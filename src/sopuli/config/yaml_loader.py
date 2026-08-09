@@ -51,9 +51,11 @@ import yaml
 
 from sopuli.config.errors import ConfigError, location_of
 
-#: Only these spellings remain boolean. Everything else YAML 1.1 would have
-#: resolved -- yes/no/on/off -- stays the string it looks like.
-BOOLEAN_LITERALS = ("true", "True", "TRUE", "false", "False", "FALSE")
+#: PyYAML indexes implicit resolvers by the first character of the scalar, so
+#: the bool resolver is registered under y, Y, n, N, o, O, t, T, f and F.
+#: Keeping only these four is what leaves `true`/`false` boolean while `yes`,
+#: `no`, `on` and `off` stay the strings they look like.
+BOOLEAN_FIRST_CHARS = "tTfF"
 
 
 class SopuliSafeLoader(yaml.SafeLoader):
@@ -72,7 +74,17 @@ class SopuliSafeLoader(yaml.SafeLoader):
         seen: dict[Any, yaml.Node] = {}
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
-            if key in seen:
+            try:
+                duplicated = key in seen
+            except TypeError:
+                # An unhashable key -- YAML allows a sequence or mapping as one
+                # (`? [a, b]`). PyYAML's own construct_mapping reports that as a
+                # ConstructorError carrying a mark, which parse_yaml turns into a
+                # located ConfigError. Skipping here leaves it to do so; without
+                # this, the hardening would replace a good error with a bare
+                # TypeError, which is a regression on stock behaviour.
+                continue
+            if duplicated:
                 line, column = location_of(key_node.start_mark)
                 first_line, _ = location_of(seen[key].start_mark)
                 raise ConfigError(
@@ -92,19 +104,17 @@ class SopuliSafeLoader(yaml.SafeLoader):
 def _narrow_boolean_resolvers() -> None:
     """Keep ``true``/``false``, drop ``yes``/``no``/``on``/``off``.
 
-    PyYAML indexes implicit resolvers by first character, so the bool resolver
-    is registered under y, Y, n, N, o, O, t, T, f, F. Rebuilding the table is
-    the supported way to change that -- there is no "remove one resolver" call.
+    Rebuilding the whole table is the supported way to do this -- PyYAML has no
+    "remove one resolver" call. See :data:`BOOLEAN_FIRST_CHARS`.
     """
     original = SopuliSafeLoader.yaml_implicit_resolvers
     rebuilt: dict[str, list[tuple[str, Any]]] = {}
     for first_char, resolvers in original.items():
-        kept = [
+        rebuilt[first_char] = [
             (tag, regexp)
             for tag, regexp in resolvers
-            if tag != "tag:yaml.org,2002:bool" or first_char in "tTfF"
+            if tag != "tag:yaml.org,2002:bool" or first_char in BOOLEAN_FIRST_CHARS
         ]
-        rebuilt[first_char] = kept
     SopuliSafeLoader.yaml_implicit_resolvers = rebuilt
 
 

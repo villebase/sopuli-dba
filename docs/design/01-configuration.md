@@ -515,9 +515,15 @@ error message for a file this long.
   on purpose: the file holds no secrets (C5), so the risk it carries is
   *tampering*, and a group-writable config is the worse version of that — anyone
   who can write it can repoint `secret_template` at a path they control, and the
-  tool will faithfully rotate a production password into it. POSIX refuses any
-  `0o077` bit; Windows refuses any ACE granting read to a SID outside the owner,
-  `SYSTEM` and `Administrators`
+  tool will faithfully rotate a production password into it — no read access
+  required. POSIX therefore refuses any `0o077` bit, and Windows refuses any ACE
+  granting read *or* write to a SID outside {owner, `OWNER RIGHTS`,
+  `CREATOR OWNER`, `SYSTEM`, `Administrators`}. `OWNER RIGHTS` (`S-1-3-4`) and
+  `CREATOR OWNER` (`S-1-3-0`) are not accounts — they resolve to whoever owns
+  the file, and a file created under `%TEMP%` commonly inherits the former and
+  no explicit ACE for the user at all. Rights that grant neither content access
+  nor control — `READ_CONTROL`, `SYNCHRONIZE`, `FILE_READ_ATTRIBUTES` — do not
+  count, so the check fires on real exposure rather than on incidental bits
 
 ---
 

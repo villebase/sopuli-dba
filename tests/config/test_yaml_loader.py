@@ -71,6 +71,21 @@ def test_a_merge_key_is_not_a_duplicate() -> None:
     assert parse_yaml(document)["acme"] == {"policy": "app-standard", "name": "acme"}
 
 
+def test_an_unhashable_key_is_still_a_located_config_error() -> None:
+    """YAML allows a sequence as a key (`? [a, b]`), and Python cannot hash one.
+
+    The duplicate-key check has to survive that. Testing `key in seen` on a list
+    raises TypeError, which would escape as a bare traceback and exit 1 -- a
+    regression on stock PyYAML, which reports it properly with a mark. The check
+    steps aside and lets PyYAML do that.
+    """
+    with pytest.raises(ConfigError) as caught:
+        parse_yaml("? [alpha, beta]\n: a value\n")
+
+    assert "unhashable" in str(caught.value).lower()
+    assert caught.value.line is not None
+
+
 # ---------------------------------------------------------------- booleans ---
 
 

@@ -47,11 +47,21 @@ ENCODING = "utf-8-sig"
 
 def load_document(path: Path) -> dict[str, Any]:
     """Read, parse and sanity-check one config file. Returns raw data."""
-    if not path.is_file():
+    if not path.exists():
         raise ConfigError(
             "config file does not exist",
             source=path,
             hint="pass --config PATH, or set SOPULI_CONFIG",
+        )
+    if not path.is_file():
+        # A directory passes `exists` and fails `is_file`. Reporting that as
+        # "does not exist" sends someone looking for a typo in a path that is
+        # spelled correctly -- `--config /etc/sopuli` rather than
+        # `--config /etc/sopuli/sopuli.yaml` is an easy thing to type.
+        raise ConfigError(
+            "config path is not a file",
+            source=path,
+            hint="point --config at the file itself, not the directory holding it",
         )
 
     check_permissions(path)

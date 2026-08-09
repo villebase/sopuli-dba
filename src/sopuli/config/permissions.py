@@ -50,7 +50,9 @@ def check_permissions(path: Path) -> None:
 
     "Owner" is joined by the platform's own administrative identities, which can
     read any file regardless of what the ACL says: refusing because
-    ``Administrators`` has access would refuse every file on the system.
+    ``Administrators`` has access would refuse every file on the system. On
+    Windows it is also joined by ``OWNER RIGHTS`` and ``CREATOR OWNER``, which
+    are not accounts at all -- they resolve to whoever owns the file.
     """
     if sys.platform == "win32":
         _check_windows_acl(path)
@@ -70,7 +72,11 @@ def _check_posix_mode(path: Path) -> None:
 
 
 def _check_windows_acl(path: Path) -> None:
-    """Walk the DACL and refuse if anyone unexpected is granted read.
+    """Walk the DACL and refuse if anyone unexpected is granted access.
+
+    "Access" means read *or* write, matching the POSIX side -- see
+    :func:`_unsafe_access_mask` for exactly which rights count and why the
+    composite ones are excluded.
 
     Two deliberate simplifications, both of which fail *safe* -- they can make
     this refuse a file that was actually fine, never accept one that was not:
@@ -124,13 +130,13 @@ def _check_windows_acl(path: Path) -> None:
         (ace_type, _flags), mask, sid = dacl.GetAce(index)
         if ace_type != ntsecuritycon.ACCESS_ALLOWED_ACE_TYPE:
             continue
-        if not mask & _READ_ACCESS:
+        if not mask & _UNSAFE_ACCESS:
             continue
         # PySID implements equality by comparing the SID itself, not identity.
         if any(sid == permitted for permitted in allowed):
             continue
         raise ConfigError(
-            f"config file is readable by {_name_of(sid)}",
+            f"config file is accessible to {_name_of(sid)}",
             source=path,
             hint=WINDOWS_HINT,
         )
@@ -178,17 +184,43 @@ def _name_of(sid: PySID) -> str:
     return f"{domain}\\{name}" if domain else name
 
 
-def _read_access_mask() -> int:
-    """Every way an ace can express "can read this file"."""
+def _unsafe_access_mask() -> int:
+    """The rights that make a third party's ACE matter.
+
+    Write is in here for the same reason the POSIX check is on ``0o077`` rather
+    than on the read bits: the file carries a *tampering* risk, and someone who
+    can rewrite ``secret_template`` does not need to be able to read it first.
+    Leaving write out would have made this gate contradict its own rationale on
+    one of the two platforms.
+
+    ``WRITE_DAC`` and ``WRITE_OWNER`` count too. Whoever can change the ACL, or
+    take ownership, can grant themselves everything else afterwards.
+
+    The composite rights (``FILE_GENERIC_READ``, ``FILE_GENERIC_WRITE``,
+    ``FILE_ALL_ACCESS``) are deliberately *not* listed, even though they are the
+    ones an ACE usually carries. Each of them bundles ``READ_CONTROL`` and
+    ``SYNCHRONIZE``, which nearly every ACE has, so including them would make
+    this mask match essentially anything -- the check would still refuse the
+    right files, but for the wrong reason and with no way to tell. Their
+    meaningful bits are listed individually instead, so a real
+    ``FILE_GENERIC_READ`` grant still matches through ``FILE_READ_DATA`` while a
+    grant of nothing but ``READ_CONTROL`` does not.
+    """
     import ntsecuritycon
 
     return (
         ntsecuritycon.FILE_READ_DATA
-        | ntsecuritycon.FILE_GENERIC_READ
+        | ntsecuritycon.FILE_READ_EA
+        | ntsecuritycon.FILE_WRITE_DATA
+        | ntsecuritycon.FILE_APPEND_DATA
+        | ntsecuritycon.FILE_WRITE_EA
+        | ntsecuritycon.DELETE
+        | ntsecuritycon.WRITE_DAC
+        | ntsecuritycon.WRITE_OWNER
         | ntsecuritycon.GENERIC_READ
+        | ntsecuritycon.GENERIC_WRITE
         | ntsecuritycon.GENERIC_ALL
-        | ntsecuritycon.FILE_ALL_ACCESS
     )
 
 
-_READ_ACCESS = _read_access_mask() if sys.platform == "win32" else 0
+_UNSAFE_ACCESS = _unsafe_access_mask() if sys.platform == "win32" else 0

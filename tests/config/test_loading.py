@@ -86,6 +86,23 @@ def test_a_missing_file_says_so(tmp_path: Path) -> None:
     assert "--config" in str(caught.value)
 
 
+def test_a_directory_is_not_reported_as_a_missing_file(tmp_path: Path) -> None:
+    """`--config /etc/sopuli` instead of `--config /etc/sopuli/sopuli.yaml`.
+
+    The path exists and is spelled correctly, so "does not exist" would send
+    someone hunting for a typo that is not there.
+    """
+    directory = tmp_path / "sopuli"
+    directory.mkdir()
+
+    with pytest.raises(ConfigError) as caught:
+        load_document(directory)
+
+    rendered = str(caught.value)
+    assert "not a file" in rendered
+    assert "does not exist" not in rendered
+
+
 def test_invalid_utf8_is_reported_as_such(tmp_path: Path) -> None:
     path = tmp_path / "sopuli.yaml"
     path.write_bytes(b"version: 1\nname: \xff\xfe\n")

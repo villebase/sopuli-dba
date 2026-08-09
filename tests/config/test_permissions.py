@@ -148,6 +148,49 @@ def test_a_grant_to_anyone_else_is_refused(locked_down: Path, trustee: str, expe
 
 
 @windows_only
+def test_a_write_only_grant_is_refused(locked_down: Path) -> None:
+    """Tampering is the risk, so write counts even with no read bit at all.
+
+    `(WD)` is FILE_WRITE_DATA on its own -- no READ_CONTROL, no SYNCHRONIZE, no
+    generic right. Someone holding it can rewrite secret_template and point a
+    production rotation at a path they control, without ever being able to read
+    the file. An earlier version of this check only looked at read access and
+    let it through; the POSIX half already refused the equivalent 0o020.
+    """
+    _icacls(str(locked_down), "/grant", "Everyone:(WD)")
+
+    with pytest.raises(ConfigError) as caught:
+        check_permissions(locked_down)
+
+    assert "Everyone" in str(caught.value)
+
+
+@windows_only
+def test_permission_changing_rights_are_refused(locked_down: Path) -> None:
+    """Whoever can rewrite the ACL can grant themselves everything else after."""
+    _icacls(str(locked_down), "/grant", "Everyone:(WDAC)")
+
+    with pytest.raises(ConfigError) as caught:
+        check_permissions(locked_down)
+
+    assert "Everyone" in str(caught.value)
+
+
+@windows_only
+def test_a_harmless_grant_is_not_refused(locked_down: Path) -> None:
+    """The other side of the mask, and the reason it is not simply "any ACE".
+
+    `(RA)` is FILE_READ_ATTRIBUTES: size and timestamps, not content. Refusing
+    on that would make the check fire on incidental rights rather than on
+    anything that puts the file at risk, and a security check nobody can satisfy
+    gets turned off.
+    """
+    _icacls(str(locked_down), "/grant", "Everyone:(RA)")
+
+    check_permissions(locked_down)
+
+
+@windows_only
 def test_administrators_and_system_do_not_count(locked_down: Path) -> None:
     """They can read any file on the machine whatever the ACL says.
 

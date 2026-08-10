@@ -155,6 +155,31 @@ def test_omitting_oracle_is_allowed() -> None:
     assert target.oracle.scope is None
 
 
+@pytest.mark.parametrize("block", ["oracle", "admin"])
+def test_an_empty_block_is_refused_even_though_omitting_it_is_fine(block: str) -> None:
+    """Absent and empty mean the same thing to the tool, so the difference
+    between them is a sentence somebody started and did not finish -- the same
+    reading as `policy: ""` naming no policy."""
+    with pytest.raises(ConfigError) as caught:
+        build_targets(document({**CDB_ROOT, block: {}}))
+
+    rendered = str(caught.value)
+    assert f"an empty `{block}:` block says nothing" in rendered
+    assert f"targets[0].{block}" in rendered
+
+
+def test_how_scope_and_container_constrain_each_other_is_not_decided_here() -> None:
+    """§2 writes `cdb_root` without a container and `pdb` with one, but never says
+    that is a rule -- and `container` is also the `{container}` token in a secret
+    template (§6), so it carries information beyond which container to connect
+    to. P1 puts per-vendor validation behind the driver. Recorded as C9 / #27
+    rather than guessed at, and pinned here so the absence is deliberate.
+    """
+    assert only(oracle={"scope": "pdb"}).oracle.container is None
+    assert only(oracle={"container": "alphadev"}).oracle.scope is None
+    assert only(oracle={"scope": "cdb_root", "container": "alphadev"}).oracle.scope == "cdb_root"
+
+
 # ------------------------------------------------------------------ admin ---
 
 

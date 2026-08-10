@@ -322,9 +322,13 @@ something the estate can express and the set silently cannot.
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§5) |
 | `vault` | which store masters passwords here |
 | `admin` | `{ username, auth }` — the credential that reaches the database. `auth` is one of P2's bootstrap sources: `external`, `vault`, `prompt`, `env`. There is no password field, and there will not be one (P2). `vault` has nowhere yet to name *which* ref — see C9 |
-| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. `scope` is `cdb_root` or `pdb`; a non-CDB database omits the block |
+| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. `scope` is `cdb_root` or `pdb`; a non-CDB database omits the block. How the two keys constrain each other is not decided — see C9 |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
 | `safety` | a `safety:` block (§8) |
+
+A block that is present and empty — `oracle: {}`, `admin: {}` — is an error.
+Absent and empty mean the same thing to the tool, so the difference between them
+is a sentence somebody started and did not finish.
 
 `type`, `oracle.scope` and `admin.auth` are closed sets. A free string there
 means `scope: cdb-root` loads happily and the tool then operates in a different
@@ -654,4 +658,4 @@ error message for a file this long.
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
 | C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set. §4 rules 2, 6 and 7 are what that costs |
 | C8 | ~~Do explicit `targets:` need labels, or is `environment` enough?~~ | **decided: labels are allowed on them**, so mixed estates select uniformly |
-| C9 | How does the file point at vault auth material, and at the database admin credential? | unresolved — P2 names the methods and forbids plaintext material in the file, but nothing names the keys. The loader accepts `auth.method` and refuses every other key rather than inventing a schema the vault layer must then live with. Also covers the `oracle.scope` vocabulary, of which only `cdb_root` and `pdb` are written down. Issue #27 |
+| C9 | How does the file point at vault auth material, and at the database admin credential? | unresolved — P2 names the methods and forbids plaintext material in the file, but nothing names the keys. The loader accepts `auth.method` and refuses every other key rather than inventing a schema the vault layer must then live with. Also covers the `oracle.scope` vocabulary, of which only `cdb_root` and `pdb` are written down, and whether `scope` and `container` constrain each other — §2 shows `cdb_root` without a container and `pdb` with one, but never says that is a rule, and `container` is also the `{container}` token in a secret template (§6). Issue #27 |

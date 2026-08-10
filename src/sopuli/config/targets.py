@@ -120,6 +120,7 @@ def read_admin(raw: Any, *, at: KeyPath) -> AdminCredential | None:
         return None
     admin = mapping(raw, at=at)
     reject_unknown_keys(admin, allowed=ADMIN_KEYS, at=at, hint=_UNSPECIFIED_ADMIN)
+    _reject_empty(admin, at=at, block_name="admin")
 
     auth = admin.get("auth")
     return AdminCredential(
@@ -142,6 +143,7 @@ def read_oracle(raw: Any, *, at: KeyPath) -> TargetOracle:
         return TargetOracle()
     options = mapping(raw, at=at)
     reject_unknown_keys(options, allowed=ORACLE_KEYS, at=at)
+    _reject_empty(options, at=at, block_name="oracle")
 
     scope = options.get("scope")
     return TargetOracle(
@@ -151,6 +153,31 @@ def read_oracle(raw: Any, *, at: KeyPath) -> TargetOracle:
             else choice(scope, allowed=ORACLE_SCOPES, at=at.key("scope"), noun="Oracle scope")
         ),
         container=optional_string(options, "container", at=at),
+    )
+
+
+def _reject_empty(block: dict[str, Any], *, at: KeyPath, block_name: str) -> None:
+    """A block that is present and says nothing is a half-finished edit.
+
+    The same reading as ``policy: ""`` naming no policy, and as an override that
+    patches nothing: absent and empty mean the same thing to the tool, so the
+    difference between them is a sentence somebody started and did not finish.
+    Reporting it costs one error; hiding it costs a target that turns out not to
+    be configured the way the file appears to say.
+
+    What is *not* checked is how ``scope`` and ``container`` constrain each
+    other. §2 writes ``cdb_root`` without a container and ``pdb`` with one, but
+    the reference never says whether that is a rule -- and ``container`` is also
+    the ``{container}`` token in a secret template (§6), so it carries
+    information beyond which container to connect to. P1 puts per-vendor
+    validation behind the driver. Recorded in C9 / issue #27 rather than guessed.
+    """
+    if block:
+        return
+    raise ConfigError(
+        f"an empty `{block_name}:` block says nothing",
+        at=at,
+        hint=f"omit `{block_name}:` entirely, or give it the keys that differ",
     )
 
 

@@ -11,9 +11,12 @@ Deliberately last, and deliberately one pass. Doing half of these while only hal
 the sections existed would have meant writing the resolver twice, and it is
 easier to see that every reference is covered when they are in one list.
 
-**Templates are skipped, not resolved.** A target set writes ``vault: "{vault}"``,
-whose value comes from a dimension variable — so a reference containing ``{`` is
-left for expansion to check, along with everything else about rendered names.
+**Templates are skipped, not resolved — but only inside a target set.** A set
+writes ``vault: "{vault}"``, whose value comes from a dimension variable, so that
+reference is left for expansion to check along with everything else about
+rendered names. The same string on an explicit target, an application or a
+profile has nothing to substitute from, and is an error rather than a hole in the
+resolver.
 """
 
 from __future__ import annotations
@@ -30,10 +33,18 @@ PRODUCTION = "prod"
 
 @dataclass(frozen=True)
 class _Reference:
-    """One name written somewhere, and where it was written."""
+    """One name written somewhere, and where it was written.
+
+    ``templated`` marks the references that are allowed to contain a
+    ``{placeholder}`` -- which is only the ones inside a target set, where a
+    dimension variable will supply the value. Everywhere else a placeholder has
+    nothing to resolve from, so the flag has to travel with the reference rather
+    than be inferred from the string.
+    """
 
     name: str
     at: KeyPath
+    templated: bool = False
 
 
 def check_references(config: Config) -> tuple[ConfigWarning, ...]:
@@ -70,7 +81,7 @@ def _vault_references(config: Config) -> list[_Reference]:
     for target_set in config.target_sets:
         vault = target_set.template.vault
         if vault is not None:
-            found.append(_Reference(vault, at.key(target_set.name).key("vault")))
+            found.append(_Reference(vault, at.key(target_set.name).key("vault"), templated=True))
 
     at = ROOT.key("applications")
     for index, application in enumerate(config.applications):
@@ -145,11 +156,23 @@ def _resolve(references: list[_Reference], declared: set[str], *, noun: str, sec
         if reference.name in declared:
             continue
         if "{" in reference.name:
-            # A target set's `vault: "{vault}"` resolves from a dimension
-            # variable. Which store that turns out to be is a question about a
-            # rendered target, so it belongs with expansion along with every
-            # other placeholder.
-            continue
+            if reference.templated:
+                # A target set's `vault: "{vault}"` resolves from a dimension
+                # variable. Which store that turns out to be is a question about
+                # a rendered target, so it belongs with expansion along with
+                # every other placeholder.
+                continue
+            # Everywhere else there is nothing to substitute from. Saying that
+            # is worth more than "no vault named '{vault}' is declared", which
+            # invites somebody to go and declare one.
+            raise ConfigError(
+                f"{reference.name!r} contains a placeholder, and this is not a target set",
+                at=reference.at,
+                hint=(
+                    "placeholders resolve from a target set's `for_each:` variables (§4); "
+                    "elsewhere they have nothing to substitute from"
+                ),
+            )
         known = ", ".join(sorted(declared)) if declared else f"none — there is no `{section}:`"
         raise ConfigError(
             f"no {noun} named {reference.name!r} is declared",

@@ -133,6 +133,32 @@ def test_a_templated_vault_is_left_for_expansion() -> None:
     assert config.target_sets[0].template.vault == "{vault}"
 
 
+@pytest.mark.parametrize(
+    "sections",
+    [
+        {"targets": [{**TARGET, "vault": "{vault}"}]},
+        {"applications": [{"name": "acme", "accounts": ["a"], "vault": "{vault}"}]},
+        {"profiles": {"ci": {"vault": "{vault}"}}},
+        {"defaults": {"vault": "{vault}"}},
+    ],
+    ids=["target", "application", "profile", "defaults"],
+)
+def test_a_placeholder_outside_a_target_set_is_refused(sections: dict[str, Any]) -> None:
+    """The exemption above is for target sets and nothing else.
+
+    An explicit target has no `for_each:` and therefore nothing to substitute
+    from, so `{vault}` there is not deferred work -- it is a line copied out of a
+    target set that will never resolve. Exempting it by looking for a `{` in the
+    string would let any reference bypass resolution just by containing one.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(vaults=VAULTS, **sections))
+
+    rendered = str(caught.value)
+    assert "contains a placeholder, and this is not a target set" in rendered
+    assert "nothing to substitute from" in rendered
+
+
 # ------------------------------------------------- policies, groups, profiles ---
 
 

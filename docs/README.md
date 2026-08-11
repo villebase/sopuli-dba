@@ -58,8 +58,9 @@ those keys rather than inventing them)**, ~~what profiles are for~~ (C10 —
 proposed no), a built-in `interactive` profile (C12, leaning no), **whether `vault:`
 under `defaults`/`profiles` is a name or a block (C13, issue #31 — the loader
 refuses the block form)**, **the `@stage=` vocabulary in a SecretRef and who owns
-it (C14, issue #40 — §7 writes `PENDING`, UC-1 writes `pending`; the parser
-carries the value as written)**.
+it (C14, issue #40 — §7 writes `PENDING`, UC-1 writes `pending`, and the run
+schema has already typed the enum lower-case and `version` as an integer; the
+parser carries both values as written)**.
 
 **Oracle privileges (02):** common `C##` service user or per-PDB local as the
 documented default (P1), grant `SELECT ON SYS.USER$` by default (P2), whether

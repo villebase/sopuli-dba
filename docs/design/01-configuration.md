@@ -12,6 +12,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
+# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -90,6 +91,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
+# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
 version: 1
 
 runtime:
@@ -920,6 +922,43 @@ match instead:
 So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
 local, incomplete check; the tool is the complete one.
+
+### Pointing an editor at it
+
+A schema nothing is pointed at is a file in a directory. The association is made
+from the config file itself, with a comment on the first line:
+
+```yaml
+# yaml-language-server: $schema=./sopuli-config-1.0.schema.json
+version: 1
+```
+
+That comment is the [YAML Language Server][yamlls] convention, which is what the
+Red Hat **YAML** extension for VS Code uses, and what most other editors' YAML
+support is built on. Verified with that extension: hovering a key shows the
+description the generator wrote for it, and an unknown key is underlined where it
+was typed.
+
+**The path is relative to the YAML file**, not to the repository. Copy the schema
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-1.0.schema.json`
+is as valid as the form above.
+
+**The `$id` inside the schema is an identifier, not an address.** It reads like a
+URL because JSON Schema identifiers conventionally do, and it matches the sibling
+schemas — but nothing serves it, so it is not a value to paste after `$schema=`.
+Use a path to a local copy. (If the schema is ever served from somewhere stable,
+the URL form belongs here beside the path form, and this paragraph goes away.)
+
+**Every complete example in this documentation carries the comment.** Not
+decoration: the line is the only part of using the schema that has to be
+discovered rather than deduced, and a reader who copies a worked example as a
+starting file should get the editor support without having read this section.
+Fragments — an `applications:` block on its own, a `groups:` snippet — do not,
+because they are not files. `tests/config/test_design_document_examples.py`
+enforces the split, so an example added later cannot quietly drop the line, and a
+schema version bump has to be reflected in the examples that name it.
+
+[yamlls]: https://github.com/redhat-developer/yaml-language-server
 
 ### `sopuli config validate`
 

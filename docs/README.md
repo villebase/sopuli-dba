@@ -33,6 +33,11 @@ All three schemas validate as Draft 2020-12, and the example validates against t
 run schema. That is no longer an assertion in prose: `tests/test_schemas.py`
 checks it, and CI runs it on every push and pull request (invariant 12).
 
+To get completion and inline errors while editing a config, put
+`# yaml-language-server: $schema=./sopuli-config-1.0.schema.json` on the file's
+first line — see [design/01-configuration.md](design/01-configuration.md) §9b,
+which also explains why the schema's `$id` is not a URL to paste there.
+
 The config schema is generated rather than written, and
 `tests/config/test_schema.py` fails if the committed file is not what the config
 layer produces today. A key added to a section without the schema following it

@@ -167,7 +167,13 @@ def _split_qualifier(text: str, *, at: KeyPath) -> tuple[str, str | None, str | 
             at=at,
             hint=f"write `@{name}=...`, or leave the qualifier off entirely",
         )
-    if QUALIFIER_SEPARATOR in head and "=" in head.rpartition(QUALIFIER_SEPARATOR)[2]:
+    if not head:
+        raise ConfigError(
+            f"secret ref {text!r} is a qualifier with nothing to qualify",
+            at=at,
+            hint="a ref needs a path before `@`",
+        )
+    if _ends_with_qualifier(head):
         raise ConfigError(
             f"secret ref {text!r} has more than one qualifier",
             at=at,
@@ -176,14 +182,23 @@ def _split_qualifier(text: str, *, at: KeyPath) -> tuple[str, str | None, str | 
                 "and nothing says which would win"
             ),
         )
-    if not head:
-        raise ConfigError(
-            f"secret ref {text!r} is a qualifier with nothing to qualify",
-            at=at,
-            hint="a ref needs a path before `@`",
-        )
 
     return (head, value, None) if name == VERSION else (head, None, value)
+
+
+def _ends_with_qualifier(head: str) -> bool:
+    """Whether what is left after peeling one qualifier ends in another.
+
+    Asked of the *end* of the remainder, because that is the only place a
+    qualifier can be. Scanning the whole string for ``@...=...`` instead would
+    contradict the rule above and reject ``apps/user@foo=bar/db#password@version=2``,
+    where only the trailing assignment is a qualifier and the rest is path.
+    """
+    _, separator, tail = head.rpartition(QUALIFIER_SEPARATOR)
+    if not separator:
+        return False
+    name, equals, value = tail.partition("=")
+    return bool(equals) and bool(value) and name in QUALIFIERS
 
 
 # ------------------------------------------------------------------ parts ---

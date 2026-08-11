@@ -123,6 +123,26 @@ def test_a_path_with_an_at_sign_can_still_be_qualified() -> None:
     assert ref.version == "2"
 
 
+def test_an_assignment_inside_the_path_is_not_a_second_qualifier() -> None:
+    """A qualifier can only be at the end, so that is the only place looked at.
+    Scanning the whole ref for `@...=...` would contradict the rule above and
+    reject this, where `@foo=bar` is path text and only `@version=2` qualifies.
+    """
+    ref = parse_secret_ref("apps/user@foo=bar/db#password@version=2")
+
+    assert ref.path == "apps/user@foo=bar/db"
+    assert ref.field == "password"
+    assert ref.version == "2"
+
+
+def test_two_real_qualifiers_are_still_refused() -> None:
+    """The other side of the same rule: `@version=1@stage=X` is two of them."""
+    with pytest.raises(ConfigError) as caught:
+        parse_secret_ref("creds#password@version=1@stage=X")
+
+    assert "more than one qualifier" in str(caught.value)
+
+
 # ---------------------------------------------------------------- pointers ---
 
 

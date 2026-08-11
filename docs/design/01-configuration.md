@@ -921,6 +921,29 @@ So a file the schema accepts may still be refused by `sopuli config validate`,
 and that is the intended division rather than a gap. The schema is the fast,
 local, incomplete check; the tool is the complete one.
 
+### `sopuli config validate`
+
+The command P3 names. It loads the file through the same path every other command
+does — discovery, the permission check, the hardened parser, the builders — and
+reports what it found:
+
+| Outcome | Exit | Output |
+|---|---|---|
+| the file loads | 0 | the files read, and how much they declare: targets, bindings, warnings |
+| §10 warnings | 0 | each warning in full, and `diagnostics[]` under `--output json` |
+| anything §9a or §10 refuses | 2 | the message, with its key path and its hint |
+
+Exit 2 rather than 1: P5 puts config validation with usage errors, so a scheduler
+can tell "fix your file" from "something broke". A bad file produces no run
+document even under `--output json`, which is not an oversight — whether a usage
+error should emit one is J7, and this command must not answer it by accident.
+
+It validates through the builders, not through the published schema above. The
+two are not equivalent and the stricter one wins; `jsonschema` stays a
+development dependency.
+
+Offline, like `config show`: no vault and no database is contacted.
+
 Secret refs are typed as strings. §7's grammar is parsed by
 `sopuli/config/secret_refs.py`, and a regex approximation of it in a published
 artefact would be a second parser that disagrees with the first in a way nobody

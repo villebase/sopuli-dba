@@ -250,6 +250,45 @@ def test_the_sources_are_listed_in_layering_order(config: Config) -> None:
     assert section["sources"] == [str(paths[0]), str(paths[1])]
 
 
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"sources": ["a"], "resolved": True, "bindings": []},
+        {"sources": ["a"], "resolved": True, "targets": [], "bindings": [], "declared": {}},
+        {"sources": ["a"], "resolved": False, "declared": {}, "targets": []},
+        {"sources": ["a"], "resolved": False},
+    ],
+    ids=["resolved-without-targets", "resolved-with-declared", "declared-with-targets", "neither"],
+)
+def test_the_schema_holds_the_producer_to_one_shape_or_the_other(
+    validator: Draft202012Validator, section: dict[str, Any]
+) -> None:
+    """`resolved` discriminates two shapes, so the schema has to enforce it.
+
+    Without the `allOf`, a regression could emit `resolved: true` carrying no
+    targets, or both shapes at once, and still validate -- a producer-side guard
+    that guards nothing (§8).
+    """
+    document = {
+        "schema_version": "1.1",
+        "tool": {"name": "sopuli", "version": "0.0.0"},
+        "command": "config.show",
+        "invocation": {
+            "correlation_id": "9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234",
+            "started_at": "2026-08-11T09:00:00Z",
+            "finished_at": "2026-08-11T09:00:01Z",
+            "duration_ms": 1000,
+            "actor": {"os_user": "dba", "host": "laptop"},
+            "dry_run": False,
+        },
+        "config": section,
+        "summary": {"total": 0, "ok": 0, "changed": 0, "failed": 0},
+        "exit_code": 0,
+    }
+
+    assert list(validator.iter_errors(document)), "the schema accepted a shape it should refuse"
+
+
 @pytest.mark.parametrize("resolved", [False, True], ids=["declared", "resolved"])
 def test_both_views_validate_against_the_schema(
     config: Config, validator: Draft202012Validator, resolved: bool

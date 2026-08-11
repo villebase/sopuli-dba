@@ -1,6 +1,10 @@
 # sopuli-dba — JSON output contract
 
-Status: draft / sketch. Schemas validate; nothing is implemented.
+Status: draft / sketch, **partly implemented**. The run document, `--output
+text|json`, colour resolution and the `config` section are real and validated
+against the schema in CI (`sopuli/output/`). `--output jsonl`, `plan`, `results`
+and `diagnostics` are not written yet, so everything about them here is still a
+sketch.
 Schemas: [`../schemas/sopuli-run-1.1.schema.json`](../schemas/sopuli-run-1.1.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)

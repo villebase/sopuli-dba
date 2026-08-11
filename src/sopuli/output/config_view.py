@@ -68,7 +68,12 @@ def build_section(
         section["declared"] = document
         return section
 
-    section["targets"] = [_target_json(expanded, config) for expanded in config.expanded_targets]
+    # Built once. A set per target would be one pass over every binding for
+    # every target, and §2's estate is already 22 x 126 of them.
+    bound = _bound_targets(config)
+    section["targets"] = [
+        _target_json(expanded, bound=bound) for expanded in config.expanded_targets
+    ]
     section["bindings"] = [_binding_json(binding) for binding in config.bindings]
     return section
 
@@ -235,7 +240,7 @@ def _unmanaged(config: Config) -> list[str]:
     case that is not designed yet, and a declared-but-unmanaged target is the
     honest state until it is. Invisible is the one thing it must not be.
     """
-    bound = {binding.target for binding in config.bindings}
+    bound = _bound_targets(config)
     return [expanded.name for expanded in config.expanded_targets if expanded.name not in bound]
 
 
@@ -286,9 +291,8 @@ def _binding_rows(bindings: Sequence[Binding]) -> list[str]:
 # ------------------------------------------------------------------ json ---
 
 
-def _target_json(expanded: ExpandedTarget, config: Config) -> dict[str, Any]:
+def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str, Any]:
     target = expanded.target
-    bound = {binding.target for binding in config.bindings}
     return {
         "name": target.name,
         "type": target.type,
@@ -319,6 +323,15 @@ def _binding_json(binding: Binding) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------- shared ---
+
+
+def _bound_targets(config: Config) -> frozenset[str]:
+    """Every target some application binds an account in.
+
+    One pass over the bindings, asked once and then looked up. §2's estate is 22
+    targets and 126 bindings, and both views ask this question per target.
+    """
+    return frozenset(binding.target for binding in config.bindings)
 
 
 def _source(expanded: ExpandedTarget) -> str:

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vronkko/sopuli-dba/schemas/sopuli-run-1.1.schema.json",
+  "$id": "https://github.com/futville/sopuli-dba/schemas/sopuli-run-1.1.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. Draft — not yet implemented.",
   "type": "object",
@@ -61,7 +61,14 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["sources", "resolved"],
-      "description": "What `config show` read, and what it resolves to. Offline: no vault or database is contacted, and no secret value appears.",
+      "description": "What `config show` read, and what it resolves to. Offline: no vault or database is contacted, and no secret value appears. `resolved` discriminates the two shapes, and the allOf below holds the producer to it.",
+      "allOf": [
+        {
+          "if": { "properties": { "resolved": { "const": true } }, "required": ["resolved"] },
+          "then": { "required": ["targets", "bindings"], "not": { "required": ["declared"] } },
+          "else": { "required": ["declared"], "not": { "anyOf": [{ "required": ["targets"] }, { "required": ["bindings"] }] } }
+        }
+      ],
       "properties": {
         "sources": {
           "type": "array",

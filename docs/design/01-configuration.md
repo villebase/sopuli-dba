@@ -870,6 +870,64 @@ error message for a file this long.
 
 ---
 
+## 9b. The published schema
+
+P3 requires a published JSON Schema. It is
+[`docs/schemas/sopuli-config-1.0.schema.json`](../schemas/sopuli-config-1.0.schema.json),
+Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
+from a YAML language server, it gives completion and inline errors while somebody
+is editing a 130-line file, which is worth more than the validation itself.
+
+**It is generated, not maintained.** `sopuli/config/schema.py` composes it from
+the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
+`CHARSETS`, `SUPPORTED_VERSIONS` and the rest — and refuses to generate at all if
+a section's keys and its type table disagree. Regenerate with:
+
+```
+python -m sopuli.config.schema > docs/schemas/sopuli-config-1.0.schema.json
+```
+
+`tests/config/test_schema.py` fails when the committed file is not what the model
+produces today, so a key cannot be added to a section without the schema moving
+with it. Two hand-written descriptions of one schema drift, and the one that
+drifts silently is the published one, because nothing runs it.
+
+The version in the filename is the schema contract's, not the config file's: a
+new optional key is a minor bump there and changes nothing about a file that says
+`version: 1`.
+
+**What it says.** Key names, JSON types, the closed sets, which keys are
+required, and `additionalProperties: false` — P3's "exits non-zero on unknown
+keys", in the form an editor can use. The shape rules of §4 are here too, since
+they are about shape: one outer dimension, one list per value.
+
+**What it deliberately does not say.** Every rule in §10 that relates two keys
+to each other stays with the hand-written validators, because those errors have
+to name the offending key and a `oneOf` failure reports every branch that did not
+match instead:
+
+| Rule | §10 |
+|---|---|
+| the inline form and `applications:` are mutually exclusive | yes |
+| `secret` and `secret_template` are mutually exclusive | §3 |
+| two accounts may not resolve to one secret ref | yes |
+| `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
+| `allow:` belongs to `charset: custom` | §8 |
+| every `vault`, `policy`, `group`, `profile` and target name must resolve | yes |
+| a `for_each`'s inner dimension must be one variable throughout | §4 |
+| a profile may not set a key that changes scope | §5 |
+
+So a file the schema accepts may still be refused by `sopuli config validate`,
+and that is the intended division rather than a gap. The schema is the fast,
+local, incomplete check; the tool is the complete one.
+
+Secret refs are typed as strings. §7's grammar is parsed by
+`sopuli/config/secret_refs.py`, and a regex approximation of it in a published
+artefact would be a second parser that disagrees with the first in a way nobody
+notices until a rotation.
+
+---
+
 ## 10. Validation rules worth enforcing early
 
 - unknown keys → error, not warning

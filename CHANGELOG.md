@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/futville/sopuli-dba/compare/v0.9.0...v0.10.0) (2026-08-11)
+
+
+### Features
+
+* bind accounts to targets, and resolve every secret ref ([#43](https://github.com/futville/sopuli-dba/issues/43)) ([7642fe2](https://github.com/futville/sopuli-dba/commit/7642fe2437fafc4f7e63271fefd52fc4cc538e3b))
+
 ## [0.9.0](https://github.com/futville/sopuli-dba/compare/v0.8.0...v0.9.0) (2026-08-11)
 
 

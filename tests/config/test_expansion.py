@@ -190,6 +190,17 @@ def test_a_template_label_that_contradicts_a_dimension_is_refused() -> None:
     assert "target_sets.appdb.labels.env" in rendered
 
 
+def test_a_placeholder_in_a_label_key_is_reported_against_that_label() -> None:
+    """`labels.{tenat}`, not `labels` — the entry as written is the line to go
+    and fix, the same as every other key path in the loader."""
+    with pytest.raises(ConfigError) as caught:
+        expand(target_sets={"appdb": {**APPDB, "labels": {"{tenat}": "yes"}}})
+
+    rendered = str(caught.value)
+    assert "nothing to substitute for `{tenat}`" in rendered
+    assert "target_sets.appdb.labels.{tenat}" in rendered
+
+
 def test_a_template_label_that_agrees_with_a_dimension_is_allowed() -> None:
     """`labels: { env: "{env}" }` is redundant, not contradictory. There is no
     disagreement to report, so refusing it would be pedantry."""
@@ -298,7 +309,55 @@ def test_an_override_patches_the_target_it_names() -> None:
     patched = named(expanded, "appdb-qa-alpha")
     assert patched.target.dsn == "192.0.2.75:1521/legacy.example.com"
     assert patched.overridden
+    assert patched.patched == ("dsn",)
     assert not named(expanded, "appdb-dev-alpha").overridden
+
+
+def test_a_patched_value_is_reported_against_the_override_that_wrote_it() -> None:
+    """The template's `vault:` is valid here and the exception's is a typo. An
+    error pointing at `target_sets.appdb.vault` would send the reader to the one
+    line where the name is spelled correctly."""
+    for_each = {"env": {"qa": {"host": "db.example.com", "pdb_suffix": "qa", "tenant": ["alpha"]}}}
+
+    with pytest.raises(ConfigError) as caught:
+        expand(
+            vaults={"vault-test": {"type": "hashicorp"}},
+            target_sets={
+                "appdb": {
+                    **APPDB,
+                    "vault": "vault-test",
+                    "for_each": for_each,
+                    "overrides": {"appdb-qa-alpha": {"vault": "vault-tset"}},
+                }
+            },
+        )
+
+    rendered = str(caught.value)
+    assert "no vault named 'vault-tset'" in rendered
+    assert "target_sets.appdb.overrides.appdb-qa-alpha.vault" in rendered
+
+
+def test_a_key_the_override_left_alone_is_still_reported_against_the_template() -> None:
+    """The other half of the same rule: a patch that touches `dsn` does not make
+    the template's `vault:` an override's fault."""
+    for_each = {"env": {"qa": {"host": "db.example.com", "pdb_suffix": "qa", "tenant": ["alpha"]}}}
+
+    with pytest.raises(ConfigError) as caught:
+        expand(
+            vaults={"vault-test": {"type": "hashicorp"}},
+            target_sets={
+                "appdb": {
+                    **APPDB,
+                    "vault": "vault-tset",
+                    "for_each": for_each,
+                    "overrides": {"appdb-qa-alpha": {"dsn": "192.0.2.75:1521/legacy"}},
+                }
+            },
+        )
+
+    rendered = str(caught.value)
+    assert "target_sets.appdb.vault" in rendered
+    assert "overrides" not in rendered
 
 
 def test_an_override_keeps_the_labels_the_dimensions_attached() -> None:

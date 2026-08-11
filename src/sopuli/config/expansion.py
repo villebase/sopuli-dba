@@ -83,13 +83,26 @@ def expand_targets(config: Config) -> tuple[ExpandedTarget, ...]:
     return tuple(expanded)
 
 
-def declared_at(expanded: ExpandedTarget) -> KeyPath:
-    """Where in the document this target was written.
+def declared_at(expanded: ExpandedTarget, field: str | None = None) -> KeyPath:
+    """Where in the document this target -- or one of its keys -- was written.
 
     A generated target points at the set that generated it. There is no key in
     the file for ``appdb-qa-delta``, and naming ``target_sets.appdb`` is what
     sends someone to lines they can actually edit.
+
+    Naming a ``field`` is what makes that precise enough to act on. A key an
+    override patched was written in the override, and reporting it against the
+    template would point at the one place the value is spelled correctly --
+    exactly the wrong line when the template's `vault:` is fine and the
+    exception's is a typo.
     """
+    at = _location(expanded)
+    if field is not None and field in expanded.patched and expanded.target_set is not None:
+        at = at.key("overrides").key(expanded.name)
+    return at if field is None else at.key(field)
+
+
+def _location(expanded: ExpandedTarget) -> KeyPath:
     if expanded.target_set is not None:
         return _TARGET_SETS.key(expanded.target_set)
     if expanded.index is None:  # pragma: no cover - an explicit target always has one
@@ -181,12 +194,12 @@ def _expand(target_set: TargetSet) -> list[ExpandedTarget]:
             )
         generated[target.name] = (target, combination)
 
-    overridden = _apply_overrides(target_set, generated, at=at)
+    patched = _apply_overrides(target_set, generated, at=at)
     return [
         ExpandedTarget(
             target=target,
             target_set=target_set.name,
-            overridden=name in overridden,
+            patched=patched.get(name, ()),
         )
         for name, (target, _) in generated.items()
     ]
@@ -265,7 +278,9 @@ def _render_labels(labels: Pairs, combination: _Combination, *, at: KeyPath) -> 
     """
     merged = dict(combination.labels)
     for key, value in labels:
-        rendered_key = _substitute(key, combination.variables, at=at)
+        # Both halves are reported against the entry as written, `labels.{env}`:
+        # the rendered key is not in the file, so it is not a location.
+        rendered_key = _substitute(key, combination.variables, at=at.key(key))
         rendered_value = _substitute(value, combination.variables, at=at.key(key))
         if rendered_key in merged and merged[rendered_key] != rendered_value:
             raise ConfigError(
@@ -335,8 +350,8 @@ def _apply_overrides(
     generated: dict[str, tuple[Target, _Combination]],
     *,
     at: KeyPath,
-) -> set[str]:
-    """Patch generated targets in place, and report which ones were patched.
+) -> dict[str, tuple[str, ...]]:
+    """Patch generated targets in place, and report which keys each patch wrote.
 
     §4 rule 5: overrides are found by *rendered* name, after generation. An
     override that matches nothing is an error rather than a no-op -- §10 says so
@@ -346,9 +361,12 @@ def _apply_overrides(
     A patch is rendered in the same scope as the target it patches. §2's
     overrides are literal, but a placeholder left unrendered here would be the
     one string in the estate that reaches a DSN with its braces intact.
+
+    The keys are returned rather than a yes/no, because a value's location is
+    the line that wrote it: see :func:`declared_at`.
     """
     at_overrides = at.key("overrides")
-    overridden: set[str] = set()
+    patched: dict[str, tuple[str, ...]] = {}
 
     for name, patch in target_set.overrides:
         if name not in generated:
@@ -362,9 +380,29 @@ def _apply_overrides(
             _patch_target(target, patch, combination, at=at_overrides.key(name)),
             combination,
         )
-        overridden.add(name)
+        patched[name] = _patched_keys(patch)
 
-    return overridden
+    return patched
+
+
+def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
+    """Which target keys this patch writes, sorted.
+
+    ``labels`` is the one measured by content rather than by presence: it is a
+    tuple with an empty default rather than an optional, so "absent" and "given"
+    are the same value.
+    """
+    given = {
+        "type": patch.type is not None,
+        "dsn": patch.dsn is not None,
+        "environment": patch.environment is not None,
+        "vault": patch.vault is not None,
+        "admin": patch.admin is not None,
+        "oracle": patch.oracle is not None,
+        "labels": bool(patch.labels),
+        "safety": patch.safety is not None,
+    }
+    return tuple(sorted(key for key, written in given.items() if written))
 
 
 def _generated_hint(generated: dict[str, tuple[Target, _Combination]]) -> str:
@@ -459,7 +497,8 @@ def _patch_labels(current: Pairs, patch: Pairs, variables: dict[str, str], *, at
     """
     merged = dict(current)
     for key, value in patch:
-        merged[_substitute(key, variables, at=at)] = _substitute(value, variables, at=at.key(key))
+        rendered_key = _substitute(key, variables, at=at.key(key))
+        merged[rendered_key] = _substitute(value, variables, at=at.key(key))
     return tuple(sorted(merged.items()))
 
 
@@ -504,6 +543,6 @@ def _reject_duplicate_names(expanded: list[ExpandedTarget]) -> None:
             continue
         raise ConfigError(
             f"duplicate target name {candidate.name!r}",
-            at=declared_at(candidate).key("name"),
+            at=declared_at(candidate, "name"),
             hint=f"already declared at {declared_at(first)}",
         )

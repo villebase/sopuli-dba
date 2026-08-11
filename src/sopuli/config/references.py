@@ -70,7 +70,7 @@ def _vault_references(config: Config) -> list[_Reference]:
     # the only form in which a generated target's store has a name to check.
     for expanded in config.expanded_targets:
         if expanded.target.vault is not None:
-            found.append(_Reference(expanded.target.vault, declared_at(expanded).key("vault")))
+            found.append(_Reference(expanded.target.vault, declared_at(expanded, "vault")))
 
     at = ROOT.key("applications")
     for index, application in enumerate(config.applications):
@@ -187,7 +187,7 @@ def _check_non_production_vaults(config: Config) -> None:
         raise ConfigError(
             f"target {target.name!r} is {PRODUCTION} but its vault {target.vault!r} "
             f"is marked `non_production: true`",
-            at=declared_at(expanded).key("vault"),
+            at=declared_at(expanded, "vault"),
             hint="point it at a production store, or drop the marking if it is wrong",
         )
 

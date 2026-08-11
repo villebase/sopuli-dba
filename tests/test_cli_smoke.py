@@ -57,7 +57,7 @@ def test_config_show_succeeds_in_text_mode(runner: CliRunner, show: list[str]) -
     assert result.output.strip()
 
 
-def test_human_output_is_ascii(runner: CliRunner, show: list[str]) -> None:
+def test_human_output_is_ascii(runner: CliRunner, show: list[str], config_file: Path) -> None:
     """The tool's own prose stays ASCII.
 
     This started as a workaround for the stream encoding bug and outlived it.
@@ -68,10 +68,16 @@ def test_human_output_is_ascii(runner: CliRunner, show: list[str]) -> None:
     that arrived in a message because it looked nice is not that choice.
 
     User-supplied text -- account names, ORA- messages -- is exempt: it passes
-    through as it came, which is exactly what the encoding fix makes safe.
+    through as it came, which is exactly what the encoding fix makes safe. The
+    config path is exactly that, and it is now printed: it comes from
+    ``tmp_path``, so on a machine whose username is not ASCII this would fail on
+    text the rule does not cover. Removing it first is what keeps the assertion
+    about the prose around it.
     """
     result = runner.invoke(cli, show)
-    result.output.encode("ascii")  # raises UnicodeEncodeError if it is not
+
+    prose = result.output.replace(str(config_file), "")
+    prose.encode("ascii")  # raises UnicodeEncodeError if it is not
 
 
 def test_all_help_text_is_ascii(runner: CliRunner) -> None:
@@ -267,6 +273,26 @@ def test_config_show_names_the_file_it_read(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert f"config: {path}" in result.output
+
+
+def test_a_non_ascii_config_path_reaches_the_output_intact(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    """The other side of the ASCII rule, made real rather than assumed.
+
+    The tool's own prose is ASCII; anything a user supplies passes through as it
+    came, which is what the UTF-8 stream fix (#12) makes safe. A path is the
+    first piece of user-supplied text any command prints, and "Muller" is a
+    perfectly ordinary Windows username.
+    """
+    home = tmp_path / "Müller"
+    home.mkdir()
+    path = _write(home / "sopuli.yaml", "version: 1\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path)])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert str(path) in result.output
 
 
 def test_config_show_counts_the_expanded_estate(

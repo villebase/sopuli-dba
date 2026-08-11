@@ -252,6 +252,38 @@ def test_an_unrenderable_ref_names_the_application_it_came_from() -> None:
     assert "applications[0].secret_template" in str(caught.value)
 
 
+def test_a_ref_from_an_override_is_reported_against_that_override() -> None:
+    """The location has to travel with the value. Reporting this against the
+    entry's own `secret_template:` would point at the one line that renders
+    perfectly well for every other target."""
+    with pytest.raises(ConfigError) as caught:
+        bind(
+            accounts=["acme_web_user"],
+            secret_template="tenants/{tenant}#DB/{account}",
+            overrides=[
+                {"where": {"env": "qa"}, "secret_template": "x/{account}"},
+                {"where": {"env": "dev"}, "secret_template": "tenants/{nope}#DB/{account}"},
+            ],
+        )
+
+    assert "applications[0].overrides[1].secret_template" in str(caught.value)
+
+
+def test_an_override_may_use_the_other_key_and_still_be_located() -> None:
+    """An entry that writes `secret_template:` may be patched by an override
+    that writes `secret:`, so the key reported is the one the *source* used."""
+    with pytest.raises(ConfigError) as caught:
+        bind(
+            accounts=["acme_web_user"],
+            secret_template="tenants/{tenant}#DB/{account}",
+            overrides=[{"where": {"env": "dev"}, "secret": "creds#password@versio=7"}],
+        )
+
+    rendered = str(caught.value)
+    assert "applications[0].overrides[0].secret" in rendered
+    assert "unknown qualifier 'versio'" in rendered
+
+
 def test_the_rendered_ref_is_parsed_not_just_substituted() -> None:
     """A token can change the structure of a ref once it has a value, which is
     the one thing §7 says cannot be checked before expansion."""

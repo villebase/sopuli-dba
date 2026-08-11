@@ -71,12 +71,12 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
 
     for expanded in select(config, application.targets):
         patches = _patches_for(application, expanded)
-        ref = _effective(application.secret_ref, patches, key="secret_ref")
+        ref, where = _ref_for(application, patches, at=at)
         vault = _effective(application.vault, patches, key="vault")
         policy = _effective(application.policy, patches, key="policy")
 
         for account in application.accounts:
-            secret = _render(ref, application, account, expanded, at=at)
+            secret = _render(ref, application, account, expanded, at=where)
             bound.append(
                 Binding(
                     application=application.name,
@@ -93,26 +93,51 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
 # ---------------------------------------------------------------- overrides ---
 
 
-def _patches_for(application: Application, expanded: ExpandedTarget) -> list[Override]:
+def _patches_for(application: Application, expanded: ExpandedTarget) -> list[tuple[int, Override]]:
     """The application's overrides that apply to this target, in document order.
 
     §3 calls them "patches applied to matching targets" -- plural, and applied,
     so all of them are. Later ones win key by key, which is what lets a broad
     rule be narrowed by a later exception rather than forcing every case to be
     written out separately.
+
+    Each keeps its position in ``overrides:``, because a value's location is the
+    line that wrote it and that line is the one worth reporting.
     """
     return [
-        override for override in application.overrides if matches(expanded.target, override.where)
+        (position, override)
+        for position, override in enumerate(application.overrides)
+        if matches(expanded.target, override.where)
     ]
 
 
-def _effective(base: str | None, patches: list[Override], *, key: str) -> str | None:
+def _effective(base: str | None, patches: list[tuple[int, Override]], *, key: str) -> str | None:
     """The last patch that sets ``key``, or the entry's own value."""
-    for override in reversed(patches):
+    for _, override in reversed(patches):
         value = getattr(override, key)
         if value is not None:
             return str(value)
     return base
+
+
+def _ref_for(
+    application: Application, patches: list[tuple[int, Override]], *, at: KeyPath
+) -> tuple[str | None, KeyPath]:
+    """The ref that applies to this target, and the key it was written under.
+
+    The location travels with the value because the two can come from different
+    places: an override may set ``secret_template`` where the entry set
+    ``secret``, and a failure reported against the entry would point at the one
+    line that is not the problem. The same rule as
+    :func:`~sopuli.config.expansion.declared_at` applies to a patched target.
+    """
+    for position, override in reversed(patches):
+        if override.secret_ref is not None:
+            key = "secret" if override.secret is not None else "secret_template"
+            return override.secret_ref, at.key("overrides").index(position).key(key)
+
+    key = "secret" if application.secret is not None else "secret_template"
+    return application.secret_ref, at.key(key)
 
 
 def _vault_for(
@@ -152,14 +177,16 @@ def _render(
 ) -> SecretRef | None:
     """Expand a ref's tokens for one account in one target.
 
+    ``at`` is where this ref was written, which :func:`_ref_for` worked out --
+    the entry's own key, or the override's if one supplied it.
+
     Absent stays absent: an application may declare no ref at all (§3), and this
     layer does not invent one.
     """
     if ref is None:
         return None
-    where = at.key("secret" if application.secret is not None else "secret_template")
-    rendered = substitute(ref, _tokens(application, account, expanded), at=where, source=_SCOPE)
-    return parse_secret_ref(rendered, at=where)
+    rendered = substitute(ref, _tokens(application, account, expanded), at=at, source=_SCOPE)
+    return parse_secret_ref(rendered, at=at)
 
 
 def _tokens(application: Application, account: str, expanded: ExpandedTarget) -> dict[str, str]:

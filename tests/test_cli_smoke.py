@@ -383,9 +383,9 @@ def test_config_show_reports_warnings_as_diagnostics(
     result = runner.invoke(
         cli, ["config", "show", "--config", str(path), *view, "--output", "json"]
     )
-    document = json.loads(result.output)
 
     assert result.exit_code == ExitCode.SUCCESS
+    document = json.loads(result.output)
     assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
     assert "named after an environment" in document["diagnostics"][0]["message"]
 
@@ -486,11 +486,13 @@ def test_config_validate_reports_warnings_both_ways(
     command = ["config", "validate", "--config", str(path)]
 
     text = runner.invoke(cli, command)
-    document = json.loads(runner.invoke(cli, [*command, "--output", "json"]).output)
+    emitted = runner.invoke(cli, [*command, "--output", "json"])
 
     assert text.exit_code == ExitCode.SUCCESS
     assert "1 warning:" in text.output
     assert "named after an environment" in text.output
+    assert emitted.exit_code == ExitCode.SUCCESS
+    document = json.loads(emitted.output)
     assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
     assert "named after an environment" in document["diagnostics"][0]["message"]
 
@@ -521,6 +523,7 @@ def test_config_validate_shows_nothing_of_the_file_itself(
 
     result = runner.invoke(cli, ["config", "validate", "--config", str(path), "--output", "json"])
 
+    assert result.exit_code == ExitCode.SUCCESS
     assert "config" not in json.loads(result.output)
 
 

@@ -186,10 +186,10 @@ What the run was narrowed to, as the selectors were given rather than as they
 resolved — the resolved answer is `config.targets[]` or `results[]`, and having
 both is what makes a filtered run auditable.
 
-Only `select` is populated so far, from `--select k=v`. The other slots
-(`targets`, `groups`, `applications`, `all`, `limit`) are the selectors that do
-not exist yet, and are omitted rather than sent empty: an empty array would
-claim the tool weighed a selector it has not implemented.
+Only `select` is populated so far, from `--select k=v`. The other slots —
+`applications`, `accounts`, `targets`, `groups`, `all` and `limit` — are the
+selectors that do not exist yet, and are omitted rather than sent empty: an
+empty array would claim the tool weighed a selector it has not implemented.
 
 `selection` is absent entirely when the whole estate was in scope. This matters
 more than it looks — a consumer reading `total: 2` cannot otherwise tell a small

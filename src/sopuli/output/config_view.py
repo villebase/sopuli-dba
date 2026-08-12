@@ -270,15 +270,30 @@ def _estate_rows(config: Config) -> list[str]:
 
 
 def _estate_summary(config: Config) -> str:
+    """How many targets, and where they came from.
+
+    A kind that contributed nothing is left out rather than printed as a zero.
+    `0 explicit` is not a fact about the estate, it is the absence of one, and
+    an estate that is entirely generated -- which is most of them, and every
+    filtered one -- should not have to say so. The breakdown itself stays even
+    when one kind accounts for all of it: §4's point is that generation is
+    invisible until it goes wrong, and `3 targets (3 generated)` is where it
+    stops being invisible.
+    """
     generated = [target for target in config.expanded_targets if target.target_set is not None]
     overridden = [target for target in generated if target.overridden]
-    parts = [f"{len(config.expanded_targets) - len(generated)} explicit"]
+    explicit = len(config.expanded_targets) - len(generated)
+    parts = []
+    if explicit:
+        parts.append(f"{explicit} explicit")
     if generated:
         parts.append(f"{len(generated)} generated")
     if overridden:
         parts.append(f"{len(overridden)} overridden")
 
-    summary = f"{_count(len(config.expanded_targets), 'target')} ({', '.join(parts)})"
+    summary = _count(len(config.expanded_targets), "target")
+    if parts:
+        summary += f" ({', '.join(parts)})"
     unmanaged = _unmanaged(config)
     if unmanaged:
         listed = ", ".join(unmanaged)

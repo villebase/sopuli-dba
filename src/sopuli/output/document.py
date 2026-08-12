@@ -144,10 +144,10 @@ class RunDocument:
     #: different things in each. Absent when the whole estate was in scope.
     #:
     #: The schema has carried ``selection`` since it was written, with slots for
-    #: the selectors that do not exist yet (``targets``, ``groups``, ``all``,
-    #: ``limit``). Only ``select`` is populated, and the others are omitted
-    #: rather than sent empty -- an empty array would claim the tool considered
-    #: a selector it has not implemented.
+    #: the selectors that do not exist yet: ``applications``, ``accounts``,
+    #: ``targets``, ``groups``, ``all`` and ``limit``. Only ``select`` is
+    #: populated, and the others are omitted rather than sent empty -- an empty
+    #: array would claim the tool considered a selector it has not implemented.
     selection: dict[str, str] | None = None
     #: The ``config`` section, when the command produces one. Its shape belongs
     #: to the command that builds it (:mod:`sopuli.output.config_view`) rather

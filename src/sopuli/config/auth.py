@@ -153,9 +153,14 @@ def read_method(
     )
     missing = [key for key in spec.required if key not in entry]
     if missing:
+        # Anchored at the first missing key rather than at the block, the way
+        # `required_string` reports a key that is not there: the path is where the
+        # line has to be written, and a block-level path leaves a reader to work
+        # that out from the message. All of them are named, so nothing is hidden by
+        # pointing at one.
         raise ConfigError(
             f"`method: {method}` needs {_listed(tuple(missing))}",
-            at=at,
+            at=at.key(missing[0]),
             hint=f"required for this method: {', '.join(spec.required)}",
         )
     return method, entry

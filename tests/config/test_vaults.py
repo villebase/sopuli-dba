@@ -300,13 +300,30 @@ def test_a_key_belonging_to_another_method_is_refused_naming_the_method() -> Non
 
 def test_a_method_missing_its_material_is_refused_at_load() -> None:
     """An AppRole with no secret_id cannot authenticate, and finding that out at
-    the first rotation is invariant 4's failure mode."""
+    the first rotation is invariant 4's failure mode.
+
+    Reported at the key that is missing rather than at the block, the way a missing
+    required key is reported everywhere else -- the path is the line that has to be
+    written.
+    """
     with pytest.raises(ConfigError) as caught:
         auth(method="approle", role_id={"env": "ROLE_ID"})
 
     rendered = str(caught.value)
+    assert "vaults.vault-dev.auth.secret_id" in rendered
     assert "`method: approle` needs `secret_id`" in rendered
     assert "required for this method: role_id, secret_id" in rendered
+
+
+def test_several_missing_keys_are_all_named_at_the_first_of_them() -> None:
+    """One location, every missing key. Naming only the one the path points at
+    would mean fixing it and being told again."""
+    with pytest.raises(ConfigError) as caught:
+        auth(method="approle")
+
+    rendered = str(caught.value)
+    assert "vaults.vault-dev.auth.role_id" in rendered
+    assert "needs `role_id`, `secret_id`" in rendered
 
 
 @pytest.mark.parametrize("method", ["token", "instance_principal", "config_file"])

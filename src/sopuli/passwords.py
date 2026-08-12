@@ -218,6 +218,12 @@ def generate(
     Every impossibility is refused *before* the loop, so an unsatisfiable policy
     produces an error naming the reason rather than a thousand wasted draws and a
     timeout (invariant 4: fail at plan time, naming what is wrong).
+
+    Raises :class:`PasswordPolicyError` where a valid policy cannot produce a
+    password, and a plain :class:`~sopuli.config.errors.ConfigError` -- its base --
+    where the policy is not a valid one at all, which only a policy built in code
+    can be (:func:`sopuli.config.charsets.alphabet`). ``except ConfigError`` covers
+    both, and both exit 2.
     """
     length = _required_length(policy)
     allowed = _usable_alphabet(policy, limit)

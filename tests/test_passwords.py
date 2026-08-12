@@ -206,6 +206,39 @@ def test_a_policy_error_is_a_config_error_and_exits_two() -> None:
     assert error.exit_code == 2
 
 
+@pytest.mark.parametrize(
+    ("why", "keys"),
+    [
+        ("an unknown charset", {"charset": "alnumm"}),
+        ("`allow:` beside a named charset", {"charset": "alnum", "allow": "abc"}),
+        ("`charset: custom` allowing nothing", {"charset": "custom"}),
+    ],
+    ids=lambda value: str(value)[:32],
+)
+def test_a_policy_a_config_file_could_not_hold_is_an_error_at_both_entry_points(
+    why: str, keys: dict[str, Any]
+) -> None:
+    """This module says a `PasswordPolicy` built in code is supported, so it has to
+    behave for one the loader would have refused.
+
+    Without the gate in `charsets.alphabet` the three shapes are, in order: a bare
+    `KeyError` out of a dict lookup, an `allow:` silently ignored so the caller gets
+    a different alphabet than it asked for, and an empty alphabet that reads as "no
+    characters are permitted". All three are `ConfigError`, so they exit 2 like any
+    other bad policy -- `PasswordPolicyError` is for a *valid* policy that cannot
+    produce a password, which these are not.
+    """
+    built = policy(length=8, **keys)
+
+    with pytest.raises(ConfigError) as generating:
+        generate(built, limit=UTF8)
+    with pytest.raises(ConfigError) as checking:
+        check(Secret("Abcdef1#"), built, limit=UTF8)
+
+    assert generating.value.exit_code == 2
+    assert str(generating.value) == str(checking.value), "the two entry points must agree"
+
+
 def test_an_empty_custom_alphabet_is_refused() -> None:
     with pytest.raises(PasswordPolicyError) as caught:
         generate(policy(length=8, charset="custom", allow='"'), limit=UTF8)

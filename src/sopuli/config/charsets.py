@@ -31,6 +31,7 @@ import unicodedata
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import PasswordPolicy
 
 #: The character §8 excludes from every password, whatever the charset
@@ -99,12 +100,52 @@ def alphabet(policy: PasswordPolicy) -> str:
 
     ``charset: custom`` uses its own ``allow:``; anything else uses §8's table,
     defaulting to ``alnum_safe``. ``"`` is removed either way -- ``policies.py``
-    already refuses it in an ``allow:``, and doing it here as well means no
-    caller can be handed an alphabet that produces unusable passwords.
+    already refuses it in an ``allow:``, and doing it here as well means no caller
+    can be handed an alphabet that produces unusable passwords.
+
+    **The gate for whether a policy has an alphabet at all.** A policy read from a
+    file cannot fail here: :mod:`sopuli.config.policies` validates the charset
+    against a closed set and pairs ``allow:`` with ``custom`` before anything asks
+    for an alphabet, and its errors carry a key path this function has no way to
+    know. But :class:`~sopuli.config.model.PasswordPolicy` is an ordinary frozen
+    dataclass that a command or a test may build directly, and for those three
+    shapes the alternative is worse than an error:
+
+    * an unknown charset would be a bare ``KeyError`` out of a dict lookup
+    * ``allow:`` beside a named charset would be *silently ignored*, so the caller
+      would get passwords from an alphabet other than the one it asked for
+    * ``charset: custom`` with nothing allowed would be an empty alphabet, which
+      reads as "no characters are permitted" rather than as the unfinished policy
+      it is
+
+    So they are refused here, once, where the alphabet is resolved -- rather than
+    at each of the two entry points in :mod:`sopuli.passwords`, which would be the
+    same rule written twice.
     """
     if policy.charset == CUSTOM:
-        return _usable(policy.allow or "")
-    return ALPHABETS[policy.charset if policy.charset is not None else DEFAULT_CHARSET]
+        if not policy.allow:
+            raise ConfigError(
+                f"`charset: {CUSTOM}` must say what it allows",
+                hint="give `allow:` the characters a password may be built from",
+            )
+        return _usable(policy.allow)
+
+    if policy.allow is not None:
+        named = "no charset" if policy.charset is None else f"`charset: {policy.charset}`"
+        raise ConfigError(
+            f"`allow:` only applies to `charset: {CUSTOM}`, but this policy sets {named}",
+            hint=f"the named charsets are fixed (§8): {_known()}",
+        )
+
+    name = policy.charset if policy.charset is not None else DEFAULT_CHARSET
+    if name not in ALPHABETS:
+        raise ConfigError(f"unknown charset {name!r}", hint=f"known: {_known()}")
+    return ALPHABETS[name]
+
+
+def _known() -> str:
+    """§8's charset names, for an error message."""
+    return ", ".join((*ALPHABETS, CUSTOM))
 
 
 def class_of(character: str) -> str:

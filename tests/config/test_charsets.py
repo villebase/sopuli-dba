@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config import charsets
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import PasswordPolicy
 
 REFERENCE = Path(__file__).resolve().parents[2] / "docs" / "design" / "01-configuration.md"
@@ -89,6 +90,52 @@ def test_a_custom_alphabet_still_loses_the_forbidden_character() -> None:
     """`policies.py` refuses it when the file is read, so this is the second lock:
     no caller can be handed an alphabet that produces unusable passwords."""
     assert charsets.alphabet(policy(charset="custom", allow='ab"c')) == "abc"
+
+
+# ------------------------------------------- policies a file could never be ---
+#
+# `policies.py` refuses all three when a config file is read, with a key path this
+# module cannot know. These are the same shapes reached by building a
+# `PasswordPolicy` in code, where the alternative to an error is a `KeyError`, a
+# silently ignored `allow:`, or an empty alphabet -- see `alphabet`.
+
+
+def test_an_unknown_charset_is_an_error_rather_than_a_key_error() -> None:
+    with pytest.raises(ConfigError) as caught:
+        charsets.alphabet(policy(charset="alnumm"))
+
+    rendered = str(caught.value)
+    assert "unknown charset 'alnumm'" in rendered
+    assert "known: alnum, alnum_safe, printable_ascii, custom" in rendered
+
+
+def test_allow_beside_a_named_charset_is_refused_rather_than_ignored() -> None:
+    """Silently ignoring it would hand the caller passwords from an alphabet other
+    than the one it asked for, which is worse than refusing."""
+    with pytest.raises(ConfigError) as caught:
+        charsets.alphabet(policy(charset="alnum", allow="abc"))
+
+    rendered = str(caught.value)
+    assert "only applies to `charset: custom`" in rendered
+    assert "`charset: alnum`" in rendered
+
+
+def test_allow_with_no_charset_at_all_is_refused_too() -> None:
+    """The default charset is `alnum_safe`, so this `allow:` would be ignored just
+    as silently."""
+    with pytest.raises(ConfigError) as caught:
+        charsets.alphabet(policy(allow="abc"))
+
+    assert "no charset" in str(caught.value)
+
+
+def test_a_custom_charset_with_nothing_allowed_is_refused() -> None:
+    """An empty alphabet reads as "no characters are permitted" rather than as the
+    unfinished policy it is."""
+    with pytest.raises(ConfigError) as caught:
+        charsets.alphabet(policy(charset="custom"))
+
+    assert "must say what it allows" in str(caught.value)
 
 
 # --------------------------------------------------------------- classes ---

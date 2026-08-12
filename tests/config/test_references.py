@@ -114,7 +114,12 @@ def test_every_place_that_names_a_vault_is_checked(section: str) -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(document(**sections))
 
-    assert "no vault named 'nope'" in str(caught.value)
+    rendered = str(caught.value)
+    assert "no vault named 'nope'" in rendered
+    if section == "admin":
+        # The ref, not the block it sits in: `admin:` has three keys that could
+        # each be wrong, and only one of them names a store.
+        assert "targets[0].admin.auth.secret" in rendered
 
 
 def test_the_inline_application_reports_its_reference_at_the_root() -> None:
@@ -298,7 +303,7 @@ def test_external_auth_beside_a_username_is_refused_rather_than_ignored() -> Non
 
     rendered = str(caught.value)
     assert "cannot be honoured" in rendered
-    assert "targets[0].admin" in rendered
+    assert "targets[0].admin.username" in rendered
 
 
 def test_another_method_may_pair_a_username_with_any_dsn() -> None:
@@ -395,6 +400,38 @@ def test_an_admin_ref_may_be_templated_in_a_target_set() -> None:
     assert refs == ["ops/prod/admin#password", "ops/qa/admin#password"]
 
 
+def test_an_admin_ref_written_in_an_override_is_reported_against_the_override() -> None:
+    """A value's location is the line that wrote it (§4 rule 5).
+
+    Reported against the template, this would send a reader to the one place the
+    store name is spelled correctly -- which is the wrong line by definition when
+    the exception is what introduced the typo.
+    """
+    declared = {"method": "vault", "secret": "vault-dev:ops#password"}
+    mistyped = {"method": "vault", "secret": "nope:ops#password"}
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                vaults=VAULTS,
+                target_sets={
+                    "appdb": {
+                        "type": "oracle",
+                        "name": "appdb-{env}",
+                        "dsn": "CDB{env}",
+                        "admin": {"auth": declared},
+                        "for_each": {"env": {"prod": {}}},
+                        "overrides": {"appdb-prod": {"admin": {"auth": mistyped}}},
+                    }
+                },
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "no vault named 'nope'" in rendered
+    assert "target_sets.appdb.overrides.appdb-prod.admin.auth.secret" in rendered
+
+
 def test_a_templated_admin_ref_on_an_explicit_target_is_refused() -> None:
     """Nothing renders it: §7's tokens are expanded per account and target for an
     application's ref, and the admin credential belongs to no account. §10 says an
@@ -406,7 +443,7 @@ def test_a_templated_admin_ref_on_an_explicit_target_is_refused() -> None:
 
     rendered = str(caught.value)
     assert "still contains a placeholder" in rendered
-    assert "targets[0].admin" in rendered
+    assert "targets[0].admin.auth.secret" in rendered
 
 
 # ----------------------------------------------------------- the warning ---

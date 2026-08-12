@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Config, ConfigWarning
+from sopuli.config.model import Config, ConfigWarning, ExpandedTarget
 from sopuli.config.targets import EXTERNAL
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
@@ -53,6 +53,21 @@ class _Reference:
 
     name: str
     at: KeyPath
+
+
+def _admin_at(expanded: ExpandedTarget, *parts: str) -> KeyPath:
+    """Where inside a target's ``admin:`` block something was written.
+
+    :func:`~sopuli.config.expansion.declared_at` keys on *target* fields, because
+    that is what an ``overrides:`` patch replaces -- so the block is located
+    override-aware first, and the keys inside it are descended afterwards. The
+    result is the line to edit (``targets[0].admin.auth.secret``, or the override's
+    own path) rather than the block it sits in.
+    """
+    at = declared_at(expanded, "admin")
+    for part in parts:
+        at = at.key(part)
+    return at
 
 
 def check_references(config: Config) -> tuple[ConfigWarning, ...]:
@@ -96,7 +111,7 @@ def _vault_references(config: Config) -> list[_Reference]:
         if admin is not None and admin.auth is not None and admin.auth.secret is not None:
             prefix = admin.auth.secret.vault
             if prefix is not None:
-                found.append(_Reference(prefix, declared_at(expanded, "admin")))
+                found.append(_Reference(prefix, _admin_at(expanded, "auth", "secret")))
 
     at = ROOT.key("applications")
     for index, application in enumerate(config.applications):
@@ -266,7 +281,7 @@ def _check_external_admin(config: Config) -> None:
             raise ConfigError(
                 f"target {target.name!r} uses external authentication, so its "
                 f"`username:` cannot be honoured",
-                at=declared_at(expanded, "admin"),
+                at=_admin_at(expanded, "username"),
                 hint=(
                     "a wallet supplies the username for the alias it is keyed on -- drop "
                     "`username:`, or use a method that takes one"
@@ -310,7 +325,7 @@ def _check_admin_refs(config: Config) -> None:
             continue
         raise ConfigError(
             f"admin ref {str(admin.auth.secret)!r} still contains a placeholder",
-            at=declared_at(expanded, "admin"),
+            at=_admin_at(expanded, "auth", "secret"),
             hint=(
                 "a target set's `for_each:` variables render one (§4); elsewhere there is "
                 "nothing to substitute from -- an admin credential belongs to no account, "

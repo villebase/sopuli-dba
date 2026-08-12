@@ -22,11 +22,12 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from sopuli.config import Config, build_config, filter_estate
+from sopuli.config.model import Pairs
 from sopuli.output.config_view import build_section, render_target_list, render_text
 from sopuli.output.document import SCHEMA_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / "sopuli-run-1.2.schema.json"
+RUN_SCHEMA = REPO_ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 
 PATHS = [Path("/etc/sopuli/config.yaml")]
 
@@ -497,3 +498,16 @@ def test_a_filter_matching_nothing_says_so_rather_than_printing_a_header(
 
 def test_the_target_list_is_deterministic(config: Config) -> None:
     assert render_target_list(PATHS, config) == render_target_list(PATHS, config)
+
+
+@pytest.mark.parametrize("match", [(), (("env", "staging"),)], ids=["estate", "nothing-matched"])
+def test_the_target_list_shows_warnings_in_full(match: Pairs) -> None:
+    """A command that reads a config and hides its findings is the same defect
+    whichever view does it -- including the path where nothing matched, which
+    is exactly when a warning about the file is worth reading."""
+    config = build_config({**DOCUMENT, "profiles": {"dev": {"output": "json"}}})
+
+    text = render_target_list(PATHS, filter_estate(config, match), match=match)
+
+    assert "1 warning:" in text
+    assert "named after an environment" in text

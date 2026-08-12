@@ -84,6 +84,10 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
     example has no VAULT, and the omission is the difference between the
     commands rather than an oversight: which store masters a target is a fact
     about the binding, and this view is about the target.
+
+    §10's warnings are rendered here as they are in every other view, including
+    the path where nothing matched. A command that reads a config and shows
+    none of its findings is the same defect whichever view does it.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -92,6 +96,7 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
 
     if not config.expanded_targets:
         lines.extend(["", f"no targets carry {_pairs(match)}" if match else "no targets"])
+        lines.extend(_warnings(config))
         return "\n".join(lines)
 
     rows = [
@@ -121,6 +126,7 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
             _estate_summary(config),
         ]
     )
+    lines.extend(_warnings(config))
     return "\n".join(lines)
 
 

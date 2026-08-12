@@ -370,6 +370,39 @@ def test_config_show_prints_warnings_in_full(
     assert "named after an environment" in result.output
 
 
+@pytest.mark.parametrize("view", [[], ["--resolved"]], ids=["declared", "resolved"])
+def test_config_show_reports_warnings_as_diagnostics(
+    runner: CliRunner, write_config: Callable[[str], Path], view: list[str]
+) -> None:
+    """The text view is not the contract. A warning that appears only there is
+    invisible to the scheduler reading the document, which is the reader §10's
+    findings most need to reach -- so both views carry them, like
+    ``config validate`` does."""
+    path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
+
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(path), *view, "--output", "json"]
+    )
+    document = json.loads(result.output)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert [entry["level"] for entry in document["diagnostics"]] == ["warning"]
+    assert "named after an environment" in document["diagnostics"][0]["message"]
+
+
+def test_config_show_emits_no_diagnostics_for_a_clean_file(
+    runner: CliRunner, config_file: Path
+) -> None:
+    """A clean run carries no empty array, for the reason its `validate`
+    counterpart gives: a field present in every document stops being read."""
+    result = runner.invoke(
+        cli, ["config", "show", "--config", str(config_file), "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "diagnostics" not in json.loads(result.output)
+
+
 def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_path: Path) -> None:
     """§9: several `--config` files layer left to right, and the output has to
     say so -- an estate assembled from two files is otherwise indistinguishable

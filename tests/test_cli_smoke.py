@@ -426,19 +426,21 @@ def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_pat
     assert "extra" in result.output
 
 
-def test_a_named_config_that_does_not_exist_is_a_usage_error(
+def test_a_named_config_that_does_not_exist_is_a_config_error(
     runner: CliRunner, tmp_path: Path
 ) -> None:
     """Never skipped in favour of the next candidate: a CI job whose path has a
-    typo must not quietly run against the system config instead."""
+    typo must not quietly run against the system config instead.
+
+    A configuration error rather than a usage one, since #8: `--config` parsed
+    perfectly and the run began, and it is the path it named that is not there.
+    """
     missing = tmp_path / "nope.yaml"
 
     result = runner.invoke(cli, ["config", "show", "--config", str(missing)], standalone_mode=False)
 
     assert isinstance(result.exception, ConfigError)
     assert "named by --config does not exist" in str(result.exception)
-    # A named file that is not there is a configuration problem, not a usage one:
-    # the option parsed fine and the run began (#8).
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
 
 

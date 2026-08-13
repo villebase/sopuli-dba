@@ -250,11 +250,19 @@ inside §4's redaction rule for free, because no code path puts a value there at
 all.
 
 **For a ratcheted setting, `source` names the layer that determined the effective
-value, not the highest layer present.** If config says `readonly: true` and a
-flag asked to relax it, `source` is the config layer and `source_detail` is
-`defaults.safety.readonly`. Reporting `"cli"` because the command line is layer 1
-would be precisely backwards. The defeated request is not swallowed either: it
-appears in `diagnostics[]` as a warning naming both ends.
+value, not the highest layer present.** If `defaults.safety.readonly` is `true`
+and a flag asked to relax it, the pair is `"source": "defaults"`,
+`"source_detail": "defaults.safety.readonly"` — the layer that held, and the key
+inside it. Reporting `"cli"` because the command line is layer 1 would be
+precisely backwards. The defeated request is not swallowed either: it appears in
+`diagnostics[]` as a warning naming both ends.
+
+The two always agree, because `source_detail` is where the value named by
+`source` was written: a `safety:` block under a target resolves as
+`"object"` / `"targets.acme-alpha.safety.readonly"`, and the same block under a
+profile as `"profile"` / `"profiles.ci.safety.readonly"`. There is no `config`
+value in the enum, deliberately — "somewhere in the file" is not a precedence
+layer, and four of the seven layers live in the file.
 
 One consequence to record so it is not re-opened later as a bug report: a
 ratcheted setting can have **several** contributing sources while the reported

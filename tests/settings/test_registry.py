@@ -133,6 +133,35 @@ def test_a_built_in_default_must_have_the_declared_type() -> None:
         )
 
 
+def test_a_boolean_built_in_default_is_not_an_integer_one() -> None:
+    """``isinstance(True, int)`` is true in Python, which this must not inherit.
+
+    The same trap the resolver closes for contributions, closed once in
+    ``Setting.accepts`` and used by both -- a built-in ``True`` for an int
+    setting would otherwise be ratcheted against numbers by ``min()``.
+    """
+    with pytest.raises(ValueError, match="built-in default"):
+        Setting(
+            name="safety.max_targets",
+            type=int,
+            layers=frozenset({Layer.DEFAULTS, Layer.BUILTIN}),
+            policy=MergePolicy.RATCHET,
+            builtin=True,
+        )
+
+
+def test_accepts_is_the_one_type_rule() -> None:
+    """Pinned directly, since both the constructor and the resolver rely on it."""
+    max_targets = setting("safety.max_targets")
+    assert max_targets.accepts(5)
+    assert not max_targets.accepts(True)
+
+    environments = setting("safety.confirm_environments")
+    assert environments.accepts(("prod",))
+    assert not environments.accepts(("prod", 1))
+    assert not environments.accepts(["prod"])
+
+
 def test_an_unsupported_type_is_refused() -> None:
     """A type with no "safest" rule must not reach the resolver to find out."""
     with pytest.raises(ValueError, match="unsupported type"):

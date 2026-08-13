@@ -162,7 +162,7 @@ class Setting:
                 f"SAFETY_SETTINGS; add it there, so the ratcheted set stays readable "
                 f"in one place"
             )
-        if self.builtin is not None and not isinstance(self.builtin, self.type):
+        if self.builtin is not None and not self.accepts(self.builtin):
             raise ValueError(
                 f"built-in default for {self.name!r} is {type(self.builtin).__name__}, "
                 f"not {self.type.__name__}"
@@ -172,6 +172,27 @@ class Setting:
     def is_safety(self) -> bool:
         """Whether invariant 10 governs this setting."""
         return self.name in SAFETY_SETTINGS
+
+    def accepts(self, value: Any) -> bool:
+        """Whether ``value`` is of this setting's declared type.
+
+        ``isinstance`` with the bool/int trap closed: ``isinstance(True, int)``
+        is true in Python, so an unguarded check would let ``max_targets: true``
+        through and then ratchet a boolean against a number.
+
+        One rule with two callers -- the built-in default above, and every
+        contribution the resolver is handed. A second copy of it would be a
+        second place for the trap to reopen, which is how the built-in check
+        came to have it in the first place.
+        """
+        if self.type is tuple:
+            # A list setting is a list *of strings*: the config layer only ever
+            # produces those, and a tuple of anything else would union its way
+            # into output nobody can render.
+            return isinstance(value, tuple) and all(isinstance(item, str) for item in value)
+        if self.type is int and isinstance(value, bool):
+            return False
+        return isinstance(value, self.type)
 
 
 def _setting(

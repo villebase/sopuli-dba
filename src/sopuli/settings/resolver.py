@@ -263,28 +263,12 @@ def _checked(contribution: Contribution, definition: Setting) -> Contribution:
             f"{definition.name!r} cannot be supplied by layer "
             f"{contribution.layer!r}; declared layers: {allowed}"
         )
-    if not _is_declared_type(contribution.value, definition):
+    if not definition.accepts(contribution.value):
         raise TypeError(
             f"{definition.name!r} is {definition.type.__name__}, but "
             f"{contribution.location} supplied {type(contribution.value).__name__}"
         )
     return contribution
-
-
-def _is_declared_type(value: Any, definition: Setting) -> bool:
-    """``isinstance`` with the bool/int trap closed.
-
-    ``isinstance(True, int)`` is true in Python, so an unguarded check would let
-    ``max_targets: true`` through and then ratchet it against a number.
-    """
-    if definition.type is tuple:
-        # A list setting is a list *of strings* -- the config layer only ever
-        # produces those, and a tuple of something else would reach _safest and
-        # union its way into output nobody can render.
-        return isinstance(value, tuple) and all(isinstance(item, str) for item in value)
-    if definition.type is int and isinstance(value, bool):
-        return False
-    return isinstance(value, definition.type)
 
 
 def _render(value: Any) -> str:

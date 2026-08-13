@@ -444,6 +444,79 @@ def test_a_named_config_that_does_not_exist_is_a_config_error(
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
 
 
+# -------------------------------------------------------------- --explain ---
+#
+# The rendering itself is `tests/test_explain_view.py`, which can feed the view
+# settings this tool cannot yet supply. These are about the flag: that it is
+# wired, that it changes both output modes, and that it is not coupled to
+# `--resolved`.
+
+
+def test_explain_prints_where_each_setting_came_from(
+    runner: CliRunner, show: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SOPULI_DRY_RUN", "1")
+
+    result = runner.invoke(cli, [*show, "--explain"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "settings" in result.output
+    assert "safety.dry_run = true" in result.output
+    assert "[env SOPULI_DRY_RUN]" in result.output
+
+
+def test_without_explain_the_output_is_unchanged(runner: CliRunner, show: list[str]) -> None:
+    """The flag adds a section; it does not reshape the view it is asked of."""
+    plain = runner.invoke(cli, show).output
+    explained = runner.invoke(cli, [*show, "--explain"]).output
+
+    assert explained.startswith(plain.rstrip("\n"))
+    assert "settings" not in plain
+
+
+def test_explain_does_not_require_resolved(
+    runner: CliRunner, show: list[str], config_file: Path
+) -> None:
+    """Unlike `--select`, which has nothing to filter until the estate exists.
+
+    Where a setting came from is the same answer in both views, so refusing it in
+    one of them would be a rule a user meets and cannot explain (#53).
+    """
+    for argv in ([*show, "--explain"], [*show, "--explain", "--resolved"]):
+        result = runner.invoke(cli, argv)
+        assert result.exit_code == ExitCode.SUCCESS, argv
+        assert "settings" in result.output, argv
+
+
+def test_explain_widens_the_options_the_document_carries(
+    runner: CliRunner, show: list[str]
+) -> None:
+    """One rule for both modes: `--explain` means "everything you consulted".
+
+    Without it the document keeps §`invocation.options`' own filter -- what
+    changed behaviour -- so a built-in default is absent. With it, the same
+    producer is asked for all of them.
+    """
+    plain = json.loads(runner.invoke(cli, [*show, "--output", "json"]).output)
+    explained = json.loads(runner.invoke(cli, [*show, "--output", "json", "--explain"]).output)
+
+    assert "safety.dry_run" not in plain["invocation"]["options"]
+    assert explained["invocation"]["options"]["safety.dry_run"] == {
+        "value": False,
+        "source": "builtin",
+    }
+
+
+def test_explain_changes_how_many_options_appear_and_nothing_else(
+    runner: CliRunner, show: list[str]
+) -> None:
+    """The schema shape does not move, so neither does a consumer that reads it."""
+    plain = json.loads(runner.invoke(cli, [*show, "--output", "json"]).output)
+    explained = json.loads(runner.invoke(cli, [*show, "--output", "json", "--explain"]).output)
+
+    assert plain["invocation"]["options"]["output"] == explained["invocation"]["options"]["output"]
+
+
 # -------------------------------------------------------- config validate ---
 
 

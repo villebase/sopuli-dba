@@ -25,6 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
 from jsonschema import Draft202012Validator
@@ -351,6 +352,41 @@ def test_an_unexpected_exception_still_emits_a_valid_document(
     assert document["summary"] == {"total": 0, "ok": 0, "changed": 0, "failed": 0}
     assert document["error"]["category"] == "internal"
     assert "something went wrong" in document["error"]["message"]
+
+
+def test_an_abort_exits_eight_with_a_document(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    validator: Draft202012Validator,
+    config_file: Path,
+) -> None:
+    """A run somebody stopped is still a run that happened.
+
+    click's own handler would print "Aborted!" and exit 1; P5 puts "aborted by
+    user / confirmation declined" on 8. Both halves matter: the document says 8
+    and the process exits 8, because `exit_code` in the document is defined as
+    equal to the process's.
+
+    Nothing prompts yet, so the abort is injected -- but the path is the one a
+    declined confirmation will take, and a Ctrl-C already takes today.
+    """
+
+    def abort(*args: object, **kwargs: object) -> None:
+        raise click.Abort
+
+    monkeypatch.setattr(cli_module, "load_layers", abort)
+
+    code = run_main(monkeypatch, "config", "show", "--config", str(config_file), "--output", "json")
+    document = emitted(capsys)
+
+    assert code == ExitCode.ABORTED
+    assert list(validator.iter_errors(document)) == []
+    assert document["exit_code"] == ExitCode.ABORTED
+    # No `error`: the category enum has no value for "the operator said no", and
+    # `internal` would be a lie about what happened. The code says it, and a
+    # diagnostic says it in words.
+    assert "error" not in document
+    assert document["diagnostics"] == [{"level": "info", "message": "aborted before completion"}]
 
 
 def test_a_failed_run_still_reports_its_options(

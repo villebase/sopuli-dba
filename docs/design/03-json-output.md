@@ -487,6 +487,15 @@ withhold, and a failure there is the located message on stderr that it always
 was. Both streams are used on a failed JSON run: the document on stdout for the
 scheduler, the message on stderr for whoever is watching the log.
 
+**An abort is a run that happened and did not finish**, so it gets a document
+too, on exit 8. Withholding one would be worst in the case the code exists for: a
+confirmation declined halfway through a rotation is exactly when a consumer needs
+to know which targets were already touched. It carries no `error` — the category
+enum has no value for "the operator said no", and `internal` would be a lie about
+what happened — so the exit code says it and a `diagnostics[]` entry says it in
+words. `error` is optional precisely so a document can report an outcome that is
+not a failure.
+
 The same rule holds for `jsonl`: a usage error produces zero events, not a
 truncated stream. That is already consistent with "a stream that ends without
 `run.finished` did not complete".

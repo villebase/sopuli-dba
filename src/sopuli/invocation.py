@@ -46,7 +46,7 @@ import click
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.output.color import ColorChoice
-from sopuli.output.document import Error, Option, RunDocument
+from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import env_contributions
@@ -410,6 +410,16 @@ def _pass_invocation(func: F) -> F:
         # holding a half-built document.
         try:
             text = ctx.invoke(func, **kwargs)
+        except click.Abort as exc:
+            # click would print "Aborted!" and exit 1. P5 puts "aborted by user /
+            # confirmation declined" on 8, and an abort raised from inside a verb
+            # is that: the invocation resolved, the run began, and somebody -- or
+            # a Ctrl-C -- stopped it. Raising SystemExit here rather than
+            # re-raising is what makes the process agree with the document, since
+            # `exit_code` in the document always equals the process's.
+            _abort(invocation)
+            click.echo("sopuli: aborted", err=True)
+            raise SystemExit(ExitCode.ABORTED) from exc
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
             _fail(invocation, exc)
             raise
@@ -438,10 +448,7 @@ def _fail(invocation: Invocation, exc: BaseException) -> None:
     stderr -- a run document *is* the JSON output mode, and text has no such
     thing to withhold.
     """
-    if not invocation.is_json or isinstance(exc, click.Abort):
-        # An abort is not a run result. Nothing prompts yet; when confirmation
-        # lands it will decline by returning exit 8 through the ordinary path,
-        # with a document, rather than by raising out of the middle of a verb.
+    if not invocation.is_json:
         return
 
     code, error = _classify(exc)
@@ -454,6 +461,29 @@ def _fail(invocation: Invocation, exc: BaseException) -> None:
     document = invocation.document
     document.error = error
     document.finish(code)
+    invocation.emitter().emit(document, "")
+
+
+def _abort(invocation: Invocation) -> None:
+    """Emit the run document for a run somebody stopped.
+
+    An abort is a run that happened and did not finish, so it gets a document
+    like every other exit but 2 -- withholding one would be the same defect as
+    withholding it for a failure, and worse in the case it exists for: a
+    confirmation declined halfway through a rotation is exactly when a scheduler
+    wants to know which targets were already touched.
+
+    No ``error`` object, because the schema's ``category`` enum has no value for
+    "the operator said no" and ``internal`` would be a lie about what happened.
+    The exit code says it, and a diagnostic says it in words -- the schema makes
+    ``error`` optional precisely so a document can report an outcome that is not
+    a failure.
+    """
+    if not invocation.is_json:
+        return
+    document = invocation.document
+    document.diagnostics.append(Diagnostic(level="info", message="aborted before completion"))
+    document.finish(ExitCode.ABORTED)
     invocation.emitter().emit(document, "")
 
 

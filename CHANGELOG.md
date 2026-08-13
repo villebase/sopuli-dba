@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.18.0](https://github.com/futville/sopuli-dba/compare/v0.17.0...v0.18.0) (2026-08-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** split usage from configuration errors, and state J7's rule ([#77](https://github.com/futville/sopuli-dba/issues/77))
+
+### Features
+
+* **cli:** split usage from configuration errors, and state J7's rule ([#77](https://github.com/futville/sopuli-dba/issues/77)) ([38bd55f](https://github.com/futville/sopuli-dba/commit/38bd55fb319610c576dfe5b79909cfe73828936e))
+
 ## [0.17.0](https://github.com/futville/sopuli-dba/compare/v0.16.0...v0.17.0) (2026-08-13)
 
 

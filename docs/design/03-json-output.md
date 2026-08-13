@@ -239,6 +239,37 @@ This is the machine-readable form of `config show --explain` (P3). When someone
 asks why a scheduled run behaved differently from their interactive one, the
 answer is in the output they already have, not in a re-run with `--debug`.
 
+Two rules about the pair, both load-bearing:
+
+**`source_detail` is a location, never a value.** The flag as typed (`-o` records
+as `-o`), the variable name, the config key. It exists so somebody can find the
+thing in their own command line or CI job definition — which is why the config
+layer points at `profiles.ci.verify.method` rather than just `"profile"`.
+`--vault-token` names the flag; the token never appears. That keeps the field
+inside §4's redaction rule for free, because no code path puts a value there at
+all.
+
+**For a ratcheted setting, `source` names the layer that determined the effective
+value, not the highest layer present.** If config says `readonly: true` and a
+flag asked to relax it, `source` is the config layer and `source_detail` is
+`defaults.safety.readonly`. Reporting `"cli"` because the command line is layer 1
+would be precisely backwards. The defeated request is not swallowed either: it
+appears in `diagnostics[]` as a warning naming both ends.
+
+One consequence to record so it is not re-opened later as a bug report: a
+ratcheted setting can have **several** contributing sources while the reported
+one is the floor rather than the top — a union of `confirm_environments` is the
+clearest case. That is correct, and text output says as much. If the full
+contribution chain is ever wanted in JSON it arrives as a new optional field
+(a minor bump), never as a change to what `source` means.
+
+There is deliberately no `cli_group` / `cli_verb` distinction in the `source`
+enum. A precedence layer encodes authority — who expressed more specific or more
+current intent — and flag position before or after the subcommand is the same
+person, in the same command line, at the same moment. Splitting it would push an
+artefact of the CLI parser into an interface scripts branch on; position, where
+it is worth recording at all, goes in `source_detail`.
+
 ### `plan`, emitted on real runs too
 
 `plan` is not a dry-run-only section. A real run emits the identical structure it

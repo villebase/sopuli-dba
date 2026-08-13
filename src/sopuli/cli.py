@@ -203,7 +203,7 @@ def config_show(
     config = filter_estate(config, match)
 
     targets = len(config.expanded_targets)
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     document.selection = as_dict(match) or None
     document.config = build_section(paths, config, declared, resolved=resolved)
     if explain:
@@ -260,7 +260,7 @@ def target_list(
     config = filter_estate(config, match)
 
     targets = len(config.expanded_targets)
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     document.selection = as_dict(match) or None
     # The same `config` section `config show --resolved` emits, deliberately.
     # It is one estate, and a second JSON shape for it would be two answers to
@@ -365,7 +365,7 @@ def policy_sample(
     samples = [generate(policy, limit=limit) for _ in range(count)]
     described = describe_all(samples, policy, limit=limit)
 
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     document.policy = build_policy_section(chosen, policy, described, limit=limit)
     document.finish(
         ExitCode.SUCCESS,
@@ -446,7 +446,7 @@ def config_validate(
     paths = discover(run.config_paths)
     _, config = load_layers(paths)
 
-    document.diagnostics = config_diagnostics(config)
+    document.diagnostics.extend(config_diagnostics(config))
     targets = len(config.expanded_targets)
     document.finish(
         ExitCode.SUCCESS,

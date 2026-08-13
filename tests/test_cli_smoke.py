@@ -17,9 +17,11 @@ import pytest
 from click.testing import CliRunner
 
 from sopuli import cli as cli_module
+from sopuli import invocation as invocation_module
 from sopuli.cli import cli
 from sopuli.config import ConfigError
 from sopuli.exit_codes import ExitCode
+from sopuli.output.document import Diagnostic
 from sopuli.version import get_version
 
 
@@ -515,6 +517,34 @@ def test_explain_changes_how_many_options_appear_and_nothing_else(
     explained = json.loads(runner.invoke(cli, [*show, "--output", "json", "--explain"]).output)
 
     assert plain["invocation"]["options"]["output"] == explained["invocation"]["options"]["output"]
+
+
+def test_a_verb_adds_its_diagnostics_to_the_ones_already_there(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The document is open before a verb runs, and may already carry findings.
+
+    A defeated ratchet becomes a warning when the invocation resolves, so a verb
+    that *assigned* its config warnings would drop it -- silently, and in exactly
+    the case invariant 10 exists to make visible. No layer can supply a looser
+    value yet, so the note is injected here: the point is the accumulation, and
+    the real producer arrives with the settings that can lose a ratchet.
+    """
+    monkeypatch.setattr(
+        invocation_module,
+        "ratchet_notes",
+        lambda resolved: [Diagnostic(level="warning", message="a ratchet held")],
+    )
+    path = write_config(f"{ESTATE}\nprofiles:\n  dev: {{ output: json }}\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path), "--output", "json"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    messages = [entry["message"] for entry in json.loads(result.output)["diagnostics"]]
+    assert "a ratchet held" in messages
+    assert any("named after an environment" in message for message in messages)
 
 
 # -------------------------------------------------------- config validate ---

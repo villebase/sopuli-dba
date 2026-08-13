@@ -217,12 +217,12 @@ def resolve_invocation(
     """
     contributions: dict[str, list[Contribution]] = {name: [] for name in RESOLVED_SETTINGS}
     for name, supplied in env_contributions(env).items():
-        contributions.setdefault(name, []).extend(supplied)
+        _wired(contributions, name).extend(supplied)
     for name, contribution in _cli_contributions(group, verb):
         # The command line outranks the environment, and within one layer the
         # first contribution wins -- so the CLI's goes in front of whatever the
         # environment already put there.
-        contributions.setdefault(name, []).insert(0, contribution)
+        _wired(contributions, name).insert(0, contribution)
 
     return Invocation(
         # Left to right, group first: both positions are kept, because repeating
@@ -231,6 +231,28 @@ def resolve_invocation(
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
         resolved=resolve_all(contributions),
     )
+
+
+def _wired(contributions: dict[str, list[Contribution]], name: str) -> list[Contribution]:
+    """The contribution list for a setting this run actually consults.
+
+    Enforced rather than assumed, for the reason
+    :attr:`sopuli.settings.registry.Setting.layers` is: a source that starts
+    producing a setting nothing reads would otherwise have it resolved and
+    reported in ``invocation.options`` by ``setdefault``, which claims the run
+    was influenced by something that influenced nothing. A lie in the contract is
+    worse than a missing row, and this is the same argument that keeps `profile`
+    out of :data:`RESOLVED_SETTINGS` until a profile does something.
+
+    A programming error, so it raises rather than being reported: only code can
+    add to :data:`~sopuli.settings.sources.ENV_SETTINGS`.
+    """
+    if name not in contributions:
+        raise ValueError(
+            f"{name!r} was supplied by a source but is not in RESOLVED_SETTINGS; "
+            f"this run consults: {', '.join(RESOLVED_SETTINGS)}"
+        )
+    return contributions[name]
 
 
 def check_output_mode(invocation: Invocation) -> None:

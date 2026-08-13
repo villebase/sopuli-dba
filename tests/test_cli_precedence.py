@@ -22,6 +22,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from sopuli import invocation
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import GLOBAL_PARAMS, INVOCATION_PARAM
@@ -232,6 +233,26 @@ def test_an_unknown_output_format_names_the_variable_it_came_from(
     message = str(result.exception)
     assert "SOPULI_OUTPUT" in message
     assert "jsonl" in message
+
+
+def test_a_source_cannot_wire_a_setting_by_producing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Which settings a run consults is a list, not whatever a source emits.
+
+    Adding a variable to `ENV_SETTINGS` and forgetting `RESOLVED_SETTINGS` would
+    otherwise resolve it and report it in `invocation.options` -- a run claiming
+    it was influenced by something that influenced nothing. Refusing is the same
+    rule the registry applies to a layer a setting does not declare.
+    """
+    monkeypatch.setattr(invocation, "RESOLVED_SETTINGS", ("safety.dry_run",))
+
+    with pytest.raises(ValueError, match="RESOLVED_SETTINGS"):
+        invocation.resolve_invocation(
+            invocation.GlobalOptions(),
+            invocation.GlobalOptions(),
+            env={"SOPULI_OUTPUT": "json"},
+        )
 
 
 # ---------------------------------------------------- invocation.options ----

@@ -186,6 +186,27 @@ def test_breaking_an_expired_lock_is_refused_without_a_fence() -> None:
     assert LOCK_ADVISORY_ONLY in rendered
 
 
+def test_the_refusal_names_every_offending_store() -> None:
+    """Not just the first one read.
+
+    Fixing the store the loader happened to name first would leave the file just
+    as invalid, and the next run would name the next one -- an error message that
+    asks somebody to play twenty questions with their own config.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                vaults={"legacy-kv": KV1, "old-file": {"type": "file", "locking": "advisory-only"}},
+                defaults={"locking": {"break_expired": True}},
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "'legacy-kv'" in rendered
+    assert "'old-file'" in rendered
+    assert "vaults" in rendered
+
+
 def test_the_refusal_names_the_profile_that_asked() -> None:
     """Either half is legitimate alone, so the message has to locate both ends."""
     with pytest.raises(ConfigError) as caught:

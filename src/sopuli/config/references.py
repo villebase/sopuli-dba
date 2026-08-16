@@ -289,14 +289,20 @@ def _check_breaking_locks_without_a_fence(config: Config) -> None:
     if not permitted or not unfenced:
         return
 
+    # Every offender, not the first one found. Fixing the one the loader happened
+    # to read first would leave the file just as invalid, and the second run of
+    # `config validate` would name the next -- which is the error message asking
+    # somebody to play twenty questions with their own config.
+    named = ", ".join(repr(name) for name in sorted(unfenced))
     raise ConfigError(
-        f"`break_expired: true` is refused while vault {unfenced[0]!r} is "
-        f"`locking: {LOCK_ADVISORY_ONLY}`",
+        f"`break_expired: true` is refused while "
+        f"{'vault' if len(unfenced) == 1 else 'vaults'} {named} "
+        f"{'is' if len(unfenced) == 1 else 'are'} `locking: {LOCK_ADVISORY_ONLY}`",
         at=permitted[0].key("break_expired"),
         hint=(
-            f"breaking a lock unattended is safe only because the takeover fences the "
-            f"run it broke, and {unfenced[0]!r} has no compare-and-set to fence with "
-            f"-- drop one of the two, or give that store a KV v2 mount"
+            "breaking a lock unattended is safe only because the takeover fences the "
+            "run it broke, and a store with no compare-and-set has nothing to fence "
+            "with -- drop `break_expired`, or give those stores a KV v2 mount"
         ),
     )
 

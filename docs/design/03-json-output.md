@@ -350,6 +350,17 @@ question anyone has at that moment: is this a colleague mid-rotation, or a
 process that died? There is never more than one, because acquisition is
 all-or-nothing and stops at the first refusal.
 
+Its `reason` says **how** the run lost, and the two ways are not the same event.
+`held` means a held, unexpired record was read, so the holder and the timestamps
+describe it and the schema requires them. `race` means the compare-and-set write
+was refused — another run acquired between this run's read and its write — and
+there the winner's record was never read. The schema therefore leaves `holder`
+optional and `reason` says why it is absent, which is better than a producer
+emitting an all-null holder that a consumer cannot distinguish from a vault that
+answered badly. Everything in `held[]` is required by contrast: that section is
+written when the run ends, by which point there is nothing about its own locks
+the tool does not know.
+
 **The section is absent on a run that takes no lock**, which is `check`,
 `status` and every `--dry-run`. Absent means none was needed, not none was
 available.

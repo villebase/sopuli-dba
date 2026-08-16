@@ -336,7 +336,8 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["vault", "path"],
+            "required": ["vault", "path", "fence", "acquired_at", "expires_at", "released"],
+            "description": "Every field is required, including the two that are only interesting when something went wrong. This section is written when the run ends, by which point all six are known -- a partial entry would mean the producer did not know what it had locked, which is not a state worth being able to describe. `fence` is nullable rather than optional for the same reason: under mode `none` there is no fence, and saying so is different from not saying.",
             "properties": {
               "vault": { "type": "string" },
               "path": { "type": "string", "description": "The secret path, not the lock record's own path. Where the record is written is the store's business." },
@@ -356,11 +357,16 @@
         "denied": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["vault", "path"],
+          "required": ["vault", "path", "reason"],
           "description": "The lock that stopped the run, on exit 7. The holder is reported so an operator can tell a colleague from a process that died -- which is the whole question at that moment. Never more than one: acquisition is all-or-nothing and stops at the first refusal.",
           "properties": {
             "vault": { "type": "string" },
             "path": { "type": "string" },
+            "reason": {
+              "type": "string",
+              "enum": ["held", "race"],
+              "description": "How the run lost. `held` means a held, unexpired record was read, and the holder and timestamps below describe it. `race` means the compare-and-set write itself was refused, which is another run acquiring between this run's read and its write -- there is nothing to report about the winner, because the winner's record was never read and re-reading it is a second round trip to answer a question the operator can answer by running again. This is why `holder` is optional: it is present exactly when it was read, and absent is a fact rather than a gap."
+            },
             "holder": {
               "type": "object",
               "additionalProperties": false,
@@ -379,7 +385,16 @@
               "type": "boolean",
               "description": "True when the lock is past its expiry and was still not taken, which happens when `locking.break_expired` is off. Distinguishes a live holder from one to break."
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "reason": { "const": "held" } }, "required": ["reason"] },
+              "then": {
+                "required": ["holder", "acquired_at", "expires_at", "expired"],
+                "description": "A denial by a record that was read has to describe it. Optional-everywhere would let a producer emit `{vault, path}` on exit 7 and leave the operator with the one question this section exists to answer."
+              }
+            }
+          ]
         }
       }
     },

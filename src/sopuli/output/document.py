@@ -7,9 +7,11 @@ that validates is a complete document. Building it properly now is cheaper than
 discovering the shape later, and it makes the schema check in CI real from the
 first command (invariant 12).
 
-Optional sections (``plan``, ``results``, ``diagnostics``) are omitted entirely
-rather than emitted as ``null`` — the schema types them as object/array, so a
-null would fail validation.
+Optional sections (``plan``, ``lock``, ``results``, ``diagnostics``) are omitted
+entirely rather than emitted as ``null`` — the schema types them as object/array,
+so a null would fail validation. For ``lock`` the omission also *means* something
+(``03-json-output.md`` §2): absent says the run needed no lock, which is every
+``check``, ``status`` and ``--dry-run``.
 """
 
 from __future__ import annotations

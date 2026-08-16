@@ -206,6 +206,47 @@ def test_an_unknown_state_is_treated_as_held() -> None:
     assert record.is_held
 
 
+def test_a_holder_field_that_is_not_text_degrades_rather_than_being_coerced() -> None:
+    """`str(None)` is `"None"`, which reads as a machine somebody owns.
+
+    Coercion invents a value; the fallback admits there is not one. The same
+    applies to the record's own text fields -- a `state` of `None` coerced to
+    `"None"` would compare unequal to `released` and read as held for a reason
+    nobody could see.
+    """
+    holder = Holder.from_dict({"host": None, "pid": None, "os_user": 7})
+
+    assert holder is not None
+    assert holder.host == "unknown"
+    assert holder.os_user == "unknown"
+    assert holder.pid == 0
+
+
+def test_a_record_field_that_is_not_text_degrades_too() -> None:
+    record = LockRecord.from_dict(
+        {**held().to_dict(), "state": None, "correlation_id": None}, now=NOW
+    )
+
+    assert record.state == HELD
+    assert record.correlation_id == ""
+
+
+def test_a_renewal_states_held_rather_than_carrying_a_state_forward() -> None:
+    """The distinction the `extra` rule does not cover.
+
+    An unknown *field* is data this version does not understand and has no
+    business dropping. The *state* is a claim, and the only claim a renewal makes
+    is "I still hold this" -- carrying an unrecognised state forward would assert
+    something this build does not implement.
+    """
+    read = LockRecord.from_dict({**held().to_dict(), "state": "renewing"}, now=NOW)
+
+    renewed = read.renewed(now=NOW + timedelta(minutes=1))
+
+    assert renewed.state == HELD
+    assert read.is_held
+
+
 def test_a_payload_that_is_not_a_record_at_all_still_blocks() -> None:
     """Something wrote it, and "too broken to be a lock" is not safe to act on.
 

@@ -50,6 +50,11 @@ CLOCK_SKEW = timedelta(seconds=60)
 HELD = "held"
 RELEASED = "released"
 
+#: What a field that should have been text says when it was not. A holder nobody
+#: can name is still a holder, and reporting it as `unknown` is the difference
+#: between a lock somebody can reason about and one that says `None` at them.
+UNKNOWN = "unknown"
+
 #: The keys this version writes. Everything else a record carries is preserved
 #: rather than dropped -- see :attr:`LockRecord.extra`.
 KNOWN_KEYS = (
@@ -93,9 +98,9 @@ class Holder:
             return None
         pid = data.get("pid")
         return cls(
-            host=str(data.get("host", "unknown")),
+            host=_text(data.get("host"), UNKNOWN),
             pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else 0,
-            os_user=str(data.get("os_user", "unknown")),
+            os_user=_text(data.get("os_user"), UNKNOWN),
         )
 
 
@@ -109,11 +114,11 @@ def current_holder() -> Holder:
     try:
         os_user = getpass.getuser()
     except Exception:  # noqa: BLE001 - no controlling terminal, no passwd entry, etc.
-        os_user = "unknown"
+        os_user = UNKNOWN
     try:
         host = socket.gethostname()
     except Exception:  # noqa: BLE001 - a container with no resolvable name
-        host = "unknown"
+        host = UNKNOWN
     return Holder(host=host, pid=os.getpid(), os_user=os_user)
 
 
@@ -124,7 +129,10 @@ class LockRecord:
     ``state`` is ``held`` or ``released``. An unknown value read from a store is
     kept as written and treated as held (see :meth:`is_held`): guessing that an
     unrecognised state means "free" is the one guess that ends with two runs
-    rotating one credential.
+    rotating one credential. Kept as written *on the way through* -- the two
+    methods that produce a new record from this one, :meth:`renewed` and
+    :meth:`released`, each state their own, because each is a claim rather than a
+    copy.
     """
 
     state: str
@@ -172,6 +180,15 @@ class LockRecord:
         been going on", which is the question somebody staring at exit 7 is
         actually asking, and a renewal that reset it would make a run that has
         been stuck for an hour look a minute old.
+
+        **The state becomes ``held``, even if the record read was in a state this
+        version does not recognise**, and that is not the same rule as
+        :attr:`extra`'s. An unknown *field* is data this version does not
+        understand and has no business dropping. The *state* is a claim, and the
+        only claim a renewal makes is "I still hold this" -- carrying somebody
+        else's vocabulary forward would be asserting a state this build does not
+        implement. In practice the two never meet: a renewal is only ever called
+        on a record this run wrote, so its state is one of the two here.
         """
         return LockRecord(
             state=HELD,
@@ -272,10 +289,10 @@ class LockRecord:
             data = {}
         acquired = _moment(data.get("acquired_at"), fallback=now)
         return cls(
-            state=str(data.get("state", HELD)),
-            correlation_id=str(data.get("correlation_id", "")),
+            state=_text(data.get("state"), HELD),
+            correlation_id=_text(data.get("correlation_id"), ""),
             holder=Holder.from_dict(data.get("holder")),
-            command=str(data.get("command", "")),
+            command=_text(data.get("command"), ""),
             acquired_at=acquired,
             expires_at=_moment(data.get("expires_at"), fallback=acquired),
             selection=_optional_str(data.get("selection")),
@@ -283,6 +300,18 @@ class LockRecord:
                 sorted((key, value) for key, value in data.items() if key not in KNOWN_KEYS)
             ),
         )
+
+
+def _text(value: Any, fallback: str) -> str:
+    """A string field, or the fallback for anything that is not one.
+
+    ``str()`` was the obvious spelling and the wrong one: a record carrying
+    ``{"host": null}`` would report a holder on a machine called ``"None"``, and
+    a state of ``None`` would compare unequal to ``released`` and read as held
+    for a reason nobody could see. Coercion invents a value; this admits there
+    is not one.
+    """
+    return value if isinstance(value, str) else fallback
 
 
 def _moment(value: Any, *, fallback: datetime) -> datetime:

@@ -45,6 +45,7 @@ import click
 
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.exit_codes import ExitCode
+from sopuli.lock.errors import LockError
 from sopuli.output.color import ColorChoice
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
@@ -516,6 +517,16 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
     the error says about itself rather than inferring it from a type, and the
     inference is what goes wrong first when a subclass is added.
 
+    ``LockError`` carries its category the same way and is mapped to exit 7 here
+    (#83). It does **not** carry an exit code of its own, unlike ``ConfigError``,
+    and the difference is real: a lock that was refused at acquisition means
+    nothing was touched, while a lock *stolen* mid-run means the run had already
+    applied changes to some targets -- which is exit 4, partial. Only the command
+    knows which of the two happened, so a command that has results to report
+    finishes its own document with the code it deserves and never reaches here.
+    Exit 7 is what an exception escaping to the boundary means: the run stopped
+    over a lock before it had anything to report.
+
     Anything else is ``internal`` on exit 1. When driver and vault errors arrive
     they bring their own categories and vendor codes, and they pass through a
     scrubber first (``03-json-output.md`` §4) -- until then this catch-all repeats
@@ -525,6 +536,11 @@ def _classify(exc: BaseException) -> tuple[ExitCode, Error]:
         return (
             ExitCode(exc.exit_code),
             Error(category=exc.category, message=exc.located, hint=exc.hint),
+        )
+    if isinstance(exc, LockError):
+        return (
+            ExitCode.LOCK_HELD,
+            Error(category=exc.category, message=exc.message, hint=exc.hint),
         )
     if isinstance(exc, click.ClickException):
         # click's own errors carry their exit code, and every one of them today

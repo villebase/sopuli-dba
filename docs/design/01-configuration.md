@@ -971,7 +971,7 @@ far end of a malformed one is a password written where nobody reads it.
 
 | Qualifier | Accepted | Refused |
 |---|---|---|
-| `@version=` | a whole number from 1 upwards | `@version=v3-beta`, and `@version=0` |
+| `@version=` | a whole number from 1 upwards | `@version=v3-beta`, `@version=0`, and `@version=007` |
 | `@stage=` | `current`, `pending`, `previous`, in any case | anything else, including `latest` and `deprecated` |
 
 - **Stages are the three states UC-1 §2 names**, matched case-insensitively and
@@ -999,6 +999,10 @@ written in upper case does not render back byte-for-byte. `@stage=PENDING` comes
 out of `config show` as `@stage=pending`. The trade is worth it, because two refs
 that differ only in the case of a stage now compare equal — which is what
 "addresses the same secret" ought to mean.
+
+That it stays the *only* thing is why `@version=007` is refused rather than read
+as 7: upper case has a source, since OCI spells its rotation states that way, and
+padding has none, so accepting it would be canonicalising for nothing.
 
 The **run document** types the same two fields (`secret_ref.version` as an
 integer, `secret_ref.stage` as this closed lower-case enum), so the config layer

@@ -119,6 +119,17 @@ def test_a_version_written_in_another_script_is_a_typo_not_a_preference() -> Non
         parse_secret_ref("creds#password@version=٧")
 
 
+def test_a_padded_version_is_refused_rather_than_quietly_read_as_the_number() -> None:
+    """`@version=007` is 7, and reading it as such would be a second thing that
+    does not render back as it was written. Upper case has a source -- OCI spells
+    its rotation states that way -- and padding has none."""
+    with pytest.raises(ConfigError) as caught:
+        parse_secret_ref("creds#password@version=007")
+
+    assert "padded with leading zeros" in str(caught.value)
+    assert "@version=7" in str(caught.value)
+
+
 # ------------------------------------------------------------ ambiguities ---
 
 
@@ -301,6 +312,7 @@ def test_a_qualifier_may_not_hold_a_token(qualifier: str) -> None:
         ("@version=7", "qualifier with nothing to qualify"),
         ("creds#password@version=v3-beta", "not a whole number"),
         ("creds#password@version=0", "below the first version"),
+        ("creds#password@version=007", "padded with leading zeros"),
         ("creds#password@stage=staging", "unknown stage 'staging'"),
         ("creds#password@stage={stage}", "contains a token"),
     ],

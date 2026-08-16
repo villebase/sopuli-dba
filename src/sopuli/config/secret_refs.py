@@ -238,6 +238,11 @@ def _version(value: str, text: str, *, at: KeyPath) -> int:
     refused here rather than at the far end of a rotation. ``isascii`` as well as
     ``isdigit`` because ``int()`` accepts other scripts' digits and a version
     written in them is a typo, not a preference.
+
+    ``@version=007`` is refused rather than read as 7, so that the case of a
+    stage stays the *only* thing that does not render back as it was written.
+    Upper case has a source -- OCI spells its rotation states that way -- and
+    padding has none, so accepting it would be canonicalising for nothing.
     """
     if not (value.isascii() and value.isdigit()):
         raise ConfigError(
@@ -254,6 +259,12 @@ def _version(value: str, text: str, *, at: KeyPath) -> int:
                 "versions are numbered from 1; for the current one write `@stage=current` "
                 "or leave the qualifier off"
             ),
+        )
+    if value != str(number):
+        raise ConfigError(
+            f"version {value!r} in secret ref {text!r} is padded with leading zeros",
+            at=at,
+            hint=f"write it as `@{VERSION}={number}` -- a ref has one canonical form",
         )
     return number
 

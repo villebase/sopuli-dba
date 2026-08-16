@@ -73,6 +73,15 @@ class MemoryStore:
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
         entry = self.paths.setdefault(path, _Path())
+        if cas is None and entry.metadata is not None and entry.metadata.cas_required:
+            # What the setting is *for*: KV v2 refuses an unguarded write on a
+            # path configured this way, whoever the writer is. A fake that
+            # accepted one would let an implementation pass here and be rejected
+            # by the real thing -- and the lock's pre-flight checks this exact
+            # setting, so the emulation has to mean it.
+            raise CasConflictError(
+                f"{path!r} requires a compare-and-set and the write did not carry one"
+            )
         if cas is not None and cas != entry.version:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {entry.version}"

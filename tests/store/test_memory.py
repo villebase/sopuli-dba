@@ -47,6 +47,24 @@ def test_a_write_without_a_compare_and_set_always_lands() -> None:
     assert store.write("locks/a", {"n": 2}, cas=None) == 2
 
 
+def test_a_path_that_requires_a_compare_and_set_refuses_a_write_without_one() -> None:
+    """What `cas_required` is *for*, and the lock's pre-flight checks it.
+
+    KV v2 refuses an unguarded write on a path configured this way, whoever the
+    writer is -- which is what stops an operator with a vault CLI from replacing
+    a lock record without one. A fake that accepted the write would let an
+    implementation pass here and be rejected by the real thing.
+    """
+    store = MemoryStore()
+    store.configure("locks/a", PathMetadata(cas_required=True))
+
+    with pytest.raises(CasConflictError) as caught:
+        store.write("locks/a", {"n": 1}, cas=None)
+
+    assert "requires a compare-and-set" in str(caught.value)
+    assert store.write("locks/a", {"n": 1}, cas=0) == 1
+
+
 def test_a_deleted_path_keeps_its_history() -> None:
     """The trap that makes "release by writing" load-bearing rather than tidy.
 

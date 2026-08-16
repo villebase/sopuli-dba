@@ -99,12 +99,23 @@ class SecretStore(Protocol):
         ...
 
     def read(self, path: str) -> Stored | None:
-        """The document at ``path``, or ``None`` if the path has no version.
+        """The document at ``path``, or ``None`` if there is nothing to read.
 
-        ``None`` means *nothing has ever been written here*, which is the only
-        state a ``cas: 0`` write can succeed against. A path whose contents are
-        unreadable is not this: it has a version, and the caller decides what to
-        make of the payload.
+        **``None`` is not the same as "a ``cas: 0`` write will succeed here",**
+        and conflating the two is the trap this interface exists to keep visible.
+        Two states read as ``None``:
+
+        * nothing was ever written -- version 0, and ``cas: 0`` succeeds;
+        * the latest version was **deleted** -- there is no data, and the version
+          counter stands, so ``cas: 0`` fails and will keep failing.
+
+        That second state is why a lock is released by writing a ``released``
+        record rather than by deleting one (#83): a delete would leave a path no
+        first acquisition could ever take again. A caller that wants to know
+        which state it is in finds out from the write.
+
+        A path whose *contents* are unreadable is neither: it has a version, and
+        the caller decides what to make of the payload.
         """
         ...
 

@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 
 from sopuli.clock import utc_now
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
-from sopuli.lock.decide import Denied, Found, decide
+from sopuli.lock.decide import FRESH, Denied, Found, decide
 from sopuli.lock.errors import LockDeniedError, LockStolenError
 from sopuli.lock.keys import LockKey, acquisition_order
 from sopuli.lock.record import (
@@ -277,7 +277,7 @@ class LockManager:
             raise LockDeniedError(
                 f"{key} was taken by another run while this one was acquiring it",
                 key=key,
-                hint="re-run: whichever run won holds it now, and this one changed nothing",
+                hint=_race_hint(cas),
             ) from conflict
         return version if entry.can_fence else None
 
@@ -388,6 +388,25 @@ def _describe(record: LockRecord) -> str:
     )
     command = record.command or "an unknown command"
     return f"{who} running {command}"
+
+
+def _race_hint(cas: int) -> str:
+    """Why a compare-and-set write lost, when there are two ways it could have.
+
+    A ``cas: 0`` write fails on a path that has *any* history, so losing one
+    means either another run got there first -- the ordinary case -- or somebody
+    deleted the lock record, which leaves the metadata behind and the path
+    permanently untakeable by a first acquisition. The tool never deletes (#83),
+    so the second is always somebody else's doing, and it is worth naming
+    because re-running will not fix it.
+    """
+    if cas != FRESH:
+        return "re-run: whichever run won holds it now, and this one changed nothing"
+    return (
+        "re-run: whichever run won holds it now, and this one changed nothing. If it "
+        "keeps failing, the lock record was deleted rather than released -- the path "
+        "keeps its version history, so a first acquisition can never succeed again"
+    )
 
 
 def _hint_for(decision: Denied) -> str:

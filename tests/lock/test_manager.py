@@ -32,7 +32,7 @@ from sopuli.lock import (
     LockStolenError,
     lock_path,
 )
-from sopuli.store import MemoryStore, PathMetadata
+from sopuli.store import MemoryStore, PathMetadata, Stored
 
 STORE = "vault-prod"
 KEY = LockKey(store=STORE, path="apps/acme/db")
@@ -152,7 +152,7 @@ def test_losing_the_write_race_is_reported_as_a_race_rather_than_a_holder() -> N
     winner_ran = False
 
     class RacingStore(MemoryStore):
-        def read(self, path: str) -> Any:
+        def read(self, path: str) -> Stored | None:
             nonlocal winner_ran
             answer = super().read(path)
             if not winner_ran:
@@ -168,6 +168,25 @@ def test_losing_the_write_race_is_reported_as_a_race_rather_than_a_holder() -> N
     assert caught.value.reason == "race"
     assert caught.value.record is None
     assert record_at(store)["correlation_id"] == "01JWINNER"
+
+
+def test_a_deleted_lock_record_is_refused_with_the_reason_it_cannot_be_taken() -> None:
+    """The delete trap, seen from the run that walks into it.
+
+    A deleted path reads as empty, so acquisition tries `cas: 0` -- and fails,
+    because the version history stands. Re-running will never fix it, so the hint
+    says what happened rather than only "somebody beat you to it". The tool never
+    deletes (#83), which is what makes this always somebody else's doing.
+    """
+    store = MemoryStore()
+    run = manager(store)
+    run.acquire([KEY])
+    store.delete(lock_path(KEY))
+
+    with pytest.raises(LockDeniedError) as caught:
+        manager(store, correlation_id="01JNEXT").acquire([KEY])
+
+    assert "deleted rather than released" in str(caught.value)
 
 
 # ------------------------------------------------------- all or nothing ---
@@ -303,7 +322,8 @@ def test_renewing_a_stolen_lock_fails_rather_than_taking_it_back() -> None:
     stalled = manager(store, clock=clock)
     stalled.acquire([KEY])
     clock.advance(DEFAULT_TTL + CLOCK_SKEW + timedelta(seconds=1))
-    manager(store, correlation_id="01JTHEIRS", clock=clock, break_expired=True).acquire([KEY])
+    taker = manager(store, correlation_id="01JTHEIRS", clock=clock, break_expired=True)
+    taker.acquire([KEY])
 
     with pytest.raises(LockStolenError):
         stalled.renew()

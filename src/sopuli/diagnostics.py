@@ -15,7 +15,8 @@ part of J3 nobody has answered, and adding two codes does not answer it.
 A code, once emitted, is part of the contract in the same way an enum value is
 (``03-json-output.md`` §8): adding one is a minor bump, changing what one means
 is not a bump at all but a lie. So the registry maps each to a sentence, and
-``tests/test_diagnostics.py`` asserts nothing emits a code that is not in it.
+``tests/test_lock_view.py`` asserts that nothing emits a code the registry
+does not describe.
 """
 
 from __future__ import annotations

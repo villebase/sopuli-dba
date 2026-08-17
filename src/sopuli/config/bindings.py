@@ -45,6 +45,8 @@ from sopuli.config.model import (
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 from sopuli.config.selection import matches, select
 from sopuli.config.templates import substitute
+from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
+from sopuli.payload import stage_layout
 
 #: What an unresolved token in a secret ref is measured against (§7).
 _SCOPE = "a secret template resolves from the account, the target and the target's labels (§7)"
@@ -77,17 +79,59 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
 
         for account in application.accounts:
             secret = _render(ref, application, account, expanded, at=where)
+            store = _vault_for(secret, vault, expanded, config)
+            _check_stageable(secret, store, config, at=where)
             bound.append(
                 Binding(
                     application=application.name,
                     account=account,
                     target=expanded.name,
                     secret=secret,
-                    vault=_vault_for(secret, vault, expanded, config),
+                    vault=store,
                     policy=policy if policy is not None else config.defaults.policy,
                 )
             )
     return bound
+
+
+def _check_stageable(
+    secret: SecretRef | None, store: str | None, config: Config, *, at: KeyPath
+) -> None:
+    """A rendered ref must have somewhere to stage into (#111, Q7 in #85).
+
+    :func:`~sopuli.payload.stage_layout` refuses a ref naming a whole secret --
+    nothing to put ``pending`` and ``previous`` beside -- and one whose field is a
+    key the mirror rule generates, which would put the current stage and a
+    staging sibling in one place. Both refusals already existed; what this does is
+    move *when* they happen, from the first rotation to the moment the file is
+    read. §1 calls the account→secret binding the safety-critical part, and
+    invariant 4 wants a command that cannot succeed to fail before it has written
+    anything.
+
+    Here rather than in :mod:`sopuli.config.references` for two reasons, both of
+    which turn on this being the rendered ref rather than the written one:
+
+    * **The template question does not arise.** ``{account}`` and ``{tenant}`` are
+      already substituted, so what is checked is what will reach the store --
+      including the §7 case a written template cannot settle, a token whose value
+      turns out to contain a ``#``.
+    * **The store is known.** Which matters, because the rule is not universal.
+
+    **Native staging is the reason for that last point.** Where a store stages
+    natively -- OCI, per P2's table -- the three stages are versions of the
+    secret, so a ref naming a whole secret is not merely legal but the natural
+    layout, and a field called ``pending`` collides with nothing. Refusing it
+    everywhere would reject a correct OCI config to enforce a rule that only
+    exists because HashiCorp KV has to emulate what OCI has. A store this layer
+    has no capability row for is left alone; see
+    :data:`~sopuli.config.vaults.STAGING_LABELS`.
+    """
+    if secret is None or store is None:
+        return
+    declared = next((vault for vault in config.vaults if vault.name == store), None)
+    if declared is None or STAGING_LABELS.get(declared.type) != STAGING_EMULATED:
+        return
+    stage_layout(secret, at=at)
 
 
 # ---------------------------------------------------------------- overrides ---

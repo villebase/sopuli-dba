@@ -1130,6 +1130,16 @@ None of this constrains a ref that is only ever *read*. An `admin.auth.secret` i
 a credential the tool authenticates with and never rotates, so the whole-secret
 form stays exactly as the table above describes it.
 
+**A ref's own `vault-name:` prefix is resolved here too**, against the same
+declared set and with the same message as every other dangling name (§10). It is
+checked at this point rather than with the others because it is the only one that
+is not readable until the ref has been rendered — the rest are plain keys, while
+this one sits inside a template. It matters for the reason §10 gives about store
+names generally, with one turn of the screw: an entry's `vault:` that names
+nothing falls back, whereas a **prefix wins outright**, so a typo there produces a
+binding pointing at a store that does not exist — or one that later exists and
+belongs to somebody else.
+
 **Writing into a shared JSON document.** One secret per application with a field
 per account is the **documented default** (Q7, decided in #85; the payload shape
 is `../use-cases/uc-01-app-credential-sync.md` §3). One secret per account stays

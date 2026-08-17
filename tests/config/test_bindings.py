@@ -598,3 +598,33 @@ def test_the_key_reported_is_the_override_that_wrote_the_bad_ref() -> None:
         )
 
     assert "applications[0].overrides[0].secret_template" in str(caught.value)
+
+
+def test_a_ref_naming_a_vault_that_is_not_declared_is_refused() -> None:
+    """The one way of naming a store that went unchecked.
+
+    `references.py` resolves the other five -- the target's `vault:`, the entry's,
+    an override's, a profile's, `defaults.vault` -- and the prefix on an
+    `admin.auth.secret`. An application's own prefix could not join them there,
+    because it is not resolvable until §7's tokens have been rendered.
+
+    Its own docstring says why that matters: a dangling store name does not stay
+    dangling. This one does not even fall back -- the prefix wins outright, so the
+    binding resolved to a store that does not exist.
+    """
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["acme_web_user"], secret_template="vault-typo:apps/{account}#password")
+
+    assert "no vault named 'vault-typo' is declared" in str(caught.value)
+    assert "applications[0].secret_template" in str(caught.value)
+
+
+def test_a_ref_naming_a_declared_vault_is_fine() -> None:
+    """The rule is that the name resolves, not that the prefix is unusual."""
+    binding = only(
+        **one_target(
+            accounts=["acme_web_user"], secret_template="vault-other:apps/{account}#password"
+        )
+    )
+
+    assert binding.vault == "vault-other"

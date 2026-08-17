@@ -42,6 +42,7 @@ from sopuli.config.model import (
     Override,
     as_dict,
 )
+from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 from sopuli.config.selection import matches, select
 from sopuli.config.templates import substitute
@@ -80,6 +81,7 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
         for account in application.accounts:
             secret = _render(ref, application, account, expanded, at=where)
             store = _vault_for(secret, vault, expanded, config)
+            _check_store_declared(secret, config, at=where)
             _check_stageable(secret, store, config, at=where)
             bound.append(
                 Binding(
@@ -92,6 +94,38 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
                 )
             )
     return bound
+
+
+def _check_store_declared(secret: SecretRef | None, config: Config, *, at: KeyPath) -> None:
+    """A ref's own ``vault-name:`` prefix names a store like every other name does.
+
+    :mod:`sopuli.config.references` resolves every *other* way a store gets named
+    -- the target's ``vault:``, the entry's, an override's, a profile's,
+    ``defaults.vault``, and the prefix on an ``admin.auth.secret``. The prefix on
+    an **application's** ref was the one that went unchecked, because it is the
+    only one that is not resolvable until the ref has been rendered: §7's tokens
+    expand per account and target, and `check_references` runs before that on
+    purpose (see :func:`~sopuli.config.loading.build_config`).
+
+    So it is resolved here, against the same declared set and through the same
+    :func:`~sopuli.config.references.dangling` message, because a second phrasing
+    of "that name names nothing" would be a second thing to learn.
+
+    This is the failure `references.py`'s own docstring describes: a dangling
+    store name does not stay dangling. ``vault-prd:apps/acme/db#password`` is a
+    ref the file accepts, a binding that resolves, and a rotation that discovers
+    at the far end that there is no such store -- or, worse, a name that later
+    *becomes* a store belonging to somebody else.
+    """
+    if secret is None or secret.vault is None:
+        return
+    dangling(
+        secret.vault,
+        {vault.name for vault in config.vaults},
+        noun="vault",
+        section="vaults",
+        at=at,
+    )
 
 
 def _check_stageable(
@@ -128,6 +162,11 @@ def _check_stageable(
     """
     if secret is None or store is None:
         return
+    # Every way a store can be named is resolved before this runs -- the five in
+    # `references.py` and the ref's own prefix just above -- so a name with no
+    # store behind it has already been refused. The `is None` arm is therefore
+    # unreachable rather than a silent skip, and it stays because a lookup that
+    # returns nothing must not decide a safety rule by falling through to it.
     declared = next((vault for vault in config.vaults if vault.name == store), None)
     if declared is None or STAGING_LABELS.get(declared.type) != STAGING_EMULATED:
         return

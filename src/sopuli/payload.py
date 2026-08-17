@@ -117,13 +117,20 @@ class StageLayout:
         root = self.container if key == CURRENT else key
         return (root, *self.within)
 
-    def read(self, document: Mapping[str, Any], key: str = CURRENT) -> Any | None:
+    def read(self, document: Mapping[str, Any] | None, key: str = CURRENT) -> Any | None:
         """What ``document`` holds at ``key``, or ``None`` if it holds nothing.
 
         A missing key and a missing document are the same answer deliberately.
         The states this distinguishes -- no ``pending``, a ``pending`` for other
         accounts but not this one, no document at all -- are all "there is
         nothing staged here", and UC-1 §3's state model reads them that way.
+
+        ``None`` is accepted for that reason rather than as tolerance.
+        :meth:`~sopuli.store.protocol.SecretStore.read` returns ``None`` for a
+        path with nothing at it, which is the very first rotation and not an
+        error; requiring a mapping here would put ``or {}`` at every call site,
+        and a call site that substitutes an empty document is a call site that
+        can substitute the wrong one.
         """
         node: Any = document
         for segment in self.location(key):
@@ -132,12 +139,13 @@ class StageLayout:
             node = node[segment]
         return node
 
-    def accounts(self, document: Mapping[str, Any], key: str = CURRENT) -> tuple[str, ...]:
+    def accounts(self, document: Mapping[str, Any] | None, key: str = CURRENT) -> tuple[str, ...]:
         """Every key alongside this one in ``document``'s ``key`` container.
 
         The raw material for ``plan.shared_secrets[].accounts``: who else's
         credential a write to this document would sit next to. Empty for an
-        unaddressed layout, where there is no container to look inside.
+        unaddressed layout, where there is no container to look inside, and for
+        a document that is not there yet -- same reasoning as :meth:`read`.
 
         Sorted, because it reaches a plan a human compares between runs, and
         insertion order in a document nobody controls is not an order.

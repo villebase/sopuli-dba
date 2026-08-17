@@ -81,11 +81,16 @@ class TestReading:
 
     @pytest.mark.parametrize(
         "document",
-        [{}, {"pending": {}}, {"pending": {"acme_api_user": "someone else's"}}],
-        ids=["no document", "no account staged", "another account staged"],
+        [None, {}, {"pending": {}}, {"pending": {"acme_api_user": "someone else's"}}],
+        ids=["no document", "empty document", "no account staged", "another account staged"],
     )
-    def test_nothing_staged_here_is_one_answer(self, document: dict[str, object]) -> None:
-        """Three states that differ, and mean the same thing to UC-1 §3's model."""
+    def test_nothing_staged_here_is_one_answer(self, document: dict[str, object] | None) -> None:
+        """Four states that differ, and mean the same thing to UC-1 §3's model.
+
+        `None` is what the store returns for a path with nothing at it, which is
+        the first rotation rather than a failure -- so it arrives here as itself
+        rather than as an `or {}` somebody wrote at a call site.
+        """
         assert layout(SHARED).read(document, PENDING) is None
 
     def test_a_scalar_where_a_container_was_expected_reads_as_absent(self) -> None:
@@ -99,6 +104,10 @@ class TestReading:
         """One account per secret: there is no container to look inside."""
         assert layout(OWN).accounts({"password": "w"}) == ()
         assert layout(OWN).is_addressed is False
+
+    def test_a_document_that_is_not_there_yet_has_no_neighbours(self) -> None:
+        """The first rotation into a path, which is not a failure."""
+        assert layout(SHARED).accounts(None) == ()
 
 
 class TestPatching:

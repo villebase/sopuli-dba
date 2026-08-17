@@ -28,8 +28,14 @@ identical entries for one six-account document, each repeating the same five
 neighbours.
 
 That is also why the emitted ``secret`` carries a path and no field: it addresses
-the document. The run schema's ``secret_ref`` requires exactly ``vault`` and
-``path`` for this reason.
+the document. It is the run schema's ``secret_document`` rather than its
+``secret_ref``, which is a distinction with two halves. There is nothing here that
+addresses part of a document, so there is no ``field`` or ``pointer`` to carry --
+and the store is **nullable**, because this is read from the config, where one may
+never have been named. ``secret_ref`` describes a ref after resolution, where C14
+makes the store required because the run is about to talk to it; that is a
+different moment, and ``config.bindings[].vault`` is nullable for the same reason
+this is.
 
 **Read from the config, never from the store.** The accounts in an entry are the
 ones the file *declares* for that document, which is invariant 5's set -- the

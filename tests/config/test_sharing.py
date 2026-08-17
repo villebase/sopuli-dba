@@ -235,3 +235,35 @@ def test_detection_is_deterministic(template: str) -> None:
     assert found(accounts=ACCOUNTS, secret_template=template) == found(
         accounts=ACCOUNTS, secret_template=template
     )
+
+
+def test_a_document_no_store_is_named_for_still_reports() -> None:
+    """A config can name no store at all -- no `vault-name:` prefix, no
+    application `vault:`, none on the target, no `defaults.vault`.
+
+    Nothing outside the file can supply one either: `VAULT_ADDR` and
+    `--vault-addr` carry an *address*, while a binding carries a store *name*,
+    and names come only from `vaults:`. So the null is real rather than
+    transitional, and the entry says so instead of being dropped -- what a write
+    would touch is worth reporting whether or not the config has said where.
+    """
+    config = build_config(
+        {
+            "version": 1,
+            "targets": [
+                {
+                    "name": "t1",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "accounts": ACCOUNTS,
+            "secret_template": "apps/acme/db#DB_CREDENTIALS/{account}",
+        }
+    )
+
+    (entry,) = shared_secrets(config.bindings)
+    assert entry.vault is None
+    assert entry.as_json()["secret"] == {"vault": None, "path": "apps/acme/db"}

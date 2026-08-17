@@ -402,7 +402,7 @@
       "required": ["secret", "targets"],
       "description": "One secret document that more than one binding lands on. Keyed on the document rather than on the ref, because the document is what a write, a compare-and-set and the advisory lock all operate on -- so `secret` carries a vault and a path and no field. Sharing is legal and often intended (01-configuration.md 7); it is emitted so that it is never invisible.",
       "properties": {
-        "secret": { "$ref": "#/$defs/secret_ref" },
+        "secret": { "$ref": "#/$defs/secret_document" },
         "targets": {
           "type": "array",
           "description": "Every target bound to this document: who receives the password. A document with one target still appears when several accounts share it.",
@@ -414,6 +414,20 @@
           "minItems": 2,
           "items": { "type": "string" }
         }
+      }
+    },
+
+    "secret_document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vault", "path"],
+      "description": "Addresses a whole secret document -- a store and a path, and nothing below them. Deliberately not `secret_ref`, for two reasons. It has no `field` or `pointer` because there is nothing here that addresses part of a document; and its `vault` is nullable, because this is emitted from the config, where a store may not have been named at all. `secret_ref` describes a ref *after* resolution, where the store is always known and C14 makes it required; that is a different moment, and `config.bindings[].vault` is nullable for the same reason this is.",
+      "properties": {
+        "vault": {
+          "type": ["string", "null"],
+          "description": "Null when the config names no store for it -- neither a `vault-name:` prefix, an application's `vault:`, the target's, nor `defaults.vault`."
+        },
+        "path": { "type": "string" }
       }
     },
 

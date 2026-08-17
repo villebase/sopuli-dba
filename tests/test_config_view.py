@@ -602,3 +602,46 @@ def test_the_shared_section_validates(sharing: Config, validator: Draft202012Val
     }
 
     validator.validate(document)
+
+
+def test_a_shared_document_with_no_store_named_still_validates(
+    validator: Draft202012Validator,
+) -> None:
+    """A config can name no store at all, and `secret_document.vault` is nullable
+    for exactly that case -- unlike `secret_ref`, which describes a ref after
+    resolution and requires one (C14)."""
+    document = {
+        "version": 1,
+        "targets": [
+            {
+                "name": "t1",
+                "type": "oracle",
+                "dsn": "db.example.com:1521/S.example.com",
+                "environment": "dev",
+                "oracle": {"scope": "pdb", "container": "P"},
+            }
+        ],
+        "accounts": ["acme_web_user", "acme_api_user"],
+        "secret_template": "apps/acme/db#DB_CREDENTIALS/{account}",
+    }
+    section = build_section(PATHS, build_config(document), document, resolved=True)
+
+    assert section["shared_secrets"][0]["secret"] == {"vault": None, "path": "apps/acme/db"}
+    validator.validate(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "tool": {"name": "sopuli", "version": "0.0.0"},
+            "command": "config.show",
+            "invocation": {
+                "correlation_id": "9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234",
+                "started_at": "2026-08-11T09:00:00Z",
+                "finished_at": "2026-08-11T09:00:01Z",
+                "duration_ms": 1000,
+                "actor": {"os_user": "dba", "host": "laptop"},
+                "dry_run": False,
+            },
+            "config": section,
+            "summary": {"total": 0, "ok": 0, "changed": 0, "failed": 0},
+            "exit_code": 0,
+        }
+    )

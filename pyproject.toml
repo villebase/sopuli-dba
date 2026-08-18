@@ -41,7 +41,13 @@ oracle = [
   # OCI-hosted databases require it. Instant Client is a runtime prerequisite
   # either way, which is why reaching Oracle was already a per-site condition
   # before this extra named it.
-  "python-oracledb>=2.0",
+  #
+  # `oracledb`, not `python-oracledb`. Oracle calls the driver python-oracledb
+  # everywhere it is written about -- the docs, the release notes, this
+  # project's own design documents -- but the distribution on PyPI and the
+  # module you import are both `oracledb`, and the other name resolves to
+  # nothing at all. Keep the prose name in prose.
+  "oracledb>=2.0",
 ]
 hashicorp = [
   # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than

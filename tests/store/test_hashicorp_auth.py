@@ -35,6 +35,7 @@ from sopuli.store.hashicorp._auth import (  # noqa: E402
     authenticate,
 )
 from sopuli.store.hashicorp._transport import Response  # noqa: E402
+from sopuli.store.protocol import StoreError  # noqa: E402
 
 ADDR = "https://vault.example.com"
 
@@ -295,6 +296,76 @@ def test_a_403_says_the_mount_is_probably_missing(transport: _FakeTransport) -> 
         authenticate(vault(auth), env={"P": "p"})
 
     assert "mount" in (caught.value.hint or "")
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (503, "StoreUnavailableError"),
+        (429, "StoreUnavailableError"),
+        (473, "StoreUnavailableError"),
+    ],
+)
+def test_a_store_that_cannot_answer_is_not_a_refused_credential(
+    transport: _FakeTransport, status: int, expected: str
+) -> None:
+    """Sealed is 503 and a standby is 429 or 473, and none of them looked at the
+    credential.
+
+    Reporting them as exit 6 would tell a scheduler to stop and fix the
+    credential, which is the one action that cannot help -- the store is not
+    refusing, it is unable to answer. Delegated to the general mapper, which
+    already tells these apart.
+    """
+    transport.response = Response(status=status, body={"errors": ["Vault is sealed"]})
+    auth = VaultAuth(
+        method="approle",
+        role_id=MaterialRef(kind="env", location="R"),
+        secret_id=MaterialRef(kind="env", location="S"),
+    )
+
+    with pytest.raises(StoreError) as caught:
+        authenticate(vault(auth), env={"R": "r", "S": "s"})
+
+    assert type(caught.value).__name__ == expected
+    assert not isinstance(caught.value, LoginFailedError)
+    assert caught.value.exit_code != ExitCode.AUTH_FAILURE
+
+
+def test_an_unrecognised_status_is_not_a_refused_credential(transport: _FakeTransport) -> None:
+    """Fail closed, the same rule `_errors.py` uses: a 500 is not evidence about
+    a credential."""
+    transport.response = Response(status=500, body={"errors": ["internal error"]})
+    auth = VaultAuth(
+        method="approle",
+        role_id=MaterialRef(kind="env", location="R"),
+        secret_id=MaterialRef(kind="env", location="S"),
+    )
+
+    with pytest.raises(StoreError) as caught:
+        authenticate(vault(auth), env={"R": "r", "S": "s"})
+
+    assert not isinstance(caught.value, LoginFailedError)
+
+
+def test_a_username_is_encoded_as_one_path_segment(transport: _FakeTransport) -> None:
+    """A username holding a slash would otherwise rewrite the request path and
+    come back as a 403 -- which this backend reads as "the auth mount is
+    missing", so the diagnosis would be wrong twice over.
+
+    Deliberately unlike a secret path, which is hierarchical and whose slashes
+    are meant to survive.
+    """
+    auth = VaultAuth(
+        method="userpass",
+        username="acme/ci user",
+        password=MaterialRef(kind="env", location="P"),
+    )
+
+    authenticate(vault(auth), env={"P": "p"})
+
+    assert transport.sent is not None
+    assert transport.sent.path == "auth/userpass/login/acme%2Fci%20user"
 
 
 def test_an_accepted_login_with_no_token_is_a_failure(transport: _FakeTransport) -> None:

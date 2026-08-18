@@ -21,12 +21,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import quote
 
 from sopuli.config.model import MaterialRef, Vault, VaultAuth
 from sopuli.exit_codes import ExitCode
 from sopuli.material import resolve, resolve_token
 from sopuli.secrets import Secret
-from sopuli.store.hashicorp._errors import messages
+from sopuli.store.hashicorp._errors import messages, raise_for
 from sopuli.store.hashicorp._transport import Transport, build_transport
 from sopuli.store.protocol import StoreError
 
@@ -38,6 +39,12 @@ METHODS = ("token", "approle", "kubernetes", "userpass")
 #: In §3a's table for a vault, and deliberately not implemented (#104's split).
 #: See :func:`_refuse_oidc` for why deferring it costs less than it looks.
 DEFERRED = ("oidc",)
+
+#: The two statuses that mean the login itself was answered and rejected
+#: (measured; see :func:`_hint`). Everything else non-2xx is delegated to
+#: :func:`~sopuli.store.hashicorp._errors.raise_for`, which already tells a
+#: sealed store from a standby from an ordinary failure.
+REFUSAL_STATUSES = (400, 403)
 
 #: What OCI's methods are called. Reaching a *HashiCorp* store with one is a
 #: config error rather than a gap: they authenticate to a different vendor.
@@ -190,7 +197,12 @@ def _userpass(vault: Vault, auth: VaultAuth, *, env: Mapping[str, str], where: s
     with a 404 rather than a 403 when it is got wrong -- a confusing symptom for
     something that looks like a credential problem.
     """
-    username = _identity(auth.username, "username", where=where)
+    # Encoded as a *single path segment*: a username holding `/`, `?`, `#` or a
+    # space would otherwise rewrite the request path and come back as a
+    # confusing 403 or 404 -- which, per `_hint` below, would then be read as
+    # "the auth mount is missing". Deliberately unlike a secret path in `kv2.py`,
+    # which is hierarchical and whose slashes are meant to survive.
+    username = quote(_identity(auth.username, "username", where=where), safe="")
     return _login(
         vault,
         path=f"auth/{_mount(auth, 'userpass')}/login/{username}",
@@ -243,11 +255,19 @@ def _login(vault: Vault, *, path: str, body: dict[str, Any], where: str) -> Secr
                 for key, value in body.items()
             },
         )
-        if not response.ok:
+        if response.status in REFUSAL_STATUSES:
             raise LoginFailedError(
                 f"{where}: the store refused the credential: {_detail(response.body)}",
                 hint=_hint(response.status),
             )
+        if not response.ok:
+            # Everything else is the store being unable to answer rather than
+            # unwilling to accept: sealed is 503, a standby is 429 or 473, and a
+            # 500 is a 500. Calling any of those an authentication failure would
+            # put exit 6 on a run whose credential was never looked at -- and
+            # exit 6 is the code a scheduler reads as "stop and fix the
+            # credential", which is the one action that would not help.
+            raise_for(response.status, response.body, path=path)
         return _client_token(response.body, where=where)
     finally:
         # The login client is not the client the store will use: the store's

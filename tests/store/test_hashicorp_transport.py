@@ -15,20 +15,26 @@ from pathlib import Path
 
 import pytest
 
-from sopuli.config.model import Vault, VaultTls
-from sopuli.secrets import Secret
-from sopuli.store.hashicorp._errors import (
+# Tier 0 by tier -- no container, no network -- but not by *install shape*: the
+# subject is the client `sopuli[hashicorp]` installs, so there is nothing to
+# assert without it. A skip rather than a collection error, so the rest of the
+# suite still runs on a base+dev install (`04-testing.md` §3).
+pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
+
+from sopuli.config.model import Vault, VaultTls  # noqa: E402
+from sopuli.secrets import Secret  # noqa: E402
+from sopuli.store.hashicorp._errors import (  # noqa: E402
     StoreAuthError,
     StoreUnavailableError,
     messages,
     raise_for,
 )
-from sopuli.store.hashicorp._transport import (
+from sopuli.store.hashicorp._transport import (  # noqa: E402
     DEFAULT_TIMEOUT_S,
     build_ssl_context,
     build_transport,
 )
-from sopuli.store.protocol import CasConflictError, StoreError
+from sopuli.store.protocol import CasConflictError, StoreError  # noqa: E402
 
 PATH = "apps/acme/lock"
 

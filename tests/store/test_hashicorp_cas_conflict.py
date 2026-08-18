@@ -36,7 +36,15 @@ from typing import Any
 
 import pytest
 
-from sopuli.store.hashicorp._errors import CAS_MESSAGE_FRAGMENT
+# The constant lives in the adapter now, and importing anything from that
+# package runs its `__init__`, which imports `httpx` (ADR-006 rule 1: the client
+# is imported inside the backend). So this file needs the extra as well as the
+# container, and skips for either -- the import is the *point* of the test, not
+# an incidental dependency: a private copy of the string would keep passing
+# while the adapter matched on something else.
+pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
+
+from sopuli.store.hashicorp._errors import CAS_MESSAGE_FRAGMENT  # noqa: E402
 
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200")
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "sopuli-test-root")

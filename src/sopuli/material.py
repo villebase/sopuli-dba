@@ -116,7 +116,20 @@ def resolve_token(
             return Secret(env[variable])
 
     path = (home / ".vault-token") if home is not None else Path(TOKEN_FILE).expanduser()
-    if not path.exists():
+    try:
+        return _from_file(path, where=where, wrote=TOKEN_FILE)
+    except MaterialError as error:
+        if not isinstance(error.__cause__, FileNotFoundError):
+            # The file is there and something else is wrong -- it is unreadable,
+            # it is a directory, it is not UTF-8, it is empty. Every one of those
+            # is a better diagnosis than "no token anywhere", and every one of
+            # them has already been worded by `_from_file`.
+            raise
+        # Only a genuinely absent file means the chain ran out. Asked by trying
+        # rather than by `path.exists()`, which returns False for a permission
+        # error on the way to the file and would report "no token" for a token
+        # that is sitting right there -- and which leaves a window between the
+        # check and the read besides.
         raise MaterialError(
             f"{where}: no token, and none of the places it is looked for had one",
             at=ROOT,
@@ -124,8 +137,7 @@ def resolve_token(
                 f"write `token: {{ file: … }}` on the store, pass --vault-token, set "
                 f"{' or '.join(TOKEN_VARIABLES)}, or log in so that {TOKEN_FILE} exists"
             ),
-        )
-    return _from_file(path, where=where, wrote=TOKEN_FILE)
+        ) from error
 
 
 def _from_env(name: str, *, env: Mapping[str, str], where: str) -> Secret:

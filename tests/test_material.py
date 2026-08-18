@@ -14,6 +14,7 @@ places.
 from __future__ import annotations
 
 import os
+import pathlib
 from pathlib import Path
 
 import pytest
@@ -293,6 +294,51 @@ def test_the_chain_ends_rather_than_falling_into_another_method(tmp_path: Path) 
     assert "~/.vault-token" in message
     # Every step it tried, and nothing about a method it did not.
     assert "approle" not in message.lower().replace(WHERE.lower(), "")
+
+
+def test_an_unreadable_token_file_is_not_reported_as_no_token(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The chain ends only for a file that is genuinely absent.
+
+    `Path.exists()` returns False for a permission error on the way to the file,
+    so asking it would report "no token anywhere" for a token sitting right
+    there -- and would leave a window between the check and the read besides. So
+    the read is attempted and only `FileNotFoundError` becomes the chain-end
+    message; every other failure keeps the wording `_from_file` already gave it.
+
+    Simulated rather than produced with real permissions, because the mode bits
+    that deny a read differ per platform and the subject here is the branch, not
+    the operating system.
+    """
+    real_read = pathlib.Path.read_bytes
+
+    def refuse(self: pathlib.Path) -> bytes:
+        if self.name == ".vault-token":
+            raise PermissionError(13, "Permission denied")
+        return real_read(self)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", refuse)
+    (tmp_path / ".vault-token").write_bytes(b"s.unreadable")
+
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(ref=None, env={}, home=tmp_path, where=WHERE)
+
+    message = str(caught.value)
+    assert "could not read" in message
+    assert "no token" not in message
+
+
+def test_an_empty_token_file_is_not_reported_as_no_token(tmp_path: Path) -> None:
+    """It exists and something wrote it -- most likely a login that produced
+    nothing. "No token anywhere" would send somebody to set a variable that was
+    never the problem."""
+    (tmp_path / ".vault-token").write_bytes(b"")
+
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(ref=None, env={}, home=tmp_path, where=WHERE)
+
+    assert "empty" in str(caught.value)
 
 
 def test_nothing_here_reads_the_real_environment(monkeypatch: pytest.MonkeyPatch) -> None:

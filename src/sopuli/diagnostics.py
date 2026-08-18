@@ -26,6 +26,7 @@ from types import MappingProxyType
 
 from sopuli.clock import to_rfc3339
 from sopuli.config.model import Vault
+from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
 from sopuli.lock.record import LockRecord
@@ -40,6 +41,14 @@ LOCK_TAKEN_OVER = "SOPULI-W002"
 
 #: A ``vaults:`` entry names a backend whose client is not installed (#130).
 MISSING_BACKEND = "SOPULI-W003"
+
+#: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
+#: the config layer, which cannot import this module (see the constant's own
+#: comment in :mod:`sopuli.config.references`), so the definition lives with the
+#: code that raises it and the registry below stays the one place that says what
+#: it means. Importing it here is also what puts it in this module's namespace,
+#: so ``from sopuli.diagnostics import UNVERIFIED_TRANSPORT`` reads the same as
+#: every other code.
 
 #: Every code this build can emit, and what each one means. The description is
 #: the contract; the message wording around it is not, and may improve.
@@ -59,6 +68,12 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A `vaults:` entry names a backend whose client is not installed. The config "
             "is valid and the install is incomplete, so `config validate` warns and exits "
             "0; any command that resolves that store to a client fails with SOPULI-20001."
+        ),
+        UNVERIFIED_TRANSPORT: (
+            "A store in this run is configured `tls.verify: false`, so its certificate is "
+            "not checked. Anything on the path can present its own and read every secret "
+            "that crosses. The key is under the safety ratchet, so no layer can weaken "
+            "this further -- but nothing in the run undoes it either."
         ),
     }
 )

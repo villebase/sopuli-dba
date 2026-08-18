@@ -54,25 +54,32 @@ class Backend:
     #: The extra that installs its client, or ``None`` where there is nothing to
     #: install -- see :data:`BACKENDS`.
     extra: str | None = None
-    #: Top-level module names ``pip install "sopuli[<extra>]"`` makes importable.
+    #: Top-level module names ``pip install "sopuli-dba[<extra>]"`` makes importable.
     provides: frozenset[str] = frozenset()
 
     @property
     def install_command(self) -> str:
-        """The line an operator can paste, for the message that names it."""
-        return f'pip install "sopuli[{self.extra}]"'
+        """The line an operator can paste, for the message that names it.
+
+        ``sopuli-dba``, not ``sopuli``. D1 splits the two -- the binary is
+        ``sopuli`` and the distribution is ``sopuli-dba`` -- and this string is
+        the one place the difference is load-bearing rather than cosmetic,
+        because it is the half the operator pastes into `pip`. The documents
+        quoted the binary here until #134; they now quote the distribution.
+        """
+        return f'pip install "sopuli-dba[{self.extra}]"'
 
 
 #: Every ``type:`` :data:`~sopuli.config.vaults.VAULT_TYPES` allows, and what
 #: serves it. The two lists are checked against each other by
-#: ``tests/store/test_registry.py``: a type the config layer accepts and this one
+#: ``tests/store/test_backend_registry.py``: a type the config layer accepts and this one
 #: has never heard of would fail at connect time with a :class:`KeyError`, which
 #: is precisely the traceback rule 2 exists to prevent.
 #:
 #: ``file`` and ``keyring`` have **no extra**, and that is not an oversight.
 #: ADR-006's named gap: P2 does not say whether the file backend reaches age/gpg
 #: as a Python library or as a subprocess, and the answer decides whether there
-#: is an extra at all -- a library makes it ``sopuli[file]``, a subprocess makes
+#: is an extra at all -- a library makes it ``sopuli-dba[file]``, a subprocess makes
 #: it a runtime prerequisite like Instant Client. ``keyring`` is priority 4 and
 #: appears in no extras table yet. Until either is settled, ``extra=None`` means
 #: "there is nothing to tell you to install", and asking for one of them fails as

@@ -150,7 +150,7 @@ def test_a_missing_client_names_the_extra(
     assert str(error.message) == (
         'vault "oci-prod" declares type "oci", but that backend is not installed'
     )
-    assert error.hint == 'install it with:  pip install "sopuli[oci]"'
+    assert error.hint == 'install it with:  pip install "sopuli-dba[oci]"'
 
 
 def test_a_missing_client_is_config_and_exit_nine() -> None:
@@ -235,8 +235,8 @@ def test_the_client_match_is_on_the_module_that_was_missing(
     """Fail closed: a backend importing *some other* absent third-party module
     is not evidence that its own extra is uninstalled.
 
-    Without the `provides` check this would report "install sopuli[hashicorp]"
-    for a dependency `sopuli[hashicorp]` does not contain, and installing it
+    Without the `provides` check this would report "install sopuli-dba[hashicorp]"
+    for a dependency `sopuli-dba[hashicorp]` does not contain, and installing it
     would change nothing.
     """
     name = module_factory("import some_unrelated_absent_package\n")

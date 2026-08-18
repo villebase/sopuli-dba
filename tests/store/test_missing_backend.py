@@ -11,7 +11,7 @@ Two answers, and the whole of ADR-006's E4/E5 is that they are different:
 
 The backend is forced absent by pointing its entry at a module nothing will ever
 install, rather than by relying on this machine's install shape: the developer
-environment is meant to be `sopuli[all]`, where the real `hashicorp` entry is
+environment is meant to be `sopuli-dba[all]`, where the real `hashicorp` entry is
 installed and none of this would fire.
 """
 
@@ -84,7 +84,7 @@ def _refuse(*_: object, **__: object) -> None:
     """
     raise BackendNotInstalledError(
         'vault "oci-prod" declares type "oci", but that backend is not installed',
-        hint='install it with:  pip install "sopuli[oci]"',
+        hint='install it with:  pip install "sopuli-dba[oci]"',
     )
 
 
@@ -99,7 +99,7 @@ def test_validate_warns_and_exits_zero(uninstalled: None, write_config: WriteCon
     assert result.exit_code == ExitCode.SUCCESS
     assert "2 warnings" in result.output
     assert 'vault "vault-prod" declares type "hashicorp"' in result.output
-    assert 'pip install "sopuli[hashicorp]"' in result.output
+    assert 'pip install "sopuli-dba[hashicorp]"' in result.output
 
 
 def test_the_warning_carries_its_code_in_json(uninstalled: None, write_config: WriteConfig) -> None:
@@ -180,7 +180,7 @@ def test_resolving_an_uninstalled_backend_exits_nine_with_the_code(
 
     assert exit_info.value.code == ExitCode.CONFIG_INVALID
     captured = capsys.readouterr()
-    assert 'pip install "sopuli[oci]"' in captured.err
+    assert 'pip install "sopuli-dba[oci]"' in captured.err
 
 
 def test_the_failure_document_carries_the_error_code(

@@ -1,7 +1,7 @@
 """Rule 3: nothing in base opens a socket (ADR-006, ``04-testing.md`` §3).
 
 **This is the only test in the suite that can see the boundary break.** The
-developer environment is `sopuli[all]`, so every other test passes whether or
+developer environment is `sopuli-dba[all]`, so every other test passes whether or
 not base is clean -- which is exactly how a convenient module-level ``import
 httpx`` gets in and is discovered by a user rather than by CI.
 
@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: What ``sopuli[oracle]``, ``sopuli[hashicorp]`` and ``sopuli[oci]`` install.
+#: What ``sopuli-dba[oracle]``, ``sopuli-dba[hashicorp]`` and ``sopuli-dba[oci]`` install.
 #: The list is the one ADR-006 names, kept here as a literal rather than derived
 #: from ``BACKENDS`` on purpose: this test is the check *on* that table, and a
 #: check that reads its expectation out of the thing it is checking would pass an
@@ -129,7 +129,7 @@ def test_the_offline_commands_still_work_with_no_client_installed(tmp_path: Path
 
     A config naming a backend validates with that backend uninstalled, because
     declaring a store is config and reaching one is not (§3a). This is the
-    promise ADR-006 makes about what `pip install sopuli` still does.
+    promise ADR-006 makes about what `pip install sopuli-dba` still does.
     """
     result = _probe(tmp_path, CONFIG_NAMING_A_BACKEND)
 

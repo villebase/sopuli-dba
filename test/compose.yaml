@@ -31,7 +31,10 @@ services:
   vault:
     image: hashicorp/vault:latest
     profiles: [tier0, tier1, tier2, nne]
-    cap_add: [IPC_LOCK]
+    # No cap_add: [IPC_LOCK] here on purpose. 2.0.2 removed the cap_ipc_lock
+    # capability at build time so Vault can run in common container runtimes
+    # without it, with disable_mlock = true the advised setting instead --
+    # carrying the capability request is obsolete, not merely unnecessary.
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: sopuli-test-root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200

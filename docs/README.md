@@ -241,9 +241,13 @@ below.)*
   wire — a soft-deleted path's 404 still carries a `data.metadata` envelope
   (`deletion_time`, `version`); a never-written path's 404 is bare. `read()`
   is right not to expose this — nothing that calls it needs the distinction —
-  but the information is there if a future diagnostic ever wants it. Probe is
-  `test/vault_cas_probe.py`, run against tier0 (`docker compose --profile
-  tier0 up -d`).
+  but the information is there if a future diagnostic ever wants it. Spike is
+  `test/vault_cas_probe.py`, run by hand against tier0 (`docker compose
+  --profile tier0 up -d`). The string dependency itself — the fact that a
+  future `CasConflictError` mapping would key on — is promoted to a real,
+  capability-skipped regression test in `tests/store/test_hashicorp_cas_conflict.py`,
+  which runs as part of the ordinary suite and skips cleanly (not a failure)
+  when Vault is unreachable.
 - **Whether `hvac`'s auth surface is worth the dependency it would add** (#103)
   — **measured, and it moved the recommendation.** The case for `hvac` rested
   on auth being where a library "earns its keep" (renewal, OIDC, Kubernetes).

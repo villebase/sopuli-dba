@@ -18,6 +18,16 @@ Oracle side. Idempotent: it wipes its own path's metadata first, so re-running
 it does not depend on the previous run's state -- dev-mode Vault is ``inmem``
 and outlives the script.
 
+The regression this found -- that ``CAS_MESSAGE_FRAGMENT`` below is the one
+string every shape of conflict shares -- is a real dependency on Vault's own
+error text now, not just a fact this script measured once. That half is
+promoted to ``tests/store/test_hashicorp_cas_conflict.py``, which runs (and
+skips cleanly when Vault is unreachable) as part of the ordinary suite. This
+script stays as the wider, exploratory investigation -- it also covers the
+``read()`` 404-ambiguity question and the malformed-cas contrast, which are
+worth keeping legible but are not string dependencies the way the conflict
+message is.
+
     python test/vault_cas_probe.py
 """
 
@@ -34,7 +44,10 @@ from typing import Any
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200")
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "sopuli-test-root")
 MOUNT = "kv"  # the v2 mount test/compose.yaml's vault-init creates
-PATH = "sopuli-probe/cas-conflict"
+# CLAUDE.md's fixture vocabulary (application `acme`) rather than the tool's
+# own name -- this is scratch space, not a real secret, but it is still an
+# example in the codebase.
+PATH = "apps/acme/probe/cas-conflict"
 
 # The exact string #83/#96 need `CasConflictError` to key on. A hope, not yet
 # a fact -- this script exists to find out whether it holds across every shape
@@ -175,7 +188,7 @@ def main() -> int:
     )
 
     section("7. never-existed path -- read, for contrast with case 5")
-    never = call("GET", f"{MOUNT}/data/sopuli-probe/never-written")
+    never = call("GET", f"{MOUNT}/data/apps/acme/probe/never-written")
     show("read a path that was never written", never)
     expect(never.status == 404, "also a 404")
     # Same status code, but NOT the same body: a soft-deleted path's 404 still
@@ -220,7 +233,7 @@ def main() -> int:
 
     section("teardown")
     call("DELETE", f"{MOUNT}/metadata/{PATH}")
-    call("DELETE", f"{MOUNT}/metadata/sopuli-probe/never-written")
+    call("DELETE", f"{MOUNT}/metadata/apps/acme/probe/never-written")
     print("  wiped probe paths")
 
     print()

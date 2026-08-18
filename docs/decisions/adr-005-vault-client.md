@@ -111,13 +111,13 @@ while we work), and because it takes a real `SSLContext`, which is what makes
 "`httpx` is a base dependency", on the grounds that a generic transport is not a
 vendor client and so #130's extras rule does not reach it. That is right about
 `httpx` and wrong about the outcome: #130 landed with rule 3 stated as *nothing
-in base opens a socket*, testable as "a base install has no HTTP client", and a
-generic HTTP client in base falsifies it exactly as a vendor one would. Nothing
-else in base wants `httpx`, so the extra costs nothing and keeps the property
-holdable by a test. The client choice above is untouched — this is where the
-dependency is declared, not which dependency it is. See
-[ADR-006](adr-006-optional-dependencies.md) (E2). Lands with #104, not with
-this decision.
+in base opens a socket*, tested as "a base install can import none of the
+clients the backends reach with", and `httpx` in base falsifies that exactly as
+a vendor SDK would. Nothing else in base wants `httpx`, so the extra costs
+nothing and keeps the property holdable by a test. The client choice above is
+untouched — this is where the dependency is declared, not which dependency it
+is. See [ADR-006](adr-006-optional-dependencies.md) (E2). Lands with #104, not
+with this decision.
 
 **Error mapping lives at the transport boundary** —
 `sopuli/store/hashicorp/_errors.py`, one module, never at call sites and never

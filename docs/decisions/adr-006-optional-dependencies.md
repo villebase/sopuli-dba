@@ -64,9 +64,13 @@ cosmetic:
 2. **A missing backend is a diagnosable condition, not a traceback.** An
    `ImportError` at registry resolution becomes a structured error naming the
    extra that supplies it, with `error.category: "config"` and exit 9.
-3. **Nothing in base opens a socket.** This is the property being defended, and
-   it is the one a test can hold: in a base install, no HTTP client and no
-   database driver is importable.
+3. **Nothing in base opens a socket.** This is the property being defended.
+   What a test can hold is the dependency set that stands for it: in a base
+   install none of the clients the backends reach with — `httpx`, the OCI SDK,
+   `python-oracledb` — is importable. The standard library's `urllib` and
+   `http.client` are importable in every Python and no packaging rule changes
+   that, so they are covered by the rule's intent rather than by its assertion:
+   base code does not reach the network, whatever it would reach it with.
 
 Rule 3 is true of `pyproject.toml` today. That is the cheap case, and the reason
 to write it down now — this ADR defends a property the project already has
@@ -115,10 +119,11 @@ anyway.
 decided the HTTP API over `httpx` rather than `hvac`, and originally recorded
 `httpx` as a base dependency on the grounds that a generic transport is not a
 vendor client. That is right about `httpx` and wrong about the outcome: a
-generic HTTP client in base is still an HTTP client in base, and rule 3 is
-stated as "no HTTP client is importable" precisely so that a test can hold it.
-Nothing else in base wants `httpx`, so putting it behind `sopuli[hashicorp]`
-costs nothing and keeps the property testable. ADR-005's consequence is amended
+third-party HTTP client in base is still a network client in base, and rule 3
+names the installed dependency set precisely so that a test can hold it, and
+`httpx` in base is exactly as visible to that test as an SDK would be. Nothing
+else in base wants `httpx`, so putting it behind `sopuli[hashicorp]` costs
+nothing and keeps the property testable. ADR-005's consequence is amended
 accordingly; the client choice itself is untouched.
 
 **`sopuli[all]` exists, and is not the recommended install (E3).** CI and the
@@ -183,6 +188,6 @@ nothing yet to settle it from.
 - `03-json-output.md`: the `error.code` for a missing backend, and the warning's
   diagnostic code (E4/E5).
 - `04-testing.md`: install shape as a dimension of the matrix, plus the two
-  tier-0 tests — the absent-backend message per backend, and "base imports no
-  HTTP client and no database driver".
+  tier-0 tests — the absent-backend message per backend, and the base install
+  importing none of the backends' clients.
 - Root `README.md`: the install matrix.

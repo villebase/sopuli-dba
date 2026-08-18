@@ -203,13 +203,17 @@ rules make that real rather than cosmetic:
 
    ```
    $ sopuli creds check --application acme
-   error: vault "hcv-prod" declares type "oci", but that backend is not installed
+   error: vault "oci-prod" declares type "oci", but that backend is not installed
           install it with:  pip install "sopuli[oci]"
    exit 9
    ```
 
 3. **Nothing in base opens a socket.** That is the property being defended, and
-   it is testable: a base install has no HTTP client and no database driver.
+   the dependency set is what makes it testable: a base install can import none
+   of the clients the backends reach with — `httpx`, the OCI SDK,
+   `python-oracledb`. The stdlib's `urllib` is importable in every Python and
+   always will be, so it is covered by intent rather than by assertion: base
+   code does not reach the network, whatever it would reach it with.
 
 Every command that does not open a connection works with no backend installed —
 `config validate`, `config show --resolved --explain`, `target list`. This is

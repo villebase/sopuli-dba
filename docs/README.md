@@ -73,9 +73,10 @@ drivers as well as stores~~ (E1 — **decided: yes.** `python-oracledb` is
 D3's Instant Client prerequisite already makes reaching Oracle a per-site
 condition), ~~is the HashiCorp store base or an extra~~ (E2 — **decided: an
 extra.** #103 landed on the HTTP API, so there is no vendor client — but `httpx`
-is still an HTTP client, and rule 3 is stated as "a base install has no HTTP
-client" precisely so a test can hold it. `httpx` ships in `sopuli[hashicorp]`
-and ADR-005's consequence is amended), ~~does `sopuli[all]` exist~~ (E3 —
+is still a network client, and rule 3 names the installed dependency set —
+`httpx`, the OCI SDK, `python-oracledb` — precisely so a test can hold it.
+`httpx` ships in `sopuli[hashicorp]` and ADR-005's consequence is amended),
+~~does `sopuli[all]` exist~~ (E3 —
 **decided: yes**, CI and the test matrix need one name that means everything;
 user-facing install instructions recommend the extras a site actually has, never
 `all` as the default line), ~~does `config validate` fail or warn on a
@@ -302,9 +303,10 @@ below.)*
   §3a except OIDC's browser/callback dance, which `hvac` does not provide
   either. Probe is `test/vault_auth_probe.py`, run against tier0. OCI keeps
   its own SDK — ADR-005's criterion is request signing and principal
-  federation, not "is it HTTP." `httpx` lands with #104, in `sopuli[hashicorp]` rather than in base —
-  ADR-005 said base until #130 made "no HTTP client in base" a testable rule
-  (ADR-006, E2).
+  federation, not "is it HTTP." `httpx` lands with #104, in
+  `sopuli[hashicorp]` rather than in base — ADR-005 said base until #130 made
+  "base can import none of the backends' clients" a testable rule (ADR-006,
+  E2).
 
 ## Likely next use cases
 

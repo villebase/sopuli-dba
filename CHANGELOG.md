@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.0](https://github.com/futville/sopuli-dba/compare/v0.24.0...v0.25.0) (2026-08-18)
+
+
+### Features
+
+* **config:** a vault's transport settings — namespace, timeout_s and tls: ([#141](https://github.com/futville/sopuli-dba/issues/141)) ([1fd4547](https://github.com/futville/sopuli-dba/commit/1fd454716e450f196f3bd5a89d83ab2372d09186))
+* **packaging:** extras in pyproject, and a store registry that imports lazily ([#139](https://github.com/futville/sopuli-dba/issues/139)) ([f02247e](https://github.com/futville/sopuli-dba/commit/f02247ec2c917c83f0e1501b0c4caeba8c1dbf57))
+
 ## [0.24.0](https://github.com/futville/sopuli-dba/compare/v0.23.0...v0.24.0) (2026-08-18)
 
 

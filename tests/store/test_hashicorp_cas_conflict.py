@@ -36,6 +36,8 @@ from typing import Any
 
 import pytest
 
+from sopuli.store.hashicorp._errors import CAS_MESSAGE_FRAGMENT
+
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200")
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "sopuli-test-root")
 MOUNT = "kv"  # the v2 mount test/compose.yaml's vault-init creates
@@ -52,11 +54,13 @@ _ALLOW_REMOTE_ENV = "SOPULI_TEST_ALLOW_REMOTE_VAULT"
 #: tool's own name -- scratch space, but still an example in the codebase.
 PATH = "apps/acme/probe/cas-conflict"
 
-#: The fact under test. Duplicated from `test/vault_cas_probe.py` rather than
-#: imported -- there is no `sopuli.store.hashicorp` yet for either of them to
-#: share it with (#104); once it exists, both this constant and the mapping
-#: it documents belong there, and this test should import it instead.
-CAS_MESSAGE_FRAGMENT = "check-and-set parameter did not match"
+#: The fact under test, imported from the mapping that depends on it (#104).
+#:
+#: It was duplicated here while there was no `sopuli.store.hashicorp` to share
+#: it with, and this file said so. Now that there is, importing it is the whole
+#: point: this test asserts that **the string the adapter matches on** is still
+#: what a real Vault sends, which a private copy could not do -- the copy would
+#: keep passing while the adapter matched on something else.
 
 
 def _call(method: str, path: str, *, json_body: dict[str, Any] | None = None) -> tuple[int, Any]:

@@ -75,7 +75,7 @@ def call(method: str, path: str, *, json_body: dict[str, Any] | None = None) -> 
     if data is not None:
         request.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=10) as response:
             raw = response.read()
             body = json.loads(raw) if raw else None
             return Response(status=response.status, body=body)

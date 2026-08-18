@@ -93,8 +93,9 @@ documents that cite the rule are updated with it: `01-configuration.md` §3a has
 what a declared-but-uninstalled `type:` does and §9/§10 have the warning,
 `03-json-output.md` §3 has `SOPULI-20001` and `SOPULI-W003`, `04-testing.md` §3
 makes install shape a dimension of the matrix, and the root `README.md` leads
-with the install matrix. `pyproject.toml` and the registry's lazy import are
-implementation, still to come.
+with the install matrix. `pyproject.toml` and the registry's lazy import landed
+in #134, with `SOPULI-20001` and `SOPULI-W003` as the first codes anything
+actually emits; `doctor`'s install-shape section (E6) waits on `doctor` itself.
 
 **Configuration (01):** ~~naming of the binding section~~ (C1 — **decided:
 `applications`, with an inline single-application form**), label selector syntax

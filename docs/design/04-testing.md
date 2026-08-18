@@ -240,7 +240,12 @@ container. `testcontainers-python` handles session-scoped containers; a
   stdlib is base code's own discipline (ADR-006 rule 3), not something a
   packaging test can hold. This is the one in the pair that regresses silently: it breaks the
   first time someone adds a convenient module-level import, and nothing else
-  notices, because the developer environment is `sopuli[all]`
+  notices, because the developer environment is `sopuli[all]`. Held in two
+  halves, because neither is sufficient alone: `tests/store/test_install_shape.py`
+  blocks the clients at the import system and imports every sopuli module outside
+  a backend, which runs in any environment and names the module that broke it,
+  and CI's `install-shape` job installs base for real and asserts the clients are
+  absent, which is the only check that can see `pyproject.toml` itself go wrong
 - **the absent-backend path, per backend (ADR-006).** Resolve a store whose
   extra is uninstalled and assert the whole contract: the message names the
   correct extra, `error.category` is `config`, `error.code` is `SOPULI-20001`,

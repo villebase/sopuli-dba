@@ -181,8 +181,15 @@ nothing yet to settle it from.
 
 ## Follow-ups
 
-- `pyproject.toml`: the extras themselves, and the store registry's lazy import
-  and error mapping. Implementation, separate PR.
+- ~~`pyproject.toml`: the extras themselves, and the store registry's lazy
+  import and error mapping~~ — **done in #134.** `sopuli/store/registry.py` maps
+  `type:` to a module path and imports on first use; `BackendNotInstalledError`
+  carries `SOPULI-20001` and `BackendNotImplementedError` is the separate case
+  for a backend nobody has written yet, which is every backend today. The trap
+  worth remembering is that both, plus a genuine bug inside a backend module,
+  arrive as `ModuleNotFoundError`: the registry matches on `exc.name` against the
+  modules the extra provides and re-raises anything else, so our own typo keeps
+  its traceback.
 - `01-configuration.md` §3a and §9: what a declared-but-uninstalled `type:`
   does, and the `config validate` warning (E4).
 - `03-json-output.md`: the `error.code` for a missing backend, and the warning's

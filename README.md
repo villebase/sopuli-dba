@@ -48,9 +48,10 @@ error: vault "oci-prod" declares type "oci", but that backend is not installed
 
 The rule and what it costs: [ADR-006](docs/decisions/adr-006-optional-dependencies.md).
 
-> **Status: pre-implementation.** The design documents are complete; the extras
-> above are the published shape of the install and land with the packaging PR.
-> Nothing is on PyPI yet.
+> **Status: pre-implementation.** The extras above are declared in
+> `pyproject.toml` and the registry behind them resolves a backend on first use,
+> but no backend is written yet — a store that is installed still reports that
+> this build has no module for it. Nothing is on PyPI yet.
 
 ---
 

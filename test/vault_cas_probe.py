@@ -162,13 +162,16 @@ def main() -> int:
     # `None` from a read is not the same as "cas=0 will succeed here."
     zero_after_delete = write(cas=0)
     show("write cas=0 (after soft-delete)", zero_after_delete)
-    expect(zero_after_delete.status == 400, "cas=0 is still refused: the version counter survived the delete")
+    expect(
+        zero_after_delete.status == 400,
+        "cas=0 is still refused: the version counter survived the delete",
+    )
     message_after_delete = " | ".join(zero_after_delete.errors)
     print(f"    message: {message_after_delete!r}")
     expect(
         message_after_delete == message_stale_zero,
-        "same message as an ordinary stale cas=0 -- read()'s None does not distinguish the two cases, "
-        "and the write-time error does not either",
+        "same message as an ordinary stale cas=0 -- read()'s None does not distinguish "
+        "the two cases, and the write-time error does not either",
     )
 
     section("7. never-existed path -- read, for contrast with case 5")
@@ -183,9 +186,13 @@ def main() -> int:
     # to look, because nothing that calls it needs the distinction. Worth
     # knowing for #104 regardless: the information is there if some future
     # caller ever does.
-    never_has_data = isinstance(never.body, dict) and "data" in never.body and never.body["data"] is not None
+    never_has_data = (
+        isinstance(never.body, dict) and "data" in never.body and never.body["data"] is not None
+    )
     deleted_has_data = (
-        isinstance(after_delete.body, dict) and "data" in after_delete.body and after_delete.body["data"] is not None
+        isinstance(after_delete.body, dict)
+        and "data" in after_delete.body
+        and after_delete.body["data"] is not None
     )
     expect(
         not never_has_data and deleted_has_data,
@@ -208,7 +215,7 @@ def main() -> int:
     print(f"    message: {message_malformed!r}")
     expect(
         CAS_MESSAGE_FRAGMENT not in message_malformed,
-        f"message does NOT contain {CAS_MESSAGE_FRAGMENT!r} -- distinguishable from a real conflict by text",
+        f"message does not contain {CAS_MESSAGE_FRAGMENT!r} -- distinct from a real conflict",
     )
 
     section("teardown")

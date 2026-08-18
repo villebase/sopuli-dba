@@ -244,6 +244,25 @@ below.)*
   but the information is there if a future diagnostic ever wants it. Probe is
   `test/vault_cas_probe.py`, run against tier0 (`docker compose --profile
   tier0 up -d`).
+- **Whether `hvac`'s auth surface is worth the dependency it would add** (#103)
+  — **measured, and it moved the recommendation.** The case for `hvac` rested
+  on auth being where a library "earns its keep" (renewal, OIDC, Kubernetes).
+  Against the real tier0 Vault: AppRole is genuinely two calls — read a
+  `role_id`, `POST role_id`+`secret_id` to `auth/approle/login`, no auth
+  header, get a `client_token` straight back, confirmed to authenticate a
+  follow-up call. Kubernetes could only be exercised up to the point a real
+  cluster becomes load-bearing — no control plane exists in this stack, same
+  category as real OCI — but the client-side request needed nothing beyond
+  `{role, jwt}`: Vault accepted a syntactically-valid fake JWT past every
+  check that does not require one (`kubernetes_ca_cert` does have to be a
+  parseable PEM, or `auth/kubernetes/config` itself is refused — the one
+  genuine surprise) and only failed reading claims out of it. Renewal is one
+  POST (`auth/token/renew-self`) with no scheduling logic behind it in `hvac`
+  either, and what sopuli needs is bespoke regardless — #83 renews at each
+  target boundary behind a fence check, not on a background timer. Net: the
+  auth argument for `hvac` is thin across every method in `01-configuration.md`
+  §3a except OIDC's browser/callback dance, which `hvac` does not provide
+  either. Probe is `test/vault_auth_probe.py`, run against tier0.
 
 ## Likely next use cases
 

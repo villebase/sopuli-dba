@@ -157,7 +157,7 @@ the same reason: a property nobody exercises is a property nobody has.
 
 | Shape | Installed | What it proves |
 |---|---|---|
-| base | `pip install .` | the boundary in rule 3: no HTTP client, no database driver, and the offline commands still work |
+| base | `pip install .` | the boundary in rule 3: none of the backends' clients importable, and the offline commands still work |
 | one extra | `pip install ".[<name>]"`, each in turn | that backend imports on its own — no extra silently depends on a sibling |
 | `all` | `pip install ".[all]"` | the shape every other test runs under, and the only one where a full suite is meaningful |
 
@@ -230,11 +230,15 @@ container. `testcontainers-python` handles session-scoped containers; a
   (`02-oracle-privileges.md` §4). A later refactor that introduces a wrapper —
   batching several rotations, say — breaks it silently and no database test would
   notice, because the DDL itself stays clean either way
-- **install shape (ADR-006): base imports no HTTP client and no database
-  driver.** Assert against the resolved environment, not against source — the
-  property is "an operator who ran `pip install sopuli` cannot open a socket",
-  and a grep for imports would pass on a machine where the extras happen to be
-  present. This is the one in the pair that regresses silently: it breaks the
+- **install shape (ADR-006): a base install can import none of the backends'
+  clients** — `httpx`, the OCI SDK, `python-oracledb`, and every name added to
+  an extra afterwards. Assert against the resolved environment, not against
+  source: the property is "an operator who ran `pip install sopuli` cannot open
+  a socket", and a grep for imports would pass on a machine where the extras
+  happen to be present. The assertion is over that dependency set rather than
+  over "an HTTP client", because `urllib` is importable in every Python — the
+  stdlib is base code's own discipline (ADR-006 rule 3), not something a
+  packaging test can hold. This is the one in the pair that regresses silently: it breaks the
   first time someone adds a convenient module-level import, and nothing else
   notices, because the developer environment is `sopuli[all]`
 - **the absent-backend path, per backend (ADR-006).** Resolve a store whose

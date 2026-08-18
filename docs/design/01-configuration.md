@@ -431,7 +431,7 @@ What changes is where it stops:
 
 ```
 $ sopuli creds check --application acme
-error: vault "hcv-prod" declares type "oci", but that backend is not installed
+error: vault "oci-prod" declares type "oci", but that backend is not installed
        install it with:  pip install "sopuli[oci]"
 exit 9
 ```

@@ -42,7 +42,7 @@ command that needs to connect stops with the install line to fix it:
 
 ```
 $ sopuli creds check --application acme
-error: vault "hcv-prod" declares type "oci", but that backend is not installed
+error: vault "oci-prod" declares type "oci", but that backend is not installed
        install it with:  pip install "sopuli[oci]"
 ```
 

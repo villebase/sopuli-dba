@@ -20,6 +20,7 @@ these two properties; until now they had only ever been observed against a fake.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -52,10 +53,27 @@ def run_driver(stack: Any, **options: Any) -> dict[str, Any]:
 
 
 def _start(stack: Any, **options: Any) -> subprocess.Popen[str]:
-    argv = [sys.executable, str(DRIVER), "--addr", stack.addr, "--token", stack.token]
+    """One racer, with the token in its environment and never in its argv.
+
+    Invariant 1: a secret on a command line is visible in `ps` and in the Windows
+    process list. This is a dev-mode root token against a loopback Vault, so the
+    exposure is nil -- but the invariant is unconditional, and a harness is the
+    worst place to demonstrate the pattern, because harnesses get copied.
+
+    It also makes the driver exercise the real chain: `VAULT_TOKEN` is a step in
+    `method: token`'s fall-through (§3a), so the racers authenticate the way a
+    production run does rather than by being handed a `Secret`.
+    """
+    argv = [sys.executable, str(DRIVER), "--addr", stack.addr]
     for key, value in options.items():
         argv += [f"--{key.replace('_', '-')}", str(value)]
-    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "VAULT_TOKEN": stack.token},
+    )
 
 
 def _finish(process: subprocess.Popen[str]) -> str:

@@ -17,29 +17,37 @@ The processes align on a wall-clock instant passed in by the parent rather than
 on a barrier file, because a barrier is a write and a read against the same disk
 the test is already using -- the alignment would be as coarse as the thing being
 measured.
+
+**The token arrives in the environment and never in argv** (invariant 1, P5:
+secrets are visible in ``ps`` and in the Windows process list). It is a dev-mode
+root token against a loopback Vault, so the exposure is nil -- but the invariant
+is unconditional, and a harness is the worst place to demonstrate the pattern,
+because harnesses get copied. Reading it from ``VAULT_TOKEN`` also makes this
+driver exercise the real chain rather than a shortcut: ``connect`` runs
+``method: token`` through :func:`sopuli.material.resolve_token`, which is what a
+production run does.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from typing import Any
 
-from sopuli.config.model import Vault
+from sopuli.config.model import Vault, VaultAuth
 from sopuli.invocation import _classify
 from sopuli.lock.errors import LockError, LockStolenError
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
-from sopuli.secrets import Secret
-from sopuli.store.hashicorp import open_store
+from sopuli.store.hashicorp import connect
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--addr", required=True)
-    parser.add_argument("--token", required=True)
     parser.add_argument("--mount", required=True)
     parser.add_argument("--kv-version", type=int, default=2)
     parser.add_argument("--path", required=True)
@@ -53,15 +61,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hold-seconds", type=float, default=0.0)
     args = parser.parse_args(argv)
 
-    store = open_store(
+    # `connect` rather than `open_store`: the token comes from `VAULT_TOKEN` in
+    # this process's environment, through the same `method: token` chain a real
+    # run uses, so nothing here holds a credential and nothing put one in argv.
+    store = connect(
         Vault(
             name=args.store_name,
             type="hashicorp",
             addr=args.addr,
             mount=args.mount,
             kv_version=args.kv_version,
+            auth=VaultAuth(method="token"),
         ),
-        token=Secret(args.token),
+        env=os.environ,
     )
     manager = LockManager(
         stores={args.store_name: LockableStore(store=store, locking=args.locking)},

@@ -202,8 +202,9 @@ individually.
 
 ### `check`'s default method, and the optional `SYS.USER$` grant
 
-`check` defaults to `--method login` unconditionally (Q1/P2 — **decided in
-#86, 2026-08-18: no**). It never requires `SYS.USER$`: a login attempt plus
+`check` defaults to `--method login` unconditionally — **decided in #86,
+2026-08-18** (Q1: `login`; P2: `SELECT ON SYS.USER$` is not granted by
+default). It never requires `SYS.USER$`: a login attempt plus
 UC-1 §7's mitigations (never retry, reset on success, `ACCOUNT_STATUS`
 reporting) is the whole of the default path, and all of it runs on the base
 grant set in §7 alone.
@@ -224,8 +225,10 @@ When present, the grant is probed as a capability at plan time (invariant 3,
 - **The `LCOUNT` guard** — refuse a login attempt within `--lockout-margin` of
   the account's `FAILED_LOGIN_ATTEMPTS` limit (UC-1 §7 mitigation 2). This is
   the one place the grant changes *behaviour*, not just what's queryable:
-  without it, `--method login` still runs, with mitigations 1/3/5 only, and
-  `check` must report that plainly rather than silently run a weaker guard.
+  without it, `--method login` still runs, on UC-1 §7's remaining runtime
+  mitigations (1/3/6 — never retry, reset on success, `ACCOUNT_STATUS`
+  reporting), and `check` must report the guard's absence plainly rather than
+  silently run a weaker version of it.
 - **`check --method hash`**, if it ships at all — see below.
 
 Under the package model this grant was the thing to avoid — it exposes every

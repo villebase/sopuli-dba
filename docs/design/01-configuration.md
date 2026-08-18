@@ -242,9 +242,13 @@ applications:
 Both `ci` and `scheduled` above assume `--method hash` exists. It doesn't yet:
 `check`'s **default** is `login` unconditionally regardless of profile
 (`02-oracle-privileges.md` §2, decided in #86), and `hash` itself is still an
-open spike (#90). If `hash` is dropped, these profiles fall back to `login`,
-guarded by `LCOUNT` where the optional `SYS.USER$` grant is present — the
-unattended win there is `--lockout-margin`, not skipping the login attempt.
+open spike (#90). These examples are not yet buildable as written — the tool
+does not silently substitute `login` for a `method:` it doesn't recognise, any
+more than it would for a typo. If #90 comes back negative, `hash` is removed
+from the CLI surface entirely and these two examples need editing to
+`method: login`, guarded by `LCOUNT` where the optional `SYS.USER$` grant is
+present — the unattended win there is `--lockout-margin`, not skipping the
+login attempt.
 
 ### Why not the inline form
 

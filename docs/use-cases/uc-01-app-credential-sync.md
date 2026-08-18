@@ -408,14 +408,15 @@ drift it was detecting. Mitigations, all of which must be in place:
    Where present, refuse to attempt a login when the account is already within
    `--lockout-margin` (default 2) of the profile's `FAILED_LOGIN_ATTEMPTS`, and
    report `UNVERIFIABLE` with the reason. Where absent, `check` still runs on
-   mitigations 1/3/5/6 alone, and must say so plainly rather than silently skip
-   the guard.
+   the remaining runtime mitigations (1/3/6 below), and must say so plainly
+   rather than silently skip the guard.
 3. **Reset on success.** A successful login resets the counter, which is why the
    happy path is self-cleaning.
 4. **Offer hash mode** (below) as the safe alternative for high-frequency
    checks, if it ships at all — see #90.
 5. Document the interaction with `PASSWORD_LOCK_TIME` and with profiles that set
-   `FAILED_LOGIN_ATTEMPTS UNLIMITED`.
+   `FAILED_LOGIN_ATTEMPTS UNLIMITED`. (A documentation item, not a runtime
+   check — excluded from the "1/3/6" runtime set above and below.)
 6. **Report `ACCOUNT_STATUS` unconditionally**, from `DBA_USERS` (already in
    the baseline grant set, no extra privilege needed). A login attempt alone
    conflates an expired password, an already-locked account and a genuinely

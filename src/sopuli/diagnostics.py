@@ -6,11 +6,16 @@ that registry, opened by the first warning that needed one: #83 requires the
 ``advisory-only`` weakening to appear in **every run's** output rather than only
 in the config file, which is only useful if a consumer can recognise it.
 
-**J3 itself stays open.** What is decided here is the spelling ``SOPULI-Wnnn``,
-which `03-json-output.md` already used as its example, and that these two
-warnings have codes. Whether *every* warning gets one -- the config layer's §10
-findings still do not -- and how numbers are allocated across categories is the
-part of J3 nobody has answered, and adding two codes does not answer it.
+**J3 itself stays open**, and the way this registry has grown is the evidence.
+What is decided is the spelling ``SOPULI-Wnnn``, which `03-json-output.md`
+already used as its example, and that these four warnings have codes: the two
+the advisory lock needed (#83), a configured-but-uninstalled backend (#130), and
+a store that does not verify its certificate (#135). Every one was allocated by
+hand, at the moment something needed it.
+
+Whether *every* warning gets one -- the config layer's §10 findings still do not
+-- and how numbers are allocated across categories is the part of J3 nobody has
+answered, and four hand-picked numbers answer it no better than two did.
 
 A code, once emitted, is part of the contract in the same way an enum value is
 (``03-json-output.md`` §8): adding one is a minor bump, changing what one means

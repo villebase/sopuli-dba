@@ -227,6 +227,23 @@ below.)*
   question — Q9 decided `rotate --max-age-days` reads only the vault, so
   nothing gates on this — but `status` has no source for the column without it.
   Worth confirming on the 11g XE and 19c images alongside #90.
+- **What a real Vault's compare-and-set conflict looks like on the wire** (#103,
+  #104) — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
+  compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,
+  or `cas: 0` against a path whose latest version was soft-deleted but whose
+  version counter survived), is a 400 with the identical body
+  `{"errors": ["check-and-set parameter did not match the current version"]}`
+  — one string `CasConflictError` can match on regardless of which client
+  wraps the call (#103). A malformed `cas` is a different 400
+  (`"error parsing check-and-set parameter"`), so the match does not misfire.
+  One refinement to `sopuli/store/protocol.py`'s `read()` docstring: the two
+  states it says both collapse to `None` are not actually identical on the
+  wire — a soft-deleted path's 404 still carries a `data.metadata` envelope
+  (`deletion_time`, `version`); a never-written path's 404 is bare. `read()`
+  is right not to expose this — nothing that calls it needs the distinction —
+  but the information is there if a future diagnostic ever wants it. Probe is
+  `test/vault_cas_probe.py`, run against tier0 (`docker compose --profile
+  tier0 up -d`).
 
 ## Likely next use cases
 

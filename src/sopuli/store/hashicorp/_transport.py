@@ -153,6 +153,13 @@ def build_ssl_context(tls: VaultTls | None) -> ssl.SSLContext | bool:
     The config layer has already warned about it (`SOPULI-W004`), so this does
     not warn again -- it is one weakening, and saying it twice trains people to
     read neither.
+
+    **A path that does not resolve is a** :class:`StoreError`, **not a
+    traceback.** These are the one part of ``tls:`` the config layer deliberately
+    does not check -- #135 settled that a block naming a CA file which does not
+    exist is *valid* config, because declaring a store is config and reaching one
+    is not (§3a). Which makes this the first moment anybody can find out, and a
+    stack trace is not how an operator should be told that a filename is wrong.
     """
     if tls is None:
         return True
@@ -161,9 +168,36 @@ def build_ssl_context(tls: VaultTls | None) -> ssl.SSLContext | bool:
     if tls.ca_file is None and tls.ca_path is None and tls.client_cert is None:
         return True
 
-    context = ssl.create_default_context(cafile=tls.ca_file, capath=tls.ca_path)
+    try:
+        context = ssl.create_default_context(cafile=tls.ca_file, capath=tls.ca_path)
+    except (OSError, ssl.SSLError) as error:
+        raise StoreError(
+            f"could not load the CA material this store's `tls:` names: {error}",
+            hint=_tls_hint(("ca_file", tls.ca_file), ("ca_path", tls.ca_path)),
+        ) from error
+
     if tls.client_cert is not None:
         # `client_key` may be absent: a combined PEM holds both halves, which is
         # why §10 refuses only the other direction.
-        context.load_cert_chain(certfile=tls.client_cert, keyfile=tls.client_key)
+        try:
+            context.load_cert_chain(certfile=tls.client_cert, keyfile=tls.client_key)
+        except (OSError, ssl.SSLError) as error:
+            raise StoreError(
+                f"could not load the client certificate this store's `tls:` names: {error}",
+                hint=_tls_hint(("client_cert", tls.client_cert), ("client_key", tls.client_key)),
+            ) from error
     return context
+
+
+def _tls_hint(*keys: tuple[str, str | None]) -> str:
+    """Name the keys and the paths, because the message cannot.
+
+    The underlying error says "No such file or directory" and, depending on the
+    platform, may not include the filename at all -- and it never says which of
+    two keys the file came from. That is the whole of what makes this actionable.
+    """
+    written = [f"{key}: {value}" for key, value in keys if value is not None]
+    return (
+        "checked " + ", ".join(written) + " -- the path is read from where the tool runs, "
+        "which is not where the config file lives if you passed `--config`"
+    )

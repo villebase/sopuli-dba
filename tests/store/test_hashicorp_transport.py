@@ -219,9 +219,50 @@ def test_a_ca_file_produces_a_context_that_loaded_it(tmp_path: Path) -> None:
     assert context.get_ca_certs(), "the bundle should have been loaded, not merely accepted"
 
 
-def test_a_ca_file_that_does_not_exist_fails_loudly(tmp_path: Path) -> None:
-    """Better here than at the first handshake: a store that silently fell back
-    to the system trust store would verify against a CA the config never named,
-    which is the opposite of what writing `ca_file` asks for."""
-    with pytest.raises(FileNotFoundError):
-        build_ssl_context(VaultTls(ca_file=str(tmp_path / "not-there.pem")))
+def test_a_ca_file_that_does_not_exist_is_a_store_error(tmp_path: Path) -> None:
+    """A `StoreError` with a hint, not a traceback.
+
+    Better found here than at the first handshake -- a store that silently fell
+    back to the system trust store would verify against a CA the config never
+    named, which is the opposite of what writing `ca_file` asks for. But #135
+    settled that this path is *valid config*, so reaching the store is the first
+    moment anybody can find out, and a stack trace is not how to say that a
+    filename is wrong.
+
+    This asserted the raw `FileNotFoundError` until Copilot pointed out that the
+    missing-`addr` case two lines away is wrapped and this one was not.
+    """
+    missing = tmp_path / "not-there.pem"
+
+    with pytest.raises(StoreError) as caught:
+        build_ssl_context(VaultTls(ca_file=str(missing)))
+
+    assert "ca_file" in str(caught.value)
+    assert str(missing) in str(caught.value)
+
+
+def test_a_ca_file_that_is_not_a_certificate_is_a_store_error(tmp_path: Path) -> None:
+    """The other way it goes wrong, and the one a file-exists check would miss:
+    the path resolves and holds something that is not a PEM."""
+    junk = tmp_path / "acme-ca.pem"
+    junk.write_text("this is not a certificate", encoding="utf-8")
+
+    with pytest.raises(StoreError) as caught:
+        build_ssl_context(VaultTls(ca_file=str(junk)))
+
+    assert "ca_file" in str(caught.value)
+
+
+def test_a_client_certificate_that_does_not_exist_is_a_store_error(tmp_path: Path) -> None:
+    """Named separately from the CA material, because the fix is a different
+    file: the hint says which of the two keys it was reading."""
+    import certifi
+
+    bundle = tmp_path / "acme-ca.pem"
+    bundle.write_bytes(Path(certifi.where()).read_bytes())
+
+    with pytest.raises(StoreError) as caught:
+        build_ssl_context(VaultTls(ca_file=str(bundle), client_cert=str(tmp_path / "no-cert.pem")))
+
+    assert "client_cert" in str(caught.value)
+    assert "ca_file" not in str(caught.value)

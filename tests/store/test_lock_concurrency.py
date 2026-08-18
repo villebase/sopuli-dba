@@ -41,10 +41,9 @@ SECRET_PATH = "apps/acme/alpha"
 #: clean up.
 LOCK_PATH = f"locks/{SECRET_PATH}"
 
-#: How far ahead the racers are told to start. Long enough that both have
-#: imported sopuli, opened a client and reached the sleep -- an import that has
-#: not finished is not a racer -- and short enough not to pad the suite.
-LEAD_SECONDS = 2.5
+#: How long to wait for a racer to say it is ready before giving up on it.
+#: Generous: this is startup, not the thing being measured.
+READY_TIMEOUT = 60
 
 
 def run_driver(stack: Any, **options: Any) -> dict[str, Any]:
@@ -66,14 +65,44 @@ def _start(stack: Any, **options: Any) -> subprocess.Popen[str]:
     """
     argv = [sys.executable, str(DRIVER), "--addr", stack.addr]
     for key, value in options.items():
-        argv += [f"--{key.replace('_', '-')}", str(value)]
+        flag = f"--{key.replace('_', '-')}"
+        argv += [flag] if value is True else [flag, str(value)]
     return subprocess.Popen(
         argv,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         env={**os.environ, "VAULT_TOKEN": stack.token},
     )
+
+
+def _race(stack: Any, count: int = 2, **options: Any) -> list[dict[str, Any]]:
+    """Start ``count`` racers, hold them at the line, and release them together.
+
+    The handshake is what makes this a race rather than a coincidence. Each
+    racer says `ready` once everything expensive is behind it -- imports, client,
+    token -- so the only thing left when `go` arrives is the acquiring write.
+
+    Aligning on a wall-clock instant instead, which this did first, is a guess
+    about process startup time. It was wrong often enough under a loaded machine
+    to make the gate flaky: a late racer found the other had already acquired
+    *and released*, so both legitimately acquired. A guess cannot be tightened
+    into a guarantee, so it is gone rather than longer.
+    """
+    racers = [
+        _start(stack, handshake=True, correlation_id=f"run-{index}", **options)
+        for index in range(count)
+    ]
+    for racer in racers:
+        assert racer.stdout is not None
+        ready = json.loads(racer.stdout.readline())
+        assert ready == {"ready": True}, ready
+    for racer in racers:
+        assert racer.stdin is not None
+        racer.stdin.write("go\n")
+        racer.stdin.flush()
+    return [json.loads(_finish(racer)) for racer in racers]
 
 
 def _finish(process: subprocess.Popen[str]) -> str:
@@ -120,18 +149,7 @@ def test_exactly_one_of_two_concurrent_runs_takes_the_lock(
     that it lost the race, and -- most importantly -- it must have touched
     nothing, which is what `acquire` releasing on the way out buys.
     """
-    start_at = time.time() + LEAD_SECONDS
-    racers = [
-        _start(
-            vault_stack,
-            mount=vault_stack.kv2_mount,
-            path=lock_path,
-            correlation_id=f"run-{index}",
-            start_at=start_at,
-        )
-        for index in range(2)
-    ]
-    results = [json.loads(_finish(racer)) for racer in racers]
+    results = _race(vault_stack, mount=vault_stack.kv2_mount, path=lock_path)
 
     outcomes = sorted(result["outcome"] for result in results)
     assert outcomes == ["acquired", "denied"], f"both runs took the lock: {results}"
@@ -152,18 +170,7 @@ def test_the_path_holds_one_record_after_a_race(vault_stack: Any, lock_path: str
     on top -- which is precisely the outcome the fence exists to prevent, and it
     would be invisible from the winner's side.
     """
-    start_at = time.time() + LEAD_SECONDS
-    racers = [
-        _start(
-            vault_stack,
-            mount=vault_stack.kv2_mount,
-            path=lock_path,
-            correlation_id=f"run-{index}",
-            start_at=start_at,
-        )
-        for index in range(2)
-    ]
-    results = [json.loads(_finish(racer)) for racer in racers]
+    results = _race(vault_stack, mount=vault_stack.kv2_mount, path=lock_path)
     [winner] = [result for result in results if result["outcome"] == "acquired"]
 
     read = vault_stack.client.get(f"/v1/{vault_stack.kv2_mount}/data/{LOCK_PATH}")
@@ -267,20 +274,13 @@ def test_advisory_only_lets_two_runs_hold_one_lock_at_once(vault_stack: Any) -> 
     secret_path = "apps/acme/beta"
     record = f"locks/{secret_path}"
     vault_stack.client.delete(f"/v1/{vault_stack.kv1_mount}/{record}")
-    start_at = time.time() + LEAD_SECONDS
-    racers = [
-        _start(
-            vault_stack,
-            mount=vault_stack.kv1_mount,
-            kv_version=1,
-            locking="advisory-only",
-            path=secret_path,
-            correlation_id=f"advisory-{index}",
-            start_at=start_at,
-        )
-        for index in range(2)
-    ]
-    results = [json.loads(_finish(racer)) for racer in racers]
+    results = _race(
+        vault_stack,
+        mount=vault_stack.kv1_mount,
+        kv_version=1,
+        locking="advisory-only",
+        path=secret_path,
+    )
     vault_stack.client.delete(f"/v1/{vault_stack.kv1_mount}/{record}")
 
     assert [result["outcome"] for result in results] == ["acquired", "acquired"]

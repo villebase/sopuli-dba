@@ -201,10 +201,10 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
 def build_vault_patches(container: dict[str, Any], *, at: KeyPath) -> tuple[VaultPatch, ...]:
     """A ``vaults:`` block under ``defaults:`` or in a profile (C13, #136).
 
-    Partial entries: everything optional, ``type`` included -- because there is
-    nothing to declare. The store is declared once, at the top level, and this
-    says something *about* it. A name that matches no declaration is refused
-    where every other dangling name in the file is
+    Partial entries: every key optional, and ``type`` not accepted at all --
+    because there is nothing here to declare. The store is declared once, at the
+    top level, and this says something *about* it. A name that matches no
+    declaration is refused where every other dangling name in the file is
     (:mod:`sopuli.config.references`), so the message and the exit code are the
     ones a reader already knows.
 

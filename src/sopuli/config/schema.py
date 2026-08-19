@@ -374,9 +374,13 @@ def _vault_patches() -> Schema:
 
 
 def _vault_patch() -> Schema:
+    types = _vault_types()
     return _object(
         keys=vaults.PATCHABLE_KEYS,
-        types={key: _vault_types()[key] for key in vaults.PATCHABLE_KEYS},
+        # The declaration's own types, narrowed to what a layer may write. Taken
+        # from the same producer rather than rewritten, so `addr` cannot come to
+        # mean one thing in a declaration and another in a patch.
+        types={key: types[key] for key in vaults.PATCHABLE_KEYS},
         description=(
             "What a layer may say about a store it did not declare. `type` is absent "
             "because a store that is HashiCorp from a laptop and OCI from CI is two "

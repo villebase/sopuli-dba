@@ -141,7 +141,8 @@ def harness(request: pytest.FixtureRequest) -> Iterator[Harness]:
     admin.wipe(stack.scratch)
 
 
-#: The three paths every listing test writes, relative to :attr:`Harness.tree`.
+#: The three paths every listing test writes, relative to the prefix the
+#: :func:`tree` fixture yields.
 #:
 #: ``nested/gamma`` is the one that matters: it is the entry a KV mount answers
 #: as a subtree marker rather than a document, so an adapter that forwarded the
@@ -330,12 +331,16 @@ def test_a_prefix_stops_at_a_segment_boundary(harness: Harness, tree: str) -> No
     The failure a bare string comparison gives you, and the reason
     `bounded_prefix` is in the protocol module rather than in one store: two
     applications whose names share a first word are not one prefix.
+
+    The prefix is a boundary and never an entry in its own right, which the same
+    setup asserts: a document written *at* `harness.path` is not below it.
     """
     harness.store.write(harness.path, {"holder": "one"}, cas=0)
 
     listed = harness.store.list(harness.path)
 
     assert not [path for path in listed if path.startswith(tree)]
+    assert harness.path not in listed
 
 
 def test_a_deleted_path_is_still_listed_though_it_reads_as_nothing(

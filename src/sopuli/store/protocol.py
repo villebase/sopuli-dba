@@ -187,11 +187,14 @@ class SecretStore(Protocol):
         Five properties, each of which a caller is entitled to rely on and none
         of which is what a backend's own listing endpoint gives you unaided:
 
-        **What comes back can be handed straight to** :meth:`read`. Full paths,
-        including ``prefix`` itself -- not the tails a KV mount answers with. A
-        caller that had to reassemble them would be reimplementing the store's
-        own addressing, and would get it wrong the first time a prefix did or did
-        not end in a separator.
+        **What comes back can be handed straight to** :meth:`read`. Each entry
+        still carries ``prefix`` on the front of it -- ``list("locks")`` answers
+        ``("locks/apps/acme/db", ...)``, not the bare tails a KV mount returns.
+        ``prefix`` is a boundary and never an entry in its own right: a document
+        written *at* ``locks`` is not below ``locks/`` and is not listed. A caller
+        that had to reassemble these would be reimplementing the store's own
+        addressing, and would get it wrong the first time a prefix did or did not
+        end in a separator.
 
         **Recursive, and leaves only.** KV answers one level at a time and marks
         a subtree with a trailing separator; that is a detail of the endpoint, and

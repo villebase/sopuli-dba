@@ -248,8 +248,19 @@ class Invocation:
 
     @property
     def is_json(self) -> bool:
-        """Whether this run's output is the machine-readable contract."""
-        return self.output_mode is OutputMode.JSON
+        """Whether this run's output is the machine-readable contract.
+
+        Compared against the resolved value rather than through
+        :attr:`output_mode`, so that a format this build does not have answers
+        ``False`` instead of raising. A run can reach here holding one: a profile
+        may write ``output: jsonl`` (#153), :func:`check_output_mode` refuses it,
+        and the refusal travels out through the exit handler -- which asks this
+        question on the way past. Raising there would replace a usage error
+        naming ``profiles.ci.output`` with a ``ValueError`` about an enum, and
+        ``False`` is the true answer in any case: a run that could not read its
+        own ``--output`` emits no document at all.
+        """
+        return bool(self.value("output") == OutputMode.JSON)
 
     @property
     def profile(self) -> str | None:

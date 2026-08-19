@@ -25,7 +25,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli import invocation
 from sopuli.cli import cli
-from sopuli.config import ConfigError
+from sopuli.config import ArgumentError, ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import GLOBAL_PARAMS, INVOCATION_PARAM
 from sopuli.output.document import SCHEMA_VERSION
@@ -653,3 +653,44 @@ def test_the_run_document_still_validates_with_a_profile(runner: CliRunner, esta
     )
 
     assert list(validator.iter_errors(document_of(result))) == []
+
+
+def test_an_output_format_this_build_lacks_is_refused_from_a_profile(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """`jsonl` is in §6's table and not implemented (#9), and a profile may write
+    it -- so the refusal has to survive arriving from layer 3.
+
+    Exit 2, like the same value from `SOPULI_OUTPUT`: what failed is not the file
+    but the run's ability to say anything about itself, and a document is exactly
+    what cannot be produced. The message still names the key.
+
+    The regression this guards is the *second* exception. A profile-supplied
+    value is refused inside the exit handler, which asks the invocation whether
+    the run is JSON before deciding whether to emit a document -- and reading
+    that through `OutputMode` raised `ValueError`, replacing a clean exit 2 with
+    a traceback about an enum on exit 1.
+    """
+    path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
+
+    result = runner.invoke(cli, ["config", "show", "--config", str(path), "--profile", "ci"])
+
+    assert isinstance(result.exception, ArgumentError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    message = str(result.exception)
+    assert "profiles.ci.output" in message
+    assert "'jsonl' is not an output format" in message
+
+
+def test_the_refusal_leaves_stdout_byte_empty(runner: CliRunner, write_config: WriteConfig) -> None:
+    """J7's other half: exit 2 carries no run document, whichever layer wrote the
+    format the tool could not read."""
+    path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
+
+    result = runner.invoke(
+        cli,
+        ["config", "show", "--config", str(path), "--profile", "ci"],
+        catch_exceptions=True,
+    )
+
+    assert result.stdout == ""

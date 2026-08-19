@@ -466,7 +466,6 @@ def test_explain_prints_where_each_setting_came_from(
     assert "settings" in result.output
     assert "safety.dry_run" in result.output
     assert "[env SOPULI_DRY_RUN]" in result.output
-    assert "[env SOPULI_DRY_RUN]" in result.output
 
 
 def test_without_explain_the_output_is_unchanged(runner: CliRunner, show: list[str]) -> None:

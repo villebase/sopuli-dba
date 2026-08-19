@@ -193,12 +193,33 @@ def _from_token_file(path: Path, *, where: str) -> Secret:
     would answer those worse and open a window between the question and the read
     besides. The secret is in memory either way; what the refusal prevents is
     *using* it.
+
+    **The refusal names the file**, in this module's own shape rather than P4's:
+    the path as the operator wrote it goes in the message, and what it expanded
+    to goes in the hint, exactly as :func:`_from_file`'s four failures already do.
+    Not :attr:`~sopuli.config.errors.ConfigError.source`, which the boundary
+    renders as a ``file:line:col`` prefix and which means *the document being
+    parsed* everywhere else -- a token file is not one, and putting it there
+    would print the path in front of the ``vault "..."`` breadcrumb that says
+    which store asked. The flag goes in the hint too: an operator with a token
+    file, a ``token:`` key and two variables in play needs to know which of the
+    four the run had in force.
     """
-    secret = _from_file(path, where=where, wrote=str(path))
+    wrote = str(path)
+    secret = _from_file(path, where=where, wrote=wrote)
+    resolved = path.expanduser()
     try:
-        check_permissions(path.expanduser(), what=f"the token file named by {TOKEN_FLAG}")
+        check_permissions(resolved, what=f"the token file {wrote}")
     except ConfigError as error:
-        raise MaterialError(f"{where}: {error.message}", at=ROOT, hint=error.hint) from error
+        raise MaterialError(
+            f"{where}: {error.message}",
+            at=ROOT,
+            hint="; ".join(
+                part
+                for part in (error.hint, f"{TOKEN_FLAG} named it, looked in {resolved}")
+                if part
+            ),
+        ) from error
     return secret
 
 

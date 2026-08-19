@@ -309,6 +309,39 @@ def test_the_flags_file_is_read_like_any_other(tmp_path: Path) -> None:
     assert resolve_token(ref=None, env={}, token_file=path, where=WHERE).reveal() == "s.from-flag"
 
 
+def test_a_tilde_in_the_flags_path_is_quoted_as_written_and_expanded_in_the_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_from_file`'s split, applied to the refusal as well as to the read.
+
+    The message quotes the line the operator typed and the hint shows where it
+    looked, so a `~` that expanded somewhere surprising is visible rather than
+    silently substituted.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / "tok").write_text("s.exposed", encoding="utf-8")
+    if sys.platform != "win32":
+        (tmp_path / "tok").chmod(0o644)
+    else:
+        subprocess.run(
+            ["icacls", str(tmp_path / "tok"), "/grant", "*S-1-1-0:(R)"],
+            capture_output=True,
+            check=True,
+        )
+
+    written = Path("~/tok")
+
+    with pytest.raises(MaterialError) as caught:
+        resolve_token(ref=None, env={}, token_file=written, where=WHERE)
+
+    message = str(caught.value)
+    # `str(written)`, not the literal: click hands the flag over as a `Path`, so
+    # what the operator "wrote" is already in the platform's own spelling.
+    assert str(written) in message
+    assert str(tmp_path / "tok") in message
+
+
 def test_a_missing_file_named_by_the_flag_says_so_rather_than_ending_the_chain(
     tmp_path: Path,
 ) -> None:
@@ -337,6 +370,11 @@ def test_a_token_file_others_can_read_is_refused(tmp_path: Path) -> None:
     A bearer token 0644 on a shared box is what the config-file check exists to
     prevent, one layer down -- and unlike a Kubernetes projected token, this path
     is one the operator typed for this run and can fix now.
+
+    The refusal has to name the *file*, not only the flag: "chmod 600 the file"
+    is not actionable against a run with a token file, a `token:` key and two
+    variables in play. Which one was in force is the flag's job to say, and which
+    file it was is the path's.
     """
     path = tmp_path / "token"
     path.write_text("s.exposed", encoding="utf-8")
@@ -346,6 +384,7 @@ def test_a_token_file_others_can_read_is_refused(tmp_path: Path) -> None:
         resolve_token(ref=None, env={}, token_file=path, where=WHERE)
 
     message = str(caught.value)
+    assert str(path) in message
     assert "0644" in message
     assert TOKEN_FLAG in message
     assert "chmod 600" in message
@@ -365,7 +404,9 @@ def test_a_token_file_granted_to_a_third_party_is_refused(tmp_path: Path) -> Non
     with pytest.raises(MaterialError) as caught:
         resolve_token(ref=None, env={}, token_file=path, where=WHERE)
 
-    assert TOKEN_FLAG in str(caught.value)
+    message = str(caught.value)
+    assert str(path) in message
+    assert TOKEN_FLAG in message
 
 
 @posix_only

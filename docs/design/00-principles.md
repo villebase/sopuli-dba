@@ -48,15 +48,18 @@ refinement of the same rule and none of them relaxes it:
   an account exists asks what it is in the next breath; UC-1 §5 step 3 is one
   step, not two.
 - **`opts` has no members yet, so it has no type yet.** It is where UC-1 §5's
-  opt-in attributes will go. An untyped bag now would accept `container_clase:
-  ALL` and silently do nothing, which is the failure `01-configuration.md` §10
-  exists to prevent — so `apply_attributes` is named and unimplemented until
-  `creds apply` grows attributes, rather than present and vague.
+  opt-in attributes will go. An untyped bag now would accept a misspelled
+  `container_clase: ALL` and silently do nothing, which is the failure
+  `01-configuration.md` §10 exists to prevent.
 
 The slice implemented is `sopuli/driver/protocol.py`, and it is types and
-vocabulary only: nothing behind it connects yet. `Scope` is the run document's
-`scope` object minus `labels`, which belong to the config rather than to
-anything a driver can observe.
+vocabulary only: nothing behind it connects yet. `apply_attributes` is the one
+operation above that the code deliberately does **not** declare — the same seam
+P2 draws around `health`. A method on the protocol is a demand on every
+implementation, so declaring one nothing calls would oblige the Oracle driver to
+write a body for a caller that does not exist; it arrives with `creds apply`'s
+attributes. `Scope` is the run document's `scope` object minus `labels`, which
+belong to the config rather than to anything a driver can observe.
 
 ### Capability negotiation
 

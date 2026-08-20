@@ -208,7 +208,13 @@ class _Session:
     def scope(self) -> Scope:
         return Scope(type="pdb", container="PDB1")
 
+    #: The one account this stub knows about. Anything else is missing, which is
+    #: what makes ``describe_user``'s ``None`` half testable at all.
+    known = "acme_web_user"
+
     def describe_user(self, account: str) -> UserState | None:
+        if account != self.known:
+            return None
         return UserState(name=account.upper(), status="OPEN")
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
@@ -242,9 +248,18 @@ def test_an_implementation_satisfies_the_protocols_without_importing_them() -> N
 
 def test_a_missing_account_is_none_rather_than_an_error() -> None:
     """UC-1's ``ACCOUNT_MISSING``: a state to report, not a failure to recover
-    from. The tool does not create accounts (Q8)."""
-    assert Session.describe_user.__doc__ is not None
-    assert _Session().describe_user("acme_web_user") is not None
+    from. The tool does not create accounts (Q8), so an absent one is an answer.
+
+    Both directions, because only the pair says anything: ``None`` alone would
+    also be what a stub that had not been written yet returns.
+    """
+    session = _Session()
+
+    assert session.describe_user("acme_batch_user") is None
+
+    found = session.describe_user(_Session.known)
+    assert found is not None
+    assert found.name == "ACME_WEB_USER"
 
 
 def test_the_interface_imports_no_database_client() -> None:

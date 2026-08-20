@@ -36,11 +36,17 @@ the second call answers anyway.
 
 *``opts`` has no members yet, so it has no type yet.* The sketch's
 ``set_password(..., opts)`` is where UC-1 §5's opt-in attributes will go --
-profile assignment, unlock, expiry handling. An untyped bag now would accept
-``container_clase: ALL`` and silently do nothing, which is the failure
-``01-configuration.md`` §10 exists to prevent. ``apply_attributes`` is named in
-:class:`Session` for the same reason it is named in the sketch, and is not
-implemented here: it has no consumer until `creds apply` grows attributes.
+profile assignment, unlock, expiry handling. An untyped bag now would accept a
+misspelled ``container_clase: ALL`` and silently do nothing, which is the
+failure ``01-configuration.md`` §10 exists to prevent.
+
+``apply_attributes`` goes with it, and is **deliberately absent from**
+:class:`Session` rather than declared and unimplemented -- the same seam P2
+draws when it says ``health`` arrives with the secret side. A method on a
+:class:`~typing.Protocol` is a demand on every implementation that satisfies it,
+so declaring one nothing calls would oblige the Oracle driver to write a body
+for a caller that does not exist. It stays in P1's sketch, which describes the
+interface, and arrives here when `creds apply` grows attributes.
 
 What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a

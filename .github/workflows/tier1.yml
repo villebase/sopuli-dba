@@ -84,9 +84,18 @@ jobs:
       # And Vault's KV mounts come from a one-shot init container that
       # `services:` cannot express at all -- it would have to be scripted here,
       # which is the compose file written twice.
+      # Two calls, because `--wait` fails on a container that has *exited* even
+      # when it exited 0, and `vault-init` is a one-shot by design: it mounts kv
+      # (v2) and kv1 (v1) and stops. Waiting on the long-running services by name
+      # and starting the one-shot afterwards says what is meant. Its own success
+      # is not asserted here -- a missing mount surfaces immediately as 404s in
+      # the store tests, which is a better message than anything this step would
+      # print.
       - name: bring up the tier-1 stack
         working-directory: test
-        run: docker compose --profile tier1 up -d --wait
+        run: |
+          docker compose --profile tier1 up -d --wait vault postgres oracle-free
+          docker compose --profile tier1 up -d vault-init
 
       - name: pytest
         env:

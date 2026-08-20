@@ -68,6 +68,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libaio1t64 \
             || sudo apt-get install -y --no-install-recommends libaio1
+          # Ubuntu 24.04's time_t transition renamed the library to
+          # `libaio.so.1t64`, and Instant Client is linked against `libaio.so.1`.
+          # Installing the package is therefore not enough: without this the
+          # client is present, on LD_LIBRARY_PATH, and still gives DPI-1047.
+          lib=$(find /usr/lib -name 'libaio.so.1t64' | head -1)
+          if [ -n "$lib" ] && [ ! -e "${lib%1t64}1" ]; then
+            sudo ln -s "$lib" "${lib%1t64}1"
+            echo "linked ${lib%1t64}1 -> $lib"
+          fi
           curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
           sudo mkdir -p /opt/oracle
           sudo unzip -q instantclient-basiclite-linuxx64.zip -d /opt/oracle

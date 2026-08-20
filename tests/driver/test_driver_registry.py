@@ -20,7 +20,7 @@ from typing import NoReturn
 
 import pytest
 
-from sopuli.config.model import Target
+from sopuli.config.model import ExpandedTarget, Target
 from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, driver_diagnostics
 from sopuli.driver.registry import (
@@ -40,6 +40,16 @@ ORACLE = DRIVERS["oracle"]
 
 def target(name: str = "cdb1-pdb-orders", type_name: str = "oracle") -> Target:
     return Target(name=name, type=type_name, dsn="db.example.com:1521/PDB1")
+
+
+def generated(name: str, *, target_set: str = "appdb") -> ExpandedTarget:
+    """A target that exists because a ``target_sets:`` entry made it.
+
+    Which is most of them: §2's own worked example writes one set and gets
+    twenty-one PDBs. The warning is asserted against these rather than against
+    explicit entries because that is the estate an operator actually has.
+    """
+    return ExpandedTarget(target=target(name), target_set=target_set)
 
 
 # ----------------------------------------------------------- the two lists ---
@@ -149,7 +159,9 @@ def test_config_validate_warns_once_per_type_however_many_targets(
     """
     monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
 
-    found = driver_diagnostics([target("pdb-alpha"), target("pdb-beta"), target("pdb-gamma")])
+    found = driver_diagnostics(
+        [generated("pdb-alpha"), generated("pdb-beta"), generated("pdb-gamma")]
+    )
 
     assert len(found) == 1
     assert found[0].code == MISSING_DRIVER
@@ -159,10 +171,23 @@ def test_config_validate_warns_once_per_type_however_many_targets(
     assert 'pip install "sopuli-dba[oracle]"' in found[0].message
 
 
+def test_the_verb_agrees_with_the_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A warning is read by somebody already having a bad morning; it should at
+    least be a sentence."""
+    monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
+
+    one = driver_diagnostics([generated("pdb-alpha")])[0].message
+    many = driver_diagnostics([generated("pdb-alpha"), generated("pdb-beta")])[0].message
+
+    assert "declares type" in one
+    assert "declare type" in many
+    assert "declares type" not in many
+
+
 def test_one_target_is_named_rather_than_counted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: False)
 
-    found = driver_diagnostics([target("cdb-root-dev")])
+    found = driver_diagnostics([generated("cdb-root-dev")])
 
     assert '"cdb-root-dev"' in found[0].message
     assert "1 targets" not in found[0].message
@@ -171,7 +196,7 @@ def test_one_target_is_named_rather_than_counted(monkeypatch: pytest.MonkeyPatch
 def test_an_installed_driver_warns_about_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sopuli.diagnostics.driver_installed", lambda _driver: True)
 
-    assert driver_diagnostics([target()]) == []
+    assert driver_diagnostics([generated("cdb1-pdb-orders")]) == []
 
 
 def test_the_warning_is_its_own_code_and_is_registered() -> None:

@@ -31,7 +31,7 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
 from sopuli.clock import to_rfc3339
-from sopuli.config.model import Target, Vault
+from sopuli.config.model import ExpandedTarget, Vault
 from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import installed as driver_installed
@@ -282,40 +282,48 @@ def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
     return found
 
 
-def driver_diagnostics(targets: Sequence[Target]) -> list[Diagnostic]:
-    """One warning per configured target whose driver is not installed (E4).
+def driver_diagnostics(targets: Sequence[ExpandedTarget]) -> list[Diagnostic]:
+    """One warning per configured driver that is not installed (E4).
 
     The same decision as :func:`backend_diagnostics`, for the same reason: the
     config is valid and the install is incomplete, and a validator that calls a
     good file broken is less trustworthy for the case it exists to serve.
 
+    **Over the expanded estate, not the ``targets:`` list.** Most targets are
+    generated -- ``01-configuration.md`` §2's own example writes one
+    ``target_sets:`` entry and gets twenty-one PDBs -- so counting the explicit
+    entries would report a number nobody recognises, and an estate that declares
+    *only* generated targets would get no warning at all. Taking
+    :class:`~sopuli.config.model.ExpandedTarget` rather than
+    :class:`~sopuli.config.model.Target` is what makes that a type error instead
+    of a quiet one.
+
     **One per distinct type, not one per target**, which is where this parts
-    company with the store version. An estate generates targets by the dozen
-    from one ``target_sets:`` entry, so twenty-one PDBs missing ``oracledb``
-    would be twenty-one identical lines saying to run one command. A store is
-    written out by hand and its name is the thing to go and look at; a target
-    may not appear in the file at all. So the warning names the type, counts the
+    company with the store version. Twenty-one PDBs missing ``oracledb`` would
+    otherwise be twenty-one identical lines saying to run one command. A store is
+    written out by hand and its name is the thing to go and look at; a target may
+    not appear in the file at all. So the warning names the type, counts the
     targets, and names one of them as the place to start reading.
     """
     seen: dict[str, list[str]] = {}
     for target in targets:
-        if driver_installed(DRIVERS[target.type]):
+        if driver_installed(DRIVERS[target.target.type]):
             continue
-        seen.setdefault(target.type, []).append(target.name)
+        seen.setdefault(target.target.type, []).append(target.name)
 
     found = []
     for type_name, names in sorted(seen.items()):
         driver = DRIVERS[type_name]
-        first = names[0]
-        scope = (
-            f'{len(names)} targets, including "{first}",' if len(names) > 1 else f'target "{first}"'
-        )
+        if len(names) > 1:
+            subject = f'{len(names)} targets, including "{names[0]}", declare'
+        else:
+            subject = f'target "{names[0]}" declares'
         found.append(
             Diagnostic(
                 level="warning",
                 code=MISSING_DRIVER,
                 message=(
-                    f'{scope} declares type "{type_name}", but that driver '
+                    f'{subject} type "{type_name}", but that driver '
                     f"is not installed; install it with: {driver.install_command}"
                 ),
             )

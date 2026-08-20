@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from oracle_harness import Environment, decide_skip, probe, render_matrix
+from oracle_harness import Environment, decide_skip, dsn_host, probe, render_matrix
 from sopuli.store.registry import BACKENDS
 
 #: Writes a config file and returns its path.
@@ -263,16 +263,15 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def _dsn_is_loopback(dsn: str) -> bool:
-    """The same question as `_is_loopback`, asked of an Oracle DSN.
+    """The same question as :func:`_is_loopback`, asked of an Oracle DSN.
 
-    A DSN is `host:port/service` rather than a URL, so it is reshaped into one
-    and handed to the existing check rather than growing a second notion of
-    "loopback" that would recognise `127.0.0.1` and miss `127.0.0.2`. IPv6
-    survives the reshaping because a bracketed host keeps its brackets:
-    `[::1]:1521/X` -> `//[::1]`.
+    A DSN is not a URL, so the host is pulled out by
+    :func:`~oracle_harness.dsn_host` -- which is in the harness because that
+    parsing is the part with edge cases worth testing -- and then reshaped into
+    one. Delegating rather than growing a second notion of "loopback" is what
+    stops this recognising `127.0.0.1` and missing `127.0.0.2`.
     """
-    host = dsn.split("/")[0].rsplit(":", 1)[0]
-    return _is_loopback(f"//{host}")
+    return _is_loopback(f"//{dsn_host(dsn)}")
 
 
 @pytest.fixture(scope="session")

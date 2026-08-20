@@ -18,6 +18,7 @@ from oracle_harness import (
     Environment,
     below,
     decide_skip,
+    dsn_host,
     probe,
     read,
     render_matrix,
@@ -247,3 +248,30 @@ def test_a_marked_test_reaches_the_environment_or_skips_saying_why(
     """
     assert oracle_target.available
     assert PASSWORD_ROLLOVER in oracle_target.capabilities
+
+
+# --------------------------------------------------------------- the dsn ---
+
+
+@pytest.mark.parametrize(
+    ("dsn", "host"),
+    [
+        ("localhost:1521/FREEPDB1", "localhost"),
+        ("//localhost:1521/FREEPDB1", "localhost"),
+        ("tcps://db.example.com:2484/svc", "db.example.com"),
+        ("[::1]:1521/FREEPDB1", "[::1]"),
+        ("localhost/FREEPDB1", "localhost"),
+        ("CDBPROD", "CDBPROD"),
+    ],
+)
+def test_the_host_comes_out_of_every_shape_a_dsn_is_written_in(dsn: str, host: str) -> None:
+    """`//host:port/service` is what most Easy Connect documentation shows, and
+    taking everything before the first `/` gets exactly that case backwards --
+    returning nothing, which reads as *not loopback* and skips the tier-1 suite
+    on the machine most likely to be running it.
+
+    A TNS alias comes back as itself and is therefore treated as remote, which is
+    the conservative reading: it resolves through `TNS_ADMIN` to somewhere this
+    cannot see.
+    """
+    assert dsn_host(dsn) == host

@@ -262,7 +262,7 @@ def test_a_missing_account_is_none_rather_than_an_error() -> None:
     assert found.name == "ACME_WEB_USER"
 
 
-def test_nothing_here_reaches_for_a_database_client() -> None:
+def test_the_no_vendor_client_property_lives_in_the_install_shape_test() -> None:
     """ADR-006 rule 3, pointed at the test that can actually hold it.
 
     This asserted ``"oracledb" not in sys.modules`` until #174, which was never

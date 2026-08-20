@@ -137,6 +137,26 @@ def below(version: str | None, floor: tuple[int, int]) -> bool:
         return False
 
 
+def dsn_host(dsn: str) -> str:
+    """The host out of an Oracle DSN, in any of the shapes one is written in.
+
+    Easy Connect is `host:port/service`, and the `//` prefix and a `tcps://`
+    scheme are both ordinary -- `//localhost:1521/FREEPDB1` is what most
+    documentation shows. Taking everything before the first `/` gets that one
+    exactly backwards and returns nothing at all, which reads as *not loopback*
+    and skips the tier-1 suite on the machine most likely to have it running.
+
+    A bracketed IPv6 host keeps its brackets, since the port is split off the
+    right: `[::1]:1521/X` -> `[::1]`.
+
+    A TNS alias has no host, so it comes back as itself and is treated as
+    remote. That is the conservative reading and the right one: an alias
+    resolves through `TNS_ADMIN` to somewhere this function cannot see.
+    """
+    remainder = dsn.split("://", 1)[-1].lstrip("/")
+    return remainder.split("/")[0].rsplit(":", 1)[0]
+
+
 def read(cursor: object, sql: str) -> bool:
     """Run one probe. Any failure means the capability is absent.
 

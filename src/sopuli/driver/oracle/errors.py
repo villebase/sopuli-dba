@@ -82,7 +82,13 @@ EXPIRED = "EXPIRED"
 #: send the operator to look at the wrong thing entirely.
 NET_RANGE = range(12150, 12700)
 
-_ORA = re.compile(r"^ORA-(\d{5})")
+_ORA = re.compile(r"^ORA-(\d+)")
+
+#: A code at the *start* of a message, which is where Oracle puts the primary
+#: one. Anchored deliberately: an ``ORA-28003`` commonly carries an ``ORA-20000``
+#: from the verify function further along, and the leading code is the one that
+#: says what happened.
+_LEADING_CODE = re.compile(r"^(?:ORA|DPI|DPY)-\d+")
 
 
 @dataclass(frozen=True)
@@ -336,9 +342,31 @@ def from_error(exc: Any) -> Diagnosis:
     :class:`Diagnosis`, because "the driver raised something we cannot read" is
     a failure the operator has to be told about in the same shape as every
     other.
+
+    **Where there is no detail object, the code is read off the front of the
+    message.** An exception whose ``args[0]`` is a plain string is the case:
+    without this it classifies as ``unknown`` and ``database``, so an
+    ``ORA-12154`` that arrived in the shape nobody expected would be reported as
+    a database failure and send the operator to the wrong machine — the exact
+    misclassification :data:`NET_RANGE` exists to prevent. The message itself is
+    never rewritten; only the code is recovered from it.
     """
     detail = exc.args[0] if getattr(exc, "args", None) else None
-    code = str(getattr(detail, "full_code", "") or "")
     message = str(getattr(detail, "message", "") or "") or str(exc)
+    code = _normalise(str(getattr(detail, "full_code", "") or ""))
 
-    return classify(code, message)
+    return classify(code or _leading_code(message), message)
+
+
+def _normalise(code: str) -> str:
+    """``"ORA-01017:"`` and ``" ORA-01017 "`` are the same key as ``"ORA-01017"``.
+
+    Trivial, and worth doing rather than trusting: a row that fails to match
+    because of a trailing colon does not fail loudly -- it silently becomes
+    ``unknown``, which is the one outcome that looks like an ordinary result.
+    """
+    return code.strip().rstrip(":")
+
+
+def _leading_code(message: str) -> str:
+    return matched.group(0) if (matched := _LEADING_CODE.match(message.strip())) else ""

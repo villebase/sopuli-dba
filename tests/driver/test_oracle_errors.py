@@ -23,6 +23,7 @@ from sopuli.driver.oracle.errors import (
     INVALID_CREDENTIALS,
     LOCKED,
     PASSWORD_EXPIRED,
+    PASSWORD_IN_GRACE,
     PASSWORD_REJECTED,
     PASSWORD_REUSED,
     RULES,
@@ -163,6 +164,23 @@ def test_lock_and_expiry_are_states_rather_than_drift() -> None:
     assert classify("ORA-28001", "expired").kind == PASSWORD_EXPIRED
 
 
+def test_a_grace_period_is_informational_and_sets_no_state() -> None:
+    """The row it would be easiest to edit wrongly, because it is the one that
+    is not a failure.
+
+    A password in its grace period still authenticates, so this must **not**
+    carry a state: reporting `EXPIRED` here would tell an operator an account
+    was unusable when it works, and `creds status` is where the warning belongs
+    (UC-1 §9).
+    """
+    found = classify("ORA-28002", "the password will expire within 7 days")
+
+    assert found.kind == PASSWORD_IN_GRACE
+    assert found.category == "database"
+    assert found.state is None
+    assert not found.regenerate
+
+
 def test_a_privilege_failure_names_the_grant_to_go_and_get() -> None:
     found = classify("ORA-01031", "insufficient privileges")
 
@@ -280,6 +298,13 @@ class _DatabaseError(Exception):
     """What the client raises, without importing the client to say so."""
 
 
+class _ColonDetail:
+    """A detail object whose code carries the punctuation of the message."""
+
+    full_code = "ORA-01017:"
+    message = SERVER
+
+
 def test_a_vendor_exception_is_read_structurally() -> None:
     """No ``oracledb`` import, which is what keeps this module in tier 0 and
     importable in a base install."""
@@ -288,6 +313,48 @@ def test_a_vendor_exception_is_read_structurally() -> None:
     assert found.code == "ORA-28007"
     assert found.kind == PASSWORD_REUSED
     assert found.message == _Detail.message
+
+
+def test_a_code_is_recovered_from_the_message_when_there_is_no_detail() -> None:
+    """The case that would otherwise be misplaced rather than merely unknown.
+
+    An exception whose ``args[0]`` is a plain string has no ``full_code``, and
+    without recovery an ``ORA-12154`` reports as a *database* failure — sending
+    the operator to the wrong machine, which is what the Net/TNS range exists to
+    prevent.
+    """
+    found = from_error(_DatabaseError("ORA-12154: TNS:could not resolve the connect identifier"))
+
+    assert found.code == "ORA-12154"
+    assert found.kind == UNREACHABLE
+    assert found.category == "connectivity"
+
+
+def test_recovering_a_code_never_rewrites_the_message() -> None:
+    original = "ORA-01017: invalid username/password; logon denied"
+
+    assert from_error(_DatabaseError(original)).message == original
+
+
+def test_only_the_leading_code_is_read() -> None:
+    """An ORA-28003 commonly carries an ORA-20000 from the verify function
+    further along the message. The first one is what happened; the second is why,
+    and it belongs in the message the operator reads rather than in the row that
+    was matched."""
+    found = from_error(
+        _DatabaseError("ORA-28003: password verification failed\nORA-20000: too short")
+    )
+
+    assert found.code == "ORA-28003"
+    assert found.kind == PASSWORD_REJECTED
+    assert "ORA-20000" in found.message
+
+
+def test_a_code_with_a_trailing_colon_still_matches_its_row() -> None:
+    """A row that fails to match because of punctuation does not fail loudly --
+    it silently becomes `unknown`, which is the one wrong answer that looks like
+    an ordinary result."""
+    assert classify("ORA-01017", SERVER).kind == from_error(_DatabaseError(_ColonDetail())).kind
 
 
 def test_an_exception_carrying_nothing_recognisable_still_diagnoses() -> None:

@@ -71,6 +71,14 @@ class PasswordNotAdmissibleError(DriverError):
     counts and classes, never characters or positions -- and an error that
     quoted the offending character would put part of a credential into whatever
     logs it, which is the failure invariant 2 exists to prevent.
+
+    **The exit code is inherited on purpose**, and the silence is worth breaking
+    because an unset one reads like an oversight beside the neighbours here that
+    do set theirs. P5's table has no code for a policy refusal, and inventing an
+    unpublished number for a scheduler to branch on is not this module's to do:
+    exit codes are a published contract. Generic failure is the honest answer
+    until #172 classifies the whole family, which is where a new code would be
+    argued for if one is ever wanted.
     """
 
     category = "policy"
@@ -250,10 +258,14 @@ def container_clause(account: Identifier, scope: Scope) -> str:
       rather than guesses (CLAUDE.md), so application containers are out of
       scope until somebody runs one.
 
-    An ``unknown`` scope gets a plain statement, not a refusal: the conservative
-    clause is no clause. Whether a scope the driver could not resolve may be
-    acted on at all is a question for the connection (#177), one layer earlier
-    than this.
+    An ``unknown`` scope splits, and the split is the conservative reading of
+    each half. An **ordinary** account gets a plain statement, because the
+    conservative clause is no clause and that is what a non-CDB would have
+    produced anyway. A **common** account is refused, because appending
+    ``CONTAINER=ALL`` is a claim to be in the root and an unresolved scope is
+    precisely not knowing that. Whether a scope the driver could not resolve may
+    be acted on at all is a question for the connection (#177), one layer
+    earlier than this.
     """
     if scope.type in ("app_root", "app_pdb"):
         raise ContainerScopeError(

@@ -55,6 +55,29 @@ WRAPPERS = re.compile(r"\b(begin|declare|execute\s+immediate)\b", re.IGNORECASE)
 #: A bind, in either of the forms Oracle takes.
 BINDS = re.compile(r"(:\w+)|(\?)")
 
+#: A double-quoted run. Matching one is trivial *here* and nowhere else, because
+#: invariant 11 guarantees no quote can appear inside one: the password and the
+#: identifier are both refused if they contain a ``"``, so there is no escaping
+#: to reason about and no ambiguity about where a run ends.
+QUOTED = re.compile(r'"[^"]*"')
+
+
+def structure(sql: str) -> str:
+    """``sql`` with its quoted literals removed.
+
+    Invariants 13 and 14 are properties of the statement's **structure**, not of
+    the text somebody's password happens to contain. ``printable_ascii`` allows
+    both ``:`` and ``?``, so a perfectly good password can carry what looks like
+    a bind marker, and ``BEGIN`` is a legal thing to call an account -- scanning
+    the whole string would fail those and call it a leak.
+
+    Stripping cannot hide a real violation, which is what makes it safe to do: a
+    wrapper or a bind is by definition *outside* the quotes. That claim is not
+    left as an argument -- :func:`test_the_detectors_catch_what_they_are_for`
+    runs both patterns over the statements this module must never produce.
+    """
+    return QUOTED.sub('""', sql)
+
 
 def build() -> Statement:
     return alter_user_password(ACCOUNT, PASSWORD, scope=PDB, limit=UTF8)
@@ -77,7 +100,7 @@ def test_the_statement_is_never_a_plsql_block() -> None:
     sql = build().reveal()
 
     assert sql.startswith("ALTER USER ")
-    assert not WRAPPERS.search(sql)
+    assert not WRAPPERS.search(structure(sql))
 
 
 def test_the_password_is_never_a_bind() -> None:
@@ -88,10 +111,35 @@ def test_the_password_is_never_a_bind() -> None:
     parameter for one -- so the assertion that there is nowhere to put it is
     worth more than the assertion that this call did not.
     """
-    assert not BINDS.search(build().reveal())
+    assert not BINDS.search(structure(build().reveal()))
 
     parameters = set(inspect.signature(alter_user_password).parameters)
     assert parameters == {"account", "secret", "scope", "limit"}
+
+
+def test_the_detectors_catch_what_they_are_for() -> None:
+    """Guards :func:`structure` and both patterns together.
+
+    Stripping quoted literals is only safe if a real violation still shows, so
+    the statements this module must never produce are run through the same
+    pipeline the assertions use. Without this, a stripper that removed too much
+    would leave every test above passing over an empty string.
+    """
+    wrapped = 'BEGIN EXECUTE IMMEDIATE \'ALTER USER "ACME_WEB_USER" IDENTIFIED BY "hunter2"\'; END;'
+    bound = 'ALTER USER "ACME_WEB_USER" IDENTIFIED BY :password'
+
+    assert WRAPPERS.search(structure(wrapped))
+    assert BINDS.search(structure(bound))
+
+
+def test_a_password_that_looks_like_a_bind_is_still_a_password() -> None:
+    """``printable_ascii`` allows ``:`` and ``?``, so this is a password a
+    policy can really produce -- and the statement carrying it is not thereby
+    bound to anything."""
+    statement = alter_user_password(ACCOUNT, Secret(":password?"), scope=PDB, limit=UTF8)
+
+    assert statement.reveal().endswith('IDENTIFIED BY ":password?"')
+    assert not BINDS.search(structure(statement.reveal()))
 
 
 def test_the_statement_redacts_itself_everywhere_but_reveal() -> None:
@@ -165,11 +213,18 @@ def test_an_application_container_is_refused_rather_than_guessed_at(scope_type: 
         assert scope_type in str(refused.value)
 
 
-def test_an_unresolved_scope_gets_the_conservative_clause() -> None:
-    """No clause is the conservative clause. Whether a scope the driver could
-    not resolve may be acted on at all is the connection's question (#177), one
-    layer earlier than this."""
+def test_an_unresolved_scope_gets_the_conservative_reading_of_each_half() -> None:
+    """No clause is the conservative clause for an ordinary account.
+
+    For a common one it is a refusal, and the asymmetry is the point:
+    ``CONTAINER=ALL`` is a claim to be in the root, and an unresolved scope is
+    exactly not knowing that. Whether such a scope may be acted on at all is the
+    connection's question (#177), one layer earlier than this.
+    """
     assert container_clause(ACCOUNT, Scope()) == ""
+
+    with pytest.raises(ContainerScopeError):
+        container_clause(COMMON, Scope())
 
 
 # ---------------------------------------------------------------- refusals ---

@@ -361,7 +361,12 @@ def _why(exc: BaseException) -> str:
 
     diagnosis = from_error(exc)
     if diagnosis.kind == CLIENT_LIBRARY:
-        return f"{diagnosis.code}: Oracle Instant Client is not installed (D3)"
+        # Ours *and* the driver's, not ours instead of it. DPI-1047 names the
+        # library it could not load -- and on Ubuntu 24.04 that is `libaio.so.1`,
+        # which is present under a different name, so "Instant Client is not
+        # installed" is true-sounding and useless on its own. This message is
+        # read by somebody who cannot see the machine.
+        return f"{diagnosis.code}: thick mode could not start (D3) -- {diagnosis.message}"
     return f"{diagnosis.code or type(exc).__name__}: {diagnosis.message}".strip()
 
 

@@ -268,7 +268,8 @@ def _vault_setting(
     type: type,  # noqa: A002 - see `_setting`
     env: tuple[Layer, ...] = (),
 ) -> Setting:
-    """One per-store vault key, at the three layers the file and P3 give it.
+    """One per-store vault key, at the three layers the file gives it and any the
+    environment does.
 
     Every one of them is :attr:`MergePolicy.OVERRIDE`: an address or a mount has
     no safe direction, so the highest layer that wrote one wins. The exception --

@@ -329,6 +329,23 @@ def test_a_store_that_cannot_fence_is_refused_at_plan_time(
         "sopuli.cli.connect",
         lambda vault, *, env, token_file=None: Unfenced(),
     )
+
+    result = run(runner, write_config(CONFIG), str(PROD), "--confirm", "--output", "json")
+    document = json.loads(result.output)
+
+    assert document["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY
+    assert document["error"]["category"] == "capability"
+    assert "no compare-and-set" in document["error"]["message"]
+
+
+def test_an_advisory_only_store_is_refused_whatever_it_supports(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The declaration decides, not the store: `MemoryStore` has `cas`, and this
+    is still refused. Same combination `LockManager.__post_init__` refuses for
+    `break_expired`, and refusing it in one place and allowing it in the other
+    would be two guards disagreeing about one configuration."""
+    with_locks((PROD, held(ago=LAPSED)))
     config = write_config(
         CONFIG.replace(
             "    addr: https://vault-prod.example.com:8200",
@@ -336,11 +353,10 @@ def test_a_store_that_cannot_fence_is_refused_at_plan_time(
         )
     )
 
-    result = run(runner, config, str(PROD), "--confirm", "--output", "json")
+    result = run(runner, config, str(PROD), "--confirm", "--force", "--output", "json")
     document = json.loads(result.output)
 
     assert document["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY
-    assert document["error"]["category"] == "capability"
     assert "advisory-only" in document["error"]["message"]
 
 

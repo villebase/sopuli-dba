@@ -606,8 +606,10 @@ invocation in a refusal is a paste. It writes a `released` record over the held
 one with `cas` set to the version it read — never a delete, for the reason above
 — and the resulting version bump is the fence: the run it was taken from stops at
 its next check rather than applying a password the vault no longer advertises.
-That is what makes the verb survivable, so a store with no compare-and-set is
-refused (exit 5) rather than given a version of it that guarantees nothing.
+That is what makes the verb survivable, so a store that cannot fence is refused
+(exit 5) rather than given a version of it that guarantees nothing — and so is one
+declared `locking: advisory-only`, whatever the mount turns out to support, which
+is the combination `locking.break_expired` is already refused against.
 
 It takes confirmation. A lock that has **not** expired takes `--force` as well,
 and refusing one is exit 7 naming the holder — the answer to a colleague

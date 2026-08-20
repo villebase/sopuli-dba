@@ -586,8 +586,9 @@ def lock_break(
     **It fences whoever held it**, and that is what makes breaking a lock
     survivable rather than reckless: the write bumps the version, so the run that
     held it fails its next fence check and stops before its next `ALTER USER`.
-    Which is also why a store that cannot compare-and-set is refused rather than
-    served a weaker version of this -- there would be nothing to stop the run
+    Which is also why a store that cannot fence is refused rather than served a
+    weaker version of this, and why a store *declared* `locking: advisory-only`
+    is refused whatever it supports -- there would be nothing to stop the run
     whose lock was taken, which is precisely the situation that ends with two
     runners applying different passwords to different targets.
 

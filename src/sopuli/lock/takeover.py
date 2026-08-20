@@ -131,23 +131,51 @@ def check_fenceable(key: LockKey, entry: LockableStore) -> None:
 
     Two stores fail it and the message differs, because the remedies do. A store
     marked ``locking: advisory-only`` is the operator having already conceded
-    there is no fence here (#94), and the only thing to say is that this is what
-    that costs. A store that simply has no ``cas`` capability has a remedy: KV v1
-    can be given versioning in place.
+    there is no fence here (#94), and the only thing to say is what that costs. A
+    store that simply has no ``cas`` capability has a remedy: KV v1 can be given
+    versioning in place.
+
+    **``advisory-only`` is refused on the declaration, without asking the store
+    what it can do**, and the order of the two checks below is that decision. A
+    KV v2 mount marked ``advisory-only`` *would* fence -- the manager keys its
+    compare-and-set on :attr:`~sopuli.lock.manager.LockableStore.can_fence`, not
+    on this key -- so probing first and returning early would let the break
+    through. Three reasons not to:
+
+    * :meth:`~sopuli.lock.manager.LockManager.__post_init__` refuses
+      ``break_expired`` on this key alone, and its comment names this verb as the
+      thing it exists to constrain. Two guards over one combination that disagree
+      about whether it is allowed is worse than either answer.
+    * #149 settled it in the same words -- "``break`` on an ``advisory-only``
+      store is refused ... ``__post_init__`` refuses the same combination for the
+      same reason" -- and that is in the part of the issue that says not to
+      re-open it.
+    * A guard that second-guesses a declaration by probing behaves differently on
+      two configurations that read identically, and the operator cannot see which
+      they have from the file.
+
+    What makes the refusal absolute rather than a weaker guarantee is worth
+    stating, because it is stronger than "there is no fence". A break writes the
+    *holder's own* record transitioned to ``released``, so it keeps their
+    ``correlation_id``. On a store that fences, their next
+    :meth:`~sopuli.lock.manager.LockManager.check` fails on the version and they
+    stop. On a store that does not, ``fence`` is ``None``, the version comparison
+    is skipped, and ``is_mine`` still answers *yes* -- so they would carry on
+    rotating having never been told. Not a quieter warning: no warning at all.
     """
-    if entry.can_fence:
-        return
     if entry.locking == LOCK_ADVISORY_ONLY:
         raise NoFenceError(
             f"{key} cannot be broken: store {key.store!r} is configured "
-            f"`locking: {LOCK_ADVISORY_ONLY}`, so there is no fence",
+            f"`locking: {LOCK_ADVISORY_ONLY}`, so a lock here is not a claim to take",
             hint=(
-                "breaking a lock is survivable because the write fences its holder; "
-                "without compare-and-set the holder would carry on. Move the secret to a "
-                "store with versioning, or clear the record with the store's own client "
-                "and accept that nothing stops the run that held it"
+                "breaking a lock is survivable because the write fences its holder, and "
+                "this store is declared not to fence. Remove `locking: advisory-only` if "
+                "the mount does support compare-and-set, or clear the record with the "
+                "store's own client and accept that nothing stops the run that held it"
             ),
         )
+    if entry.can_fence:
+        return
     raise NoFenceError(
         f"{key} cannot be broken: store {key.store!r} has no compare-and-set",
         hint=(

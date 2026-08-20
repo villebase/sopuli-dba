@@ -574,8 +574,11 @@ question is where their test database lives.
   compare-and-set against version 0 again. The write bumps the version, which
   **fences** whoever held it: their next check fails and they stop before their
   next mutation. That fence is what makes the verb survivable, so a store that
-  cannot compare-and-set is refused with exit 5 rather than served a weaker
-  version of it. It takes confirmation, and a lock that has *not* expired takes
+  cannot fence is refused with exit 5 rather than served a weaker version of it —
+  **including one declared `locking: advisory-only`, whatever it turns out to
+  support.** The declaration decides, because `locking.break_expired` is refused
+  against the same combination (#94) and two guards disagreeing about one
+  configuration is worse than either answer. It takes confirmation, and a lock that has *not* expired takes
   `--force` as well; refusing one is exit 7, naming the holder, in the words a
   rotation losing the same lock would use. It may clear a record at a path this
   config does not declare — the leftover `lock status` surfaces is precisely the

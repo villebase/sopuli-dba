@@ -147,6 +147,26 @@ def test_advisory_only_is_refused_in_its_own_words() -> None:
     assert LOCK_ADVISORY_ONLY in caught.value.message
 
 
+def test_advisory_only_is_refused_even_where_the_store_could_fence() -> None:
+    """The refusal is on the **declaration**, not on what the store turns out to
+    support -- so a KV v2 mount somebody marked `advisory-only` is refused too.
+
+    It is the case that reads as an exception and is not one.
+    `LockManager.__post_init__` refuses `break_expired` on this key alone, and
+    its comment names this verb as the thing it exists to constrain; #149 settled
+    the pair in the same words. A guard that probed the store instead would
+    behave differently on two configurations that read identically, and the
+    operator cannot see which they have from the file.
+    """
+    fenceable = MemoryStore()
+    assert CAS in fenceable.supports()
+
+    with pytest.raises(NoFenceError) as caught:
+        check_fenceable(KEY, LockableStore(store=fenceable, locking=LOCK_ADVISORY_ONLY))
+
+    assert LOCK_ADVISORY_ONLY in caught.value.message
+
+
 def test_a_store_that_can_fence_passes() -> None:
     """The ordinary KV v2 case, asserted so the refusals above are known to be
     about the capability rather than about the check being unconditional."""
@@ -310,3 +330,18 @@ def test_a_lost_race_leaves_the_record_alone() -> None:
     assert stored is not None
     assert stored.data["state"] == HELD
     assert stored.version == 2
+
+
+def test_a_break_on_an_unfenced_store_would_be_invisible_to_its_holder() -> None:
+    """Why the refusal above is absolute rather than a weaker guarantee.
+
+    The released record is the holder's own, so it keeps their `correlation_id`.
+    Where there is a fence, their next check fails on the version. Where there is
+    not, `fence` is `None`, the version comparison is skipped, and `is_mine` still
+    answers *yes* -- so the holder would carry on rotating having never been told.
+    Not a quieter warning: no warning at all, which is what makes a break in such
+    a store a thing the tool must refuse to do rather than do carefully.
+    """
+    broken = record().released()
+
+    assert broken.is_mine("01JTHEIRS") is True

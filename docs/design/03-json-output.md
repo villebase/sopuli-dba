@@ -542,9 +542,11 @@ and **`new_version` is what it produced** — and it is the second that fences t
 previous holder, whose next check now fails. Neither is called a fence: `held[]`'s
 `fence` is a claim *this* run holds, and after a break nobody holds anything.
 `version` is never null here, unlike `found[].version`, because a store that
-cannot compare-and-set is refused before the read (exit 5) — there would be
-nothing to fence with, and an unfenced "break" is deleting somebody's claim while
-they carry on rotating.
+cannot fence is refused before the read (exit 5) — and so is one *declared*
+`locking: advisory-only`, whatever it turns out to support. An unfenced "break"
+is worse than a weaker guarantee: the released record keeps the holder's own
+`correlation_id`, so with no version to compare, their next check would find a
+record that still answers "mine" and they would carry on rotating, never told.
 
 **`applied` is what makes `--dry-run` and the run that follows one shape.** The
 plan *is* the entry; whether it happened is a boolean inside it, so a consumer

@@ -448,11 +448,27 @@ Not tests that can be skipped. A release does not happen if any of these is red.
    reaches it only when the timing cooperates.
 
    The interleaving claim itself — two runs *can* hold one advisory lock at once
-   — moved to `tests/lock/test_manager.py`, where the window can be forced open
-   with a store whose first two reads answer nothing, and where the same
-   interleaving against a store that *has* `cas` still yields one winner. That
-   contrast is what makes it a test about locking rather than about a fake that
-   was told to lie.
+   — moved to `tests/lock/test_manager.py`, where the window can be held open:
+   a store that parks each racer's first read on a barrier until they have all
+   looked, so no write happens until every read has answered against the empty
+   path. Threads are the mechanism and not the subject — **no outcome depends on
+   which one the scheduler favours**, only on an ordering that is imposed, which
+   is what separates this from the coin flip it replaces.
+
+   Two overrides make it honest rather than convenient, and both were forced by
+   review. The barrier is per thread's *first* read, because `release` and
+   `check` read too and a barrier they also hit would deadlock the moment one
+   racer finished first. And `write` takes a lock, because `MemoryStore` has
+   never had to be thread-safe and its compare-and-set is a check followed by an
+   increment — two threads can both pass it and both commit, which would have
+   made the contrast below flaky in exactly the way this whole change is about.
+   A real store serialises writes; the fake does too, now that anything calls it
+   from two threads.
+
+   The contrast is the part that makes it a test about locking rather than about
+   a double that was told to lie: the *same* interleaving against a store that
+   has `cas` still yields exactly one winner. Which one loses is not asserted —
+   an outcome worth asserting is one the ordering cannot change.
 
    The rule this leaves: **tier 0 owns claims about ordering, tier 1 owns claims
    about simultaneity.** Each tier can force exactly one of them, and a claim

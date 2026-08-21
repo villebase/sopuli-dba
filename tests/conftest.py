@@ -332,7 +332,18 @@ def oracle_target() -> Iterator[Environment]:
         # Thick mode, always (D3): thin mode has no Native Network Encryption,
         # so a harness that quietly used it would be exercising a configuration
         # the tool cannot run in.
-        oracledb.init_oracle_client()
+        #
+        # **The tool's own initialisation, not a second copy** (#176). This was
+        # a bare `init_oracle_client()` until `session.initialise` existed, and
+        # the difference is not cosmetic: the tool honours §6's
+        # `SOPULI_ORACLE_CLIENT_LIB_DIR` and the bare call does not, so a
+        # contributor whose Instant Client is anywhere the loader does not
+        # already look could point the tool at it and still watch every tier-1
+        # test skip. Two initialisations mean two answers to "where is the
+        # client", and only one of them was the documented one.
+        from sopuli.driver.oracle import session as oracle_session
+
+        oracle_session.initialise(env=os.environ)
         connection = oracledb.connect(user=USER, password=PASSWORD, dsn=DSN)
         cursor = connection.cursor()
         row = cursor.execute("select version_full from v$instance").fetchone()
@@ -357,7 +368,16 @@ def _why(exc: BaseException) -> str:
     — the failure a contributor hits first, and the one most likely to be
     mistaken for a missing container.
     """
+    from sopuli.driver.oracle.client import ClientError
     from sopuli.driver.oracle.errors import CLIENT_LIBRARY, from_error
+
+    if isinstance(exc, ClientError):
+        # Already worded for exactly this reader (#176): it names DPI-1047, keeps
+        # the driver's own detail about which library failed, and carries the
+        # per-platform remediation. Running it back through `from_error` would
+        # classify our own exception as an unreadable driver failure and throw
+        # the hint away.
+        return exc.message
 
     diagnosis = from_error(exc)
     if diagnosis.kind == CLIENT_LIBRARY:
@@ -368,6 +388,30 @@ def _why(exc: BaseException) -> str:
         # read by somebody who cannot see the machine.
         return f"{diagnosis.code}: thick mode could not start (D3) -- {diagnosis.message}"
     return f"{diagnosis.code or type(exc).__name__}: {diagnosis.message}".strip()
+
+
+@pytest.fixture
+def live_oracle(oracle_target: Environment) -> Environment:
+    """An Oracle that is actually there, or the right kind of skip (#176).
+
+    :func:`oracle_target` yields whatever it found, including a reason it found
+    nothing, because the summary reports the gap rather than hiding it. The
+    autouse gate below turns that into a skip — but only for a test carrying a
+    capability marker, and a test that needs *a database* and no particular
+    capability has none to carry.
+
+    Connecting is the first thing in that shape and will not be the last, so
+    this is a fixture rather than three lines in one module. It counts the skip
+    where :func:`decide_skip` would have, and goes through
+    :func:`_missing_environment`, so a lane running with
+    ``SOPULI_TEST_TIER1=required`` still fails rather than reporting green over
+    an absent database.
+    """
+    reason = decide_skip(oracle_target)
+    if reason is not None:
+        _SKIPS["environment"] += 1
+        _missing_environment(reason)
+    return oracle_target
 
 
 @pytest.fixture(autouse=True)

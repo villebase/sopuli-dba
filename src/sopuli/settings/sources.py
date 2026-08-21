@@ -43,7 +43,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from sopuli.config.errors import ROOT, ConfigError
-from sopuli.config.model import Config, Locking, Safety
+from sopuli.config.model import Config, Locking, ProfileDb, Safety
 from sopuli.config.vault_env import DEFAULT_STORE_SETTING, DEFAULT_STORE_VARIABLE
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution
@@ -153,6 +153,7 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
         found.append(("output", profile.output, f"{at}.output", Layer.PROFILE))
         found.extend(_safety(profile.safety, at=at, layer=Layer.PROFILE))
         found.extend(_locking(profile.locking, at=at, layer=Layer.PROFILE))
+        found.extend(_db(profile.db, at=at, layer=Layer.PROFILE))
 
     found.append(("profile", config.defaults.profile, "defaults.profile", Layer.DEFAULTS))
     found.append((DEFAULT_STORE_SETTING, config.defaults.vault, "defaults.vault", Layer.DEFAULTS))
@@ -170,6 +171,29 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
             Contribution(layer=layer, value=value, detail=detail)
         )
     return contributions
+
+
+def _db(db: ProfileDb, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:
+    """A profile's ``db:`` block -- the two budgets that differ when nobody is
+    waiting (#176).
+
+    Profile-only, and there is no ``defaults.db``: §5's table puts these under a
+    profile because they are properties of *where a run is invoked from*. The
+    same estate reached across a WAN from a CI runner and from a laptop on the
+    same subnet wants two different numbers, and neither is a fact about the
+    target.
+
+    Takes a block rather than an optional one, unlike :func:`_safety` beside it,
+    because :class:`~sopuli.config.model.Profile` builds a
+    :class:`~sopuli.config.model.ProfileDb` whether or not the file wrote a
+    ``db:``. Its fields are ``None`` when unwritten, which the caller already
+    reads as "this layer said nothing" -- so an absent block needs no second
+    spelling here.
+    """
+    return [
+        ("db.connect_timeout_s", db.connect_timeout_s, f"{at}.db.connect_timeout_s", layer),
+        ("db.query_timeout_s", db.query_timeout_s, f"{at}.db.query_timeout_s", layer),
+    ]
 
 
 def _safety(

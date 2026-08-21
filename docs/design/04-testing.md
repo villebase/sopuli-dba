@@ -422,11 +422,42 @@ Not tests that can be skipped. A release does not happen if any of these is red.
 
    The two facts about the *store* rather than the manager are asserted here for
    the same reason: that `cas: 0` fails forever on a deleted path — the fact
-   behind "release writes a record, never deletes one" — and that the real KV v1
-   mount lets two runs hold one lock at once, which is what `lock.mode: none` is
-   honest about. The second asserts a **weakness** on purpose: a run reporting
-   `cas` there would be claiming a guarantee it does not have, and that is the
-   failure worth catching.
+   behind "release writes a record, never deletes one" — and what a KV v1 mount
+   with no compare-and-set does and does not promise. The second asserts a
+   **weakness** on purpose: a run reporting `cas` there would be claiming a
+   guarantee it does not have, and that is the failure worth catching.
+
+   **The split cuts both ways, and #197 is the case that showed it.** That
+   second gate asserted that two racers on the KV v1 mount *both* acquire, and
+   it was asserting a coin flip: `acquire` reads the path before it writes on
+   `advisory-only` exactly as on `required`, so a racer whose read lands after
+   the other's write is correctly denied. Both outcomes are legal and which one
+   appears is a fact about how a loaded machine schedules two processes. It
+   passed for as long as it did because an idle machine wins the toss every
+   time; the lane added in #184 is what finally ran it enough to lose.
+
+   So a claim about an **interleaving** — two runs both reading before either
+   writes — cannot be made from this side either, for the mirror of the reason
+   the one-winner claim cannot be made from tier 0. The window is inside
+   `acquire`, no handshake reaches into it, and two processes released together
+   land in it only sometimes. What tier 1 asserts is what holds on every run
+   whatever the scheduler did: nobody is handed a fence, every run reports
+   `mode: none`, and a denial is never a *lost* compare-and-set, because on a
+   mount without `cas` there is none to lose. That last one is also asserted
+   deterministically beside it, against a planted record, since the raced form
+   reaches it only when the timing cooperates.
+
+   The interleaving claim itself — two runs *can* hold one advisory lock at once
+   — moved to `tests/lock/test_manager.py`, where the window can be forced open
+   with a store whose first two reads answer nothing, and where the same
+   interleaving against a store that *has* `cas` still yields one winner. That
+   contrast is what makes it a test about locking rather than about a fake that
+   was told to lie.
+
+   The rule this leaves: **tier 0 owns claims about ordering, tier 1 owns claims
+   about simultaneity.** Each tier can force exactly one of them, and a claim
+   asserted on the wrong side of that line is a coin flip whether or not it has
+   started losing yet.
 
    A tool that lets two runs rotate one credential at once is worse than one with
    no locking at all, because the second at least does not claim otherwise.

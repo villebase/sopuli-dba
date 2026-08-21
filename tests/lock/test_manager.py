@@ -12,6 +12,7 @@ Vault. What it checks is a version comparison, so it belongs here first.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -407,6 +408,32 @@ def advisory(store: MemoryStore, **kwargs: Any) -> LockManager:
     return manager(store, locking=LOCK_ADVISORY_ONLY, **kwargs)
 
 
+@dataclass
+class ReadsBeforeWrites(MemoryStore):
+    """A store where the first ``blind_reads`` reads land before any write.
+
+    The window that makes ``advisory-only`` unsafe, forced rather than waited
+    for. ``acquire`` reads the path and then writes it, so two runs both end up
+    holding one lock exactly when both reads happen before either write -- and
+    whether that occurs across two real processes is a matter of how a loaded
+    machine schedules them. #197: a tier-1 test that asserted it directly was
+    asserting a coin flip, and lost the toss.
+
+    Expressed as *reads that answer nothing* rather than as a paused write,
+    because that is what the racers actually experienced: each looked, saw an
+    empty path, and was entitled to take it. Nothing about the write is changed,
+    which is what leaves the CAS contrast below meaningful.
+    """
+
+    blind_reads: int = 0
+
+    def read(self, path: str) -> Stored | None:
+        if self.blind_reads:
+            self.blind_reads -= 1
+            return None
+        return super().read(path)
+
+
 def test_a_store_without_compare_and_set_still_writes_a_record() -> None:
     """A courtesy that catches operators minutes apart and misses two CI jobs
     in the same second -- which is what `mode: none` tells a consumer."""
@@ -450,6 +477,52 @@ def test_an_advisory_lock_notices_it_was_overwritten() -> None:
 
     with pytest.raises(LockStolenError):
         run.check()
+
+
+def test_two_advisory_runs_can_hold_one_lock_at_once() -> None:
+    """What ``mode: none`` costs, stated as a test rather than as a warning.
+
+    Both runs look at an empty path, both are entitled to take it, and nothing
+    stops the second write. That is the concession an operator makes with
+    ``locking: advisory-only`` (#94) and it is the reason the mode is reported
+    -- a run claiming ``cas`` here would be claiming a guarantee it does not
+    have.
+
+    **Tier 0 because only tier 0 can force it** (#197). The window is between a
+    racer's read and its write, and no handshake reaches inside ``acquire`` to
+    hold it open; two processes released at one instant land in it *sometimes*.
+    Driving the store in a chosen order is what this tier is for, and it is what
+    the concurrency gate's own header says it is for.
+    """
+    store = ReadsBeforeWrites(capabilities=frozenset(), blind_reads=2)
+    mine = advisory(store)
+    theirs = advisory(store, correlation_id="01JTHEIRS")
+
+    mine.acquire([KEY])
+    theirs.acquire([KEY])
+
+    assert mine.mode == theirs.mode == MODE_NONE
+    assert mine.held[0].fence is None
+    assert theirs.held[0].fence is None
+    # Two writes to one path, which is the damage: the second record is on top
+    # and the first run has no way to notice until its next `check`.
+    assert record_at(store)["correlation_id"] == "01JTHEIRS"
+
+
+def test_the_same_window_produces_one_winner_where_there_is_a_fence() -> None:
+    """The contrast that makes the test above about locking rather than about a
+    store that was told to lie.
+
+    Identical interleaving -- both reads answer nothing -- against a store that
+    *has* compare-and-set. The second write carries `cas: 0`, the path is no
+    longer empty, and the run is denied. So the window is real in both cases and
+    only the fence closes it, which is exactly what `advisory-only` gives up.
+    """
+    store = ReadsBeforeWrites(blind_reads=2)
+    manager(store).acquire([KEY])
+
+    with pytest.raises(LockDeniedError):
+        manager(store, correlation_id="01JTHEIRS").acquire([KEY])
 
 
 def test_breaking_expired_locks_is_refused_where_there_is_no_fence() -> None:

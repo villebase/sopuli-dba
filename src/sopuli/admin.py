@@ -76,16 +76,25 @@ LOW_ASSURANCE = frozenset({ENV})
 #: and #183 owns what a credential document looks like.
 RefReader = Callable[[SecretRef], Secret]
 
-#: Asks for one target's admin password. Takes the target rather than a line of
-#: text so that the prompter can decide whether it has been asked this before --
-#: see :class:`PasswordPrompt`.
-Prompter = Callable[[ExpandedTarget], Secret]
+#: Asks for one target's admin password, given the target and the username the
+#: connection will actually use. Both, rather than a line of text, so that the
+#: prompter can decide whether it has been asked this before -- see
+#: :class:`PasswordPrompt`.
+Prompter = Callable[[ExpandedTarget, "str | None"], Secret]
 
-#: Shows a line and reads a password without echoing it. :func:`getpass.getpass`
-#: is the obvious implementation and this module does not name it: importing it
-#: here would put a terminal read one import away from the config layer, and the
-#: CLI is where the decision *whether there is a terminal* already lives.
-Asker = Callable[[str], Secret]
+#: Shows a line and reads a password without echoing it. Returns a ``str``, and
+#: that is deliberate: :func:`getpass.getpass` is the obvious implementation and
+#: this makes it usable *as it is*, with :class:`PasswordPrompt` wrapping the
+#: result exactly once. A contract returning :class:`~sopuli.secrets.Secret`
+#: would put that wrapping in every supplier instead, which is invariant 2's own
+#: argument against remembering to mask at a call site: a supplier that forgot
+#: would put a bare ``str`` into :attr:`Resolved.credential`, where ``repr``
+#: prints it in full.
+#:
+#: The module does not name :mod:`getpass` itself. Importing it here would put a
+#: terminal read one import away from the config layer, and the CLI is where the
+#: decision *whether there is a terminal* already lives.
+Asker = Callable[[str], str]
 
 
 class AdminCredentialError(ConfigError):
@@ -147,13 +156,13 @@ class Resolved:
         return self.method in LOW_ASSURANCE
 
 
-def prompt_key(target: ExpandedTarget) -> str:
+def prompt_key(target: ExpandedTarget, username: str | None) -> str:
     """What makes two targets share one prompt.
 
     Prompting per target for the same credential is a bad experience -- an
     estate of thirty-four generated targets would ask thirty-four times -- and
     caching across targets that only *look* alike is a worse bug. So the key is
-    **what the config declares**, not what the credential turns out to be:
+    **what the configuration declares**, not what the credential turns out to be:
 
     * the **declaration site** -- ``target_sets.appdb`` for a generated target,
       ``targets[2]`` for an explicit one. One ``target_sets:`` entry is one
@@ -161,10 +170,22 @@ def prompt_key(target: ExpandedTarget) -> str:
       is covered by that act. Two explicit targets are two acts and are asked
       twice, even where the blocks are identical, because the file gives no
       reason to believe they are the same credential;
-    * the **rendered username**, which is what distinguishes generated targets
-      from one another. ``username: C##SOPULI_SVC`` across a CDB renders the
-      same everywhere and is one credential; ``username: sopuli_{tenant}``
-      renders differently per target and is thirty-four.
+    * the **effective username** -- what :func:`_username` resolved, so §6's
+      ``SOPULI_DB_ADMIN_USER`` counts. That is what distinguishes generated
+      targets from one another: ``username: C##SOPULI_SVC`` across a CDB
+      resolves the same everywhere and is one credential, while ``username:
+      sopuli_{tenant}`` resolves differently per target and is thirty-four.
+
+    **Effective and not as-written**, which is the correction #196's review
+    forced. Taking it from the file alone gets both halves wrong at once. The
+    operator would be asked for one account's password while the connection used
+    another, since the variable overrides ``username:`` -- so the two differ
+    exactly when it is set. And the key would separate targets the variable has
+    just made identical: ``sopuli_{tenant}`` under ``SOPULI_DB_ADMIN_USER`` is
+    one account on thirty-four databases, and would have been asked about
+    thirty-four times. The variable is P3's layer 3 and the file is layer 4;
+    "what the configuration declares" means the resolved value, not the lowest
+    layer that had an opinion.
 
     Deliberately **not** the username alone, which is the tempting key and the
     unsafe one: two PDBs can hold same-named local accounts with different
@@ -178,8 +199,6 @@ def prompt_key(target: ExpandedTarget) -> str:
     authentication error naming the target -- diagnosable, and the file's own
     claim being wrong rather than this cache guessing.
     """
-    admin = target.target.admin
-    username = admin.username if admin is not None else None
     # NUL, because it cannot appear in a key path or in an Oracle identifier and
     # so cannot be smuggled in by a username to make two distinct keys collide.
     return "\x00".join((str(declared_at(target, "admin")), username or ""))
@@ -197,26 +216,36 @@ class PasswordPrompt:
     which keeps this testable without a pty and keeps the terminal read at the
     CLI boundary where the decision about whether there *is* a terminal already
     lives.
+
+    **This is where a typed password becomes a** :class:`~sopuli.secrets.Secret`,
+    and it is the only place. The asker hands back a ``str`` because every
+    terminal read does; wrapping it here means a supplier cannot forget to, and
+    invariant 2's guarantee holds for the prompt source the way it holds for the
+    other three -- structurally, rather than because each caller remembered.
     """
 
     ask: Asker
     _answers: dict[str, Secret] = field(default_factory=dict, repr=False)
 
-    def __call__(self, target: ExpandedTarget) -> Secret:
-        key = prompt_key(target)
+    def __call__(self, target: ExpandedTarget, username: str | None) -> Secret:
+        key = prompt_key(target, username)
         if key not in self._answers:
-            self._answers[key] = self.ask(self.line(target))
+            self._answers[key] = Secret(self.ask(self.line(target, username)))
         return self._answers[key]
 
     @staticmethod
-    def line(target: ExpandedTarget) -> str:
+    def line(target: ExpandedTarget, username: str | None) -> str:
         """What the operator is asked, naming both halves of the answer.
 
         The account *and* the target, because an estate prompts for several and
         "Password:" on its own is a question nobody can answer correctly twice.
+
+        ``username`` is the **effective** one, for the reason
+        :func:`prompt_key` gives: being asked for ``C##SOPULI_SVC`` and then
+        connecting as whatever ``SOPULI_DB_ADMIN_USER`` says is a question whose
+        answer is wrong through no fault of the person answering it.
         """
-        admin = target.target.admin
-        who = (admin.username if admin is not None else None) or "the admin account"
+        who = username or "the admin account"
         return f"password for {who} on {target.name}: "
 
 
@@ -271,7 +300,7 @@ def resolve(
         secret = _read_ref(auth.secret, target=target, read_ref=read_ref)
         source = f"vault ref {auth.secret}"
     elif auth.method == PROMPT:
-        secret, source = _from_prompt(target, prompt=prompt)
+        secret, source = _from_prompt(target, username=username, prompt=prompt)
     elif auth.method == ENV:
         secret, source = _from_env(auth, target=target, env=env)
     else:  # pragma: no cover - `ADMIN_METHODS` is a closed set the builder checks
@@ -290,7 +319,9 @@ def resolve(
 # ------------------------------------------------------------------ sources ---
 
 
-def _from_prompt(target: ExpandedTarget, *, prompt: Prompter | None) -> tuple[Secret, str]:
+def _from_prompt(
+    target: ExpandedTarget, *, username: str | None, prompt: Prompter | None
+) -> tuple[Secret, str]:
     """``method: prompt`` -- and the refusal when there is nobody there.
 
     **A prompt never reads stdin**, which is how P5's "one stream, one reader"
@@ -316,7 +347,7 @@ def _from_prompt(target: ExpandedTarget, *, prompt: Prompter | None) -> tuple[Se
                 f"reading ${ADMIN_PASSWORD_ENV}, or `auth: external` with a wallet"
             ),
         )
-    return prompt(target), "an interactive prompt"
+    return prompt(target, username), "an interactive prompt"
 
 
 def _from_env(

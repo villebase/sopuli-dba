@@ -818,13 +818,14 @@ so the two sources are mutually exclusive by construction and no ordering
 between them ever has to be defined.
 
 **One prompt covers every target that declares the same credential**, keyed on
-*what the config declares* rather than on the username. The key is the
-declaration site plus the rendered username:
+*what the configuration declares* rather than on the username. The key is the
+declaration site plus the **effective** username — the one `SOPULI_DB_ADMIN_USER`
+may have overridden, not the one the file wrote:
 
 - one `target_sets:` entry is one operator writing one credential down once, so
   its thirty-four generated targets are asked once. `username: sopuli_{tenant}`
-  renders differently per target and is therefore thirty-four credentials, asked
-  separately — which is why the rendered name is in the key;
+  resolves differently per target and is therefore thirty-four credentials,
+  asked separately — which is why the username is in the key at all;
 - two explicit targets are two acts of writing it down and are asked twice even
   where the blocks are identical, because the file gives no reason to believe
   they are the same credential;
@@ -837,6 +838,22 @@ declaration site plus the rendered username:
   entirely. Where those databases really do hold different passwords the run
   fails at the second one with an authentication error naming the target —
   diagnosable, and the file's own claim being wrong rather than a cache guessing.
+
+Taking the username from the file alone gets two things wrong at once, which is
+why *effective* is stated rather than implied. The operator would be **asked
+about one account and connected as another**, since the variable outranks
+`username:` — the two differ exactly when it is set, and the mismatch surfaces
+as ORA-01017 long after the prompt. And the key would **separate targets the
+variable has just made identical**: `sopuli_{tenant}` under
+`SOPULI_DB_ADMIN_USER` is one account on thirty-four databases, asked about
+thirty-four times. "What the configuration declares" means the value P3's layers
+resolve to, not the lowest layer that had an opinion.
+
+The prompt is also the one place a typed password becomes a `Secret`. The asker
+the CLI supplies returns a `str`, because every terminal read does — `getpass`
+included — and it is wrapped once, at that boundary, rather than by each
+supplier. Invariant 2's argument applies to itself here: a supplier that forgot
+would put a bare `str` where `repr` prints it in full.
 
 **`SOPULI_DB_ADMIN_USER` outranks a target's `username:`** (P3: the environment
 is layer 3, the file is layer 4) and is **ignored under `external`**. The

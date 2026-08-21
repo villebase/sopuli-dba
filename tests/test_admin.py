@@ -72,8 +72,13 @@ def refuse_ref(ref: object) -> Secret:
     raise AssertionError(f"the store was consulted for {ref!r}")
 
 
-def refuse_prompt(_: ExpandedTarget) -> Secret:
+def refuse_prompt(_: ExpandedTarget, __: str | None) -> Secret:
     raise AssertionError("the operator was asked and should not have been")
+
+
+def answer(_: ExpandedTarget, __: str | None) -> Secret:
+    """A prompter that types the same thing every time."""
+    return Secret("typed")
 
 
 def env(**values: str) -> Mapping[str, str]:
@@ -82,14 +87,18 @@ def env(**values: str) -> Mapping[str, str]:
 
 class Recorder:
     """An :data:`~sopuli.admin.Asker` that answers everything and remembers what
-    it was asked, so "asked once" and "asked twice" are countable."""
+    it was asked, so "asked once" and "asked twice" are countable.
+
+    Returns a bare ``str``, which is the contract and not a shortcut: every real
+    terminal read does, `getpass.getpass` included.
+    """
 
     def __init__(self) -> None:
         self.lines: list[str] = []
 
-    def __call__(self, line: str) -> Secret:
+    def __call__(self, line: str) -> str:
         self.lines.append(line)
-        return Secret("typed")
+        return "typed"
 
 
 # ------------------------------------------------------------------ external ---
@@ -210,7 +219,7 @@ def test_prompt_asks_and_returns_what_it_was_told() -> None:
         target(admin=admin("prompt")),
         env=env(),
         read_ref=refuse_ref,
-        prompt=lambda _: Secret("typed"),
+        prompt=answer,
     )
 
     assert resolved.credential.secret == Secret("typed")
@@ -280,7 +289,10 @@ def test_one_target_set_is_asked_once() -> None:
     prompt = PasswordPrompt(ask=ask)
 
     for tenant in ("alpha", "beta", "gamma"):
-        prompt(target(name=f"appdb-qa-{tenant}", admin=admin("prompt"), target_set="appdb"))
+        prompt(
+            target(name=f"appdb-qa-{tenant}", admin=admin("prompt"), target_set="appdb"),
+            "C##SOPULI_SVC",
+        )
 
     assert len(ask.lines) == 1
 
@@ -293,8 +305,8 @@ def test_two_explicit_targets_are_asked_twice_even_when_identical() -> None:
     ask = Recorder()
     prompt = PasswordPrompt(ask=ask)
 
-    prompt(target(name="cdb-root-dev", admin=admin("prompt"), index=0))
-    prompt(target(name="cdb-root-qa", admin=admin("prompt"), index=1))
+    prompt(target(name="cdb-root-dev", admin=admin("prompt"), index=0), "C##SOPULI_SVC")
+    prompt(target(name="cdb-root-qa", admin=admin("prompt"), index=1), "C##SOPULI_SVC")
 
     assert len(ask.lines) == 2
 
@@ -310,7 +322,7 @@ def test_a_templated_username_is_a_credential_per_target() -> None:
         name="appdb-beta", admin=admin("prompt", username="sopuli_beta"), target_set="appdb"
     )
 
-    assert prompt_key(alpha) != prompt_key(beta)
+    assert prompt_key(alpha, "sopuli_alpha") != prompt_key(beta, "sopuli_beta")
 
 
 def test_the_key_is_not_the_username_alone() -> None:
@@ -321,7 +333,7 @@ def test_the_key_is_not_the_username_alone() -> None:
     one = target(name="pdb-orders", admin=admin("prompt", username="sopuli_svc"), index=0)
     other = target(name="pdb-billing", admin=admin("prompt", username="sopuli_svc"), index=1)
 
-    assert prompt_key(one) != prompt_key(other)
+    assert prompt_key(one, "sopuli_svc") != prompt_key(other, "sopuli_svc")
 
 
 def test_the_dsn_is_not_in_the_key() -> None:
@@ -334,13 +346,68 @@ def test_the_dsn_is_not_in_the_key() -> None:
         name="appdb-beta", admin=admin("prompt"), dsn="b.example.com:1521/B", target_set="s"
     )
 
-    assert prompt_key(one) == prompt_key(other)
+    assert prompt_key(one, "C##SOPULI_SVC") == prompt_key(other, "C##SOPULI_SVC")
+
+
+def test_the_prompt_asks_about_the_account_the_connection_will_use() -> None:
+    """#196's review. §6's variable overrides `username:`, so a prompt built
+    from the file alone asks for one account's password and then connects as
+    another -- a question whose answer is wrong through no fault of the person
+    answering it, and one that surfaces as ORA-01017 much later."""
+    ask = Recorder()
+    resolved = resolve(
+        target(admin=admin("prompt", username="C##SOPULI_SVC")),
+        env=env(**{ADMIN_USER_ENV: "C##OTHER_SVC"}),
+        prompt=PasswordPrompt(ask=ask),
+    )
+
+    assert resolved.credential.username == "C##OTHER_SVC"
+    assert "C##OTHER_SVC" in ask.lines[0]
+    assert "C##SOPULI_SVC" not in ask.lines[0]
+
+
+def test_the_username_variable_makes_one_credential_of_a_templated_set() -> None:
+    """The other half of taking the *effective* username: the variable can make
+    targets identical that the file wrote apart, and a key built from the file
+    would ask thirty-four times about one account."""
+    ask = Recorder()
+    prompt = PasswordPrompt(ask=ask)
+    override = "C##OVERRIDE"
+
+    for tenant in ("alpha", "beta", "gamma"):
+        prompt(
+            target(
+                name=f"appdb-{tenant}",
+                admin=admin("prompt", username=f"sopuli_{tenant}"),
+                target_set="appdb",
+            ),
+            override,
+        )
+
+    assert len(ask.lines) == 1
+
+
+def test_a_typed_password_is_wrapped_where_it_is_read() -> None:
+    """An asker returns a `str`, because every terminal read does -- `getpass`
+    included. Wrapping it here rather than in each supplier is invariant 2's own
+    argument: a supplier that forgot would put a bare `str` into `credential`,
+    where `repr` prints the password in full.
+    """
+    resolved = resolve(
+        target(admin=admin("prompt")),
+        env=env(),
+        prompt=PasswordPrompt(ask=lambda _: "hunter2"),
+    )
+
+    assert isinstance(resolved.credential.secret, Secret)
+    assert resolved.credential.secret == Secret("hunter2")
+    assert "hunter2" not in repr(resolved)
 
 
 def test_the_prompt_line_names_the_account_and_the_target() -> None:
     """An estate prompts for several. "Password:" on its own is a question
     nobody can answer correctly twice."""
-    line = PasswordPrompt.line(target(admin=admin("prompt")))
+    line = PasswordPrompt.line(target(admin=admin("prompt")), "C##SOPULI_SVC")
 
     assert "C##SOPULI_SVC" in line
     assert "cdb-root-qa" in line
@@ -348,7 +415,7 @@ def test_the_prompt_line_names_the_account_and_the_target() -> None:
 
 def test_the_prompt_line_survives_a_target_with_no_username() -> None:
     """§6 lets `SOPULI_DB_ADMIN_USER` supply it, so the file need not."""
-    line = PasswordPrompt.line(target(admin=admin("prompt", username=None)))
+    line = PasswordPrompt.line(target(admin=admin("prompt", username=None)), None)
 
     assert "cdb-root-qa" in line
 
@@ -443,7 +510,7 @@ def test_every_declared_method_resolves_to_something(method: str) -> None:
         target(admin=credential),
         env=env(**{ADMIN_PASSWORD_ENV: "hunter2"}),
         read_ref=lambda _: Secret("from-the-vault"),
-        prompt=lambda _: Secret("typed"),
+        prompt=answer,
     )
 
     assert isinstance(resolved, Resolved)

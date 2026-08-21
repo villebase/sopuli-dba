@@ -390,7 +390,7 @@ def test_a_source_cannot_wire_a_setting_by_producing_it(
 
 
 def test_a_profile_block_no_command_consults_yet_still_loads(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, write_config: Any
 ) -> None:
     """The other direction from the test above, and the one that was missing.
 
@@ -404,8 +404,10 @@ def test_a_profile_block_no_command_consults_yet_still_loads(
     above -- but of the far more ordinary thing the guard can break: a key the
     file is allowed to contain.
     """
-    config = tmp_path / "sopuli.yaml"
-    config.write_text(
+    # `write_config` rather than a hand-written file: it sets 0600, which P4's
+    # permission check requires on POSIX. Writing it by hand passed on Windows
+    # and failed on every Linux runner -- which is what the OS matrix is for.
+    config = write_config(
         "version: 1\n"
         "vaults:\n"
         "  vault-dev:\n"
@@ -415,8 +417,7 @@ def test_a_profile_block_no_command_consults_yet_still_loads(
         "  ci:\n"
         "    db:\n"
         "      connect_timeout_s: 90\n"
-        "      query_timeout_s: 600\n",
-        encoding="utf-8",
+        "      query_timeout_s: 600\n"
     )
 
     result = runner.invoke(cli, ["--profile", "ci", "config", "validate", "--config", str(config)])

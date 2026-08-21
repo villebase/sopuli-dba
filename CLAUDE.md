@@ -174,9 +174,12 @@ wrong about the fix, say both.
 If a comment is accepted, push the fix and let CI go green again before
 reporting the PR as ready.
 
-`/request-copilot-review` does the mechanics; the request itself is
-`copilot-pull-request-reviewer[bot]` through the REST endpoint, since REST hides
-bot reviewers from the PR object and GraphQL cannot request one.
+`/request-copilot-review` does the mechanics. The request is
+`copilot-pull-request-reviewer[bot]` through the REST endpoint, which is the
+only route — GraphQL's `requestReviews` takes `userIds` and `teamIds` and will
+not resolve a bot. Confirming it landed takes GraphQL, though: the pull
+request's `requested_reviewers` omits Bot-type reviewers, so it reads empty even
+when the request succeeded.
 
 ---
 

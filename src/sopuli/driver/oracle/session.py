@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import oracledb
@@ -62,28 +62,45 @@ _INITIALISING = threading.Lock()
 _initialised = False
 
 
-def initialise(*, env: Mapping[str, str], platform: str | None = None) -> None:
+def initialise(
+    *,
+    env: Mapping[str, str],
+    lib_dir: str | None = None,
+    platform: str | None = None,
+) -> None:
     """Start thick mode, once per process.
 
-    ``lib_dir`` comes from :data:`~sopuli.driver.oracle.client.CLIENT_LIB_DIR_ENV`
-    when it is set, and is otherwise left to the platform's loader -- P4's table
-    is the specification for where that looks. An unset variable is not an
-    error: the ordinary Linux install puts the client on ``LD_LIBRARY_PATH``
-    and never needs one.
+    Where the client is, in P3's order: §6's
+    :data:`~sopuli.driver.oracle.client.CLIENT_LIB_DIR_ENV` first, then
+    ``runtime.oracle.client_lib_dir`` from the file, then nothing -- which leaves
+    it to the platform's own loader, and P4's table is the specification for
+    where that looks. An unset variable and an unwritten key are not an error
+    between them: the ordinary Linux install puts the client on
+    ``LD_LIBRARY_PATH`` and needs neither.
+
+    **The config key is a parameter rather than something read here**, for the
+    reason the whole driver layer is arranged that way: this module must not
+    reach for a :class:`~sopuli.config.model.Config`. #176's review found it
+    ignored outright -- a documented key that silently did nothing, which is
+    worse than one that does not exist -- and threading it through
+    :class:`OracleDriver` is where a run-scoped fact belongs.
     """
     global _initialised
     with _INITIALISING:
         if _initialised:
             return
-        lib_dir = env.get(CLIENT_LIB_DIR_ENV) or None
         try:
-            oracledb.init_oracle_client(lib_dir=lib_dir)
+            oracledb.init_oracle_client(lib_dir=env.get(CLIENT_LIB_DIR_ENV) or lib_dir or None)
         except oracledb.Error as error:
             if NO_CLIENT in str(error):
                 raise missing_client(str(error), platform=platform) from error
-            # Something else went wrong inside the client. Not ours to reword:
-            # the driver's own message is the only description of it anybody has.
-            raise
+            # Anything else the client raised on the way up. Mapped rather than
+            # re-raised, because `connect` promises that every failure arrives
+            # classified -- an unmapped vendor exception escaping from *here*
+            # would be the one place the promise did not hold, and #172's
+            # fallback already preserves the vendor code and message for a code
+            # it has no specific rule for.
+            raise from_error(error).as_error() from error
         _initialised = True
 
 
@@ -119,50 +136,69 @@ class OracleSession:
         self.close()
 
 
-def connect(
-    target: ExpandedTarget,
-    credential: Credential,
-    *,
-    env: Mapping[str, str],
-    correlation_id: str,
-    timeouts: Timeouts | None = None,
-) -> OracleSession:
-    """Reach ``target`` as ``credential``, with the run's id on the session.
+@dataclass(frozen=True)
+class OracleDriver:
+    """P1's :class:`~sopuli.driver.protocol.Driver`, for Oracle.
 
-    Every failure comes back through :mod:`sopuli.driver.oracle.errors`, so an
-    ``ORA-`` code keeps its number, its category and the server's own wording
-    (#172) -- CLAUDE.md's rule that a vendor code is mapped and never swallowed.
+    **A class rather than a module-level function**, which is #176's review
+    correcting the first draft. P1 says ``connect(target, credential) ->
+    Session``, and a function needing four more keyword arguments is not that
+    interface -- a caller written against the protocol would get a ``TypeError``,
+    which is the drift the protocol exists to prevent.
 
-    **The target is not added to the message here**, and that is #172's design
-    rather than an omission: the server's wording is preserved rather than
-    rewritten, and the command knows which target it asked for while this layer
-    only knows the one it was handed. A caller reporting across an estate has
-    the name already.
+    The split falls out naturally once the shape is right: everything here is a
+    property of the **run** -- which environment, which correlation id, which
+    budgets, where the client lives -- and everything ``connect`` takes is a
+    property of the **target**. Nothing run-scoped has to be repeated per target,
+    and nothing target-scoped can be set once and silently reused.
     """
-    initialise(env=env)
-    budget = timeouts or Timeouts()
-    arguments = connect_arguments(target, credential, timeouts=budget)
 
-    try:
-        connection = oracledb.connect(**arguments)
-    except oracledb.Error as error:
-        raise from_error(error).as_error() from error
+    env: Mapping[str, str]
+    correlation_id: str
+    timeouts: Timeouts = field(default_factory=Timeouts)
+    #: ``runtime.oracle.client_lib_dir`` from the file, outranked by §6's
+    #: variable. Resolved by the caller, which is the one holding a `Config`.
+    client_lib_dir: str | None = None
 
-    try:
-        # Set before anything else happens on this session, so there is no
-        # window in which a statement could be audited without the id.
-        connection.call_timeout = budget.call_timeout_ms
-        set_identifier(connection, correlation_id)
-    except oracledb.Error as error:
-        # A session we cannot label is a session whose work cannot be traced
-        # back to this run, which `02-oracle-privileges.md` §5 makes the
-        # compensating control for having no audit table of our own. Closing it
-        # is the honest outcome -- carrying on would silently give up the join
-        # between the tool's output, the database trail and the vault.
-        connection.close()
-        raise from_error(error).as_error() from error
+    def connect(self, target: ExpandedTarget, credential: Credential) -> OracleSession:
+        """Reach ``target`` as ``credential``, with the run's id on the session.
 
-    return OracleSession(connection=connection, target=target, correlation_id=correlation_id)
+        Every failure comes back through :mod:`sopuli.driver.oracle.errors`, so
+        an ``ORA-`` code keeps its number, its category and the server's own
+        wording (#172) -- CLAUDE.md's rule that a vendor code is mapped and never
+        swallowed.
+
+        **The target is not added to the message here**, and that is #172's
+        design rather than an omission: the server's wording is preserved rather
+        than rewritten, and the command knows which target it asked for while
+        this layer only knows the one it was handed. A caller reporting across an
+        estate has the name already.
+        """
+        initialise(env=self.env, lib_dir=self.client_lib_dir)
+        arguments = connect_arguments(target, credential, timeouts=self.timeouts)
+
+        try:
+            connection = oracledb.connect(**arguments)
+        except oracledb.Error as error:
+            raise from_error(error).as_error() from error
+
+        try:
+            # Set before anything else happens on this session, so there is no
+            # window in which a statement could be audited without the id.
+            connection.call_timeout = self.timeouts.call_timeout_ms
+            set_identifier(connection, self.correlation_id)
+        except oracledb.Error as error:
+            # A session we cannot label is a session whose work cannot be traced
+            # back to this run, which `02-oracle-privileges.md` §5 makes the
+            # compensating control for having no audit table of our own. Closing
+            # it is the honest outcome -- carrying on would silently give up the
+            # join between the tool's output, the database trail and the vault.
+            connection.close()
+            raise from_error(error).as_error() from error
+
+        return OracleSession(
+            connection=connection, target=target, correlation_id=self.correlation_id
+        )
 
 
 def set_identifier(connection: Any, correlation_id: str) -> None:

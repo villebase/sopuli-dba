@@ -375,9 +375,14 @@ def _why(exc: BaseException) -> str:
         # Already worded for exactly this reader (#176): it names DPI-1047, keeps
         # the driver's own detail about which library failed, and carries the
         # per-platform remediation. Running it back through `from_error` would
-        # classify our own exception as an unreadable driver failure and throw
-        # the hint away.
-        return exc.message
+        # classify our own exception as an unreadable driver failure.
+        #
+        # `str`, not `.message`: the remediation lives in `hint`, and `__str__`
+        # is what renders the two together. Returning the message alone dropped
+        # exactly the LD_LIBRARY_PATH / PATH / VC++ guidance this branch exists
+        # to preserve -- caught in #176's review, having been claimed in this
+        # very comment.
+        return str(exc)
 
     diagnosis = from_error(exc)
     if diagnosis.kind == CLIENT_LIBRARY:
@@ -412,6 +417,31 @@ def live_oracle(oracle_target: Environment) -> Environment:
         _SKIPS["environment"] += 1
         _missing_environment(reason)
     return oracle_target
+
+
+@pytest.fixture
+def oracle_client() -> None:
+    """Instant Client, up -- and **no database** (#176).
+
+    A narrower prerequisite than :func:`live_oracle`, for the tests that need
+    thick mode and nothing at the other end: the client's version, and anything
+    else `doctor` will want to answer before it makes anybody wait on a
+    connection that cannot succeed (#182).
+
+    Separate because the alternative is a test named "without a database" that
+    takes a fixture which connects to one -- true of the first draft, and
+    pointed out in review. It would skip for the wrong reason on a machine with
+    a client and no container, and it could not tell whether it was exercising
+    the offline path at all.
+    """
+    session = pytest.importorskip("sopuli.driver.oracle.session")
+    from sopuli.driver.oracle.client import ClientError
+
+    try:
+        session.initialise(env=os.environ)
+    except ClientError as error:
+        _SKIPS["environment"] += 1
+        _missing_environment(f"environment unavailable: {error}")
 
 
 @pytest.fixture(autouse=True)

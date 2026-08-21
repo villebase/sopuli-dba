@@ -52,11 +52,28 @@ refinement of the same rule and none of them relaxes it:
   `container_clase: ALL` and silently do nothing, which is the failure
   `01-configuration.md` §10 exists to prevent.
 
-`connect` is implemented (#176) — `sopuli/driver/oracle/session.py`, which is
-also the module the driver registry imports for `type: oracle`, so that a
-missing client is a structured error rather than a traceback. Three decisions
-came with it and are recorded here because each was a fork rather than a detail:
+`connect` is implemented (#176) — `OracleDriver` in
+`sopuli/driver/oracle/session.py`, which is also the module the driver registry
+imports for `type: oracle`, so that a missing client is a structured error
+rather than a traceback.
 
+**A driver is an object, and the split is load-bearing.** Everything the driver
+holds is a property of the *run* — which environment, which correlation id,
+which timeout budgets, where Instant Client lives — and everything `connect`
+takes is a property of the *target*. The first draft made `connect` a module
+function with four extra keyword arguments, which is not the interface above:
+a caller written against `Driver` would have got a `TypeError`, which is exactly
+the drift this sketch exists to prevent. `tests/driver/test_oracle_connect.py`
+asserts `isinstance(driver, Driver)` so the two cannot part company again.
+
+Three further decisions came with it, each a fork rather than a detail:
+
+- **Where Instant Client lives is resolved, not assumed.** §6's
+  `SOPULI_ORACLE_CLIENT_LIB_DIR` first, then `runtime.oracle.client_lib_dir`
+  from the file, then the platform's own loader (P4's table). The config key had
+  been documented and parsed since the config layer was written and was ignored
+  by the first draft of this — a documented key that silently does nothing is
+  worse than one that does not exist.
 - **Thick-mode initialisation is lazy, on the first connect.**
   `init_oracle_client` is process-global and effectively one-shot, so the
   alternative was doing it at startup, where the failure is earliest. Lazy wins

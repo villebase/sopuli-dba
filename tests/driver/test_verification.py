@@ -19,6 +19,8 @@ from sopuli.driver.oracle.verification import (
     INVALID_CREDENTIALS,
     PASSWORD_EXPIRED,
     PASSWORD_IN_GRACE,
+    VERIFICATION_CODES,
+    is_verification_outcome,
     margin_reason,
     result_for,
 )
@@ -167,3 +169,54 @@ def test_an_unrecognised_code_is_unavailable_rather_than_failed() -> None:
     assert outcome == UNAVAILABLE
     assert detail is not None
     assert "ORA-12541" in detail
+
+
+# ------------------------------------------- findings versus failures ---
+
+
+@pytest.mark.parametrize("code", [None, *sorted(VERIFICATION_CODES)])
+def test_a_verification_outcome_is_an_answer_about_the_password(code: str | None) -> None:
+    assert is_verification_outcome(code)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "ORA-12154",  # the connect identifier did not resolve
+        "ORA-12541",  # no listener
+        "ORA-28040",  # no logon protocol client and server can agree
+        "ORA-01031",  # the account cannot even create a session
+    ],
+)
+def test_a_failure_of_the_run_is_not_a_verification_outcome(code: str) -> None:
+    """These say nothing about the password.
+
+    #172 has already classified each into its own category and exit path, and
+    folding them into `unavailable` would let an unreachable target look like an
+    account-level finding — a target nobody can reach reported as a target whose
+    password could not be checked.
+    """
+    assert not is_verification_outcome(code)
+
+
+def test_drift_carries_the_vendor_code_and_the_server_s_own_words() -> None:
+    """CLAUDE.md: an ORA- code is never swallowed.
+
+    A `check` that reports drift without saying what the server said leaves an
+    operator comparing "it failed" against an audit trail that has the actual
+    diagnostic in it.
+    """
+    outcome, detail = result_for(INVALID_CREDENTIALS, "invalid username/password; logon denied")
+
+    assert outcome == FAIL
+    assert detail is not None
+    assert INVALID_CREDENTIALS in detail
+    assert "logon denied" in detail
+
+
+def test_a_detail_survives_a_server_that_said_nothing() -> None:
+    outcome, detail = result_for(INVALID_CREDENTIALS)
+
+    assert outcome == FAIL
+    assert detail is not None
+    assert INVALID_CREDENTIALS in detail

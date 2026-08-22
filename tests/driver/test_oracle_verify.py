@@ -32,6 +32,7 @@ from sopuli.driver.protocol import (
     SKIPPED,
     UNAVAILABLE,
     Credential,
+    DriverError,
     Session,
     UnsupportedCapabilityError,
 )
@@ -197,9 +198,10 @@ def test_hash_verification_is_refused_rather_than_faked(account: Any) -> None:
 # ---------------------------------------------------------- release gate 4 ---
 
 
-@pytest.mark.requires_capability(OFFLINE_VERIFY)
-def test_release_gate_4_checking_a_drifted_account_never_locks_it(guarded_account: Any) -> None:
-    """**The gate.** `04-testing.md` §5.
+def test_release_gate_4_checking_a_drifted_account_never_locks_it(
+    guarded_account: Any, oracle_target: Environment
+) -> None:
+    """**The gate.** `04-testing.md` §5, and §6's rule that a gate does not skip.
 
     `FAILED_LOGIN_ATTEMPTS 3`, a password that is wrong, and five checks. Without
     the guard the account locks on the third; with it, exactly one attempt is
@@ -208,7 +210,22 @@ def test_release_gate_4_checking_a_drifted_account_never_locks_it(guarded_accoun
     The assertion is on the *account*, not on the tool: whatever the results say,
     `ACCOUNT_STATUS` must never contain `LOCKED`. That is the property that
     matters at 03:00 on a production estate.
+
+    **No `requires_capability` marker, deliberately.** §6 opens with "not tests
+    that can be skipped", and routing this through the generic capability gate
+    would mean a missing `SELECT ON SYS.USER$` grant reports a tidy skip while
+    the safety property goes unverified — a broken setup looking green, which is
+    the one outcome a release gate must not have. So the guard's absence fails
+    here, with a message saying what to grant.
     """
+    if OFFLINE_VERIFY not in oracle_target.capabilities:
+        pytest.fail(
+            "release gate 4 cannot run without the LCOUNT guard, and a gate does not skip "
+            "(04-testing.md §6). Grant SELECT ON SYS.USER$ to the test account -- "
+            "test/oracle-init/01_test_profiles.sql does it, and it needs CONTAINER=ALL "
+            "because the init script runs in CDB$ROOT while the suite connects to a PDB"
+        )
+
     results = [guarded_account.verify_password(ACCOUNT, Secret(WRONG)) for _ in range(5)]
 
     assert "LOCKED" not in _status(guarded_account), (
@@ -280,3 +297,29 @@ def test_the_counter_is_reported_with_the_result(guarded_account: Any) -> None:
 
     assert result.failed_logins == 1
     assert result.failed_login_limit == "3"
+
+
+# ------------------------------------------- the client, but no server ------
+
+
+def test_an_unreachable_target_raises_rather_than_reporting_a_finding(
+    account: Any, session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A target nobody can reach is not an account whose password failed.
+
+    Driven by making the *verification* connection fail while the admin session
+    stays up, which is the shape that matters: `_attempt` opens its own
+    connection, and a listener that has gone away between the two is exactly how
+    this arises in an estate.
+    """
+    import oracledb
+
+    def unreachable(**_: Any) -> Any:
+        raise oracledb.DatabaseError("ORA-12541: TNS:no listener")
+
+    monkeypatch.setattr(session_module.oracledb, "connect", unreachable)
+
+    with pytest.raises(DriverError) as raised:
+        account.verify_password(ACCOUNT, Secret(CORRECT))
+
+    assert raised.value.category == "connectivity"

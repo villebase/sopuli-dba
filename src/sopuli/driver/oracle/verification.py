@@ -121,27 +121,61 @@ def margin_reason(
     return None
 
 
-def result_for(code: str | None) -> tuple[str, str | None]:
+#: The codes that say something about **this password on this account**, and so
+#: are answers rather than failures.
+#:
+#: Everything else a connection can raise -- ``ORA-12154`` for a DSN that does
+#: not resolve, ``ORA-12541`` for a listener that is down, ``ORA-28040`` for a
+#: logon protocol client and server cannot agree -- is a failure of the run and
+#: is raised. Folding those into ``unavailable`` would let an unreachable target
+#: look like an account-level finding, and #172 has already classified each of
+#: them into its own category and exit path for exactly that reason.
+VERIFICATION_CODES = frozenset(
+    {INVALID_CREDENTIALS, ACCOUNT_LOCKED, PASSWORD_EXPIRED, PASSWORD_IN_GRACE}
+)
+
+
+def is_verification_outcome(code: str | None) -> bool:
+    """Whether ``code`` is an answer about the password rather than a failure."""
+    return code is None or code in VERIFICATION_CODES
+
+
+def result_for(code: str | None, message: str | None = None) -> tuple[str, str | None]:
     """What a login attempt's outcome means, as ``(result, detail)``.
 
-    ``code`` is ``None`` for a login that succeeded. Everything else is #172's
-    classification of what the server said, read here for what it says about
-    *the password* rather than about the account.
+    ``code`` is ``None`` for a login that succeeded. Callers must have checked
+    :func:`is_verification_outcome` first; anything else belongs to the run
+    rather than to the password.
+
+    **The vendor code travels with the answer**, including the ordinary
+    wrong-password case. CLAUDE.md's rule is that an ORA- code is never
+    swallowed, and a `check` that reports drift without saying what the server
+    said leaves an operator comparing "it failed" against a trail that has the
+    actual diagnostic in it.
     """
     if code is None:
         return PASS, None
     if code == PASSWORD_EXPIRED:
-        return PASS, "the password is correct and has expired"
+        return PASS, f"the password is correct and has expired ({code})"
     if code == PASSWORD_IN_GRACE:
-        return PASS, "the password is correct and is in its grace period"
+        return PASS, f"the password is correct and is in its grace period ({code})"
     if code == INVALID_CREDENTIALS:
-        return FAIL, None
+        return FAIL, _detail("the database rejected this password", code, message)
     if code == ACCOUNT_LOCKED:
-        return (
-            UNAVAILABLE,
+        return UNAVAILABLE, _detail(
             "the account is locked, which it answers with whether or not the password is right",
+            code,
+            message,
         )
-    return UNAVAILABLE, f"the login attempt failed with {code}"
+    # Defensive: a caller that skipped `is_verification_outcome`.
+    return UNAVAILABLE, _detail("the login attempt failed", code, message)
+
+
+def _detail(summary: str, code: str, message: str | None) -> str:
+    """``summary (ORA-xxxxx): what the server said``, with the server's own
+    wording preserved rather than rewritten (#172)."""
+    text = f"{summary} ({code})"
+    return f"{text}: {message}" if message else text
 
 
 def skipped_detail(reason: str) -> str:
@@ -151,12 +185,14 @@ def skipped_detail(reason: str) -> str:
 
 __all__ = [
     "ACCOUNT_LOCKED",
+    "VERIFICATION_CODES",
     "DEFAULT_MARGIN",
     "INVALID_CREDENTIALS",
     "PASSWORD_EXPIRED",
     "PASSWORD_IN_GRACE",
     "SKIPPED",
     "UNLIMITED",
+    "is_verification_outcome",
     "margin_reason",
     "result_for",
     "skipped_detail",

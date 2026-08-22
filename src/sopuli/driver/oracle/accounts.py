@@ -325,5 +325,12 @@ def failed_logins(cursor: Cursor, name: str) -> int | None:
     no code -- the database does it -- which is what makes the happy path
     self-cleaning.
     """
-    row = read(cursor, LCOUNT_QUERY, name=name.upper())
+    # Bound **unchanged**. ``name`` is already the spelling `DBA_USERS` gave
+    # back, and ``SYS.USER$.NAME`` preserves it -- so upper-casing here would
+    # miss a quoted lower-case account, return no row, and be indistinguishable
+    # from "the grant was never made". That failure is silent and it is the
+    # dangerous direction: an absent counter reads as an unavailable guard, and
+    # the login goes ahead spending lockout budget the guard was there to
+    # protect.
+    row = read(cursor, LCOUNT_QUERY, name=name)
     return int(row[0]) if row and row[0] is not None else None

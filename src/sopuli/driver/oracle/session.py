@@ -54,6 +54,7 @@ from sopuli.driver.oracle.limits import resolve as resolve_limit
 from sopuli.driver.oracle.statements import Identifier, alter_user_password
 from sopuli.driver.oracle.verification import (
     DEFAULT_MARGIN,
+    is_verification_outcome,
     margin_reason,
     result_for,
     skipped_detail,
@@ -335,6 +336,21 @@ class OracleSession:
             guarded = self.scope().supports(OFFLINE_VERIFY)
             counter = failed_logins(cursor, state.name) if guarded else None
 
+        if state.locked:
+            # **Before the margin, not after.** A lock caused by earlier failures
+            # usually leaves the counter at the threshold, so the margin check
+            # would win and report `skipped` -- and the same locked account would
+            # then describe itself differently depending on whether the counter
+            # could be read. It is locked either way, and saying so is both
+            # consistent and more useful than "we did not try".
+            return VerifyResult(
+                method=method,
+                result=UNAVAILABLE,
+                failed_logins=counter,
+                failed_login_limit=state.failed_login_limit,
+                detail=f"the account is locked ({state.status}); no login was attempted",
+            )
+
         reason = margin_reason(
             counter, state.failed_login_limit, margin=lockout_margin, attempts=attempts
         )
@@ -388,13 +404,34 @@ class OracleSession:
                 )
             )
         except oracledb.Error as error:
-            return result_for(from_error(error).code or None)
+            diagnosis = from_error(error)
+            if not is_verification_outcome(diagnosis.code or None):
+                # Not an answer about the password. A DSN that does not resolve,
+                # a listener that is down, a logon protocol nobody can agree --
+                # #172 has classified each into its own category and exit path,
+                # and folding them into `unavailable` would let an unreachable
+                # target look like an account-level finding.
+                raise diagnosis.as_error() from error
+            return result_for(diagnosis.code or None, diagnosis.message)
+        else:
+            # Labelled like every other connection (§5). A failed login is the
+            # most audited thing this tool does, so a verification session that
+            # reaches UNIFIED_AUDIT_TRAIL without the run's id is the one an
+            # operator cannot account for afterwards.
+            #
+            # A labelling failure is **not** allowed to change the answer, which
+            # is the opposite of `connect`'s rule and deliberately so: there the
+            # session had done nothing yet, and here the login has already
+            # happened and answered the question. Reporting drift because a
+            # `DBMS_SESSION` call was refused would start a rotation over an
+            # audit-hygiene problem.
+            with suppress(Exception):
+                set_identifier(connection, self.correlation_id)
+            return result_for(None)
         finally:
             if connection is not None:
                 with suppress(Exception):
                     connection.close()
-
-        return result_for(None)
 
     def check_assertions(self) -> Scope:
         """Refuse unless the target's claims match what this connection is.

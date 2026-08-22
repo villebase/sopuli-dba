@@ -136,6 +136,27 @@ class OracleSession:
         session and never per driver, and the answer is never derived from a
         version in a file.
 
+        **On first call, not during** :meth:`OracleDriver.connect`, and #177's
+        "on connect" means *from the connection rather than from a config file*
+        rather than *eagerly*. Three reasons, in ascending order of how much they
+        would cost to get wrong:
+
+        * ``connect`` promises what connecting is. Probing inside it would make
+          an ``ORA-`` from a dictionary read arrive as a connection failure,
+          which sends the reader to the listener and the credential for a
+          problem that is neither.
+        * The probe is several round trips, and not every session wants them.
+        * **It would pre-answer an open decision.** #180 has yet to decide
+          whether verification opens its own connection or reuses the admin
+          session; a session opened as the account *being verified* holds none of
+          §2's grants, so probing every connection would make one of those two
+          options quietly unworkable. Laziness leaves the choice where it belongs.
+
+        What P1 does require is that a read-only standby is refused **up front**
+        rather than mid-statement. That is a property of when the *plan* asks —
+        which it does, before anything mutates — and not of when the session
+        volunteers.
+
         The probe raises rather than degrades. A capability that is absent is an
         ordinary result and comes back as a smaller set; a probe that could not
         be *answered* is :class:`~sopuli.driver.oracle.capabilities.ProbeError`,

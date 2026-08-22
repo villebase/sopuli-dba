@@ -15,11 +15,11 @@ to compare against. §3's claim only holds while the two ask the same thing:
     `password_rollover` on 18c XE, the rollover test runs and fails there —
     which is the bug. Version-keyed skips would have hidden it.
 
-So :data:`PROBES`, :data:`STRUCTURAL` and :func:`probe` are
-:mod:`sopuli.driver.oracle.capabilities`', re-exported here because that is
-where the fixtures reach for them, and asserted against P1's vocabulary in
-`tests/driver/test_capabilities.py`. What remains the harness's own work is
-which environment, what to skip, and how to report it.
+So :data:`PROBES`, :data:`STRUCTURAL` and :func:`probe` now belong to
+:mod:`sopuli.driver.oracle.capabilities`, and are re-exported here because that
+is where the fixtures reach for them. P1's vocabulary is asserted against them in
+`tests/driver/test_capabilities.py`. What remains the harness's own work is which
+environment, what to skip, and how to report it.
 
 **Nothing here imports ``oracledb``.** The pure parts — what to ask, how to read
 an answer, what to skip, how to report — are testable in tier 0, and only the

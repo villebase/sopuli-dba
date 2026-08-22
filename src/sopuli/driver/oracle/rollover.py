@@ -42,6 +42,7 @@ no longer applies.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 
 #: What ``PASSWORD_ROLLOVER_TIME`` reads as when rollover is switched off. The
@@ -57,13 +58,21 @@ def days(limit: str | None) -> float | None:
     ``1/24`` reads back as ``.0416``. ``UNLIMITED`` is not a value this resource
     takes, and anything else unparseable is ``None`` rather than a guess -- a
     window length nobody can read is not a window length of zero.
+
+    **Non-finite values are unreadable too**, which is not obvious because
+    ``float()`` accepts them: ``float("inf")`` and ``float("1e400")`` both give
+    infinity, and ``float("nan")`` gives NaN. Left alone, ``inf`` would satisfy
+    :func:`is_enabled` -- claiming a window -- and then raise ``OverflowError``
+    the moment :func:`window_end` tried to describe it. A value this function
+    cannot use is ``None``, and that is the whole rule.
     """
     if limit is None:
         return None
     try:
-        return float(limit)
+        value = float(limit)
     except ValueError:
         return None
+    return value if math.isfinite(value) else None
 
 
 def is_enabled(limit: str | None) -> bool:
@@ -93,11 +102,20 @@ def window_end(changed_at: datetime | None, limit: str | None) -> datetime | Non
     ``None`` when either input is missing, which includes 11.2, where
     ``PASSWORD_CHANGE_DATE`` does not exist (#87) -- and where rollover does not
     exist either, so the pair are never both wanted.
+
+    **Fails closed rather than raising.** A number can be finite, parseable and
+    still too large for a ``timedelta`` -- ``1e10`` days overflows -- and this is
+    a field derived for a *report*. Crashing ``describe_user`` because a profile
+    holds an absurd limit would take out the command that was going to tell
+    somebody about it.
     """
     value = days(limit)
     if changed_at is None or value is None or value <= DISABLED:
         return None
-    return changed_at + timedelta(days=value)
+    try:
+        return changed_at + timedelta(days=value)
+    except (OverflowError, ValueError):
+        return None
 
 
 def alter_profile_ddl(profile: str, rollover_days: str = "1") -> str:

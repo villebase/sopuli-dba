@@ -467,14 +467,25 @@ class OracleSession:
         if state is None:
             raise DriverError(f'account "{account}" does not exist on this target')
         if not is_enabled(state.rollover_time):
-            profile = state.profile or "the account's profile"
+            if state.profile is None:
+                # No name, so no statement worth printing. A hint reading
+                # `ALTER PROFILE the account's profile LIMIT ...` is not SQL, and
+                # a hint is a thing operators paste into a terminal.
+                raise DriverError(
+                    f'account "{state.name}" grants no rollover window, and the '
+                    "database did not report which profile it uses",
+                    hint=(
+                        "check DBA_USERS.PROFILE for this account; a rollover window "
+                        "comes from the profile's PASSWORD_ROLLOVER_TIME"
+                    ),
+                )
             raise DriverError(
-                f"profile {profile} grants no rollover window "
+                f"profile {state.profile} grants no rollover window "
                 f"(PASSWORD_ROLLOVER_TIME is {state.rollover_time or 'unset'})",
                 hint=(
                     "sopuli does not alter a profile, because profiles are shared and "
                     "changing one affects accounts nobody selected. Run this yourself if "
-                    "it is what you want: " + alter_profile_ddl(profile)
+                    "it is what you want: " + alter_profile_ddl(state.profile)
                 ),
             )
 

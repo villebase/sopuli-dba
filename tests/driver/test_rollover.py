@@ -100,3 +100,31 @@ def test_the_alter_profile_is_reported_and_never_issued() -> None:
 
 def test_the_reported_ddl_can_name_a_different_window() -> None:
     assert "PASSWORD_ROLLOVER_TIME 7" in alter_profile_ddl("ACME_APP_PROF", "7")
+
+
+# ------------------------------------------------- values that are not values ---
+
+
+@pytest.mark.parametrize("limit", ["nan", "inf", "-inf", "1e400", "NaN", "Infinity"])
+def test_a_non_finite_limit_is_unreadable_rather_than_a_window(limit: str) -> None:
+    """`float()` accepts these, which is what makes them dangerous.
+
+    Left alone, `inf` satisfies `is_enabled` — claiming a window — and then
+    raises `OverflowError` the moment `window_end` tries to describe it. So a
+    profile holding a value nobody can use would plan a zero-downtime rotation
+    and crash while reporting on it.
+    """
+    assert days(limit) is None
+    assert not is_enabled(limit)
+    assert window_end(CHANGED, limit) is None
+
+
+def test_a_limit_too_large_for_a_timedelta_fails_closed() -> None:
+    """Finite, parseable, and still not usable: `timedelta(days=1e10)` overflows.
+
+    This value is derived for a *report*, so crashing `describe_user` over an
+    absurd profile limit would take out the command that was going to tell
+    somebody about it.
+    """
+    assert is_enabled("1e10"), "it is a positive number, so the profile does grant a window"
+    assert window_end(CHANGED, "1e10") is None, "but the end of it cannot be expressed"

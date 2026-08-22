@@ -273,6 +273,41 @@ def test_a_password_change_date_is_carried_where_the_release_has_one() -> None:
 # ------------------------------------------------------------------- roles ---
 
 
+def test_the_roles_query_traverses_roles_held_through_other_roles() -> None:
+    """Pinned on the SQL, because the hole it closes is invisible in the result.
+
+    A flat `DBA_ROLE_PRIVS` read returns only direct grants, so an account
+    granted a site role that itself holds `DBA` reports nothing guardrail 4
+    refuses — and passes. `NOCYCLE` matters just as much: roles can be granted in
+    a loop, and the same query without it raises `ORA-01436` there.
+    """
+    assert "connect by nocycle" in ROLES_QUERY
+    assert "start with" in ROLES_QUERY
+
+
+def test_the_effective_limits_are_all_carried_rather_than_only_the_lockout_one() -> None:
+    """One query resolves every password resource, so discarding the rest would
+    force #181 and UC-1 §4's bounded regeneration into a second, uncoordinated
+    read of the same profile."""
+    state = describe(
+        _cursor(
+            limits=[
+                ("FAILED_LOGIN_ATTEMPTS", "5"),
+                ("PASSWORD_ROLLOVER_TIME", "1"),
+                ("PASSWORD_REUSE_MAX", "UNLIMITED"),
+                ("PASSWORD_REUSE_TIME", "365"),
+            ]
+        ),
+        "acme_orders_user",
+    )
+
+    assert state is not None
+    assert state.failed_login_limit == "5"
+    assert state.rollover_time == "1"
+    assert state.password_reuse_max == "UNLIMITED"
+    assert state.password_reuse_time == "365"
+
+
 def test_roles_are_upper_cased_the_way_a_database_spells_them() -> None:
     """Guardrail 4 compares against an upper-cased set."""
     state = describe(_cursor(roles=[("dba",), ("CONNECT",)]), "acme_orders_user")

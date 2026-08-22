@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -34,6 +35,9 @@ CORRELATION_ID = "5c2a9b71-8e34-4d06-a7f1-2e9b6c0d1a53"
 
 ACCOUNT = "acme_orders_user"
 PROFILE = "acme_orders_prof"
+SITE_ROLE = "acme_app_admin"
+LOOP_A = "acme_loop_a"
+LOOP_B = "acme_loop_b"
 FIRST = "First-Pass-1x"
 SECOND = "Second-Pass-2x"
 
@@ -179,15 +183,83 @@ def test_the_status_stays_compound_when_two_things_are_true(account: Any) -> Non
 
 def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     """#87 is open about where the value comes from on 11.2, not about whether it
-    means anything on a release that has the column. Measured: two rotations two
-    minutes apart moved it."""
+    means anything on a release that has the column.
+
+    The assertion is a strict ``>``, and the sleep is what earns it. The column
+    has second granularity, so two rotations in the same second are equal — and
+    an implementation that always returned the account's original timestamp would
+    satisfy ``>=`` while pinning nothing at all.
+    """
     before = account.describe_user(ACCOUNT)
     assert before is not None
     assert before.password_changed_at is not None
 
+    time.sleep(1.1)
     _run(account, f'alter user {ACCOUNT} identified by "{SECOND}"')
 
     after = account.describe_user(ACCOUNT)
     assert after is not None
     assert after.password_changed_at is not None
-    assert after.password_changed_at >= before.password_changed_at
+    assert after.password_changed_at > before.password_changed_at
+
+
+def test_a_role_held_through_another_role_is_still_found(account: Any) -> None:
+    """Guardrail 4's hole, closed and pinned.
+
+    An account granted a site role that itself holds ``DBA`` holds ``DBA``. A
+    flat read of `DBA_ROLE_PRIVS` sees only `ACME_APP_ADMIN` and reports nothing
+    the guardrail refuses, so the account passes — measured on 26ai before the
+    query was changed, which is how this was confirmed rather than argued.
+    """
+    _run(
+        account,
+        f"create role {SITE_ROLE}",
+        f"grant dba to {SITE_ROLE}",
+        f"grant {SITE_ROLE} to {ACCOUNT}",
+    )
+    try:
+        state = account.describe_user(ACCOUNT)
+
+        assert state is not None
+        assert SITE_ROLE.upper() in state.roles, "the directly granted role"
+        assert "DBA" in state.roles, "and the one it is holding on the account's behalf"
+    finally:
+        with contextlib.suppress(Exception):
+            _run(account, f"drop role {SITE_ROLE}")
+
+
+def test_a_cycle_in_the_role_graph_does_not_break_the_read(account: Any) -> None:
+    """Roles can be granted in a loop, and Oracle allows it.
+
+    Without ``NOCYCLE`` the traversal raises `ORA-01436` on such a graph, which
+    would turn one site's unusual role layout into a tool that cannot describe
+    any account there.
+    """
+    _run(
+        account,
+        f"create role {LOOP_A}",
+        f"create role {LOOP_B}",
+        f"grant {LOOP_A} to {LOOP_B}",
+        f"grant {LOOP_B} to {LOOP_A}",
+        f"grant {LOOP_A} to {ACCOUNT}",
+    )
+    try:
+        state = account.describe_user(ACCOUNT)
+
+        assert state is not None
+        assert LOOP_A.upper() in state.roles
+    finally:
+        for role in (LOOP_A, LOOP_B):
+            with contextlib.suppress(Exception):
+                _run(account, f"drop role {role}")
+
+
+def test_the_effective_rollover_time_is_carried(account: Any) -> None:
+    """#181 reads this at plan time. One query already resolved it, so reading it
+    again from a second, uncoordinated one would be a second chance to disagree
+    about the same profile."""
+    state = account.describe_user(ACCOUNT)
+
+    assert state is not None
+    assert state.rollover_time == "1", "set on the profile"
+    assert state.password_reuse_max == "UNLIMITED", "unset, so resolved from DEFAULT"

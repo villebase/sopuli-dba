@@ -97,12 +97,30 @@ PROFILE_QUERY = (
     "where p.profile = :profile and p.resource_type = 'PASSWORD'"
 )
 
-#: Roles held, for guardrail 4. Directly granted only, which is what
-#: ``DBA_ROLE_PRIVS`` carries; a role held through another role is not reached.
-ROLES_QUERY = "select granted_role from dba_role_privs where grantee = :name"
+#: Every role the account holds, **including the ones it holds through another
+#: role**. Guardrail 4 refuses ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
+#: ``AUDIT_ADMIN``, and a flat read of ``DBA_ROLE_PRIVS`` sees only direct
+#: grants -- so an account granted a site role that itself holds ``DBA`` would
+#: have been reported as holding nothing the guardrail cares about, and passed.
+#:
+#: Measured on 26ai, which is how the hole was confirmed rather than argued:
+#: ``ACME_APP_ADMIN`` granted ``DBA``, then granted to an account, reads as
+#: ``ACME_APP_ADMIN`` alone flat and as ``ACME_APP_ADMIN, DBA, …`` traversed.
+#:
+#: ``NOCYCLE`` is not decoration. Roles can be granted in a loop -- ``A`` to
+#: ``B`` and ``B`` to ``A`` is legal -- and the same query without it raises
+#: ``ORA-01436`` on a graph that has one. Measured with a deliberate cycle: 44
+#: roles reached, no error.
+ROLES_QUERY = (
+    "select granted_role from dba_role_privs "
+    "start with grantee = :name "
+    "connect by nocycle prior granted_role = grantee"
+)
 
 FAILED_LOGIN_ATTEMPTS = "FAILED_LOGIN_ATTEMPTS"
 PASSWORD_ROLLOVER_TIME = "PASSWORD_ROLLOVER_TIME"
+PASSWORD_REUSE_MAX = "PASSWORD_REUSE_MAX"
+PASSWORD_REUSE_TIME = "PASSWORD_REUSE_TIME"
 
 #: The token the status carries during a gradual rollover window.
 IN_ROLLOVER = "IN ROLLOVER"
@@ -160,6 +178,14 @@ def describe(cursor: Cursor, account: str) -> UserState | None:
         password_versions=_versions(row[3]),
         password_changed_at=_changed_at(row),
         failed_login_limit=limits.get(FAILED_LOGIN_ATTEMPTS),
+        # Carried rather than discarded, because one query already resolved
+        # them: #181 reads the rollover time at plan time, and UC-1 §4's bounded
+        # regeneration exists because of the reuse policy. Reading them again
+        # from a second, uncoordinated query would be a second chance to
+        # disagree about the same profile.
+        rollover_time=limits.get(PASSWORD_ROLLOVER_TIME),
+        password_reuse_max=limits.get(PASSWORD_REUSE_MAX),
+        password_reuse_time=limits.get(PASSWORD_REUSE_TIME),
         rollover_active=IN_ROLLOVER in status,
         # Deliberately absent. The window's end is not in the dictionary -- only
         # that it is open -- and computing it from `password_change_date` plus

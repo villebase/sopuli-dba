@@ -107,10 +107,14 @@ PROFILE_QUERY = (
 #: ``ACME_APP_ADMIN`` granted ``DBA``, then granted to an account, reads as
 #: ``ACME_APP_ADMIN`` alone flat and as ``ACME_APP_ADMIN, DBA, …`` traversed.
 #:
-#: ``NOCYCLE`` is not decoration. Roles can be granted in a loop -- ``A`` to
-#: ``B`` and ``B`` to ``A`` is legal -- and the same query without it raises
-#: ``ORA-01436`` on a graph that has one. Measured with a deliberate cycle: 44
-#: roles reached, no error.
+#: ``NOCYCLE`` is **defensive rather than load-bearing**, and the distinction is
+#: worth writing down because the obvious justification for it is false. Oracle
+#: refuses to build a cycle in the first place: ``grant a to b`` followed by
+#: ``grant b to a`` fails with ``ORA-01934: circular role grant detected``, so
+#: the role graph is acyclic by construction and ``CONNECT BY`` cannot loop on
+#: it. It is kept because it costs nothing and the alternative failure --
+#: ``ORA-01436`` at a site whose role graph reached a shape this reasoning did
+#: not anticipate -- would be a tool that cannot describe any account there.
 ROLES_QUERY = (
     "select granted_role from dba_role_privs "
     "start with grantee = :name "

@@ -278,8 +278,12 @@ def test_the_roles_query_traverses_roles_held_through_other_roles() -> None:
 
     A flat `DBA_ROLE_PRIVS` read returns only direct grants, so an account
     granted a site role that itself holds `DBA` reports nothing guardrail 4
-    refuses — and passes. `NOCYCLE` matters just as much: roles can be granted in
-    a loop, and the same query without it raises `ORA-01436` there.
+    refuses — and passes.
+
+    `NOCYCLE` is asserted too, but as the defensive measure it is: Oracle refuses
+    to create a role cycle (`ORA-01934`), so it cannot fire on a graph Oracle
+    built. It costs nothing and the failure it would prevent is a tool that
+    cannot describe any account at all.
     """
     assert "connect by nocycle" in ROLES_QUERY
     assert "start with" in ROLES_QUERY

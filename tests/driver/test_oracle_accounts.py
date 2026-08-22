@@ -228,26 +228,23 @@ def test_a_role_held_through_another_role_is_still_found(account: Any) -> None:
             _run(account, f"drop role {SITE_ROLE}")
 
 
-def test_a_cycle_in_the_role_graph_does_not_break_the_read(account: Any) -> None:
-    """Roles can be granted in a loop, and Oracle allows it.
+def test_oracle_refuses_to_build_a_role_cycle_at_all(account: Any) -> None:
+    """Why `NOCYCLE` is defensive rather than load-bearing.
 
-    Without ``NOCYCLE`` the traversal raises `ORA-01436` on such a graph, which
-    would turn one site's unusual role layout into a tool that cannot describe
-    any account there.
+    The first version of this test tried to build a cycle and assert the
+    traversal survived it. It cannot: Oracle rejects the second grant outright
+    with `ORA-01934`, so the role graph is acyclic by construction and
+    `CONNECT BY` has nothing to loop on. Pinned as the refusal it actually is,
+    because the wrong version of this test passed locally for the wrong reason —
+    the error was scrolling past under `feedback off` while a traversal of `DBA`
+    returned plenty of rows and looked like success.
     """
-    _run(
-        account,
-        f"create role {LOOP_A}",
-        f"create role {LOOP_B}",
-        f"grant {LOOP_A} to {LOOP_B}",
-        f"grant {LOOP_B} to {LOOP_A}",
-        f"grant {LOOP_A} to {ACCOUNT}",
-    )
+    _run(account, f"create role {LOOP_A}", f"create role {LOOP_B}")
     try:
-        state = account.describe_user(ACCOUNT)
+        _run(account, f"grant {LOOP_A} to {LOOP_B}")
 
-        assert state is not None
-        assert LOOP_A.upper() in state.roles
+        with pytest.raises(Exception, match="ORA-01934"):
+            _run(account, f"grant {LOOP_B} to {LOOP_A}")
     finally:
         for role in (LOOP_A, LOOP_B):
             with contextlib.suppress(Exception):

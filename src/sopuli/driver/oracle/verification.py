@@ -27,6 +27,20 @@ on every expired account in an estate and rotate all of them for no reason.
 **The margin is spent before the attempt, not after.** :func:`margin_reason`
 answers with what it would cost, and a caller that gets a reason has already
 decided not to try.
+
+**The guard is sticky, and an operator needs to know it.** Once the margin is
+breached every further attempt is refused, *including one carrying the correct
+password* -- the guard cannot know a password is right without spending an
+attempt to find out, and spending the last of the margin on a guess is the thing
+it exists to prevent. On a tight profile the effect is stark: with
+``FAILED_LOGIN_ATTEMPTS 3`` and the default margin of 2, a single drift makes the
+account unverifiable by this tool until something else clears ``LCOUNT`` -- the
+application logging in successfully, or an operator widening the margin
+deliberately. `check` then reports ``skipped`` with the reason rather than a
+verdict, which is the honest answer and not a failure.
+
+That is UC-1 §7's trade taken at face value: an account nobody can verify is a
+worse report and a better outcome than an account nobody can log into.
 """
 
 from __future__ import annotations

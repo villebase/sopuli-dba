@@ -223,17 +223,48 @@ def test_release_gate_4_checking_a_drifted_account_never_locks_it(guarded_accoun
 
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_the_guard_does_not_make_an_exception_for_a_password_it_cannot_know_is_right(
+    guarded_account: Any,
+) -> None:
+    """The guard is **sticky**, and that is a real operational property.
+
+    Once the margin is breached, *every* further attempt is refused — including
+    one carrying the correct password. It has to be: the guard cannot know the
+    password is right without spending an attempt to find out, and spending the
+    last of the margin on a guess is exactly what it exists to prevent.
+
+    The consequence, on a profile as tight as this one (`FAILED_LOGIN_ATTEMPTS
+    3`, default margin 2), is that a single drift makes the account
+    unverifiable by this tool until something *else* clears `LCOUNT` — the
+    application logging in successfully, or an operator widening the margin
+    deliberately. `check` reports `skipped` with the reason rather than a
+    verdict, which is the honest answer and not a failure.
+
+    Written down here because it surfaced as a failing test that looked like a
+    bug and is not one.
+    """
+    assert guarded_account.verify_password(ACCOUNT, Secret(WRONG)).result == FAIL
+
+    blocked = guarded_account.verify_password(ACCOUNT, Secret(CORRECT))
+
+    assert blocked.result == SKIPPED, "the right password is refused too"
+    assert blocked.lockout_margin_hit
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
 def test_a_successful_check_clears_the_counter(guarded_account: Any) -> None:
-    """Mitigation 3, and it is the database's doing rather than ours: a
-    successful login resets `LCOUNT`, which is what makes the happy path
-    self-cleaning and lets a recovered account be checked again immediately."""
-    spent = guarded_account.verify_password(ACCOUNT, Secret(WRONG))
-    assert spent.result == FAIL
+    """Mitigation 3, and it is the database's doing rather than ours.
 
-    blocked = guarded_account.verify_password(ACCOUNT, Secret(WRONG))
-    assert blocked.result == SKIPPED
+    Reaching the success at all needs the margin widened, which is the test
+    above's finding turned into a fixture: `lockout_margin=0` spends the
+    remaining budget deliberately, the login succeeds, and Oracle puts `LCOUNT`
+    back to zero — after which an ordinary check is allowed again with no
+    special pleading.
+    """
+    assert guarded_account.verify_password(ACCOUNT, Secret(WRONG)).result == FAIL
+    assert guarded_account.verify_password(ACCOUNT, Secret(WRONG)).result == SKIPPED
 
-    recovered = guarded_account.verify_password(ACCOUNT, Secret(CORRECT))
+    recovered = guarded_account.verify_password(ACCOUNT, Secret(CORRECT), lockout_margin=0)
     assert recovered.result == PASS
 
     again = guarded_account.verify_password(ACCOUNT, Secret(WRONG))

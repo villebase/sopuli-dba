@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,15 @@ PASSWORD_ENV = "SOPULI_TEST_DOCTOR_PASSWORD"
 
 
 def _config(path: Path, dsn: str, *, asserted: str = "") -> Path:
+    """A config file P4's permission check will accept.
+
+    The same 0600 rule as `conftest.write_config`, applied here rather than by
+    using that fixture, because it writes one fixed filename and
+    `test_a_matching_assertion_is_reported_as_matching` needs two configs in one
+    test. Without the chmod the file inherits the runner's umask, lands 0644, and
+    every test in this module fails on "config file is accessible to others"
+    rather than on what it says it tests -- which is exactly what CI showed.
+    """
     path.write_text(
         f"""
 version: 1
@@ -53,6 +63,8 @@ targets:
 """.lstrip(),
         encoding="utf-8",
     )
+    if sys.platform != "win32":
+        path.chmod(0o600)
     return path
 
 

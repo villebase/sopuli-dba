@@ -1,0 +1,149 @@
+"""Deciding whether to try a login, and reading what came back (#180).
+
+UC-1 §7's whole argument in one module: **a tool that locks production accounts
+while checking them is worse than no tool.** Everything here exists to make the
+attempt that never happens as reportable as the one that did.
+
+Four behaviours were measured on 26ai Free 23.26.2.0.0 before any of this was
+written, and two of them come out the opposite way round from the obvious guess.
+
+**A wrong password is ``ORA-01017`` and takes ``LCOUNT`` up by one; a right one
+puts it back to zero.** Mitigation 3 is therefore not code -- the database does
+it -- which is what makes the happy path self-cleaning. Measured 0 -> 1 -> 2 on
+two failures, then 0 on a success.
+
+**A locked account answers ``ORA-28000`` whether the password is right or
+wrong.** So a locked account cannot be verified at all, and the result is
+``unavailable``. Calling it ``fail`` would report drift on an account whose
+password may be perfectly correct, and drift is what makes a scheduler start a
+rotation.
+
+**An expired password answers ``ORA-28001`` only when the password is
+correct** -- a wrong one still answers ``ORA-01017``. So ``ORA-28001`` is a
+**pass**: the value matched, and what is wrong with the account is its expiry.
+The obvious reading, that an error means verification failed, would report drift
+on every expired account in an estate and rotate all of them for no reason.
+
+**The margin is spent before the attempt, not after.** :func:`margin_reason`
+answers with what it would cost, and a caller that gets a reason has already
+decided not to try.
+"""
+
+from __future__ import annotations
+
+from sopuli.driver.protocol import (
+    FAIL,
+    PASS,
+    SKIPPED,
+    UNAVAILABLE,
+)
+
+#: UC-1 §7 mitigation 2's default. Two attempts of headroom left untouched.
+DEFAULT_MARGIN = 2
+
+#: What ``FAILED_LOGIN_ATTEMPTS`` says when there is no lockout to guard against.
+UNLIMITED = "UNLIMITED"
+
+ACCOUNT_LOCKED = "ORA-28000"
+PASSWORD_EXPIRED = "ORA-28001"
+PASSWORD_IN_GRACE = "ORA-28002"
+INVALID_CREDENTIALS = "ORA-01017"
+
+
+def margin_reason(
+    failed_logins: int | None,
+    failed_login_limit: str | None,
+    *,
+    margin: int = DEFAULT_MARGIN,
+    attempts: int = 1,
+) -> str | None:
+    """Why this run must not attempt a login, or ``None`` to go ahead.
+
+    ``attempts`` is how many logins **this run intends against this account**,
+    and it is a parameter rather than an assumed 1 because of what
+    ``--include-previous`` does. Mitigation 1 says one attempt per account per
+    run; a flag that checks the previous password too makes two, and restating
+    the rule per *value checked* rather than per account would quietly double
+    the spend on the counter the guard is protecting. Asking for the budget up
+    front is what keeps the flag honest.
+
+    Returns a sentence rather than a bool because it is reported: "we chose not
+    to try" is a result (:data:`~sopuli.driver.protocol.SKIPPED`), and a result
+    with no reason attached is indistinguishable at 03:00 from a run that did
+    nothing.
+
+    Two ways to have no guard, and they are not the same:
+
+    * **``UNLIMITED``** -- there is no lockout on this profile, so there is
+      nothing to protect and the attempt goes ahead.
+    * **``failed_logins is None``** -- ``SELECT ON SYS.USER$`` was never granted
+      (#86 made it optional), so the guard is *unavailable*. The attempt still
+      goes ahead, because #86 also decided `check` runs without a
+      site-specific grant -- but the caller is expected to say so plainly rather
+      than let an absent guard look like a satisfied one.
+    """
+    if failed_login_limit is None or failed_login_limit.upper() == UNLIMITED:
+        return None
+    if failed_logins is None:
+        return None
+
+    try:
+        limit = int(failed_login_limit)
+    except ValueError:
+        # A limit that is neither a number nor UNLIMITED is one this code does
+        # not understand, and guessing at a lockout threshold is the wrong thing
+        # to guess at. Refuse the attempt rather than spend an unknown budget.
+        return (
+            f"the profile's FAILED_LOGIN_ATTEMPTS is {failed_login_limit!r}, "
+            "which is neither a count nor UNLIMITED"
+        )
+
+    remaining = limit - failed_logins
+    if remaining - attempts < margin:
+        return (
+            f"{failed_logins} of {limit} failed logins are already recorded, "
+            f"and {attempts} more would leave less than the {margin}-attempt margin"
+        )
+    return None
+
+
+def result_for(code: str | None) -> tuple[str, str | None]:
+    """What a login attempt's outcome means, as ``(result, detail)``.
+
+    ``code`` is ``None`` for a login that succeeded. Everything else is #172's
+    classification of what the server said, read here for what it says about
+    *the password* rather than about the account.
+    """
+    if code is None:
+        return PASS, None
+    if code == PASSWORD_EXPIRED:
+        return PASS, "the password is correct and has expired"
+    if code == PASSWORD_IN_GRACE:
+        return PASS, "the password is correct and is in its grace period"
+    if code == INVALID_CREDENTIALS:
+        return FAIL, None
+    if code == ACCOUNT_LOCKED:
+        return (
+            UNAVAILABLE,
+            "the account is locked, which it answers with whether or not the password is right",
+        )
+    return UNAVAILABLE, f"the login attempt failed with {code}"
+
+
+def skipped_detail(reason: str) -> str:
+    """What a skipped verification says about itself."""
+    return f"no login attempted: {reason}"
+
+
+__all__ = [
+    "ACCOUNT_LOCKED",
+    "DEFAULT_MARGIN",
+    "INVALID_CREDENTIALS",
+    "PASSWORD_EXPIRED",
+    "PASSWORD_IN_GRACE",
+    "SKIPPED",
+    "UNLIMITED",
+    "margin_reason",
+    "result_for",
+    "skipped_detail",
+]

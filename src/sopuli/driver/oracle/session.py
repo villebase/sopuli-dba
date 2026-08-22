@@ -40,7 +40,7 @@ import oracledb
 
 from sopuli.config.model import ExpandedTarget
 from sopuli.driver.oracle.accounts import describe, resolve_name
-from sopuli.driver.oracle.capabilities import assert_scope, observe
+from sopuli.driver.oracle.capabilities import assert_scope, observe, require_read_write
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     NO_CLIENT,
@@ -219,7 +219,18 @@ class OracleSession:
 
         The name in the statement is the spelling the dictionary gave back, not
         the caller's, because an Oracle quoted identifier is case-sensitive.
+
+        **A read-only target is refused here, before anything is built.** #177
+        put :func:`~sopuli.driver.oracle.capabilities.require_read_write` in the
+        mutating callers' hands rather than in ``assert_scope``, so that `creds
+        check` keeps working against a physical standby -- and this is the
+        mutating caller. Leaving it to a command that does not exist yet would
+        have been a refusal that cannot fire, which P1 asks for *up front*
+        precisely so it does not arrive as a failed ``ALTER USER`` half way
+        through a run.
         """
+        require_read_write(self.scope(), target=self.target.name)
+
         with self.connection.cursor() as cursor:
             spelling = resolve_name(cursor, account)
             if spelling is None:

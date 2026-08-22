@@ -206,3 +206,74 @@ def test_an_over_long_password_is_refused_before_the_wire(account: Any) -> None:
     was broken."""
     with pytest.raises(DriverError, match="bytes"):
         account.set_password(ACCOUNT, Secret("Aa11-" + "x" * 200))
+
+
+# ------------------------------------------- the client, but no server ------
+
+
+class _Cursor:
+    """A cursor that records, so a test can prove nothing was sent."""
+
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def execute(self, sql: str, parameters: Any = None, /) -> None:
+        self.executed.append(sql)
+
+    def fetchone(self) -> Any:
+        return None
+
+    def fetchall(self) -> Any:
+        return []
+
+    def __enter__(self) -> _Cursor:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+class _Connection:
+    def __init__(self) -> None:
+        self.opened = _Cursor()
+
+    def cursor(self) -> _Cursor:
+        return self.opened
+
+    def close(self) -> None:
+        return None
+
+
+def test_a_read_only_target_is_refused_before_any_statement(session_module: Any) -> None:
+    """P1 wants a standby refused **up front**, not as a failed `ALTER USER` half
+    way through a run.
+
+    #177 deliberately kept `require_read_write` out of `assert_scope`, so that
+    `creds check` keeps working against a physical standby — which makes calling
+    it the mutating caller's job, and this is the mutating caller. Left to a
+    command that does not exist yet it would have been a refusal that cannot
+    fire.
+
+    Driven against a fake connection because a standby is not something the
+    tier-1 lane can stand up, and the assertion that matters is that **nothing
+    reached the cursor**.
+    """
+    from sopuli.driver.oracle.capabilities import ReadOnlyTargetError
+    from sopuli.driver.protocol import Scope
+
+    connection = _Connection()
+    session = session_module.OracleSession(
+        connection=connection,
+        target=ExpandedTarget(
+            target=Target(name="orders-dr", type="oracle", dsn="dr.example.com:1521/orders"),
+            index=0,
+        ),
+        correlation_id=CORRELATION_ID,
+    )
+    session._scope = Scope(type="pdb", open_mode="READ ONLY", read_write=False)
+
+    with pytest.raises(ReadOnlyTargetError) as raised:
+        session.set_password(ACCOUNT, Secret(ROTATED))
+
+    assert "orders-dr" in str(raised.value)
+    assert connection.opened.executed == [], "nothing may reach the wire"

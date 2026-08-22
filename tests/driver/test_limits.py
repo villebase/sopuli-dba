@@ -12,6 +12,7 @@ import pytest
 
 from sopuli.driver.oracle.limits import (
     CHARSET_QUERY,
+    CODECS,
     FALLBACK,
     LEGACY_MAX_BYTES,
     MODERN_MAX_BYTES,
@@ -142,3 +143,31 @@ def test_the_limit_is_enforced_at_the_measured_boundary() -> None:
 
     with pytest.raises(PasswordNotAdmissibleError, match="31 bytes"):
         admissible(Secret("a" * (LEGACY_MAX_BYTES + 1)), limit)
+
+
+def test_oracle_utf8_is_not_mapped_to_python_utf8() -> None:
+    """Its absence from `CODECS` is the point, not a gap somebody should fill.
+
+    Oracle's `UTF8` is CESU-8. The two agree across the Basic Multilingual Plane
+    and diverge above it, where UTF-8 spends four bytes on a supplementary
+    character and CESU-8 spends six on a surrogate pair — so mapping it to
+    `utf-8` under-counts by two bytes each, accepting a password the server then
+    refuses. In the one code path whose job is to know the limit *before* the
+    statement is built, that is the wrong direction to be wrong in.
+    """
+    assert "UTF8" not in CODECS, "see the module docstring: this omission is deliberate"
+    assert "AL32UTF8" in CODECS, "which is real UTF-8 and is mapped"
+
+    limit = resolve(_Cursor({CHARSET_QUERY: ("UTF8",)}), "19.3.0.0.0")
+
+    assert limit.encoding == FALLBACK
+    assert limit.charset == "UTF8", "and the message still names what the database calls it"
+
+
+def test_a_supplementary_character_is_where_the_two_would_disagree() -> None:
+    """The measurement behind the omission, as arithmetic rather than prose."""
+    supplementary = "😀"
+
+    assert len(supplementary.encode("utf-8")) == 4
+    # CESU-8 spends 3 bytes on each half of the surrogate pair.
+    assert len(supplementary.encode("utf-16-be")) // 2 * 3 == 6

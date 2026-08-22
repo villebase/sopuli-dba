@@ -27,9 +27,20 @@ is not a guess about byte widths -- it is a refusal to make one: under ``ascii``
 every generated password (§8's alphabets are ASCII) measures exactly, and
 anything outside ASCII is refused by
 :func:`~sopuli.driver.oracle.statements.admissible` with a message naming the
-database's own word for the character set. The alternative, assuming UTF-8,
-silently *under*-counts on Oracle's ``UTF8`` (CESU-8) for supplementary
-characters, which would build a statement the server rejects.
+database's own word for the character set.
+
+**Oracle's ``UTF8`` is one of the unmapped ones, and its absence from
+:data:`CODECS` is the point rather than an oversight.** It is CESU-8, not UTF-8:
+the two agree for every character in the Basic Multilingual Plane and diverge
+above it, where UTF-8 spends four bytes and CESU-8 spends six on a surrogate
+pair. Mapping it to ``utf-8`` would *under*-count by two bytes per supplementary
+character -- accepting a password the server then refuses, in the one code path
+whose whole job is to know the limit before the statement is built. Python has no
+CESU-8 codec, so the choice is between measuring it wrongly and not claiming to
+measure it, and this module does the second. A database still on ``UTF8``
+(Oracle deprecated it in favour of ``AL32UTF8``) therefore accepts ASCII
+passwords, which is every password §8 can generate, and refuses the rest with a
+message rather than a surprise.
 """
 
 from __future__ import annotations
@@ -50,7 +61,6 @@ LONG_IDENTIFIER_FLOOR = (12, 2)
 #: add for a site that needs it. Anything absent lands on :data:`FALLBACK`.
 CODECS: dict[str, str] = {
     "AL32UTF8": "utf-8",
-    "UTF8": "utf-8",
     "US7ASCII": "ascii",
     "WE8MSWIN1252": "cp1252",
     "WE8ISO8859P1": "latin-1",

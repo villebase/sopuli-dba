@@ -72,7 +72,7 @@ def _validate(entry: dict[str, Any]) -> list[str]:
 
 
 def test_a_reachable_target_reports_what_it_found() -> None:
-    entry = build_target(_target(), scope=_found())
+    entry = build_target(_target(), connected=True, scope=_found())
 
     assert _validate(entry) == []
     assert entry["reachable"] is True
@@ -85,7 +85,9 @@ def test_an_unreachable_target_has_no_scope_at_all() -> None:
     reach reads as a database that supports nothing, which is a different and
     much more alarming claim."""
     entry = build_target(
-        _target(), error=Error(category="connectivity", message="no listener", code="ORA-12541")
+        _target(),
+        connected=False,
+        error=Error(category="connectivity", message="no listener", code="ORA-12541"),
     )
 
     assert _validate(entry) == []
@@ -95,7 +97,9 @@ def test_an_unreachable_target_has_no_scope_at_all() -> None:
 
 
 def test_capabilities_are_sorted_so_two_runs_can_be_diffed() -> None:
-    entry = build_target(_target(), scope=_found(capabilities=frozenset({"b", "a", "c"})))
+    entry = build_target(
+        _target(), connected=True, scope=_found(capabilities=frozenset({"b", "a", "c"}))
+    )
 
     assert entry["scope"]["capabilities"] == ["a", "b", "c"]
 
@@ -104,8 +108,10 @@ def test_offline_verify_is_reported_from_the_capability_set() -> None:
     """One fact, reported twice in the schema because a consumer asks it
     directly — and stored once on `Scope`, because two copies are two things
     that can disagree."""
-    without = build_target(_target(), scope=_found())
-    with_it = build_target(_target(), scope=_found(capabilities=frozenset({"offline_verify"})))
+    without = build_target(_target(), connected=True, scope=_found())
+    with_it = build_target(
+        _target(), connected=True, scope=_found(capabilities=frozenset({"offline_verify"}))
+    )
 
     assert without["scope"]["offline_verify_available"] is False
     assert with_it["scope"]["offline_verify_available"] is True
@@ -114,7 +120,9 @@ def test_offline_verify_is_reported_from_the_capability_set() -> None:
 def test_labels_come_from_the_config_and_not_the_driver() -> None:
     """A driver has no idea what a target set called this database, which is why
     `Scope` has no field for them and this adds them."""
-    entry = build_target(_target(labels=(("env", "qa"),), target_set="appdb"), scope=_found())
+    entry = build_target(
+        _target(labels=(("env", "qa"),), target_set="appdb"), connected=True, scope=_found()
+    )
 
     assert entry["scope"]["labels"] == {"target_set": "appdb", "env": "qa"}
 
@@ -126,13 +134,13 @@ def test_a_target_that_asserts_nothing_gets_no_assertion_object() -> None:
     """`01-configuration.md` §3a: an assertion nobody makes is not a gap. An
     object saying `matches: true` would report agreement with a claim that was
     never made."""
-    entry = build_target(_target(), scope=_found())
+    entry = build_target(_target(), connected=True, scope=_found())
 
     assert "asserted" not in entry
 
 
 def test_a_matching_assertion_is_reported_as_matching() -> None:
-    entry = build_target(_target(scope="pdb", container="ORDERS"), scope=_found())
+    entry = build_target(_target(scope="pdb", container="ORDERS"), connected=True, scope=_found())
 
     assert _validate(entry) == []
     assert entry["asserted"] == {"scope": "pdb", "container": "ORDERS", "matches": True}
@@ -148,7 +156,9 @@ def test_a_disagreeing_assertion_is_reported_as_not_matching(
     """The `dsn:` edit that silently repointed a target, made visible in a survey
     rather than only at the moment somebody tries to rotate."""
     entry = build_target(
-        _target(scope=declared_scope, container=declared_container), scope=_found()
+        _target(scope=declared_scope, container=declared_container),
+        connected=True,
+        scope=_found(),
     )
 
     assert entry["asserted"]["matches"] is False
@@ -157,7 +167,7 @@ def test_a_disagreeing_assertion_is_reported_as_not_matching(
 def test_a_container_assertion_is_compared_case_insensitively() -> None:
     """The same rule the driver applies, for the same reason: Oracle upper-cases
     an unquoted identifier, so `orders` and `ORDERS` are one container."""
-    entry = build_target(_target(container="orders"), scope=_found())
+    entry = build_target(_target(container="orders"), connected=True, scope=_found())
 
     assert entry["asserted"]["matches"] is True
 
@@ -169,7 +179,7 @@ def test_the_report_leads_with_the_client() -> None:
     """Two sections, because only the first can be answered without a network:
     *can this machine reach an Oracle at all*, and then *what is each target*."""
     text = render(
-        [build_target(_target(), scope=_found())],
+        [build_target(_target(), connected=True, scope=_found())],
         client={"instant_client": "23.5.0.0", "reaches": "19.1 and later"},
     )
 
@@ -181,7 +191,7 @@ def test_the_report_leads_with_the_client() -> None:
 def test_the_report_names_a_mismatch_in_full() -> None:
     """Both halves, because the found one is the half the reader cannot see."""
     text = render(
-        [build_target(_target(scope="cdb_root"), scope=_found())],
+        [build_target(_target(scope="cdb_root"), connected=True, scope=_found())],
         client={"instant_client": "23.5.0.0"},
     )
 
@@ -191,9 +201,36 @@ def test_the_report_names_a_mismatch_in_full() -> None:
 
 def test_the_report_names_a_failure_and_its_target() -> None:
     text = render(
-        [build_target(_target(), error=Error(category="connectivity", message="no listener"))],
+        [
+            build_target(
+                _target(),
+                connected=False,
+                error=Error(category="connectivity", message="no listener"),
+            )
+        ],
         client={"instant_client": "23.5.0.0"},
     )
 
     assert "orders-pdb" in text
     assert "no listener" in text
+
+
+def test_a_session_that_opened_but_could_not_be_described_stays_reachable() -> None:
+    """`reachable` means *a session was opened*, and nothing more.
+
+    A probe can fail on a connection that is perfectly fine — a dictionary view
+    the service account cannot read, or a question this build should not have
+    asked (`ProbeError`). Deriving `reachable` from whether a scope came back
+    reported those as connectivity failures, which sends somebody to the
+    listener over a grant.
+    """
+    entry = build_target(
+        _target(),
+        connected=True,
+        error=Error(category="database", message="a capability probe failed", code="ORA-00942"),
+    )
+
+    assert _validate(entry) == []
+    assert entry["reachable"] is True, "the session opened; that is what the field means"
+    assert "scope" not in entry, "but nothing could be said about what it is"
+    assert entry["error"]["code"] == "ORA-00942"

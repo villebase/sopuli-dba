@@ -425,29 +425,42 @@ def _examine(target: ExpandedTarget, run: Invocation, config: Config) -> dict[st
     started = time.monotonic()
     session = None
     try:
-        module = resolve_driver(target.target)
-        credential = admin_resolve(target, env=os.environ)
-        driver = module.OracleDriver(
-            env=os.environ,
-            correlation_id=run.document.correlation_id,
-            timeouts=_timeouts(run),
-            client_lib_dir=config.runtime.oracle.client_lib_dir,
-        )
-        session = driver.connect(target, credential.credential)
-        scope = session.scope()
-    except Exception as error:  # noqa: BLE001 -- every failure is a per-target finding
-        return build_target(
-            target,
-            error=_as_error(error),
-            duration_ms=_elapsed(started),
-            warnings=_reach_warning(error),
-        )
+        # Getting in, which is what `reachable` reports.
+        try:
+            module = resolve_driver(target.target)
+            credential = admin_resolve(target, env=os.environ)
+            driver = module.OracleDriver(
+                env=os.environ,
+                correlation_id=run.document.correlation_id,
+                timeouts=_timeouts(run),
+                client_lib_dir=config.runtime.oracle.client_lib_dir,
+            )
+            session = driver.connect(target, credential.credential)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return build_target(
+                target,
+                connected=False,
+                error=_as_error(error),
+                duration_ms=_elapsed(started),
+                warnings=_reach_warning(error),
+            )
+
+        # Finding out what it is, which can fail on a connection that is fine:
+        # a dictionary view this account cannot read, or a probe that could not
+        # be answered. Reporting that as unreachable would send somebody to the
+        # listener over a grant, so the two are separate.
+        try:
+            scope = session.scope()
+        except Exception as error:  # noqa: BLE001 -- also a per-target finding
+            return build_target(
+                target, connected=True, error=_as_error(error), duration_ms=_elapsed(started)
+            )
     finally:
         if session is not None:
             with suppress(Exception):
                 session.close()
 
-    return build_target(target, scope=scope, duration_ms=_elapsed(started))
+    return build_target(target, connected=True, scope=scope, duration_ms=_elapsed(started))
 
 
 def _timeouts(run: Invocation) -> Timeouts:

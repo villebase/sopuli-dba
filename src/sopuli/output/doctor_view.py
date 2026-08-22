@@ -41,6 +41,7 @@ from sopuli.output.table import Column, render_table
 def build_target(
     target: ExpandedTarget,
     *,
+    connected: bool,
     scope: Scope | None = None,
     error: Error | None = None,
     duration_ms: int | None = None,
@@ -48,11 +49,23 @@ def build_target(
 ) -> dict[str, Any]:
     """One entry in ``targets[]``.
 
-    ``scope`` and ``error`` are the two outcomes and exactly one of them is
-    expected: a session either opened and reported what it found, or it did not
-    and said why.
+    ``connected`` is passed rather than inferred from ``scope``, and the
+    distinction is the whole point of the field. ``reachable`` means *a session
+    was opened*, which is not the same as *everything after that worked*: a
+    probe can fail on a connection that is perfectly fine -- a dictionary view
+    the service account cannot read, or a question this build should not have
+    asked (:class:`~sopuli.driver.oracle.capabilities.ProbeError`). Deriving
+    ``reachable`` from ``scope is not None`` reported those as connectivity
+    failures, which sends somebody to the listener over a grant.
+
+    So there are three shapes and not two:
+
+    * **not connected** -- no scope, and ``error`` says why;
+    * **connected, not described** -- ``reachable: true``, no scope, and
+      ``error`` says what failed after the session opened;
+    * **connected and described** -- ``reachable: true`` and a scope.
     """
-    entry: dict[str, Any] = {"target": target.name, "reachable": scope is not None}
+    entry: dict[str, Any] = {"target": target.name, "reachable": connected}
 
     if scope is not None:
         entry["scope"] = _scope(scope, target)

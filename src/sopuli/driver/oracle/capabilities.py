@@ -399,8 +399,7 @@ def require_read_write(scope: Scope, *, target: str) -> None:
     """
     if scope.read_write is False:
         raise ReadOnlyTargetError(
-            f'target "{target}" is open {scope.open_mode or "read-only"} '
-            "and cannot be written to",
+            f'target "{target}" is open {scope.open_mode or "read-only"} and cannot be written to',
             hint=(
                 "this looks like a physical standby; point the target at the primary, "
                 "or drop it from the selection"

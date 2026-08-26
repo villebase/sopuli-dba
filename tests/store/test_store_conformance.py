@@ -305,6 +305,34 @@ def test_a_merge_patch_returns_the_new_version(harness: Harness) -> None:
     assert harness.store.patch(harness.path, {"password": "two"}, cas=1) == 2
 
 
+def test_a_merge_patch_will_not_create_a_document(harness: Harness) -> None:
+    """A patch describes a change to something, and Vault answers 404 when there
+    is nothing to change. The fake has to refuse it too: a dictionary would
+    create the document quite happily, and a caller patching a path it had never
+    written would then pass in tier 0 and fail against a real mount."""
+    with pytest.raises(StoreError) as raised:
+        harness.store.patch(harness.path, {"password": "one"}, cas=0)
+
+    assert not isinstance(raised.value, CasConflictError)
+    assert "nothing at" in str(raised.value)
+
+
+def test_a_merge_patch_will_not_undelete(harness: Harness) -> None:
+    """The same refusal for the state that reads identically but is not the same
+    -- a soft-deleted path has a history, so `cas: 0` could never take it either.
+    Both stores answer this on the read, which is why one rule covers both."""
+    harness.store.write(harness.path, {"password": "one"}, cas=0)
+    harness.admin.soft_delete(harness.path)
+
+    with pytest.raises(StoreError) as raised:
+        harness.store.patch(harness.path, {"password": "two"}, cas=1)
+
+    # Not a lost race: the version never moved. Asserted because a conflict is
+    # the other way this could fail, and it would be right for the wrong reason.
+    assert not isinstance(raised.value, CasConflictError)
+    assert "nothing at" in str(raised.value)
+
+
 def test_a_stale_merge_patch_is_refused(harness: Harness) -> None:
     """A patch is not a substitute for a compare-and-set: it says which keys
     change, not which version they change. §7 wants a foreign writer to abort the

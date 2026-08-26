@@ -170,6 +170,13 @@ class MemoryStore:
         deletion in particular -- and it holds it by calling the same
         :func:`~sopuli.payload.apply_patch` the read-modify-write fallback does,
         so the two can never drift into two readings of one RFC.
+
+        **A patch will not create a document**, and that refusal is the one thing
+        here a dictionary would happily get wrong. Vault answers 404 to a patch
+        of a path with nothing at it -- never written, metadata-only, or
+        soft-deleted alike -- because a patch describes a change to something. A
+        fake that created the document instead would let a caller patch a path it
+        had never written, pass in tier 0, and fail against a real mount.
         """
         if MERGE_PATCH not in self.capabilities:
             raise StoreError(
@@ -177,9 +184,12 @@ class MemoryStore:
                 hint="read the document, apply the patch locally, and write it back under a `cas`",
             )
         existing = self.read(path)
-        return self.write(
-            path, apply_patch(None if existing is None else existing.data, changes), cas=cas
-        )
+        if existing is None:
+            raise StoreError(
+                f"there is nothing at {path!r} to merge a patch into",
+                hint="the first write to a path creates it; a merge patch changes one that exists",
+            )
+        return self.write(path, apply_patch(existing.data, changes), cas=cas)
 
     def metadata(self, path: str) -> PathMetadata | None:
         entry = self.paths.get(path)

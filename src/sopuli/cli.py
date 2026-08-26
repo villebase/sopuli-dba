@@ -55,6 +55,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -344,9 +345,15 @@ def target_list(
 
 @cli.command("doctor")
 @select_option
+@click.option(
+    "--check-privileges",
+    is_flag=True,
+    help="Also report privileges the service account holds and does not need.",
+)
 @global_options
 def doctor(
     selectors: tuple[str, ...],
+    check_privileges: bool,
     run: Invocation,
 ) -> str:
     """Check that every target can be reached, and report what it is.
@@ -364,6 +371,13 @@ def doctor(
 
     Nothing here is a substitute for the guardrails. Reporting what a service
     account holds is not enforcing it; #173 is the refusal.
+
+    **``--check-privileges`` warns and never fails** (P5, decided in #213). An
+    over-granted account is somebody else's decision to fix, and a ``doctor``
+    that exited non-zero over it would block the person who ran it, mid-incident,
+    over a condition they did not create. It is behind a flag because it is three
+    more round trips per target, and a survey of twenty databases should not pay
+    for a question nobody asked.
     """
     document = run.document
 
@@ -373,7 +387,10 @@ def doctor(
     document.diagnostics.extend(config_diagnostics(config))
 
     client = _client_report(config)
-    entries = [_examine(target, run, config) for target in config.expanded_targets]
+    entries = [
+        _examine(target, run, config, privileges=check_privileges)
+        for target in config.expanded_targets
+    ]
 
     document.targets = entries
     reachable = sum(1 for entry in entries if entry["reachable"])
@@ -420,7 +437,9 @@ def _client_report(config: Config) -> dict[str, Any]:
     return report
 
 
-def _examine(target: ExpandedTarget, run: Invocation, config: Config) -> dict[str, Any]:
+def _examine(
+    target: ExpandedTarget, run: Invocation, config: Config, *, privileges: bool = False
+) -> dict[str, Any]:
     """One target: connect, report what it is, and always close."""
     started = time.monotonic()
     session = None
@@ -451,6 +470,13 @@ def _examine(target: ExpandedTarget, run: Invocation, config: Config) -> dict[st
         # listener over a grant, so the two are separate.
         try:
             scope = session.scope()
+            if privileges:
+                # Folded into the scope the entry already carries rather than
+                # added beside it, because `scope.over_granted` is where the run
+                # schema puts this, and two places for one fact are two things
+                # that can disagree. The audit never raises for a view it cannot
+                # read: that comes back as `unreadable` and is reported.
+                scope = replace(scope, over_granted=session.privileges().over_granted)
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             return build_target(
                 target, connected=True, error=_as_error(error), duration_ms=_elapsed(started)

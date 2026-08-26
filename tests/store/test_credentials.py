@@ -147,6 +147,27 @@ def test_a_missing_document_resolves_to_nothing() -> None:
     assert resolve(None, ref(f"{PATH}#password")) is None
 
 
+def test_a_staged_read_of_a_missing_document_resolves_to_nothing() -> None:
+    """No document is not a document of the wrong shape.
+
+    The two look alike from inside the staged branch -- neither is a map -- and
+    conflating them refuses a path that is merely empty, which is the ordinary
+    state before the first rotation. Reachable through a store as well as
+    directly: KV v1 answers a body with no `data` key as `Stored(data=None)`.
+    """
+    assert resolve(None, ref(f"{PATH}#password@stage=pending")) is None
+    assert resolve(None, ref(f"{SHARED}#DB_CREDENTIALS/acme_web_user@stage=previous")) is None
+
+
+def test_a_staged_read_of_a_missing_document_resolves_to_nothing_through_a_store() -> None:
+    """The same thing where it is actually reached: a store whose read answers a
+    document of `None` rather than answering `None` itself."""
+    store = MemoryStore()
+    store.write(PATH, None, cas=0)
+
+    assert read_secret(store, ref(f"{PATH}#password@stage=pending")) is None
+
+
 def test_a_field_that_is_not_there_resolves_to_nothing() -> None:
     assert resolve({"other": "value"}, ref(f"{PATH}#password")) is None
 

@@ -127,6 +127,13 @@ def resolve(document: Any, ref: SecretRef) -> Secret | None:
     difference is between a value that is absent and a value that is present and
     is not a password, and only the first of those is ordinary.
     """
+    if document is None:
+        # Before anything else, including the staged read below: **no document**
+        # is not a document of the wrong shape. Reachable through the store as
+        # well as directly -- KV v1 answers a body with no `data` key as
+        # `Stored(data=None)`, so a staged read there would otherwise be refused
+        # for a path that is merely empty.
+        return None
     if ref.field is None:
         return _whole(document, ref)
 
@@ -143,7 +150,8 @@ def resolve(document: Any, ref: SecretRef) -> Secret | None:
         # document has none. Not `None`: on a store that emulates the stages in
         # payload fields -- every backend in P2's table but OCI -- there is
         # nowhere else for a stage to be, so this is a ref that can never resolve
-        # rather than one that found nothing today.
+        # rather than one that found nothing today. An *absent* document took the
+        # early return above and never reaches this.
         raise SecretShapeError(
             f"the secret ref {ref} asks for the `{stage}` stage of a document that is not a map",
             hint=(
@@ -198,9 +206,11 @@ def _whole(document: Any, ref: SecretRef) -> Secret | None:
     document of one key, and a ref naming no field means that key. More than one
     and there is nothing for it to mean. Listing the field names in the message is
     safe: they are keys, and the values are what this module never shows.
+
+    ``document`` is never ``None`` here: :func:`resolve` returns for that before
+    it dispatches, so an absent document is one answer at one place rather than
+    the same check repeated down each branch.
     """
-    if document is None:
-        return None
     if not isinstance(document, Mapping):
         return _wrap(document, ref, at=())
     if len(document) == 1:

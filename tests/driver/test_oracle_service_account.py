@@ -46,8 +46,21 @@ from sopuli.driver.oracle.privileges import (
 from sopuli.driver.protocol import Credential
 from sopuli.secrets import Secret
 
-ADMIN_USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 ADMIN_PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
+
+#: **`SYS AS SYSDBA`, and not `SYSTEM`** -- which is §2's own instruction and was
+#: measured before it was written: "every `GRANT SELECT ON SYS.…` above fails with
+#: `ORA-01031: insufficient privileges` when the granting session is `SYSTEM`,
+#: while the `CREATE USER` and the two system privileges succeed."
+#:
+#: The first draft of this module granted as `SYSTEM`, because that is what every
+#: other tier-1 fixture connects as, and CI produced exactly that `ORA-01031`.
+#: Worth recording rather than quietly fixing: the documented warning is real,
+#: the failure it warns about is *partial* -- the account is created and can
+#: rotate, and only the dictionary reads are missing -- and a fixture that had
+#: swallowed the error would have built the half-granted account §2 describes as
+#: the trap, then asserted the tool was happy with it.
+ADMIN_USER = "sys"
 
 CORRELATION_ID = "9f1c4e02-77ab-4d51-9c6e-3b8a5d2f0e14"
 
@@ -59,9 +72,20 @@ ACCOUNT_PASSWORD = "Service-Account-9z"
 
 
 def _run(session: Any, *statements: str) -> None:
-    with session.connection.cursor() as cursor:
+    """Statements through a driver session."""
+    _execute(session.connection, *statements)
+
+
+def _execute(connection: Any, *statements: str) -> None:
+    with connection.cursor() as cursor:
         for statement in statements:
             cursor.execute(statement)
+
+
+def _container(connection: Any) -> str:
+    with connection.cursor() as cursor:
+        cursor.execute("select sys_context('userenv','con_name') from dual")
+        return str(cursor.fetchone()[0])
 
 
 def _grants() -> tuple[str, ...]:
@@ -81,25 +105,29 @@ def _grants() -> tuple[str, ...]:
 
 @pytest.fixture
 def admin(live_oracle: Environment) -> Iterator[Any]:
-    """A session as `system`, which is what can create an account at all."""
+    """A `SYS AS SYSDBA` connection, which is what can issue §2's grants.
+
+    Raw `oracledb` rather than the tool's own driver, and that is not a shortcut:
+    :meth:`OracleDriver.connect` has no `SYSDBA` mode and should not grow one.
+    P2's bootstrap list is about the credential the *tool* authenticates with,
+    and the tool has no operation that requires `SYSDBA` -- §3 puts it on the
+    must-not-grant list. Installing the account is an operator's job that happens
+    before the tool exists, so the fixture does it the way an operator does.
+    """
+    oracledb = pytest.importorskip("oracledb")
     session_module = pytest.importorskip("sopuli.driver.oracle.session")
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=ADMIN_USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=ADMIN_USER, secret=Secret(ADMIN_PASSWORD)),
+    session_module.initialise(env=os.environ)
+
+    connection = oracledb.connect(
+        user=ADMIN_USER,
+        password=ADMIN_PASSWORD,
+        dsn=live_oracle.dsn,
+        mode=oracledb.AUTH_MODE_SYSDBA,
     )
     try:
-        yield opened
+        yield connection
     finally:
-        opened.close()
+        connection.close()
 
 
 @pytest.fixture
@@ -112,7 +140,7 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
     question and getting a reassuring answer.
     """
     session_module = pytest.importorskip("sopuli.driver.oracle.session")
-    if admin.scope().type == "cdb_root":
+    if _container(admin) == "CDB$ROOT":
         # A local account cannot be created in the root -- ORA-65096 -- and a
         # common one is the install script's COMMON mode, which grants
         # `CONTAINER=ALL` and adds `V_$PDBS`. That is a different account with a
@@ -121,7 +149,7 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
         # pretending one is the other would assert the wrong thing quietly.
         pytest.skip("this container answers as CDB$ROOT; a local service account needs a PDB")
     _drop(admin)
-    _run(admin, f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"', *_grants())
+    _execute(admin, f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"', *_grants())
 
     driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
     opened = driver.connect(
@@ -146,7 +174,7 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
 def _drop(admin: Any) -> None:
     """Absent is the desired state, so "it was not there" is a success."""
     with contextlib.suppress(Exception):
-        _run(admin, f"drop user {ACCOUNT} cascade")
+        _execute(admin, f"drop user {ACCOUNT} cascade")
 
 
 def _audit(session: Any) -> Any:

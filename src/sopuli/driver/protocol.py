@@ -266,6 +266,68 @@ class Credential:
 
 
 @dataclass(frozen=True)
+class PrivilegeAudit:
+    """What the must-not-grant list found, and what it could not look at.
+
+    Sorted throughout, because this reaches a report a human compares between
+    runs and dictionary order is nobody's contract.
+    """
+
+    #: §3 entries this account holds. What ``scope.over_granted`` carries.
+    over_granted: tuple[str, ...] = ()
+    #: §2 grants this account has. The positive side (#225): a half-installed
+    #: account is visible *here* rather than as six unrelated failures three
+    #: commands later.
+    held: tuple[str, ...] = ()
+    #: §2 grants it does not have, spelled as the ``GRANT`` to issue. Empty is
+    #: the answer a correct install gives, and the reason this section is emitted
+    #: whether or not it is empty: a section that appeared only on a problem
+    #: could not be quoted as evidence that there was none (E6).
+    missing: tuple[str, ...] = ()
+    #: Every role held, traversed. Reported whole rather than only where it
+    #: matched, so a reader can see *how* an over-grant arrived -- a site role
+    #: two levels up is the case #178 measured and the one nobody guesses.
+    roles: tuple[str, ...] = ()
+    #: Direct system privileges granted commonly (``USER_SYS_PRIVS.COMMON``),
+    #: which for a ``C##`` account is the difference between a grant that reaches
+    #: every PDB and one that reaches this one.
+    common: tuple[str, ...] = ()
+    #: §3 entries that were not checked, and why. :data:`UNAUDITABLE` always,
+    #: plus anything a refused view took with it.
+    unaudited: tuple[str, ...] = ()
+    #: Views that raised. Empty is the ordinary case; non-empty means the audit
+    #: is partial and the report has to say so rather than read as clean.
+    unreadable: tuple[str, ...] = ()
+
+    def caveats(self) -> tuple[str, ...]:
+        """What a reader has to know before trusting ``over_granted``.
+
+        Both lines, and the always-true one is deliberate. E6's argument for
+        `doctor`'s install shape applies here word for word: a caveat that
+        appears only when something is wrong cannot be quoted as evidence that
+        nothing was. Somebody handing this run to an auditor needs "SYSDBA was
+        not among the things checked" written down, not inferred from its
+        absence.
+        """
+        lines = []
+        if self.unreadable:
+            lines.append("this audit is partial -- could not read " + ", ".join(self.unreadable))
+        if self.unaudited:
+            lines.append("not checked, and not visible from here: " + ", ".join(self.unaudited))
+        return tuple(lines)
+
+    @property
+    def complete(self) -> bool:
+        """Whether every row of §3's list actually got looked at.
+
+        Never true today -- :data:`UNAUDITABLE` is always in ``unaudited`` -- and
+        it is a property rather than a constant because that is a fact about
+        §2's grant set rather than about this code, and the grant set can change.
+        """
+        return not self.unaudited and not self.unreadable
+
+
+@dataclass(frozen=True)
 class Scope:
     """What the driver found when it connected -- observed, never configured.
 

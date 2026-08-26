@@ -149,21 +149,36 @@ def service_account(admin: Any, live_oracle: Environment) -> Iterator[Any]:
         # pretending one is the other would assert the wrong thing quietly.
         pytest.skip("this container answers as CDB$ROOT; a local service account needs a PDB")
     _drop(admin)
-    _execute(admin, f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"', *_grants())
+    # Everything from here to `yield` can fail and leave an account behind, and
+    # on this module's first CI run it did: `CREATE USER` succeeded and the
+    # grants raised `ORA-01031`, so a half-granted `acme_svc_user` outlived the
+    # run. The `_drop` above means the *next* test still gets a clean account
+    # rather than "user already exists" -- but a fixture whose recovery is "the
+    # next one will tidy up" leaves the database dirty at the end of the session,
+    # which on a developer's own instance is litter and on a shared one is worse.
+    try:
+        _execute(admin, f'create user {ACCOUNT} identified by "{ACCOUNT_PASSWORD}"', *_grants())
 
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-service",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=ACCOUNT, auth=AdminAuth(method="env")),
+        driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
+        opened = driver.connect(
+            ExpandedTarget(
+                target=Target(
+                    name="tier1-service",
+                    type="oracle",
+                    dsn=live_oracle.dsn,
+                    admin=AdminCredential(username=ACCOUNT, auth=AdminAuth(method="env")),
+                ),
+                index=0,
             ),
-            index=0,
-        ),
-        Credential(username=ACCOUNT, secret=Secret(ACCOUNT_PASSWORD)),
-    )
+            Credential(username=ACCOUNT, secret=Secret(ACCOUNT_PASSWORD)),
+        )
+    except Exception:
+        # Dropped and re-raised, never swallowed: a setup failure here is the
+        # finding -- a grant §2 documents that this release will not issue is
+        # exactly what this module exists to notice.
+        _drop(admin)
+        raise
+
     try:
         yield opened
     finally:

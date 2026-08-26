@@ -43,6 +43,7 @@ from sopuli.store import MemoryStore
 from sopuli.store.protocol import (
     CAS,
     LIST,
+    MERGE_PATCH,
     VERSIONING,
     CasConflictError,
     PathMetadata,
@@ -260,6 +261,59 @@ def test_a_soft_delete_removes_the_latest_version_only(harness: Harness) -> None
     pinned = harness.store.read(harness.path, version=1)
     assert pinned is not None
     assert pinned.data == {"password": "first"}
+
+
+def test_a_store_that_can_merge_patch_says_so(harness: Harness) -> None:
+    assert MERGE_PATCH in harness.store.supports()
+
+
+def test_a_merge_patch_changes_only_the_keys_it_names(harness: Harness) -> None:
+    """01-configuration.md §7's central promise, against the real endpoint.
+
+    A dictionary makes this trivial and Vault does not: the merge patch is
+    selected by a content type rather than by the URL, so an adapter that sent an
+    ordinary body would *replace* the document here and pass against the fake.
+    """
+    harness.store.write(harness.path, {"acme_web_user": "one", "acme_api_user": "two"}, cas=0)
+
+    harness.store.patch(harness.path, {"acme_web_user": "rotated"}, cas=1)
+
+    stored = harness.store.read(harness.path)
+    assert stored is not None
+    assert stored.data == {"acme_web_user": "rotated", "acme_api_user": "two"}
+
+
+def test_a_merge_patch_deletes_a_key_mapped_to_null(harness: Harness) -> None:
+    """RFC 7386's deletion, which is how `pending` is cleared at promotion. A
+    store that stored a null instead would leave a `pending` that reads as staged
+    with no value rather than as cleared."""
+    harness.store.write(harness.path, {"password": "one", "pending": "two"}, cas=0)
+
+    harness.store.patch(harness.path, {"pending": None}, cas=1)
+
+    stored = harness.store.read(harness.path)
+    assert stored is not None
+    assert stored.data == {"password": "one"}
+
+
+def test_a_merge_patch_returns_the_new_version(harness: Harness) -> None:
+    """The fence, from the write that made it -- the same rule `write` follows
+    and for the same reason: reading it back afterwards would reopen the window
+    the fence exists to close."""
+    harness.store.write(harness.path, {"password": "one"}, cas=0)
+
+    assert harness.store.patch(harness.path, {"password": "two"}, cas=1) == 2
+
+
+def test_a_stale_merge_patch_is_refused(harness: Harness) -> None:
+    """A patch is not a substitute for a compare-and-set: it says which keys
+    change, not which version they change. §7 wants a foreign writer to abort the
+    run rather than be merged over."""
+    harness.store.write(harness.path, {"password": "one"}, cas=0)
+    harness.store.write(harness.path, {"password": "somebody-elses"}, cas=1)
+
+    with pytest.raises(CasConflictError):
+        harness.store.patch(harness.path, {"password": "mine"}, cas=1)
 
 
 def test_a_stale_compare_and_set_is_refused(harness: Harness) -> None:

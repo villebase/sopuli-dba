@@ -18,6 +18,12 @@
 SET SERVEROUTPUT ON
 SET DEFINE ON
 SET VERIFY OFF
+
+-- Errors are fatal here, as in 00_install.sql. Without this SQL*Plus continues
+-- past an ORA- or SP2- error and still exits 0, so an automated run cannot tell
+-- a working install from a broken one -- and a parameter that failed to resolve
+-- would leave `&svc_user` undefined, whereupon the prompt eats the script.
+WHENEVER SQLERROR EXIT SQL.SQLCODE
 --------------------------------------------------------------------------------
 -- Parameters
 --

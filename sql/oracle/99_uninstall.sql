@@ -5,7 +5,9 @@
 --         install, with keep_audit=Y and with keep_audit=N. The account and all
 --         8 grants were removed, and the ALTER USER audit history survived the
 --         drop. Also run against a PDB install with both parameters passed
---         (`ACME_SVC N`). Untried on 19c, 21c and 11.2.
+--         (`ACME_SVC N` -- deliberately NOT the default name, because a run
+--         using the default cannot tell whether the parameter was honoured or
+--         simply ignored). Untried on 19c, 21c and 11.2.
 --
 -- Removes the service account and the audit policies. Does NOT change any
 -- application account's password — whatever the tool last applied stays in

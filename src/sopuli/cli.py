@@ -378,6 +378,15 @@ def doctor(
     over a condition they did not create. It is behind a flag because it is three
     more round trips per target, and a survey of twenty databases should not pay
     for a question nobody asked.
+
+    What it *cannot* see is reported beside what it found: a refused view, and
+    the rows of the must-not-grant list that no view reachable from here carries.
+    An audit that listed only its findings would read as complete whatever it
+    managed to look at.
+
+    Help text stays ASCII throughout, which is P4's rule and why the section
+    numbers above are spelled out -- ``tests/test_cli_smoke.py`` fails the build
+    on a section sign reaching a Windows console.
     """
     document = run.document
 
@@ -468,15 +477,21 @@ def _examine(
         # a dictionary view this account cannot read, or a probe that could not
         # be answered. Reporting that as unreachable would send somebody to the
         # listener over a grant, so the two are separate.
+        warnings: tuple[str, ...] = ()
         try:
             scope = session.scope()
             if privileges:
                 # Folded into the scope the entry already carries rather than
                 # added beside it, because `scope.over_granted` is where the run
                 # schema puts this, and two places for one fact are two things
-                # that can disagree. The audit never raises for a view it cannot
-                # read: that comes back as `unreadable` and is reported.
-                scope = replace(scope, over_granted=session.privileges().over_granted)
+                # that can disagree.
+                audit = session.privileges()
+                scope = replace(scope, over_granted=audit.over_granted)
+                # The findings alone would be a report that reads as complete
+                # whatever it managed to look at. `caveats()` is what stops
+                # `over_granted: []` meaning both "nothing is over-granted" and
+                # "the view that would have said so was refused".
+                warnings = audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             return build_target(
                 target, connected=True, error=_as_error(error), duration_ms=_elapsed(started)
@@ -486,7 +501,13 @@ def _examine(
             with suppress(Exception):
                 session.close()
 
-    return build_target(target, connected=True, scope=scope, duration_ms=_elapsed(started))
+    return build_target(
+        target,
+        connected=True,
+        scope=scope,
+        duration_ms=_elapsed(started),
+        warnings=warnings,
+    )
 
 
 def _timeouts(run: Invocation) -> Timeouts:

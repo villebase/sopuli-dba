@@ -213,8 +213,10 @@ class OracleSession:
         **Not folded into** :meth:`scope`, unlike the capability probe, and the
         difference is who asks. Every command calls ``scope()``; only
         ``doctor --check-privileges`` wants this, and three more round trips on
-        every connection to answer a question nobody asked is the cost `--check-`
-        exists to avoid. Uncached for the same reason: it is asked once per run.
+        every connection to answer a question nobody asked is the cost the flag
+        exists to avoid. Three and not four: the role traversal starts from
+        ``USER`` rather than from a name read back first. Uncached for the same
+        reason as the flag: it is asked once per run.
 
         Reporting is not enforcing (#173), and this never refuses. P5 is decided
         — over-granting **warns**.

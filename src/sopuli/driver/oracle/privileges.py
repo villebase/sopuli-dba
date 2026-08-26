@@ -54,8 +54,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sopuli.driver.oracle.accounts import ROLES_QUERY
-
 #: §3's must-not-grant list, as **system privileges**. Spelled the way Oracle
 #: spells them in ``SESSION_PRIVS``, which is upper case and space-separated.
 FORBIDDEN_PRIVILEGES = (
@@ -77,10 +75,21 @@ FORBIDDEN_PREFIX = "GRANT ANY"
 #: which is what the traversal is for.
 FORBIDDEN_ROLES = ("DBA", "PDB_DBA", "CDB_DBA")
 
-#: On §3's list and not visible from a session that is not using them. See the
-#: module note: reported as unaudited rather than dropped, because a list missing
-#: two of its rows reads as a clean audit.
-UNAUDITABLE = ("SYSDBA", "SYSOPER")
+#: On §3's list and not visible from the three reads below. Reported as
+#: unaudited rather than dropped, because a list missing some of its rows reads
+#: as a clean audit.
+#:
+#: ``SYSDBA``/``SYSOPER`` live in ``V$PWFILE_USERS``, which §2 does not grant --
+#: and an account that had them would not be exercising them on this connection
+#: anyway.
+#:
+#: ``EXECUTE ON DBMS_LOCK`` is an **object** privilege, and these three views
+#: carry system privileges and roles. Auditing it means ``USER_TAB_PRIVS`` for
+#: the direct grant and ``ROLE_TAB_PRIVS`` for the role-derived one, and the
+#: second does not compose with the nested-role traversal the way the system
+#: privileges do -- which is a design question rather than a query, so the row is
+#: named as unaudited here rather than half-answered.
+UNAUDITABLE = ("SYSDBA", "SYSOPER", "EXECUTE ON DBMS_LOCK")
 
 #: Every system privilege in force, role-derived included. Granted to PUBLIC, so
 #: this is the one query here that cannot be refused.
@@ -90,8 +99,19 @@ SESSION_PRIVS_QUERY = "select privilege from session_privs"
 #: answer for the session's own user and need no grant.
 USER_SYS_PRIVS_QUERY = "select privilege, common from user_sys_privs"
 
-#: Who this session is, which the role traversal needs as its ``start with``.
-CURRENT_USER_QUERY = "select user from dual"
+#: The role traversal, scoped to this session rather than to a named grantee.
+#:
+#: :data:`~sopuli.driver.oracle.accounts.ROLES_QUERY` is the same ``CONNECT BY``
+#: over ``DBA_ROLE_PRIVS`` and takes a ``:name``, because guardrail 4 asks about
+#: an account that is not this one. Here the grantee **is** the session, and
+#: ``USER`` is a SQL function -- so this asks in one round trip what a bind would
+#: have taken two, which is worth a second query text for a command that is
+#: already three reads per target.
+SELF_ROLES_QUERY = (
+    "select granted_role from dba_role_privs "
+    "start with grantee = user "
+    "connect by nocycle prior granted_role = grantee"
+)
 
 
 @dataclass(frozen=True)
@@ -118,6 +138,23 @@ class PrivilegeAudit:
     #: Views that raised. Empty is the ordinary case; non-empty means the audit
     #: is partial and the report has to say so rather than read as clean.
     unreadable: tuple[str, ...] = ()
+
+    def caveats(self) -> tuple[str, ...]:
+        """What a reader has to know before trusting ``over_granted``.
+
+        Both lines, and the always-true one is deliberate. E6's argument for
+        `doctor`'s install shape applies here word for word: a caveat that
+        appears only when something is wrong cannot be quoted as evidence that
+        nothing was. Somebody handing this run to an auditor needs "SYSDBA was
+        not among the things checked" written down, not inferred from its
+        absence.
+        """
+        lines = []
+        if self.unreadable:
+            lines.append("this audit is partial -- could not read " + ", ".join(self.unreadable))
+        if self.unaudited:
+            lines.append("not checked, and not visible from here: " + ", ".join(self.unaudited))
+        return tuple(lines)
 
     @property
     def complete(self) -> bool:
@@ -185,9 +222,7 @@ def audit(cursor: Any) -> PrivilegeAudit:
     )
 
     try:
-        cursor.execute(CURRENT_USER_QUERY)
-        who = str(cursor.fetchall()[0][0])
-        roles = frozenset(str(row[0]).upper() for row in _rows(cursor, ROLES_QUERY, {"name": who}))
+        roles = frozenset(str(row[0]).upper() for row in _rows(cursor, SELF_ROLES_QUERY))
         unreadable: tuple[str, ...] = ()
     except Exception:  # noqa: BLE001 -- a refused view is a finding, not a crash
         roles, unreadable = frozenset(), ("DBA_ROLE_PRIVS",)

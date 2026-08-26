@@ -333,13 +333,19 @@ a non-default `DBA` grant is one `SET ROLE` away. For a guardrail that would be
 splitting hairs; for an audit asking what an account could become, a privilege
 one statement away is held.
 
-**`SYSDBA` and `SYSOPER` cannot be audited from here**, and the report says so
-rather than omitting them. They live in `V$PWFILE_USERS`, which §2 does not grant
-— and an account that had them would not be exercising them on this connection
-anyway. A list that quietly dropped two of its rows would read as a clean audit.
-The same applies to a refused `DBA_ROLE_PRIVS`, which takes the three role rows
-with it: "I looked and found nothing" and "I could not look" are answers this
-report never merges.
+**Three rows cannot be audited from here**, and the report names them on every
+run rather than omitting them — E6's argument, applied to a caveat: one that
+appears only when something is wrong cannot be quoted as evidence that nothing
+was.
+
+| Row | Why not | What it would take |
+|---|---|---|
+| `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's grant set, and an account holding them would not be exercising them on this connection anyway | a grant added only so the tool can report |
+| `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, the second of which does not compose with the nested-role traversal — a design question rather than a query |
+
+A refused `DBA_ROLE_PRIVS` joins them at runtime, taking the three role rows with
+it. "I looked and found nothing" and "I could not look" are answers this report
+never merges.
 
 ---
 

@@ -17,7 +17,8 @@ The assertions that matter are the two kinds of *quiet*:
 
 P5 is decided and is not tested here because it is not this module's: `classify`
 returns findings and never an exit code. That `doctor` warns rather than fails on
-them is `tests/test_cli_doctor.py`'s.
+them is asserted in `tests/driver/test_oracle_doctor.py`, against a real
+database.
 """
 
 from __future__ import annotations
@@ -164,3 +165,37 @@ def test_common_grants_are_reported_separately() -> None:
     audit = audit_of(common=frozenset({"ALTER USER", "CREATE SESSION"}))
 
     assert audit.common == ("ALTER USER", "CREATE SESSION")
+
+
+# ------------------------------------------------------------------ caveats ---
+
+
+def test_a_clean_audit_still_states_what_it_did_not_check() -> None:
+    """E6's argument, applied here: a caveat that appears only when something is
+    wrong cannot be quoted as evidence that nothing was. Somebody handing this
+    run to an auditor needs "SYSDBA was not among the things checked" written
+    down rather than inferred from its absence."""
+    caveats = audit_of().caveats()
+
+    assert len(caveats) == 1
+    assert "SYSDBA" in caveats[0]
+    assert "DBMS_LOCK" in caveats[0]
+
+
+def test_a_partial_audit_says_so_before_anything_else() -> None:
+    """The line that changes how `over_granted` is read. Without it an empty
+    finding list means both "nothing is over-granted" and "the view that would
+    have said so was refused"."""
+    caveats = audit_of(unreadable=("DBA_ROLE_PRIVS",)).caveats()
+
+    assert len(caveats) == 2
+    assert "partial" in caveats[0]
+    assert "DBA_ROLE_PRIVS" in caveats[0]
+
+
+def test_the_object_privilege_row_is_named_rather_than_dropped() -> None:
+    """`EXECUTE ON DBMS_LOCK` is on the must-not-grant list and is an *object*
+    privilege, which none of the three views here carries. Auditing it properly
+    is a design question about role-derived object grants, so the row is named as
+    unchecked rather than half-answered."""
+    assert "EXECUTE ON DBMS_LOCK" in audit_of().unaudited

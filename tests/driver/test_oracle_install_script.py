@@ -91,6 +91,12 @@ SVC = "acme_install_user"
 COMMON_SVC = f"C##{SVC.upper()}"
 LOCAL_SVC = SVC.upper()
 
+#: A second install, for the one bug that only shows up when the audit policy
+#: is still enabled BY an account the uninstall is not dropping. See
+#: :func:`test_uninstall_with_keep_audit_n_drops_a_policy_another_install_enabled`.
+SVC_OTHER = "acme_other_user"
+COMMON_SVC_OTHER = f"C##{SVC_OTHER.upper()}"
+
 
 def _missing(reason: str) -> None:
     if os.environ.get(TIER1) == "required":
@@ -141,37 +147,64 @@ def scripts(container: str) -> str:
     return REMOTE_DIR
 
 
+def _exec(
+    container: str, connect: str, *args: str, script: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`docker exec` straight to `sqlplus`, with no shell anywhere in the path.
+
+    **An argv list rather than `bash -lc`**, which matters for a reason that is
+    not hypothetical here: the connect string carries a password, and
+    `SOPULI_TEST_ORACLE_PASSWORD` is a contributor's to set. Through a shell, a
+    password containing `$`, a backtick or `$(` is expanded rather than sent, and
+    the failure would arrive as a puzzling authentication error rather than as
+    anything pointing at quoting. The list form also removes the injection
+    surface, which is small here but free to close.
+
+    The image sets `ORACLE_HOME` and a `PATH` reaching `sqlplus` in its own
+    environment, so a login shell was never buying anything. What it *was* buying
+    is `< /dev/null`, and `stdin=DEVNULL` says the same thing without a shell:
+    should a substitution variable ever go undefined, SQL*Plus prompts, and a
+    prompt whose stdin is a terminal would **hang** the suite rather than fail
+    it. Stdin at EOF is the difference between a red build and a stuck one.
+    """
+    command = ["docker", "exec", "-i", container, "sqlplus", "-s", connect, *args]
+    if script is None:
+        return subprocess.run(
+            command, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300
+        )
+    return subprocess.run(command, input=script, capture_output=True, text=True, timeout=300)
+
+
 def sqlplus(
     container: str, connect: str, script: str, *args: str
 ) -> subprocess.CompletedProcess[str]:
-    """Run one script through the container's SQL*Plus and hand back the result.
-
-    ``< /dev/null`` is not belt and braces. If a substitution variable ever goes
-    undefined, SQL*Plus prompts -- and a prompt whose stdin is the terminal would
-    hang the suite rather than fail it. With stdin at EOF it gives up and the test
-    reports, which is the difference between a red build and a stuck one.
-    """
-    command = f'sqlplus -s "{connect}" @{script} {" ".join(args)} < /dev/null'
-    return _docker("exec", "-i", container, "bash", "-lc", command)
+    """Run one script file through the container's SQL*Plus, byte for byte."""
+    return _exec(container, connect, f"@{script}", *args)
 
 
 def query(container: str, connect: str, sql: str) -> list[str]:
-    """One query, stripped to its rows.
+    """One query, stripped to its rows -- and loud when it does not run.
 
     Bare values rather than a driver result set: this module's whole point is
     that it talks to the database the way the operator's client does, and
     reaching for `oracledb` here would mean asserting through a different path
     than the one under test.
+
+    **`WHENEVER SQLERROR EXIT` and a `returncode` check, both.** Without them
+    SQL*Plus prints an `ORA-` line and still exits 0, so a query that failed
+    outright returns its error text as though it were rows -- and a caller
+    comparing against an empty set gets a **passing** test out of a broken one.
+    Filtering the error lines away would be worse again: it turns a failure into
+    exactly the empty result several of these assertions expect.
     """
-    script = f"SET HEADING OFF PAGESIZE 0 FEEDBACK OFF LINESIZE 200 VERIFY OFF\n{sql}\nEXIT\n"
-    # Not `_docker`, which has no way to pass stdin.
-    result = subprocess.run(
-        ["docker", "exec", "-i", container, "bash", "-lc", f'sqlplus -s "{connect}"'],
-        input=script,
-        capture_output=True,
-        text=True,
-        timeout=300,
+    script = (
+        "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+        "SET HEADING OFF PAGESIZE 0 FEEDBACK OFF LINESIZE 200 VERIFY OFF\n"
+        f"{sql}\nEXIT\n"
     )
+    result = _exec(container, connect, script=script)
+    if result.returncode != 0:
+        raise AssertionError(f"query failed (rc={result.returncode}):\n{result.stdout.strip()}")
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -195,16 +228,20 @@ def grants_of(container: str, connect: str, account: str) -> set[str]:
             SELECT 'SELECT ON ' || table_name FROM dba_tab_privs
              WHERE grantee = UPPER('{account}') AND privilege = 'SELECT';""",
     )
-    return {row for row in rows if row and not row.startswith("ORA-")}
+    return set(rows)
 
 
 def drop(container: str, connect: str, account: str) -> None:
-    subprocess.run(
-        ["docker", "exec", "-i", container, "bash", "-lc", f'sqlplus -s "{connect}"'],
-        input=f"WHENEVER SQLERROR CONTINUE\nDROP USER {account} CASCADE;\nEXIT\n",
-        capture_output=True,
-        text=True,
-        timeout=300,
+    """Best-effort teardown: the account is usually not there, and that is fine.
+
+    The one place `WHENEVER SQLERROR CONTINUE` is right rather than a hazard, and
+    the return code is deliberately ignored: `ORA-01918` for an account that was
+    never created is the expected outcome half the time this runs.
+    """
+    _exec(
+        container,
+        connect,
+        script=f"WHENEVER SQLERROR CONTINUE\nDROP USER {account} CASCADE;\nEXIT\n",
     )
 
 
@@ -217,10 +254,11 @@ def clean(container: str, scripts: str) -> Iterator[None]:
     developer's own instance is litter and on a shared one is worse -- the same
     finding review raised against `test_oracle_service_account.py` (#226).
     """
-    for connect, account in ((ROOT, COMMON_SVC), (PDB, LOCAL_SVC)):
+    accounts = ((ROOT, COMMON_SVC), (ROOT, COMMON_SVC_OTHER), (PDB, LOCAL_SVC))
+    for connect, account in accounts:
         drop(container, connect, account)
     yield
-    for connect, account in ((ROOT, COMMON_SVC), (PDB, LOCAL_SVC)):
+    for connect, account in accounts:
         drop(container, connect, account)
 
 
@@ -365,44 +403,82 @@ def test_uninstall_removes_the_account_and_every_grant_with_it(
     )
 
 
+def _policies(container: str) -> set[str]:
+    return set(
+        query(
+            container,
+            ROOT,
+            "SELECT DISTINCT policy_name FROM audit_unified_policies"
+            " WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL');",
+        )
+    )
+
+
 def test_uninstall_with_keep_audit_n_drops_every_policy(
     container: str, scripts: str, clean: None
 ) -> None:
-    """Regression for #231's third bug, which failed silently in both directions.
+    """`keep_audit=N` removes both policies. Regression for #231's third bug.
 
     `audit_unified_policies` returns one row **per policy per audit option** --
     six for `SOPULI_POL`. The cursor loop dropped it on the first iteration,
     raised `ORA-46357` on the second, and the exception aborted the block before
-    `SOPULI_LOGON_POL` was ever reached.
+    `SOPULI_LOGON_POL` was reached.
 
-    Nothing noticed. The verification section looked only at the account, and
-    `WHENEVER SQLERROR CONTINUE` held the exit code at 0 -- so the uninstall
-    reported success while leaving an audit policy behind. Asserting on
-    `returncode` alone would still pass against the bug; the assertion has to be
-    that both policies are gone.
+    Asserting on `returncode` alone would still pass against that bug:
+    `WHENEVER SQLERROR CONTINUE` holds the exit code at 0, so the uninstall
+    reported success while leaving both policies behind. The assertion has to be
+    that they are gone.
     """
     assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
     assert sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", COMMON_SVC).returncode == 0
-    assert set(
-        query(
-            container,
-            ROOT,
-            "SELECT DISTINCT policy_name FROM audit_unified_policies"
-            " WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL');",
-        )
-    ) == {"SOPULI_POL", "SOPULI_LOGON_POL"}
+    assert _policies(container) == {"SOPULI_POL", "SOPULI_LOGON_POL"}
 
     result = sqlplus(container, ROOT, f"{scripts}/99_uninstall.sql", COMMON_SVC, "N")
     assert result.returncode == 0, result.stdout[-2000:]
-    assert (
+    assert _policies(container) == set()
+
+
+def test_uninstall_with_keep_audit_n_drops_a_policy_another_install_enabled(
+    container: str, scripts: str, clean: None
+) -> None:
+    """Two installs, then uninstall one. This is the case that finds the bug.
+
+    `01_audit_policy.sql` enables `sopuli_logon_pol` **`BY &svc_user`**, and
+    `NOAUDIT POLICY p` unqualified does *not* lift a `BY <user>` enablement -- it
+    reports success, leaves the policy enabled, and the `DROP` then fails with
+    `ORA-46361`, aborting the block before the other policy is dropped either.
+
+    **The single-install case above cannot catch it**, which is worth stating
+    because it looks like it should. Section 1 drops the account first, and that
+    removes the `BY`-user enablement as a side effect, so the `DROP` happens to
+    succeed. Verified rather than reasoned: with the fix reverted, the test above
+    still passes and this one fails.
+
+    So the reproducer needs an enablement that **survives** the uninstall -- a
+    second install, which is an ordinary thing for a site to have and the exact
+    shape a hand-run never produces.
+    """
+    for account, name in ((SVC, COMMON_SVC), (SVC_OTHER, COMMON_SVC_OTHER)):
+        assert (
+            sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", account).returncode == 0
+        )
+        assert sqlplus(container, ROOT, f"{scripts}/01_audit_policy.sql", name).returncode == 0
+
+    enabled = set(
         query(
             container,
             ROOT,
-            "SELECT DISTINCT policy_name FROM audit_unified_policies"
-            " WHERE policy_name IN ('SOPULI_POL','SOPULI_LOGON_POL');",
+            "SELECT entity_name FROM audit_unified_enabled_policies"
+            " WHERE policy_name = 'SOPULI_LOGON_POL';",
         )
-        == []
     )
+    assert enabled == {COMMON_SVC, COMMON_SVC_OTHER}, enabled
+
+    # Uninstall only the first. The second account -- and its enablement -- stay.
+    result = sqlplus(container, ROOT, f"{scripts}/99_uninstall.sql", COMMON_SVC, "N")
+    assert result.returncode == 0, result.stdout[-2000:]
+    assert "ORA-46361" not in result.stdout, "NOAUDIT did not lift the BY-user enablement"
+    assert _policies(container) == set()
 
 
 def test_audit_policy_script_fails_loudly_on_an_account_that_does_not_exist(

@@ -1521,7 +1521,15 @@
     "privilege_report": {
       "type": "object",
       "additionalProperties": false,
-      "description": "What the service account holds, emitted by `doctor --check-privileges` and absent otherwise -- so a consumer can tell 'not asked' from 'nothing found'. Present whole whenever it is present at all, empty arrays included: a section that appeared only on a problem could not be quoted as evidence that there was none (ADR-006 E6, applied to an audit). Added in 1.12; nothing existing moved.",
+      "required": [
+        "held",
+        "missing",
+        "common",
+        "roles",
+        "unaudited",
+        "unreadable"
+      ],
+      "description": "What the service account holds, emitted by `doctor --check-privileges` and absent otherwise -- so a consumer can tell 'not asked' from 'nothing found'. Present whole whenever it is present at all, empty arrays included: a section that appeared only on a problem could not be quoted as evidence that there was none (ADR-006 E6, applied to an audit). Added in 1.12; nothing existing moved. Every property is required, so the promise above is the schema's and not only the producer's: a run that emitted half a section would fail validation rather than read as a complete audit that found less.",
       "properties": {
         "held": {
           "type": "array",

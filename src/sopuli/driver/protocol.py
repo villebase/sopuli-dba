@@ -267,7 +267,26 @@ class Credential:
 
 @dataclass(frozen=True)
 class PrivilegeAudit:
-    """What the must-not-grant list found, and what it could not look at.
+    """What a service account is granted, on both sides, and what was not checked.
+
+    A driver's answer to "is this account fit to run the tool" (#213, #225), and
+    that is **two independent questions** rather than one: what it holds and
+    should not (``over_granted``), and what it needs and may not have
+    (``held``/``missing``). An account can be in both states at once, which is
+    what a half-finished debugging session leaves behind, so neither answer
+    implies anything about the other.
+
+    A third thing is carried and is not a finding: **what was not looked at**.
+    ``unaudited`` and ``unreadable`` are the difference between "I looked and
+    found nothing" and "I could not look", and a report that merged them would
+    have its most reassuring output be its least trustworthy.
+
+    Here rather than in a driver package for the reason :class:`Scope` is here:
+    the output layer renders it, and one that imported a vendor module would make
+    ``sopuli.output`` depend on which database a site happens to run. What is
+    vendor-specific is *which* privileges these are and how they are discovered
+    -- for Oracle, :mod:`sopuli.driver.oracle.privileges` -- and none of that
+    appears in the shape.
 
     Sorted throughout, because this reaches a report a human compares between
     runs and dictionary order is nobody's contract.

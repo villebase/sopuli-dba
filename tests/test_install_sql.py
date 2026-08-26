@@ -1,11 +1,17 @@
 """`sql/oracle/00_install.sql` against what the tool says it needs (#226).
 
-Tier 0, and it needs no database — which is the point. The script has never been
-executed (CLAUDE.md says so), and it **cannot** be executed from here: it is
-SQL*Plus rather than SQL. `DEFINE`/`&substitution`, `COLUMN … NEW_VALUE`,
-`PROMPT`, `SET SERVEROUTPUT` and `/` terminators are all client commands, and
-`python-oracledb` sends statements to a server that has never heard of any of
-them. Running it properly means a real `sqlplus`, which is #229.
+Tier 0, and it needs no database — which is the point. The script cannot be
+executed from *here*: it is SQL*Plus rather than SQL. `DEFINE`/`&substitution`,
+`COLUMN … NEW_VALUE`, `PROMPT`, `SET SERVEROUTPUT` and `/` terminators are all
+client commands, and `python-oracledb` sends statements to a server that has
+never heard of any of them. Running it properly means a real `sqlplus`: the
+tier-1 container ships one, and automating that is #229.
+
+Executing the file is a different test, not a better one. That one proves it
+runs; this one proves it grants the right things, in under a second and with no
+container. #231 is the argument for keeping both — running the scripts by hand
+found four bugs this module cannot see, and not one of them was grant drift,
+which is the thing it does see.
 
 What can be checked without running it is the thing most likely to be wrong, and
 the only thing that gets *worse* over time: **whether the grants the script issues

@@ -111,6 +111,7 @@ def test_an_unset_tns_admin_has_nowhere_to_look(tmp_path: Path) -> None:
 
     (found,) = wallet_diagnostics(report)
     assert found.code == WALLET_UNUSABLE
+    assert found.message.startswith("target 'a' uses external authentication")
     assert "$TNS_ADMIN is unset" in found.message
 
 
@@ -154,6 +155,69 @@ def test_an_encrypted_wallet_alone_is_not_enough(tmp_path: Path) -> None:
     (found,) = wallet_diagnostics(report)
     assert ENCRYPTED in found.message
     assert "passphrase" in found.message
+
+
+def test_a_wallet_that_is_present_and_unreadable_is_not_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Presence is not access, and this is the case the whole report exists for.
+
+    A wallet owned by the account a service runs as is ``is_file()`` from every
+    account on the machine and opens from exactly one. The first version of this
+    check asked ``is_file`` and reported ``auto_login: true`` for a wallet it
+    could not read -- health, for precisely the failure it was written to
+    explain. Found by Copilot on #241.
+
+    The open is refused rather than the file's permissions changed, so the case
+    runs identically on POSIX and on Windows: a real deny needs `chmod` on one and
+    `icacls` on the other, and this is testing what the survey does with a refusal
+    rather than how a platform produces one.
+    """
+    directory = _wallet_dir(tmp_path, AUTO_LOGIN)
+    real_open = Path.open
+
+    def refuse(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == AUTO_LOGIN:
+            raise PermissionError(13, "Permission denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refuse)
+    report = survey([_target("a", external=True)], tns_admin=str(directory))
+
+    assert report is not None
+    assert report.readable, "the directory listed fine; only the file is refused"
+    assert report.files == ()
+    assert report.unreadable == (AUTO_LOGIN,)
+    assert not report.auto_login
+    assert not report.usable
+
+    (found,) = wallet_diagnostics(report)
+    assert found.code == WALLET_UNUSABLE
+    assert "cannot read it" in found.message
+    assert "which account this is running as" in found.message
+
+
+def test_a_directory_that_cannot_be_listed_is_not_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`is_dir` needs only traverse permission on the parent.
+
+    So it answers yes for a directory whose contents this process cannot see, and
+    a preflight that called that readable would say the one thing that stops
+    somebody looking further.
+    """
+    directory = _wallet_dir(tmp_path, AUTO_LOGIN)
+
+    def refuse(self: Path) -> Any:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+    report = survey([_target("a", external=True)], tns_admin=str(directory))
+
+    assert report is not None
+    assert not report.readable
+    assert report.files == ()
+    assert "missing or not readable" in wallet_diagnostics(report)[0].message
 
 
 def test_sqlnet_wallet_location_moves_the_search(tmp_path: Path) -> None:
@@ -284,7 +348,7 @@ def test_one_entry_for_a_missing_wallet_however_many_targets_need_it() -> None:
     assert report is not None
     found = wallet_diagnostics(report)
     assert len(found) == 1
-    assert "20 targets, including 't0'" in found[0].message
+    assert "20 targets, including 't0', use external authentication" in found[0].message
 
 
 def test_the_section_validates_against_the_schema(tmp_path: Path) -> None:

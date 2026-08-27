@@ -166,9 +166,11 @@ unchanged, which is precisely what the UTF-8 streams make safe.
   lock       { mode, held[], denied, found[] },
   results    [ { account, target, scope, secret, state, changed, actions[],
                  verification, rollover, error, warnings[] } ],
-  targets    [ { target, reachable, scope, asserted, privileges, error } ],
+  targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
+                 error, warnings[] } ],
   install    { backends[], drivers[] },
-  wallet     { required_by[], tns_admin, directory, readable, files[], auto_login },
+  wallet     { required_by[], tns_admin, directory, from_sqlnet, readable,
+               files[], unreadable[], auto_login, insecure[] },
   summary    { total, ok, changed, drift, unverifiable, skipped, failed, by_state },
   diagnostics[],
   error      { category, message, hint },
@@ -699,6 +701,7 @@ on every machine where a service runs as one user and a DBA tests as another.
   "from_sqlnet": true,
   "readable": true,
   "files": ["cwallet.sso"],
+  "unreadable": [],
   "auto_login": true,
   "insecure": []
 }
@@ -717,6 +720,15 @@ survey that did not would report "no wallet" for a correctly configured estate �
 sending somebody to fix a directory that was never wrong, which is worse than not
 checking at all. A reader who checks the obvious directory and finds nothing has
 to be able to see that the tool looked elsewhere.
+
+**Presence is not access, so `files` holds what could actually be opened.** A
+wallet owned by the account a service runs as is `is_file()` from every account
+on the machine and opens from exactly one — which is the case this whole section
+exists for, so it is measured by reading a byte rather than inferred from the
+file existing. One that is there and unreadable lands in `unreadable[]` and does
+not count towards `auto_login`: it is a different finding from a missing wallet,
+because the remedy is different. A missing wallet is somebody to ask for one; an
+unreadable one is already where it should be and owned by the wrong account.
 
 **`auto_login` and not just `files`.** `ewallet.p12` alone is a wallet, and it
 needs a passphrase this tool has no way to supply — so a directory holding only

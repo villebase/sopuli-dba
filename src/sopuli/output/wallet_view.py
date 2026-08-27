@@ -48,6 +48,7 @@ def build(report: WalletReport) -> dict[str, Any]:
         "from_sqlnet": report.from_sqlnet,
         "readable": report.readable,
         "files": list(report.files),
+        "unreadable": list(report.unreadable),
         "auto_login": report.auto_login,
         "insecure": [name for name, _reason in report.insecure],
     }
@@ -65,7 +66,7 @@ def render(report: WalletReport) -> list[str]:
         ("required by", _targets(report.required_by)),
         ("tns_admin", report.tns_admin or "(unset)"),
         ("searched", _searched(report)),
-        ("found", ", ".join(report.files) or "nothing"),
+        ("found", _found(report)),
         ("auto-login", "yes" if report.auto_login else "no"),
     ):
         lines.append(f"  {key:<18}{value}")
@@ -73,6 +74,17 @@ def render(report: WalletReport) -> list[str]:
     lines.extend(f"  {line}" for line in _findings(report))
     lines.append("")
     return lines
+
+
+def _found(report: WalletReport) -> str:
+    """What is there, marking what could not be read.
+
+    Present-but-unreadable is listed rather than omitted, because the reader's
+    next move differs completely: a missing wallet is somebody to ask for one,
+    and an unreadable one is already sitting where it should be.
+    """
+    names = [*report.files, *(f"{name} (unreadable)" for name in report.unreadable)]
+    return ", ".join(names) or "nothing"
 
 
 def _searched(report: WalletReport) -> str:
@@ -112,11 +124,17 @@ def _findings(report: WalletReport) -> list[str]:
         )
     elif not report.readable:
         lines.append(f"cannot read {report.directory}: it is missing, or not readable by this user")
+    elif AUTO_LOGIN in report.unreadable:
+        lines.append(
+            f"{AUTO_LOGIN} is in {report.directory} and this process cannot read it: "
+            f"check who owns it, and which account this is running as"
+        )
     elif not report.auto_login:
-        missing = f"no {AUTO_LOGIN} in {report.directory}"
-        if report.files:
+        missing = f"no readable {AUTO_LOGIN} in {report.directory}"
+        present = sorted({*report.files, *report.unreadable})
+        if present:
             lines.append(
-                f"{missing} -- only {', '.join(report.files)}, which needs a passphrase "
+                f"{missing} -- only {', '.join(present)}, which needs a passphrase "
                 f"this tool has no way to supply"
             )
         else:

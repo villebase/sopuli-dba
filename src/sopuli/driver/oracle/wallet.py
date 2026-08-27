@@ -17,9 +17,18 @@ actually holds a credential for the alias means asking the Oracle client, and th
 connection report already does that better than any inspection could: a target
 that connects has proved its wallet works. What is left for this module is the
 diagnosis when it does *not* -- turning "invalid username/password" into "there
-is no wallet in the directory you pointed at". Opening ``cwallet.sso`` adds
-nothing to that and would mean reverse-engineering a proprietary container in the
-one part of the codebase where cleverness is least welcome.
+is no wallet in the directory you pointed at", or into "there is one and this
+process cannot read it". Interpreting ``cwallet.sso`` adds nothing to that and
+would mean reverse-engineering a proprietary container in the one part of the
+codebase where cleverness is least welcome.
+
+**Readability is measured, not inferred.** One byte is read from each wallet
+file and discarded, because presence is not access: a wallet owned by the
+account a service runs as is ``is_file()`` from every account on the machine and
+opens from exactly one. That gap is the subject of this module, so asking the
+cheaper question would have reported health for precisely the failure the report
+exists to explain. Nothing is parsed or kept -- reading is how you find out
+whether reading works.
 
 **Nothing here fails the run.** An unreadable wallet is not a separate verdict:
 it rides on the target's own reachability, which the connection attempt decides a
@@ -100,10 +109,18 @@ class WalletReport:
     #: obvious directory and finds nothing needs to know the tool looked
     #: somewhere else.
     from_sqlnet: bool = False
-    #: Whether :data:`directory` exists and this process could list it.
+    #: Whether :data:`directory` exists and this process could **list** it.
+    #: Answered by listing it rather than by :meth:`~pathlib.Path.is_dir`, which
+    #: needs only traverse permission on the parent and so says yes about a
+    #: directory whose contents are unreadable.
     readable: bool = False
-    #: Which of :data:`WALLET_FILES` are there.
+    #: Which of :data:`WALLET_FILES` are there **and openable by this process**.
     files: tuple[str, ...] = ()
+    #: Wallet files that are there and cannot be read. The case this whole
+    #: report exists for -- a wallet owned by the account the service runs as,
+    #: surveyed by a DBA logged in as themselves -- and the one a presence check
+    #: reports as healthy right up until the connection fails as a login error.
+    unreadable: tuple[str, ...] = ()
     #: Wallet files somebody other than the owner can reach, with the reason.
     #: An auto-login wallet readable by others is a credential readable by
     #: others, which is P4's argument for the config-file check applied to the
@@ -112,7 +129,12 @@ class WalletReport:
 
     @property
     def auto_login(self) -> bool:
-        """Whether an unattended run can open this wallet without a passphrase."""
+        """Whether an unattended run can open this wallet without a passphrase.
+
+        Reads :attr:`files`, which holds only what this process could actually
+        open -- so a ``cwallet.sso`` that is present and unreadable answers
+        ``False`` here, which is the answer the connection is about to give.
+        """
         return AUTO_LOGIN in self.files
 
     @property
@@ -158,12 +180,16 @@ def survey(targets: Sequence[ExpandedTarget], *, tns_admin: str | None) -> Walle
         return WalletReport(required_by=required_by, tns_admin=tns_admin)
 
     found: list[str] = []
+    unreadable: list[str] = []
     insecure: list[tuple[str, str]] = []
-    readable = directory.is_dir()
-    if readable:
+    present = _listing(directory)
+    if present is not None:
         for name in WALLET_FILES:
             path = directory / name
-            if not path.is_file():
+            if name not in present:
+                continue
+            if not _can_read(path):
+                unreadable.append(name)
                 continue
             found.append(name)
             reason = _reachable_by_others(path)
@@ -175,10 +201,52 @@ def survey(targets: Sequence[ExpandedTarget], *, tns_admin: str | None) -> Walle
         tns_admin=tns_admin,
         directory=str(directory),
         from_sqlnet=from_sqlnet,
-        readable=readable,
+        readable=present is not None,
         files=tuple(found),
+        unreadable=tuple(unreadable),
         insecure=tuple(insecure),
     )
+
+
+def _listing(directory: Path) -> frozenset[str] | None:
+    """What is in ``directory``, or ``None`` when it cannot be listed.
+
+    **Listed rather than asked about.** :meth:`~pathlib.Path.is_dir` needs only
+    traverse permission on the parent, so it answers yes for a directory whose
+    contents this process cannot see -- and a readability preflight that reports
+    a directory as readable when it cannot be read is worse than no preflight,
+    because it says the one thing that stops somebody looking further.
+    """
+    try:
+        return frozenset(entry.name for entry in directory.iterdir())
+    except OSError:
+        return None
+
+
+def _can_read(path: Path) -> bool:
+    """Whether this process can actually open ``path``.
+
+    One byte, discarded. Presence is not access: a wallet owned by the account a
+    service runs as is ``is_file()`` from any account on the machine, and opens
+    from exactly one. That difference is the whole subject of this module, so
+    asking the cheaper question would have reported health for precisely the
+    failure the report exists to explain.
+
+    Not :func:`os.access`, which on Windows reports the read-only *attribute*
+    rather than the ACL and would answer yes for a file no ACE grants this user.
+    Opening it is the only question whose answer means the same thing on both
+    platforms -- and it is the same question the Oracle client is about to ask.
+
+    **This is not "opening the wallet"** in the sense the design refuses. Nothing
+    is parsed, interpreted or kept; the byte is read to learn whether reading
+    works and is dropped immediately.
+    """
+    try:
+        with path.open("rb") as handle:
+            handle.read(1)
+    except OSError:
+        return False
+    return True
 
 
 def _wallet_directory(tns_admin: str | None) -> tuple[Path | None, bool]:

@@ -1599,7 +1599,8 @@
         "directory",
         "readable",
         "files",
-        "auto_login"
+        "auto_login",
+        "unreadable"
       ],
       "properties": {
         "required_by": {
@@ -1640,7 +1641,14 @@
               "ewallet.p12"
             ]
           },
-          "description": "Which wallet files are there."
+          "description": "Which wallet files are there **and openable by this process**. Measured by reading a byte, not by `is_file`: presence is not access, and a wallet owned by the account a service runs as looks present from every account on the machine and opens from exactly one."
+        },
+        "unreadable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Wallet files that are there and cannot be read by this process. Distinct from absent, because the remedy differs entirely: a missing wallet is somebody to ask for one, and an unreadable one is already where it should be and owned by the wrong account. A cwallet.sso listed here does not count towards `auto_login`."
         },
         "auto_login": {
           "type": "boolean",

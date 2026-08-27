@@ -477,7 +477,7 @@ def wallet_diagnostics(report: WalletReport) -> list[Diagnostic]:
                 level="warning",
                 code=WALLET_UNUSABLE,
                 message=(
-                    f"{_needs_wallet(report.required_by)} uses external authentication, "
+                    f"{_needs_wallet(report.required_by)} external authentication, "
                     f"and {_why_unusable(report)}"
                 ),
             )
@@ -498,9 +498,16 @@ def wallet_diagnostics(report: WalletReport) -> list[Diagnostic]:
 
 
 def _needs_wallet(names: Sequence[str]) -> str:
+    """The subject of the sentence, carrying its own verb.
+
+    The verb has to travel with the subject rather than sit in the f-string that
+    joins them, because the subject is singular or plural depending on the estate
+    -- and "20 targets ... uses external authentication" is the kind of seam that
+    makes a reader doubt the rest of the report.
+    """
     if len(names) == 1:
-        return f"target {names[0]!r}"
-    return f"{len(names)} targets, including {names[0]!r},"
+        return f"target {names[0]!r} uses"
+    return f"{len(names)} targets, including {names[0]!r}, use"
 
 
 def _why_unusable(report: WalletReport) -> str:
@@ -514,9 +521,15 @@ def _why_unusable(report: WalletReport) -> str:
         return "$TNS_ADMIN is unset, so there is nowhere to read a wallet from"
     if not report.readable:
         return f"{report.directory} is missing or not readable by this user"
-    if report.files:
+    if AUTO_LOGIN in report.unreadable:
         return (
-            f"{report.directory} holds {', '.join(report.files)} but no {AUTO_LOGIN}, "
+            f"{report.directory} holds {AUTO_LOGIN} and this process cannot read it -- "
+            f"check who owns it, and which account this is running as"
+        )
+    if report.files or report.unreadable:
+        present = ", ".join(sorted({*report.files, *report.unreadable}))
+        return (
+            f"{report.directory} holds {present} but no readable {AUTO_LOGIN}, "
             f"and an encrypted wallet needs a passphrase this tool cannot supply"
         )
     return f"{report.directory} holds no wallet"

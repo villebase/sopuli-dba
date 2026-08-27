@@ -90,15 +90,16 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "it may have applied changes before that."
         ),
         MISSING_BACKEND: (
-            "A `vaults:` entry names a backend whose client is not installed. The config "
-            "is valid and the install is incomplete, so `config validate` warns and exits "
-            "0; any command that resolves that store to a client fails with SOPULI-20001."
+            "A `vaults:` entry names a backend this machine cannot serve. The config is "
+            "valid and the install is incomplete, and what that is worth depends on the "
+            "question asked: `config validate` warns and exits 0, `doctor` fails, and any "
+            "command that resolves that store to a client fails with SOPULI-20001."
         ),
         MISSING_DRIVER: (
-            "A `targets:` entry names a driver whose client is not installed. As with a "
-            "store, the config is valid and the install is incomplete, so `config "
-            "validate` warns and exits 0; any command that connects to that target fails "
-            "with SOPULI-20002."
+            "A `targets:` entry names a driver this machine cannot serve. As with a store, "
+            "the config is valid and the install is incomplete, and what that is worth "
+            "depends on the question asked: `config validate` warns and exits 0, `doctor` "
+            "fails, and any command that connects to that target fails with SOPULI-20002."
         ),
         UNVERIFIED_TRANSPORT: (
             "A store in this run is configured `tls.verify: false`, so its certificate is "
@@ -244,14 +245,22 @@ def _names(names: Sequence[str]) -> str:
     return "stores " + ", ".join(quoted)
 
 
-def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
-    """One warning per configured store whose backend is not installed (E4).
+def backend_diagnostics(vaults: Sequence[Vault], *, level: str = "warning") -> list[Diagnostic]:
+    """One entry per configured store whose backend is not installed (E4, E6).
 
-    A **warning**, never an error, and that is the whole decision: the config is
-    valid and the install is incomplete. A validator that calls a good file
-    broken is less trustworthy for the case it exists to serve, and validating on
-    a laptop a config that runs elsewhere is the common case rather than the
-    strange one (ADR-006).
+    A **warning in `config validate`**, and that is the whole of E4's decision:
+    the config is valid and the install is incomplete. A validator that calls a
+    good file broken is less trustworthy for the case it exists to serve, and
+    validating on a laptop a config that runs elsewhere is the common case rather
+    than the strange one (ADR-006).
+
+    ``level`` exists because `doctor` disagrees, deliberately (E6): the same
+    condition is a **failure** there, because `doctor`'s question is whether this
+    machine can reach its vaults and the answer is no. The two commands answer
+    different questions about the same fact, so the fact is computed once and the
+    caller says how much it weighs. Passing the level rather than hard-coding
+    ``"warning"`` here is what stops a document exiting 9 over an entry that
+    calls itself a warning.
 
     One per vault rather than one per backend type, unlike :func:`_advisory`
     above: the operator's unit of action here is the store they wrote down, and
@@ -271,7 +280,7 @@ def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
             continue
         found.append(
             Diagnostic(
-                level="warning",
+                level=level,
                 code=MISSING_BACKEND,
                 message=(
                     f'vault "{vault.name}" declares type "{vault.type}", but that backend '
@@ -282,12 +291,15 @@ def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
     return found
 
 
-def driver_diagnostics(targets: Sequence[ExpandedTarget]) -> list[Diagnostic]:
-    """One warning per configured driver that is not installed (E4).
+def driver_diagnostics(
+    targets: Sequence[ExpandedTarget], *, level: str = "warning"
+) -> list[Diagnostic]:
+    """One entry per configured driver that is not installed (E4, E6).
 
     The same decision as :func:`backend_diagnostics`, for the same reason: the
     config is valid and the install is incomplete, and a validator that calls a
-    good file broken is less trustworthy for the case it exists to serve.
+    good file broken is less trustworthy for the case it exists to serve. And the
+    same ``level``, for the same reason -- `doctor` weighs it as a failure.
 
     **Over the expanded estate, not the ``targets:`` list.** Most targets are
     generated -- ``01-configuration.md`` §2's own example writes one
@@ -320,7 +332,7 @@ def driver_diagnostics(targets: Sequence[ExpandedTarget]) -> list[Diagnostic]:
             subject = f'target "{names[0]}" declares'
         found.append(
             Diagnostic(
-                level="warning",
+                level=level,
                 code=MISSING_DRIVER,
                 message=(
                     f'{subject} type "{type_name}", but that driver '

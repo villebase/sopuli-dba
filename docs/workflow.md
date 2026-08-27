@@ -47,7 +47,7 @@ commits are not.
 `.github/workflows/ci.yml` runs tier 0 (`design/04-testing.md` §4) on every pull
 request: `ruff check`, `ruff format --check`, `mypy`, `pytest`, and a smoke check
 that the installed `sopuli` binary runs. No containers, under a minute.
-`tier1.yml` is the container lane and runs on the same trigger.
+`.github/workflows/tier1.yml` is the container lane and runs on the same trigger.
 
 - **Pull requests only, not the push to `main` as well.** A `pull_request` run
   checks out `refs/pull/N/merge` — the head *already merged into the base* — so it

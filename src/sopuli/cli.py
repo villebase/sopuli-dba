@@ -76,6 +76,7 @@ from sopuli.config import (
 from sopuli.diagnostics import (
     backend_diagnostics,
     driver_diagnostics,
+    install_diagnostics,
     lock_broken,
     unlistable_stores,
 )
@@ -418,11 +419,10 @@ def doctor(
     # every target below it is about to be unreachable.
     shape = install_survey(config)
     document.install = build_install(shape)
-    if shape.missing:
-        document.diagnostics.extend(
-            backend_diagnostics(config.vaults, level="error")
-            + driver_diagnostics(config.expanded_targets, level="error")
-        )
+    # From the survey, never recomputed. "Missing" has to mean the same thing in
+    # the section and in the diagnostics of one document, and two functions
+    # working it out separately is how it stops meaning the same thing.
+    document.diagnostics.extend(install_diagnostics(shape))
 
     client = _client_report(config)
     entries = [

@@ -35,6 +35,7 @@ from sopuli.config.model import ExpandedTarget, Vault
 from sopuli.config.references import UNVERIFIED_TRANSPORT
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import installed as driver_installed
+from sopuli.install_shape import INSTALLED, Component, InstallShape
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
 from sopuli.lock.record import LockRecord
@@ -245,22 +246,22 @@ def _names(names: Sequence[str]) -> str:
     return "stores " + ", ".join(quoted)
 
 
-def backend_diagnostics(vaults: Sequence[Vault], *, level: str = "warning") -> list[Diagnostic]:
-    """One entry per configured store whose backend is not installed (E4, E6).
+def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
+    """One warning per configured store whose backend's client is missing (E4).
 
-    A **warning in `config validate`**, and that is the whole of E4's decision:
-    the config is valid and the install is incomplete. A validator that calls a
-    good file broken is less trustworthy for the case it exists to serve, and
-    validating on a laptop a config that runs elsewhere is the common case rather
-    than the strange one (ADR-006).
+    A **warning**, never an error, and that is the whole decision: the config is
+    valid and the install is incomplete. A validator that calls a good file
+    broken is less trustworthy for the case it exists to serve, and validating on
+    a laptop a config that runs elsewhere is the common case rather than the
+    strange one (ADR-006).
 
-    ``level`` exists because `doctor` disagrees, deliberately (E6): the same
-    condition is a **failure** there, because `doctor`'s question is whether this
-    machine can reach its vaults and the answer is no. The two commands answer
-    different questions about the same fact, so the fact is computed once and the
-    caller says how much it weighs. Passing the level rather than hard-coding
-    ``"warning"`` here is what stops a document exiting 9 over an entry that
-    calls itself a warning.
+    `config validate`'s alone since #214. `doctor` weighs the same fact harder
+    and asks a wider question -- *can this machine serve it at all* -- so it goes
+    through :func:`install_diagnostics` instead, over the survey it has already
+    built. Giving this one a ``level`` was the first attempt and was worse: it
+    made two functions answer "is this component missing" from two different
+    definitions, and they disagreed on the case where a build has no module for a
+    backend whose client happens to be installed.
 
     One per vault rather than one per backend type, unlike :func:`_advisory`
     above: the operator's unit of action here is the store they wrote down, and
@@ -280,7 +281,7 @@ def backend_diagnostics(vaults: Sequence[Vault], *, level: str = "warning") -> l
             continue
         found.append(
             Diagnostic(
-                level=level,
+                level="warning",
                 code=MISSING_BACKEND,
                 message=(
                     f'vault "{vault.name}" declares type "{vault.type}", but that backend '
@@ -291,15 +292,14 @@ def backend_diagnostics(vaults: Sequence[Vault], *, level: str = "warning") -> l
     return found
 
 
-def driver_diagnostics(
-    targets: Sequence[ExpandedTarget], *, level: str = "warning"
-) -> list[Diagnostic]:
-    """One entry per configured driver that is not installed (E4, E6).
+def driver_diagnostics(targets: Sequence[ExpandedTarget]) -> list[Diagnostic]:
+    """One warning per configured driver whose client is missing (E4).
 
     The same decision as :func:`backend_diagnostics`, for the same reason: the
     config is valid and the install is incomplete, and a validator that calls a
-    good file broken is less trustworthy for the case it exists to serve. And the
-    same ``level``, for the same reason -- `doctor` weighs it as a failure.
+    good file broken is less trustworthy for the case it exists to serve. And
+    `config validate`'s alone for the same reason -- `doctor` asks the wider
+    question through :func:`install_diagnostics`.
 
     **Over the expanded estate, not the ``targets:`` list.** Most targets are
     generated -- ``01-configuration.md`` §2's own example writes one
@@ -332,7 +332,7 @@ def driver_diagnostics(
             subject = f'target "{names[0]}" declares'
         found.append(
             Diagnostic(
-                level=level,
+                level="warning",
                 code=MISSING_DRIVER,
                 message=(
                     f'{subject} type "{type_name}", but that driver '
@@ -341,3 +341,81 @@ def driver_diagnostics(
             )
         )
     return found
+
+
+def install_diagnostics(shape: InstallShape) -> list[Diagnostic]:
+    """What `doctor` says about a configured component it cannot serve (E6).
+
+    **Derived from the survey rather than computed a second time**, which is the
+    whole reason this exists beside :func:`backend_diagnostics`. "Missing" has to
+    mean the same thing in the ``install`` section and in the ``diagnostics``
+    array of the same document, and it did not when the two were worked out
+    separately: the section asks whether this build has a module *and* whether
+    the client is there, and the older pair asked only about the client. On a
+    machine with the `oci` SDK installed and no `oci` backend written, that
+    disagreement produced an exit 9 with no diagnostic at all -- and with the SDK
+    absent it produced one that contradicted the section and pointed at a `pip`
+    line that fixes nothing.
+
+    **Errors, not warnings.** `config validate` warns over the narrower fact and
+    exits 0 (E4); `doctor` fails. The two commands answer different questions and
+    it is deliberate that they disagree -- but a document exiting 9 must not
+    describe its own reason as a warning.
+
+    **The install line comes from the component**, so it appears only where one
+    exists. That is structural rather than remembered: a
+    :class:`~sopuli.install_shape.Component` carries an ``install_command`` only
+    when its status is ``not_installed``, so there is no path here that can tell
+    somebody to `pip install` a backend nobody has written.
+    """
+    found = []
+    for component in shape.backends:
+        if component.status == INSTALLED:
+            continue
+        for name in component.configured:
+            found.append(
+                Diagnostic(
+                    level="error",
+                    code=MISSING_BACKEND,
+                    message=(
+                        f'vault "{name}" declares type "{component.name}", '
+                        f"{_cannot_serve(component, 'backend')}"
+                    ),
+                )
+            )
+    for component in shape.drivers:
+        if component.status == INSTALLED or not component.configured:
+            continue
+        # One per driver *type*, counted, exactly as `driver_diagnostics` does
+        # and for the same reason: twenty-one PDBs from one `target_sets:` entry
+        # would otherwise be twenty-one identical lines about one command.
+        names = component.configured
+        if len(names) > 1:
+            subject = f'{len(names)} targets, including "{names[0]}", declare'
+        else:
+            subject = f'target "{names[0]}" declares'
+        found.append(
+            Diagnostic(
+                level="error",
+                code=MISSING_DRIVER,
+                message=(
+                    f'{subject} type "{component.name}", {_cannot_serve(component, "driver")}'
+                ),
+            )
+        )
+    return found
+
+
+def _cannot_serve(component: Component, kind: str) -> str:
+    """Why this machine cannot serve it, and what -- if anything -- to do.
+
+    The two halves are different sentences because they are different problems,
+    which is the distinction :class:`~sopuli.store.registry.BackendNotInstalledError`
+    and :class:`~sopuli.store.registry.BackendNotImplementedError` already draw.
+    Only one of them ends in something the reader can run, and offering an
+    install command for the other is the expensive mistake: it sends somebody to
+    `pip` forever for something `pip` cannot supply.
+    """
+    if component.install_command is not None:
+        return f"but that {kind} is not installed; install it with: {component.install_command}"
+    return f"but this build has no {component.name} {kind} yet -- this is not something to install"

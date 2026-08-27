@@ -33,6 +33,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.config.model import Config, ExpandedTarget, Target, Vault
+from sopuli.diagnostics import MISSING_BACKEND, MISSING_DRIVER, install_diagnostics
 from sopuli.driver.registry import DRIVERS, DatabaseDriver
 from sopuli.exit_codes import ExitCode
 from sopuli.install_shape import (
@@ -353,3 +354,84 @@ def test_config_validate_still_warns_and_exits_zero(
     levels = {one["level"] for one in document["diagnostics"] if one.get("code") == "SOPULI-W003"}
     assert levels == {"warning"}
     assert "install" not in document
+
+
+def test_a_component_with_no_module_is_never_told_to_run_pip() -> None:
+    """The bug the first cut of this had, in the direction that misleads.
+
+    With the `oci` SDK absent, the older `backend_diagnostics` reported
+    `not installed; install it with: pip install "sopuli-dba[oci]"` -- while the
+    section beside it in the same document said `not_implemented`. One document,
+    two answers, and the one a reader would act on is the one that fixes nothing.
+    """
+    shape = survey(_config(vaults=("oci",)), backends={"oci": NO_MODULE}, drivers={})
+
+    (found,) = install_diagnostics(shape)
+    assert found.code == MISSING_BACKEND
+    assert "no oci backend yet" in found.message
+    assert "pip install" not in found.message
+
+
+def test_a_component_with_no_module_is_still_reported_when_its_client_is_present() -> None:
+    """The other half, and the one that failed silently.
+
+    `pip install "sopuli-dba[oci]"` puts the SDK on the machine and does not add
+    the backend module, because nobody has written it. The client check alone
+    then says "installed", the survey says `not_implemented`, and the run exited
+    9 with an empty `diagnostics` array -- a failure with no words anywhere in
+    the document.
+
+    ``provides`` names a module that is genuinely importable here, which is what
+    reproduces "the client is present" without installing anything.
+    """
+    present_client = Backend(
+        module="sopuli.store.nowhere", extra="oci", provides=frozenset({"json"})
+    )
+    shape = survey(_config(vaults=("oci",)), backends={"oci": present_client}, drivers={})
+
+    assert shape.backends[0].status == NOT_IMPLEMENTED
+    (found,) = install_diagnostics(shape)
+    assert found.level == "error"
+    assert "no oci backend yet" in found.message
+
+
+def test_the_diagnostics_and_the_section_cannot_disagree() -> None:
+    """One survey feeds both, which is the structural half of the fix.
+
+    Every component the section reports as unserviceable and configured gets a
+    diagnostic, and nothing else does. Asserting the correspondence rather than
+    the messages is what keeps this true when the wording improves.
+    """
+    shape = survey(
+        _config(vaults=("hashicorp", "oci"), targets=3),
+        backends={"hashicorp": CLIENT_MISSING, "oci": NO_MODULE},
+        drivers={"oracle": ORACLE},
+    )
+
+    found = install_diagnostics(shape)
+    assert {one.code for one in found} == {MISSING_BACKEND}
+    assert len(found) == len(shape.missing)
+    assert all(one.level == "error" for one in found)
+
+
+def test_a_missing_driver_is_counted_once_and_not_once_per_target() -> None:
+    """The same reasoning `driver_diagnostics` uses, carried over.
+
+    Twenty-one PDBs generated from one ``target_sets:`` entry would otherwise be
+    twenty-one identical lines telling somebody to run one command.
+    """
+    absent = DatabaseDriver(
+        module="sopuli.driver.oracle.session", extra="oracle", provides=frozenset({"no_such"})
+    )
+    shape = survey(_config(targets=21), backends={}, drivers={"oracle": absent})
+
+    (found,) = install_diagnostics(shape)
+    assert found.code == MISSING_DRIVER
+    assert "21 targets" in found.message
+    assert 'pip install "sopuli-dba[oracle]"' in found.message
+
+
+def test_nothing_is_said_about_a_component_nobody_configured() -> None:
+    shape = survey(_config(), backends={"oci": NO_MODULE}, drivers={})
+
+    assert install_diagnostics(shape) == []

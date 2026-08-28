@@ -246,14 +246,19 @@ def _secret_json(binding: Binding) -> dict[str, Any] | None:
     perfectly valid. ``config show --resolved`` already renders ``-`` for such a
     binding rather than a verdict, and this matches it.
 
-    **This is not the place that refuses one.** Resolving a binding's store at
-    plan time is C15, still open, and a refusal written here would decide it --
-    it would reject every file that relies on ``SOPULI_VAULT``, which is the case
-    C15 exists to serve. Invariant 4 puts the refusal in the command that actually
-    needs a store, which is where ``_check_has_somewhere_to_resolve_from``'s own
-    docstring already says it belongs. What the file *can* be refused for at load
-    -- ``vaults:`` declaring nothing at all, so no run could ever complete the
-    binding -- it already is.
+    **This is not the place that refuses one**, and C15 is what says so. It is
+    decided (#118), and what it decided is "mostly plan time": the null is a real
+    temporary state, `config show --resolved` shows it as ``-``, and *the command
+    that actually needs a store* is what fails -- once a run's profile is known
+    and the answer is exact. A refusal written into this function would fire
+    before either of those is true and would reject every file whose store comes
+    from ``SOPULI_VAULT``, which is the arrangement C15 explicitly preserved.
+    Invariant 4 puts it in the command, which is also where
+    ``_check_has_somewhere_to_resolve_from``'s docstring says it belongs. What a
+    *file* can be refused for at load -- ``vaults:`` declaring nothing at all, so
+    no run could ever complete the binding -- it already is. C15's other half --
+    a run completing the store from a profile or ``SOPULI_VAULT`` -- is #250, and
+    is what makes such a unit addressable rather than merely honest.
 
     ``updated_at`` is absent by construction: it describes what the store holds,
     and reading the store here would make a plan a function of something other

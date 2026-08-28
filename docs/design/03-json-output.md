@@ -369,10 +369,12 @@ requires `vault` as a string, so there is no shape for half an address, and
 `units[].secret` is optional exactly so a unit can say it has none. §3's chain
 deliberately leaves out a profile's `vault:` and `SOPULI_VAULT` — which profile is
 active is a property of a run, and bindings are built once at load — so a valid
-file can reach the plan with no store resolved. The plan does not refuse it:
-resolving a binding's store at plan time is C15 (#118), still open, and invariant
-4 puts the refusal in the command that actually needs a store. `config show
---resolved` renders `-` for the same binding.
+file can reach the plan with no store resolved. The plan does not refuse it, and
+C15 (#118) is what says so: it decided "mostly plan time" — the null is a real
+temporary state, and the command that actually *needs* a store is what fails,
+once a run's profile is known and the answer is exact (invariant 4). `config show
+--resolved` renders `-` for the same binding. Building that completion step is
+#250; until it lands, such a unit stays unaddressable.
 
 **`plan` is absent entirely on a command that plans nothing** — `config show`,
 `doctor`, `lock status`. That is not J2 ("always emit `plan`") being answered: J2

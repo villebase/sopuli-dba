@@ -184,9 +184,11 @@ def test_a_ref_whose_store_nothing_named_yet_emits_no_secret() -> None:
     address -- and `units[].secret` is optional precisely so a unit can say it
     has none. Emitting `{"vault": null}` failed schema validation.
 
-    Not refused here: resolving a binding's store at plan time is C15, still
-    open, and a refusal written into the plan builder would reject every file
-    that relies on `SOPULI_VAULT` -- the case C15 exists to serve.
+    Not refused here, and C15 (#118) is what says so: it decided "mostly plan
+    time" -- the null is a real temporary state, and the command that actually
+    needs a store is what fails, once a run's profile is known and the answer is
+    exact. A refusal in the plan builder would fire before that and reject every
+    file whose store comes from `SOPULI_VAULT`.
     """
     config = build_config(
         {

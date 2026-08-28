@@ -357,6 +357,19 @@ would have emitted with `--dry-run`, so a diff between "what we said we'd do" an
 one-secret-many-targets case from UC-1 §4 — the situation where rotating one
 account quietly changes three PDBs. Legal, often intended, never invisible.
 
+**`confirmation_required` is optional, and is not emitted yet** (#247). Answering
+it needs a profile's `confirm:` reaching the precedence resolver, which has not
+happened — the key is parsed and has no consumer. Emitting `false` in the
+meantime would be the one reading that is actually wrong: it claims a run was put
+to a gate and passed it. Absent says the run was never asked, which is true.
+Adding it later is a minor bump, since the property already exists in the schema.
+
+**`plan` is absent entirely on a command that plans nothing** — `config show`,
+`doctor`, `lock status`. That is not J2 ("always emit `plan`") being answered: J2
+asks whether a *planning* command may ever omit it, and the answer here is that a
+command with no units is not planning. `sopuli.plan` builds the section and
+`sopuli/output/plan_view.py` reads it.
+
 Since Q7 (#85) made one secret per application the documented default, sharing has
 a second axis and the entry carries it: `accounts[]`, present when one document
 holds more than one account's credential. That is the case where rotating

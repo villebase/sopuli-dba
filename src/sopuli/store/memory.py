@@ -38,7 +38,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from sopuli.clock import utc_now
@@ -120,23 +120,35 @@ class MemoryStore:
         is somebody else's, so the skew a caller computes from this is a real
         measurement of two clocks that genuinely disagree.
 
-        ``round_trip`` is zero rather than absent -- a dictionary lookup really
-        does cost nothing measurable -- which makes the uncertainty band zero
-        too, and so makes a tier-0 skew assertion exact. For an assertion exact
-        on *both* sides, a caller passes
+        **The store clock is bracketed exactly as the real adapter brackets it**
+        -- host clock, store clock, host clock -- so ``measured_at`` is the
+        midpoint of the interval the store's clock was read in and
+        ``round_trip`` is that interval's real width. Which for a dictionary is
+        microseconds and never worth reporting, and is the point anyway: this
+        module is the *reference reading* of
+        :mod:`sopuli.store.protocol`'s semantics, so a timing shape here that
+        the protocol forbids is a fake that would let an adapter with the same
+        fault pass the conformance suite. Reporting ``round_trip=0`` beside two
+        readings taken at different instants was that fault, in the one place
+        it is least affordable.
+
+        For a skew assertion exact on *both* sides, a caller passes
         :meth:`~sopuli.store.protocol.StoreHealth.skew`'s ``local``, which pins
         the host half the same way :attr:`clock` pins the store's.
         """
+        # The *store's* clock and this host's, read separately and never from
+        # one source. Setting both from `clock` was the first version and was
+        # useless: it makes the skew identically zero however far the injected
+        # clock is moved, so the one thing this field exists to exercise cannot
+        # be exercised through it.
+        sent = utc_now()
+        server_time = self.clock()
+        received = utc_now()
         return StoreHealth(
             status=OK,
-            # The *store's* clock and this host's, read separately and never
-            # from one source. Setting both from `clock` was the first version
-            # and was useless: it makes the skew identically zero however far
-            # the injected clock is moved, so the one thing this field exists to
-            # exercise cannot be exercised through it.
-            server_time=self.clock(),
-            measured_at=utc_now(),
-            round_trip=timedelta(0),
+            server_time=server_time,
+            measured_at=sent + (received - sent) / 2,
+            round_trip=received - sent,
             # Nothing was asked of a credential, because there is none to ask
             # about. `None` is the protocol's "not asked", and reporting `True`
             # would be this store claiming to have checked something.

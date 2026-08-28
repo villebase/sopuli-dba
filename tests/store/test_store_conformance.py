@@ -38,6 +38,7 @@ from typing import Any, Protocol
 
 import pytest
 
+from sopuli.clock import utc_now
 from sopuli.config.model import Vault
 from sopuli.lock.record import CLOCK_SKEW
 from sopuli.secrets import Secret
@@ -596,3 +597,28 @@ def test_a_clock_five_minutes_out_is_beyond_what_the_lock_tolerates(harness: Har
 
     assert skew is not None
     assert skew.beyond_tolerance
+
+
+def test_a_reading_is_bracketed_by_this_host_s_clock(harness: Harness) -> None:
+    """`measured_at` is a midpoint inside the call, and `round_trip` is its width.
+
+    The shape `StoreHealth` promises, asserted from outside where it can be:
+    a midpoint outside the window the call occupied is not a midpoint, and a
+    round trip wider than the call is one the store invented -- and an invented
+    one widens the uncertainty band, which is how a genuinely skewed clock stops
+    being reported.
+
+    It constrains the shape rather than reproducing any particular fault: for a
+    store this fast the interval is microseconds, so a reading taken at one end
+    rather than the middle is not distinguishable from out here. The bracket in
+    each implementation is what makes it right; this is what stops it drifting.
+    """
+    before = utc_now()
+    report = harness.store.health()
+    after = utc_now()
+
+    if report.measured_at is None:
+        pytest.skip(f"{harness.name} exposes no server clock")
+    assert before <= report.measured_at <= after
+    assert report.round_trip is not None
+    assert timedelta(0) <= report.round_trip <= after - before

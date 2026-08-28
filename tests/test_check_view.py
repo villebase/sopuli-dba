@@ -114,15 +114,39 @@ def test_the_observed_version_is_what_the_store_served() -> None:
 
 
 def test_a_declined_login_records_that_it_did_not_happen() -> None:
-    """`applied` is whether the action happened, not whether it passed. Collapsing
-    that would lose exactly the distinction mitigation 1 exists to make visible."""
+    """`applied` is whether the login happened, not whether it passed.
+
+    A decline carries a `VerifyResult` too -- saying it declined -- so reading
+    "the object exists" as "we tried" collapses exactly the distinction
+    mitigation 1 exists to make visible. Caught by Copilot on #253, where the
+    code said `True` while the comment beside it said the opposite.
+    """
     declined = VerifyResult(
         method=VERIFY_LOGIN, result=SKIPPED, lockout_margin_hit=True, detail="within margin"
     )
     entry = build_result(binding(), check.Outcome(check.UNVERIFIABLE, "within margin", declined))
 
-    assert entry["actions"][0]["applied"] is True
+    assert entry["actions"][0]["applied"] is False
     assert entry["verification"]["lockout_margin_hit"] is True
+
+
+def test_a_rejected_password_did_happen() -> None:
+    """The other side of it: `FAIL` is an answer the database gave, and it cost
+    the attempt that `SKIPPED` deliberately did not spend."""
+    rejected = VerifyResult(method=VERIFY_LOGIN, result=FAIL, detail="ORA-01017")
+    entry = build_result(binding(), check.Outcome(check.DRIFT, "rejected", rejected))
+
+    assert entry["actions"][0]["applied"] is True
+
+
+def test_an_errored_run_counts_as_failed_not_unverifiable() -> None:
+    """`summary.failed` and the exit code must agree about one run: a document
+    exiting 1 while reporting `failed: 0` contradicts itself."""
+    summary = summarise([check.ERROR, check.LOCKED, check.IN_SYNC]).to_dict()
+
+    assert summary["failed"] == 1
+    assert summary["unverifiable"] == 1
+    assert check.exit_code_for([check.ERROR, check.LOCKED, check.IN_SYNC]) == ExitCode.FAILURE
 
 
 def test_a_missing_lcount_is_null_rather_than_absent() -> None:

@@ -62,6 +62,7 @@ __all__ = [
     "counts",
     "decide",
     "exit_code_for",
+    "is_failure",
     "is_inconclusive",
     "password_age_days",
 ]
@@ -92,8 +93,14 @@ STATES = (IN_SYNC, DRIFT, ROLLOVER_ACTIVE, ACCOUNT_MISSING, LOCKED, EXPIRED, UNV
 #: States that mean "the vault and the database disagree", for the exit code.
 _DRIFTING = frozenset({DRIFT})
 
-#: States that mean "no answer", as opposed to a bad one.
-_INCONCLUSIVE = frozenset({UNVERIFIABLE, ACCOUNT_MISSING, LOCKED, EXPIRED, ERROR})
+#: States that mean "no answer about the password", as opposed to a bad one.
+#:
+#: :data:`ERROR` is deliberately **not** here. It is counted as ``failed``, which
+#: is the counter the document's own exit code agrees with: a run carrying an
+#: `ERROR` exits 1, and a ``summary`` reporting ``failed: 0`` beside that would
+#: contradict it. The rest are runs that reached the database and learned
+#: something about the account without learning anything about its password.
+_INCONCLUSIVE = frozenset({UNVERIFIABLE, ACCOUNT_MISSING, LOCKED, EXPIRED})
 
 
 @dataclass(frozen=True)
@@ -162,13 +169,13 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
         # re-phrasing it here would be a second wording of one condition.
         return Outcome(
             UNVERIFIABLE,
-            verification.detail or "the attempt was declined",
+            _one_line(verification.detail) or "the attempt was declined",
             verification,
         )
     if verification.result == UNAVAILABLE:
         return Outcome(
             UNVERIFIABLE,
-            verification.detail or "verification is not available on this target",
+            _one_line(verification.detail) or "verification is not available on this target",
             verification,
         )
     if verification.result == PASS:
@@ -185,7 +192,7 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
             )
         return Outcome(IN_SYNC, f"{where}verified by login", verification)
     if verification.result == FAIL:
-        detail = verification.detail or "rejected"
+        detail = _one_line(verification.detail) or "rejected"
         return Outcome(DRIFT, f"{where}{detail}", verification)
 
     # A result outside the schema's closed enum. Refused rather than mapped to a
@@ -193,6 +200,26 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
     # is a driver this module has not been taught about, and guessing which
     # state it means is how a wrong password becomes an `IN_SYNC`.
     raise ValueError(f"not a verification result: {verification.result!r}")
+
+
+def _one_line(detail: str | None) -> str | None:
+    """The first line of a driver's message, which is all a table row can hold.
+
+    ``oracledb`` appends a documentation URL on its own line to most errors, so
+    an ``ORA-01017`` arrives as two lines and a three-column table rendered with
+    it becomes four ragged ones. Found by running this against a real container;
+    a fake session returning a one-line detail could not have shown it.
+
+    The same trim :func:`sopuli.cli._as_error` already applies to the document's
+    ``error.message``, and for the same reason it gives -- a survey puts one line
+    per row beside a table. Nothing is lost that identifies the failure: the
+    vendor code is in the first line, and where a run carries an ``error`` object
+    the driver's full message is on the exception it was built from.
+    """
+    if detail is None:
+        return None
+    lines = detail.splitlines()
+    return lines[0] if lines else None
 
 
 def password_age_days(changed_at: datetime | None, *, now: datetime | None = None) -> float | None:
@@ -206,10 +233,30 @@ def password_age_days(changed_at: datetime | None, *, now: datetime | None = Non
     ``None`` where the database did not say -- the source is version-dependent
     and unconfirmed on 11.2, and nothing gates on it, so guessing would be all
     cost (:class:`~sopuli.driver.protocol.UserState`).
+
+    **A naive timestamp is read as UTC**, because Oracle's ``PASSWORD_CHANGE_DATE``
+    is a ``DATE`` and a ``DATE`` carries no zone: ``oracledb`` hands back a naive
+    :class:`~datetime.datetime` in whatever zone the server keeps, and this
+    function has no way to learn which. Subtracting it from an aware "now" is a
+    ``TypeError``, which is how this was found -- against a real container, since
+    a test that built its own aware fixture could not reproduce it.
+
+    Reading it as UTC is the proportionate answer rather than the correct one,
+    and Q9 (#87) is why that is enough: this number is displayed beside the
+    vault's own age as a *drift smell* and nothing gates on it --
+    ``--max-age-days`` reads ``rotated_at`` from the vault and only that. So the
+    error is bounded by the server's offset, at most a few tenths of a day on a
+    figure whose job is to look wrong when something is wrong. Returning ``None``
+    instead would discard a useful signal to avoid an inaccuracy nobody acts on,
+    and querying ``DBTIMEZONE`` would buy a round trip per target for the same.
     """
     if changed_at is None:
         return None
     moment = now if now is not None else datetime.now(UTC)
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
     return round((moment - changed_at).total_seconds() / 86400, 1)
 
 
@@ -257,5 +304,19 @@ def is_inconclusive(state: str) -> bool:
     reading "1 drift, 1 unverifiable" wants: the two numbers answer *go and fix
     something* and *go and look at something*, and an account that is locked and
     one whose counter was too close to its limit both belong to the second.
+
+    :data:`ERROR` is not one of them -- see :data:`_INCONCLUSIVE`. It has its own
+    counter, because it is the one state where the *tool* rather than the estate
+    is what needs looking at.
     """
     return state in _INCONCLUSIVE
+
+
+def is_failure(state: str) -> bool:
+    """Whether the check itself failed, as opposed to answering unhappily.
+
+    ``summary.failed``, and the same condition :func:`exit_code_for` turns into
+    exit 1 -- asked in one place so the counter and the exit code cannot
+    disagree about one run.
+    """
+    return state == ERROR

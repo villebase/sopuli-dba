@@ -1500,8 +1500,7 @@ def _check_one(
             outcome = check_states.decide(user, None)
             if stored is None and user is not None and not _settled_by_status(user):
                 outcome = check_states.Outcome(
-                    check_states.UNVERIFIABLE,
-                    "the vault holds no password at this ref",
+                    check_states.UNVERIFIABLE, _nothing_to_compare(binding)
                 )
         else:
             # `attempts` is the budget this run intends against this account, and
@@ -1592,6 +1591,25 @@ def _previous_accepted(
     if result.result not in (PASS, FAIL):
         return None
     return bool(result.result == PASS)
+
+
+def _nothing_to_compare(binding: Binding) -> str:
+    """Why this account could not be checked, when the vault side came back empty.
+
+    Three different situations reach one ``None`` from
+    :func:`_stored_credential`, and they send an operator to three different
+    places. Saying "the vault holds no password at this ref" for all of them
+    would name a ref that, in two of the three, does not exist.
+
+    A binding with no ref at all is not a fault: §3 makes ``secret`` optional,
+    and an application that declares none is the ordinary shape of a config that
+    only ever runs `doctor`.
+    """
+    if binding.secret is None:
+        return "this account is declared with no secret ref, so there is nothing to compare"
+    if binding.vault is None:
+        return "no store is named for this ref, so there is nowhere to read it from"
+    return f"the vault holds no password at {binding.secret}"
 
 
 def _settled_by_status(user: UserState) -> bool:

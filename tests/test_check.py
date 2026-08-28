@@ -205,3 +205,41 @@ def test_counts_omit_the_states_with_none() -> None:
         check.DRIFT: 1,
         check.IN_SYNC: 2,
     }
+
+
+def test_a_naive_change_date_is_read_as_utc() -> None:
+    """The regression a real container found and no unit test had.
+
+    Oracle's `PASSWORD_CHANGE_DATE` is a `DATE`, which carries no zone, so
+    `oracledb` returns a naive datetime -- and subtracting it from an aware "now"
+    raised `TypeError: can't subtract offset-naive and offset-aware datetimes`,
+    failing the whole run at exit 1. Every fixture here had built an aware
+    datetime, which is exactly the input the driver never produces.
+    """
+    naive = datetime(2026, 8, 16, 0, 0)
+
+    assert check.password_age_days(naive, now=NOW) == 12.5
+
+
+def test_a_naive_now_works_too() -> None:
+    """The other half of the same mismatch, so the guard cannot rot from one side."""
+    assert (
+        check.password_age_days(
+            datetime(2026, 8, 16, 0, 0, tzinfo=UTC), now=datetime(2026, 8, 28, 12, 0)
+        )
+        == 12.5
+    )
+
+
+def test_a_multi_line_driver_message_is_trimmed_to_one_line() -> None:
+    """`oracledb` appends a documentation URL on its own line, which turned one
+    table row into two ragged ones. Also found against a real container: a fake
+    session returning a one-line detail could not have shown it."""
+    outcome = check.decide(
+        user(),
+        attempt(FAIL, detail="ORA-01017: invalid credential\nHelp: https://example.com"),
+        version=1,
+    )
+
+    assert "\n" not in outcome.detail
+    assert "ORA-01017" in outcome.detail

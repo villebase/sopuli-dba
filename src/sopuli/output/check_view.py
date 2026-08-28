@@ -22,9 +22,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.check import DRIFT, IN_SYNC, Outcome, counts, is_inconclusive
+from sopuli.check import DRIFT, IN_SYNC, Outcome, counts, is_failure, is_inconclusive
 from sopuli.config.model import Binding
-from sopuli.driver.protocol import VerifyResult
+from sopuli.driver.protocol import FAIL, PASS, VerifyResult
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
@@ -70,11 +70,13 @@ def build_result(
     entry["actions"] = [
         {
             "kind": "verify",
-            # `applied` is whether the action happened, not whether it passed.
-            # A declined login is an action that did not happen and a failed one
-            # is an action that did -- collapsing them would lose exactly the
-            # distinction UC-1 §7's mitigation 1 exists to make visible.
-            "applied": outcome.verification is not None,
+            # `applied` is whether the login actually happened, not whether it
+            # passed. A rejected password is an action that happened; a login
+            # the lockout guard declined is one that did not, and neither is a
+            # `VerifyResult` being present -- a decline produces one too, saying
+            # so. Reading "the object exists" as "we tried" collapses exactly
+            # the distinction UC-1 §7's mitigation 1 exists to make visible.
+            "applied": _attempted(outcome.verification),
             "detail": outcome.detail,
         }
     ]
@@ -93,6 +95,18 @@ def build_result(
             {"level": "warning", "message": text, "target": binding.target} for text in warnings
         ]
     return entry
+
+
+def _attempted(result: VerifyResult | None) -> bool:
+    """Whether a login was actually made.
+
+    ``SKIPPED`` is the guard declining and ``UNAVAILABLE`` is the method not
+    existing here; both carry a result object and neither spent an attempt. Only
+    ``PASS`` and ``FAIL`` are answers the database gave.
+    """
+    if result is None:
+        return False
+    return result.result in (PASS, FAIL)
 
 
 def _secret(binding: Binding, *, version: int | None, stage: str | None) -> dict[str, Any] | None:
@@ -161,12 +175,18 @@ def summarise(states: Sequence[str]) -> Summary:
     ``changed`` is zero and ``unchanged`` is everything, which is invariant 9's
     shape for a read-only verb rather than an oversight: nothing here mutates, so
     a second run reports exactly what the first did.
+
+    ``failed`` counts `ERROR` and nothing else -- the same condition
+    :func:`sopuli.check.exit_code_for` turns into exit 1, so the counter and the
+    exit code in one document cannot disagree. It is deliberately not folded into
+    ``unverifiable``: a target that could not be reached needs the *tool* looked
+    at, and a locked account needs the estate looked at.
     """
     return Summary(
         total=len(states),
         ok=sum(1 for state in states if state == IN_SYNC),
         changed=0,
-        failed=0,
+        failed=sum(1 for state in states if is_failure(state)),
         unchanged=len(states),
         drift=sum(1 for state in states if state == DRIFT),
         unverifiable=sum(1 for state in states if is_inconclusive(state)),
@@ -209,13 +229,24 @@ def _state(state: str) -> Cell | str:
 
 
 def _verdict(states: Sequence[str]) -> str:
+    """The closing line, naming findings in the order somebody deals with them.
+
+    Drift first, because it is the thing that is actually wrong. `failed` last
+    and separate from `unverifiable`, because it is the count that says *this run
+    did not finish looking* -- an operator who reads "2 unverifiable" and does
+    not notice one of them was an unreachable database has been told the estate
+    is odd when the answer is that the survey is incomplete.
+    """
     drift = sum(1 for state in states if state == DRIFT)
     unverifiable = sum(1 for state in states if is_inconclusive(state))
-    if not drift and not unverifiable:
+    failed = sum(1 for state in states if is_failure(state))
+    if not drift and not unverifiable and not failed:
         return paint(f"all {len(states)} in sync", Role.HEADING)
     findings = []
     if drift:
         findings.append(f"{drift} drift")
     if unverifiable:
         findings.append(f"{unverifiable} unverifiable")
+    if failed:
+        findings.append(f"{failed} failed")
     return ", ".join(findings)

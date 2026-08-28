@@ -504,3 +504,29 @@ def test_no_previous_password_reports_null_rather_than_false(
     body = document(run(runner, write_config(CONFIG), "--include-previous", "--output", "json"))
 
     assert body["results"][0]["verification"]["previous_password_accepted"] is None
+
+
+def test_a_binding_with_no_ref_says_so_rather_than_blaming_a_ref(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Three situations reach one empty read, and they send an operator to three
+    different places. Caught by Copilot on #253: the message named a ref that,
+    for an application declaring none, does not exist."""
+    estate()
+    config = CONFIG.replace('    secret_template: "apps/acme/{target}#password"\n', "")
+    result = run(runner, write_config(config))
+
+    assert "no secret ref" in result.output
+    assert "the vault holds no password at" not in result.output
+
+
+def test_an_unreachable_target_is_counted_as_failed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The summary and the exit code have to agree about one run."""
+    estate(connect_error=RuntimeError("ORA-12541: no listener"))
+    body = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    assert body["summary"]["failed"] == 2
+    assert body["summary"]["unverifiable"] == 0
+    assert body["exit_code"] == ExitCode.FAILURE

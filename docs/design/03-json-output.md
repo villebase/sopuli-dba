@@ -364,6 +364,16 @@ meantime would be the one reading that is actually wrong: it claims a run was pu
 to a gate and passed it. Absent says the run was never asked, which is true.
 Adding it later is a minor bump, since the property already exists in the schema.
 
+**A unit omits `secret` when nothing has named its store yet.** `secret_ref`
+requires `vault` as a string, so there is no shape for half an address, and
+`units[].secret` is optional exactly so a unit can say it has none. §3's chain
+deliberately leaves out a profile's `vault:` and `SOPULI_VAULT` — which profile is
+active is a property of a run, and bindings are built once at load — so a valid
+file can reach the plan with no store resolved. The plan does not refuse it:
+resolving a binding's store at plan time is C15 (#118), still open, and invariant
+4 puts the refusal in the command that actually needs a store. `config show
+--resolved` renders `-` for the same binding.
+
 **`plan` is absent entirely on a command that plans nothing** — `config show`,
 `doctor`, `lock status`. That is not J2 ("always emit `plan`") being answered: J2
 asks whether a *planning* command may ever omit it, and the answer here is that a

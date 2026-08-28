@@ -92,6 +92,31 @@ def test_a_shared_plan_validates(validator: Draft202012Validator) -> None:
     assert not list(validator.iter_errors(document_with(section)))
 
 
+def test_a_plan_whose_store_is_unresolved_validates(validator: Draft202012Validator) -> None:
+    """The regression Copilot caught: `secret_ref.vault` is a required *string*,
+    so a binding whose store nothing has named yet (C15/#118) emitted
+    `{"vault": null}` and failed validation. It now emits no `secret` at all."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "targets": [{"name": "plain", "type": "oracle", "dsn": "h:1521/x"}],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["plain"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme/{account}#password",
+                }
+            ],
+        }
+    )
+
+    section = build(config, intent=["verify"]).as_json()
+    assert "secret" not in section["units"][0]
+    assert not list(validator.iter_errors(document_with(section)))
+
+
 def test_a_command_that_plans_nothing_has_no_section() -> None:
     """Absent means the command plans nothing -- `config show`, `doctor`, `lock
     status` -- rather than a planning command declining to say."""

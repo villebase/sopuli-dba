@@ -235,13 +235,35 @@ def _secret_json(binding: Binding) -> dict[str, Any] | None:
     ref leave the store off and inherit it. The plan addresses a document, so it
     needs the resolved one.
 
-    ``version`` and ``updated_at`` are absent by construction. Both describe what
-    the store holds, and reading the store here would make a plan a function of
-    something other than the config -- see the module note. They are `results[]`'s
-    to report once something has actually looked.
+    **A ref whose store nothing has named yet emits no ``secret`` at all**, which
+    is why this returns ``None`` for two different reasons. ``secret_ref`` requires
+    ``vault`` as a *string*, so there is no shape for half an address, and the
+    schema makes ``units[].secret`` optional precisely so a unit can say it does
+    not have one. C15/#118 is why the case exists: §3's chain deliberately leaves
+    out a profile's ``vault:`` and ``SOPULI_VAULT``, because which profile is
+    active is a property of a run and bindings are built once at load, so a file
+    that gets its store from either has ``binding.vault is None`` here and is
+    perfectly valid. ``config show --resolved`` already renders ``-`` for such a
+    binding rather than a verdict, and this matches it.
+
+    **This is not the place that refuses one.** Resolving a binding's store at
+    plan time is C15, still open, and a refusal written here would decide it --
+    it would reject every file that relies on ``SOPULI_VAULT``, which is the case
+    C15 exists to serve. Invariant 4 puts the refusal in the command that actually
+    needs a store, which is where ``_check_has_somewhere_to_resolve_from``'s own
+    docstring already says it belongs. What the file *can* be refused for at load
+    -- ``vaults:`` declaring nothing at all, so no run could ever complete the
+    binding -- it already is.
+
+    ``updated_at`` is absent by construction: it describes what the store holds,
+    and reading the store here would make a plan a function of something other
+    than the config -- see the module note. ``version`` appears only when the
+    **ref itself pins one** (``…@version=7``), which is config and therefore
+    deterministic; the version a run *observes* is `results[]`'s to report once
+    something has actually looked.
     """
     ref = binding.secret
-    if ref is None:
+    if ref is None or binding.vault is None:
         return None
     item: dict[str, Any] = {"vault": binding.vault, "path": ref.path}
     if ref.field is not None:

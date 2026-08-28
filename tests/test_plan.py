@@ -161,6 +161,56 @@ def test_a_binding_with_no_ref_carries_no_secret() -> None:
     assert all(unit.secret is None for unit in plan.units)
 
 
+def test_a_pinned_version_survives_because_it_is_config() -> None:
+    """`@version=7` is written in the file, so it is deterministic and belongs in
+    the plan. What must not appear is a version *observed* in the store."""
+    plan = plan_over(
+        accounts=["acme_web_user"], secret_template="apps/acme/{tenant}#password@version=7"
+    )
+
+    assert plan.units[0].secret == {
+        "vault": "vault-dev",
+        "path": "apps/acme/alpha",
+        "field": "password",
+        "version": 7,
+    }
+
+
+def test_a_ref_whose_store_nothing_named_yet_emits_no_secret() -> None:
+    """C15/#118: §3's chain deliberately leaves out a profile's `vault:` and
+    `SOPULI_VAULT`, so a valid file can reach here with `binding.vault is None`.
+
+    `secret_ref` requires `vault` as a *string*, so there is no shape for half an
+    address -- and `units[].secret` is optional precisely so a unit can say it
+    has none. Emitting `{"vault": null}` failed schema validation.
+
+    Not refused here: resolving a binding's store at plan time is C15, still
+    open, and a refusal written into the plan builder would reject every file
+    that relies on `SOPULI_VAULT` -- the case C15 exists to serve.
+    """
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "targets": [{"name": "plain", "type": "oracle", "dsn": "h:1521/x"}],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["plain"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme/{account}#password",
+                }
+            ],
+        }
+    )
+    (binding,) = config.bindings
+    assert binding.secret is not None
+    assert binding.vault is None
+
+    (unit,) = build(config, intent=["verify"]).units
+    assert unit.secret is None
+
+
 def test_a_unit_with_no_secret_omits_the_key_rather_than_nulling_it() -> None:
     """The schema types `secret` as an object, so a null would fail validation --
     and `additionalProperties: false` means there is nothing else to put there."""

@@ -1,13 +1,17 @@
 """Which store a binding uses, once the run is known (C15's plan-time half, #250).
 
-`_vault_for` resolves §3's chain while the file is being read: the ref's own
-prefix, the entry's ``vault:``, the target's, ``defaults.vault``. Two of the six
-places a store can be named are deliberately **not** in that chain -- a profile's
-``vault:`` and ``SOPULI_VAULT`` -- because both are properties of a *run* and
-bindings are built once, at load. So a perfectly good file can finish loading with
-``binding.vault is None``, and #118 decided that is a real temporary state rather
-than an error: `config show --resolved` renders it ``-``, and the command that
-actually needs a store is what fails.
+A store can be named in **seven** places. `_vault_for` resolves five of them
+while the file is being read -- the ref's own prefix, the application entry's
+``vault:``, an ``overrides:`` patch's, the target's, and ``defaults.vault`` --
+which is the same list ``bindings._check_has_somewhere_to_resolve_from`` recites
+and the same one this module's refusal offers back. The other two are
+deliberately **not** in that chain: a profile's ``vault:`` and ``SOPULI_VAULT``,
+because both are properties of a *run* and bindings are built once, at load.
+
+So a perfectly good file can finish loading with ``binding.vault is None``, and
+#118 decided that is a real temporary state rather than an error: `config show
+--resolved` renders it ``-``, and the command that actually needs a store is what
+fails.
 
 This module is the step that turns the temporary state into an answer, and the
 refusal for when it cannot.

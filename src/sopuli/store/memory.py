@@ -36,19 +36,24 @@ What it gets right on purpose, because the lock depends on each:
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
+from sopuli.clock import utc_now
 from sopuli.payload import apply_patch
 from sopuli.store.protocol import (
     CAS,
     LIST,
     MERGE_PATCH,
+    OK,
     VERSIONING,
     CasConflictError,
     PathMetadata,
     Stored,
     StoreError,
+    StoreHealth,
     bounded_prefix,
 )
 
@@ -93,9 +98,50 @@ class MemoryStore:
     #: against one pretending not to -- and, since #150, so that a caller's
     #: handling of a store that cannot be listed is exercised the same way.
     capabilities: frozenset[str] = frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
+    #: What this store answers :meth:`health` with, as its own clock (#216).
+    #:
+    #: Injectable for the reason :class:`~sopuli.lock.manager.LockManager`'s is:
+    #: a skew of zero is what a fake sharing the caller's clock always reports,
+    #: and a comparison exercised only against zero is a comparison that passes
+    #: while broken. Handing this store a clock that is five minutes out is how
+    #: the whole reporting path is tested without a container or a machine
+    #: somebody has to misconfigure.
+    clock: Callable[[], datetime] = utc_now
 
     def supports(self) -> frozenset[str]:
         return self.capabilities
+
+    def health(self) -> StoreHealth:
+        """Always reachable, and honest about why that proves nothing.
+
+        There is no network here and nothing that can be down, so this is the one
+        implementation for which :data:`~sopuli.store.protocol.OK` is a constant
+        rather than a finding. What it *is* good for is the clock: :attr:`clock`
+        is somebody else's, so the skew a caller computes from this is a real
+        measurement of two clocks that genuinely disagree.
+
+        ``round_trip`` is zero rather than absent -- a dictionary lookup really
+        does cost nothing measurable -- which makes the uncertainty band zero
+        too, and so makes a tier-0 skew assertion exact. For an assertion exact
+        on *both* sides, a caller passes
+        :meth:`~sopuli.store.protocol.StoreHealth.skew`'s ``local``, which pins
+        the host half the same way :attr:`clock` pins the store's.
+        """
+        return StoreHealth(
+            status=OK,
+            # The *store's* clock and this host's, read separately and never
+            # from one source. Setting both from `clock` was the first version
+            # and was useless: it makes the skew identically zero however far
+            # the injected clock is moved, so the one thing this field exists to
+            # exercise cannot be exercised through it.
+            server_time=self.clock(),
+            measured_at=utc_now(),
+            round_trip=timedelta(0),
+            # Nothing was asked of a credential, because there is none to ask
+            # about. `None` is the protocol's "not asked", and reporting `True`
+            # would be this store claiming to have checked something.
+            authenticated=None,
+        )
 
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
         if version is not None and VERSIONING not in self.capabilities:

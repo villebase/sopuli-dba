@@ -50,7 +50,7 @@ from sopuli.output.palette import Role
 from sopuli.output.table import Cell, Column, render_table
 
 
-def build_section(
+def build_lock_section(
     manager: LockManager, *, denied: LockDeniedError | None = None
 ) -> dict[str, Any] | None:
     """The ``lock`` section, or ``None`` when the run took no locks.

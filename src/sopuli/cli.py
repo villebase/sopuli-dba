@@ -122,6 +122,7 @@ from sopuli.lock.takeover import (
     check_fenceable,
     plan_break,
 )
+from sopuli.material import strip_one_newline
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.config_view import (
     build_section,
@@ -1824,13 +1825,14 @@ def _candidate(
 def _password_from_stdin() -> Secret:
     """Read one password from stdin (invariant 1: never from an option value).
 
-    One trailing newline is stripped and nothing else is, which is
-    :mod:`sopuli.material`'s rule and for its reason: a password may legitimately
-    end in a space, and `echo` appends a newline that was never part of it.
+    One trailing newline is stripped and nothing else is --
+    :func:`sopuli.material.strip_one_newline`, *called* rather than restated. A
+    password may legitimately end in a space, and a pipe appends a newline that
+    was never part of it; the shared function also handles ``\r\n``, which a
+    local copy of the rule did not, and Windows is precisely where P4 asks for
+    identical behaviour.
     """
-    text = sys.stdin.read()
-    if text.endswith("\n"):
-        text = text[:-1]
+    text = strip_one_newline(sys.stdin.read())
     if not text:
         raise ArgumentError(
             "--from-stdin was given and stdin was empty",
@@ -1862,13 +1864,10 @@ def _stage(
         reported = _as_error(error)
         return _reported(write, FAILED, reported.message, out=out, error=reported)
 
-    detail = f"staged v{written.version}"
-    if replaced is not None:
-        detail = f"{detail}, replaced the pending in v{replaced}"
     return _reported(
         write,
         STAGED,
-        detail,
+        f"staged v{written.version}",
         out=out,
         version=written.version,
         replaced=replaced,
@@ -1883,45 +1882,61 @@ def _reported(
     *,
     out: list[dict[str, Any]],
     version: int | None = None,
-    replaced: int | None = None,
+    replaced: Mapping[str, int] | None = None,
     mechanism: str | None = None,
     error: Error | None = None,
 ) -> list[tuple[Candidate, str, str]]:
-    """One outcome, recorded once per account in the document that shared it."""
+    """One document's outcome, recorded per account.
+
+    The *write* is shared, so the state and the version are; **what was replaced
+    is not**. In a shared document one account can have had a `pending` staged
+    while its neighbours did not, and telling the neighbours their password was
+    replaced sends somebody looking for a credential that never existed. So the
+    warning and the detail suffix are looked up per account.
+    """
+    replaced = replaced or {}
     rows = []
     for candidate in write.candidates:
+        was = replaced.get(candidate.binding.account)
+        line = detail if was is None else f"{detail}, replaced the pending in v{was}"
         out.append(
             build_generate_result(
                 candidate,
                 state=state,
                 stage=PENDING,
                 version=version,
-                replaced=replaced,
+                replaced=was,
                 mechanism=mechanism,
                 changed=state == STAGED,
-                detail=detail,
+                detail=line,
                 error=error,
             )
         )
-        rows.append((candidate, state, detail))
+        rows.append((candidate, state, line))
     return rows
 
 
-def _already_pending(existing: Any, write: DocumentWrite) -> int | None:
-    """The version whose ``pending`` this write is about to replace, or ``None``.
+def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
+    """Which accounts had a ``pending`` this write is about to replace.
 
-    Read from the document that was there rather than assumed, because "nothing
-    was staged" and "something was staged and is now gone" are different things
-    to tell an operator -- and only the second means a password somebody may be
-    holding has just become worthless.
+    Per account rather than per document, which is the distinction that matters
+    in a shared layout: "nothing was staged" and "something was staged and is now
+    gone" are different things to tell an operator, and only the second means a
+    password somebody may be holding has just become worthless. Reporting the
+    document's answer for every account in it would attach that warning to
+    accounts it was never true of.
+
+    The version is the document's own -- there is one per document, and it is
+    what an operator would go and read the old value back from.
     """
     if existing is None:
-        return None
+        return {}
+    found: dict[str, int] = {}
     for candidate in write.candidates:
         ref = candidate.binding.secret
         if ref is not None and stage_layout(ref).read(existing.data, PENDING) is not None:
-            return int(existing.version)
-    return None
+            found[candidate.binding.account] = int(existing.version)
+    return found
 
 
 if __name__ == "__main__":  # pragma: no cover

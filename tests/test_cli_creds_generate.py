@@ -397,3 +397,55 @@ def test_no_password_reaches_the_document_or_the_terminal(
     assert secrets
     for value in secrets:
         assert value not in result.output
+
+
+def test_a_crlf_line_ending_is_stripped_whole(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Caught by Copilot on #256. `--from-stdin` had its own copy of the
+    strip-one-newline rule that handled only `\n`, so a password piped in on
+    Windows kept a trailing `\r` -- and P4 is precisely the rule that says
+    behaviour must be identical there. Now calls
+    `sopuli.material.strip_one_newline` rather than restating it.
+    """
+    run(runner, write_config(CONFIG), "--from-stdin", stdin="SuppliedPassword2026abcd\r\n")
+
+    assert staged(store)["acme_web_user"] == "SuppliedPassword2026abcd"
+
+
+def test_a_trailing_space_in_a_supplied_password_survives(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The other half of that rule: exactly one newline, never `.strip()`. A
+    password may legitimately end in a space, and trimming it is a bug that
+    surfaces much later as a credential that works nowhere."""
+    run(
+        runner,
+        write_config(CONFIG),
+        "--from-stdin",
+        "--no-policy-check",
+        stdin="SuppliedPassword2026abc \n",
+    )
+
+    assert staged(store)["acme_web_user"] == "SuppliedPassword2026abc "
+
+
+def test_only_the_accounts_that_had_a_pending_are_told_it_was_replaced(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Caught by Copilot on #256. The write is shared; what it replaced is not.
+
+    One account had a staged password and its neighbour did not, and reporting
+    the document's answer for both would tell somebody a credential was replaced
+    that never existed -- sending them to look for it.
+    """
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+
+    body = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    by_account = {entry["account"]: entry for entry in body["results"]}
+    web = by_account["acme_web_user"].get("warnings", [])
+    batch = by_account["acme_batch_user"].get("warnings", [])
+
+    assert any("replaced a pending" in one["message"] for one in web)
+    assert not any("replaced a pending" in one["message"] for one in batch)

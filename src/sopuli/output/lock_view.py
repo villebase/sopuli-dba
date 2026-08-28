@@ -431,7 +431,7 @@ def _broken(take: Take, *, applied: bool, new_version: int | None) -> dict[str, 
 def build_denied_section(denied: LockDeniedError, *, mode: str) -> dict[str, Any]:
     """The ``lock`` section for a run that was refused one, with no manager.
 
-    :func:`build_section` answers this for a run that was acquiring, and it asks
+    :func:`build_lock_section` answers this for a run that was acquiring, and it asks
     a :class:`~sopuli.lock.manager.LockManager` because such a run may be holding
     others as well. ``lock break`` holds none and has no manager, and the refusal
     it reports is the same event -- so it goes through the same ``denied``

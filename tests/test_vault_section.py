@@ -417,3 +417,24 @@ def test_a_missing_backend_still_wins_the_exit_code(
     result = _doctor(runner, write_config(DEAD))
 
     assert result.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_an_exception_with_no_message_still_produces_a_readable_error(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same empty-message trap one layer up, in the shared error builder.
+
+    `_as_error` is reached by every target and, since this change, by every
+    store as well -- so an exception carrying no message would have crashed the
+    command that exists to survive its own subject being broken.
+    """
+
+    def explode(*_: object, **__: object) -> None:
+        raise RuntimeError
+
+    monkeypatch.setattr("sopuli.store.survey.connect", explode)
+
+    document = json.loads(_doctor(runner, write_config(DEAD)).output)
+
+    assert document["vaults"][0]["detail"] == "RuntimeError"
+    assert document["vaults"][0]["error"]["message"] == "RuntimeError"

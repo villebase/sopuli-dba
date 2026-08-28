@@ -207,3 +207,29 @@ def test_a_real_vault_refusing_the_token_is_degraded_and_not_ok(
     # Still reachable, so it must not fail the run: what the reader does next is
     # look at a token, not at the network.
     assert report.health.status != UNREACHABLE
+
+
+def test_an_exception_carrying_no_message_does_not_break_the_survey(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one function whose contract is never to raise, raising.
+
+    `"".splitlines()` is `[]`, so an exception with no message at all -- a bare
+    `Exception()`, or a vendor client raising a class -- turned the reason for
+    one store's failure into an `IndexError` that took the whole survey with it.
+    Exactly the crash this module exists to prevent, arriving through the code
+    that reports the crash.
+
+    The class name rather than an empty string, because an empty `detail` reads
+    as the tool having lost the reason rather than there never having been one.
+    """
+
+    def explode(*_: object, **__: object) -> None:
+        raise RuntimeError
+
+    monkeypatch.setattr("sopuli.store.survey.connect", explode)
+
+    report = survey([vault()], env={})[0]
+
+    assert report.health.status == UNREACHABLE
+    assert report.health.detail == "RuntimeError"

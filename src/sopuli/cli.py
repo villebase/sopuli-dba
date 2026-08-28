@@ -671,9 +671,15 @@ def _as_error(error: Exception) -> Error:
     # several lines including a documentation link. A survey puts one line per
     # target beside a table, so the rest belongs in the hint where it already is.
     message = getattr(error, "message", None) or str(error)
+    # `"".splitlines()` is `[]`, so indexing it raises on an exception carrying no
+    # message -- `Exception()`, or a vendor client raising a bare class. Reachable
+    # from every target and, since #216, from every store as well. The class name
+    # is the only information left, and it beats an empty string: that reads as
+    # the tool having lost the reason rather than there never having been one.
+    lines = message.splitlines()
     return Error(
         category=getattr(error, "category", "database"),
-        message=message.splitlines()[0],
+        message=lines[0] if lines else type(error).__name__,
         hint=getattr(error, "hint", None),
         code=getattr(error, "code", None),
     )

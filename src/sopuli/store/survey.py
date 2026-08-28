@@ -158,9 +158,18 @@ def _first_line(error: Exception) -> str:
     run to several including a documentation link. This is the sentence that
     goes beside a row in a table; the rest survives in the ``error`` object the
     boundary builds from :attr:`VaultReport.failure`.
+
+    An exception with **no message at all** -- ``Exception()``, or a vendor
+    client raising a bare class -- is why this does not simply index
+    ``splitlines()``: that is ``[]`` for an empty string, and an ``IndexError``
+    here would be raised by the one code path whose contract is never to raise.
+    The class name is the only information left and beats an empty string, which
+    reads as the tool having lost the reason rather than there never having been
+    one.
     """
     message = getattr(error, "message", None) or str(error)
-    return message.splitlines()[0]
+    lines = message.splitlines()
+    return lines[0] if lines else type(error).__name__
 
 
 def _elapsed(started: float) -> int:

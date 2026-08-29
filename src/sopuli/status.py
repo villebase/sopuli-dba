@@ -43,7 +43,7 @@ from sopuli.check import (
     UNVERIFIABLE,
     Outcome,
 )
-from sopuli.clock import as_utc, from_rfc3339, utc_now
+from sopuli.clock import as_utc, from_rfc3339, until, utc_now
 from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState
 from sopuli.payload import PENDING, ROTATED_AT, stage_layout
@@ -196,7 +196,16 @@ def decide(
             "-- run `sopuli creds apply`",
         )
     if user.rollover_active:
-        return Outcome(ROLLOVER_ACTIVE, "a rollover window is open; both passwords authenticate")
+        # With the deadline where there is one. The state alone says two
+        # passwords work; what an operator surveying an estate needs is how long
+        # for, because that is what decides whether tonight's job has to run
+        # `creds finish-rollover` or can leave the window to elapse.
+        left = until(user.rollover_ends_at)
+        deadline = "" if left is None else f", {left} left"
+        return Outcome(
+            ROLLOVER_ACTIVE,
+            f"a rollover window is open{deadline}; both passwords authenticate",
+        )
     if stored is None:
         return Outcome(UNVERIFIABLE, "the vault holds no password for this account")
     return Outcome(UNVERIFIABLE, "no login was attempted; `sopuli creds check` compares")

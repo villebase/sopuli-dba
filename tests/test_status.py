@@ -167,10 +167,29 @@ def test_a_staged_pending_is_an_inventory_finding() -> None:
     assert "creds apply" in outcome.detail
 
 
-def test_an_open_window_is_reported() -> None:
+def test_an_open_window_reports_how_long_is_left() -> None:
+    """The state alone says two passwords work; how long for is what decides
+    whether tonight's job has to run `finish-rollover` or can let the window
+    elapse."""
+    # Half a minute of headroom: the phrase floors to whole minutes, so a
+    # deadline exactly 41 minutes out renders as 40m by the time the call
+    # lands.
+    ends_at = datetime.now(UTC) + timedelta(minutes=41, seconds=30)
+    account = user(rollover_active=True, rollover_ends_at=ends_at)
+
+    outcome = status.decide(account, stored(), document(), binding())
+
+    assert outcome.state == check.ROLLOVER_ACTIVE
+    assert "41m left" in outcome.detail
+
+
+def test_an_open_window_with_no_known_end_still_reports_the_state() -> None:
+    """`rollover_ends_at` is derived and a release reporting no
+    `PASSWORD_ROLLOVER_TIME` gives nothing to derive it from."""
     outcome = status.decide(user(rollover_active=True), stored(), document(), binding())
 
     assert outcome.state == check.ROLLOVER_ACTIVE
+    assert "left" not in outcome.detail
 
 
 def test_an_empty_vault_says_so_rather_than_borrowing_a_state() -> None:

@@ -53,6 +53,7 @@ def build_result(
     version: int | None = None,
     changed: bool,
     verified_before: VerifyResult | None = None,
+    rollover: dict[str, Any] | None = None,
     promoted_to: int | None = None,
     mechanism: str | None = None,
     duration_ms: int | None = None,
@@ -90,7 +91,15 @@ def build_result(
     )
     if outcome.verification is not None:
         entry["verification"] = _verification(outcome.verification)
-    if outcome.state == ROLLOVER_ACTIVE:
+    if rollover is not None:
+        # Emitted for every account this run acted on, not only the ones with an
+        # open window: the *absence* of one is the answer to "did the old
+        # password stop working just now", and `profile_rollover_time` beside it
+        # says whether that was the regime asked for or the only one available
+        # (#262). A `ROLLOVER_ACTIVE` state with no object beside it would leave
+        # a consumer inferring the deadline from a word.
+        entry["rollover"] = rollover
+    elif outcome.state == ROLLOVER_ACTIVE:
         entry["rollover"] = {"active": True}
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms

@@ -85,6 +85,36 @@ def test_the_refusal_is_located_at_the_application_entry() -> None:
     assert str(raised.value.at) == "applications[0]"
 
 
+def test_the_location_is_the_entry_that_collides_not_the_first_to_name_the_account() -> None:
+    """One account may be declared by two application entries, each with its own
+    ref, and only one of them collides. Locating by account name alone would send
+    an operator to a line that is fine."""
+    document: dict[str, Any] = {
+        "version": 1,
+        "vaults": VAULTS,
+        "targets": [{"name": "plain", "type": "oracle", "dsn": "h:1521/x", "vault": "vault-dev"}],
+        "applications": [
+            {
+                "name": "other",
+                "targets": ["plain"],
+                "accounts": ["acme_web_user"],
+                "secret_template": "apps/other/db#password",
+            },
+            {
+                "name": "acme",
+                "targets": ["plain"],
+                "accounts": ["acme_batch_user", "acme_web_user"],
+                "secret_template": "apps/acme/db#{account}",
+            },
+        ],
+    }
+
+    with pytest.raises(ConfigError) as raised:
+        build_config(document)
+
+    assert str(raised.value.at) == "applications[1]"
+
+
 def test_a_template_with_no_account_token_is_still_the_earlier_refusal() -> None:
     """A ref with no `{account}` in it at all sends two accounts to one *field*,
     which is the same loss one step earlier -- and `secret_template` already

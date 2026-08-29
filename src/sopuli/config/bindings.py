@@ -47,9 +47,10 @@ from sopuli.config.model import (
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 from sopuli.config.selection import matches, select
-from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
+from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
 from sopuli.config.templates import substitute
 from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
+from sopuli.lock.keys import normalise_path
 from sopuli.payload import stage_layout
 
 #: What an unresolved token in a secret ref is measured against (§7).
@@ -114,19 +115,35 @@ def _check_stages_do_not_collide(
     for collision in colliding_stages(stageable):
         raise ConfigError(
             collision.description,
-            at=where.get(_declared_by(bindings, collision.accounts[1]), ROOT),
+            at=where.get(_declared_by(stageable, collision), ROOT),
             hint=STAGE_COLLISION_HINT,
         )
 
 
-def _declared_by(bindings: Sequence[Binding], account: str) -> str | None:
-    """Which application entry declared ``account``, for the error's location.
+def _declared_by(bindings: Sequence[Binding], collision: StageCollision) -> str | None:
+    """Which application entry produced the second half of ``collision``.
 
     The *second* account of the pair, because that is the one whose arrival made
     it a collision -- and in the ordinary case both are in the same entry anyway,
-    since one ``secret_template`` is what puts them in one document.
+    since one ``secret_template`` is what puts two accounts in one document.
+
+    Matched on the **document as well as the account**, not on the name alone.
+    One account may be declared by more than one application entry, each with its
+    own ref, and only one of those entries is the one that collides; locating by
+    name would then point at whichever entry mentions the account first and send
+    an operator to a line that is fine.
     """
-    return next((binding.application for binding in bindings if binding.account == account), None)
+    return next(
+        (
+            binding.application
+            for binding in bindings
+            if binding.account == collision.accounts[1]
+            and binding.vault == collision.vault
+            and binding.secret is not None
+            and normalise_path(binding.secret.path) == collision.path
+        ),
+        None,
+    )
 
 
 def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Binding]:

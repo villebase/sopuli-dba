@@ -216,9 +216,16 @@ def colliding_stages(
     ``creds generate`` writes and therefore where the loss would first happen.
 
     Calls :func:`~sopuli.payload.stage_layout`, which **raises** for a ref with
-    nowhere to stage at all. That is ``_check_stageable``'s refusal (#111) and
-    every caller here runs after it, so reaching it would mean a ref got past
-    that check rather than a case this function should tolerate.
+    nowhere to stage at all -- ``_check_stageable``'s refusal (#111). That is
+    propagated rather than swallowed: a ref that cannot stage anywhere is not a
+    ref this function can report a collision for, and answering "no collisions"
+    about it would be the wrong answer to a question that has none.
+
+    The load-time caller has already refused those per binding, so it never sees
+    it. A caller assembling bindings itself -- ``sopuli.generate.group`` -- can,
+    and that is deliberate rather than an ordering this function assumes: it is
+    the same refusal, arriving at the write boundary for a binding whose store
+    was not known while the file was read.
     """
     found: dict[tuple[str | None, str], dict[tuple[str, ...], str]] = {}
     collisions: dict[tuple[str | None, str], StageCollision] = {}

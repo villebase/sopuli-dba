@@ -1590,7 +1590,7 @@ why that matters.
 **The store is why this is not a universal rule.** On OCI the stages are versions
 of the secret rather than fields in it (P2's `staging_labels` row), so a ref
 naming a whole secret is the natural layout there and a field called `pending`
-collides with nothing. None of these refusals fires against a store that
+collides with nothing. No refusal in this section fires against a store that
 stages natively. A store type P2 gives no capability row — `keyring` — is left alone
 too, rather than assumed to emulate.
 

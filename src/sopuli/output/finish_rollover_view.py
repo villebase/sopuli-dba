@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sopuli.check import DRIFT, IN_SYNC, Outcome, counts, is_failure, is_inconclusive
-from sopuli.clock import to_rfc3339
+from sopuli.clock import as_utc, to_rfc3339
 from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState, VerifyResult
 from sopuli.finish_rollover import PENDING_APPLY, SKIPPED, remaining
@@ -103,7 +103,10 @@ def _rollover(user: UserState, *, closed: bool) -> dict[str, Any]:
         "profile_rollover_time": user.rollover_time,
     }
     if still_open and user.rollover_ends_at is not None:
-        found["ends_at"] = to_rfc3339(user.rollover_ends_at)
+        # Through `as_utc`: `to_rfc3339` converts a naive value from the
+        # *machine's* local time, which would put this deadline hours away
+        # from the countdown `remaining` computes off the same field.
+        found["ends_at"] = to_rfc3339(as_utc(user.rollover_ends_at))
     return found
 
 
@@ -190,8 +193,15 @@ def _window(user: UserState) -> Cell | str:
     return "open" if left is None else f"open, {left} left"
 
 
-def render_finish(rows: Sequence[tuple[Binding, Outcome, bool]]) -> str:
-    """The result table and the closing line. ``rows`` is (binding, outcome, changed)."""
+def render_finish(
+    rows: Sequence[tuple[Binding, Outcome, bool]], *, would_close: int | None = None
+) -> str:
+    """The result table and the closing line. ``rows`` is (binding, outcome, changed).
+
+    ``would_close`` is set under ``--dry-run`` and is what the closing line
+    counts there. Without it a preview would say "nothing closed" -- true, and
+    the opposite of the thing somebody ran a preview to find out.
+    """
     table = render_table(
         [
             Column("ACCOUNT", _ACCOUNT),
@@ -211,6 +221,7 @@ def render_finish(rows: Sequence[tuple[Binding, Outcome, bool]]) -> str:
             _verdict(
                 [outcome.state for _, outcome, _ in rows],
                 closed=sum(1 for _, _, changed in rows if changed),
+                would_close=would_close,
             ),
         ]
     )
@@ -226,15 +237,30 @@ def _state(state: str) -> Cell | str:
     return Cell(state, Role.NOTABLE) if state == DRIFT else state
 
 
-def _verdict(states: Sequence[str], *, closed: int) -> str:
+def _verdict(states: Sequence[str], *, closed: int, would_close: int | None = None) -> str:
     """The closing line: what was closed, then what was deliberately not.
 
     A run that closed nothing because nothing was open says so plainly, because
     that is the ordinary night and it must not read like a failure.
+
+    Under a preview ``would_close`` replaces the count, and the line ends by
+    saying nothing happened. The findings beside it are **not** hypothetical --
+    an unreachable target, a staged `pending`, a locked account are all things
+    the preview really found, and they are the answer it was run for.
     """
     drift = sum(1 for state in states if state == DRIFT)
     left = sum(1 for state in states if _left_alone(state))
     failed = sum(1 for state in states if is_failure(state))
+    if would_close is not None:
+        parts = [f"{would_close} would be closed"] if would_close else ["nothing would be closed"]
+        if drift:
+            parts.append(f"{drift} drift")
+        if left - drift > 0:
+            parts.append(f"{left - drift} left open")
+        if failed:
+            parts.append(f"{failed} failed")
+        return ", ".join([*parts, "no window was closed (--dry-run)"])
+
     if not closed and not drift and not left and not failed:
         return paint(f"no rollover window was open on any of {len(states)}", Role.HEADING)
 

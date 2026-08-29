@@ -69,7 +69,7 @@ from sopuli import plan as plan_builder
 from sopuli import strategy as strategies
 from sopuli.admin import resolve as admin_resolve
 from sopuli.apply import Source
-from sopuli.clock import to_rfc3339, utc_now
+from sopuli.clock import as_utc, to_rfc3339, utc_now
 from sopuli.config import (
     ROOT,
     ArgumentError,
@@ -2426,7 +2426,9 @@ def _rollover_json(user: UserState) -> dict[str, Any]:
         # Omitted rather than null: the schema types `ends_at` as a timestamp and
         # not as a nullable one, and there is no deadline to report when no
         # window is open. `active: false` already says that.
-        found["ends_at"] = to_rfc3339(user.rollover_ends_at)
+        # Through `as_utc`: `to_rfc3339` reads a naive value as the machine's
+        # local time, and an Oracle `DATE` is naive.
+        found["ends_at"] = to_rfc3339(as_utc(user.rollover_ends_at))
     return found
 
 
@@ -2790,10 +2792,17 @@ def creds_finish_rollover(selectors: tuple[str, ...], lockout_margin: int, run: 
             ),
         ]
     )
-    if run.dry_run:
-        return f"{header}\n\nno window was closed (--dry-run)"
+    # The rows are printed under `--dry-run` too. They are not decoration there:
+    # a preview still reaches every database, so an unreachable target is a real
+    # finding that sets the exit code, and a run exiting 1 with only a plan and a
+    # window table on screen would be a non-zero exit nobody could explain. The
+    # rows are also the half a preview is *for* -- which accounts would be closed
+    # and which would be left open, per account and with the reason.
     rows = [(record.binding, record.outcome, record.changed) for record in finished]
-    return f"{header}\n\n{render_finish(rows)}"
+    body = render_finish(
+        rows, would_close=sum(1 for one in finished if one.would_close) if run.dry_run else None
+    )
+    return f"{header}\n\n{body}"
 
 
 @dataclass(frozen=True)
@@ -2809,6 +2818,12 @@ class _Finished:
     outcome: check_states.Outcome
     changed: bool
     user: UserState | None = None
+    #: Under ``--dry-run``, whether this account cleared every gate and would
+    #: have had its window closed. Always ``False`` on a real run, where
+    #: ``changed`` is the answer -- the two are never both meaningful, and one
+    #: field serving both would make "would have" and "did" indistinguishable in
+    #: the one place it matters.
+    would_close: bool = False
     duration_ms: int | None = None
     error: Error | None = None
 
@@ -2918,6 +2933,7 @@ def _finish_one(
                 ),
                 changed=False,
                 user=user,
+                would_close=True,
                 duration_ms=_elapsed(started),
             )
 

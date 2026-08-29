@@ -36,7 +36,7 @@ Two gates, then, and only one of them is a login:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sopuli.apply import Source
 from sopuli.check import (
@@ -48,6 +48,7 @@ from sopuli.check import (
     UNVERIFIABLE,
     Outcome,
 )
+from sopuli.clock import as_utc, utc_now
 from sopuli.driver.protocol import EXPIRE_PASSWORD, FAIL, PASS, Scope, UserState, VerifyResult
 from sopuli.payload import PENDING
 
@@ -199,17 +200,12 @@ def remaining(user: UserState, *, now: datetime | None = None) -> str | None:
     ends_at = user.rollover_ends_at
     if ends_at is None:
         return None
-    moment = now if now is not None else datetime.now(UTC)
-    if ends_at.tzinfo is None:
-        # `DATE` carries no zone and `oracledb` hands back a naive value, which
-        # `check.password_age_days` reads as UTC for the same reason: there is no
-        # way here to learn the server's offset, and the alternative is a
-        # `TypeError` on the subtraction.
-        ends_at = ends_at.replace(tzinfo=UTC)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-
-    seconds = int((ends_at - moment).total_seconds())
+    # `DATE` carries no zone and `oracledb` hands back a naive value.
+    # `clock.as_utc` is the one place that decides what to do about it, and it is
+    # one place on purpose: the same timestamp is *also* rendered into
+    # `results[].rollover.ends_at`, and a countdown computed one way beside a
+    # deadline rendered the other is one run saying two things.
+    seconds = int((as_utc(ends_at) - as_utc(now if now is not None else utc_now())).total_seconds())
     if seconds <= 0:
         return None
     minutes, hours = seconds // 60, seconds // 3600

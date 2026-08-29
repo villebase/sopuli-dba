@@ -290,6 +290,31 @@ def test_one_login_is_spent_per_account(
     assert harness["sessions"][0].budgets == [1]
 
 
+def test_a_naive_window_end_is_read_as_utc_in_the_document(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """Oracle's `DATE` is naive, and `to_rfc3339` converts a naive value from the
+    *machine's* local time -- so on a laptop three hours off UTC the rendered
+    deadline would sit three hours away from the countdown computed off the same
+    field. One run, two answers."""
+    naive = (datetime.now(UTC) + timedelta(minutes=41)).replace(tzinfo=None)
+    # Drifted, so the window is left open and its deadline is still reported --
+    # a window this run closed has no deadline left to render.
+    estate(
+        users={"ACME_WEB_USER": in_rollover(rollover_ends_at=naive)},
+        answers={"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017")},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    ends_at = body["results"][0]["rollover"]["ends_at"]
+    assert ends_at == naive.isoformat() + "Z"
+
+
 def test_the_document_validates_and_reports_the_window(
     runner: CliRunner,
     write_config: Callable[[str], Path],
@@ -431,6 +456,43 @@ def test_dry_run_closes_nothing_and_spends_no_login(
     assert all(session.attempts == [] for session in harness["sessions"])
     assert "no window was closed" in result.output
     assert result.exit_code == ExitCode.SUCCESS
+
+
+def test_the_preview_shows_its_rows_and_what_would_be_closed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """ "Nothing closed" is true of a preview and is the opposite of what somebody
+    ran one to find out."""
+    estate()
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert "would end this window" in result.output
+    assert "2 would be closed" in result.output
+    assert "no window was closed (--dry-run)" in result.output
+
+
+def test_a_preview_that_cannot_reach_a_target_says_so(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A preview still reaches every database, so an unreachable one is a real
+    finding and it sets the exit code. Printing only the plan and the window
+    table would leave a non-zero exit nobody could explain."""
+    estate(connect_error=RuntimeError("ORA-12541: no listener"))
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert "ORA-12541" in result.output
+
+
+def test_a_preview_reports_what_it_would_leave_open(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The half a preview is for, beside the half it would close."""
+    estate(documents=_unfinished())
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert windows.PENDING_APPLY in result.output
+    assert "nothing would be closed" in result.output
 
 
 def test_the_preview_shows_what_is_open_and_for_how_long(

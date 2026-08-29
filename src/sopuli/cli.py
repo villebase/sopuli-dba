@@ -2053,10 +2053,13 @@ def creds_apply(selectors: tuple[str, ...], lockout_margin: int, run: Invocation
     document.finish(
         apply_states.exit_code_for(
             states,
-            promoted=all(one.version is not None for one in promotions.values()),
-            staged=any(
-                record.source is not None and record.source.stage == PENDING for record in applied
-            ),
+            # Both questions are asked of the documents that actually read a
+            # `pending`. A repair -- a document whose accounts were applied from
+            # `current` -- has nothing to promote, so counting it as unpromoted
+            # would make a mixed run look like UC-1 §8 case 7 and exit 4 with
+            # everything confirmed and nothing wrong.
+            promoted=all(one.version is not None for one in promotions.values() if one.staged),
+            staged=any(one.staged for one in promotions.values()),
         ),
         summarise_apply(states, changed=changed),
     )
@@ -2092,10 +2095,16 @@ class _Promotion:
     ``version`` is ``None`` for a document that was not promoted, and ``reason``
     says which of the two cases that is: nothing needed promoting, or something
     did and the estate had not earned it.
+
+    ``staged`` is what keeps those two apart for the exit code. A document whose
+    accounts were applied from `current` is a repair: it has nothing to promote,
+    and its ``version: None`` must not read as a promotion this run owed and did
+    not make. Only the staged ones are asked about.
     """
 
     version: int | None
     reason: str
+    staged: bool = False
     mechanism: str | None = None
     error: Error | None = None
 
@@ -2338,7 +2347,7 @@ def _promote_documents(
             continue
         if not apply_states.summarise_document(record.outcome.state for record in records):
             promotions[key] = _Promotion(
-                None, "not every target confirmed, so `pending` was left in place"
+                None, "not every target confirmed, so `pending` was left in place", staged=True
             )
             continue
         promotions[key] = _write_promotion(key, staged, documents[key], stores[key.store])
@@ -2394,9 +2403,12 @@ def _write_promotion(
         written = write_credential(store, key.path, patch, cas=_version_of(stored))
     except Exception as error:  # noqa: BLE001 -- a per-document finding
         reported = _as_error(error)
-        return _Promotion(None, reported.message, error=reported)
+        return _Promotion(None, reported.message, staged=True, error=reported)
     return _Promotion(
-        written.version, f"promoted to v{written.version}", mechanism=written.mechanism
+        written.version,
+        f"promoted to v{written.version}",
+        staged=True,
+        mechanism=written.mechanism,
     )
 
 

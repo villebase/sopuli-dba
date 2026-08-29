@@ -370,6 +370,33 @@ def test_nothing_is_promoted_when_nothing_was_staged(
     assert harness["store"].read("apps/acme/appdb-alpha").version == before
 
 
+def test_a_repair_beside_a_rotation_exits_zero(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Two documents, one staged and one not. The repair has nothing to promote,
+    so counting it as unpromoted would make a run where everything confirmed look
+    like UC-1 §8 case 7 -- the database holding the new password while the vault
+    still advertises the old one -- and exit 4 with nothing wrong."""
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            },
+            "apps/acme/appdb-beta": {"DB_CREDENTIALS": {"acme_web_user": LIVE}},
+        },
+        per_target={
+            "appdb-alpha": {"ACME_WEB_USER": drifted()},
+            "appdb-beta": {"ACME_WEB_USER": passes(1)},
+        },
+    )
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"] == {}
+    assert "previous" not in stored(harness["store"], "apps/acme/appdb-beta")
+
+
 def test_a_drifted_target_is_repaired_from_current(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

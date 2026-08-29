@@ -57,6 +57,13 @@ CURRENT, PENDING, PREVIOUS = STAGES
 #: thing that can disagree with itself.
 STAMPS = ("rotated_at", "rotated_by", "policy", "targets")
 
+#: The one stamp anything reads *back*. `creds status` (#275) ages a credential
+#: by it and `--max-age-days` filters on it (Q9, #87); the other three are
+#: written for an operator and for an audit, and nothing branches on them.
+#: Named because a string literal in a second module is a typo waiting to be a
+#: silently absent value.
+ROTATED_AT = STAMPS[0]
+
 #: Root keys the mirror rule generates, and therefore names a container may not
 #: take. ``current`` is absent on purpose: it is not a root key -- the container
 #: *is* the current stage -- so a field genuinely called ``current`` collides
@@ -74,6 +81,7 @@ __all__ = [
     "PREVIOUS",
     "REMOVE",
     "RESERVED",
+    "ROTATED_AT",
     "STAMPS",
     "StageLayout",
     "apply_patch",

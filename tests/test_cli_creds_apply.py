@@ -163,6 +163,11 @@ class FakeSession:
         return replace(found, rollover_active=opened)
 
     def require_rollover(self, account: str) -> None:
+        # The real driver raises for a missing account before it looks at
+        # anything else (#181), so this one does too -- otherwise the pre-flight
+        # could skip a case the estate would meet.
+        if account.upper() not in self.users:
+            raise RuntimeError(f'account "{account}" does not exist on this target')
         if self.rollover_refusal is not None:
             raise self.rollover_refusal
 
@@ -852,3 +857,18 @@ def test_an_unreachable_target_is_not_a_strategy_problem(
 
     assert "ORA-12541" in result.output
     assert result.exit_code == ExitCode.FAILURE
+
+
+def test_a_missing_account_does_not_refuse_the_estate_over_a_strategy(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`ACCOUNT_MISSING` is a state the run reports per account. The driver's
+    `require_rollover` raises for one, having no way to know this caller would
+    rather skip it, so the pre-flight has to check before asking -- otherwise an
+    account the run was going to report on anyway takes the whole estate down."""
+    harness = estate(users={})
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover")
+
+    assert check.ACCOUNT_MISSING in result.output
+    assert result.exit_code == ExitCode.FAILURE
+    assert all(session.changed == [] for session in harness["sessions"])

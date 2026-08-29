@@ -2504,16 +2504,27 @@ def _check_strategy(
     the regime the operator asked for rather than about anything the driver
     knows.
 
-    An account the database does not have is skipped: ``ACCOUNT_MISSING`` is a
-    state the run reports, and refusing the whole estate over it here would turn
-    a per-account finding into a plan-time failure.
+    An account the database does not have is skipped, for **every** regime:
+    ``ACCOUNT_MISSING`` is a state the run reports per account, and refusing the
+    whole estate over one would turn a per-account finding into a plan-time
+    failure. The check is here rather than inside each branch because
+    ``require_rollover`` raises for a missing account too -- it has no way to
+    know this caller would rather skip it -- so a rollover pre-flight that asked
+    it first would refuse an estate over an account the run was going to report
+    on anyway.
+
+    That means the rollover branch reads the account twice, once here and once
+    inside ``require_rollover``. Deliberate: the driver owns that refusal
+    (#181) and reads what it needs for it, and one extra query on a pre-flight
+    that only runs under an explicit ``--strategy`` is a cheaper thing to spend
+    than a second copy of the refusal.
     """
     for binding in bindings:
-        if strategy == strategies.ROLLOVER:
-            session.require_rollover(binding.account)
-            continue
         user = session.describe_user(binding.account)
         if user is None:
+            continue
+        if strategy == strategies.ROLLOVER:
+            session.require_rollover(binding.account)
             continue
         refusal = strategies.unhonourable(strategy, session.scope(), user)
         if refusal is None:

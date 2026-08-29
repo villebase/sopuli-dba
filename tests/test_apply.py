@@ -232,6 +232,31 @@ def test_a_rollback_under_a_rotation_in_flight_is_refused() -> None:
     assert "undone by the next" in outcome.detail
 
 
+def test_a_missing_account_outranks_the_rollback_gate() -> None:
+    """Telling somebody to deal with a `pending` first, about an account the
+    database does not have, answers a question they had not reached. What the
+    database says about the account is the cause of everything downstream of
+    it."""
+    outcome = apply.settled_before_acting(
+        None, apply.Source(PREVIOUS, Secret("old"), Secret("live"), pending_staged=True)
+    )
+
+    assert outcome is not None
+    assert outcome.state == check.ACCOUNT_MISSING
+
+
+def test_a_locked_account_outranks_the_rollback_gate() -> None:
+    """Same argument one step down: nothing was going to be rolled back onto a
+    locked account either."""
+    outcome = apply.settled_before_acting(
+        user(status="LOCKED", locked=True),
+        apply.Source(PREVIOUS, Secret("old"), Secret("live"), pending_staged=True),
+    )
+
+    assert outcome is not None
+    assert outcome.state == check.LOCKED
+
+
 def test_a_forward_apply_under_a_staged_pending_is_not_refused() -> None:
     """That is the ordinary rotation, and the `pending` is the point of it."""
     assert (

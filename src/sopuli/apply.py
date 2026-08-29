@@ -225,9 +225,6 @@ def settled_before_acting(
       named, so the message can say *which* one is empty -- "no `previous` to
       roll back to" and "nothing staged at all" send somebody to different
       places.
-    * **A rollback with a rotation in flight.** ``PENDING_APPLY``. Rolling back
-      while a `pending` is staged leaves it staged, and the next `apply` moves
-      the estate forward with it -- undoing the undo, unattended.
     * **No account.** ``ACCOUNT_MISSING``, and it is not created: Q8 puts
       provisioning in its own use case, and invariant 5 makes the config a
       whitelist of what may be *touched* rather than a list of what should exist.
@@ -235,6 +232,11 @@ def settled_before_acting(
       change would succeed and could never be confirmed, which is the one state
       the ordering in UC-1 §3 exists to keep a run out of. Unlocking is an
       opt-in attribute (§5) and is not in this build.
+    * **A rollback with a rotation in flight.** ``PENDING_APPLY``. Rolling back
+      while a `pending` is staged leaves it staged, and the next `apply` moves
+      the estate forward with it -- undoing the undo, unattended. Last of the
+      four, because it is a reason not to do something that was going to happen
+      and the two above it are reasons it was never going to.
 
     **An expired password is deliberately not here.** ``ORA-28001`` is listed in
     §6.4 as resolvable *by* apply -- setting a password clears the expiry -- so an
@@ -243,16 +245,6 @@ def settled_before_acting(
     """
     if source is None:
         return Outcome(ERROR, _nothing_to_apply(requested))
-    if source.stage == PREVIOUS and source.pending_staged:
-        # A rollback underneath a rotation in flight. The `pending` would survive
-        # this run, and the next `apply` would move the estate *forward* with it
-        # -- silently undoing the undo, at whatever hour that next run happens.
-        # `creds finish-rollover` refuses on the same fact for the same reason.
-        return Outcome(
-            PENDING_APPLY,
-            "a password is staged for this account, so a rollback now would be "
-            "undone by the next `sopuli creds apply` -- deal with the `pending` first",
-        )
     if user is None:
         return Outcome(
             ACCOUNT_MISSING,
@@ -263,6 +255,22 @@ def settled_before_acting(
             LOCKED,
             f"account is {user.status.lower()}; the password was not changed, because a "
             f"locked account cannot confirm one",
+        )
+    if source.stage == PREVIOUS and source.pending_staged:
+        # A rollback underneath a rotation in flight. The `pending` would survive
+        # this run, and the next `apply` would move the estate *forward* with it
+        # -- silently undoing the undo, at whatever hour that next run happens.
+        # `creds finish-rollover` refuses on the same fact for the same reason.
+        #
+        # **Last of the four**, and deliberately so: it is a reason not to do
+        # something that was going to happen, and the two above it are reasons it
+        # was never going to. Telling somebody to deal with a `pending` first,
+        # about an account the database does not have, would be answering a
+        # question they had not reached.
+        return Outcome(
+            PENDING_APPLY,
+            "a password is staged for this account, so a rollback now would be "
+            "undone by the next `sopuli creds apply` -- deal with the `pending` first",
         )
     return None
 

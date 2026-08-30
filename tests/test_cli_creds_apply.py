@@ -31,6 +31,7 @@ from sopuli import check
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.model import Vault
+from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -149,7 +150,9 @@ class FakeSession:
         on_call: Callable[[str], None] | None = None,
         scope: Scope | None = None,
         audit: PrivilegeAudit | Exception | None = None,
+        describe_error: Exception | None = None,
     ) -> None:
+        self.describe_error = describe_error
         self.on_call = on_call
         self.given_scope = scope
         self.audit = audit
@@ -182,6 +185,8 @@ class FakeSession:
 
     def describe_user(self, account: str) -> UserState | None:
         self._called("describe_user")
+        if self.describe_error is not None:
+            raise self.describe_error
         found = self.users.get(account.upper())
         if found is None:
             return None
@@ -284,6 +289,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         on_call: Callable[[dict[str, Any], str], None] | None = None,
         scopes: Mapping[str, Scope] | None = None,
         audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
+        describe_error: Exception | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
@@ -318,6 +324,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     on_call=None if on_call is None else (lambda event: on_call(harness, event)),
                     scope=None if scopes is None else scopes.get(target.name),
                     audit=None if audits is None else audits.get(target.name),
+                    describe_error=describe_error,
                 )
                 sessions.append(session)
                 return session
@@ -946,6 +953,45 @@ def test_a_dry_run_still_preflights(
     assert result.exit_code == ExitCode.FAILURE
     assert "GRANT ALTER USER" in result.output
     assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_an_account_whose_state_cannot_be_read_is_a_finding_and_not_a_crash(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`describe_user` raises where the account's *state* cannot be read rather
+    than where the account is absent -- `RolesUnreadableError`, for a
+    `DBA_ROLE_PRIVS` this service account is not granted.
+
+    Letting it escape would abort the survey and take every finding gathered so
+    far with it, which is the opposite of what a run asking "tell me everything
+    first" wants. It blocks, unlike the unreadable privilege audit, because it is
+    the input guardrail 4 refuses on: treating an unreadable answer as "holds no
+    admin role" is the silent success that error exists to prevent.
+    """
+    estate(
+        describe_error=RolesUnreadableError(
+            'could not read the roles held by "acme_web_user"',
+            hint="GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account",
+        ),
+        audits={"appdb-alpha": PrivilegeAudit(missing=("GRANT ALTER USER",))},
+    )
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--preflight",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    # Both findings survive: the survey did not stop at the one that raised.
+    messages = str(found["diagnostics"])
+    assert "could not read the roles" in messages
+    assert "GRANT ALTER USER" in messages
 
 
 def test_every_problem_is_reported_rather_than_the_first(

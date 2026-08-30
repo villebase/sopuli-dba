@@ -141,7 +141,7 @@ def survey(
 ) -> tuple[Finding, ...]:
     """Everything wrong with one reachable target, in §8's order.
 
-    Three groups, and each is a refusal the run would otherwise have discovered
+    Four checks, and each is a refusal the run would otherwise have discovered
     with part of the estate already changed:
 
     * **the scope the file claims**, per :func:`assertion_holds`, reported with

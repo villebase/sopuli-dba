@@ -77,12 +77,26 @@ def _hints(findings: Sequence[Finding]) -> list[str]:
 def _verdict(findings: Sequence[Finding]) -> str:
     """How many, over how many targets, and that nothing was written.
 
+    **Counts what refused, not what was printed**, which is the same count
+    :func:`sopuli.preflight.summarise` puts in the run-level ``error``. A caveat
+    is in the table because it is worth seeing and is not a problem: counting it
+    here would have the text say four where the document said three, and one run
+    described two ways is exactly what the JSON contract exists to prevent. It is
+    named separately instead, because a reader who fixes three things and sees a
+    fourth row needs to know why it is there.
+
     The last clause is the one worth the words. Every other refusal in this tool
     happens where an operator can see what had already been done; this one is the
     whole point of running the survey, and a verdict that did not say so would
     leave somebody checking.
     """
-    targets = len({one.target for one in findings})
-    plural = "" if len(findings) == 1 else "s"
+    blocking = [one for one in findings if one.blocking]
+    caveats = len(findings) - len(blocking)
+    targets = len({one.target for one in blocking})
+    plural = "" if len(blocking) == 1 else "s"
     over = "1 target" if targets == 1 else f"{targets} targets"
-    return f"{len(findings)} problem{plural} over {over}; nothing was written"
+    line = f"{len(blocking)} problem{plural} over {over}; nothing was written"
+    if caveats:
+        was = "1 check could not" if caveats == 1 else f"{caveats} checks could not"
+        line = f"{line} ({was} be established)"
+    return line

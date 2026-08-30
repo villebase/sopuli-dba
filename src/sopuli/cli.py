@@ -2806,13 +2806,18 @@ def _preflight_target(
     Reading is here and deciding is in :mod:`sopuli.preflight`, which is the
     arrangement every other verb in this file has with its own decision module.
 
-    **A probe that fails is a finding rather than an exception**, and it is
+    **Every probe that fails is a finding rather than an exception**, and each is
     reported as the check it was answering rather than as unreachability --
     `doctor` draws the same line and for the same reason: a dictionary view this
     account cannot read would otherwise send somebody to the listener over a
-    grant. The two probes are separate for that reason too, since a service
-    account can be perfectly able to describe its scope and unable to audit its
-    own privileges.
+    grant. The probes are separate for that reason too, since a service account
+    can be perfectly able to describe its scope, unable to audit its own
+    privileges, and unable to read the roles an account holds -- three grants,
+    three answers.
+
+    Letting any of them escape would abort the survey and take every finding
+    gathered so far with it, which is precisely what a run asking "tell me
+    everything before you start" did not ask for.
     """
     try:
         scope = session.scope()
@@ -2848,6 +2853,39 @@ def _preflight_target(
     else:
         privilege_finding = ()
 
+    missing_accounts: list[str] = []
+    unreadable: list[Finding] = []
+    for binding in bindings:
+        try:
+            state = session.describe_user(binding.account)
+        except Exception as error:  # noqa: BLE001 -- a finding about this account
+            # `describe_user` raises where the account's *state* cannot be read
+            # rather than where the account is absent -- `RolesUnreadableError`
+            # is the one that exists, for a `DBA_ROLE_PRIVS` this service
+            # account is not granted. Letting it escape would abort the survey
+            # and take every finding gathered so far with it, which is the
+            # opposite of what a run asking "tell me everything first" wants.
+            #
+            # Blocking, unlike the privilege audit above, and the asymmetry is
+            # the point: that one establishes nothing either way, while this one
+            # is the input guardrail 4 refuses on, and treating an unreadable
+            # answer as "holds no admin role" is the silent success
+            # `RolesUnreadableError` was raised to prevent.
+            reported = _as_error(error)
+            unreadable.append(
+                Finding(
+                    target=target.name,
+                    check=preflight.ACCOUNT,
+                    message=reported.message,
+                    hint=reported.hint,
+                    account=binding.account,
+                    category=reported.category,
+                )
+            )
+            continue
+        if state is None:
+            missing_accounts.append(binding.account)
+
     declared = target.target.oracle
     return (
         preflight.survey(
@@ -2855,13 +2893,10 @@ def _preflight_target(
             scope=scope,
             declared_scope=declared.scope,
             declared_container=declared.container,
-            missing_accounts=[
-                binding.account
-                for binding in bindings
-                if session.describe_user(binding.account) is None
-            ],
+            missing_accounts=missing_accounts,
             missing_privileges=missing_privileges,
         )
+        + tuple(unreadable)
         + privilege_finding
     )
 

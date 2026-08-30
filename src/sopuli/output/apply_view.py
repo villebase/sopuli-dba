@@ -388,12 +388,19 @@ def repair_invocation(
 
 
 def _word(value: str) -> str:
-    """One argument, quoted only where a shell would need it to be.
+    """One argument, quoted where it carries whitespace.
 
-    Double quotes rather than single: the line is meant to be pasted, and this
-    tool runs on Windows as well (P4). ``cmd`` and PowerShell both understand a
-    double-quoted argument and neither understands a single-quoted one, while
-    every POSIX shell understands both.
+    **Not a general shell quoter**, and it should not become one. What is
+    composed here is config paths, a profile name and `k=v` label selectors, and
+    whitespace is the character among those that arises -- ``C:/Program
+    Files/estate.yaml`` is the ordinary case on Windows. Nothing here escapes
+    ``&``, ``$`` or a glob, and a value carrying one would need a different
+    answer per shell rather than this one.
+
+    Double quotes rather than single, because the line is meant to be pasted on
+    Windows as well (P4): ``cmd`` does not treat a single quote as quoting at
+    all, while a double-quoted argument works in ``cmd``, in PowerShell and in
+    every POSIX shell.
     """
     return f'"{value}"' if any(char.isspace() for char in value) else value
 
@@ -507,10 +514,12 @@ def _verdict(
 
 
 def _with_remedy(line: str, repair: str | None) -> str:
-    """The verdict, and under it what to type next. Unpainted, deliberately.
+    """The verdict, and under it what to type next.
 
-    Colour maps onto the JSON vocabulary and nothing else (`03-json-output.md`
-    §1), and a remedy is not a field the document carries. It is also the line
-    somebody copies, which is a second reason to keep escape sequences out of it.
+    **The remedy line is unpainted**, unlike the verdict above it -- which the
+    caller may have painted as a heading already. Colour maps onto the JSON
+    vocabulary and nothing else (`03-json-output.md` §1), and a remedy is not a
+    field the document carries. It is also the line somebody copies, which is a
+    second reason to keep escape sequences out of it.
     """
     return line if repair is None else f"{line}\nrepair with: {repair}"

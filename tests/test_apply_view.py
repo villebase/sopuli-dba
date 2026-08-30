@@ -289,9 +289,9 @@ def test_no_other_stage_is_offered_a_confirmation() -> None:
 
 
 def test_an_argument_with_a_space_is_quoted_for_both_shells() -> None:
-    """P4: the line is meant to be pasted, on Windows as well. `cmd` and
-    PowerShell both understand a double-quoted argument and neither understands a
-    single-quoted one."""
+    """P4: the line is meant to be pasted, on Windows as well. `cmd` does not
+    treat a single quote as quoting at all, while a double-quoted argument works
+    in `cmd`, in PowerShell and in every POSIX shell."""
     line = apply_view.repair_invocation(config_paths=("C:/Program Files/estate.yaml",))
 
     assert line.endswith('--config "C:/Program Files/estate.yaml"')

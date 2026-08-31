@@ -13,12 +13,12 @@ tool does the first night it is pointed at somebody else's estate.
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
 from sopuli import rotate as rotation
-from sopuli.apply import IN_SYNC
-from sopuli.check import ERROR
+from sopuli.check import ERROR, IN_SYNC
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config import Binding
 from sopuli.config.secret_refs import parse_secret_ref
@@ -42,7 +42,7 @@ def binding(account: str = "acme_web_user", target: str = "appdb-alpha") -> Bind
 
 def document(
     *, account: str = "acme_web_user", days: float | None = None, value: Secret = OLD
-) -> dict:
+) -> dict[str, Any]:
     """One document in the mirror layout §7 describes, stamped ``days`` ago.
 
     ``current`` lives under the ref's field and every other stage and stamp under
@@ -54,7 +54,7 @@ def document(
     ``days=None`` writes no stamp at all, which is the estate this tool has never
     rotated -- seeded by hand, or written by whatever came before it.
     """
-    body: dict = {"DB_CREDENTIALS": {account: value.reveal()}}
+    body: dict[str, Any] = {"DB_CREDENTIALS": {account: value.reveal()}}
     if days is not None:
         body["rotated_at"] = {account: to_rfc3339(utc_now() - timedelta(days=days))}
     return body

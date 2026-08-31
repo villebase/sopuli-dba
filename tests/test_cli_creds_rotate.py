@@ -53,6 +53,7 @@ from sopuli.lock import Holder, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore, StoreError
+from sopuli.store.protocol import Stored
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -150,7 +151,17 @@ class Database:
             self.windows.add(account)
 
     def finish_rollover(self, account: str) -> bool:
-        return bool(self.windows.discard(account) or True) and account not in self.windows
+        """Whether *this call* closed a window, which is not the same as whether
+        one is shut afterwards.
+
+        A window that had already elapsed reports no change, because that is what
+        the real driver reports and what `_finish_one` distinguishes: what this
+        run wanted is true, and it is not what made it true.
+        """
+        if account not in self.windows:
+            return False
+        self.windows.discard(account)
+        return True
 
 
 class FakeSession:
@@ -725,8 +736,8 @@ def test_a_read_back_disagreement_is_exit_four_with_its_own_code(
     class Lagging(MemoryStore):
         """Accepts every write and serves a stale ``current`` after the promotion."""
 
-        def read(self, path: str) -> Any:
-            found = super().read(path)
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
             if found is None or "previous" not in found.data:
                 return found
             stale = dict(found.data)
@@ -749,8 +760,8 @@ def test_a_read_back_disagreement_offers_no_repair(
     The thing to go and look at is the vault, so the remedy is withheld."""
 
     class Lagging(MemoryStore):
-        def read(self, path: str) -> Any:
-            found = super().read(path)
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
             if found is None or "previous" not in found.data:
                 return found
             stale = dict(found.data)

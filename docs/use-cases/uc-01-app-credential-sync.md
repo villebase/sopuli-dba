@@ -1051,7 +1051,7 @@ in a store `vaults:` declares, and never touches the secret the lock guards.
 The sequence above is implemented, over parts that all existed by the time it was
 written — `generate`'s staging write, `apply`'s convergence and promotion,
 `finish-rollover`'s window, the lock's fence (#282) and the pre-flight (#283).
-Seven things about it are decisions rather than transcription.
+Eight things about it are decisions rather than transcription.
 
 **It is not a wrapper, and the lock is why.** Each of the three verbs takes and
 releases its own, so between a `generate` that released and an `apply` that has
@@ -1097,6 +1097,19 @@ something. `rotate` reaches a database later than it reaches the vault, so a
 staged `pending` is a mutation that exists before any DDL does — and a run fenced
 out between two step-4 writes exits **4**, not 7, because 7 asserts nothing
 happened and a `pending` somebody has to clean up is something happening.
+
+**The fence reaches `--finish-rollover` too**, which is worth stating because the
+first version of this did not (found in review). Window-closing is the run's last
+mutation and the furthest from the acquisition at step 2, so it is the one most
+likely to be issued after a lease has already gone — and it is the one whose
+direction cannot be undone: a window nobody closed elapses on its own, and one
+closed by a run that had lost the estate cannot be reopened. So the closing path
+re-reads the fence before each statement where a caller holds a lock, and lets a
+`LockError` past its per-account catch-all rather than filing a takeover as one
+account's bad luck. **The standalone `creds finish-rollover` still takes no lock
+at all** — it writes to no store, and an hourly job that blocked rotations would
+be a worse problem than the one the lock solves — so the manager is an argument a
+caller supplies rather than something the verb acquires.
 
 **Step 9's audit record is the run document.** `--output json` is the record a
 scheduler keeps, and `creds.rotate` was already in the run schema's command enum;

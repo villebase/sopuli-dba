@@ -215,6 +215,7 @@ class FakeSession:
     def finish_rollover(self, account: str) -> ChangeResult:
         closed = self.database.finish_rollover(account.upper())
         self.finished.append(account.upper())
+        self._called("finish_rollover")
         return ChangeResult(changed=closed, detail="rollover window ended")
 
     def verify_password(
@@ -889,6 +890,77 @@ def test_without_the_flag_no_window_is_closed(
     # were left in. What must be absent is the closing line's own clause, which
     # is the only place the run claims to have ended any.
     assert "closed" not in result.output.rsplit("rotation:", 1)[-1]
+
+
+def test_a_takeover_stops_the_windows_being_closed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The fence reaches the tail of the run too (found in review on #284).
+
+    Window-closing is the last mutation and the furthest from the acquisition, so
+    it is the one most likely to be issued after a lease has gone -- and it is the
+    one whose direction cannot be undone. A window nobody closed elapses on its
+    own; one closed by a run that had already lost the estate cannot be reopened.
+
+    The takeover fires on the first close, so the assertion is that the *second*
+    target is left alone rather than that none was touched.
+    """
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=steal("apps/acme/appdb-beta", at="finish_rollover"),
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    assert len(finished(harness)) == 1
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert "SOPULI-W011" in codes
+
+
+def test_a_takeover_while_closing_is_not_a_per_account_finding(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The trap #282 fixed in `_apply_one`, which the closing path had too.
+
+    `_finish_one` catches `Exception` broadly and turns it into a row in the
+    table, so a stolen lock would have become one account's bad luck and the run
+    would have carried on closing the next account's window. The run must end
+    instead -- exit 4, because it had already applied and promoted.
+    """
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=steal("apps/acme/appdb-beta", at="finish_rollover"),
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "ERROR" not in result.output
+
+
+def test_finish_rollover_alone_still_takes_no_lock(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The standalone verb writes to no store, so there is nothing for the
+    advisory lock to protect -- and an hourly job that blocked rotations would be
+    a worse problem than the one the lock solves. Threading the manager through
+    for `rotate` must not have given this one a lock by the back door."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        documents={
+            f"apps/acme/{target}": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}
+            for target in ("appdb-alpha", "appdb-beta")
+        },
+    )
+    result = runner.invoke(
+        cli,
+        ["creds", "finish-rollover", "--config", str(write_config(CONFIG)), "--output", "json"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "lock" not in document(result)
+    assert harness["store"].read("locks/apps/acme/appdb-alpha") is None
 
 
 def test_a_failed_target_keeps_its_window(

@@ -3325,8 +3325,20 @@ def _finish_estate(
     *,
     margin: int,
     preview: bool,
+    manager: LockManager | None = None,
 ) -> list[_Finished]:
-    """Every account, target by target, one connection each. `check`'s grouping."""
+    """Every account, target by target, one connection each. `check`'s grouping.
+
+    ``manager`` is ``None`` for `creds finish-rollover`, which takes no lock at
+    all -- it writes to no store, so there is nothing for the advisory lock to
+    protect and an hourly job that blocked rotations would be the worse problem.
+
+    `rotate` passes the one it is holding, because there the DDL below is a
+    mutation inside a sequence somebody else can take over mid-run, and UC-1 §8
+    is explicit that the fence is re-read before *every* mutating call. Optional
+    rather than required so the standalone verb keeps behaving exactly as it did:
+    the argument is the lock a caller holds, and a caller that holds none says so.
+    """
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
     grouped: dict[str, list[tuple[Binding, Source | None]]] = {}
     for binding, source in sources:
@@ -3335,7 +3347,9 @@ def _finish_estate(
     found: list[_Finished] = []
     for name, work in grouped.items():
         found.extend(
-            _finish_target(by_target[name], work, run, config, margin=margin, preview=preview)
+            _finish_target(
+                by_target[name], work, run, config, margin=margin, preview=preview, manager=manager
+            )
         )
     return found
 
@@ -3348,6 +3362,7 @@ def _finish_target(
     *,
     margin: int,
     preview: bool,
+    manager: LockManager | None = None,
 ) -> list[_Finished]:
     """One target's worth of accounts, over one connection.
 
@@ -3374,7 +3389,9 @@ def _finish_target(
             ]
 
         return [
-            _finish_one(binding, session, source=source, margin=margin, preview=preview)
+            _finish_one(
+                binding, session, source=source, margin=margin, preview=preview, manager=manager
+            )
             for binding, source in work
         ]
     finally:
@@ -3390,6 +3407,7 @@ def _finish_one(
     source: Source | None,
     margin: int,
     preview: bool,
+    manager: LockManager | None = None,
 ) -> _Finished:
     """One account: read the window, decide, and close it or say why not.
 
@@ -3400,6 +3418,18 @@ def _finish_one(
     Under ``--dry-run`` the state is read and the login is **not** spent. The
     plan a preview shows is which windows are open and how much is left on them,
     and a login would be a real cost paid for a run that changes nothing.
+
+    **The fence is re-read immediately before the statement**, where a caller
+    holds a lock at all (UC-1 §8, #282, found in review on #284). Closing a window
+    is a mutation, and it is the one whose direction cannot be undone: a window
+    nobody closed elapses on its own, and one closed by a run that had already
+    lost the estate cannot be reopened. Narrowed to this account's own document,
+    which is §8's per-document rule and the same check :func:`_apply_one` makes.
+
+    **A lock error is never a per-account finding**, for the reason it is not one
+    in :func:`_apply_one`: the catch-all below would turn "somebody else owns this
+    estate now" into a row in the table and carry on closing the next account's
+    window. It is re-raised ahead of it, and the run ends.
     """
     started = time.monotonic()
     try:
@@ -3436,6 +3466,8 @@ def _finish_one(
                 binding, refused, changed=False, user=user, duration_ms=_elapsed(started)
             )
 
+        if manager is not None:
+            manager.check(_lock_key(binding))
         result = session.finish_rollover(user.name)
         if not result.changed:
             # The window closed between the read and the statement -- it elapsed,
@@ -3453,6 +3485,10 @@ def _finish_one(
                 duration_ms=_elapsed(started),
             )
         outcome = windows.closed(user, verified)
+    except LockError:
+        # Ahead of the catch-all on purpose -- see the docstring. The run ends;
+        # it does not report a takeover as one account's bad luck.
+        raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
         return _Finished(
@@ -3845,7 +3881,15 @@ def _rotate_estate(
     into.disagreed = _read_back(into.applied, into.promotions, promoted)
 
     if finish_windows:
-        into.closed = _close_windows(into.applied, run, config, documents=promoted, margin=margin)
+        try:
+            into.closed = _close_windows(
+                into.applied, run, config, documents=promoted, margin=margin, manager=manager
+            )
+        except LockStolenError as lost:
+            # Every window this run had already closed stays closed, which is why
+            # the count is not discarded -- `_close_windows` returns only on the
+            # path that finished. What the run must not do is close another.
+            into.stolen = lost
     return None
 
 
@@ -3899,6 +3943,7 @@ def _close_windows(
     *,
     documents: Mapping[LockKey, Any],
     margin: int,
+    manager: LockManager,
 ) -> int:
     """`--finish-rollover`: end every window this run opened, once it is over.
 
@@ -3914,9 +3959,11 @@ def _close_windows(
     and closing it because its neighbours succeeded would turn a partial
     rotation into an outage.
 
-    :func:`_finish_estate` still applies its own refusals on top -- a staged
-    `pending`, an account whose vault password the database refuses -- and both
-    are reasons to leave a window open that this function cannot see.
+    **The fence still applies here**, which is why the manager is handed down.
+    This is the last mutation of the run and the furthest from step 2, so it is
+    the one most likely to be issued after a lease has gone -- and a window closed
+    by a run that no longer owns the estate cannot be reopened. A takeover found
+    here raises, the same as one found at step 5.
     """
     confirmed = [
         record.binding
@@ -3926,7 +3973,12 @@ def _close_windows(
     if not confirmed:
         return 0
     finished = _finish_estate(
-        _sources(confirmed, documents), run, config, margin=margin, preview=False
+        _sources(confirmed, documents),
+        run,
+        config,
+        margin=margin,
+        preview=False,
+        manager=manager,
     )
     return sum(1 for record in finished if record.changed)
 

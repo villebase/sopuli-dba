@@ -45,6 +45,8 @@ vaults:
 groups:
   prod-pdbs:
     match: { env: prod }
+  dev-pdbs:
+    match: { env: dev }
 targets:
   - name: appdb-alpha
     type: oracle
@@ -66,6 +68,10 @@ applications:
     accounts: [report_reader]
     targets: [appdb-alpha]
     secret_template: "apps/rep/{target}#DB_CREDENTIALS/{account}"
+  - name: dormant
+    accounts: [dormant_user]
+    targets: { match: { env: staging } }
+    secret_template: "apps/dor/{target}#DB_CREDENTIALS/{account}"
 """
 
 
@@ -198,6 +204,36 @@ def test_a_selector_cannot_resurrect_what_another_removed(
     assert found == []
 
 
+# ------------------------------------- each flag unions, flags intersect ---
+
+
+def test_two_groups_are_a_union(runner: CliRunner, write_config: Callable[[str], Path]) -> None:
+    """Repeatable flags union within themselves (found in review on #299).
+
+    Merging both groups' labels into one match would make `env=prod` and
+    `env=dev` a conjunction that matches nothing -- turning "either of these two
+    populations" into "neither".
+    """
+    found = listed(runner, write_config(CONFIG), "--group", "prod-pdbs", "--group", "dev-pdbs")
+
+    assert found == ["appdb-alpha", "appdb-beta"]
+
+
+def test_a_group_does_not_overwrite_an_explicit_label(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """`--select env=dev --group prod-pdbs` asks for both and gets neither.
+
+    The bug this guards is worse than an empty result: merging let the group's
+    labels silently *replace* the ones the operator typed, so this would have
+    listed the prod target -- a selector quietly answering a question nobody
+    asked.
+    """
+    found = listed(runner, write_config(CONFIG), "--select", "env=dev", "--group", "prod-pdbs")
+
+    assert found == []
+
+
 # ------------------------------------------------- names refused, labels not ---
 
 
@@ -236,6 +272,28 @@ def test_an_unknown_account_is_refused(
     result = refused(runner, write_config(CONFIG), "--account", "acme_web_usr")
 
     assert result.exit_code != ExitCode.SUCCESS
+
+
+def test_an_application_reaching_no_target_is_still_a_declared_name(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """Declared names come from `applications:`, not from the bindings they
+    produced (found in review on #299).
+
+    `dormant` selects on `env: staging`, which no target carries, so it yields no
+    binding at all. Deriving the declared set from bindings would refuse its name
+    as a typo the operator did not make -- while the thing they actually want to
+    know, that the entry currently reaches nothing, is what the empty run says.
+    """
+    assert listed(runner, write_config(CONFIG), "--application", "dormant") == []
+
+
+def test_an_account_of_a_dormant_application_is_declared_too(
+    runner: CliRunner, write_config: Callable[[str], Path]
+) -> None:
+    """The same argument one level down: an account is declared by the entry
+    that lists it, whether or not that entry reaches a target today."""
+    assert listed(runner, write_config(CONFIG), "--account", "dormant_user") == []
 
 
 def test_the_refusal_names_what_is_declared(

@@ -234,23 +234,31 @@ def filter_estate(config: Config, selection: Selection) -> Config:
     :func:`sopuli.cli.select_option` calls the same defect as ignoring one that
     does. `target list --account acme_web_user` is "the targets where this
     account lives", and every flag narrows every command that carries it.
+
+    **Each flag is a union within itself and an intersection with the others.**
+    `--target a --target b` is both targets; `--group x --group y` is the targets
+    in either group; and `--select env=dev --group prod-pdbs` is targets that
+    satisfy *both*, which for a `prod-pdbs` matching `env=prod` is correctly
+    nothing. Groups are therefore evaluated as their own predicate rather than
+    merged into the label match: merging would let a group's labels silently
+    overwrite the ones the operator typed, and would turn two groups into one
+    conjunction that can match nothing an operator asked for (found in review on
+    #299).
     """
     if selection.is_everything:
         return config
 
-    match = dict(selection.select)
-    for name in selection.groups:
-        match.update(_group_match(config, name))
-    pairs = tuple(match.items())
-
     wanted = set(selection.targets)
     accounts = {name.casefold() for name in selection.accounts}
     applications = set(selection.applications)
+    groups = tuple(_group_match(config, name) for name in selection.groups)
 
     targets = tuple(
         expanded
         for expanded in config.expanded_targets
-        if matches(expanded.target, pairs) and (not wanted or expanded.name in wanted)
+        if matches(expanded.target, selection.select)
+        and (not wanted or expanded.name in wanted)
+        and (not groups or any(matches(expanded.target, match) for match in groups))
     )
     selected = {expanded.name for expanded in targets}
     bindings = tuple(
@@ -299,15 +307,21 @@ def refuse_unknown(config: Config, selection: Selection) -> None:
         {expanded.name for expanded in config.expanded_targets},
     )
     _refuse_missing("--group", selection.groups, {group.name for group in config.groups})
+    # From `applications:` and not from the bindings they produced. An entry
+    # whose `targets:` selector matches nothing is validly declared and yields no
+    # binding, and refusing its name as undeclared would report a typo the
+    # operator did not make -- while the thing they actually want to know, that
+    # the entry currently reaches no target, is what the empty run tells them
+    # (found in review on #299).
     _refuse_missing(
         "--application",
         selection.applications,
-        {binding.application for binding in config.bindings if binding.application},
+        {entry.name for entry in config.applications if entry.name},
     )
     _refuse_missing(
         "--account",
         selection.accounts,
-        {binding.account for binding in config.bindings},
+        {name for entry in config.applications for name in entry.accounts},
         folded=True,
     )
 

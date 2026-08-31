@@ -145,7 +145,10 @@ Harness = Callable[..., dict[str, Any]]
 @pytest.fixture
 def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
     def install(
-        users: Mapping[str, UserState], *, document: dict[str, Any] | None = None
+        users: Mapping[str, UserState],
+        *,
+        document: dict[str, Any] | None = None,
+        session: type[FakeSession] = FakeSession,
     ) -> dict[str, Any]:
         store = MemoryStore()
         store.write(
@@ -169,9 +172,9 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
-                session = FakeSession(users)
-                sessions.append(session)
-                return session
+                opened = session(users)
+                sessions.append(opened)
+                return opened
 
         class FakeModule:
             OracleDriver = FakeDriver
@@ -434,6 +437,59 @@ def test_force_records_what_it_waived(
         "vendor_maintained",
         "privileged_role",
     ]
+
+
+def test_force_records_the_waiver_on_an_account_that_needed_no_change(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The no-op path keeps the audit trail (found in review on #298).
+
+    A forced account whose password the database already holds reports
+    `changed: false` and issues nothing -- but the waiver was still granted and
+    the tool still went on to touch an account §4 would have refused. That it
+    turned out to need no change is a fact about the estate, not about what was
+    overridden, and an audit trail recording the override only when something
+    happened would be missing exactly the runs somebody skims looking for
+    `--force`.
+    """
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        # `current` already holds what the database holds, and no `pending`: the
+        # run reads `current`, the login passes, and nothing is issued.
+        document={"DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}},
+    )
+    result = run(runner, write_config(CONFIG), "--force", "--output", "json")
+
+    forced = next(one for one in document(result)["results"] if one["account"] == "acme_web_user")
+    assert forced["changed"] is False
+    assert [one["check"] for one in forced["overridden"]] == ["vendor_maintained"]
+
+
+def test_force_records_the_waiver_on_an_account_that_failed(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """And on the error path, for the same reason: the override happened."""
+
+    class Refusing(FakeSession):
+        def set_password(self, name: str, secret: Secret) -> ChangeResult:
+            raise RuntimeError("ORA-01031: insufficient privileges")
+
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        session=Refusing,
+    )
+    result = run(runner, write_config(CONFIG), "--force", "--output", "json")
+
+    assert changed(harness) == []
+    forced = next(one for one in document(result)["results"] if one["account"] == "acme_web_user")
+    assert forced["state"] == "ERROR"
+    assert [one["check"] for one in forced["overridden"]] == ["vendor_maintained"]
 
 
 def test_a_clean_account_carries_no_overridden_key(

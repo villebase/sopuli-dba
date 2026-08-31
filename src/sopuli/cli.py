@@ -2702,6 +2702,7 @@ def _apply_one(
     """
     started = time.monotonic()
     before = None
+    overridden: tuple[guardrails.Refusal, ...] = ()
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(user, source, requested=requested)
@@ -2742,6 +2743,13 @@ def _apply_one(
                 changed=False,
                 verified_before=before,
                 rollover=_rollover_json(user),
+                # Reported on the no-op path too. The waiver was granted and the
+                # tool went on to touch an account §4 would have refused -- that
+                # it turned out to need no change is a fact about the estate, not
+                # about what was overridden, and an audit trail that recorded the
+                # override only when something happened would be missing exactly
+                # the runs somebody skims looking for `--force`.
+                overridden=overridden,
                 duration_ms=_elapsed(started),
             )
 
@@ -2781,6 +2789,9 @@ def _apply_one(
             check_states.Outcome(check_states.ERROR, reported.message),
             changed=False,
             verified_before=before,
+            # Empty where the failure came before the review, which is why it is
+            # initialised above rather than assigned only on the path that runs.
+            overridden=overridden,
             duration_ms=_elapsed(started),
             error=reported,
         )

@@ -472,7 +472,7 @@ whose job is to make a database hold what a vault holds. Q8 already puts account
 creation in that use case; this is the same boundary one field along.
 
 So UC-1's attribute list is two, and it is closed rather than merely unfinished.
-A fifth would be a decision, not an implementation detail.
+A third would be a decision, not an implementation detail.
 
 ### What shipped in #259, and what the flags above still describe
 

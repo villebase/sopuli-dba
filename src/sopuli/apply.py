@@ -307,7 +307,7 @@ def settled_before_acting(
 ) -> Outcome | None:
     """The outcome for an account nothing should be issued against, or ``None``.
 
-    Three cases, in this order, and the order is the same argument
+    Four cases, in this order, and the order is the same argument
     :func:`sopuli.check.decide` makes about status outranking the attempt: what
     the database says about the account is the *cause* of whatever a login would
     have seen.

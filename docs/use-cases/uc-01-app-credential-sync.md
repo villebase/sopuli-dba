@@ -449,8 +449,10 @@ as ambiguous rather than absent:
   the only consumer of the `expire_password` capability today. An attribute
   spelled `PASSWORD_EXPIRE` would have been a second way to ask for it.
 - **`ORA-28002`, the grace period**, which §6.4 files as informational and
-  surfaced in `status`. That is a reporting question rather than an attribute, and
-  it is tracked separately.
+  surfaced in `status`. That is a reporting question rather than an attribute —
+  and looking for it turned up a real one: `EXPIRED(GRACE)` is currently read as a
+  hard expiry, so `check` reports `EXPIRED` for an account whose password works
+  and never attempts the login that would prove it. #309.
 
 ### What shipped in #259, and what the flags above still describe
 

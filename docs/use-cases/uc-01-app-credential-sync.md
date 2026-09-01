@@ -296,8 +296,8 @@ apply causes no outage at all.
 policy, each opt-in: account unlock, profile assignment, default/temporary
 tablespace. Each is reported as a separate change so the diff stays readable.
 
-This sentence used to name a fourth, `PASSWORD_EXPIRE` handling. It does not any
-more, and the reason is below rather than in a commit message, because the phrase
+This sentence used to name a fourth, `PASSWORD_EXPIRE` handling. It no longer
+does, and the reason is below rather than in a commit message, because the phrase
 looked like a missing feature for as long as it stood here.
 
 ### Account unlock, the first attribute (#300)

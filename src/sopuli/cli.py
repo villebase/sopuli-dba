@@ -3344,7 +3344,44 @@ def _preflight_target(
         # question is whether this run's *move* can land, and an account already
         # there is not moving.
         moving = strategies.moves_profile(state, apply_states.attributes_for(config, binding))
-        if moving is not None and session.resolve_profile(moving) is None:
+        if moving is None:
+            continue
+        try:
+            found = session.resolve_profile(moving)
+        except UnsupportedCapabilityError:
+            # Invariant 4, and the one exception this survey lets past: the
+            # target cannot read profiles at all, so the assignment this run
+            # intends can never run here. That is a plan-time refusal with its
+            # own exit code naming the capability, not a finding among others --
+            # the same escape `_check_strategy` gives it.
+            raise
+        except Exception as error:  # noqa: BLE001 -- a finding about this account
+            # Reported and **not** blocking, on the rule this function states and
+            # the privilege audit above already follows: a dictionary read that
+            # failed has established nothing either way, and refusing over it
+            # would mean an estate that will not grant `DBA_PROFILES` can never
+            # run a pre-flight. The run still cannot move an account onto a
+            # profile that is not there -- the driver asks the same question
+            # again before its own statement and refuses that account -- so what
+            # is lost is the early warning, which is exactly what the finding
+            # says.
+            reported = _as_error(error)
+            unreadable.append(
+                Finding(
+                    target=target.name,
+                    check=preflight.PROFILE,
+                    message=(
+                        f"could not establish whether profile {moving!r} exists here: "
+                        f"{reported.message}"
+                    ),
+                    hint="nothing about this account's profile was established, either way",
+                    account=binding.account,
+                    category=reported.category,
+                    blocking=False,
+                )
+            )
+            continue
+        if found is None:
             missing_profiles.append((binding.account, moving))
 
     declared = target.target.oracle

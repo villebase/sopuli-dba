@@ -46,6 +46,7 @@ from sopuli.driver.protocol import (
     ChangeResult,
     PrivilegeAudit,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
@@ -186,7 +187,9 @@ class FakeSession:
         scope: Scope | None = None,
         audit: PrivilegeAudit | Exception | None = None,
         describe_error: Exception | None = None,
+        profile_error: Exception | None = None,
     ) -> None:
+        self.profile_error = profile_error
         self.describe_error = describe_error
         self.on_call = on_call
         self.given_scope = scope
@@ -248,7 +251,15 @@ class FakeSession:
     profiles = ("DEFAULT", "ACME_APP_PROF", "ACME_ROLLOVER_PROF")
 
     def resolve_profile(self, profile: str) -> str | None:
-        """The dictionary's spelling, or `None`. The real driver's contract."""
+        """The dictionary's spelling, or `None`. The real driver's contract.
+
+        `profile_error` stands for the read that could not be made at all --
+        `DBA_PROFILES` refused, or the capability absent -- which is a different
+        answer from "no such profile" and has to be distinguishable here or the
+        test cannot tell them apart either.
+        """
+        if self.profile_error is not None:
+            raise self.profile_error
         found = profile.upper()
         return found if found in self.profiles else None
 
@@ -385,6 +396,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         scopes: Mapping[str, Scope] | None = None,
         audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
         describe_error: Exception | None = None,
+        profile_error: Exception | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
@@ -420,6 +432,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     scope=None if scopes is None else scopes.get(target.name),
                     audit=None if audits is None else audits.get(target.name),
                     describe_error=describe_error,
+                    profile_error=profile_error,
                 )
                 sessions.append(session)
                 return session
@@ -799,6 +812,46 @@ def test_a_profile_this_database_has_not_got_is_refused_before_anything_is_writt
     assert all(session.assigned == [] for session in harness["sessions"])
     assert all(session.changed == [] for session in harness["sessions"])
     assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]
+
+
+def test_a_profile_read_that_failed_is_reported_and_does_not_stop_the_survey(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`_preflight_target`'s own rule: every probe that fails is a finding rather
+    than an exception, because letting one escape takes every finding gathered so
+    far with it. A read that failed has established nothing either way, so it does
+    not block -- the driver asks again before its own statement."""
+    estate(
+        users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")},
+        profile_error=RuntimeError("ORA-00942: table or view does not exist"),
+    )
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--preflight", "--output", "json")
+
+    # Reported for **both** targets: an escaping exception would have taken the
+    # first target's findings with it and never reached the second.
+    diagnostics = [one["message"] for one in document(result)["diagnostics"]]
+    assert sum("could not establish" in one for one in diagnostics) == 2
+    # Not blocking, so the run went on to try -- and the account is an ERROR
+    # because the driver asks the same question again before its own statement.
+    assert [one["state"] for one in document(result)["results"]] == [check.ERROR, check.ERROR]
+
+
+def test_a_target_that_cannot_read_profiles_at_all_refuses_the_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Invariant 4, and the one exception the survey lets past: an assignment this
+    run intends can never run against a target without the capability, and that is
+    a plan-time refusal naming it rather than a finding among others."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")},
+        profile_error=UnsupportedCapabilityError("profile_management", target="appdb-alpha"),
+    )
+    result = run(runner, write_config(ASSIGNING_CONFIG), "--preflight")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.assigned == [] for session in harness["sessions"])
+    assert all(session.changed == [] for session in harness["sessions"])
 
 
 def test_naming_a_regime_over_a_profile_move_is_refused(

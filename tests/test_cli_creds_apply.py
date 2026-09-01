@@ -27,7 +27,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from sopuli import check
+from sopuli import apply, check
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.model import Vault
@@ -269,6 +269,9 @@ class FakeSession:
         self.capabilities = capabilities
         self.rollover_refusal = rollover_refusal
         self.attempts: list[tuple[str, str]] = []
+        #: Every ``set_password`` this session was asked for, refused ones
+        #: included. ``changed`` is the subset that landed.
+        self.attempted: list[tuple[str, str]] = []
         #: Accounts this session actually issued ``ACCOUNT UNLOCK`` for, which is
         #: not the same list as the ones it was asked about -- invariant 9 for the
         #: attributes is that an account already open is not touched.
@@ -404,6 +407,11 @@ class FakeSession:
         return queued.pop(0) if queued else VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9)
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
+        # Recorded before the refusal, unlike `changed` below, which only sees the
+        # calls that succeeded. A bounded redraw has to be asserted on the
+        # statements the server was *asked* for (#312): an unbounded loop issues
+        # them for ever and appends nothing to a list of successes.
+        self.attempted.append((account.upper(), secret.reveal()))
         if self.set_error is not None and next(self.refusals, False):
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
@@ -2168,8 +2176,12 @@ def test_a_server_that_refuses_everything_stops_at_the_budget(
     result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
 
     assert result.exit_code != ExitCode.SUCCESS
-    attempted = sum(1 for session in harness["sessions"] for _ in session.users)
-    assert attempted <= 2 * 3  # two targets, three draws
+    asked = [one for session in harness["sessions"] for one in session.attempted]
+    # Two targets, three draws, and nothing beyond that. Asserted on the
+    # statements the server was asked for rather than on the ones that landed:
+    # none of these landed, and an unbounded loop would have issued them for ever.
+    assert len(asked) == 2 * apply.DRAW_LIMIT
+    assert len({secret for _, secret in asked}) == apply.DRAW_LIMIT
     assert "ORA-28003" in result.output
     assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] != STAGED
 
@@ -2184,8 +2196,10 @@ def test_each_draw_is_a_different_password(
 
     run(runner, write_config(REDRAW_CONFIG))
 
-    presented = [secret for session in harness["sessions"] for _, secret in session.attempts]
-    assert len(set(presented)) == len(presented) or STAGED not in presented[2:]
+    presented = [secret for session in harness["sessions"] for _, secret in session.attempted]
+    assert len(set(presented)) == apply.DRAW_LIMIT
+    # The value the run arrived with is drawn once and never sent again.
+    assert presented.count(STAGED) == 2
 
 
 def test_an_error_that_is_not_a_refusal_never_redraws(

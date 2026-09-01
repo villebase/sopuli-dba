@@ -934,6 +934,12 @@ of one is the answer to "did the old password stop working just now".
 
 ### Which verb redraws, and why it is `apply` (#268, decided)
 
+**Decided, and not yet wired** (#312). The decision is built and tested — which
+error may be redrawn, whose password, and how many times — and this build still
+reports the refusal and stops, as §5's "What shipped" says. The two rows above
+describe what the verb does once #312 lands; nothing else in this section is
+waiting on it.
+
 "Regenerate" without a subject is what made the two rows above ambiguous for as
 long as they stood there. The subject is **`apply`**, and `generate` is not where
 this is fixed.

@@ -566,15 +566,31 @@ def may_redraw(error: Any, origin: Any, *, drawn: int, limit: int = DRAW_LIMIT) 
     if not getattr(error, "regenerate", False):
         return Redraw(False, "the server did not refuse the password")
     if origin != GENERATED:
-        return Redraw(
-            False,
-            "this run did not draw that password"
-            if origin == SUPPLIED
-            else "there is no record of where that password came from",
-        )
+        return Redraw(False, _unredrawable(origin))
     if drawn >= limit:
         return Redraw(False, f"{limit} passwords were refused")
     return Redraw(True)
+
+
+def _unredrawable(origin: Any) -> str:
+    """Why an ``origin`` that is not :data:`~sopuli.payload.GENERATED` blocks a redraw.
+
+    Three cases and not two, because the operator's next move differs. *Supplied*
+    sends them to whoever dictated the value; *absent* sends them to a document
+    staged before #311 existed, which the next `creds generate` heals on its own;
+    and a value this tool does not recognise sends them to the document itself,
+    which something other than `generate` has written to.
+
+    The unrecognised value is described and **never quoted**. It is a document
+    field, and `store/credentials.py` holds the same line for the same reason --
+    every message built from keys and never from values, because the obvious way
+    to say "that is not one of mine" is to show what it was instead.
+    """
+    if origin == SUPPLIED:
+        return "this run did not draw that password"
+    if origin is None:
+        return "there is no record of where that password came from"
+    return "the record of where that password came from is not one this tool wrote"
 
 
 # ------------------------------------------------------------- the promote ---

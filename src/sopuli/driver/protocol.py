@@ -237,8 +237,8 @@ class DriverError(Exception):
     #: ``exit_code`` are: the boundary reports what an error says about itself
     #: rather than inferring it from an exception type. A driver that classifies
     #: its vendor codes sets it on the instance -- Oracle's does, from the
-    #: ``regenerate`` its own ``Diagnosis`` already computed -- and one that does
-    #: not gets the safe answer without having to know the question.
+    #: ``regenerate`` that its own ``Diagnosis`` already computed -- and one that
+    #: does not gets the safe answer without having to know the question.
     #:
     #: **``False`` is the answer that cannot loop**, which is why it is the
     #: default rather than something a driver must remember to deny. An unmapped

@@ -615,6 +615,23 @@ def test_an_unknown_origin_is_not_redrawn_either() -> None:
     assert "no record" in decision.reason
 
 
+def test_an_origin_this_tool_did_not_write_is_its_own_answer() -> None:
+    """Three cases, not two, because the operator's next move differs: a supplied
+    value sends them to whoever dictated it, an absent one to a document staged
+    before #311 that the next `generate` heals, and an unrecognised one to the
+    document itself, which something other than `generate` has written to.
+
+    The value is described and never quoted -- it is a document field, and the
+    obvious way to say "that is not one of mine" is to show what it was instead.
+    """
+    decision = apply.may_redraw(Refused(), "rotated-by-hand", drawn=0)
+
+    assert decision.allowed is False
+    assert decision.reason is not None
+    assert "not one this tool wrote" in decision.reason
+    assert "rotated-by-hand" not in decision.reason
+
+
 def test_the_budget_is_counted_in_draws_not_failures() -> None:
     """The value the run arrived with is the first draw, so `DRAW_LIMIT` of three
     is the original plus two more."""

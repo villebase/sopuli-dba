@@ -93,7 +93,7 @@ GENERATED, SUPPLIED = "generated", "supplied"
 #: with nothing.
 RESERVED = (PENDING, PREVIOUS, ORIGIN, *STAMPS)
 
-#: What a JSON merge patch (RFC 7386) uses to remove a key, which is how
+#: What a JSON merge patch (RFC 7396) uses to remove a key, which is how
 #: ``pending`` is cleared at promotion. Named because ``None`` in a patch means
 #: "delete this" and not "no value", and those read identically at a call site.
 REMOVE = None
@@ -263,7 +263,13 @@ def merge(*patches: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
-    """``document`` with ``patch`` applied to it: RFC 7386, in full.
+    """``document`` with ``patch`` applied to it: RFC 7396, in full.
+
+    **7396 and not 7386**, which this file and its neighbours used to cite. The
+    two are the same specification a month apart -- 7386 (October 2014) was
+    replaced by 7396 (November 2014) to correct its pseudocode and examples -- so
+    nothing about the semantics moved, but the obsolete number is the one a
+    reader would have gone looking up.
 
     The other half of :func:`merge`, and the difference between them is one rule
     that is easy to read past. **Combining two patches and applying a patch to a
@@ -278,7 +284,7 @@ def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
     Here because the arithmetic is the arithmetic: this is what a store with
     :data:`~sopuli.store.protocol.MERGE_PATCH` does server-side, and a store
     without it needs the same answer computed locally. Two implementations of
-    RFC 7386 that had to agree would be a bug waiting for the first document
+    RFC 7396 that had to agree would be a bug waiting for the first document
     holding a ``None``.
 
     A non-mapping ``document`` is replaced wholesale, which is the RFC's own rule
@@ -293,7 +299,7 @@ def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
 def _applied(target: dict[str, Any], patch: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in patch.items():
         if value is REMOVE:
-            # RFC 7386's deletion. `pop` rather than a membership test because
+            # RFC 7396's deletion. `pop` rather than a membership test because
             # deleting a key that is not there is not an error -- clearing a
             # `pending` that was never staged is the ordinary idempotent case.
             target.pop(key, None)

@@ -553,7 +553,7 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         # `origin` describes what `pending` held, so it is cleared with it (#311).
         # Leaving it behind would leave a document asserting the provenance of a
         # stage that no longer has a value, and the next reader of it would be
-        # #312 deciding whether it may redraw. "Cleared" is RFC 7386's clearing
+        # #312 deciding whether it may redraw. "Cleared" is RFC 7396's clearing
         # and not a root delete: promoting the last staged account empties the
         # container rather than removing the key, exactly as `pending` above has
         # always done. `tests/test_payload.py` pins that and says why it stays.

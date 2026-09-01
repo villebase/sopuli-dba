@@ -99,7 +99,7 @@ class TestReading:
     def test_an_emptied_container_reads_as_nothing_staged(self) -> None:
         """What a promotion actually leaves behind, asserted end to end.
 
-        RFC 7386 deletes the *key named in the patch*, and a patch built by the
+        RFC 7396 deletes the *key named in the patch*, and a patch built by the
         mirror rule names an account inside a container -- so promoting the last
         staged account empties `pending` and `origin` rather than removing them,
         and promoting an account whose document predates #311 creates an empty
@@ -107,7 +107,7 @@ class TestReading:
         clear, and true of `pending` since the promotion patch was first written.
 
         It stays that way. The alternatives are both worse: pruning empty maps
-        locally would make this module's RFC 7386 disagree with the one Vault
+        locally would make this module's RFC 7396 disagree with the one Vault
         runs server-side -- `store/credentials.py` picks between them per store
         and says in its own docstring that two implementations which had to agree
         would be a bug waiting -- and deleting at the root instead would clobber a

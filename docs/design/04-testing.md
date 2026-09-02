@@ -340,9 +340,15 @@ Carried over from UC-1 §11, with the environment each one needs:
 The table above is what CI asserts. This is the step before writing any of it,
 and it is a rule rather than a habit: **a change to what the tool reads from a
 target or a store, writes to one, or reports about one is verified by running the
-verb against a real one before the PR opens.** Tier 1 only — the images §1 calls
-freely pullable — because tiers 2 and 3 are the maintainer's and a rule needing
-them would be a rule that stops people contributing.
+verb against a real one before the PR opens.** Tier 1 is the floor — it is the
+stack that comes up locally — and tiers 2 and 3 stay the pre-release matrix §1
+describes.
+
+**A floor, not a ceiling.** While the repository is private there are no
+contributors for §1's constraint to protect, so nothing stops a change reaching
+for a harder environment when it deserves one. §1 starts capping this at tier 1
+when the repository goes public, and that is the point to revisit the wording
+rather than now.
 
 The point is not coverage; CI runs tier 1 on every pull request. The point is
 that **a test asserts what its author already suspected**, and the failures worth

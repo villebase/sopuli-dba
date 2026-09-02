@@ -166,10 +166,12 @@ tier 1); anything needing more must skip, not fail, or forks cannot run it.
 **Run it, do not only test it.** A change to what the tool reads from a target
 or a store, writes to one, or *reports* about one is not done when its tests
 pass. Bring the tier-1 stack up — `docker compose --profile tier1 up -d` from
-`test/` — and run the verb end to end. **Tier 1 only:** tiers 2 and 3 are the
-maintainer's, and requiring them would contradict `04-testing.md` §1, which is
-that a contributor whose PR cannot go green on their own machine stops
-contributing.
+`test/` — and run the verb end to end. **Tier 1**, because that is the stack that
+comes up locally; tiers 2 and 3 stay the maintainer's pre-release matrix. That is
+a floor rather than a ceiling while the repository is private — reach for a
+harder environment when a change deserves it. `04-testing.md` §1's rule that a
+contributor must be able to go green on their own machine is the thing that would
+cap it, and it starts binding when the repository goes public.
 
 CI already runs tier 1 on every PR, so this is not about coverage. It is about
 the assertions nobody writes, because a test can only check what its author

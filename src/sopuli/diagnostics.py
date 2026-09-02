@@ -394,9 +394,14 @@ def backend_diagnostics(vaults: Sequence[Vault]) -> list[Diagnostic]:
     consumer reading one diagnostic out of the array should not have to find the
     other one to learn what to run.
 
-    Asks :func:`~sopuli.store.registry.installed`, which looks a module up
-    without importing it -- so this stays safe to call from an offline command,
-    which is the only kind that calls it.
+    **Two module questions, and neither of them imports anything** -- which is
+    what keeps this safe to call from an offline command, the only kind that
+    calls it. Whether a store warns at all is
+    :func:`~sopuli.store.registry.installed`, which asks only about the *client*
+    modules in :attr:`~sopuli.store.registry.Backend.provides`; what the warning
+    then says is :func:`_install_line`, which asks
+    :func:`~sopuli.install_shape.status_of` about the *backend* module as well.
+    Both stop at :func:`importlib.util.find_spec` (ADR-006 rule 3).
 
     **Which stores warn is unchanged and is still E4's narrow reading**: a
     backend with no client to look for stays silent, and whether that is right is
@@ -434,6 +439,10 @@ def driver_diagnostics(targets: Sequence[ExpandedTarget]) -> list[Diagnostic]:
     good file broken is less trustworthy for the case it exists to serve. And
     `config validate`'s alone for the same reason -- `doctor` asks the wider
     question through :func:`install_diagnostics`.
+
+    Asks the same two non-importing questions its store counterpart does:
+    :func:`~sopuli.driver.registry.installed` about the client, and
+    :func:`_install_line` about the driver module before offering a `pip` line.
 
     **Over the expanded estate, not the ``targets:`` list.** Most targets are
     generated -- ``01-configuration.md`` §2's own example writes one

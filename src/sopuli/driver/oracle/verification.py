@@ -204,7 +204,7 @@ def _detail(summary: str, code: str, message: str | None) -> str:
     return f"{text}: {message}" if message else text
 
 
-def warning_detail(code: str, message: str | None) -> str:
+def warning_detail(code: str | None, message: str | None) -> str:
     """What the server said on a login that **succeeded** (#322).
 
     A connection can carry a diagnostic without failing: a password in its grace
@@ -230,18 +230,34 @@ def warning_detail(code: str, message: str | None) -> str:
     as a line under a table beside other accounts' lines. So the server's own
     sentence is kept and the two pieces of packaging around it are not -- the same
     trade :func:`sopuli.store.survey._first_line` makes, for the same reason.
+
+    ``code`` is optional because a client can grow the attribute without putting
+    a code on it, and the server's sentence is worth carrying either way. That
+    case formats **here** rather than at the call site: a second spelling of this
+    sentence is a second place for the one-line rule to be forgotten, which is
+    exactly what happened to the first draft of it.
     """
-    return _detail("the server warned on this login", code, _sentence(code, message))
+    sentence = _sentence(code, message)
+    summary = "the server warned on this login"
+    if code is None:
+        return f"{summary}: {sentence}" if sentence else summary
+    return _detail(summary, code, sentence)
 
 
-def _sentence(code: str, message: str | None) -> str | None:
+def _sentence(code: str | None, message: str | None) -> str | None:
     """The server's own sentence, without the code it already carries or the URL
-    the client appended after it."""
+    the client appended after it.
+
+    First line only, unconditionally -- including when there is no ``code`` to
+    strip, which is the arm that made this worth extracting.
+    """
     if not message:
         return None
     first = message.splitlines()[0].strip()
     prefix = f"{code}:"
-    return first[len(prefix) :].strip() if first.startswith(prefix) else first
+    if code is not None and first.startswith(prefix):
+        return first[len(prefix) :].strip()
+    return first
 
 
 def skipped_detail(reason: str) -> str:

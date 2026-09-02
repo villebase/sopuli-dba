@@ -274,6 +274,25 @@ def test_a_warning_with_no_message_still_names_the_code() -> None:
     assert found.endswith("(ORA-28011)")
 
 
+def test_a_warning_with_no_code_is_trimmed_the_same_way() -> None:
+    """A client can grow `Connection.warning` without putting a code on it, and
+    the server's sentence is worth carrying either way.
+
+    The first draft of this returned the message verbatim on that arm, so the
+    documentation URL and its newline came back -- the very packaging the coded
+    arm strips. One formatter, one rule.
+    """
+    found = warning_detail(None, "The password has expired.\nHelp: https://docs.oracle.com/x")
+
+    assert found == "the server warned on this login: The password has expired."
+
+
+def test_a_warning_with_neither_code_nor_message_still_says_something() -> None:
+    """Reaching this means the client had a warning object and nothing readable
+    on it. Saying so beats an empty string, which reads as no warning at all."""
+    assert warning_detail(None, None) == "the server warned on this login"
+
+
 @pytest.mark.parametrize("code", ["ORA-28098", "ORA-28011", "ORA-99999"])
 def test_no_code_is_matched_against_a_list(code: str) -> None:
     """The same condition is two codes on one release depending on the profile, so

@@ -657,12 +657,10 @@ class OracleSession:
             return None
         code = getattr(warning, "full_code", None) or getattr(warning, "code", None)
         message = getattr(warning, "message", None) or str(warning)
-        if code is None:
-            # A client that grew the attribute without the code on it. The
-            # server's own sentence is still worth carrying, and is what
-            # `_detail` would have appended anyway.
-            return f"the server warned on this login: {message}"
-        return warning_detail(str(code), message)
+        # Both shapes go through one formatter, including the codeless one: it is
+        # what keeps the one-line rule in a single place rather than in two that
+        # can drift apart.
+        return warning_detail(None if code is None else str(code), message)
 
     def require_rollover(self, account: str) -> None:
         """Refuse ``--strategy rollover`` here, at **plan time**, or say nothing.

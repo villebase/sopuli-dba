@@ -24,9 +24,9 @@ def render_notices(notices: Sequence[str]) -> list[str]:
     """Findings that belong to a row but do not fit in it.
 
     A table column cannot hold a sentence with a date in it, and a warning nobody
-    can see in the default output is not surfaced -- which is what
-    ``01-configuration.md`` §6.4 asks for and what `results[].warnings[]` alone
-    does not give a person reading a terminal (#309).
+    can see in the default output is not surfaced -- which is what UC-1 §6.4 asks
+    for and what `results[].warnings[]` alone does not give a person reading a
+    terminal (#309).
 
     The same block `config validate` prints under its summary, and deliberately
     the same words: an operator who has read one of these has read all of them.

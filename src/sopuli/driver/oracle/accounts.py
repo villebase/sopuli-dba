@@ -53,10 +53,11 @@ only that), so guessing would be all cost.
 
 **``EXPIRED(GRACE)`` is a value of ``ACCOUNT_STATUS``, and it contains the token
 ``EXPIRED``.** Measured 2026-09-02, later than the four above, because #309 turned
-on it. The grace state compounds like the rest:
+on it. The grace state compounds like the rest, and the hard expiry was measured
+alongside it as a control — it is the fourth value below:
 
     EXPIRED(GRACE)                    EXPIRED(GRACE) & LOCKED
-    EXPIRED(GRACE) & LOCKED(TIMED)    EXPIRED (hard, the control)
+    EXPIRED(GRACE) & LOCKED(TIMED)    EXPIRED
 
 So the token reading below makes :attr:`~sopuli.driver.protocol.UserState.expired`
 ``True`` for an account whose password still works — which is #309 and is **not

@@ -47,7 +47,7 @@ from sopuli.install_shape import INSTALLED, InstallShape
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager
 from sopuli.lock.record import LockRecord
-from sopuli.output.document import Diagnostic
+from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
 
@@ -371,7 +371,9 @@ def _names(names: Sequence[str]) -> str:
     return "stores " + ", ".join(quoted)
 
 
-def install_diagnostics(shape: InstallShape, *, level: str = "error") -> list[Diagnostic]:
+def install_diagnostics(
+    shape: InstallShape, *, level: DiagnosticLevel = "error"
+) -> list[Diagnostic]:
     """What a command says about a configured component this machine cannot serve.
 
     **The only definition of that fact in the tool** (#238). `doctor` reports it
@@ -393,9 +395,9 @@ def install_diagnostics(shape: InstallShape, *, level: str = "error") -> list[Di
     Giving :func:`backend_diagnostics` a level was tried before #238 and was
     worse, because there were still two functions answering "is this component
     missing" from two definitions; with one function there is nothing left to
-    disagree about. Passing anything but ``"error"`` or ``"warning"`` is a bug in
-    the caller, not something to validate here -- ``03-json-output.md`` §2 closes
-    the enum and the schema check in CI is what holds it.
+    disagree about. It is a :data:`~sopuli.output.document.DiagnosticLevel` and
+    not a ``str``, so a typo here is a type error rather than a document that
+    fails the schema at the end of a run; there is deliberately no runtime check.
 
     **Derived from the survey rather than computed a second time.** "Missing" has
     to mean the same thing in `doctor`'s ``install`` section and in the

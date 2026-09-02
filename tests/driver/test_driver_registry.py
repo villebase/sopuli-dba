@@ -54,10 +54,14 @@ def generated(name: str, *, target_set: str = "appdb") -> ExpandedTarget:
     return ExpandedTarget(target=target(name), target_set=target_set)
 
 
-#: A driver whose module and client are both here, stated rather than looked up.
-#: `oracledb` is installed in the developer environment and absent from CI's base
-#: cell, so a test reading the real answer would assert different things in the
-#: two places -- the rule this module's docstring already sets.
+#: A driver whose module and client are both here -- the healthy row.
+#:
+#: ``provides`` is ``json``, a stdlib module, and that is the whole trick: it
+#: makes this constant mean *the client is present* on every machine, rather than
+#: meaning whatever `oracledb`'s install state happens to be. Naming `oracledb`
+#: here would make the tests below assert one thing in the developer environment,
+#: which is `sopuli-dba[all]`, and another in CI's base cell -- which is the rule
+#: this module's docstring already sets.
 PRESENT = DatabaseDriver(
     module="sopuli.driver.oracle.session", extra="oracle", provides=frozenset({"json"})
 )

@@ -290,10 +290,11 @@ Take what the vault holds and make the database match it.
 
 ```
 sopuli creds apply --application orders-app
-                   [--source {pending,current}]   # default: pending if set, else current
+                   [--source {pending,current,previous}]  # default: pending if set, else current
+                   [--confirm]                            # required for --source previous
                    [--strategy {rollover,staged,direct}]
-                   [--preflight]                  # survey every target before writing anything
-                   [--repair FILE]                # act only on a run's unconfirmed set
+                   [--preflight]                          # survey every target before writing anything
+                   [--repair FILE]                        # act only on a run's unconfirmed set
 ```
 
 **Flow, per target**

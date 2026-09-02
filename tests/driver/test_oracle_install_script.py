@@ -100,15 +100,22 @@ SVC_OTHER = "acme_other_user"
 COMMON_SVC_OTHER = f"C##{SVC_OTHER.upper()}"
 
 
-#: Wall clock allowed for one `docker exec` into the container, in seconds.
+#: Wall clock allowed for any one `docker` invocation this module makes, in
+#: seconds -- :func:`_exec`'s ``docker exec ... sqlplus`` and equally
+#: :func:`_docker`'s ``inspect``, ``cp`` and ``exec``.
 #:
 #: **Not a budget, a stall detector** (#326). One `00_install.sql` run takes under
 #: a second -- the whole of
 #: :func:`test_the_optional_grants_are_off_unless_asked_for` is 1.93s and runs the
-#: script twice -- so this is roughly 300x headroom and nothing that merely
+#: script twice -- and the container operations are faster still, so this is
+#: roughly 300x headroom over the slowest thing it governs and nothing that merely
 #: *finishes slowly* can reach it. It fired once, on 2026-09-02, on a
 #: `GRANT CREATE SESSION ... CONTAINER=ALL` that had printed its label and never
 #: returned.
+#:
+#: One number for both because it is one question -- *did a docker call stop?* --
+#: and a second constant would be a second thing to keep proportionate to a
+#: measurement neither of them states.
 #:
 #: So raising it is the one change to refuse: it would turn a visible stall into a
 #: slow green run. Together with ``stdin=DEVNULL`` below it is what keeps a stuck
@@ -295,7 +302,13 @@ def _blocked_sessions(container: str) -> str:
     # means nothing and would make "nothing waiting" unreachable. Intermittent --
     # it depends on what the probe is doing at sample time -- which is worse than
     # constant, because it would look like a finding.
+    # `WHENEVER SQLERROR EXIT` for the reason :func:`query` gives at length: SQL*Plus
+    # prints an `ORA-` line and still exits 0, so a probe that failed outright
+    # would hand its error text back as though it were rows -- and an empty
+    # `stdout` from a refused connection would read as *nothing waiting*, which is
+    # the one conclusion this function must never reach by accident.
     sql = (
+        "whenever sqlerror exit sql.sqlcode\n"
         "set pagesize 0 feedback off heading off lines 200\n"
         "select s.sid || ' | ' || nvl(s.username, '(internal)') || ' | ' || s.status"
         " || ' | event=' || s.event || ' | waited=' || s.seconds_in_wait || 's'"
@@ -326,6 +339,18 @@ def _blocked_sessions(container: str) -> str:
         )
     except OSError as error:  # docker gone, container gone
         return f"v$session could not be read: {error}"
+
+    if probe.returncode != 0:
+        # Not "nothing waiting". A missing container, a refused connection or an
+        # `ORA-` from the query itself all land here, and every one of them is a
+        # probe that did not answer rather than a database with nothing to say.
+        detail = (probe.stderr.strip() or probe.stdout.strip() or "no output").splitlines()
+        return "\n".join(
+            [
+                f"v$session could not be read: sqlplus exited {probe.returncode}.",
+                *(f"  {line}" for line in detail[-6:]),
+            ]
+        )
 
     rows = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
     if not rows:
@@ -777,6 +802,52 @@ def test_a_quiet_database_says_so_rather_than_printing_nothing(
     found = _blocked_sessions(CONTAINER)
 
     assert "nothing waiting" in found
+
+
+def test_a_probe_that_failed_is_not_reported_as_a_quiet_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The trap :func:`query` documents, one function over: SQL*Plus prints an
+    `ORA-` and still exits 0 unless told otherwise, and a refused connection
+    writes nothing at all. Either would have read as *nothing waiting* -- the one
+    conclusion that must never be reached by accident, because it points the next
+    reader away from the database."""
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="Error response from daemon: no such container",
+        ),
+    )
+
+    found = _blocked_sessions(CONTAINER)
+
+    assert "could not be read" in found
+    assert "no such container" in found
+    assert "nothing waiting" not in found
+
+
+def test_an_ora_error_from_the_probe_is_not_mistaken_for_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`whenever sqlerror exit sql.sqlcode` is what makes this a non-zero exit
+    rather than error text arriving where rows were expected."""
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            args=[], returncode=942, stdout="ORA-00942: table or view does not exist", stderr=""
+        ),
+    )
+
+    found = _blocked_sessions(CONTAINER)
+
+    assert "sqlplus exited 942" in found
+    assert "ORA-00942" in found
+    assert "non-idle or blocked" not in found
 
 
 def test_a_timeout_fails_the_test_rather_than_escaping_as_a_traceback(

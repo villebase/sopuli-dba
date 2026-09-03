@@ -335,6 +335,19 @@ def test_a_release_without_application_containers_is_not_one() -> None:
     assert application_of(cursor) is None
 
 
+def test_the_second_question_is_not_asked_where_the_attribute_is_absent() -> None:
+    """A release before 12.2 says so once, not twice.
+
+    ``ORA-02003`` from the first probe is the release answering for both, so
+    asking the second would spend a round trip and an exception parse to be told
+    the same thing again.
+    """
+    cursor = _Cursor({APPLICATION_ROOT: _ora("ORA-02003", "invalid USERENV attribute")})
+
+    assert application_of(cursor) is None
+    assert APPLICATION_PDB not in cursor.asked
+
+
 def test_a_failure_asking_about_application_containers_is_not_read_as_no() -> None:
     """Anything but ``ORA-02003`` propagates, for :func:`container_of`'s reason:
     reporting "not an application container" because the question could not be

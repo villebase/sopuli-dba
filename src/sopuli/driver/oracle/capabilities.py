@@ -281,14 +281,19 @@ def application_of(cursor: Cursor) -> str | None:
     pay nothing, and an application root pays one.
 
     The two probes are separate for :func:`probe`'s reason -- one question, one
-    attributable answer -- and the second is not asked once the first says ``YES``,
-    because a container cannot be both.
+    attributable answer -- and neither is asked when the first has already
+    settled it. ``YES`` ends it because a container cannot be both; ``None`` ends
+    it because the attribute is not there to ask about, and asking the second
+    would spend a second round trip and a second exception on a release that has
+    already said it has no application containers.
     """
-    if _userenv(cursor, APPLICATION_ROOT) == YES:
+    root = _userenv(cursor, APPLICATION_ROOT)
+    if root is None:
+        return None
+    if root.upper() == YES:
         return "root"
-    if _userenv(cursor, APPLICATION_PDB) == YES:
-        return "pdb"
-    return None
+    pdb = _userenv(cursor, APPLICATION_PDB)
+    return "pdb" if pdb is not None and pdb.upper() == YES else None
 
 
 def scope_type(container: str | None, application: str | None = None) -> str:

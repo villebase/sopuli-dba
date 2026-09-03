@@ -99,6 +99,15 @@ def test_the_application_container_questions_are_ones_oracle_can_answer(
     An ordinary PDB answers ``NO`` to both, and that is enough. What is asserted
     is that the attribute exists at all; which container this happens to be is
     :func:`test_the_scope_is_what_the_database_says_it_is`'s business.
+
+    **It is deliberately strict, and tolerating ``ORA-02003`` here would empty
+    it.** A misspelled attribute and a release too old to have a correctly spelled
+    one raise the *same code* -- that is exactly how ``'cdb'`` shipped -- so a
+    test that accepted it would pass on the typo it exists to catch. The premise
+    is instead the lane: tier 1 is Oracle Free (``04-testing.md`` §1), which has
+    these attributes, so a failure here means the statement is wrong. The message
+    says so, because pointing ``SOPULI_TEST_ORACLE_DSN`` at a pre-12.2 database is
+    the one way to see it otherwise, and that is not tier 1.
     """
     with (
         _session(session_module, live_oracle.dsn) as session,
@@ -109,7 +118,8 @@ def test_the_application_container_questions_are_ones_oracle_can_answer(
             row = cursor.fetchone()
             assert row is not None, f"{statement} returned no row"
             assert str(row[0]).upper() in ("YES", "NO"), (
-                f"{statement} did not answer YES or NO: {row!r}"
+                f"{statement} did not answer YES or NO: {row!r}. Either the attribute "
+                "is misspelled, or this is not a tier-1 database -- these arrived in 12.2"
             )
 
         assert application_of(cursor) is None, "the tier-1 container is not an application one"

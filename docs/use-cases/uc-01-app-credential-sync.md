@@ -241,16 +241,16 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
                       [--promote]         # write straight to `current` (no staging)
                       [--from-stdin]      # take a supplied password instead of generating
                       [--policy NAME]     # override the policy
+                      [--offline]         # do not read constraints from any target
 ```
 
 **Flow**
 
 1. Resolve selection and policy; resolve SecretRefs from templates.
-2. If reachable, connect to one representative target to read *constraints*:
-   database character set, max password length, verify function presence,
-   `PASSWORD_REUSE_*`, `PASSWORD_VERSIONS`. Constraints from the strictest target
-   in the selection win. If no target is reachable, fall back to the policy's
-   declared limits and say so in the output.
+2. If reachable, connect to read *constraints* — **one connection per selected
+   target, not per account** — and let the strictest answer govern. If no target
+   is reachable, fall back to the policy's declared limits and say so in the
+   output. `--offline` declines to ask at all.
 3. Generate from a CSPRNG. Reject and regenerate candidates that violate charset,
    first-character, length-in-bytes, or composition requirements. Bounded retries.
 4. Acquire the lock for the secret path (Q2, #83) — which `generate` can do
@@ -263,6 +263,35 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
 6. Report new version, and the fact that the database has not changed.
 
 **Notes**
+
+**What step 2 reads, and what it deliberately does not** (#317). The byte limit
+and the character set, and nothing else. Those are the *deterministic*
+constraints: a password too long in bytes, or holding characters the target will
+not accept, fails identically for every account in the selection and one policy
+fix ends it — which is exactly the class of refusal that can be moved from
+`apply` to here. The rest of the list this step used to name cannot be:
+
+- a **verify function** is arbitrary PL/SQL and cannot be consulted (invariants 13
+  and 14), and from inside a PDB `PASSWORD_VERIFY_FUNCTION` reads as the literal
+  `FROM ROOT`, so even its *presence* is not always knowable;
+- **`PASSWORD_REUSE_*`** history is hashed.
+
+So `ORA-28003` and `ORA-28007` stay unpredictable before the statement is issued
+and #312 handles them by redrawing. Reporting the first two — including the
+not-knowing, which is §5's `--preflight` rule that *not knowing is not a
+finding* — is its own change and not this one.
+
+**Strictest is not smallest.** A limit is a byte count *and* the character set it
+is counted in, and the two cannot be compared apart: 128 bytes of `AL32UTF8` is
+guaranteed to hold 32 characters and 128 bytes of `WE8MSWIN1252` holds 128. The
+comparison is on what each will actually accept. For a generated password the two
+coincide — §8's alphabets are ASCII — and the distinction earns its keep on the
+`--from-stdin` path, where the value is whatever an external system dictated.
+
+**Reading is not writing, and the lock's argument is unchanged.** `creds generate`
+takes the vault's advisory lock because there is no *change* here for a
+database-side lock to protect (Q2, #83). That was never the same claim as opening
+no session, and a read does not make one.
 
 - Generation and validation are `sopuli/passwords.py`, and step 3's "reject and
   regenerate" runs against the *same* predicate `--from-stdin` uses. A policy that

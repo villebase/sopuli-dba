@@ -1,9 +1,18 @@
 """What `creds generate` writes, and how it is grouped into writes (#254).
 
 Stage a new password per the policy into the vault's ``pending`` slot. The first
-credential mutation, and it never connects to a database -- which is what lets it
+credential mutation, and it changes nothing in a database -- which is what lets it
 take the advisory lock at all: the lock lives in the vault (Q2, #83), so a
 database-side one could not have protected the write below.
+
+**It does now connect, and that argument is untouched** (#317). UC-1 §4 step 2
+reads one constraint per selected target -- how long a password may be, in that
+database's own character set -- because a policy written by somebody who never saw
+the estate can otherwise stage a `pending` no target can hold. The lock's case was
+never "this command opens no session"; it was that there is no *change* here for a
+database-side lock to protect, and reading does not make one. The connecting is
+:func:`sopuli.cli._constraints_for`; the merge is :mod:`sopuli.constraints`; what
+arrives here is a :class:`~sopuli.passwords.ByteLimit` or ``None``.
 
 Pure, like :mod:`sopuli.check`. Drawing is :mod:`sopuli.passwords` and writing is
 :mod:`sopuli.store.credentials`; what lives here is the arithmetic between them --

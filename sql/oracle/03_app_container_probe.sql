@@ -101,9 +101,11 @@
 --   acceptable for a throwaway probe and is why the passwords here are visibly
 --   disposable placeholders rather than anything resembling a real one.
 --
---   Needs Oracle Managed Files. If db_create_file_dest is empty the script sets
---   it SCOPE=MEMORY and puts it back in §7 -- CREATE PLUGGABLE DATABASE is
---   ORA-65016 without either that or FILE_NAME_CONVERT.
+--   Needs Oracle Managed Files: CREATE PLUGGABLE DATABASE is ORA-65016 without
+--   either that or FILE_NAME_CONVERT. Where db_create_file_dest is already set
+--   the script keeps the site's own value and &omf_dest is never used; where it
+--   is empty, &omf_dest is set SCOPE=MEMORY. Either way §7 puts back exactly what
+--   §0 read, so a run leaves the parameter as it found it.
 --------------------------------------------------------------------------------
 
 SET SERVEROUTPUT ON SIZE UNLIMITED
@@ -145,7 +147,13 @@ PROMPT [1] build
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 
-ALTER SYSTEM SET db_create_file_dest = '&omf_dest' SCOPE=MEMORY;
+-- &omf_dest is a FALLBACK, not an override: NVL keeps whatever the instance
+-- already has, so this is a no-op on a site that has configured OMF and only
+-- supplies a destination where there was none. §7 restores &saved_omf regardless.
+COLUMN omf_to_use NEW_VALUE omf_to_use NOPRINT
+SELECT NVL(value, '&omf_dest') AS omf_to_use
+  FROM v$parameter WHERE name = 'db_create_file_dest';
+ALTER SYSTEM SET db_create_file_dest = '&omf_to_use' SCOPE=MEMORY;
 
 CREATE PLUGGABLE DATABASE &app_root AS APPLICATION CONTAINER
   ADMIN USER acme_adm IDENTIFIED BY "&pwd_first";
@@ -365,8 +373,9 @@ PROMPT     is refused by Oracle. No refusal of our own is needed there.
 --------------------------------------------------------------------------------
 -- 7. Teardown
 --
--- Unpluggable state only. The instance parameter is put back the way it was,
--- which matters because §1 set it globally rather than for this session.
+-- Unpluggable state only. The instance parameter is put back to the value §0
+-- read, which matters because §1 set it globally rather than for this session --
+-- and is a no-op in the case where §1 was one too.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [7] teardown

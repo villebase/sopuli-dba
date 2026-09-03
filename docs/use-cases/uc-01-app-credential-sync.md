@@ -414,11 +414,12 @@ promotion. Three things are its own.
 **The tool assigns a profile and never creates or alters one.** `ALTER PROFILE`
 edits a shared object and so reaches accounts nobody selected; §3 of
 `02-oracle-privileges.md` keeps the privilege off the service account, and Q4
-(#88) decided it: never, in any verb. `creds finish-rollover` takes the other half
-of that position — it *reports* the `ALTER PROFILE` an operator would run, and
-never issues it. Creating and altering profiles belongs to UC-4, provisioning
-(see the roadmap in `docs/README.md`), where a profile is part of making an
-account exist rather than a shared object a credential rotation reached sideways.
+(#88) decided it: never, in any credential-sync verb. `creds finish-rollover`
+takes the other half of that position — it *reports* the `ALTER PROFILE` an
+operator would run, and never issues it. Creating and altering profiles is UC-4's,
+provisioning (see the roadmap in `docs/README.md`), where a profile is part of
+making an account exist rather than a shared object a credential rotation reached
+sideways — an open question there, not one #88 closed.
 
 **A profile the target has not got is a pre-flight finding, not an `ORA-02380`
 half way through.** Which profiles exist is a property of each database, so an

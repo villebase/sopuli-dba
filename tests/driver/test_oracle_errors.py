@@ -221,7 +221,8 @@ def test_an_application_common_account_says_where_to_rotate_it_instead() -> None
     assert found.kind == CONTAINER_MISUSE
     assert found.category == "config"
     assert found.exit_code == ExitCode.CONFIG_INVALID
-    assert "root" in found.hint
+    assert found.hint is not None
+    assert "application root" in found.hint
 
 
 def test_a_verifier_mismatch_explains_the_password_version_trap() -> None:

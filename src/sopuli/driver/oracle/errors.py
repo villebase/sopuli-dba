@@ -164,6 +164,15 @@ RULES: dict[str, _Rule] = {
             "check the target's scope"
         ),
     ),
+    "ORA-65066": _Rule(
+        CONTAINER_MISUSE,
+        "config",
+        exit_code=ExitCode.CONFIG_INVALID,
+        hint=(
+            "this account is common to its container and every other one, so it cannot be "
+            "altered from inside a single container; rotate it from the root that owns it"
+        ),
+    ),
     "ORA-65048": _Rule(
         CONTAINER_MISUSE,
         "config",

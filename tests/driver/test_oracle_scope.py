@@ -21,7 +21,15 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target, TargetOracle
-from sopuli.driver.oracle.capabilities import PROBES, ProbeError, ScopeAssertionError, read
+from sopuli.driver.oracle.capabilities import (
+    APPLICATION_PDB,
+    APPLICATION_ROOT,
+    PROBES,
+    ProbeError,
+    ScopeAssertionError,
+    application_of,
+    read,
+)
 from sopuli.driver.protocol import SCOPE_TYPES, UNKNOWN, Credential
 from sopuli.secrets import Secret
 
@@ -75,6 +83,36 @@ def test_every_probe_is_a_question_oracle_can_answer(
                 read(cursor, statement)
             except ProbeError as failed:  # pragma: no cover - the failure path
                 pytest.fail(f"the {capability} probe is not a valid question: {failed}")
+
+
+def test_the_application_container_questions_are_ones_oracle_can_answer(
+    live_oracle: Environment, session_module: Any
+) -> None:
+    """The test above, for the two statements that are not in ``PROBES`` (#204).
+
+    They sit outside that dict because they are not capabilities -- they refine a
+    *scope* -- so the guard that exists for #195 does not reach them, and they are
+    the same kind of statement it was written for: syntactically fine, passing
+    every tier-0 test, and possibly asking Oracle a question it does not have.
+    ``sys_context('userenv','cdb')`` is exactly that, and it shipped.
+
+    An ordinary PDB answers ``NO`` to both, and that is enough. What is asserted
+    is that the attribute exists at all; which container this happens to be is
+    :func:`test_the_scope_is_what_the_database_says_it_is`'s business.
+    """
+    with (
+        _session(session_module, live_oracle.dsn) as session,
+        session.connection.cursor() as cursor,
+    ):
+        for statement in (APPLICATION_ROOT, APPLICATION_PDB):
+            cursor.execute(statement)
+            row = cursor.fetchone()
+            assert row is not None, f"{statement} returned no row"
+            assert str(row[0]).upper() in ("YES", "NO"), (
+                f"{statement} did not answer YES or NO: {row!r}"
+            )
+
+        assert application_of(cursor) is None, "the tier-1 container is not an application one"
 
 
 def test_the_scope_is_what_the_database_says_it_is(

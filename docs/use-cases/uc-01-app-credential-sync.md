@@ -281,12 +281,20 @@ and #312 handles them by redrawing. Reporting the first two — including the
 not-knowing, which is §5's `--preflight` rule that *not knowing is not a
 finding* — is its own change and not this one.
 
-**Strictest is not smallest.** A limit is a byte count *and* the character set it
-is counted in, and the two cannot be compared apart: 128 bytes of `AL32UTF8` is
-guaranteed to hold 32 characters and 128 bytes of `WE8MSWIN1252` holds 128. The
-comparison is on what each will actually accept. For a generated password the two
-coincide — §8's alphabets are ASCII — and the distinction earns its keep on the
-`--from-stdin` path, where the value is whatever an external system dictated.
+**There is no single strictest limit**, and the run does not invent one. A limit
+is a byte count *and* the character set it is counted in, which makes "stricter"
+a partial order: 128 bytes of `WE8MSWIN1252` holds more characters than 128 of
+`AL32UTF8` and holds *fewer distinct* ones, so neither contains the other. Every
+reading is kept and the two questions are asked separately:
+
+- a **generated** password is drawn against the smallest byte count and nothing
+  else. §8's alphabets are ASCII and an ASCII character is one byte in every
+  character set the driver maps, so the count is the only thing that can bind it.
+- a **supplied** password (`--from-stdin`) is validated against *every* answered
+  target. A character storable in one target's set and not another's is a
+  violation there whichever target had the smallest count — and it is the
+  "characters the target will not accept" half of what this step is for. One
+  violation is reported once however many targets report it.
 
 **Reading is not writing, and the lock's argument is unchanged.** `creds generate`
 takes the vault's advisory lock because there is no *change* here for a

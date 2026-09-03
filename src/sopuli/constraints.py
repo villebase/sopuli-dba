@@ -15,12 +15,26 @@ target will not accept. Those hit every account in the selection identically and
 one policy fix ends them, which is exactly why they were the wrong answer to #268
 and are worth fixing on their own.
 
-**Strictest wins, and the strictest is not the smallest number.** A
-:class:`~sopuli.passwords.ByteLimit` is a count *and* the encoding it is counted
-in, and the two cannot be compared apart: 30 bytes of ``cp1252`` holds 30
-characters and 30 bytes of ``utf-8`` holds as few as 7. So the comparison is on
-what a limit will actually accept, and the tie-break is the encoding rather than
-the count.
+**There is no single strictest limit, and inventing one loses information.** A
+:class:`~sopuli.passwords.ByteLimit` is a count *and* the character set it is
+counted in, which makes "stricter" a partial order rather than a total one: 128
+bytes of ``WE8MSWIN1252`` holds more characters than 128 of ``AL32UTF8`` and
+holds *fewer distinct* ones, so neither limit contains the other. An earlier
+draft of this module collapsed the two into one comparable number and got both
+halves wrong -- it refused policies that every target could satisfy, and it
+accepted supplied passwords that one target deterministically could not store.
+
+So every reading is kept, and the two questions are asked separately:
+
+* **drawing** uses the smallest byte count, and nothing else. §8's alphabets are
+  ASCII, and an ASCII character is one byte in every encoding
+  ``driver/oracle/limits.py`` maps, so the count is the only thing that can bind
+  a password this tool generates.
+* **validating a supplied password** uses *all* of them, because
+  ``--from-stdin`` takes whatever an external system dictated. A character
+  outside one target's set is a violation there whether or not that target had
+  the smallest count, and it is exactly the "characters the target will not
+  accept" half of what §4 step 2 is for.
 
 **Not reaching a target is not a failure.** §4 says so, and it is the difference
 between this being useful and being a new way for `generate` to fail: staging a
@@ -42,7 +56,7 @@ __all__ = [
     "POLICY",
     "TARGETS",
     "UNREAD",
-    "strictest",
+    "survey",
 ]
 
 #: The limit came from at least one target that answered.
@@ -63,108 +77,100 @@ UNREAD = "unread"
 class Constraints:
     """What was learned about the estate, and from where.
 
-    ``limit`` is ``None`` in exactly the two cases where nothing was learned:
-    nothing was asked (:data:`UNREAD`) or nothing answered (:data:`POLICY`).
-    Passing that ``None`` on to :func:`sopuli.generate.candidate_for` is not a
-    degradation -- it is the argument that function already accepts for "no target
-    limit", and the policy's own length then governs, which is §4's fallback
-    written as a default rather than as a branch.
+    ``readings`` is every target that answered, paired with its limit, in the
+    order they were tried. It is the whole answer; :attr:`drawing_limit` and
+    :attr:`limits` are two views of it for the two questions a password gets
+    asked, and keeping the pairs means a message can name the target as well as
+    the number.
 
-    ``unreachable`` names the targets that did not answer, in the order they were
-    tried. It is not an error list: a run that reached three of four targets used
-    the three, and the fourth is a caveat on how strict the answer is rather than
-    a reason to stop.
+    ``unreachable`` names the targets that did not answer. It is not an error
+    list: a run that reached three of four targets used the three, and the fourth
+    is a caveat on how strict the answer is rather than a reason to stop.
     """
 
-    limit: ByteLimit | None = None
+    readings: tuple[tuple[str, ByteLimit], ...] = ()
     source: str = UNREAD
-    read: tuple[str, ...] = ()
     unreachable: tuple[str, ...] = ()
-    #: Where two targets disagreed, the one whose limit won. Empty where only one
-    #: target answered, because there was nothing to be strictest *than*.
-    strictest_target: str | None = None
+
+    @property
+    def read(self) -> tuple[str, ...]:
+        """The targets that answered, named."""
+        return tuple(target for target, _ in self.readings)
+
+    @property
+    def limits(self) -> tuple[ByteLimit, ...]:
+        """Every limit that must be satisfied.
+
+        What a *supplied* password is validated against -- all of them, because a
+        password can be storable in one target's character set and not in
+        another's, and that is independent of which target had the smallest
+        count.
+        """
+        return tuple(limit for _, limit in self.readings)
+
+    @property
+    def drawing_limit(self) -> ByteLimit | None:
+        """The limit a generated password is drawn against, or ``None``.
+
+        The smallest byte count, and the encoding is not consulted: §8's
+        alphabets are ASCII and an ASCII character is one byte in every encoding
+        the driver maps, so nothing but the count can bind a password this tool
+        draws. Ties keep the first reading, so the order targets were tried in
+        decides an otherwise arbitrary choice -- nothing depends on which of two
+        identical limits is used, but a run that picked a different one each time
+        would be reporting noise as a fact.
+
+        ``None`` where nothing was learned, which is what
+        :func:`sopuli.generate.candidate_for` already means by no target limit:
+        the policy's declared length governs, which is §4's fallback written as a
+        default rather than as a branch.
+        """
+        if not self.readings:
+            return None
+        return min(self.limits, key=lambda limit: limit.max_bytes)
+
+    @property
+    def strictest_target(self) -> str | None:
+        """The target whose count decided the draw, where more than one answered.
+
+        ``None`` for a single reading, because there was nothing to be strictest
+        *than* and naming a winner of a one-horse race invites a reader to think
+        an estate was surveyed.
+        """
+        if len(self.readings) < 2:
+            return None
+        return min(self.readings, key=lambda pair: pair[1].max_bytes)[0]
 
     @property
     def partial(self) -> bool:
         """Some targets answered and some did not.
 
         Worth its own name because it is the case a reader is most likely to get
-        wrong: the limit is real, it came from a database, and it is still not
-        necessarily the strictest one in the estate.
+        wrong: the limits are real, they came from databases, and they are still
+        not necessarily every limit in the estate.
         """
-        return bool(self.read) and bool(self.unreachable)
+        return bool(self.readings) and bool(self.unreachable)
 
 
-#: Characters probed to find how wide an encoding's widest one is. Chosen to
-#: separate the encodings ``driver/oracle/limits.py`` actually maps rather than to
-#: be exhaustive: ASCII, a Latin-1 letter, a symbol outside it, and a character
-#: above the Basic Multilingual Plane. Under ``ascii`` and ``cp1252`` only some
-#: encode and each is one byte; under ``utf-8`` all four do and the last is four.
-_WIDTH_PROBES = ("z", "é", "€", "𝄞")
-
-
-def _widest(encoding: str) -> int:
-    """The most bytes one character can take in ``encoding``.
-
-    Measured rather than tabulated, for the reason ``limits.py`` gives about its
-    codec table: a second list of facts about encodings is a second thing to keep
-    true, and this one can be asked of the codec directly.
-    """
-    widths = []
-    for probe in _WIDTH_PROBES:
-        try:
-            widths.append(len(probe.encode(encoding)))
-        except UnicodeEncodeError:
-            continue
-    return max(widths, default=1)
-
-
-def _accepts(limit: ByteLimit) -> int:
-    """How many characters this limit is *guaranteed* to hold.
-
-    The comparable quantity, and deliberately the worst case: a limit accepts
-    fewer characters the wider its encoding, so comparing byte counts alone would
-    call 128 bytes of ``utf-8`` looser than 30 bytes of ``ascii`` and be right,
-    and would call it looser than 30 bytes of ``utf-8`` and be wrong about what
-    either will hold.
-
-    **For a generated password the two coincide**, because §8's alphabets are
-    ASCII and one ASCII character is one byte in every encoding
-    ``driver/oracle/limits.py`` maps. The distinction earns its keep on the
-    ``--from-stdin`` path, where the password is whatever an external system
-    dictated and may be nothing of the kind.
-    """
-    return limit.max_bytes // _widest(limit.encoding)
-
-
-def strictest(
+def survey(
     readings: Iterable[tuple[str, ByteLimit]],
     *,
     unreachable: Sequence[str] = (),
 ) -> Constraints:
-    """The tightest of what the estate reported, with where it came from.
+    """What the estate reported, with where it came from.
 
     ``readings`` is one pair per target that answered -- **one connection per
     target, never one per account**, which is what §4's "one representative"
     means for a command whose unit of work is an account and whose selection
     routinely puts several of them on one database.
 
-    Ties keep the first reading, so the order targets were tried in decides an
-    otherwise arbitrary choice rather than the iteration order of a set. Nothing
-    depends on which of two identical limits is reported, but a run that named a
-    different target on each invocation would be reporting noise as a fact.
+    Named for what it does rather than for what the caller wants out of it. An
+    earlier ``strictest()`` promised a single answer and had to invent one; this
+    collects, and :class:`Constraints` answers the two questions separately.
     """
-    seen = list(readings)
+    seen = tuple(readings)
     unreached = tuple(unreachable)
 
     if not seen:
         return Constraints(source=POLICY if unreached else UNREAD, unreachable=unreached)
-
-    name, limit = min(seen, key=lambda pair: _accepts(pair[1]))
-    return Constraints(
-        limit=limit,
-        source=TARGETS,
-        read=tuple(target for target, _ in seen),
-        unreachable=unreached,
-        strictest_target=name if len(seen) > 1 else None,
-    )
+    return Constraints(readings=seen, source=TARGETS, unreachable=unreached)

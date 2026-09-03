@@ -1,15 +1,20 @@
-"""Merging what the estate said into one limit (#317). Tier 0.
+"""Collecting what the estate said, and the two questions asked of it (#317). Tier 0.
 
-Pure arithmetic over readings the caller collected, so none of this needs a
+Pure arithmetic over readings the caller gathered, so none of this needs a
 database -- which is the point of the split: `cli._constraints_for` opens the
 connections and this decides what they meant.
+
+The file leans on one comparison that a first draft got wrong in both directions,
+so most of what is asserted here is that the two questions stay separate: a
+password this tool *draws* is bound by a byte count alone, and one somebody
+*supplies* has to satisfy every target's character set as well.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from sopuli.constraints import POLICY, TARGETS, UNREAD, Constraints, strictest
+from sopuli.constraints import POLICY, TARGETS, UNREAD, Constraints, survey
 from sopuli.passwords import ByteLimit
 
 MODERN = ByteLimit(max_bytes=128, encoding="ascii", charset="US7ASCII")
@@ -27,64 +32,73 @@ def test_nothing_asked_is_not_nothing_answered() -> None:
     collapsing it into the fallback would report a warning about an estate
     nobody tried to reach.
     """
-    assert strictest([]).source == UNREAD
-    assert strictest([], unreachable=("appdb-alpha",)).source == POLICY
+    assert survey([]).source == UNREAD
+    assert survey([], unreachable=("appdb-alpha",)).source == POLICY
 
 
 def test_no_limit_is_carried_when_nothing_answered() -> None:
-    """``None`` is what `candidate_for` already means by "no target limit", so
-    the fallback is a default rather than a branch somebody has to remember."""
-    assert strictest([], unreachable=("appdb-alpha",)).limit is None
+    """``None`` and ``()`` are what `candidate_for` already means by "no target
+    limit", so the fallback is a default rather than a branch to remember."""
+    nothing = survey([], unreachable=("appdb-alpha",))
+
+    assert nothing.drawing_limit is None
+    assert nothing.limits == ()
 
 
-def test_the_smallest_limit_wins() -> None:
-    found = strictest([("modern", MODERN), ("legacy", LEGACY)])
+def test_the_draw_is_bound_by_the_smallest_byte_count() -> None:
+    found = survey([("modern", MODERN), ("legacy", LEGACY)])
 
-    assert found.limit == LEGACY
+    assert found.drawing_limit == LEGACY
     assert found.source == TARGETS
     assert found.strictest_target == "legacy"
 
 
-def test_the_strictest_limit_is_not_the_smallest_number() -> None:
-    """The reason a `ByteLimit` is a pair and not an int.
+def test_the_draw_ignores_the_encoding() -> None:
+    """The bug an earlier draft had, in the direction that refuses valid runs.
 
-    Both are 128 bytes. One is counted in ``cp1252``, where a character is always
-    one byte, and one in ``utf-8``, where a character can be four -- so the second
-    is guaranteed to hold 32 characters and the first 128. Comparing the counts
-    alone would call them equal and pick whichever came first.
+    Both targets hold 128 bytes. Comparing "characters guaranteed" would call the
+    UTF-8 one stricter -- 32 against 128 -- and cap a generated password at 32
+    characters that both databases would have stored happily, because §8's
+    alphabets are ASCII and an ASCII character is one byte in either encoding.
     """
-    found = strictest([("western", WESTERN), ("unicode", UNICODE)])
+    found = survey([("western", WESTERN), ("unicode", UNICODE)])
 
-    assert found.limit == UNICODE
-    assert found.strictest_target == "unicode"
+    assert found.drawing_limit is not None
+    assert found.drawing_limit.max_bytes == 128
 
 
-def test_a_narrow_encoding_can_still_lose_to_a_small_count() -> None:
-    """The other half of the same comparison, so it is not just encoding-first.
+def test_every_limit_is_kept_for_a_supplied_password() -> None:
+    """The bug in the other direction, which is the one that stages an
+    unappliable password.
 
-    30 ASCII bytes hold 30 characters; 128 UTF-8 bytes are guaranteed 32. The
-    legacy target is stricter and the encoding-aware rule has to agree.
+    A supplied password can be storable in ``AL32UTF8`` and not in
+    ``WE8MSWIN1252``. Keeping only the limit that won the count would validate
+    against one target and stage for both.
     """
-    assert strictest([("unicode", UNICODE), ("legacy", LEGACY)]).limit == LEGACY
+    found = survey([("western", WESTERN), ("unicode", UNICODE)])
+
+    assert found.limits == (WESTERN, UNICODE)
 
 
 def test_a_tie_keeps_the_first_reading() -> None:
-    """Nothing depends on which of two identical limits is named, and a run that
-    named a different one each time would be reporting noise as a fact."""
+    """Nothing depends on which of two identical counts is used, and a run that
+    picked a different one each time would be reporting noise as a fact."""
     first = ByteLimit(max_bytes=128, encoding="ascii", charset="US7ASCII")
     second = ByteLimit(max_bytes=128, encoding="ascii", charset="WE8ISO8859P1")
+    drawn = survey([("alpha", first), ("beta", second)]).drawing_limit
 
-    assert strictest([("alpha", first), ("beta", second)]).limit.charset == "US7ASCII"  # type: ignore[union-attr]
+    assert drawn is not None
+    assert drawn.charset == "US7ASCII"
 
 
 def test_one_reading_names_no_strictest_target() -> None:
     """There was nothing to be strictest *than*, and reporting a winner of a
     one-horse race invites a reader to think an estate was surveyed."""
-    assert strictest([("only", MODERN)]).strictest_target is None
+    assert survey([("only", MODERN)]).strictest_target is None
 
 
 def test_every_target_that_answered_is_named() -> None:
-    found = strictest([("alpha", MODERN), ("beta", LEGACY)], unreachable=("gamma",))
+    found = survey([("alpha", MODERN), ("beta", LEGACY)], unreachable=("gamma",))
 
     assert found.read == ("alpha", "beta")
     assert found.unreachable == ("gamma",)
@@ -101,12 +115,13 @@ def test_every_target_that_answered_is_named() -> None:
 def test_partial_means_some_answered_and_some_did_not(
     readings: list[tuple[str, ByteLimit]], unreachable: tuple[str, ...], expected: bool
 ) -> None:
-    """The case a reader is most likely to get wrong: the limit is real, it came
-    from a database, and it is still not necessarily the estate's strictest."""
-    assert strictest(readings, unreachable=unreachable).partial is expected
+    """The case a reader is most likely to get wrong: the limits are real, they
+    came from databases, and they are still not necessarily every one."""
+    assert survey(readings, unreachable=unreachable).partial is expected
 
 
 def test_the_default_constraints_claim_nothing() -> None:
-    assert Constraints().limit is None
+    assert Constraints().drawing_limit is None
+    assert Constraints().limits == ()
     assert Constraints().source == UNREAD
     assert Constraints().partial is False

@@ -2062,7 +2062,7 @@ def creds_generate(
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
-            limit=limits.limit,
+            limits=limits.limits,
         )
         for binding in bindings
     ]
@@ -2151,7 +2151,7 @@ def _candidate(
     name: str | None,
     supplied: Secret | None,
     enforce: bool,
-    limit: ByteLimit | None = None,
+    limits: Sequence[ByteLimit] = (),
 ) -> Candidate:
     """One account's password, drawn or validated against its policy.
 
@@ -2161,18 +2161,18 @@ def _candidate(
     before the file's chain is consulted -- so it wins over an application entry
     and still goes through the same dangling-name check every policy name gets.
 
-    ``limit`` is the estate's, resolved once for the run by
-    :func:`_constraints_for` and passed in rather than read here: it is a property
-    of the *targets*, not of the binding, and a function called once per account
-    is the wrong place to open a connection. ``None`` is the documented fallback
-    -- no target answered, or none was asked -- and the policy's declared length
-    then governs, which is what :func:`sopuli.generate.candidate_for` already does
-    with it.
+    ``limits`` is every answered target's, resolved once for the run by
+    :func:`_constraints_for` and passed in rather than read here: they are a
+    property of the *targets*, not of the binding, and a function called once per
+    account is the wrong place to open a connection. Empty is the documented
+    fallback -- no target answered, or none was asked -- and the policy's declared
+    length then governs, which is what
+    :func:`sopuli.generate.candidate_for` already does with it.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
     return staging.candidate_for(
-        binding, policy, name=chosen, limit=limit, supplied=supplied, enforce=enforce
+        binding, policy, name=chosen, limits=limits, supplied=supplied, enforce=enforce
     )
 
 
@@ -2218,7 +2218,7 @@ def _constraints_for(
             if session is not None:
                 with suppress(Exception):
                     session.close()
-    return constraint_source.strictest(readings, unreachable=unreachable)
+    return constraint_source.survey(readings, unreachable=unreachable)
 
 
 def _constraint_diagnostics(limits: Constraints) -> list[Diagnostic]:

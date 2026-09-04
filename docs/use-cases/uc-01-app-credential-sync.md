@@ -239,6 +239,7 @@ Does not connect to the database — except optionally to read constraints.
 ```
 sopuli creds generate --application orders-app [--account ORDERS_APP]
                       [--promote]         # write straight to `current` (no staging)
+                      [--confirm]         # yes in advance: an existing `current` may be replaced
                       [--from-stdin]      # take a supplied password instead of generating
                       [--policy NAME]     # override the policy
                       [--offline]         # do not read constraints from any target
@@ -258,7 +259,9 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
    precisely because the lock lives in the vault: this step never connects to a
    database, so a database-side lock could not have protected the write below.
 5. Write to the vault: `pending = candidate` and `origin` beside it (§3), leave
-   `current` untouched. One write, both keys — a write that landed the password
+   `current` untouched — or, under `--promote`, `current = candidate` with
+   `previous = current` and the §3 stamps, and no `origin`, which describes a
+   `pending` there is none of. One write, both keys — a write that landed the password
    and not its provenance would stage a password no later `apply` may redraw. Use
    CAS where supported so a concurrent writer cannot be overwritten silently.
 6. Report new version, and the fact that the database has not changed.
@@ -335,6 +338,68 @@ no session, and a read does not make one.
   unless `--no-policy-check` is passed, which is recorded in the audit event. It
   reads `length:` as a minimum rather than as an exact figure — a password an
   external system dictated is not weaker for being longer.
+### `--promote`, and the exception it takes to invariant 7 (#257, decided)
+
+```
+sopuli creds generate --application acme --promote [--confirm]
+```
+
+Write the drawn password straight to `current`, with no `pending` and no
+database touched. It exists for **S1 — first adoption of an existing account**:
+the account is there, its password is known to humans and is not in the vault,
+and `generate --promote` → `apply` → `check` adopts it without the tool ever
+needing the old password. Staging first would mean a `pending` nothing has read
+and a `current` that does not exist, then a promote of one into the other — two
+writes and an intermediate state, to describe a document with no rotation in
+progress.
+
+**It takes invariant 7's one exception, and the exception is `--confirm`.** The
+invariant says never promote before every target has confirmed, and `--promote`
+confirms nothing. Both readings were weighed (#257) and the wider one was chosen:
+the flag may write over an existing `current`, because refusing there would leave
+`--promote` unable to mean *I know what I am doing* — which is what an operator
+passing it is saying. What makes that safe to allow is not that the write is
+harmless; it is that the operator is asked:
+
+- **no `current` for that account** — nothing is reading the field being written,
+  so there is no window to protect. Written without a question;
+- **a `current` exists** — the field every application reads is about to be
+  replaced by a password no database has been given, so the run **asks**, and
+  `--confirm` is that yes given in advance. Unattended, it refuses on **exit 8**,
+  which is the environment gate's shape exactly: a scheduler cannot tell whether
+  a human said no or was never there, and does not need to.
+
+**`previous = current` in the same write**, or §8's rollback has nothing to roll
+back to. One CAS write per document carries `current`, `previous` and the §3
+stamps, like every other write this command makes.
+
+**One `--confirm` answers both of this verb's questions**, and that is a real
+cost of spelling the gate this way rather than a detail. An operator passing it
+because `safety.confirm_environments` covers prod also authorises overwriting a
+`current` they may not have thought about. It is accepted because the flag's
+documented meaning is already *proceed without asking* and a second confirmation
+flag on one command is how a person learns to pass both reflexively — but the
+plan is what makes it honest, which is why `--promote --dry-run` names the two
+groups separately: accounts that would be **seeded** and accounts whose `current`
+would be **replaced** are different risks, and an operator should not have to
+count them.
+
+**The refusal is at plan time** (invariant 4), read from the documents before
+anything is written — and checked again under the lock, because a `current` that
+appears between the two would otherwise be overwritten by a run that was told
+there was none.
+
+**What it reports is `VAULT_ONLY`** — the vault holds this password and no
+database has been asked. A new `state` value rather than a reused one: the other
+four candidates each assert something untrue (`03-json-output.md` §3), and
+`PENDING_APPLY` in particular would send `check` and `apply` looking for a
+`pending` that does not exist. It lands with the schema bump that builds this.
+
+**There is still no `creds promote` verb**, and this does not reopen #276. That
+decision is about promoting a *rotation* — advertising a password on the strength
+of an earlier run's document, without re-verifying. This promotes a password
+drawn in the same breath, for an account that has no rotation in flight.
+
 - Generating twice without applying simply replaces `pending`. That is safe and
   is reported as such — including a warning naming the version whose `pending`
   was replaced, because anything already holding that password is now stale.

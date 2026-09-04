@@ -1094,6 +1094,21 @@ or renaming one is major.
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`
 
+**`VAULT_ONLY` is decided and not yet emitted** (#257). `creds generate
+--promote` writes `current` and touches no database, and none of the values above
+is true of the result: `IN_SYNC` asserts a match nobody checked, `DRIFT` asserts a
+comparison that never happened — and exits 3, so a successful adoption would exit
+non-zero — `PENDING_APPLY` sends `check` and `apply` looking for a `pending` that
+is not there, and `UNVERIFIABLE` means *tried and could not*, which `check` leans
+on. Reusing `SKIPPED` was weighed and refused as a lie, and emitting no
+`results[]` at all was refused because it would leave the one verb that writes
+the field applications read with nothing machine-readable to say about what it
+changed. So the enum gains a value, which this section's own first line makes a
+**minor** bump; the cost is a consumer switching exhaustively over `state`, and it
+is paid once here rather than argued again per verb. The value joins the list
+above in the schema bump that builds `--promote`, not before — a documented enum
+value the schema does not carry is a contract that disagrees with itself.
+
 **`action_kind`** — `none`, `generate`, `vault_write_pending`, `vault_promote`,
 `vault_rollback`, `password_set`, `rollover_start`, `rollover_finish`,
 `account_unlock`, `attribute_set`, `verify`

@@ -259,11 +259,13 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
    precisely because the lock lives in the vault: this step never connects to a
    database, so a database-side lock could not have protected the write below.
 5. Write to the vault: `pending = candidate` and `origin` beside it (§3), leave
-   `current` untouched — or, under `--promote`, `current = candidate`, the value
-   `current` held moved into `previous` where there was one, and the §3 stamps;
-   no `origin`, which describes a `pending` there is none of. One write, both keys — a write that landed the password
+   `current` untouched. One write, both keys — a write that landed the password
    and not its provenance would stage a password no later `apply` may redraw. Use
    CAS where supported so a concurrent writer cannot be overwritten silently.
+   Under `--promote` that one write carries `current = candidate` instead, the
+   value `current` held moved into `previous` where there was one, and the §3
+   stamps. No `origin`: that key describes what `pending` holds, and a promote
+   writes no `pending`.
 6. Report new version, and the fact that the database has not changed.
 
 **Notes**

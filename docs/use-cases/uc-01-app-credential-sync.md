@@ -239,7 +239,7 @@ Does not connect to the database — except optionally to read constraints.
 ```
 sopuli creds generate --application orders-app [--account ORDERS_APP]
                       [--promote]         # write straight to `current` (no staging)
-                      [--confirm]         # yes in advance: an existing `current` may be replaced
+                      [--overwrite-current]  # authorise replacing an existing `current`
                       [--from-stdin]      # take a supplied password instead of generating
                       [--policy NAME]     # override the policy
                       [--offline]         # do not read constraints from any target
@@ -338,10 +338,18 @@ no session, and a read does not make one.
   unless `--no-policy-check` is passed, which is recorded in the audit event. It
   reads `length:` as a minimum rather than as an exact figure — a password an
   external system dictated is not weaker for being longer.
+- Generating twice without applying simply replaces `pending`. That is safe and
+  is reported as such — including a warning naming the version whose `pending`
+  was replaced, because anything already holding that password is now stale.
+  This is the **one exemption from invariant 9** and is decided rather than
+  assumed (#254): the invariant governs commands that converge on a state, and a
+  fresh draw has none. `apply` is the convergent half and reports
+  `changed: false` on a re-run.
+
 ### `--promote`, and the exception it takes to invariant 7 (#257, decided)
 
 ```
-sopuli creds generate --application acme --promote [--confirm]
+sopuli creds generate --application acme --promote [--overwrite-current]
 ```
 
 Write the drawn password straight to `current`, with no `pending` and no
@@ -353,21 +361,30 @@ and a `current` that does not exist, then a promote of one into the other — tw
 writes and an intermediate state, to describe a document with no rotation in
 progress.
 
-**It takes invariant 7's one exception, and the exception is `--confirm`.** The
-invariant says never promote before every target has confirmed, and `--promote`
-confirms nothing. Both readings were weighed (#257) and the wider one was chosen:
-the flag may write over an existing `current`, because refusing there would leave
-`--promote` unable to mean *I know what I am doing* — which is what an operator
-passing it is saying. What makes that safe to allow is not that the write is
-harmless; it is that the operator is asked:
+**It takes invariant 7's one exception, and the exception is
+`--overwrite-current`.** The invariant says never promote before every target has
+confirmed, and `--promote` confirms nothing. Both readings were weighed (#257)
+and the wider one was chosen: the flag may write over an existing `current`,
+because refusing there outright would leave `--promote` unable to mean *I know
+what I am doing* — which is what an operator passing it is saying. What makes
+that safe to allow is not that the write is harmless; it is that the wider case
+has to be asked for by name:
 
 - **no `current` for that account** — nothing is reading the field being written,
-  so there is no window to protect. Written without a question;
+  so there is no window to protect. Written without a question, and without a
+  flag;
 - **a `current` exists** — the field every application reads is about to be
-  replaced by a password no database has been given, so the run **asks**, and
-  `--confirm` is that yes given in advance. Unattended, it refuses on **exit 8**,
-  which is the environment gate's shape exactly: a scheduler cannot tell whether
-  a human said no or was never there, and does not need to.
+  replaced by a password no database has been given, so the run refuses on
+  **exit 8** unless `--overwrite-current` was passed, naming the accounts. Exit 8
+  is "aborted, or confirmation declined", and a required authorisation nobody
+  gave is that: the file is not wrong and the run is not broken.
+
+**No prompt, and identically so attended or not.** `--overwrite-current` is an
+authorisation you type, not a question you answer — `--force`'s register rather
+than `--confirm`'s. An operator who did not know some accounts had a `current`
+reads the refusal, then `--dry-run`, then decides; that is a better sequence than
+a y/n on a write to the field every application reads, and it makes a scheduled
+run behave exactly like a hand-run one.
 
 **The value `current` held moves into `previous`**, in the same write that
 replaces it — the prior password, never the one being written — or §8's rollback
@@ -375,21 +392,34 @@ has nothing to roll back to. An account being seeded has no such value and gets
 no `previous`. One CAS write per document carries all of it, plus the §3 stamps,
 like every other write this command makes.
 
-**One `--confirm` answers both of this verb's questions**, and that is a real
-cost of spelling the gate this way rather than a detail. An operator passing it
-because `safety.confirm_environments` covers prod also authorises overwriting a
-`current` they may not have thought about. It is accepted because the flag's
-documented meaning is already *proceed without asking* and a second confirmation
-flag on one command is how a person learns to pass both reflexively — but the
-plan is what makes it honest, which is why `--promote --dry-run` names the two
-groups separately: accounts that would be **seeded** and accounts whose `current`
-would be **replaced** are different risks, and an operator should not have to
-count them.
+**Its own flag rather than `--confirm`, and the reason is reversibility.**
+`--confirm` was the obvious spelling — it already means *proceed without asking*
+on this verb, and P5 gives every mutating command one. It was refused because
+that meaning is scope-free by construction: every question this command learns to
+ask in future folds into it, so the flag's blast radius grows without anyone
+editing it, and an operator passing it because `safety.confirm_environments`
+covers prod would also be authorising an overwrite they had not thought about.
+The decisive argument is what each choice costs to undo. Shipping `--confirm`
+alone and adding a dedicated flag later **breaks** every script that relied on the
+first — a scheduled adoption run starts exiting 8. Shipping the dedicated flag
+and later letting `--confirm` satisfy it is purely permissive: nothing that
+worked stops working. On a gate protecting the field every application reads, take
+the choice you can walk back.
+
+**`--confirm` keeps its single meaning** and does not satisfy this gate. The two
+are asked for different things — assent to touching a listed *environment*, and
+authorisation to replace a *value* — and a run that needs both passes both.
+
+**`--promote --dry-run` names the two groups separately**: accounts that would be
+**seeded** and accounts whose `current` would be **replaced** are different risks,
+and an operator should not have to count them. A preview is never gated, so it is
+also how somebody finds out they need the flag.
 
 **The refusal is at plan time** (invariant 4), read from the documents before
 anything is written — and checked again under the lock, because a `current` that
 appears between the two would otherwise be overwritten by a run that was told
-there was none.
+there was none. Where the flag *was* passed, the second read has nothing to
+refuse: the overwrite is authorised whenever it is found.
 
 **What it reports is `VAULT_ONLY`** — the vault holds this password and no
 database has been asked. A new `state` value rather than a reused one: the other
@@ -401,14 +431,6 @@ four candidates each assert something untrue (`03-json-output.md` §3), and
 decision is about promoting a *rotation* — advertising a password on the strength
 of an earlier run's document, without re-verifying. This promotes a password
 drawn in the same breath, for an account that has no rotation in flight.
-
-- Generating twice without applying simply replaces `pending`. That is safe and
-  is reported as such — including a warning naming the version whose `pending`
-  was replaced, because anything already holding that password is now stale.
-  This is the **one exemption from invariant 9** and is decided rather than
-  assumed (#254): the invariant governs commands that converge on a state, and a
-  fresh draw has none. `apply` is the convergent half and reports
-  `changed: false` on a re-run.
 
 ---
 

@@ -71,7 +71,7 @@ something specific.
    `pending` → `current` ordering in UC-1 §3 is the whole safety design. Read it
    before touching rotation. **`creds generate --promote` is the one exception**
    (decided in #257): it writes `current` having asked no database anything, and
-   over an existing `current` only with `--confirm`. What the invariant protects
+   over an existing `current` only with `--overwrite-current`. What the invariant protects
    is a *window* — a `current` that applications are reading, replaced before any
    database can serve the new value — and `--promote` exists for the case where
    the operator already knows the password and no rotation is in flight. The same

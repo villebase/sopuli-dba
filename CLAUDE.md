@@ -74,8 +74,9 @@ something specific.
    over an existing `current` only with `--confirm`. What the invariant protects
    is a *window* — a `current` that applications are reading, replaced before any
    database can serve the new value — and `--promote` exists for the case where
-   the operator already knows the password and no rotation is in flight. It sets
-   `previous = current` in the same write, so §8's rollback keeps somewhere to go.
+   the operator already knows the password and no rotation is in flight. The same
+   write moves the value `current` held into `previous`, so §8's rollback keeps
+   somewhere to go.
    Written here rather than left to be discovered in a diff, as invariant 9's
    exemption is, and a second one is a decision rather than an implementation
    detail.

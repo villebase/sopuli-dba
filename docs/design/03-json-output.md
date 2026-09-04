@@ -1105,9 +1105,11 @@ on. Reusing `SKIPPED` was weighed and refused as a lie, and emitting no
 the field applications read with nothing machine-readable to say about what it
 changed. So the enum gains a value, which this section's own first line makes a
 **minor** bump; the cost is a consumer switching exhaustively over `state`, and it
-is paid once here rather than argued again per verb. The value joins the list
-above in the schema bump that builds `--promote`, not before — a documented enum
-value the schema does not carry is a contract that disagrees with itself.
+is paid once here rather than argued again per verb. The value becomes contract
+when the schema bump that builds `--promote` adds it to the list above and to
+`sopuli-run-1.20`, together — until then nothing emits it and no consumer should
+expect it. Deciding a value before shipping it is fine; *listing* one the schema
+does not carry would be a contract that disagrees with itself.
 
 **`action_kind`** — `none`, `generate`, `vault_write_pending`, `vault_promote`,
 `vault_rollback`, `password_set`, `rollover_start`, `rollover_finish`,

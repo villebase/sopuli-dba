@@ -259,9 +259,9 @@ sopuli creds generate --application orders-app [--account ORDERS_APP]
    precisely because the lock lives in the vault: this step never connects to a
    database, so a database-side lock could not have protected the write below.
 5. Write to the vault: `pending = candidate` and `origin` beside it (§3), leave
-   `current` untouched — or, under `--promote`, `current = candidate` with
-   `previous = current` and the §3 stamps, and no `origin`, which describes a
-   `pending` there is none of. One write, both keys — a write that landed the password
+   `current` untouched — or, under `--promote`, `current = candidate`, the value
+   `current` held moved into `previous` where there was one, and the §3 stamps;
+   no `origin`, which describes a `pending` there is none of. One write, both keys — a write that landed the password
    and not its provenance would stage a password no later `apply` may redraw. Use
    CAS where supported so a concurrent writer cannot be overwritten silently.
 6. Report new version, and the fact that the database has not changed.
@@ -369,9 +369,11 @@ harmless; it is that the operator is asked:
   which is the environment gate's shape exactly: a scheduler cannot tell whether
   a human said no or was never there, and does not need to.
 
-**`previous = current` in the same write**, or §8's rollback has nothing to roll
-back to. One CAS write per document carries `current`, `previous` and the §3
-stamps, like every other write this command makes.
+**The value `current` held moves into `previous`**, in the same write that
+replaces it — the prior password, never the one being written — or §8's rollback
+has nothing to roll back to. An account being seeded has no such value and gets
+no `previous`. One CAS write per document carries all of it, plus the §3 stamps,
+like every other write this command makes.
 
 **One `--confirm` answers both of this verb's questions**, and that is a real
 cost of spelling the gate this way rather than a detail. An operator passing it

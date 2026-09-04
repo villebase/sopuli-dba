@@ -1184,3 +1184,53 @@ def test_the_terminal_says_promoted_rather_than_staged(
     assert "2 promoted to current" in output
     assert "staged" not in output
     assert "no database was changed" in output
+
+
+def test_a_failed_promote_is_not_reported_as_a_pending_write(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage travels with the failure, not only with the success.
+
+    Left to default, a refused promote reports `vault_write_pending` and
+    `secret.stage: pending` -- a consumer reading it would conclude a `pending`
+    is sitting there waiting for `apply`, when nothing was written at all.
+    """
+    seed_current(store, acme_web_user="the-live-one")
+    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+
+    found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
+    entry = found["results"][0]
+
+    assert entry["state"] == "ERROR"
+    assert entry["actions"][0]["kind"] == "vault_promote"
+    assert entry["actions"][0]["applied"] is False
+    assert entry["secret"]["stage"] == "current"
+
+
+def test_a_document_shaped_wrongly_fails_that_document_and_not_the_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """The config and the vault disagree about where a password lives.
+
+    Reading it raises `SecretShapeError`, and letting that out would abort a run
+    over twenty documents for one of them -- while the identical failure from the
+    *write* is already a per-document finding. The plan-time read says nothing
+    about such a document on purpose; this is where the disagreement is named.
+    """
+    store.write(PATH, {CONTAINER: {"acme_web_user": {"nested": "wrong"}}}, cas=0)
+
+    found = document(
+        run(runner, write_config(CONFIG), "--promote", "--overwrite-current", "--output", "json")
+    )
+    validator.validate(found)
+
+    assert found["exit_code"] == ExitCode.FAILURE
+    assert {entry["state"] for entry in found["results"]} == {"ERROR"}
+    assert found["results"][0]["error"]["category"] == "vault"
+    assert current(store) == {"acme_web_user": {"nested": "wrong"}}, "nothing was written"

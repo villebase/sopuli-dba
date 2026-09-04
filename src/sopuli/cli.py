@@ -2494,7 +2494,20 @@ def _promote_document(
     replaced: list[str] = []
     for candidate in write.candidates:
         ref = candidate.binding.secret
-        held = resolve(data, ref) if ref is not None else None
+        try:
+            held = resolve(data, ref) if ref is not None else None
+        except StoreError as error:
+            # A document shaped the way this ref does not address -- the config
+            # and the vault disagree about where a password lives. Reported per
+            # document like a refused write, rather than raised: it is one
+            # document's problem, and a run over twenty of them should write the
+            # nineteen it can. The plan-time read reached the same document and
+            # said nothing for the same reason (`_holds_current`), which is what
+            # makes this the place the disagreement is named.
+            reported = _as_error(error)
+            return _reported(
+                write, FAILED, reported.message, out=out, stage=CURRENT, error=reported
+            )
         if held is not None:
             replaced.append(candidate.binding.account)
         entries.append(
@@ -2517,6 +2530,7 @@ def _promote_document(
             f"a `current` appeared for {', '.join(replaced)} after the plan was made, "
             f"and replacing it was not authorised (--overwrite-current)",
             out=out,
+            stage=CURRENT,
         )
 
     patch = apply_states.promotion_patch(entries, at=utc_now(), by=_rotated_by())
@@ -2524,7 +2538,7 @@ def _promote_document(
         written = write_credential(store, write.key.path, patch, cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
         reported = _as_error(error)
-        return _reported(write, FAILED, reported.message, out=out, error=reported)
+        return _reported(write, FAILED, reported.message, out=out, stage=CURRENT, error=reported)
 
     return _reported(
         write,

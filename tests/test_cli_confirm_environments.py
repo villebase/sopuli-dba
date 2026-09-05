@@ -301,8 +301,12 @@ def test_a_dry_run_is_never_gated(
 # somebody later reads the absent behaviour as a gap and builds it, these fail.
 #
 # Both run unattended -- `CliRunner` has no terminal -- so a gate that fired would
-# refuse (exit 8) rather than block on a prompt, and the assertion is the exit
-# code plus the fact that the estate really was written to.
+# refuse (exit 8) rather than block on a prompt. What is asserted is the exit code
+# plus the **plan**: that the run really did resolve to a prod target, or to two
+# targets, so a case that quietly narrowed to nothing cannot pass by having
+# nothing to be gated about. Deliberately not "the estate was written to":
+# `creds finish-rollover` legitimately writes nothing when no window is open, and
+# an assertion it cannot satisfy is one that gets deleted rather than fixed.
 
 
 @pytest.mark.parametrize("argv", VERBS)

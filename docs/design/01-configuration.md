@@ -1015,7 +1015,8 @@ Four things about it are decisions:
   prod merely because prod exists elsewhere in the estate — a gate that asked
   every time is one that gets switched off within a week.
 - **`--confirm` satisfies it.** P5 says every mutating command supports
-  `--confirm`/`--yes`, and this setting says these environments are not entered
+  `--confirm` — and only that, since #294 struck the `--yes` alias P5 had
+  promised and nothing ever built — and this setting says these environments are not entered
   without an explicit yes; the flag is that yes, given in advance. So the setting
   configures *where a yes is required*, not a second gate that a yes cannot
   answer. A scheduler adds one flag rather than keeping an environment list in

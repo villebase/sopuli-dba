@@ -173,10 +173,10 @@ def confirmation_demanded(
 ) -> Confirmation | None:
     """Whether ``safety.confirm_environments`` covers anything this run reaches.
 
-    P5 says every mutating command supports ``--confirm``/``--yes`` and that
-    confirmation is required in some circumstances; this is **all** of the
-    circumstances. The setting had been parsed, ratcheted as a union and read by
-    nothing since the config model was written (#292), and this is its consumer.
+    P5 says every mutating command supports ``--confirm`` and that confirmation
+    is required in some circumstances; this is **all** of the circumstances. The
+    setting had been parsed, ratcheted as a union and read by nothing since the
+    config model was written (#292), and this is its consumer.
 
     **There is no second trigger to come.** P5 asked for two more -- a built-in
     `prod` and a blast radius over ``max_targets`` -- and #294 declined both: the

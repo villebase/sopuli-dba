@@ -755,7 +755,7 @@ question is where their test database lives.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
-- Every mutating command supports `--confirm`/`--yes`. **Interactive confirmation
+- Every mutating command supports **`--confirm`**. **Interactive confirmation
   is required where the configuration asks for it, and nowhere else** — decided in
   #294, and this bullet is the rewrite that decision called for. It asked for
   three triggers and only one survives:
@@ -776,6 +776,14 @@ question is where their test database lives.
   has. `--confirm` is the yes given in advance for all three; a profile's
   `confirm: false` says nobody could be asked, which makes a gated run *refuse*
   (exit 8) rather than proceed.
+
+  **The flag is `--confirm`, and there is no `--yes` alias.** This bullet
+  promised one from the first draft and nothing ever built it, which #294's
+  review caught: a spec naming a flag the binary does not have is the same defect
+  as a trigger that never fires, one document over. Struck rather than
+  implemented — the alias buys an operator four keystrokes and costs the CLI a
+  second spelling of one flag, and if a site wants it that is a change to D2's
+  grammar rather than a footnote here.
 - `--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by accident.
 - Mutating operations take an advisory **lock** keyed on the secret path being
   mutated, so two operators or two CI jobs cannot rotate the same credential

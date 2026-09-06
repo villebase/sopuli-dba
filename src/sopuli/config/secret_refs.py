@@ -51,11 +51,11 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 #: Path segments that address something other than a document. Refused rather
 #: than dropped, everywhere a path is read (#344).
 #:
-#: Lives here rather than beside :func:`~sopuli.lock.keys.normalise_path`, which
-#: is the other place that enforces it, because ``sopuli.lock.keys`` imports
-#: :class:`SecretRef` from this module and the reverse would be a cycle. The ref
-#: grammar is also the right owner: this is a rule about what a path may say, and
-#: the lock layer is one of its consumers rather than its author.
+#: The ref grammar owns this rule: it is a statement about what a path may say,
+#: and the lock layer is one of its consumers rather than its author.
+#: :func:`normalise_path` below -- the other place that enforces it -- now lives
+#: here for that same reason, having spent a while in ``sopuli.lock.keys`` making
+#: a cycle out of the argument (#357).
 TRAVERSAL = frozenset({".", ".."})
 
 #: The qualifiers §7 names. Closed, because a misspelt one would otherwise
@@ -196,6 +196,42 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
         version=version,
         stage=stage,
     )
+
+
+def normalise_path(path: str) -> str:
+    """Collapse a path to the one spelling a lock is taken on.
+
+    Empty segments are dropped -- ``apps//acme/db`` and ``apps/acme/db`` are one
+    document, and two keys for it would be two locks that never contend.
+
+    **`.` and `..` are refused rather than dropped** (#344). Dropping them would
+    silently rewrite the path the operator typed, so `lock status` and `lock
+    break` would disagree about which record they mean; keeping them was worse
+    still. `lock_path()` prefixes this with ``locks/``, and a `..` walks straight
+    back out of that prefix: measured, ``lock break 'kv:../secrets/acme/db'``
+    built ``locks/../secrets/acme/db``, which httpx collapsed to the *secret's*
+    own path, and the run CAS-wrote a lock record onto the credential document.
+
+    That is the sentence in :func:`sopuli.lock.keys.lock_key` about normalisation only ever
+    *merging* keys -- "which over-locks at worst" -- being false. Merging is
+    safe; redirecting is not, and the difference is these two segments.
+
+    :class:`ValueError` rather than the :class:`ConfigError` everything else in
+    this module raises,
+    for :func:`sopuli.lock.keys.parse_lock_key`'s reason: this is reached from a command line as
+    well as from a file, and the command boundary already turns it into exit 2.
+    A ref in a *file* is refused earlier and with a location, by
+    :func:`parse_secret_ref` above, so this is the backstop rather than the
+    message an operator normally sees.
+    """
+    segments = [segment for segment in path.split("/") if segment]
+    offending = sorted({segment for segment in segments if segment in TRAVERSAL})
+    if offending:
+        raise ValueError(
+            f"secret path {path!r} contains {', '.join(repr(one) for one in offending)}, "
+            f"which cannot address a document"
+        )
+    return "/".join(segments)
 
 
 # ------------------------------------------------------------- qualifiers ---

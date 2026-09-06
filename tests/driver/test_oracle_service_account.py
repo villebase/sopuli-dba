@@ -77,10 +77,12 @@ CORRELATION_ID = "9f1c4e02-77ab-4d51-9c6e-3b8a5d2f0e14"
 ACCOUNT = "acme_svc_user"
 ACCOUNT_PASSWORD = "Service-Account-9z"
 
-#: §2's optional grant, spelled as §2 and `00_install.sql` spell it. Not in
-#: :func:`_grants`, because it is the thing whose presence and absence this module
-#: has to be able to tell apart.
-PASSWORD_FILE_GRANT = f"grant select on sys.v_$pwfile_users to {ACCOUNT}"
+#: §2's optional grant, spelled the way :func:`_grants` spells the rest of the
+#: set -- lower-case keywords around the object name §2 and `00_install.sql` use,
+#: so a grep for `V_$PWFILE_USERS` across the docs, the script and this file finds
+#: all three. Not in :func:`_grants`, because it is the thing whose presence and
+#: absence this module has to be able to tell apart.
+PASSWORD_FILE_GRANT = f"grant SELECT ON SYS.V_$PWFILE_USERS to {ACCOUNT}"
 
 
 def _run(session: Any, *statements: str) -> None:

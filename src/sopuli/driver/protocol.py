@@ -393,6 +393,15 @@ class PrivilegeAudit:
     #: this class is deliberately free of any -- the same seam
     #: :data:`~sopuli.diagnostics.GUARDRAIL_REMEDIES` sits on. Rendered as a
     #: caveat rather than emitted in the run document, so no consumer parses it.
+    #:
+    #: **The one field here that is not sorted**, and the exception is the class
+    #: docstring's own reason read the other way: sorting exists because
+    #: dictionary order is nobody's contract, and every other field holds names
+    #: that arrive from a query or a set. These are sentences, produced by a
+    #: driver in a fixed sequence, and alphabetising prose orders it by whichever
+    #: word happens to start it. :meth:`caveats` already orders by meaning rather
+    #: than by spelling -- the partial-audit line first, because it changes how
+    #: the rest is read -- and this follows that.
     remedies: tuple[str, ...] = ()
 
     def caveats(self) -> tuple[str, ...]:

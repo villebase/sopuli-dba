@@ -81,6 +81,7 @@ def _first_import_report() -> tuple[int, dict[str, str]]:
         capture_output=True,
         text=True,
         check=False,
+        env=_probe_env(),
     )
     assert result.returncode == 0, f"the probe itself failed:\n{result.stderr}"
     report = json.loads(result.stdout)
@@ -113,15 +114,28 @@ def test_the_lock_package_imports_on_its_own() -> None:
         capture_output=True,
         text=True,
         check=False,
-        env={"PYTHONPATH": str(SRC), **_clean_env()},
+        env=_probe_env(),
     )
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "LockKey"
 
 
-def _clean_env() -> dict[str, str]:
-    """The parent's environment minus anything that would preload sopuli."""
+def _probe_env() -> dict[str, str]:
+    """The parent's environment, with ``PYTHONPATH`` pointed at this checkout.
+
+    Explicit rather than inherited, for a reason particular to this file: the
+    probe enumerates modules by walking ``src/sopuli`` and then imports them *by
+    name*. Under the editable install this repository uses those are the same
+    files, so today it would pass either way -- but under a plain
+    ``pip install .`` the walk would describe the checkout while the imports
+    resolved to site-packages, and a test whose whole subject is which module
+    initialises first would be answering about a different copy without saying so.
+
+    Written in this order because the opposite is a bug I had here: with
+    ``{"PYTHONPATH": ..., **os.environ}`` a ``PYTHONPATH`` already set in the
+    parent wins and the explicit value is silently discarded.
+    """
     import os
 
-    return {key: value for key, value in os.environ.items() if key != "PYTHONSTARTUP"}
+    return {**os.environ, "PYTHONPATH": str(SRC)}

@@ -207,14 +207,17 @@ def normalise_path(path: str) -> str:
     **`.` and `..` are refused rather than dropped** (#344). Dropping them would
     silently rewrite the path the operator typed, so `lock status` and `lock
     break` would disagree about which record they mean; keeping them was worse
-    still. `lock_path()` prefixes this with ``locks/``, and a `..` walks straight
-    back out of that prefix: measured, ``lock break 'kv:../secrets/acme/db'``
-    built ``locks/../secrets/acme/db``, which httpx collapsed to the *secret's*
-    own path, and the run CAS-wrote a lock record onto the credential document.
+    still. `lock_path()` prefixes a key with ``locks/``, and a `..` walks
+    straight back out of that prefix: before this refusal existed,
+    ``lock break 'kv:../secrets/acme/db'`` built ``locks/../secrets/acme/db``,
+    which httpx collapsed to the *secret's* own path, and the run CAS-wrote a
+    lock record onto the credential document. Measured against a real Vault,
+    which is how it was found.
 
-    That is the sentence in :func:`sopuli.lock.keys.lock_key` about normalisation only ever
-    *merging* keys -- "which over-locks at worst" -- being false. Merging is
-    safe; redirecting is not, and the difference is these two segments.
+    :func:`sopuli.lock.keys.lock_key` says normalisation can only ever *merge*
+    keys, "which over-locks at worst". **This refusal is what makes that true.**
+    Merging is safe and redirecting is not, and these two segments are the whole
+    difference -- so they cannot be normalised away, only rejected.
 
     :class:`ValueError` rather than the :class:`ConfigError` everything else in
     this module raises,

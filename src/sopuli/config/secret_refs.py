@@ -182,8 +182,9 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
             at=at,
             hint=(
                 "write the path the document actually lives at -- a relative segment "
-                "resolves somewhere else on the way to the store, and the lock for it "
-                "would not land under `locks/`"
+                "resolves somewhere else on the way to the store, so the ref addresses "
+                "a document other than the one written here; a lock for it, for "
+                "instance, would not land under `locks/`"
             ),
         )
 

@@ -3370,13 +3370,19 @@ def _apply_one(
     where it could not run (:func:`_refuse_unhonourable_strategy`), so by here it
     is a regime this account can honour.
 
-    **The fence is re-read immediately before every mutating statement** (UC-1
-    §8), and narrowed to this account's own document: that is the lock the change
-    is about to be made under, and checking the run's other twenty would be
-    twenty store reads to establish nineteen facts nothing here is about to act
-    on. *Every* is the word #347 cost -- the attribute pass and the rollover
-    close are mutations too, and each carries its own check rather than resting
-    on the distance to the one before `set_password`.
+    **The fence is re-read immediately before every mutating call** (UC-1 §8),
+    and narrowed to this account's own document: that is the lock the change is
+    about to be made under, and checking the run's other twenty would be twenty
+    store reads to establish nineteen facts nothing here is about to act on.
+    *Every* is the word #347 cost -- the attribute pass and the rollover close
+    are mutations too, and each carries its own check rather than resting on the
+    distance to the one before `set_password`.
+
+    *Call*, not *statement*: `apply_attributes` may issue both an
+    `ACCOUNT UNLOCK` and a `PROFILE` change under one check. The check is per
+    driver call because that is the granularity the fence can have -- a run
+    cannot re-read a vault between two statements the driver sends -- and the
+    guarantee is that no call begins on a lock this run has lost.
 
     **A lock error is never a per-account finding.** Everything else that goes
     wrong with one account is a row in the table and the run carries on, which is

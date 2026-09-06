@@ -237,10 +237,10 @@ def test_a_store_that_fails_mid_acquisition_gives_back_what_it_took() -> None:
     class Flaky(MemoryStore):
         """Fine for the first lock, unreachable for the second."""
 
-        def read(self, path: str, version: int | None = None) -> Stored | None:
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
             if path == lock_path(OTHER):
                 raise StoreError("the store went away mid-acquisition")
-            return super().read(path)
+            return super().read(path, version=version)
 
     store = Flaky()
     run = manager(store)
@@ -262,10 +262,10 @@ def test_the_body_never_runs_when_acquisition_fails_and_nothing_stays_held() -> 
     """
 
     class Flaky(MemoryStore):
-        def read(self, path: str, version: int | None = None) -> Stored | None:
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
             if path == lock_path(OTHER):
                 raise StoreError("the store went away mid-acquisition")
-            return super().read(path)
+            return super().read(path, version=version)
 
     store = Flaky()
     run = manager(store)
@@ -288,10 +288,10 @@ def test_an_interrupt_during_acquisition_still_gives_the_locks_back() -> None:
     """
 
     class Interrupted(MemoryStore):
-        def read(self, path: str, version: int | None = None) -> Stored | None:
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
             if path == lock_path(OTHER):
                 raise KeyboardInterrupt
-            return super().read(path)
+            return super().read(path, version=version)
 
     store = Interrupted()
     run = manager(store)

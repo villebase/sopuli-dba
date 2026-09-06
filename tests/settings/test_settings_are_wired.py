@@ -35,6 +35,7 @@ without failing anything.
 from __future__ import annotations
 
 import ast
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,35 @@ def _declaring_spans(path: Path, tree: ast.Module) -> list[tuple[int, int]]:
     return spans
 
 
+@cache
+def _readable_strings() -> tuple[tuple[str, str], ...]:
+    """Every string literal in `src/` that could name a setting, with where.
+
+    Parsing the tree is the expensive half and it does not depend on which names
+    are being asked about, so it happens once for the module rather than once per
+    test. 123 files under `src/sopuli` today, four tests, and the difference is
+    about 1.8 s of parsing down to about 0.5 s -- small against an eight-minute
+    suite, and free.
+
+    Docstrings and the declaring regions are dropped *here*, so what comes back
+    is only the places a name is being used for something.
+    """
+    found: list[tuple[str, str]] = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        spans = _declaring_spans(path, tree)
+        prose = _docstrings(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in prose:
+                continue
+            if any(low <= node.lineno <= high for low, high in spans):
+                continue
+            found.append((node.value, f"{path.relative_to(SRC).as_posix()}:{node.lineno}"))
+    return tuple(found)
+
+
 def consumers(names: set[str]) -> dict[str, list[str]]:
     """Where each of ``names`` is read, outside the settings machinery.
 
@@ -125,18 +155,9 @@ def consumers(names: set[str]) -> dict[str, list[str]]:
     for name in _constructed() & names:
         found[name].append("config/vault_layers.py (built by setting_name)")
 
-    for path in sorted(SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        spans = _declaring_spans(path, tree)
-        prose = _docstrings(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-                continue
-            if node.value not in names or id(node) in prose:
-                continue
-            if any(low <= node.lineno <= high for low, high in spans):
-                continue
-            found[node.value].append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
+    for value, where in _readable_strings():
+        if value in names:
+            found[value].append(where)
     return found
 
 

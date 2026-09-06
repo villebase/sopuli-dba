@@ -2183,6 +2183,7 @@ def creds_generate(
         correlation_id=document.correlation_id,
         command="creds generate",
         selection=describe_selection(selection),
+        break_expired=_break_expired(run),
     )
 
     results: list[dict[str, Any]] = []
@@ -2870,6 +2871,7 @@ def creds_apply(
         correlation_id=document.correlation_id,
         command="creds apply",
         selection=describe_selection(selection),
+        break_expired=_break_expired(run),
     )
 
     try:
@@ -3135,6 +3137,32 @@ def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
         if binding.secret is not None and binding.vault is not None
     }
     return list(acquisition_order(found))
+
+
+def _break_expired(run: Invocation) -> bool:
+    """Whether this run may take over a lock whose holder's claim has lapsed.
+
+    `locking.break_expired` (#83) was resolved, ratcheted, cross-checked against
+    `locking: advisory-only` at load *and* in `LockManager.__post_init__`, and
+    implemented in `decide()` -- and no `LockManager` was ever built with it, so
+    it was always `False` (#348). An operator who set the key got exit 7 on an
+    expired lock, was told by `_hint_for` to set the key they had already set,
+    and had no way to see from the output that it was not consulted. This is the
+    wire.
+
+    Absent is not `false`: the setting has no built-in, because nobody having
+    asked is a different statement from somebody having written `false`, and
+    only the second appears in `invocation.options`. Both mean the same thing
+    here, which is why this reads as a plain truth test.
+
+    Nothing checks `advisory-only` at this point on purpose. `references.py`'s
+    `_check_breaking_locks_without_a_fence` already refuses the combination for
+    the whole file -- any vault, not only the ones a run selects -- and the two
+    layers this setting may come from are both blocks in that file. A third
+    check here would be a fourth place to disagree about one rule.
+    """
+    answer = run.resolved.get("locking.break_expired")
+    return bool(answer is not None and answer.value)
 
 
 def _lock_key(binding: Binding) -> LockKey:
@@ -5131,6 +5159,7 @@ def creds_rotate(
         correlation_id=document.correlation_id,
         command="creds rotate",
         selection=describe_selection(selection),
+        break_expired=_break_expired(run),
     )
 
     sequence = _Rotation()

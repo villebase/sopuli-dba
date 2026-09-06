@@ -3145,6 +3145,13 @@ def _record_locks(
 ) -> None:
     """The lock section, and what the run should say about how it got its locks.
 
+    Called **after** the lock has been let go, which is the other half of the
+    rule and the half that was wrong: `release()` flips `HeldLock.released`, so a
+    section built while the run still held its locks reports `released: false`
+    for locks it gives back immediately afterwards. `creds rotate` did that on
+    three early-return paths inside `manager.holding(...)` -- the document said
+    `false` while the store record said `released`.
+
     One function because the two halves must not come apart, and they had (#348).
     `lock_diagnostics` was written, unit-tested in `tests/test_lock_view.py`, and
     called by nothing -- so a run that took over an expired lock said so nowhere,
@@ -5187,6 +5194,9 @@ def creds_rotate(
     )
 
     sequence = _Rotation()
+    # Bound before the `try` because every path out of it reads this, including
+    # the one that returns a refusal from inside the lock.
+    refusal: str | None = None
     try:
         # Step 2. One acquisition, held to the end of the sequence, released in
         # the `finally` inside `holding` on every path including this one's
@@ -5209,13 +5219,22 @@ def creds_rotate(
                 selection=selection,
                 into=sequence,
             )
-            if refusal is not None:
-                return refusal
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
         raise
 
+    # **After** `holding` has exited, on every path including the refusals
+    # `_rotate_estate` returns from inside the lock. `release()` runs in that
+    # `finally`, and it is what flips `HeldLock.released` -- so a section built
+    # while the lock was still held reported `released: false` for locks this run
+    # gave back a moment later. Measured on the `--max-age-days` no-op: the
+    # document said `false` and the store record said `released` (#348, found in
+    # review). One call, one place, and the ordering is now structural rather
+    # than a property of where each early return happens to sit.
     _record_locks(document, manager)
+    if refusal is not None:
+        return refusal
+
     document.results = sequence.staged_json + [
         _applied_json(record, sequence.promotions) for record in sequence.applied
     ]
@@ -5344,7 +5363,6 @@ def _rotate_estate(
     )
     rotating = rotation.due(into.selections)
     if not rotating:
-        _record_locks(document, manager)
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
 
@@ -5354,7 +5372,6 @@ def _rotate_estate(
     findings = _preflight(rotating, run, config, strategy=strategy, full=True)
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
-        _record_locks(document, manager)
         return _refuse_preflight(
             findings, document, header=_rotation_header(plan, into.selections, max_age_days)
         )
@@ -5380,7 +5397,6 @@ def _rotate_estate(
             into.documents += 1
 
     if into.failures:
-        _record_locks(document, manager)
         document.results = into.staged_json
         document.finish(
             ExitCode.FAILURE, summarise_generate([state for _, state, _ in into.staged_rows])

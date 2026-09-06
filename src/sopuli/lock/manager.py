@@ -174,8 +174,9 @@ class LockManager:
         **Both refuse with** :class:`~sopuli.lock.errors.NoFenceError` **-- exit
         5, not 7** (#346). Neither is a held lock. Both are invariant 4's shape:
         a plan-time fact about what this store and path can guarantee, decided
-        before anything is read or written, and true again on the next run and
-        the one after that. Exit 7 said "another process holds the lock", so an
+        before any lock record is read or written -- the second check does read
+        the path's *metadata*, which is how it knows -- and true again on the
+        next run and the one after that. Exit 7 said "another process holds the lock", so an
         unattended runner meeting a KV v1 mount retried for ever on a condition
         that can never clear -- while ``sopuli lock break`` against the same
         store already answered 5 for the identical fact, through
@@ -310,11 +311,12 @@ class LockManager:
     ) -> int | None:
         """Write a record, translating a lost compare-and-set into the right stop.
 
-        ``cas=None`` under ``advisory-only``: there is no compare-and-set to
-        pass, and the returned version is not a fence because nothing guarantees
-        it is still ours a moment later. Reporting ``None`` rather than the
-        version keeps that honest -- a fence somebody could compare would be a
-        guarantee this store cannot give.
+        ``cas`` is always a version here; it is the *store* call that receives
+        ``None`` for it, under ``advisory-only``, because there is no
+        compare-and-set to pass. The version such a write returns is not a fence
+        either -- nothing guarantees it is still ours a moment later -- so this
+        returns ``None`` rather than it, which keeps the caller from comparing a
+        guarantee the store cannot give.
 
         **``acquiring`` decides which failure a lost CAS is** (#346), and the two
         are not the same event. Acquiring, it is a race: two runs went for a lock

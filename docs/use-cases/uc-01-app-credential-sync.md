@@ -1624,7 +1624,7 @@ state before the first lock and is not a failure.
 **Both pre-flight refusals are exit 5, not exit 7** (#346). Neither is a held
 lock — one is a store with no compare-and-set that nobody marked
 `locking: advisory-only`, the other is a path that does not require one — and
-both are decided before anything is read or written. Exit 7 said "another
+both are decided before any lock record is read or written. Exit 7 said "another
 process holds the lock", which is a condition that clears; these do not, so an
 unattended runner retried one for ever. `sopuli lock break` has always answered
 5 for the identical fact, through `check_fenceable`. The second refusal is 5

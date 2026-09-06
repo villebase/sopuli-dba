@@ -100,6 +100,7 @@ from sopuli.diagnostics import (
     guardrail_diagnostics,
     install_diagnostics,
     lock_broken,
+    lock_diagnostics,
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
@@ -166,7 +167,7 @@ from sopuli.output.config_view import (
 from sopuli.output.constraints_view import build_constraints, render_constraints
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
-from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
 from sopuli.output.finish_rollover_view import build_result as build_finish_result
 from sopuli.output.finish_rollover_view import render_finish, render_window_table
 from sopuli.output.finish_rollover_view import summarise as summarise_finish
@@ -2210,10 +2211,10 @@ def creds_generate(
                     else _stage(write, stores[write.key.store], out=results)
                 )
     except LockDeniedError as denied:
-        document.lock = build_lock_section(manager, denied=denied)
+        _record_locks(document, manager, denied=denied)
         raise
 
-    document.lock = build_lock_section(manager)
+    _record_locks(document, manager)
     document.results = results
     states = [state for _, state, _ in rows]
     if stolen is not None:
@@ -2930,10 +2931,10 @@ def creds_apply(
                 # way through has no standing to assert it.
                 promotions, stolen = _promote_documents(applied, documents, stores, manager=manager)
     except LockDeniedError as denied:
-        document.lock = build_lock_section(manager, denied=denied)
+        _record_locks(document, manager, denied=denied)
         raise
 
-    document.lock = build_lock_section(manager)
+    _record_locks(document, manager)
     document.results = [_applied_json(record, promotions) for record in applied]
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
@@ -3137,6 +3138,29 @@ def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
         if binding.secret is not None and binding.vault is not None
     }
     return list(acquisition_order(found))
+
+
+def _record_locks(
+    document: RunDocument, manager: LockManager, *, denied: LockDeniedError | None = None
+) -> None:
+    """The lock section, and what the run should say about how it got its locks.
+
+    One function because the two halves must not come apart, and they had (#348).
+    `lock_diagnostics` was written, unit-tested in `tests/test_lock_view.py`, and
+    called by nothing -- so a run that took over an expired lock said so nowhere,
+    and neither did a run holding an `advisory-only` lock. Both are documented
+    output: `01-configuration.md` §5.3 says `break_expired` and `sopuli lock
+    break` "emit the same warning code, because it is the same event", and
+    `03-json-output.md` lists `SOPULI-W001` for the second.
+
+    That mattered less while `break_expired` reached no manager, because the
+    takeover it reports could not happen. It matters now, and reporting is not
+    decoration here: `_taken_over`'s own docstring says the evidence is gone from
+    the path the moment the takeover write lands, so if this run does not report
+    it, nothing ever does.
+    """
+    document.lock = build_lock_section(manager, denied=denied)
+    document.diagnostics.extend(lock_diagnostics(manager))
 
 
 def _break_expired(run: Invocation) -> bool:
@@ -5188,10 +5212,10 @@ def creds_rotate(
             if refusal is not None:
                 return refusal
     except LockDeniedError as denied:
-        document.lock = build_lock_section(manager, denied=denied)
+        _record_locks(document, manager, denied=denied)
         raise
 
-    document.lock = build_lock_section(manager)
+    _record_locks(document, manager)
     document.results = sequence.staged_json + [
         _applied_json(record, sequence.promotions) for record in sequence.applied
     ]
@@ -5320,7 +5344,7 @@ def _rotate_estate(
     )
     rotating = rotation.due(into.selections)
     if not rotating:
-        document.lock = build_lock_section(manager)
+        _record_locks(document, manager)
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
 
@@ -5330,7 +5354,7 @@ def _rotate_estate(
     findings = _preflight(rotating, run, config, strategy=strategy, full=True)
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
-        document.lock = build_lock_section(manager)
+        _record_locks(document, manager)
         return _refuse_preflight(
             findings, document, header=_rotation_header(plan, into.selections, max_age_days)
         )
@@ -5356,7 +5380,7 @@ def _rotate_estate(
             into.documents += 1
 
     if into.failures:
-        document.lock = build_lock_section(manager)
+        _record_locks(document, manager)
         document.results = into.staged_json
         document.finish(
             ExitCode.FAILURE, summarise_generate([state for _, state, _ in into.staged_rows])

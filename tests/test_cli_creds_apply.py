@@ -32,6 +32,7 @@ from sopuli import apply, check
 from sopuli.cli import cli
 from sopuli.clock import utc_now
 from sopuli.config.model import Vault
+from sopuli.diagnostics import LOCK_TAKEN_OVER
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
@@ -1464,6 +1465,34 @@ def test_break_expired_in_defaults_lets_an_unattended_run_take_the_lock(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert harness["sessions"][0].changed == [("ACME_WEB_USER", STAGED)]
+
+
+def test_a_takeover_says_so_in_the_output(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """A guardrail that fires silently is half a guardrail, and this one did.
+
+    `lock_diagnostics` was written and unit-tested and called by nothing -- the
+    same shape as #348 itself -- so a run that broke somebody's lock said so
+    nowhere. `01-configuration.md` §5.3 says this and `sopuli lock break` "emit
+    the same warning code, because it is the same event", and `_taken_over`'s own
+    docstring says why it has to: the evidence is gone from the path the moment
+    the takeover write lands, so if this run does not report it, nothing ever
+    does.
+    """
+    harness = estate()
+    harness["store"].write(lock_path(ALPHA_LOCK), lapsed(), cas=0)
+
+    result = run(
+        runner, write_config(BREAK_EXPIRED_CONFIG), "--select", "tenant=alpha", "--output", "json"
+    )
+    found = document(result)
+
+    validator.validate(found)
+    warnings = [one for one in found["diagnostics"] if one.get("code") == LOCK_TAKEN_OVER]
+    assert len(warnings) == 1
+    # The holder, so somebody can go and ask whether they were still working.
+    assert "svc_sopuli@ci-runner-3" in warnings[0]["message"]
 
 
 def test_break_expired_in_a_profile_reaches_the_manager_too(

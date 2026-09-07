@@ -6,9 +6,17 @@ not imported by anything, it needs `pillow` and `numpy` (neither of which is a
 project dependency), and `docs/` is outside ruff's and mypy's scope.
 
     python -m venv /tmp/imgvenv && /tmp/imgvenv/bin/pip install pillow numpy
-    /tmp/imgvenv/bin/python docs/assets/make-transparent.py         docs/assets/sopuli-dba-logo.jpg docs/assets/sopuli-dba-logo.png
+    /tmp/imgvenv/bin/python docs/assets/make-transparent.py SRC.jpg DST.png
 
-The source JPEG is no longer in the tree; `git log --follow` finds it.
+Both paths are required. **The source JPEG is no longer in the tree** -- this
+ran once against it and the PNG replaced it -- so recover it first if you need
+to re-run this:
+
+    git show <commit-that-deleted-it>^:docs/assets/sopuli-dba-logo.jpg > /tmp/logo.jpg
+
+`git log --follow -- docs/assets/sopuli-dba-logo.png` finds that commit. There is
+deliberately no default source path: defaulting to a file the same commit deleted
+would fail with a bare FileNotFoundError and tell nobody why.
 
 The background is a flat light grey (229,232,234), and nothing else in the image
 is that colour -- the lab coat is 255 and the database cylinders are bluer. So
@@ -43,8 +51,20 @@ from collections import deque
 import numpy as np
 from PIL import Image
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else "docs/assets/sopuli-dba-logo.jpg"
-DST = sys.argv[2] if len(sys.argv) > 2 else "docs/assets/sopuli-dba-logo.png"
+USAGE = """usage: make-transparent.py SRC.jpg DST.png
+
+Both paths are required, and there is deliberately no default source: the JPEG
+this was written for is no longer in the tree, so a default would fail with a
+bare FileNotFoundError and tell nobody why. To recover it:
+
+    git log --follow -- docs/assets/sopuli-dba-logo.png   # find the commit
+    git show <commit>^:docs/assets/sopuli-dba-logo.jpg > /tmp/logo.jpg
+"""
+
+if len(sys.argv) != 3:
+    sys.exit(USAGE)
+
+SRC, DST = sys.argv[1], sys.argv[2]
 
 FILL_TOL = 20.0  # within this of the background colour: flooded
 SOLID_AT = 52.0  # at this distance: fully opaque. between the two: ramped

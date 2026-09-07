@@ -157,9 +157,17 @@ python k8s_eso_probe.py --down   # remove everything it created
 ```
 
 It creates two namespaces — `sopuli-test` for the vault and the document's
-objects, `external-secrets` for the operator — and `--down` removes both, plus
-the cluster-scoped things ESO installs. It installs nothing on the host: Helm
-runs in a container and only ever renders YAML, which `kubectl` then applies.
+objects, `external-secrets` for the operator. It installs nothing on the host:
+Helm runs in a container and only ever renders YAML, which `kubectl` then
+applies.
+
+**`--down` uninstalls ESO from the cluster**, not just from its namespace. It
+deletes both namespaces and then re-renders the chart to delete what that
+installed — the CRDs, the cluster roles and the webhook configurations, none of
+which a namespace deletion touches. Deleting the CRDs takes every
+`ExternalSecret` and `SecretStore` in the cluster with them, this probe's or
+not, so do not run any of this on a cluster where somebody else is using ESO.
+The script warns if it finds ESO already installed.
 
 It is deliberately not a pytest test, for the reason `vault_cas_probe.py` is
 not one: it needs an environment the suite cannot assume, it installs a

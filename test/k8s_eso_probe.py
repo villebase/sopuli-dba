@@ -138,8 +138,11 @@ def vault_cli(
 ) -> subprocess.CompletedProcess[str]:
     """Run the vault CLI inside the Vault pod, as root.
 
-    The token never crosses the cluster boundary and no vault port has to be
-    open to the host for the configuration half of this script.
+    The root token is a constant in this file and is handed to the pod on the
+    command line, so it plainly does cross the boundary -- what this buys is
+    that no vault port has to be open to the host for the configuration half of
+    the run. It is a dev-mode token for a Vault thrown away with the namespace,
+    which is the only reason either of those is acceptable here.
     """
     return kubectl(
         "-n", NS, "exec", "-i", "deploy/vault", "--",
@@ -233,26 +236,43 @@ def blocks_from_doc() -> dict[str, str]:
     }
 
 
-def substitute(name: str, manifest: str) -> str:
-    """Replace the two placeholders, and refuse if either has gone missing."""
-    edits = [
+#: What each manifest's placeholders are replaced with. Kept per manifest
+#: rather than as one list applied to both, because only the `SecretStore`
+#: carries a vault address -- demanding that edit of the `ExternalSecret` would
+#: reject a document that is perfectly correct.
+SUBSTITUTIONS = {
+    "secretstore": [
         ("namespace: acme", f"namespace: {NS}"),
         (
             'server: "https://vault.example.com:8200"',
             f'server: "{VAULT_ADDR_IN_CLUSTER}"',
         ),
-    ]
+    ],
+    "externalsecret": [
+        ("namespace: acme", f"namespace: {NS}"),
+    ],
+}
+
+
+def substitute(name: str, manifest: str) -> str:
+    """Replace this manifest's placeholders, refusing if one has gone missing.
+
+    Refusing matters more than it looks, and it matters most for the address.
+    A `server:` line that stopped matching would be applied as it stands,
+    pointing at `vault.example.com` -- and the run would fail several steps
+    later at the ExternalSecret, saying the vault is unreachable. That is true,
+    and it sends you to look at the network rather than at this list.
+    """
     out = manifest
-    for old, new in edits:
-        if old in out:
-            out = out.replace(old, new)
-            print(f"  {name}: {old!r} -> {new!r}")
-    if f"namespace: {NS}" not in out:
-        raise SystemExit(
-            f"{name}: no `namespace: acme` line to rewrite. The document's "
-            f"manifest has changed and this probe would apply it to the wrong "
-            f"namespace."
-        )
+    for old, new in SUBSTITUTIONS[name]:
+        if old not in out:
+            raise SystemExit(
+                f"{DOC.name}: the {name} block no longer contains {old!r}, so "
+                f"this probe would apply it unchanged. Fix the substitution "
+                f"here, or the document."
+            )
+        out = out.replace(old, new)
+        print(f"  {name}: {old!r} -> {new!r}")
     return out
 
 
@@ -387,21 +407,36 @@ def configure_vault(policy_hcl: str) -> None:
     )
 
 
-def install_eso() -> None:
-    step(f"External Secrets Operator {ESO_CHART_VERSION}")
+def render_eso() -> str:
+    """ESO's Helm chart, rendered to YAML.
+
+    Helm runs in a container so nothing lands on the host, and `template` is
+    entirely client-side, so the container needs no access to the cluster --
+    it prints YAML and kubectl does the rest. Teardown renders it a second time
+    and deletes it, which is why this is its own function.
+    """
     if shutil.which("docker") is None:
         raise SystemExit("docker is needed to render the Helm chart")
-
-    # Helm runs in a container so nothing lands on the host. `template` is
-    # entirely client-side, so the container needs no access to the cluster --
-    # it prints YAML, and kubectl applies it.
-    rendered = run([
+    return run([
         "docker", "run", "--rm", HELM_IMAGE,
         "template", "external-secrets", ESO_CHART,
         "--namespace", ESO_NS,
-    ])
+    ]).stdout
+
+
+def install_eso() -> None:
+    step(f"External Secrets Operator {ESO_CHART_VERSION}")
+    existing = kubectl("get", "namespace", ESO_NS, check=False, quiet=True)
+    if existing.returncode == 0:
+        print(
+            f"  WARNING: namespace {ESO_NS} already exists. This probe is about "
+            f"to install ESO over whatever is there, and `--down` will remove "
+            f"it. Do not run this on a cluster somebody else is using ESO on."
+        )
+
+    rendered = render_eso()
     kubectl("create", "namespace", ESO_NS, check=False)
-    kubectl("apply", "--server-side", "-f", "-", stdin=rendered.stdout)
+    kubectl("apply", "--server-side", "-f", "-", stdin=rendered)
 
     for deploy in (
         "external-secrets",
@@ -666,6 +701,13 @@ def check_policy_is_read_only() -> list[str]:
 
 # --------------------------------------------------------------------------
 def teardown() -> None:
+    """Remove everything this probe created, including outside the namespaces.
+
+    **Deleting the CRDs deletes every ExternalSecret and SecretStore in the
+    cluster**, not only this probe's, because a CRD takes its custom resources
+    with it. That is what uninstalling ESO means; it is the reason `install_eso`
+    warns when it finds ESO already there.
+    """
     step("removing everything this probe created")
     kubectl("delete", "namespace", NS, "--ignore-not-found", check=False)
     kubectl("delete", "namespace", ESO_NS, "--ignore-not-found", check=False)
@@ -673,12 +715,23 @@ def teardown() -> None:
         "delete", "clusterrolebinding", f"{NS}-vault-auth-delegator",
         "--ignore-not-found", check=False,
     )
-    # ESO's CRDs and webhooks are cluster-scoped and outlive its namespace.
-    kubectl(
-        "delete", "crd", "-l", "app.kubernetes.io/name=external-secrets",
-        "--ignore-not-found", check=False,
-    )
-    print("\nGone. `kubectl get ns` should show neither namespace.")
+
+    # ESO's CRDs, cluster roles and webhook configurations are cluster-scoped
+    # and outlive its namespace, so they have to go separately -- and they are
+    # deleted by re-rendering the chart rather than by a label selector.
+    #
+    # A selector was the first attempt and it was silently wrong. Measured
+    # against 2.10.0: the CRDs carry `external-secrets.io/component`, the
+    # ClusterRoles carry `app.kubernetes.io/name=external-secrets`, and the
+    # webhook configurations carry `app.kubernetes.io/name=external-secrets-
+    # webhook`. No one selector matches all three -- and a selector matching
+    # nothing deletes nothing while exiting 0, so the mistake looks exactly
+    # like success. Deleting what was installed needs no guess about labels
+    # and stays right when the chart relabels something.
+    print("  re-rendering the chart to delete exactly what it installed")
+    kubectl("delete", "--ignore-not-found", "-f", "-", stdin=render_eso(), check=False)
+
+    print("\nGone. `kubectl get crd | grep external-secrets` should be empty too.")
 
 
 def main() -> int:

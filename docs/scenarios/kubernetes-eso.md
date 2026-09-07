@@ -369,8 +369,8 @@ the setup before this is Vault, ESO and the vault role being created:
   $ kubectl -n sopuli-test wait --for=condition=Ready externalsecret/acme-db-credentials --timeout=120s
 externalsecret.external-secrets.io/acme-db-credentials condition met
   $ kubectl -n sopuli-test get secret acme-db-credentials -o jsonpath={.data.DB_PASSWORD}
-  sha256 in the vault:             ea49028069c9
-  sha256 in the Kubernetes Secret: ea49028069c9
+  sha256 in the vault:             292043d7fde9
+  sha256 in the Kubernetes Secret: 292043d7fde9
 
 === is ESO's vault role really read-only? =============================
   $ kubectl -n sopuli-test create token acme-secret-reader --duration=10m

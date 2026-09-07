@@ -135,8 +135,34 @@ The public test suite must be green using only what a contributor can pull —
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
 | `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |
+| `k8s_eso_probe.py` | the evidence behind [`../docs/scenarios/kubernetes-eso.md`](../docs/scenarios/kubernetes-eso.md) §7: stands up Vault, the External Secrets Operator and the document's own manifests on a throwaway cluster, and checks that ESO reads what sopuli wrote. Needs Kubernetes rather than compose — see below. Run by hand |
 
 Test accounts are created and dropped per test under a per-run prefix. Only the
 profiles are created at container init, so no test assumes anything pre-exists.
 Fixtures use the fictional vocabulary from `01-configuration.md` — application
 `acme`, tenants `alpha…theta`, hosts under `example.com`.
+
+## Kubernetes, which is not part of the compose stack
+
+`k8s_eso_probe.py` is the one thing here that does not use `compose.yaml`. It
+needs a Kubernetes cluster, because the thing it is checking is a Kubernetes
+add-on reading a vault. Docker Desktop's built-in cluster is what it was
+written against — *Settings → Kubernetes → Enable Kubernetes* — and any cluster
+`kubectl` can reach should do.
+
+```bash
+python k8s_eso_probe.py          # stand it up, check it, tear it down
+python k8s_eso_probe.py --keep   # leave it up to poke at
+python k8s_eso_probe.py --down   # remove everything it created
+```
+
+It creates two namespaces — `sopuli-test` for the vault and the document's
+objects, `external-secrets` for the operator — and `--down` removes both, plus
+the cluster-scoped things ESO installs. It installs nothing on the host: Helm
+runs in a container and only ever renders YAML, which `kubectl` then applies.
+
+It is deliberately not a pytest test, for the reason `vault_cas_probe.py` is
+not one: it needs an environment the suite cannot assume, it installs a
+third-party operator, and it takes minutes. **It is the thing to re-run when
+`kubernetes-eso.md` changes**, because it reads the manifests out of that
+document rather than keeping a copy of them.

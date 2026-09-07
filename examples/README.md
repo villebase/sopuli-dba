@@ -60,7 +60,18 @@ anything:
 ```bash
 # Which databases does this file actually resolve to?
 sopuli --config safety-hardened.yaml target list
+```
+```
+config: safety-hardened.yaml
 
+NAME         DSN                                ENV   SCOPE  SOURCE
+prod-orders  db-orders.example.com:1521/ORDERS  prod  pdb    targets
+uat-orders   db-uat.example.com:1521/ORDERS     uat   pdb    targets
+
+2 targets (2 explicit)
+```
+
+```bash
 # Every effective setting, and which layer of config produced it.
 sopuli --config safety-hardened.yaml config show --explain
 ```
@@ -68,10 +79,15 @@ sopuli --config safety-hardened.yaml config show --explain
 `--explain` is worth knowing because of the safety ratchet: a safety setting can
 be made stricter by any layer and looser by none, so "which layer won" is not
 always the one you would expect. Running it against `safety-hardened.yaml` with
-its `audit` profile selected shows the ratchet saying so out loud:
+its `audit` profile selected shows the ratchet saying so out loud.
+
+`--output text` is on that command line because the `audit` profile sets
+`output: json`, and without the flag you get the same information as a JSON
+document. A flag on the command line beats a profile, which is precedence
+working:
 
 ```
-$ sopuli --config safety-hardened.yaml --profile audit config show --explain
+$ sopuli --config safety-hardened.yaml --profile audit config show --explain --output text
 
 settings
   db.connect_timeout_s        = 30          [built-in default]

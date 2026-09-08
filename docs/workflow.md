@@ -55,6 +55,17 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   isolation. The run on `main` afterwards re-tested an identical tree and was
   billed again for it, which on a private repository's free minutes is the
   single largest duplicate there is.
+- **A prose-only pull request runs neither lane**, and the two arrange that
+  differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
+  filters in a `changes` job that every other job carries an `if:` on, for the
+  branch-protection reason below. **Both lists are measured, not "docs"** — the
+  suite reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
+  every `docs/schemas/*.json`, every `examples/*.yaml` and
+  `sql/oracle/00_install.sql`, so a blanket `docs/**` or an `examples/**` would
+  switch off a test while leaving it green. `test/paths_ignore_probe.py` measures
+  what the suite opens; `tests/test_workflow_prose_list.py` keeps the two copies
+  of the list equal. The lists drifted seven patterns behind the tree between
+  #370 and #373, which is what #375 fixed.
 - **`ruff` runs once**, on Linux. It is deterministic — same answer on every OS
   and interpreter — so six identical failures would be noise, not coverage.
 - **`mypy` runs on the whole matrix**, unlike `ruff`, because it is not
@@ -88,6 +99,19 @@ closing the gap later is a settings change and not a project: when the repositor
 goes public (or the plan changes), add `lint` and the `test` cells as required
 status checks. Those job names are the contract — renaming a job silently
 disables the requirement that names it.
+
+**Require `changes` as well, and it is not optional.** `ci.yml` decides whether a
+pull request is prose-only in a job called `changes`, and `lint`, `test` and
+`install shape` carry `if: needs.changes.outputs.code == 'true'`. A job skipped
+that way reports `skipped`, which branch protection accepts — which is the point,
+and is why `ci.yml` has no `paths-ignore` while `tier1.yml` does (#375). A
+workflow skipped by `paths-ignore` never creates its check contexts at all, so a
+required one stays pending forever and no prose-only pull request can ever merge.
+The same mechanism has a second edge: because a skipped required check passes,
+a `changes` job that *failed* would skip everything downstream and wave the pull
+request through. Requiring `changes` is what closes that, and tier 1 needs none
+of this — it is not among the checks named above, so it can keep filtering on the
+trigger.
 
 **Nothing runs on `main` itself any more**, and that is not a widening of this
 gap. Because a `pull_request` run tests the merge result, the commit that lands on

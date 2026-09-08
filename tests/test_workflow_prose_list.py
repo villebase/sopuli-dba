@@ -4,16 +4,16 @@ Tier 0 (04-testing.md §4): reads two files, runs nothing.
 
 `tier1.yml` skips a prose-only pull request with `paths-ignore` on the trigger.
 `ci.yml` cannot -- a workflow skipped that way never creates its check contexts,
-and `workflow.md` names `lint` and the `test` cells as the checks to require the
-day branch protection becomes available, so a required context that was never
-created would leave every prose-only pull request pending forever. It filters in
-a `changes` job instead, whose skipped dependants report `skipped` and satisfy
-the requirement (#375).
+and a required context that was never created leaves every prose-only pull
+request pending forever. It filters in a `changes` job instead, whose skipped
+dependants report `skipped` and satisfy the requirement, with `ci ok` as the one
+check `workflow.md` says to require (#375).
 
 The cost of that is the list existing twice, in two syntaxes. This is what makes
 the second copy safe: a pattern added to one and not the other is a failing test
-rather than a lane that quietly stopped skipping -- which is the failure #375 was
-opened about, six months of drift nobody saw because nothing looked.
+rather than a lane that quietly stopped skipping. Drift is the failure #375 was
+opened about -- seven patterns arrived in #370 and #373 and neither list heard
+about them, because nothing looked.
 
 It does **not** check that the list is *correct*. What the suite actually opens
 under `docs/`, `sql/` and `examples/` is a property of running the suite, and

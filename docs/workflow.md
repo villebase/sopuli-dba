@@ -96,22 +96,31 @@ merged anyway.
 
 This is recorded rather than assumed closed. The workflow exists now so that
 closing the gap later is a settings change and not a project: when the repository
-goes public (or the plan changes), add `lint` and the `test` cells as required
-status checks. Those job names are the contract — renaming a job silently
-disables the requirement that names it.
+goes public (or the plan changes), **add `ci ok` as the required status check.
+One name, and not `lint` or the `test` cells** — that job name is the contract,
+and renaming it silently disables the requirement.
 
-**Require `changes` as well, and it is not optional.** `ci.yml` decides whether a
-pull request is prose-only in a job called `changes`, and `lint`, `test` and
-`install shape` carry `if: needs.changes.outputs.code == 'true'`. A job skipped
-that way reports `skipped`, which branch protection accepts — which is the point,
-and is why `ci.yml` has no `paths-ignore` while `tier1.yml` does (#375). A
-workflow skipped by `paths-ignore` never creates its check contexts at all, so a
-required one stays pending forever and no prose-only pull request can ever merge.
-The same mechanism has a second edge: because a skipped required check passes,
-a `changes` job that *failed* would skip everything downstream and wave the pull
-request through. Requiring `changes` is what closes that, and tier 1 needs none
-of this — it is not among the checks named above, so it can keep filtering on the
-trigger.
+That is a change from what this paragraph used to say, and it is measured rather
+than reasoned (#375, verified on #379). `ci.yml` skips its lanes on a prose-only
+pull request — `changes` decides, and `lint`, `test` and `install shape` carry
+`if: needs.changes.outputs.code == 'true'` — because a job skipped by an `if:`
+reports `skipped`, which protection accepts, while a whole workflow skipped by
+`paths-ignore` never creates its contexts at all and a required one stays pending
+forever. That is why `ci.yml` has no `paths-ignore` and `tier1.yml` still does.
+
+But **a skipped matrix job never expands.** Instead of six contexts named
+`test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named
+`test (${{ matrix.os }}, py${{ matrix.python-version }})` — the literal
+expression. Requiring the cell names would leave six contexts that were never
+created, which is the original trap one step along. `ci ok` has a fixed name,
+runs on every pull request under `if: always()`, and fails if any lane reports
+anything but `success` or `skipped`.
+
+It closes the other edge too: because a skipped required check *passes*, a
+`changes` job that failed would skip everything downstream and wave the pull
+request through. `ci ok` needs `changes` like any other lane, so a failure there
+is a failure here. Tier 1 needs none of this — it is not among the required
+checks, so it can keep filtering on the trigger.
 
 **Nothing runs on `main` itself any more**, and that is not a widening of this
 gap. Because a `pull_request` run tests the merge result, the commit that lands on

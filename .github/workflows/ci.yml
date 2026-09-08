@@ -50,10 +50,11 @@ jobs:
   # `paths-ignore` on the trigger, and that difference is the whole point.**
   #
   # `tier1.yml` filters with `paths-ignore` and is right to. This one cannot,
-  # because `workflow.md` names `lint` and the `test` cells as the status checks
-  # to require the day branch protection becomes available (it is 403 on a
-  # private repository on the free plan today). The two mechanisms look alike and
-  # do opposite things under protection:
+  # because `workflow.md` names `ci ok` -- the last job in this file -- as the
+  # status check to require the day branch protection becomes available (it is
+  # 403 on a private repository on the free plan today), and `ci ok` needs every
+  # job below. The two mechanisms look alike and do opposite things under
+  # protection:
   #
   # * a workflow skipped by `paths-ignore` never starts, so its check contexts
   #   are never created and a required one stays **pending forever** -- every
@@ -68,10 +69,9 @@ jobs:
   # twenty billed minutes for a prose-only pull request -- ten jobs, each rounded
   # up to a whole minute, with the Windows cell billing at 2x. This job costs one.
   #
-  # **`changes` must be added as a required check alongside them.** If it fails,
-  # every job that needs it is skipped, and a skipped required check passes --
-  # so a broken filter would wave a red pull request through unless `changes`
-  # itself is required. `set -euo pipefail` is there for the same reason.
+  # A skipped required check *passes*, so a broken filter here could wave a red
+  # pull request through. `set -euo pipefail` is the first half of the answer
+  # and `ci ok` is the other half -- see the comment on it.
   #
   # The list below is `tier1.yml`'s `paths-ignore` written a second time, which
   # is a real cost of doing it this way; `tests/test_workflow_prose_list.py`
@@ -346,3 +346,55 @@ jobs:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")
           print("base carries no backend client")
           PY
+
+  # The one check to require, and the reason it exists rather than requiring the
+  # jobs above directly.
+  #
+  # `changes` makes prose-only pull requests skip those jobs, and a skipped job
+  # reports `skipped`, which branch protection accepts -- that much holds for
+  # `lint`, whose context is called `lint` either way. **It does not hold for a
+  # matrix.** Measured on a prose-only pull request against this branch (#379):
+  # a skipped matrix job never expands, so instead of six contexts named
+  # `test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named
+  # `test (${{ matrix.os }}, py${{ matrix.python-version }})` -- the literal
+  # expression. Requiring the cell names would therefore leave six contexts that
+  # were never created, pending forever, which is the whole failure #375 set out
+  # to avoid, moved one step along.
+  #
+  # So `workflow.md` requires this job instead of naming any of them. It has a
+  # fixed name, it runs on every pull request, and it is red whenever anything
+  # above is. That also closes the other edge: a `changes` job that *failed*
+  # would skip everything downstream, and skipped-passes would wave the pull
+  # request through -- here it is a dependency like any other, and a failure is
+  # a failure.
+  #
+  # `if: always()` rather than a condition on `changes`: without it this job
+  # would itself be skipped when its dependencies were, and a required check
+  # that is skipped for the right reason is indistinguishable from one skipped
+  # for the wrong one.
+  ci-ok:
+    name: ci ok
+    needs: [changes, lint, test, install-shape]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every lane passed or was skipped
+        env:
+          # `join(needs.*.result, ' ')` rather than four separate expressions:
+          # a job added above and forgotten here would otherwise be unguarded,
+          # and this is the check that is supposed to notice.
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "lane results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                echo "::error::a lane reported '$result'"
+                exit 1
+                ;;
+            esac
+          done
+          echo "every lane passed or was skipped"

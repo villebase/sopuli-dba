@@ -97,8 +97,26 @@ def _execute(connection: Any, *statements: str) -> None:
 
 
 def _container(connection: Any) -> str:
+    """Where this connection is standing, or `NON-CDB` on a release with no
+    containers.
+
+    `SYS_CONTEXT('USERENV','CON_NAME')` **raises** on a non-CDB rather than
+    answering NULL -- `ORA-02003: invalid USERENV parameter`, measured on 11g XE
+    11.2.0.2.0 (#382). The driver already knows this and enumerates the code as
+    `capabilities.NO_CONTAINERS`; this helper predates that and did not, so on
+    11g it took the whole fixture down and errored fifteen tests that have
+    nothing to do with containers.
+
+    A string rather than `None`, because the only caller compares it to
+    `CDB$ROOT` and a `None` would make that comparison quietly false rather than
+    obviously not-the-root. It is the same choice `00_install.sql` makes, and for
+    the same reason.
+    """
     with connection.cursor() as cursor:
-        cursor.execute("select sys_context('userenv','con_name') from dual")
+        try:
+            cursor.execute("select sys_context('userenv','con_name') from dual")
+        except Exception:  # noqa: BLE001 -- ORA-02003 is the answer, not a fault
+            return "NON-CDB"
         return str(cursor.fetchone()[0])
 
 
@@ -377,7 +395,12 @@ def test_an_account_is_still_described_with_the_password_file_unreadable(
     assert state is not None
     assert state.password_file_member is None
     assert state.roles == frozenset(), "§2 grants privileges directly and no roles"
-    assert state.vendor_maintained is False, "the control: DBA_USERS was read"
+    # The control -- `DBA_USERS` was read -- on a field every release supplies.
+    # `vendor_maintained` was the control until #382: `ORACLE_MAINTAINED` does not
+    # exist on 11.2, so it is `None` there for a reason that has nothing to do
+    # with whether the view was readable, and a control that cannot tell those
+    # two apart is not one. `name` comes from the same row and the same query.
+    assert state.name == ACCOUNT.upper(), "the control: DBA_USERS was read"
 
 
 def test_the_audit_reports_the_password_file_rows_as_unaudited(service_account: Any) -> None:

@@ -38,8 +38,8 @@ that ran the suite inside the suite would be a different kind of object.
 "environment unavailable" and whatever they read is invisible to this. The
 script says which it was, and refuses to call the answer complete without them::
 
-    cd test && docker compose --profile tier1 up -d
-    python test/paths_ignore_probe.py
+    docker compose --profile tier1 up -d   # from test/
+    python test/paths_ignore_probe.py       # from the repository root
 
 Exit status is 0 when nothing the suite opens is ignored by either workflow, and
 1 when something is -- so it can be read by a human or by a shell.

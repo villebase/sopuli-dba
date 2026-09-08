@@ -39,8 +39,8 @@ on:
     #
     # To re-measure after adding a test:
     #
-    #   cd test && docker compose --profile tier1 up -d
-    #   python test/paths_ignore_probe.py
+    #   docker compose --profile tier1 up -d   # from test/
+    #   python test/paths_ignore_probe.py       # from the repository root
     #
     # It runs the suite under an audit hook, prints every file under `docs/`,
     # `sql/` or `examples/` that was opened, and exits non-zero if a pattern

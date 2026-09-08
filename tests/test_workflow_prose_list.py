@@ -61,11 +61,13 @@ def test_the_two_prose_lists_are_identical() -> None:
 
 
 def test_neither_list_is_empty() -> None:
-    """A regex that stopped matching would otherwise pass the test above.
+    """A regex that found its block but nothing in it would pass the test above.
 
-    Both extractors return `[]` for a shape they do not recognise, and two empty
-    lists compare equal. Reformatting either workflow -- double quotes for
-    single, say -- would then silently turn this file into a test of nothing.
+    The extractors assert when they cannot find the block at all, so a workflow
+    reorganised out from under them fails loudly. The quieter failure is a block
+    that is still found and no longer yields entries -- reformat either list to
+    double quotes, say, and `findall` returns `[]` for both. Two empty lists
+    compare equal, and this file becomes a test of nothing while staying green.
     """
     tier1 = _paths_ignore((WORKFLOWS / "tier1.yml").read_text(encoding="utf-8"))
     ci = _prose_array((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))

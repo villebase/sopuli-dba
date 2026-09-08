@@ -470,3 +470,5 @@ it on the database and then promotes it — and that is the next document.
 | `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | a vault housekeeping step, needed once per secret path. See [`local-testing.md`](local-testing.md) §8 |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |
 | exit 3 from `creds check` | not an error. Exit 3 means drift was found — the vault's password does not work on the database. It has its own exit code so a scheduler can tell it apart from a failure |
+
+<!-- #375: a prose-only change, to verify the lanes skip. Delete with this branch. -->

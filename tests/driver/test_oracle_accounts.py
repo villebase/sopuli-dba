@@ -345,8 +345,9 @@ def password_file_account(session: Any) -> Iterator[Any]:
     The dependency was incidental in the first place: what this test needs is an
     account an operator would have made, and rollover has nothing to do with the
     password file. So it gets its own rather than a version guard, and the
-    difference is recorded in `docs/design/02-oracle-privileges.md` §5 where it
-    is a fact about Oracle rather than about this fixture.
+    difference is recorded in `docs/design/02-oracle-privileges.md` §2's
+    `V$PWFILE_USERS` subsection -- where it is a fact about the password file and
+    about profiles, rather than about this fixture.
 
     The `alter user ... profile` route reaches the same state on 21c and is not
     used here for the same reason: it would preserve a coupling this test never

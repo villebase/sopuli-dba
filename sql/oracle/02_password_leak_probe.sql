@@ -240,6 +240,12 @@ BEGIN
     SELECT SYS_CONTEXT('USERENV','CON_NAME') INTO :probe_con FROM dual;
   EXCEPTION
     WHEN OTHERS THEN
+      -- ORA-02003 only. Anything else is a real fault, and a probe that
+      -- swallowed it would spool its findings to a log named after a container
+      -- it never reached.
+      IF SQLCODE != -2003 THEN
+        RAISE;
+      END IF;
       :probe_con := 'noncdb';
   END;
 END;
@@ -435,6 +441,13 @@ BEGIN
       INTO :probe_uat;
   EXCEPTION
     WHEN OTHERS THEN
+      -- ORA-00942 only: there is no unified trail here. A privilege or
+      -- configuration failure reading one that *does* exist would set the
+      -- sentinel and make section 4a count events from every previous run,
+      -- which is the separation this watermark exists to provide.
+      IF SQLCODE != -942 THEN
+        RAISE;
+      END IF;
       :probe_uat := '1900-01-01 00:00:00.000000';
   END;
 END;

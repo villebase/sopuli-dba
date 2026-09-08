@@ -25,6 +25,7 @@ from sopuli.driver.oracle.capabilities import (
     APPLICATION_PDB,
     APPLICATION_ROOT,
     CONTAINER_NAME,
+    NO_CONTAINERS,
     PROBES,
     ProbeError,
     ScopeAssertionError,
@@ -122,7 +123,12 @@ def test_the_application_container_questions_are_ones_oracle_can_answer(
         # which is the case this test exists to catch, and it is still caught.
         try:
             cursor.execute(CONTAINER_NAME)
-        except Exception:  # noqa: BLE001 -- ORA-02003 is the answer, not a fault
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            # `ORA-02003` only. Skipping on anything else would let a broken
+            # connection look like an old release, and this test's whole value is
+            # that it does not accept that code as an excuse -- see above.
+            if NO_CONTAINERS not in str(error):
+                raise
             pytest.skip("this release has no containers, so no application containers either")
 
         for statement in (APPLICATION_ROOT, APPLICATION_PDB):

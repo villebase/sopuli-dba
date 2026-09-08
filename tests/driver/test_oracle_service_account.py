@@ -44,6 +44,7 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.driver.oracle.privileges import (
     PASSWORD_FILE_PRIVILEGES,
     REQUIRED_PRIVILEGES,
@@ -115,7 +116,13 @@ def _container(connection: Any) -> str:
     with connection.cursor() as cursor:
         try:
             cursor.execute("select sys_context('userenv','con_name') from dual")
-        except Exception:  # noqa: BLE001 -- ORA-02003 is the answer, not a fault
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            # `ORA-02003` only. Any other failure misclassifies the target shape,
+            # and the caller installs a *common* account or a local one on the
+            # strength of this answer -- so a transient fault would silently
+            # build the wrong account and let the tests pass about it.
+            if NO_CONTAINERS not in str(error):
+                raise
             return "NON-CDB"
         return str(cursor.fetchone()[0])
 

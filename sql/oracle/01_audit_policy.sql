@@ -84,6 +84,13 @@ BEGIN
       INTO l_cnt;
   EXCEPTION
     WHEN OTHERS THEN
+      -- ORA-00942 only: the view is not there, which is what "no unified
+      -- auditing" looks like. ORA-01031 from the same read would mean the
+      -- session may not look, and rewriting that as "this release needs 12.1"
+      -- would send an operator to upgrade a database that is already new enough.
+      IF SQLCODE != -942 THEN
+        RAISE;
+      END IF;
       RAISE_APPLICATION_ERROR(-20020,
         'unified auditing is not available on this release (needs 12.1 or later): '
         || SQLERRM || '. Audit ALTER USER with traditional auditing instead -- '

@@ -138,6 +138,14 @@ BEGIN
     SELECT SYS_CONTEXT('USERENV','CON_NAME') INTO :con_name FROM dual;
   EXCEPTION
     WHEN OTHERS THEN
+      -- ORA-02003 only. It is the one code here that carries information --
+      -- 11.2 saying it has never heard of containers -- and the driver makes the
+      -- same narrowing for the same query (capabilities.NO_CONTAINERS). Anything
+      -- else is a real fault, and swallowing it would install under a container
+      -- name this script invented.
+      IF SQLCODE != -2003 THEN
+        RAISE;
+      END IF;
       :con_name := 'NON-CDB';
   END;
 END;
@@ -173,6 +181,9 @@ BEGIN
     l_con := SYS_CONTEXT('USERENV','CON_NAME');
   EXCEPTION
     WHEN OTHERS THEN
+      IF SQLCODE != -2003 THEN
+        RAISE;   -- see the same narrowing above
+      END IF;
       l_con := 'NON-CDB';
   END;
   IF UPPER('&mode') = 'COMMON' AND l_con != 'CDB$ROOT' THEN

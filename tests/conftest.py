@@ -412,15 +412,21 @@ def _server_version(cursor: Any) -> str | None:
     Two queries rather than a version test, for the reason the driver gives for
     the same shape: `ORA-00904` *is* the answer to "does this release have the
     column".
+
+    **Only `ORA-00904` falls through to the second query.** Anything else --
+    `ORA-01031` on `V$INSTANCE`, a dropped connection -- propagates, so the
+    caller's `except` reports the environment unavailable with that reason
+    instead of this quietly answering `None` about a database it could not read.
+    A missing column and a refused read are different findings and only the first
+    one is a fallback.
     """
-    for query in ("select version_full from v$instance", "select version from v$instance"):
-        try:
-            row = cursor.execute(query).fetchone()
-        except Exception:  # noqa: BLE001 -- the next query is the fallback
-            continue
-        if row:
-            return str(row[0])
-    return None
+    try:
+        row = cursor.execute("select version_full from v$instance").fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified on the next line
+        if "ORA-00904" not in str(error):
+            raise
+        row = cursor.execute("select version from v$instance").fetchone()
+    return str(row[0]) if row else None
 
 
 def _why(exc: BaseException) -> str:

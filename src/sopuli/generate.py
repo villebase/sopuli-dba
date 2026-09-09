@@ -82,6 +82,7 @@ VAULT_ONLY = "VAULT_ONLY"
 __all__ = [
     "Candidate",
     "DocumentWrite",
+    "VAULT_ONLY",
     "candidate_for",
     "group",
     "policy_for",

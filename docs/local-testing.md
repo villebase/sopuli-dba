@@ -208,7 +208,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 26ai Free | `sopuli-test-oracle-free-1` | `127.0.0.1:1521/FREEPDB1` | CDB + PDB |
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` so `status` leaves `DB_PW_CHANGED` empty |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, no `DB_PW_CHANGED`, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here and nowhere else**, so a leak result from this container is not a leak result about Oracle — `../security-model.md` §5 and #387 |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, no `DB_PW_CHANGED`, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other three containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and 19c are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. All three images are already on the machine and reach healthy in about a

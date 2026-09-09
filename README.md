@@ -310,7 +310,7 @@ mechanism, and the on-disk surfaces are entirely unchecked.
 | Open | Why it matters |
 |---|---|
 | **19c** unrun | the version most sites actually run, and not redistributable as a container — needs a hand-built image or real OCI. It is now what two open questions turn on: the password byte limit (#383) and whether 11.2's `V$SQLSTATS` retention reaches it (#387) |
-| **12.1, 12.2 and 19c** unrun | so **the boundary is unknown**. 11.2 retains the DDL text and 18.4 does not; nothing measures where that changed, and no freely pullable image exists for any of the three. Read the 11.2 result as *11.2 does*, never as *everything older does* |
+| **12.1 and 12.2** unrun, and 19c above | so **the boundary is unknown**. 11.2 retains the DDL text and 18.4 does not; nothing measures where between them that changed, and no freely pullable image exists for any release in the gap. Read the 11.2 result as *11.2 does*, never as *everything older does* |
 | **Trace files** — `grep` of `Diag Trace` unreported | the probe emits the command (§7); nobody has run it. Assume not redacted |
 | **OS audit files** — `grep` of `audit_file_dest`, run on 21c, 18c and 11.2 only | clean on all three, including 835 files on 11.2, which is the release it mattered most on. Not yet run on 26ai, and not yet run once with `svc_user = sys` |
 | **AWR / `DBA_HIST_SQLTEXT`** untested | on 26ai it reported `pop=y` in one run and `pop=n` in the next with no snapshot taken; on 11g XE snapshots *were* taken and captured nothing at all, the Diagnostics Pack being off in XE. Needs a licensed EE. Untested, not clean |

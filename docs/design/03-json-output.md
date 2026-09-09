@@ -143,10 +143,10 @@ growing a palette of their own:
 
 | Value | Role | Why |
 |---|---|---|
-| `vaults[].health.status` = `ok` | `good` | |
+| `vaults[].status` = `ok` | `good` | |
 | `= degraded` | `attention` | it **answered** and cannot serve; the reader goes to the vault |
 | `= unreachable` | `bad` | nothing answered; the reader goes to the network |
-| `install[].status` = `not_installed` | `attention` | there is a `pip` line under the table |
+| `install.backends[].status` / `install.drivers[].status` = `not_installed` | `attention` | there is a `pip` line under the table |
 | `= not_implemented`, nothing configured | `muted` | true on every run of this build; colouring it would make every `doctor` look broken |
 | `= not_implemented`, something configured | `bad` | the run's actual failure, exit 9, and no install fixes it |
 | `targets[].reachable` = `false` | `bad` | |

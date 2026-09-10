@@ -482,7 +482,8 @@ sopuli creds apply --application orders-app
 - All succeeded → promote in the vault: `previous = current`, `current = pending`,
   clear `pending`, stamp `rotated_at`/`rotated_by`. Exit 0.
 - Some failed → do **not** promote. `pending` stays. Report per-target status and
-  exit 4 (partial). The remedy is `apply --repair`, which is safe to re-run.
+  exit 4 (partial). The remedy is `apply` again — narrowed by `--repair FILE`
+  where the run's document was captured — and it is safe to re-run either way.
 - All failed → nothing changed anywhere. Exit 1.
 
 **Multi-target atomicity.** There is no distributed transaction across databases.
@@ -696,8 +697,8 @@ A third would be a decision, not an implementation detail.
 
 The spine is implemented: read the source, set the password, verify, promote per
 document. `--strategy` arrived with #262 and is described in §6.3; `--source`
-with #265, and the rollback it exists for is §8. One thing in the sketch above is
-still **not** in this build — `--repair` (#264, whose input is settled below).
+with #265, and the rollback it exists for is §8. `--repair` arrived with #391
+and is described below. **Every flag in the sketch above is now built.**
 
 A second, `--continue-on-error`, was in that sketch and has been **removed from
 it** rather than built (#266); the section below says why, because a flag that
@@ -907,9 +908,8 @@ sopuli creds apply --repair result.json   # act only on what that run left uncon
 
 **The list comes from a previous run's document.** `--repair` takes a path to
 one — an `apply` that exited 4, or a `check` that exited 3 — and narrows this run
-to the (account, target) pairs it reported as not confirmed. That is decided;
-the flag itself is not in this build, and what follows is what it will be when it
-lands.
+to the (account, target) pairs it reported as not confirmed. Built in #391; what
+follows is what it does.
 
 **What it buys is logins, not capability.** `apply` is already idempotent: every
 account is verified before it is touched and one that already works is left
@@ -941,13 +941,40 @@ written:
   `changed: false`,** because the pre-flight asks before it acts.
 
 Acting on a stale document is therefore wasteful rather than dangerous, so
-freshness is a **warning naming the document's age**, not a gate with a threshold
-in it: a threshold would have to be wrong for somebody, and the run it refused
-would have been safe. What *is* refused is a document describing a different
-estate — `--repair` reads `command` and `config.sources[]`, and one not produced
-by `creds apply` or `creds check` over this configuration is rejected before a
-target is dialled. A repair aimed at the wrong estate is the one failure the two
-properties above do not catch.
+freshness is a **warning naming the document's age** — `SOPULI-W020` — not a gate
+with a threshold in it: a threshold would have to be wrong for somebody, and the
+run it refused would have been safe. What *is* refused is a document describing a
+different estate, before a target is dialled. A repair aimed at the wrong estate
+is the one failure the two properties above do not catch.
+
+**It reads `invocation.config_files`, not `config.sources[]`**, and this
+paragraph said the second until #391 built it. The `config` section is emitted by
+`config show` and `target list` only, so it is absent from every document this
+flag can be handed — the estate could not have been checked the way this was
+written. `invocation.config_files` was itself declared and never written until
+#402; a document produced before that carries none and is refused, on whether the
+field is *there* rather than on what version wrote it.
+
+Paths and not their content, which decides one case worth naming: the same file
+copied to a second path is a different estate to this check, and moving a config
+file invalidates the documents produced over it. The message names both lists, so
+the operator can see which. Order matters too — it is the layering order (§5 of
+`01-configuration.md`), so the same files layered the other way round resolved
+different settings and are not the same estate.
+
+**The refusal exits 2, with no run document** (J7). That is what every other
+selector does when it does not resolve: `--target nosuch` already raises
+`ArgumentError` from `refuse_unknown`, and `--repair` feeds a filter, so a filter
+that does not resolve is an invocation that did not resolve. Exit 9 was the
+alternative and was declined in #391 — it means *fix your configuration*, and the
+configuration here is fine.
+
+**The promotion still commits per document, over this run's scope.** A repair
+narrowed to one of a document's two accounts promotes that document once its own
+pairs confirm, without re-verifying the sibling the earlier run already applied.
+That is not new and not specific to this flag — `--account` has always narrowed
+within a document the same way — but `--repair` is the flag that makes it
+ordinary, so it is written down here rather than left to be discovered.
 
 **Exit 4 names the invocation that repairs it, and that part shipped.** A partial
 run's closing line says what to type, narrowed the way that run was narrowed and
@@ -959,11 +986,23 @@ resolves and acts the way the run did:
 repair with: sopuli creds apply --config estate.yaml --select env=prod
 ```
 
-It names the plain re-run rather than `--repair`, because that is the invocation
-that works today — safe (invariant 9) and merely more expensive than the flag
-will be. Sending somebody holding a half-applied estate to a usage error is worse
-than sending them to a slow remedy. The flag replaces it in this message when it
-ships.
+It **still** names the plain re-run now that `--repair` exists, and #391 found
+the reason this section could not have known. The emitter writes the JSON
+document or the human text and never both, so this line is only ever read in
+**text** mode — and a text-mode run leaves no document on disk for `--repair` to
+be pointed at. Replacing the line would hand a half-applied estate an invocation
+that cannot run, which is the same trap the paragraph above refuses.
+
+So the flag gets a second line instead, saying what it needs:
+
+```
+1 changed, 1 not confirmed
+repair with: sopuli creds apply --config estate.yaml --select env=prod
+         or: --repair FILE, if you captured this run with --output json
+```
+
+A JSON consumer needs no line at all: it has `results[]`, and
+`03-json-output.md` §7's recipe is the same filter the flag applies.
 
 Both shapes of exit 4 get the line: targets that did not confirm, and an estate
 that confirmed while its vault was not promoted. The second is §8 case 7 —

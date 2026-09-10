@@ -417,11 +417,19 @@ def repair_invocation(
     No other stage gets it: `--confirm` being on that operation alone is the
     point of having it.
 
-    **Not a `--repair FILE` invocation yet.** #264 decided that flag reads a
-    previous run's document; until it ships, the invocation that actually repairs
-    a partial run is this one -- safe to re-run (invariant 9) and merely more
-    expensive than the flag will be. Naming a flag this build has not got would
-    send an operator holding a half-applied estate to a usage error.
+    **Still the plain re-run, now that `--repair FILE` exists** (#391), and the
+    reason is one UC-1 could not have known when it said the flag would replace
+    this line. :meth:`~sopuli.output.emit.Emitter.emit` writes "the JSON
+    document, or the human text, never both" -- so this line is only ever read
+    by somebody in **text** mode, and a text-mode run leaves no document on disk
+    for ``--repair`` to be pointed at. Replacing the line would hand a half-
+    applied estate an invocation that cannot run, which is the trap the
+    paragraph above already refused once.
+
+    The flag is named on a second line instead, conditional on nothing and
+    promising nothing: it says what it needs. A JSON consumer needs no line at
+    all -- it has ``results[]``, and ``03-json-output.md`` §7's recipe is the
+    same filter this flag applies.
     """
     words = ["sopuli", "creds", "apply"]
     for path in config_paths:
@@ -593,7 +601,19 @@ def _with_remedy(line: str, repair: str | None, stopped: str | None = None) -> s
     remedy nor a reason is a field the document carries. The remedy is also the
     line somebody copies, which is a second reason to keep escape sequences out
     of it.
+
+    ``--repair`` gets the third line and the conditional wording, because this
+    text is only ever read in text mode and a text-mode run captured no document
+    (see :func:`repair_invocation`). It is worth saying anyway: an operator
+    meeting exit 4 twice is exactly who should know the cheaper route exists,
+    and *what it costs to have one* is the part they can act on before the next
+    run rather than after it.
     """
     if stopped is not None:
         return f"{line}\n{stopped}"
-    return line if repair is None else f"{line}\nrepair with: {repair}"
+    if repair is None:
+        return line
+    return (
+        f"{line}\nrepair with: {repair}\n"
+        f"         or: --repair FILE, if you captured this run with --output json"
+    )

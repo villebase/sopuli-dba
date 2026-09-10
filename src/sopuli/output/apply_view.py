@@ -583,12 +583,14 @@ def _verdict(
         line = ", ".join(parts)
         if not (changed and not promoted):
             line = paint(line, Role.HEADING)
-        return _with_remedy(line, repair, stopped)
+        return _with_remedy(line, repair, stopped, flag=False)
     parts.append(f"{unconfirmed} not confirmed")
-    return _with_remedy(", ".join(parts), repair, stopped)
+    return _with_remedy(", ".join(parts), repair, stopped, flag=True)
 
 
-def _with_remedy(line: str, repair: str | None, stopped: str | None = None) -> str:
+def _with_remedy(
+    line: str, repair: str | None, stopped: str | None = None, *, flag: bool = False
+) -> str:
     """The verdict, and under it either why the run stopped or what to type next.
 
     Never both, and ``stopped`` wins. A run whose lock was taken over has an
@@ -608,12 +610,20 @@ def _with_remedy(line: str, repair: str | None, stopped: str | None = None) -> s
     meeting exit 4 twice is exactly who should know the cheaper route exists,
     and *what it costs to have one* is the part they can act on before the next
     run rather than after it.
+
+    ``flag`` is that third line's own condition, and it is not the same as
+    ``repair``'s (found in review on #391). Exit 4 has two shapes and the plain
+    re-run fixes both, but ``--repair`` only fixes one: on UC-1 §8 case 7 --
+    every target confirmed and the vault not promoted -- there is no unconfirmed
+    row for a repair set to be built from, so the flag would filter the estate
+    to nothing and report ``nothing to apply``. Advertising it there sends the
+    reader to a command that does nothing about the case they are in.
     """
     if stopped is not None:
         return f"{line}\n{stopped}"
     if repair is None:
         return line
-    return (
-        f"{line}\nrepair with: {repair}\n"
-        f"         or: --repair FILE, if you captured this run with --output json"
-    )
+    remedy = f"{line}\nrepair with: {repair}"
+    if not flag:
+        return remedy
+    return f"{remedy}\n         or: --repair FILE, if you captured this run with --output json"

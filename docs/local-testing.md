@@ -1246,9 +1246,39 @@ repair with: sopuli creds apply --config C:\tmp\sopuli-guide\sopuli.yaml --selec
          or: --repair FILE, if you captured this run with --output json
 ```
 
-Exit 4. Unlock the account, capture that run with `--output json`, and repair
-from it: the pending is applied to the one account that missed it and *then*
-promoted, which is invariant 7's ordering surviving the narrowing.
+Exit 4 — but that run was text mode, so it captured nothing. **Re-run it as JSON
+while the account is still locked**, which is the document you actually repair
+from:
+
+```bash
+sopuli --config sopuli.yaml --output json creds apply --select tier=sandbox > partial.json
+echo "exit $?"      # 4
+```
+
+*Then* unlock the account and repair from that document:
+
+```sql
+ALTER USER acme_batch_user ACCOUNT UNLOCK;
+```
+
+```bash
+sopuli --config sopuli.yaml creds apply --repair partial.json
+```
+
+```
+ACCOUNT          TARGET    SECRET                   SOURCE
+acme_batch_user  free-pdb  vault-dev:acme/dev/acme  pending
+
+ACCOUNT          TARGET    STATE    DETAIL
+acme_batch_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+```
+
+The pending is applied to the one account that missed it and *then* promoted,
+which is invariant 7's ordering surviving the narrowing. Getting the order wrong
+is worth doing once: unlock first and the locked run's document is the one you
+already fixed, so the repair set is empty and you get `nothing to apply`.
 
 #### The refusals, which are most of the value
 
@@ -1290,7 +1320,7 @@ refused rather than trusted. Cause it on purpose by deleting that key from a
 captured document:
 
 ```
-sopuli: --repair: C:	mp\sopuli-guide\old.json: names no config files, so it cannot be shown to describe this estate
+sopuli: --repair: C:\tmp\sopuli-guide\old.json: names no config files, so it cannot be shown to describe this estate
   hint: `invocation.config_files` arrived in #402 -- re-run the command that produced this document to get one that carries it
 ```
 

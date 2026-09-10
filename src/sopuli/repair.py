@@ -69,6 +69,15 @@ PRODUCERS = ("creds.apply", "creds.check")
 #: step with it deliberately: an operator filtering by hand and this flag must
 #: not disagree about what a partial run left behind.
 #:
+#: **The filter is the row's state, never the document's exit code**, and that
+#: is deliberate rather than an omission (raised in review on #391). Refusing a
+#: producer by exit code would refuse an ``apply`` that exited 1 -- every target
+#: failed, nothing changed anywhere -- which is the document most worth
+#: repairing from. It would also refuse a ``check`` that exited 1 because one
+#: target was unreachable, where retrying is exactly the remedy. Nothing is lost
+#: by accepting them: ``apply`` verifies every pair before it touches it, and
+#: invariant 5 still bounds what it can reach.
+#:
 #: ``ROLLOVER_ACTIVE`` is confirmed because the window is open and both passwords
 #: authenticate: the target took the new one, and what remains is
 #: ``creds finish-rollover`` rather than an apply.
@@ -159,7 +168,18 @@ def _load(path: Path) -> dict[str, Any]:
             hint="this flag reads a run document, which is what `--output json` writes",
         ) from problem
 
-    if not isinstance(document, dict) or "command" not in document:
+    if (
+        not isinstance(document, dict)
+        or not isinstance(document.get("command"), str)
+        or not isinstance(document.get("invocation", {}), dict)
+        or not isinstance(document.get("results") or [], list)
+    ):
+        # Every shape this module goes on to walk, checked in one place. Found
+        # in review on #391: an `invocation` that was a string reached
+        # `_refuse_foreign` and raised `AttributeError`, and a `config_files`
+        # holding numbers reached `os.path.abspath` and raised `TypeError` --
+        # both exit 1 with a traceback, from a reader whose whole contract is
+        # that a file it cannot use is exit 2 with a message.
         raise ArgumentError(
             f"{path}: is JSON, but not a run document",
             at=AT_REPAIR,
@@ -193,40 +213,72 @@ def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[P
     to a document instead of a database.
     """
     declared = document.get("invocation", {}).get("config_files")
-    if not declared:
+    if (
+        not declared
+        or not isinstance(declared, list)
+        or not all(isinstance(one, str) for one in declared)
+    ):
         raise ArgumentError(
-            f"{path}: names no config files, so it cannot be shown to describe this estate",
+            f"{path}: names no usable config files, so it cannot be shown to describe this estate",
             at=AT_REPAIR,
             hint=(
-                "`invocation.config_files` arrived in #402 -- re-run the command that "
-                "produced this document to get one that carries it"
+                "`invocation.config_files` arrived in #402 and is a list of paths -- re-run "
+                "the command that produced this document to get one that carries it"
             ),
         )
 
-    if _normalise(declared) != _normalise(str(one) for one in sources):
+    mine = [_absolute(str(one)) for one in sources]
+    theirs = [_absolute(one) for one in declared]
+    if _comparable(theirs) != _comparable(mine):
+        # Both sides shown normalised. The document's paths are resolved by its
+        # producer (#391), but this run's may be relative as typed, and a hint
+        # that compared a resolved list against a bare `estate.yaml` would ask
+        # the reader to do the normalising in their head.
         raise ArgumentError(
             f"{path}: was produced over a different configuration",
             at=AT_REPAIR,
-            hint=(
-                f"produced over {', '.join(declared)}; this run resolves "
-                f"{', '.join(str(one) for one in sources)}"
-            ),
+            hint=f"produced over {', '.join(theirs)}; this run resolves {', '.join(mine)}",
         )
 
 
-def _normalise(paths: Any) -> tuple[str, ...]:
-    """Paths comparable across the two runs, order preserved.
+def _absolute(path: str) -> str:
+    """One path, made absolute and user-expanded, but still readable.
+
+    ``abspath`` resolves against *this* run's working directory, which is right
+    for this run's own sources and meaningless for the document's -- those are
+    resolved by their producer before being written (#391, #402). A relative
+    entry in a document therefore stays relative here and fails the comparison,
+    which is the intended answer: it came from a build that did not record where
+    it was standing.
+    """
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def _comparable(paths: Any) -> tuple[str, ...]:
+    """The same paths reduced to what may be *compared*, order preserved.
+
+    Split from :func:`_absolute` so the message can show a path a reader
+    recognises: ``normcase`` lower-cases on Windows, and a hint quoting a
+    lower-cased drive and home directory reads as a bug rather than as a
+    comparison.
 
     ``normcase`` because Windows is case- and separator-insensitive and the two
-    runs may have spelled one path either way; ``abspath`` because a scheduled
-    run and a hand-typed repair may disagree about the working directory without
-    disagreeing about the file.
+    runs may have spelled one path either way; ``abspath`` for *this* run's
+    side, which is whatever was typed on the command line.
+
+    **It does not make the comparison sound on its own**, and an earlier version
+    of this leaned on it as though it did (found in review on #391). ``abspath``
+    runs during the repair, so it resolves against the repairing run's working
+    directory -- which tells you nothing about the one the document was written
+    in. Two different files both called ``estate.yaml`` compared equal. The
+    producer resolves before writing, and that is what fixed it; this stays for
+    spelling.
 
     Order is kept rather than sorted: it is the layering order
     (``01-configuration.md`` §5), so two runs over the same files in the
     opposite order resolved different settings and are not the same estate.
     """
-    return tuple(os.path.normcase(os.path.abspath(os.path.expanduser(one))) for one in paths)
+    return tuple(os.path.normcase(one) for one in paths)
 
 
 def _unconfirmed(document: dict[str, Any]) -> tuple[AccountTarget, ...]:

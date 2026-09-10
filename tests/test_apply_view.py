@@ -413,6 +413,22 @@ def test_a_run_with_no_remedy_names_no_flag_either() -> None:
     assert "--repair" not in apply_view.render_apply(rows, promoted=1)
 
 
+def test_the_flag_is_not_offered_where_it_would_do_nothing() -> None:
+    """Exit 4's other shape: every target confirmed, the vault not promoted
+    (UC-1 §8 case 7). Found in review on #391.
+
+    The plain re-run fixes it; `--repair` cannot, because there is no
+    unconfirmed row for a repair set to be built from -- the flag would filter
+    the estate to nothing and report `nothing to apply`.
+    """
+    rows = [(binding(), outcome(), True)]
+
+    rendered = apply_view.render_apply(rows, promoted=0, repair="sopuli creds apply")
+
+    assert "repair with: sopuli creds apply" in rendered
+    assert "--repair FILE" not in rendered
+
+
 def test_a_run_that_did_not_exit_four_offers_no_remedy() -> None:
     """The renderer never decides this. Offering a remedy on a run the exit code
     called successful would be the two describing one run differently."""

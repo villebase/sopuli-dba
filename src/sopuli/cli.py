@@ -2944,7 +2944,9 @@ def creds_apply(
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
         if preflight.refusal(findings) is not None:
-            return _refuse_preflight(findings, document, header=_header(plan, sources))
+            return _refuse_preflight(
+                findings, document, header=_header(plan, sources), notes=repair_notes
+            )
         document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
         return "\n".join(
             [
@@ -2978,7 +2980,9 @@ def creds_apply(
                 # cannot change between the survey and the run it was surveying
                 # for. Releasing happens on the way out of `holding`, as it does
                 # on every other path.
-                return _refuse_preflight(findings, document, header=_header(plan, sources))
+                return _refuse_preflight(
+                    findings, document, header=_header(plan, sources), notes=repair_notes
+                )
             applied, stolen = _apply_estate(
                 sources,
                 run,
@@ -4151,7 +4155,9 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
     ]
 
 
-def _refuse_preflight(findings: Sequence[Finding], document: Any, *, header: str) -> str:
+def _refuse_preflight(
+    findings: Sequence[Finding], document: Any, *, header: str, notes: Sequence[str] = ()
+) -> str:
     """Report the refusal, and change nothing.
 
     Exit 1, which is what "nothing changed anywhere" already means for this verb
@@ -4159,6 +4165,13 @@ def _refuse_preflight(findings: Sequence[Finding], document: Any, *, header: str
     as a file that could not be read, and `config validate` would pass on every
     one of these. Not exit 5 either -- that is invariant 4's capability code, and
     the capability refusal never reaches here because it raises.
+
+    ``notes`` carries the run-level notices the ordinary return paths render, so
+    a refusal does not silently drop them (found in review on #391). A stale
+    ``--repair`` document under ``--preflight`` was serialised into
+    ``diagnostics[]`` and printed nowhere, which is exactly the invisibility
+    #309's rule exists to prevent -- and a refusal is a worse place to lose a
+    warning than a success, because it is where somebody is already reading.
     """
     first = preflight.refusal(findings)
     if first is None:  # pragma: no cover - the caller asks before calling

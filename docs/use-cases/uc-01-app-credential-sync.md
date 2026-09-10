@@ -907,9 +907,19 @@ sopuli creds apply --repair result.json   # act only on what that run left uncon
 ```
 
 **The list comes from a previous run's document.** `--repair` takes a path to
-one — an `apply` that exited 4, or a `check` that exited 3 — and narrows this run
-to the (account, target) pairs it reported as not confirmed. Built in #391; what
-follows is what it does.
+one — typically an `apply` that exited 4, or a `check` that exited 3 — and
+narrows this run to the (account, target) pairs it reported as not confirmed.
+Built in #391; what follows is what it does.
+
+**The filter is the row's state, never the document's exit code**, and that is
+deliberate rather than an omission (raised in review on #391). Refusing by exit
+code would refuse an `apply` that exited 1 — every target failed, nothing
+changed anywhere — which is the document *most* worth repairing from; and a
+`check` that exited 1 because one target was unreachable, where retrying is
+exactly the remedy. Nothing is lost by accepting them: `apply` verifies every
+pair before it touches it, and invariant 5 still bounds what it can reach. What
+the producer check refuses is a document from a command that reports no repair
+set at all, such as `creds generate`.
 
 **What it buys is logins, not capability.** `apply` is already idempotent: every
 account is verified before it is touched and one that already works is left
@@ -987,7 +997,7 @@ repair with: sopuli creds apply --config estate.yaml --select env=prod
 ```
 
 It **still** names the plain re-run now that `--repair` exists, and #391 found
-the reason this section could not have known. The emitter writes the JSON
+two reasons this section could not have known. The first: The emitter writes the JSON
 document or the human text and never both, so this line is only ever read in
 **text** mode — and a text-mode run leaves no document on disk for `--repair` to
 be pointed at. Replacing the line would hand a half-applied estate an invocation
@@ -1003,6 +1013,13 @@ repair with: sopuli creds apply --config estate.yaml --select env=prod
 
 A JSON consumer needs no line at all: it has `results[]`, and
 `03-json-output.md` §7's recipe is the same filter the flag applies.
+
+The second reason is that **the flag does not fix both shapes of exit 4.** On
+§8 case 7 — every target confirmed and the vault not promoted — there is no
+unconfirmed row for a repair set to be built from, so `--repair` would filter
+the estate to nothing and report `nothing to apply`. The plain re-run does fix
+it. So the flag's line is printed only where an unconfirmed row exists, while
+the re-run's is printed on both (found in review on #391).
 
 Both shapes of exit 4 get the line: targets that did not confirm, and an estate
 that confirmed while its vault was not promoted. The second is §8 case 7 —

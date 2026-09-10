@@ -205,7 +205,7 @@ class TestRefusals:
         with pytest.raises(ArgumentError) as caught:
             read(path, sources=[Path(ESTATE)])
 
-        assert "names no config files" in str(caught.value)
+        assert "names no usable config files" in str(caught.value)
 
     def test_the_same_files_in_a_different_order_are_a_different_estate(
         self, tmp_path: Path
@@ -227,6 +227,103 @@ class TestRefusals:
         found = read(path, sources=[Path(str(real).replace("\\", "/"))])
 
         assert found.command == "creds.apply"
+
+    def test_a_relative_path_in_the_document_is_not_normalised_into_a_match(
+        self, tmp_path: Path
+    ) -> None:
+        """The estate check's whole job, and it did not do it (found in review
+        on #391).
+
+        `abspath` runs during the *repair*, so it resolves against the repairing
+        run's working directory and tells you nothing about the writing run's.
+        A document written in one directory with `--config estate.yaml` and
+        repaired in another against a different `estate.yaml` compared equal and
+        was accepted. The producer resolves before writing (#402), so a relative
+        entry can now only be a document from before that -- and must not be
+        rescued by normalising it here.
+        """
+        path = written(tmp_path, document(config_files=["estate.yaml"]))
+
+        with pytest.raises(ArgumentError) as caught:
+            read(path, sources=[tmp_path / "estate.yaml"])
+
+        assert "different configuration" in str(caught.value)
+
+
+class TestMalformedShapes:
+    """A file this reader cannot use is exit 2 with a message, never a
+    traceback (found in review on #391). Each of these reached an internal
+    error before the shape check was one place instead of several."""
+
+    def test_an_invocation_that_is_not_an_object(self, tmp_path: Path) -> None:
+        path = written(tmp_path, {"command": "creds.apply", "invocation": "nope"})
+
+        with pytest.raises(ArgumentError) as caught:
+            read(path, sources=[Path(ESTATE)])
+
+        assert caught.value.exit_code == ExitCode.USAGE
+
+    def test_results_that_are_not_a_list(self, tmp_path: Path) -> None:
+        path = written(
+            tmp_path,
+            {
+                "command": "creds.apply",
+                "invocation": {"config_files": [ESTATE]},
+                "results": "nope",
+            },
+        )
+
+        with pytest.raises(ArgumentError):
+            read(path, sources=[Path(ESTATE)])
+
+    def test_config_files_holding_something_other_than_paths(self, tmp_path: Path) -> None:
+        """Reached `os.path.abspath` and raised `TypeError` before the check
+        looked at the entries rather than only at the list."""
+        path = written(tmp_path, document(config_files=[1, 2]))  # type: ignore[list-item]
+
+        with pytest.raises(ArgumentError):
+            read(path, sources=[Path(ESTATE)])
+
+    def test_config_files_that_is_not_a_list(self, tmp_path: Path) -> None:
+        path = written(tmp_path, document(config_files="/etc/sopuli/estate.yaml"))  # type: ignore[arg-type]
+
+        with pytest.raises(ArgumentError):
+            read(path, sources=[Path(ESTATE)])
+
+    def test_a_non_string_command(self, tmp_path: Path) -> None:
+        """This one already refused correctly -- a tuple membership test does
+        not raise on a non-string -- and is kept so the shape check cannot
+        regress it into one."""
+        with pytest.raises(ArgumentError):
+            read(written(tmp_path, {"command": 123}), sources=[Path(ESTATE)])
+
+
+# --------------------------------------------- the exit code is not a filter ---
+
+
+class TestExitCodeIsNotAFilter:
+    """Raised in review on #391 as a reason to refuse, and declined.
+
+    Refusing a producer by exit code would refuse the documents most worth
+    repairing from. `apply` verifies every pair before touching it and
+    invariant 5 bounds what it can reach, so accepting them costs nothing.
+    """
+
+    def test_an_apply_that_failed_everywhere_is_repairable(self, tmp_path: Path) -> None:
+        """Exit 1 for `apply` is "nothing changed anywhere" (UC-1 §5) -- every
+        row unconfirmed, which is precisely a repair set."""
+        body = document(command="creds.apply", results=[row("a", "t", "ERROR")])
+        body["exit_code"] = 1
+
+        assert read(written(tmp_path, body), sources=[Path(ESTATE)]).pairs == (("a", "t"),)
+
+    def test_a_check_that_could_not_reach_a_target_is_repairable(self, tmp_path: Path) -> None:
+        """`check.exit_code_for` reserves 1 for a run that produced no answer
+        somewhere. Retrying that pair is the remedy, not a hazard."""
+        body = document(command="creds.check", results=[row("a", "t", "ERROR")])
+        body["exit_code"] = 1
+
+        assert read(written(tmp_path, body), sources=[Path(ESTATE)]).pairs == (("a", "t"),)
 
 
 # ---------------------------------------------------------- staleness ---

@@ -405,10 +405,12 @@ two runs over the same paths are the same estate for that question. A file edite
 between them is a staleness question, and belongs to whatever compares the
 documents rather than to their identity.
 
-Absent, not empty, on a run that read no file: `doctor` and `policy sample` can
-run without one, and an empty array would claim a run looked and found nothing.
-Absent too when a file was found and rejected — the run has no loaded config to
-report, and the `error` on exit 9 names the path.
+**Absent, not empty, on a run that never loaded a configuration layer** — the
+file was missing, unreadable or rejected. There is no verb for which that is the
+ordinary case: every command loads a config before its body runs, so absence
+here always means the run got no further than trying, and the `error` on exit 9
+names the path. An empty array would say the run looked and found nothing, which
+is a different statement.
 
 ### `invocation.correlation_id`
 

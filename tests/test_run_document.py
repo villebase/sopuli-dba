@@ -170,6 +170,72 @@ def test_optional_sections_are_omitted_not_nulled() -> None:
         assert optional not in document
 
 
+# ------------------------------------------- invocation.config_files (#402) ---
+
+
+def test_a_real_run_names_the_config_file_it_read(config_file: Path) -> None:
+    """The field was in the schema and in the committed example for months and
+    no run wrote it (#402), so this asserts the producer rather than the shape.
+
+    Through the CLI on purpose: the gap was between what the document *could*
+    carry and what the wiring filled in, and a test that built a
+    :class:`RunDocument` by hand would have passed throughout.
+    """
+    result = CliRunner().invoke(
+        cli, ["target", "list", "--config", str(config_file), "--output", "json"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert json.loads(result.output)["invocation"]["config_files"] == [str(config_file)]
+
+
+def test_config_files_is_absent_when_no_file_was_read() -> None:
+    """Absent and not empty, which is this document's rule everywhere: an empty
+    array would claim the run looked for a file and found none, and what it
+    means is that the run never needed one."""
+    document = RunDocument.start("policy.sample").finish(ExitCode.SUCCESS).to_dict()
+    assert "config_files" not in document["invocation"]
+
+
+def test_config_files_keeps_layering_order() -> None:
+    """The order is the contract, not the set. `01-configuration.md` §5 layers
+    later files over earlier ones, so a document that sorted them would describe
+    a precedence the run did not use."""
+    document = RunDocument.start("creds.apply")
+    document.config_files = ("/etc/sopuli/site.yaml", "/home/dba/team.yaml")
+
+    assert document.to_dict()["invocation"]["config_files"] == [
+        "/etc/sopuli/site.yaml",
+        "/home/dba/team.yaml",
+    ]
+
+
+def test_the_committed_example_carries_no_field_the_producer_cannot_write() -> None:
+    """What let `config_files` sit unproduced for months (#402).
+
+    ``tests/test_schemas.py`` validates the example against the schema, and it
+    passed the whole time -- conformance is not the claim *a run produces this*.
+    The example is hand-written and cited from the design documents, so a key in
+    it that no run can emit is a documented lie about the tool's output.
+
+    Checked as a subset rather than an equality: an example showing a narrower
+    run than the maximum is exactly what an example is for.
+    """
+    every_field = RunDocument.start("creds.check")
+    every_field.profile = "scheduled"
+    every_field.config_files = ("/etc/sopuli/config.yaml",)
+    every_field.selection = {"applications": ["orders-app"]}
+    every_field.options = {"output": Option(value="json", source="cli")}
+    producible = set(every_field.finish(ExitCode.SUCCESS).to_dict()["invocation"])
+
+    example = json.loads(
+        (REPO_ROOT / "docs" / "schemas" / "example-creds-check-drift.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(example["invocation"]) <= producible
+
+
 def test_timestamps_are_rfc3339_utc_with_trailing_z() -> None:
     stamp = to_rfc3339(utc_now())
     assert stamp.endswith("Z")

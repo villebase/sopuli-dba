@@ -26,14 +26,14 @@ reference this guide only skims.
 
 ## 1. What actually exists, before you plan an evening around it
 
-`sopuli --help` lists five nouns, and the implemented surface is **thirteen
+`sopuli --help` lists five nouns, and the implemented surface is **fourteen
 commands**:
 
 ```
 sopuli config validate      sopuli creds generate         sopuli lock status
 sopuli config show          sopuli creds apply            sopuli lock break
 sopuli target list          sopuli creds check            sopuli doctor
-sopuli policy sample        sopuli creds rotate
+sopuli policy sample        sopuli creds rotate           sopuli about
                             sopuli creds status
                             sopuli creds finish-rollover
 ```
@@ -113,6 +113,64 @@ that lands in every `--output json` run document as `tool.version` — so an aud
 sample captured that way is wrong in the one field an auditor would trust.
 `pip install -e . --no-deps` refreshes the metadata in a second or two; do it
 after any pull that crossed a release.
+
+### `sopuli about`, the one command that needs nothing at all
+
+No config, no Docker, no Instant Client, no vault. It is the first thing that
+proves the install works, and the second place the version appears:
+
+```
+$ sopuli about
+ ####  ###  ####  #   # #     #####
+#     #   # #   # #   # #       #
+ ###  #   # ####  #   # #       #
+    # #   # #     #   # #       #
+####   ###  #      ###  ##### #####
+
+         ####  ####   ###
+         #   # #   # #   #
+         #   # ####  #####
+         #   # #   # #   #
+         ####  ####  #   #
+
+Database credential rotation, without the ceremony.
+version 0.61.0
+https://github.com/villebase/sopuli-dba
+
+Maintained by Ville (github.com/villebase)
+Support the project: https://ko-fi.com/villeronkko
+```
+
+The banner is cyan and bold on a terminal and plain everywhere else — piped,
+redirected, under `NO_COLOR=1`, or with `--color never`. Nothing is lost either
+way; there is no word on that screen that only the colour is carrying.
+
+**It takes no options at all**, which is worth causing on purpose once, because
+the message names the flag rather than the rule:
+
+```
+$ sopuli about --output json
+Usage: sopuli about [OPTIONS]
+Try 'sopuli about --help' for help.
+
+Error: No such option '--output'.
+```
+
+Exit 2. There is no `--output json` for `about` anywhere — `sopuli --output json
+about` parses, because `--output` is a group option, and then prints the same
+banner, because there is no run to describe. That is the whole design: `about`
+is a screen, not a run, which is also why it is not in the JSON contract's
+`command` enum (`03-json-output.md` §6, J7).
+
+`--color` is the one global flag it honours, and only before the verb:
+
+```
+$ sopuli --color never about      # plain
+$ sopuli about --color never      # exit 2, no such option
+```
+
+If you want the version in a script, use `sopuli --version` — one line, never
+coloured, never a banner. That is what `about` exists to keep true.
 
 ---
 

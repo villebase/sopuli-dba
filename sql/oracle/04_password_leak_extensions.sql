@@ -2,7 +2,8 @@
 -- sopuli-dba : password leakage probe, extensions   (v1)
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (FREEPDB1) and 21c XE 21.3.0.0.0
--- (XEPDB1) on 2026-09-11 (#407). Every finding below is from those two runs.
+-- (XEPDB1) on 2026-09-11 (#407), and re-run on both after the review of #410
+-- changed what §3 measures. Every finding below is from the later runs.
 -- Untried on 18c, 11.2, 12.x and 19c.
 --
 -- The three checks `02_password_leak_probe.sql` §6 and §7 described and left for
@@ -46,9 +47,27 @@
 --       `AUDIT USER` on 21c as well. Both secrets are masked -- the REPLACE
 --       clause carries the *current* password and is masked with the same `*`.
 --
---   6b  THE VERIFIER IS MASKED TOO:
+--   6b  THE VERIFIER IS MASKED TOO, in the trail and under trace alike:
 --
 --         ALTER USER sopulitest IDENTIFIED BY VALUES *
+--
+--       And the DDL truncates in a traced session exactly as the password form
+--       does -- `len=44` declared, `ALTER USER sopulitest IDE` printed, cut at
+--       the same character. No raw verifier (`S:` followed by 60 hex) appears
+--       in any trace file or any OS audit file on either release.
+--
+--       **6b is issued under trace for this reason and it was not at first.**
+--       The first version switched tracing off before §3, so "the verifier
+--       appears in no trace file" was a claim about files that could not have
+--       contained it -- clean because nothing was tracing. That is the `pop=n`
+--       rule, committed by the script whose job is to apply it. Copilot caught
+--       it on #410; the fix was to measure rather than to soften the claim.
+--
+--       One limit, stated because the result is otherwise easy to over-read:
+--       §3 builds the DDL by concatenation, so the PL/SQL block's own text
+--       never holds the verifier. A block with a verifier written into it as a
+--       LITERAL would leak exactly as C8 does. The finding is about the DDL,
+--       not about any way of reaching it -- invariant 13, one more time.
 --
 --       So the restore-from-verifier path, if one is ever added, does not
 --       widen the audit exposure. It is still offline-crackable wherever the
@@ -146,9 +165,16 @@ DEFINE c5   = S0puliCanary5Eq7x
 DEFINE c6   = S0puliCanary6Fq7x
 DEFINE c8   = S0puliCanary8Hq7x
 
+-- **EXIT mode stays on through setup and through every mutation**, and is
+-- relaxed only around the release-specific reads that are *expected* to fail on
+-- some releases. The main probe switches to CONTINUE straight after connecting,
+-- which is right for it -- its §1 deliberately queries views that do not exist
+-- everywhere. Copying that here would have made the §0 guard below decorative:
+-- a missing service account, a failed CREATE USER or a failed rotation would
+-- print an error and carry on to report a masking result nothing produced,
+-- which is the exact failure this file's HOW TO RUN warns about.
 WHENEVER SQLERROR EXIT FAILURE
 CONNECT &sys_user/"&sys_pwd"@&tns AS SYSDBA
-WHENEVER SQLERROR CONTINUE NONE
 SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 
 PROMPT
@@ -172,12 +198,19 @@ END;
 -- Dropped rather than refused, unlike the main probe: that one plants the
 -- canaries a whole release gate is read off and must not touch an account
 -- somebody else made. This one runs after it, on the account it made.
+--
+-- ORA-01918 only. `WHEN OTHERS THEN NULL` here would swallow a drop that failed
+-- for a real reason -- an active session, a locked account -- and the script
+-- would then measure a PRE-EXISTING account while reporting a result, which is
+-- the same class of mistake as reading an empty audit trail as a masked one.
 DECLARE
 BEGIN
   EXECUTE IMMEDIATE 'DROP USER sopulitest CASCADE';
   DBMS_OUTPUT.PUT_LINE('dropped the previous SOPULITEST');
 EXCEPTION WHEN OTHERS THEN
-  NULL;
+  IF SQLCODE != -1918 THEN
+    RAISE;
+  END IF;
 END;
 /
 
@@ -210,32 +243,78 @@ COLUMN ext_mark NEW_VALUE uat_mark NOPRINT
 SELECT :ext_mark AS ext_mark FROM dual;
 SET TERMOUT ON
 
-PROMPT watermark taken
-
-PROMPT
-PROMPT --- is anything actually auditing ALTER USER right now?
-PROMPT  If this says (none), stop: every masking result below would be an empty
-PROMPT  trail rather than a masked one. Re-run 02_password_leak_probe.sql §2.
-DECLARE
-  l_out VARCHAR2(4000);
+-- The traditional trail needs its own, and it is a DATE rather than a
+-- TIMESTAMP. Absent on 23ai+, where the view itself is gone -- so this is read
+-- with a handler for the same reason the unified one is, one release the other
+-- way round.
+SET TERMOUT OFF
+VARIABLE ext_dat VARCHAR2(30)
 BEGIN
   BEGIN
-    EXECUTE IMMEDIATE 'SELECT LISTAGG(policy_name, '', '') WITHIN GROUP '
-                   || '(ORDER BY policy_name) FROM audit_unified_enabled_policies'
-      INTO l_out;
-    DBMS_OUTPUT.PUT_LINE('unified policies enabled    ' || NVL(l_out, '(none)'));
-  EXCEPTION WHEN OTHERS THEN
-    DBMS_OUTPUT.PUT_LINE('unified policies enabled    n/a on this release');
+    EXECUTE IMMEDIATE
+      'SELECT TO_CHAR(NVL(MAX(timestamp), DATE ''1900-01-01''),'
+      || ' ''YYYY-MM-DD HH24:MI:SS'') FROM dba_audit_trail'
+      INTO :ext_dat;
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF SQLCODE != -942 THEN
+        RAISE;
+      END IF;
+      :ext_dat := '1900-01-01 00:00:00';
   END;
+END;
+/
+COLUMN ext_dat NEW_VALUE dat_mark NOPRINT
+SELECT :ext_dat AS ext_dat FROM dual;
+SET TERMOUT ON
+
+PROMPT watermarks taken -- this run's rows only, in both trails
+
+PROMPT
+PROMPT --- WHICH policy is about to capture ALTER USER, and does one exist at all?
+DECLARE
+  l_out  VARCHAR2(4000);
+  l_cov  PLS_INTEGER := 0;
+  l_n    PLS_INTEGER;
+BEGIN
+  BEGIN
+    -- Names the POLICIES THAT COVER ALTER USER, not merely the ones enabled.
+    -- On 21c the Oracle-supplied ORA_SECURECONFIG covers it, so a run whose own
+    -- policy had been dropped still produced masked rows -- and the result
+    -- would have been credited to SOPULI_PROBE_POL. Listing coverage is what
+    -- turns that from a silent mis-attribution into a line somebody reads.
+    EXECUTE IMMEDIATE
+      'SELECT LISTAGG(p.policy_name, '', '') WITHIN GROUP (ORDER BY p.policy_name),'
+      || ' COUNT(*) FROM audit_unified_policies p'
+      || ' JOIN audit_unified_enabled_policies e ON e.policy_name = p.policy_name'
+      || ' WHERE p.audit_option = ''ALTER USER'''
+      INTO l_out, l_cov;
+    DBMS_OUTPUT.PUT_LINE('unified, covering ALTER USER   ' || NVL(l_out, '(none)'));
+  EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('unified, covering ALTER USER   n/a on this release');
+    l_cov := -1;
+  END;
+
   BEGIN
     EXECUTE IMMEDIATE 'SELECT LISTAGG(audit_option, '', '') WITHIN GROUP '
-                   || '(ORDER BY audit_option) FROM dba_stmt_audit_opts '
+                   || '(ORDER BY audit_option), COUNT(*) FROM dba_stmt_audit_opts '
                    || 'WHERE audit_option LIKE ''%USER%'''
-      INTO l_out;
-    DBMS_OUTPUT.PUT_LINE('traditional statement opts  ' || NVL(l_out, '(none)'));
+      INTO l_out, l_n;
+    DBMS_OUTPUT.PUT_LINE('traditional statement options  ' || NVL(l_out, '(none)'));
+    IF l_cov < 1 THEN l_cov := l_n; END IF;
   EXCEPTION WHEN OTHERS THEN
-    DBMS_OUTPUT.PUT_LINE('traditional statement opts  n/a on this release');
+    DBMS_OUTPUT.PUT_LINE('traditional statement options  n/a on this release');
   END;
+
+  -- Refuse rather than report. A masking result read off an empty trail is
+  -- worse than no result: it is the same shape as a real one.
+  IF l_cov < 1 THEN
+    RAISE_APPLICATION_ERROR(-20002,
+      'nothing is auditing ALTER USER here, so every masking result below '
+      || 'would be an EMPTY trail rather than a masked one. Re-run '
+      || '02_password_leak_probe.sql §2 (or AUDIT POLICY / AUDIT USER by hand) '
+      || 'and start again. 02''s §8 turns these off -- see HOW TO RUN.');
+  END IF;
 END;
 /
 
@@ -251,9 +330,12 @@ PROMPT =========================================================================
 PROMPT  1. Self-rotation -- the account changes its OWN password (C5)
 PROMPT ================================================================================
 
+-- EXIT mode held through the rotation. A self-rotation that failed -- wrong
+-- password, a password-verify function, a release that spells REPLACE
+-- differently -- would otherwise print `C5 planted` and leave §3 reporting an
+-- absence as a masking result.
 WHENEVER SQLERROR EXIT FAILURE
 CONNECT sopulitest/"&c1"@&tns
-WHENEVER SQLERROR CONTINUE NONE
 SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 
 COLUMN whoami FORMAT A90
@@ -278,9 +360,11 @@ PROMPT =========================================================================
 PROMPT  2. A traced session issues the rotations (10046 level 12)
 PROMPT ================================================================================
 
+-- And through trace setup and the three traced rotations, for the same reason:
+-- a failed `ALTER SESSION SET events` followed by three successful rotations
+-- produces a trace file that proves nothing and a PROMPT saying it does.
 WHENEVER SQLERROR EXIT FAILURE
 CONNECT &svc_user/"&svc_pwd"@&tns
-WHENEVER SQLERROR CONTINUE NONE
 SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 
 ALTER SESSION SET tracefile_identifier = 'SOPULIPROBE';
@@ -302,13 +386,18 @@ BEGIN
 END;
 /
 
-ALTER SESSION SET events '10046 trace name context off';
-
 COLUMN tracefile FORMAT A110
 SELECT value AS tracefile FROM v$diag_info WHERE name = 'Default Trace File';
 
 PROMPT C6 (direct), C8 (wrapped literal) and C9 (assembled) planted under trace.
 PROMPT Grep that file in §4. C6 absent and C8 present is the expected result.
+PROMPT
+PROMPT  **Trace is deliberately left ON here** and switched off at the end of §3,
+PROMPT  so that 6b's IDENTIFIED BY VALUES is issued under it too. It was switched
+PROMPT  off at this line in the first version, which made "the verifier appears in
+PROMPT  no trace file" a claim about files that could not have contained it --
+PROMPT  the grep was clean because nothing was tracing, which is the `pop=n` rule
+PROMPT  again and this time the script was the one committing it.
 
 --------------------------------------------------------------------------------
 -- 3. §6b — IDENTIFIED BY VALUES, and what the trail shows for all of it
@@ -320,26 +409,41 @@ PROMPT =========================================================================
 
 WHENEVER SQLERROR EXIT FAILURE
 CONNECT &sys_user/"&sys_pwd"@&tns AS SYSDBA
-WHENEVER SQLERROR CONTINUE NONE
 SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED
 
+-- Traced, so that §4's "the verifier is in no trace file" is a measurement
+-- rather than a statement about an untraced session.
+ALTER SESSION SET tracefile_identifier = 'SOPULIPROBE';
+ALTER SESSION SET events '10046 trace name context forever, level 12';
+
 PROMPT
-PROMPT --- the verifier being re-applied, truncated here to 150 characters
-COLUMN spare4 FORMAT A150
-SELECT SUBSTR(spare4, 1, 150) AS spare4 FROM sys.user$ WHERE name = 'SOPULITEST';
+PROMPT --- the verifier being re-applied
+PROMPT  Masked to its first 24 characters. A verifier is offline-crackable, so
+PROMPT  printing one in full puts it in this script's spool and in whatever
+PROMPT  terminal scrollback the run lands in -- for a shape that 24 characters
+PROMPT  already shows. What matters here is that `S:` and `T:` are present and
+PROMPT  how long the whole string is, which is what §4's grep pattern is built
+PROMPT  from; `sys.user$` is where to look if the full value is ever needed.
+COLUMN spare4 FORMAT A70
+SELECT SUBSTR(spare4, 1, 24) || '...[' || LENGTH(spare4) || ' chars]' AS spare4
+  FROM sys.user$ WHERE name = 'SOPULITEST';
 
 DECLARE
   l_v VARCHAR2(4000);
 BEGIN
   SELECT spare4 INTO l_v FROM sys.user$ WHERE name = 'SOPULITEST';
   EXECUTE IMMEDIATE 'ALTER USER sopulitest IDENTIFIED BY VALUES ''' || l_v || '''';
-  DBMS_OUTPUT.PUT_LINE('verifier re-applied, length ' || LENGTH(l_v));
+  DBMS_OUTPUT.PUT_LINE('verifier re-applied under trace, length ' || LENGTH(l_v));
 EXCEPTION WHEN OTHERS THEN
   -- SELECT ON SYS.USER$ is itself an open question (ADR-001). A release or an
-  -- install that withholds it leaves 6b unanswerable rather than clean.
+  -- install that withholds it leaves 6b UNANSWERED rather than clean, and the
+  -- distinction is this gate's whole reading discipline -- so it is said out
+  -- loud rather than left as a missing row.
   DBMS_OUTPUT.PUT_LINE('6b UNANSWERED here -- ' || SUBSTR(SQLERRM, 1, 120));
 END;
 /
+
+ALTER SESSION SET events '10046 trace name context off';
 
 PROMPT
 PROMPT --- unified trail, this run only. Every row should end in `*`.
@@ -354,13 +458,18 @@ SELECT TO_CHAR(event_timestamp, 'HH24:MI:SS.FF3') AS ts,
  ORDER BY event_timestamp;
 
 PROMPT
-PROMPT --- traditional trail, where the release still has one
+PROMPT --- traditional trail, where the release still has one, this run only
+PROMPT  Watermarked like the unified one above. Without it a re-run shows the
+PROMPT  PREVIOUS run's rows mixed in, which is how the first run of this file
+PROMPT  appeared to produce audit rows minutes before its own statements -- an
+PROMPT  anomaly that cost real time to chase and was entirely the query's.
 COLUMN username FORMAT A14
 COLUMN sql_text FORMAT A60
 SELECT TO_CHAR(timestamp, 'HH24:MI:SS') AS ts,
        username, action_name, SUBSTR(sql_text, 1, 60) AS sql_text
   FROM dba_audit_trail
  WHERE obj_name = 'SOPULITEST'
+   AND timestamp > TO_DATE('&dat_mark', 'YYYY-MM-DD HH24:MI:SS')
  ORDER BY timestamp;
 
 --------------------------------------------------------------------------------
@@ -402,8 +511,11 @@ PROMPT
 -- 5. Cleanup
 --
 -- The account goes. The trace files and audit records stay -- they are the
--- evidence, and they hold four passwords in clear. Delete them once the
--- findings are written up.
+-- evidence. What is actually in clear among them is narrower than it sounds,
+-- and saying so precisely is the point of the whole file: the audit rows are
+-- MASKED, and the one cleartext password is C8, in the SOPULIPROBE trace files,
+-- because it is a literal inside a PL/SQL block. C6 and C9 are nowhere. Delete
+-- them anyway once the findings are written up -- one is enough.
 --------------------------------------------------------------------------------
 PROMPT ================================================================================
 PROMPT  5. Cleanup

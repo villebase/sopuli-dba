@@ -10,10 +10,11 @@ samples are shortened to `C:\tmp\sopuli-guide\` — that is the only edit made t
 any output here.
 
 §15's run document was re-captured on 2026-09-11 on the same stack, against
-sopuli 0.60.0, when the run schema became 1.21 (#392). A sample carrying a field
-the tool has since gained -- or a `schema_version` it no longer emits -- is the
-failure this guide is most prone to, so the date moves per sample rather than for
-the file.
+sopuli 0.60.0, when the run schema became 1.21 (#392), and §3's `sopuli about`
+on the same day against 0.61.0, the release that added the command (#413). A
+sample carrying a field the tool has since gained -- or a `schema_version` it no
+longer emits -- is the failure this guide is most prone to, so the date moves
+per sample rather than for the file.
 
 Related: [`../test/README.md`](../test/README.md) for the container stack itself,
 [`design/04-testing.md`](design/04-testing.md) for the automated tiers,
@@ -116,6 +117,9 @@ after any pull that crossed a release.
 
 ### `sopuli about`, the one command that needs nothing at all
 
+*Captured on 2026-09-11 against sopuli 0.61.0, when the command was added
+(#413) — not in the 0.58.0 pass the header describes.*
+
 No config, no Docker, no Instant Client, no vault. It is the first thing that
 proves the install works, and the second place the version appears:
 
@@ -145,8 +149,8 @@ The banner is cyan and bold on a terminal and plain everywhere else — piped,
 redirected, under `NO_COLOR=1`, or with `--color never`. Nothing is lost either
 way; there is no word on that screen that only the colour is carrying.
 
-**It takes no options at all**, which is worth causing on purpose once, because
-the message names the flag rather than the rule:
+**It takes no options at all**, which is worth causing on purpose once —
+and it is worth doing in *both* positions, because the two answers differ:
 
 ```
 $ sopuli about --output json
@@ -156,11 +160,35 @@ Try 'sopuli about --help' for help.
 Error: No such option '--output'.
 ```
 
-Exit 2. There is no `--output json` for `about` anywhere — `sopuli --output json
-about` parses, because `--output` is a group option, and then prints the same
-banner, because there is no run to describe. That is the whole design: `about`
-is a screen, not a run, which is also why it is not in the JSON contract's
-`command` enum (`03-json-output.md` §6, J7).
+```
+$ sopuli --output json about
+Usage: sopuli about [OPTIONS]
+Try 'sopuli about --help' for help.
+
+Error: --output cannot be honoured by `about`, which is not a run:
+       about prints compiled-in text: no configuration, no settings, no machine-readable form
+       --color is the one exception, and it is read in this same position
+```
+
+Exit 2 both times, and the second is the one that matters. `--output` belongs to
+the *group*, so its parser accepts it before any subcommand and `about` would
+otherwise have printed the banner and exited 0 — a run that looks like it did
+what was asked. `--config`, `--profile` and `--vault-token-file` are refused
+there for the same reason, and `--vault-token` gets ADR-007's own message rather
+than this one:
+
+```
+$ sopuli --vault-token s.notatoken about
+sopuli: --vault-token is not an option: a token given on the command line is visible in `ps` and in the Windows process list (P5, invariant 1)
+  hint: name where the token is instead of passing it. Any of: --vault-token-file PATH, $SOPULI_VAULT_TOKEN, $VAULT_TOKEN, or `vault login`, which writes ~/.vault-token
+```
+
+The token is in `argv` and visible in `ps` whether or not the command reaches a
+store, so invariant 1 does not relax for the command that reaches none.
+
+There is no `--output json` for `about` anywhere. That is the whole design:
+`about` is a screen, not a run, which is also why it is not in the JSON
+contract's `command` enum (`03-json-output.md` §6, J7).
 
 `--color` is the one global flag it honours, and only before the verb:
 

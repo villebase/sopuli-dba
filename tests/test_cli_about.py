@@ -34,6 +34,7 @@ import pytest
 from click.testing import CliRunner
 
 from sopuli.cli import cli
+from sopuli.config import ConfigError
 from sopuli.exit_codes import ExitCode
 from sopuli.output.about_view import (
     BANNER,
@@ -46,6 +47,12 @@ from sopuli.output.about_view import (
 from sopuli.output.color import ColorChoice
 from sopuli.output.emit import Emitter
 from sopuli.version import get_version
+
+#: The command's one-line description, which `sopuli --help` shortens to and
+#: `sopuli about --help` prints in full. Spelled here rather than imported from
+#: the docstring, so rewriting the docstring to something unhelpful fails
+#: instead of silently redefining what the test checks.
+SUMMARY = "Show the sopuli-dba banner, tagline, and project links."
 
 
 @pytest.fixture
@@ -157,6 +164,16 @@ def test_about_still_has_help(runner: CliRunner) -> None:
     assert "about [OPTIONS]" in result.output
 
 
+@pytest.mark.parametrize("argv", [["--help"], ["about", "--help"]], ids=["group", "verb"])
+def test_the_description_appears_in_both_helps(runner: CliRunner, argv: list[str]) -> None:
+    """``sopuli --help`` takes the short help from the same docstring the verb's
+    own ``--help`` prints in full, so a docstring deleted or rewritten to
+    something unhelpful shows up in exactly one place: here."""
+    result = runner.invoke(cli, argv)
+
+    assert SUMMARY in result.output
+
+
 @pytest.mark.parametrize(
     "flag",
     [["--output", "json"], ["--dry-run"], ["--config", "sopuli.yaml"], ["--color", "never"]],
@@ -175,13 +192,52 @@ def test_about_refuses_a_global_option_after_the_verb(runner: CliRunner, flag: l
     assert result.exit_code == ExitCode.USAGE
 
 
-def test_about_emits_no_json(runner: CliRunner) -> None:
-    """There is no machine half, so asking the group for one must not produce a
-    run document describing a command that acted on nothing."""
-    result = runner.invoke(cli, ["--output", "json", "about"])
+@pytest.mark.parametrize(
+    "flag",
+    [
+        ["--output", "json"],
+        ["--output", "text"],
+        ["--config", "sopuli.yaml"],
+        ["--profile", "ci"],
+        ["--vault-token-file", "token.txt"],
+    ],
+    ids=["json", "text", "config", "profile", "token-file"],
+)
+def test_about_refuses_a_global_option_before_the_verb(runner: CliRunner, flag: list[str]) -> None:
+    """The group's parser accepts them, so they have to be refused rather than
+    dropped (#414 review).
 
-    assert result.exit_code == ExitCode.SUCCESS
-    assert TAGLINE in result.output
+    Exiting 0 with human text after being asked for JSON is the silent ignore
+    `config show` refuses for a selector it cannot apply, and the failure is the
+    same one: the run looks like it did what was asked. ``--output text`` is
+    refused with the rest, because `about` has no output *mode* -- honouring the
+    one that happens to match would make the refusal a preference about JSON
+    rather than a statement about the command.
+    """
+    result = runner.invoke(cli, [*flag, "about"])
+
+    assert result.exit_code == ExitCode.USAGE
+    assert TAGLINE not in result.output
+    assert flag[0] in result.output
+
+
+def test_about_refuses_the_bare_token_flag_before_the_verb(runner: CliRunner) -> None:
+    """Invariant 1 does not relax for a command that reaches no store.
+
+    The token is in ``argv`` and visible in ``ps`` whatever the command does
+    with it, and exiting 0 over it is ADR-007's worst case -- the flag accepted,
+    nothing done. So `about` asks the same function every verb asks, and the
+    operator gets the same message naming every source that does work.
+    """
+    result = runner.invoke(cli, ["--vault-token", "s.notatoken", "about"])
+
+    # `ArgumentError` rather than a `click.UsageError`, so the exit code is
+    # asserted on the exception -- only the boundary in `main` maps one onto the
+    # process. Same shape as `tests/test_cli_smoke.py`'s refusal tests.
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.USAGE
+    assert TAGLINE not in result.output
+    assert "--vault-token-file" in str(result.exception)
 
 
 def test_version_is_still_one_plain_line(runner: CliRunner) -> None:

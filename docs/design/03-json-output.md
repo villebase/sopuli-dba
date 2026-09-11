@@ -1537,6 +1537,14 @@ consumer could branch on. It is the same footing `--version` and `--help` stand
 on, and the reason it is a verb rather than a flag is D2's grammar: a bare
 top-level command fits it, a root-level `--about` would not.
 
+**Asking it for JSON is a usage error, not a quiet text answer.** `--output`
+belongs to the group's parser, so `sopuli --output json about` is accepted
+*there* whatever the command does — and a command that then printed human text
+and exited 0 would be the silent-ignore this document's §2 refuses everywhere
+else: the run looks like it did what was asked. So `about` refuses `--output`,
+`--config`, `--profile` and `--vault-token-file` in that position by name, and
+exits 2 with no document, which is J7 unchanged.
+
 The consequence for this contract is that **`about` is not in the `command`
 enum and must not be added to it.** An enum value nothing emits is a branch a
 consumer can write and never reach, which is the defect #392 was opened about;

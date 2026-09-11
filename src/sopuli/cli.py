@@ -151,6 +151,7 @@ from sopuli.invocation import (
     GlobalOptions,
     Invocation,
     all_options,
+    check_vault_token,
     global_options,
     group_options,
 )
@@ -405,6 +406,35 @@ def cli(
     )
 
 
+def about_refusals(given: GlobalOptions) -> list[str]:
+    """Which group-level options were written that ``about`` cannot honour.
+
+    `about` takes no options of its own, but the group's parser accepts the
+    global ones before any subcommand -- so they arrive on
+    :class:`~sopuli.invocation.GlobalOptions` whether or not the command has any
+    use for them. Dropping them would be the failure `config show` refuses for a
+    selector it cannot apply, and for the same reason: the run looks like it did
+    what was asked. So they are refused instead, by name.
+
+    ``--color`` is absent because it is the one this command honours.
+    ``--dry-run`` is absent because the group's copy refuses for itself
+    (:func:`~sopuli.invocation.trailing_only`) before this runs, and
+    ``--vault-token`` because :func:`~sopuli.invocation.check_vault_token` owns
+    a better message for it than a list of flag names -- ADR-007's, naming every
+    source that does work.
+    """
+    written = []
+    if given.config_paths:
+        written.append("--config")
+    if given.output_mode is not None:
+        written.append("--output")
+    if given.profile_name is not None:
+        written.append("--profile")
+    if given.vault_token_file is not None:
+        written.append("--vault-token-file")
+    return written
+
+
 @cli.command("about")
 @click.pass_obj
 def about(options: GlobalOptions | None) -> None:
@@ -417,7 +447,11 @@ def about(options: GlobalOptions | None) -> None:
     questions is how they come to disagree.
 
     `--color` is read from the position before the verb, which is the one this
-    command's parser can see: `sopuli --color never about`.
+    command's parser can see: `sopuli --color never about`. Every other global
+    option is refused there rather than ignored, including `--output json`:
+    there is no machine-readable form of this screen, and exiting 0 with human
+    text after being asked for JSON is the silent-ignore this tool refuses
+    everywhere else.
     """
     # Not a run, so not decorated with `global_options` and given no
     # `Invocation` (#413). It resolves no settings, has nothing to report and no
@@ -436,7 +470,21 @@ def about(options: GlobalOptions | None) -> None:
     # leave a documented flag silently inert on the one screen in the tool that
     # is mostly colour. `options` is `None` only for a caller that invoked this
     # command outside the group, which no real run does.
-    choice = ColorChoice((options.color_choice if options else None) or ColorChoice.AUTO)
+    given = options or GlobalOptions()
+    # Invariant 1 does not stop being true because the command is trivial: the
+    # token is in `argv` and visible in `ps` either way, and exiting 0 over it
+    # would be ADR-007's worst case -- accepting the flag and doing nothing.
+    # The group's position is the only one there is here, so the verb's is empty.
+    check_vault_token(given, GlobalOptions())
+    if written := about_refusals(given):
+        raise click.UsageError(
+            f"{', '.join(written)} cannot be honoured by `about`, which is not a run:\n"
+            "       about prints compiled-in text: no configuration, no "
+            "settings, no machine-readable form\n"
+            "       --color is the one exception, and it is read in this same "
+            "position"
+        )
+    choice = ColorChoice(given.color_choice or ColorChoice.AUTO)
     Emitter(color_choice=choice).emit_text(render_about())
 
 

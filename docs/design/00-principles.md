@@ -583,7 +583,10 @@ Two deliberate exceptions, documented as such:
   `TNS_ADMIN`, `OCI_CLI_PROFILE`) are honoured but rank *below* the `SOPULI_*`
   equivalent, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`.
 - **Safety settings only ratchet toward safe.** `--dry-run`, `--confirm`,
-  `--max-targets` and `readonly: true` cannot be relaxed by any source. If config
+  `safety.max_targets` and `readonly: true` cannot be relaxed by any source.
+  Two of those are flags and two are settings, and the spelling is not
+  decoration: this bullet said `--max-targets` until #392, for a flag that has
+  never existed and that P5 below now explains will not. If config
   says `readonly: true`, no command-line flag re-enables writes — including
   `--force`, which is not a setting and has no layer to arrive on. The first
   command to consume `readonly` is `lock break` (#149), which refuses on **exit
@@ -850,10 +853,20 @@ tool safe to run from a scheduler.
 
 - Human output by default; `--output json` for one machine-readable object,
   `--output jsonl` to stream per-target events. Scripts consume JSON, never text.
+  **`jsonl` is the one of the three that does not exist** — `--output` takes
+  `text` and `json`, and asking for `jsonl` is a usage error. It is specified
+  ahead of its code rather than unbuilt by accident: the event schema is
+  published (`../schemas/sopuli-event-1.0.schema.json`) and #9 is the issue.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
-- `--log-level`, optional log file, and an explicit statement in the docs that
-  secrets are redacted from all output including tracebacks.
+- A log level, an optional log file, and an explicit statement in the docs that
+  secrets are redacted from all output including tracebacks. **This bullet said
+  `--log-level` until #392, and there is no such flag.** `profiles: log_level` is
+  parsed and validated and has no consumer — the state `sopuli/invocation.py`
+  calls "waiting for a consumer" — so what is true today is that the level can be
+  *written*, not that anything reads it. Whether the flag ever joins the setting
+  is D2's grammar, and naming one here before that is decided is the defect #392
+  was opened about.
 
 **Secret hygiene**
 

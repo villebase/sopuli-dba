@@ -74,10 +74,19 @@ Every command takes the same target/account selection options:
 --target NAME           repeatable
 --group NAME            a named or selector-based group
 --select k=v[,k=v]      filter by target labels, e.g. --select env=dev,tenant=beta
---all                   everything in config (requires --confirm)
---limit N               refuse if the plan exceeds N targets
---dry-run / --confirm / --output {text,json,jsonl}
+--dry-run / --confirm / --output {text,json}
 ```
+
+**Three lines left this block in #392**, because they named flags the binary has
+not got. `--all` and `--limit N` were never built: with no selector at all a
+command already covers everything declared, which is what the paragraph below
+says and what makes `--all` a second spelling of nothing, and the ceiling
+`--limit` offered is `safety.max_targets` — a setting the resolver will not
+accept from the command line, for the reason `00-principles.md` P5 now gives.
+`jsonl` left for a third reason: `--output` takes `text` and `json`, and asking
+for `jsonl` is a usage error. `invocation.selection` still carries `all` and
+`limit` as slots (`03-json-output.md` §1); a slot in a schema is a promise, and a
+line in a list shaped like help output is a claim.
 
 **These are filters over what the config declares, not a second way of addressing
 things.** The tool never acts on an account that is not in the config; a selector

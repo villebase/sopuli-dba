@@ -1539,6 +1539,7 @@ Trade-offs to document honestly if it does ship:
   (`02-oracle-privileges.md` §2), which some sites will not grant; the tool
   must degrade to `login` mode cleanly. #124 is investigating whether a
   narrower grant can expose just enough to avoid this trade-off
+  (unverified: lcount-grant)
 - confirms the *stored verifier*, not that a login would succeed — an expired
   password, a locked account, or a failed listener still means the application
   cannot connect. Hence `--method both` for the strongest answer. Lock/expiry

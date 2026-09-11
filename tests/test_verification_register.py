@@ -36,6 +36,23 @@ worked example. This was found the hard way while writing this file: the first
 attempt put the marker inside that docstring, broke its indentation, and
 ``ruff format`` then reflowed all thirty lines of published help text.
 
+**What this cannot check, and it is worth being plain about it.** The rule below
+requires that an open entry be marked *somewhere*, which is not the same as
+*everywhere*. Whether a given paragraph asserts a given open question is a
+judgement about prose, and no test makes it -- #412's review found seven sites
+this file's own author had missed, after he wrote the convention saying every
+site gets one. So the marker narrows the problem rather than removing it: it
+turns "remember every document" into "remember at the moment you write the
+claim", and it makes the *settling* step mechanical even when the *marking* step
+is not. A site nobody marks is still a site nobody finds.
+
+**There is no `partial` status**, and that is the other thing #412's review
+changed. `ddl-text-retention` was one partial entry covering versions, AWR and
+SQL trace; the trace surface was settled while the other two were not, so a stale
+marker on a trace claim would have been allowed to sit indefinitely -- the #410
+failure this file exists to catch, uncaught. A question whose surfaces settle
+separately splits into entries that each settle whole.
+
 **The register is the authority, not GitHub.** #383, #387 and #87 are all closed
 issues whose verification is still outstanding -- the decision was taken, the
 measurement was not -- so a check keyed on issue state would call them settled
@@ -56,13 +73,13 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTER = ROOT / "docs" / "README.md"
 REGISTER_HEADING = "## Verify before implementing"
 
-#: One register entry:  - `partial` `ddl-text-retention` (#387) — ...
+#: One register entry:  - `unverified` `ddl-text-versions` (#387) — ...
 #:
 #: Status and slug are code spans so that the line stays readable as prose and
 #: parseable without one. The issue numbers after them are for a human; this
 #: test deliberately does not read them -- see the module note on why GitHub is
 #: not the authority here.
-ENTRY = re.compile(r"^- `(unverified|partial|verified)` `([a-z0-9][a-z0-9-]*)`")
+ENTRY = re.compile(r"^- `(unverified|verified)` `([a-z0-9][a-z0-9-]*)`")
 
 #: One marker, anywhere else:  (unverified: t-verifier)
 #:
@@ -82,11 +99,17 @@ SCANNED = (
     (".", "CLAUDE.md"),
 )
 
-#: The register is not a site. Its own bullets assert the unverified state --
-#: that is what a register is -- and §Conventions shows the marker syntax by
-#: example, which would otherwise satisfy the "is it marked anywhere" rule below
-#: without any document actually being marked.
-NOT_A_SITE = (ROOT / "docs" / "README.md",)
+#: The register's own section is not a site: its bullets assert the unverified
+#: state, because that is what a register is. **Only that section**, not the whole
+#: file -- #412's review pointed out that excluding `docs/README.md` entirely made
+#: the checker blind to the README's own prose, where §*Consolidated open
+#: decisions* repeats several of these claims and a typo'd marker would never have
+#: been validated.
+#:
+#: §Conventions needs no exclusion: it shows the syntax as `(unverified: <slug>)`,
+#: and `<` is outside the slug character class, so the example cannot be mistaken
+#: for a marker. That is cheaper than a second excluded range and it cannot drift.
+NOT_A_SITE_SECTION = {REGISTER: REGISTER_HEADING}
 
 #: Entries that are genuinely asserted nowhere, and why. Kept as a named list
 #: rather than inferred, for `RESERVED_COMMANDS`'s reason one test over: an
@@ -131,17 +154,62 @@ def register() -> dict[str, str]:
     return found
 
 
+def _outside_the_register(path: Path, text: str) -> str:
+    """``text`` with the register's own section blanked, line count preserved.
+
+    Blanked rather than removed so that reported line numbers still match the
+    file a reader opens.
+    """
+    heading = NOT_A_SITE_SECTION.get(path)
+    if heading is None:
+        return text
+
+    kept, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            inside = line.strip() == heading
+        kept.append("" if inside else line)
+    return "\n".join(kept)
+
+
 def markers() -> dict[str, list[str]]:
     """Slug to the ``path:line`` of every site claiming it."""
     out: dict[str, list[str]] = {}
     for path in _scan():
-        if path in NOT_A_SITE:
-            continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        text = _outside_the_register(path, path.read_text(encoding="utf-8"))
+        for number, line in enumerate(text.splitlines(), 1):
             for slug in MARKER.findall(line):
                 rel = path.relative_to(ROOT).as_posix()
                 out.setdefault(slug, []).append(f"{rel}:{number}")
     return out
+
+
+#: A register bullet that opens with a code span but is not a valid entry. The
+#: strict parse would skip it in silence, so a typo in the status word -- or a
+#: slug with a capital in it -- would remove an entry from the register while
+#: leaving something that still reads like one to a person. #412's review raised
+#: this, and it is the failure mode the whole file is about, one level down.
+MALFORMED = re.compile(r"^- `(?!(?:unverified|verified)` `[a-z0-9][a-z0-9-]*`)")
+
+
+def test_no_register_bullet_is_silently_skipped() -> None:
+    """Every ``- `...`` bullet in the section parses, or this names it.
+
+    The prose paragraphs between entries are fine -- they do not start with a
+    bullet and a code span. What must not happen is a bullet that looks like an
+    entry to a reader and is invisible to :func:`register`.
+    """
+    text = REGISTER.read_text(encoding="utf-8")
+    section = text.split(REGISTER_HEADING, 1)[1]
+    section = re.split(r"^## ", section, maxsplit=1, flags=re.MULTILINE)[0]
+
+    bad = [line for line in section.splitlines() if MALFORMED.match(line)]
+
+    assert not bad, (
+        "register bullets that do not parse as entries, and would be skipped "
+        f"in silence: {bad}. Statuses are `unverified` or `verified`; slugs are "
+        "lowercase, digits and hyphens."
+    )
 
 
 def test_the_register_has_entries() -> None:
@@ -182,9 +250,7 @@ def test_every_open_entry_is_marked_somewhere() -> None:
     above passes trivially on a tree where nobody marks anything. An entry with
     no site at all is legitimate and goes in ``UNSITED``, by name.
     """
-    open_entries = {
-        slug for slug, status in register().items() if status in {"unverified", "partial"}
-    }
+    open_entries = {slug for slug, status in register().items() if status == "unverified"}
     marked = set(markers())
     unmarked = sorted(open_entries - marked - UNSITED)
 

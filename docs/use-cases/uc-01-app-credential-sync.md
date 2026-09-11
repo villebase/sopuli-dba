@@ -53,6 +53,12 @@ it would advertise a password to applications on the strength of a previous run'
 document, and re-verification is exactly what makes `apply` safe to point §8's
 worst row at.
 
+**The run schema said otherwise until #392.** `creds.promote` sat in the
+`command` enum from the first draft through 1.20 — a name for a verb this
+paragraph had already declined, in the file `03-json-output.md` §8 points at as
+the definition of what the tool can produce. It is gone in 1.21, and §8 carries
+the rule that let a never-emitted enum value go on a minor bump.
+
 Separating `generate` from `apply` is deliberate: it lets an operator stage a new
 password, get a change window approved, and apply later — and it makes each half
 independently retryable.

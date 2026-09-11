@@ -784,7 +784,27 @@ question is where their test database lives.
   implemented — the alias buys an operator four keystrokes and costs the CLI a
   second spelling of one flag, and if a site wants it that is a change to D2's
   grammar rather than a footnote here.
-- `--limit`/`--max-targets` prevents a wildcard from hitting 200 PDBs by accident.
+- **`safety.max_targets` prevents a wildcard from hitting 200 PDBs by accident,
+  and it is a setting rather than a flag.** This bullet offered
+  `--limit`/`--max-targets` from the first draft and nothing ever built either,
+  which is #294's `--yes` defect one bullet along (#392). Struck rather than
+  implemented, and the striking is a statement about the registry rather than a
+  preference: `sopuli/settings/registry.py` declares the setting on
+  `(PROFILE, OBJECT, DEFAULTS)`, `Setting.layers` is *enforced*, and a
+  contribution from an undeclared layer raises — so the flag is not merely
+  absent, it would be refused by the resolver until that tuple gained
+  `Layer.CLI`.
+
+  **Invariant 10 is not the argument against it**, and saying so is worth a line
+  because it looks like the argument. `safety.max_targets` is `MergePolicy.RATCHET`
+  and an `int` ratchets to the *minimum*, so a CLI contribution could only lower
+  the ceiling — safe by construction, exactly as `safety.dry_run` is safe on
+  `Layer.CLI` today. What is actually missing is the case for widening the tuple.
+  A ceiling that lives in the file a reviewer reads says what an estate permits;
+  one an operator can also pass per run says what an operator chose, and those
+  are different claims to put in `invocation.options`. If anyone wants the flag,
+  that is where the argument is won — a registry entry and the reason for it, not
+  a footnote here.
 - Mutating operations take an advisory **lock** keyed on the secret path being
   mutated, so two operators or two CI jobs cannot rotate the same credential
   concurrently. The lock lives in the vault, is compare-and-set guarded, and

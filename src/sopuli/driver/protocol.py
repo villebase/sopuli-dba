@@ -60,9 +60,10 @@ detail.
 What is **not** deferred, and is worth saying because it looks like an omission:
 there is no ``offline_verify`` path in :meth:`Session.verify_password` beyond a
 method name. Whether the ``T:`` verifier in ``SYS.USER$.SPARE4`` can be
-reproduced client-side is #90, unanswered, and if it cannot then ``--method
-hash`` is dropped from the CLI entirely. So the vocabulary is representable --
-it is the run document's, and the document was written before the doubt -- while
+reproduced client-side is #90, unanswered (unverified: t-verifier), and if it
+cannot then ``--method hash`` is dropped from the CLI entirely. So the
+vocabulary is representable -- it is the run document's, and the document was
+written before the doubt -- while
 :data:`OFFLINE_VERIFY` exists in this build to gate UC-1 §7's ``LCOUNT`` guard
 and nothing else.
 """

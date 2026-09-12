@@ -122,9 +122,17 @@ vendor message may arrive already decorated.
 ### Progress, and the one thing on stderr that is not a message
 
 A verb reading a document out of a vault animates a spinner on **stderr** while
-it waits (#419, assessed in #416). It is the only progress indicator in the tool
-and it is opt-in at the call site -- `sopuli/cli.py`'s `_read_documents`, which
-is the one place every `creds` verb goes through to read the vault.
+it waits (#419, assessed in #416). It is the only progress indicator in the tool,
+and it is opt-in at exactly one call site: `sopuli/cli.py`'s `_read_documents`,
+which `creds apply`, `creds rotate`, `creds finish-rollover` and `creds status`
+all read through.
+
+**That is not every read of the vault, and the difference is deliberate.**
+`creds check` reads through `_stored_credential`, and `creds generate` calls
+`store.read` directly where it needs a document's current version for a
+compare-and-set; neither animates. #419 scoped this to one call site rather than
+a sweep, so that which operations are considered slow stays a decision somebody
+made in a diff. Extending it is another one.
 
 Gated the same way colour is, and in the same place, for the same reason:
 `Emitter.spinner()` is the single answer, so no call site works it out for

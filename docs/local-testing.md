@@ -1120,12 +1120,22 @@ rather than after the wreckage of a half-drawn frame.
 
 **Four things it deliberately will not do**, each worth causing on purpose:
 
-- **It does not run when stderr is not a terminal.** Pipe the command into
-  anything -- `sopuli creds status | cat`, or a redirect to a file -- and there
-  are no frames at all, not even stripped ones. There is no `--spinner` flag and
-  no `SOPULI_SPINNER` to force it, because carriage-return-separated frames in a log file
-  are worse than silence for every reader. (Measured in #416: at one frame per
-  100ms that is about 12,000 characters over a 30-second vault timeout.)
+- **It does not run when stderr is not a terminal.** Redirect **stderr**
+  specifically -- `sopuli creds status 2>frames.txt`, or `2>/dev/null` -- and the
+  file is **zero bytes**: no frames at all, not even stripped ones.
+
+  **`| cat` does not demonstrate this, and it is the mistake to make on
+  purpose.** A pipe redirects stdout; stderr stays attached to the terminal, so
+  `sopuli creds status | cat` animates exactly as it did before. That is correct
+  behaviour -- the spinner is keeping a human company, and piping the *result*
+  somewhere does not mean nobody is watching -- but it means the obvious way to
+  test the gate tests nothing. Measured: 73 bytes of frames with stdout piped,
+  0 bytes with stderr redirected, same command.
+
+  There is no `--spinner` flag and no `SOPULI_SPINNER` to force it on, because
+  carriage-return-separated frames in a log file are worse than silence for every
+  reader. (Measured in #416: at one frame per 100ms that is about 12,000
+  characters over a 30-second vault timeout.)
 - **It does not run under `--output json`.** Verified on a terminal, which is the
   only place it could have: `sopuli creds status --output json` writes **zero**
   bytes of animation to stderr. stdout is the contract (invariant 12), and a

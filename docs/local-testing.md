@@ -1121,25 +1121,32 @@ rather than after the wreckage of a half-drawn frame.
 **Four things it deliberately will not do**, each worth causing on purpose:
 
 - **It does not run when stderr is not a terminal.** Redirect **stderr**
-  specifically -- `sopuli creds status 2>frames.txt`, or `2>/dev/null` -- and the
-  file is **zero bytes**: no frames at all, not even stripped ones.
+  specifically -- `sopuli creds status 2>frames.txt`, or `2>/dev/null` -- and
+  there are **no frames at all**, not even stripped ones.
+
+  Check the file for carriage returns rather than for size, because stderr is
+  also where the tool's own error messages go: on a run that succeeds the file is
+  genuinely empty (measured: 0 bytes against the local vault), but on the timeout
+  run below it holds the `sopuli:` message and its hint, and **no `\r`**. The
+  frames are what has to be absent, not the bytes.
 
   **`| cat` does not demonstrate this, and it is the mistake to make on
   purpose.** A pipe redirects stdout; stderr stays attached to the terminal, so
   `sopuli creds status | cat` animates exactly as it did before. That is correct
   behaviour -- the spinner is keeping a human company, and piping the *result*
   somewhere does not mean nobody is watching -- but it means the obvious way to
-  test the gate tests nothing. Measured: 73 bytes of frames with stdout piped,
-  0 bytes with stderr redirected, same command.
+  test the gate tests nothing. Measured, same command: 73 bytes of frames with
+  stdout piped, and not one carriage return with stderr redirected.
 
   There is no `--spinner` flag and no `SOPULI_SPINNER` to force it on, because
   carriage-return-separated frames in a log file are worse than silence for every
   reader. (Measured in #416: at one frame per 100ms that is about 12,000
   characters over a 30-second vault timeout.)
 - **It does not run under `--output json`.** Verified on a terminal, which is the
-  only place it could have: `sopuli creds status --output json` writes **zero**
-  bytes of animation to stderr. stdout is the contract (invariant 12), and a
-  consumer capturing `2>&1` would otherwise find frames ahead of the document.
+  only place it could have: `sopuli creds status --output json` writes **not one
+  frame** to stderr, where the same run in text mode wrote 74. stdout is the
+  contract (invariant 12), and a consumer capturing `2>&1` would otherwise find
+  frames ahead of the document.
 - **It ignores `NO_COLOR`.** Not an oversight -- there is nothing to turn off.
   The frames are four ASCII characters and a carriage return, with no ANSI
   anywhere, so a `NO_COLOR=1` run animates identically. Try it.

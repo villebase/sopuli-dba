@@ -295,7 +295,7 @@ def test_a_detached_stdin_answers_rather_than_raising() -> None:
 
     for stdin in (closed, None):
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(cli_module.sys, "stdin", stdin)
+            patch.setattr(sys, "stdin", stdin)
             assert cli_module._can_prompt() is False
 
 
@@ -304,5 +304,5 @@ def test_a_terminal_stdin_can_still_prompt() -> None:
     import sopuli.cli as cli_module
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(cli_module.sys, "stdin", Terminal())
+        patch.setattr(sys, "stdin", Terminal())
         assert cli_module._can_prompt() is True

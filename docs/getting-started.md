@@ -28,8 +28,10 @@ those runs printed.
 That version is a **record of what the capture printed**, not a claim about what
 this build is at — it is supposed to name an old release, and it moves when the
 samples are re-captured rather than when a version is cut. Do not "correct" it to
-the current number; `sopuli --version` answers that question, and
-[`local-testing.md`](local-testing.md) keeps the same kind of note per sample.
+the current number: `pyproject.toml` owns that number, and `sopuli --version`
+reports the *installed distribution's* version, which under an editable install
+can itself lag the tree — see [`local-testing.md`](local-testing.md) §3, which
+keeps the same kind of per-sample note.
 
 ---
 

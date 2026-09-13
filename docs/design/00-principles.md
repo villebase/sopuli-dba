@@ -517,7 +517,7 @@ precedence order applies everywhere**, and the tool can print it.
 ### Precedence (highest wins)
 
 ```
-1. Command-line option              --vault-addr https://…
+1. Command-line option              --vault-addr https://…   (not built -- #422)
 2. Environment variable             SOPULI_VAULT_ADDR
 3. Profile block in config          profiles.ci.vaults.hcv-prod.addr
 4. Target/vault-level setting       vaults.hcv-prod.addr

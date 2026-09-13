@@ -1926,7 +1926,7 @@ Safety ratchet — `defaults.safety.readonly: true`, and a `ci` profile that tri
 to undo it with `safety: { readonly: false }`:
 
 ```
-$ sopuli creds apply --application acme --profile ci
+$ sopuli creds apply --application acme --profile ci --output text
 sopuli: applying a password is a mutation, and `safety.readonly` is set
   hint: set at defaults.safety.readonly; no layer can relax it (invariant 10) -- `sopuli lock status` reads without writing
 ```

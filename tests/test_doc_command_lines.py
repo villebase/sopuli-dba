@@ -86,11 +86,14 @@ class CommandLine:
     arguments: list[str]
     #: The line's trailing `# ...`, lower-cased, or empty.
     comment: str
-    #: The whole fenced block the line sits in, for the output pasted beneath it.
-    block: str
+    #: This command and what is pasted beneath it, up to the next command in the
+    #: same block. **Not the whole block**: a fence often holds several commands
+    #: (`docs/scenarios/rotate-and-sync.md`), and a rejection printed for one of
+    #: them must not excuse a bad option on another (Copilot on #423).
+    output: str
 
     def shows_rejection_of(self, option: str) -> bool:
-        return REJECTED_IN_COMMENT in self.comment or _click_rejection(option) in self.block
+        return REJECTED_IN_COMMENT in self.comment or _click_rejection(option) in self.output
 
 
 def command_lines(text: str) -> Iterator[CommandLine]:
@@ -101,6 +104,7 @@ def command_lines(text: str) -> Iterator[CommandLine]:
     """
     lines = text.splitlines()
     for block_start, block in _fenced_blocks(lines):
+        found: list[tuple[int, list[str], str]] = []
         index = 0
         while index < len(block):
             start = index
@@ -109,10 +113,16 @@ def command_lines(text: str) -> Iterator[CommandLine]:
             while line.rstrip().endswith("\\") and index < len(block):
                 line = line.rstrip()[:-1] + " " + block[index]
                 index += 1
-            found = _parse(line)
-            if found is not None:
-                arguments, comment = found
-                yield CommandLine(block_start + start + 1, arguments, comment, "\n".join(block))
+            parsed = _parse(line)
+            if parsed is not None:
+                found.append((start, *parsed))
+        if not found:
+            continue
+        ends = [start for start, _, _ in found[1:]] + [len(block)]
+        for (start, arguments, comment), end in zip(found, ends, strict=True):
+            yield CommandLine(
+                block_start + start + 1, arguments, comment, "\n".join(block[start:end])
+            )
 
 
 def _fenced_blocks(lines: list[str]) -> Iterator[tuple[int, list[str]]]:
@@ -229,13 +239,23 @@ def test_every_documented_command_line_names_only_options_its_command_has() -> N
 def test_a_rejection_shown_on_purpose_is_of_an_option_that_really_is_missing() -> None:
     """The other direction, and what keeps the rule above from being an exemption:
     a block that pastes `No such option` for a flag that has since been added is
-    as stale as an example using a flag that has been removed."""
-    stale = [
-        f"{path}:{line.number}  {option}"
-        for path, line in _documented()
-        for option in _options_named(line.arguments)
-        if _click_rejection(option) in line.block and option not in unknown_options(line.arguments)
-    ]
+    as stale as an example using a flag that has been removed.
+
+    Both forms the rule accepts are checked here, because a form checked in only
+    one direction is an exemption for the other (Copilot on #423): a pasted
+    rejection must name an option that is still undeclared, and a `# no such
+    option` comment must sit on a line that still has one.
+    """
+    stale = []
+    for path, line in _documented():
+        unknown = unknown_options(line.arguments)
+        if REJECTED_IN_COMMENT in line.comment and not unknown:
+            stale.append(f"{path}:{line.number}  (says 'no such option'; every option parses)")
+        stale.extend(
+            f"{path}:{line.number}  {option}"
+            for option in _options_named(line.arguments)
+            if _click_rejection(option) in line.output and option not in unknown
+        )
 
     assert not stale, (
         "these blocks show an option being refused that the command now declares:\n  "
@@ -329,3 +349,21 @@ def test_a_rejection_counts_only_where_the_block_shows_it_for_that_option() -> N
     assert one.shows_rejection_of("--output")
     assert two.shows_rejection_of("--color")
     assert not three.shows_rejection_of("--output")
+
+
+def test_a_rejection_belongs_to_the_command_it_was_pasted_under() -> None:
+    """Copilot on #423: one fence, two commands, and the rejection printed under
+    the first must not excuse the second."""
+    text = (
+        "```\n"
+        "$ sopuli about --output json\n"
+        "Error: No such option '--output'.\n"
+        "$ sopuli creds status --output-format json\n"
+        "```\n"
+    )
+
+    first, second = command_lines(text)
+
+    assert first.shows_rejection_of("--output")
+    assert not second.shows_rejection_of("--output")
+    assert second.output.startswith("$ sopuli creds status")

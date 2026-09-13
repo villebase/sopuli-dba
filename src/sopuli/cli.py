@@ -109,6 +109,7 @@ from sopuli.diagnostics import (
     LOCK_LOST,
     LOCK_PATH_UNGUARDED,
     LOGIN_WARNING,
+    PASSWORD_CHANGE_DATE_UNKNOWN,
     PASSWORD_GRACE_PERIOD,
     ROTATION_UNCONFIRMED,
     constraint_diagnostics,
@@ -1968,22 +1969,29 @@ def _check_one(
             ),
             duration_ms=_elapsed(started),
             previous_accepted=accepted,
-            warnings=_result_warnings(grace, server),
+            warnings=_result_warnings(
+                grace, server, None if user is None else user.password_changed_unknown
+            ),
         )
     )
     return binding, outcome
 
 
-def _result_warnings(grace: str | None, server: str | None) -> tuple[tuple[str, str], ...]:
+def _result_warnings(
+    grace: str | None, server: str | None, changed_unknown: str | None = None
+) -> tuple[tuple[str, str], ...]:
     """The coded entries for one account's ``results[].warnings[]``.
 
     Order is the order they were learned: the account's state is read before the
     login is attempted, and on a run where the lockout guard declined there is no
-    second entry at all.
+    server entry at all. ``changed_unknown`` is read with that state, so it sits
+    beside the grace period rather than after the login (#386).
     """
     found = []
     if grace is not None:
         found.append((PASSWORD_GRACE_PERIOD, grace))
+    if changed_unknown is not None:
+        found.append((PASSWORD_CHANGE_DATE_UNKNOWN, changed_unknown))
     if server is not None:
         found.append((LOGIN_WARNING, server))
     return tuple(found)

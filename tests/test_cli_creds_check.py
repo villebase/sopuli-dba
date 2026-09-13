@@ -250,6 +250,28 @@ def test_an_absent_password_age_says_why(
     assert result.exit_code == ExitCode.SUCCESS, "informational: nothing gates on it"
 
 
+def test_a_login_that_raises_keeps_what_was_already_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """Copilot on #421: the account's state is read before the login, so an
+    `ERROR` from the login must not discard it. W021 explains a missing
+    `password_age_days`, and it has to survive on the path where the row is an
+    error too -- as does an age that *was* read."""
+    reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$"
+    # No scripted answer, so `verify_password` raises -- after `describe_user`.
+    estate(users={"ACME_WEB_USER": user(password_changed_unknown=reason)}, answers={})
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    for entry in body["results"]:
+        assert entry["state"] == check.ERROR
+        assert [one["code"] for one in entry["warnings"]] == ["SOPULI-W021"]
+
+
 def test_the_plan_is_printed_before_anything_is_checked(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

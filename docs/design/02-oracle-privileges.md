@@ -264,8 +264,9 @@ When present, the grant is probed as a capability at plan time (invariant 3,
   reporting), and `check` must report the guard's absence plainly rather than
   silently run a weaker version of it.
 - **`check --method hash`**, if it ships at all — see below.
-- **The password change date below 19c** (#386). `DBA_USERS.PASSWORD_CHANGE_DATE`
-  is `ORA-00904` on 18c and 11.2; there, `SELECT PTIME FROM SYS.USER$` supplies
+- **The password change date where `DBA_USERS` has no column for it** (#386).
+  `DBA_USERS.PASSWORD_CHANGE_DATE` is `ORA-00904` on 18c and 11.2 (12.1, 12.2 and
+  19c unmeasured); there, `SELECT PTIME FROM SYS.USER$` supplies
   the same value, measured equal to the column to the second on the releases
   that have both. Display only — `creds status`'s `DB_PW_CHANGED` and the run
   document's `password_age_days` — and never read where the column exists.

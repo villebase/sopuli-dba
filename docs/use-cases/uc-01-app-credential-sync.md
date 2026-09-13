@@ -1971,7 +1971,7 @@ past 90 days. `ORDERS_APP`'s `cdb1-pdb-billing` row shares that exact
 94d: the same database-side history, two very different answers depending on
 which clock is asked, and only the vault's is acted on.
 
-### Where `DB_PW_CHANGED` comes from below 19c (#386, decided)
+### Where `DB_PW_CHANGED` comes from without `PASSWORD_CHANGE_DATE` (#386, decided)
 
 `DBA_USERS.PASSWORD_CHANGE_DATE` does not exist on every supported release.
 Measured 2026-09-08, it is present on 26ai and 21c and `ORA-00904` on **18c and

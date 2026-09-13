@@ -1903,6 +1903,9 @@ def _check_one(
     # answer. `None` there is the same "nothing was attempted" the rest of this
     # function already means by it.
     verification: VerifyResult | None = None
+    # Bound before the `try` for the error path's sake: an account read before a
+    # later step failed is still an account that was read (#386).
+    user: UserState | None = None
     try:
         stored = _stored_credential(binding, stores)
         user = session.describe_user(binding.account)
@@ -1940,7 +1943,26 @@ def _check_one(
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)
         outcome = check_states.Outcome(check_states.ERROR, reported.message)
-        out.append(build_result(binding, outcome, duration_ms=_elapsed(started), error=reported))
+        # What the database said before the failure still stands. A login that
+        # raised says nothing about the account's age or its grace period, and
+        # dropping them would leave `password_age_days` missing with neither the
+        # value nor W021's reason for its absence (#386, Copilot on #421).
+        out.append(
+            build_result(
+                binding,
+                outcome,
+                age_days=check_states.password_age_days(
+                    None if user is None else user.password_changed_at
+                ),
+                duration_ms=_elapsed(started),
+                error=reported,
+                warnings=_result_warnings(
+                    check_states.grace_warning(user),
+                    None,
+                    None if user is None else user.password_changed_unknown,
+                ),
+            )
+        )
         return binding, outcome
 
     # One call, two channels: `results[].warnings[]` for a consumer and a line

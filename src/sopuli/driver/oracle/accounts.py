@@ -72,7 +72,8 @@ expects numbers in, resolved through :data:`PROFILE_QUERY`'s ``DEFAULT`` join
 like every other resource.
 
 **``PASSWORD_CHANGE_DATE`` does track a rotation** on this release — two
-rotations two minutes apart moved it. Below 19c the column does not exist, and
+rotations two minutes apart moved it. On 18c and 11.2 the column does not exist
+(19c is unmeasured; the server's ``ORA-00904`` decides, not a version), and
 #386 decided the value comes from ``SYS.USER$.PTIME`` there, behind the optional
 grant, rather than going missing. That is a second source for one field, and it
 is admitted only because it is **the same clock** rather than an estimate of it —
@@ -113,7 +114,7 @@ from sopuli.driver.oracle.rollover import is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
 
 #: The account, as the database spells it. ``PASSWORD_CHANGE_DATE`` is selected
-#: unconditionally: it exists from 19c, and on 18c and 11.2 the query fails with
+#: unconditionally: it exists on 21c and 26ai, and on 18c and 11.2 the query fails with
 #: ``ORA-00904`` — which :func:`~sopuli.driver.oracle.capabilities.read` already
 #: treats as an enumerated negative, so the fallback is a query rather than a
 #: guess. See :data:`USER_QUERY_NO_CHANGE_DATE`, and :data:`PTIME_QUERY` for where
@@ -124,7 +125,7 @@ from sopuli.driver.protocol import DriverError, UserState
 #: not be pasted into SQL text.
 #: ``EXPIRY_DATE`` is **appended** rather than slotted in beside
 #: ``ACCOUNT_STATUS`` where it reads most naturally, and that is deliberate:
-#: :func:`_maintained` and :func:`_changed_at` read fixed positions, so a column
+#: :func:`_maintained` and :func:`_password_changed` read fixed positions, so a column
 #: inserted in the middle would move two fields that nothing would fail loudly
 #: about -- ``ORACLE_MAINTAINED`` would come back as a date and read as *not
 #: vendor-maintained*, which is guardrail check 5's input (#309).

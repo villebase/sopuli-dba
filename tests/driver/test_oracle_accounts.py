@@ -265,8 +265,9 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     and not a version test.
 
     There is deliberately no capability for it, and #386 decided there will not
-    be: the query is its own probe. Below 19c the driver reads ``SYS.USER$.PTIME``
-    instead where the grant exists, which the tests after this one pin.
+    be: the query is its own probe. Where the column is absent the driver reads
+    ``SYS.USER$.PTIME`` instead, if the grant exists, which the tests after this
+    one pin.
     """
     before = account.describe_user(ACCOUNT)
     assert before is not None
@@ -325,7 +326,7 @@ def test_ptime_is_the_same_clock_as_password_change_date(account: Any) -> None:
 
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)
-def test_below_19c_the_fallback_tracks_a_rotation(account: Any) -> None:
+def test_without_the_column_the_fallback_tracks_a_rotation(account: Any) -> None:
     """#386's acceptance: 18c reports what 21c reports natively.
 
     The same strict ``>`` and the same sleep as the test above it, for the same
@@ -349,7 +350,7 @@ def test_below_19c_the_fallback_tracks_a_rotation(account: Any) -> None:
     assert after.password_changed_at > before.password_changed_at
 
 
-def test_below_19c_without_the_grant_the_date_is_absent_and_says_why(account: Any) -> None:
+def test_without_the_column_or_the_grant_the_date_is_absent_and_says_why(account: Any) -> None:
     """#386's other acceptance test: the fallback stays ``None`` without the grant.
 
     The suite's own account holds the grant (the init script makes it), so the

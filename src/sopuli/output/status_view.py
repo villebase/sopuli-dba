@@ -331,8 +331,9 @@ def _age(row: Row) -> Cell | str:
 def _changed_at(user: UserState | None) -> Cell | str:
     """The database's own date, for display and nothing else (Q9).
 
-    ``-`` where the database would not say. Below 19c the date is behind the
-    optional ``SYS.USER$`` grant (#386), and the notes under the table say which
+    ``-`` where the database would not say. On a release with no
+    ``PASSWORD_CHANGE_DATE`` -- 18c and 11.2 among those measured -- the date is
+    behind the optional ``SYS.USER$`` grant (#386), and the notes under the table say which
     of the reasons applies -- a dash on its own used to mean all of them.
     """
     if user is None or user.password_changed_at is None:

@@ -2068,15 +2068,19 @@ is the layer being demonstrated; its line above is abridged from that document's
 the profile beneath it — the operator at the keyboard is the more specific intent.
 
 The third-party layer does not appear, because `output` has none: `VAULT_ADDR`
-ranking below `SOPULI_VAULT_ADDR` is §6's to show, and it is a vault setting with
-no flag.
+ranking below `SOPULI_VAULT_ADDR` and below `--vault-addr` is §6's to show, being
+a setting of a store rather than of the run.
 
 **These examples are pasted, not written** (#409). They were once drawn on
-`--vault-addr` and `--method`, and neither flag exists — `sopuli` rejected both
-before any precedence was consulted, so the documented outcomes were predictions.
-`output` was chosen over marking the old blocks illustrative because it has a
-real layer at every level shown, which leaves nothing in this section excused
-from running.
+`--vault-addr` and `--method`, and at the time neither flag existed — `sopuli`
+rejected both before any precedence was consulted, so the documented outcomes
+were predictions. `output` was chosen over marking the old blocks illustrative
+because it has a real layer at every level shown, which leaves nothing in this
+section excused from running. **`--vault-addr` has since been built** (#422) and
+these examples were still not moved back onto it: it demonstrates one layer fewer
+here — a store's settings are merged inside the file, so they never appear in the
+`settings` table this section is showing — and §6 is where its own chain is worked
+through.
 
 Safety ratchet — `defaults.safety.readonly: true`, and a `ci` profile that tries
 to undo it with `safety: { readonly: false }`:

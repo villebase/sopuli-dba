@@ -27,12 +27,13 @@ from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
-from sopuli.config.model import Pairs, Vault
+from sopuli.config.model import Pairs, Safety, Vault
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
-from sopuli.settings import Resolved
+from sopuli.settings import Contribution, Layer, Resolved, render_value, resolve_all
+from sopuli.settings.sources import safety_block, target_safety
 
 #: The environment safety rules key on (§9), and the one this view highlights.
 PRODUCTION = "prod"
@@ -231,7 +232,14 @@ def build_section(
 
 
 def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
-    """One block per section of the file, in the order the file writes them."""
+    """One block per section of the file, in the order the file writes them --
+    and then one that is not a section of the file at all.
+
+    ``safety`` is derived: a ``safety:`` block may be written under six different
+    things, so the question "what does this file guard, and where is it written"
+    has no home among the sections. It goes last because it is a summary over
+    them rather than one of them.
+    """
     return [
         ("vaults", _vault_rows(config)),
         ("targets", _declared_target_rows(config)),
@@ -240,7 +248,142 @@ def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
         ("policies", _named(policy.name for policy in config.policies)),
         ("profiles", _named(profile.name for profile in config.profiles)),
         ("applications", _application_rows(config)),
+        ("safety", _safety_rows(config)),
     ]
+
+
+def _safety_rows(config: Config) -> list[str]:
+    """Every ``safety:`` key the file writes, by the key that writes it (#426).
+
+    **The section exists because a block outside ``defaults`` was invisible.**
+    ``config show --explain`` reports the *run's* settings, and ``config show``
+    applies no selector and builds no plan -- so its ``safety.readonly`` is
+    correctly ``false`` even for a file whose target sets it, and §9 defines
+    ``[built-in default]`` as precisely *nothing else spoke*. The row was never
+    the defect; the defect was that nothing else in the command said a block
+    existed. This is what says it.
+
+    **Every block, not only the object layer.** ``defaults`` and a profile are
+    already visible in ``--explain``'s table, and leaving them out here would make
+    this section its own half-truth -- a map of the file's guards with two of the
+    six kinds of place missing. The two views answer different questions: that one
+    is *what did this run resolve to*, this one is *what does this file say, and
+    where*.
+
+    **One row per key rather than per block**, because the key path is the thing
+    to edit and a block writes up to three of them. Deduplicated by that path,
+    which is what collapses a target set's template to one row instead of one per
+    generated target -- the template is a single line in the file however many
+    targets it makes.
+
+    **Generated targets are addressed through**
+    :func:`~sopuli.config.expansion.declared_at`, so a block an ``overrides:``
+    entry wrote is reported against the override. Reporting it against the
+    template would point at the one place the value is spelled the way the reader
+    expected.
+    """
+    written: dict[str, str] = {}
+    for _, value, key, _ in _safety_keys(config):
+        if value is not None and key not in written:
+            written[key] = render_value(value)
+    defeated = _defeated_keys(config)
+    return render_table(
+        # **No width cap on the key**, which is the one column here that must not
+        # be truncated: two `target_sets.appdb.overrides.…` paths differ in their
+        # tail, so a cap turns the answer into two identical rows. The same reason
+        # `explain_view` lays its own table out by hand rather than through this
+        # module -- a truncated location is useless in exactly the moment the view
+        # exists for.
+        [Column("KEY"), Column("VALUE", _DSN), Column("NOTE")],
+        [
+            [
+                key,
+                written[key],
+                Cell("defeated by the ratchet", Role.NOTABLE) if key in defeated else "",
+            ]
+            for key in sorted(written)
+        ],
+    )
+
+
+def _defeated_keys(config: Config) -> frozenset[str]:
+    """Keys a ``safety:`` block writes that do not survive the ratchet (#426).
+
+    Exactly one thing can produce these today: an ``overrides:`` entry asking for
+    less than its target set's template -- ``readonly: false`` over a ``true``, or
+    a higher ``max_targets``. The two blocks sit at one layer and the safest wins
+    (invariant 10), so the override's value is in the file and is not what any run
+    will read.
+
+    **Marked rather than hidden.** Dropping the row would leave somebody who wrote
+    `readonly: false` with no sign of it anywhere -- which is the failure this
+    section exists to fix, in miniature. Showing it unmarked beside rows that *are*
+    in force is worse still, because the table reads as effective values.
+    :attr:`~sopuli.settings.resolver.Resolved.relaxations` already names the losers
+    and carries their locations, so the answer is the resolver's rather than a
+    comparison invented here.
+
+    **Defeated everywhere, not merely somewhere**, and this is the case the first
+    run of it got wrong. A template writes one line and generates many targets, so
+    a key can lose on the one an override patched and hold on every other -- and
+    marking the template's `max_targets: 4` as defeated because *one* generated
+    target lowered it would be telling the reader a line has no effect when it
+    governs the rest of the set. So a row is marked only where nothing it applies
+    to ever reads it.
+    """
+    won: set[str] = set()
+    lost: set[str] = set()
+    for expanded in config.expanded_targets:
+        contributions: dict[str, list[Contribution]] = {}
+        for name, value, detail, layer in target_safety(expanded):
+            if value is None:
+                continue
+            contributions.setdefault(name, []).append(
+                Contribution(layer=layer, value=value, detail=detail)
+            )
+        for answer in resolve_all(contributions).values():
+            won.add(answer.location)
+            lost.update(one.location for one in answer.relaxations)
+    return frozenset(lost - won)
+
+
+def _safety_keys(config: Config) -> list[tuple[str, object, str, Layer]]:
+    """Every ``safety:`` key the file writes, with the path that writes it.
+
+    In the order a reader would look for them: the two that govern the whole run
+    first, then the objects.
+
+    **Targets go through** :func:`~sopuli.settings.sources.target_safety` rather
+    than through :func:`~sopuli.config.expansion.declared_at` directly, and that
+    is the whole reason this is not four lines. A patch merges into a target set's
+    template key by key, so the flattened block holds the template's answer for
+    every key the ``overrides:`` entry did not write -- and addressing all of them
+    at the override's path reports it as the source of values it never mentions.
+    That function already decides which key belongs to which line (#424, #425),
+    and a second rule here would be a second answer to one question.
+    """
+    found: list[tuple[str, object, str, Layer]] = []
+    if config.defaults.safety is not None:
+        found.extend(_keys(config.defaults.safety, at="defaults.safety"))
+    for profile in config.profiles:
+        if profile.safety is not None:
+            found.extend(_keys(profile.safety, at=f"profiles.{profile.name}.safety"))
+    for expanded in config.expanded_targets:
+        found.extend(target_safety(expanded))
+    for group in config.groups:
+        if group.safety is not None:
+            found.extend(_keys(group.safety, at=f"groups.{group.name}.safety"))
+    return found
+
+
+def _keys(block: Safety, *, at: str) -> list[tuple[str, object, str, Layer]]:
+    """One block's keys. The contribution builder, reused so that a fourth key
+    added to a ``safety:`` block appears here without a second edit.
+
+    Its ``layer`` is irrelevant to a view and is discarded by the caller: nothing
+    is resolved here, so any value would do.
+    """
+    return safety_block(block, at=at, layer=Layer.OBJECT)
 
 
 def _vault_rows(config: Config) -> list[str]:
@@ -538,9 +681,52 @@ def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str
         "scope": target.oracle.scope,
         "container": target.oracle.container,
         "labels": as_dict(target.labels),
+        "safety": _target_safety_json(expanded),
         "target_set": expanded.target_set,
         "overridden": expanded.overridden,
         "managed": target.name in bound,
+    }
+
+
+def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
+    """This target's ``safety:`` block as the run will read it (#426, schema 1.22).
+
+    ``None`` where neither the target nor the set that generated it writes one,
+    which is most targets: an empty object would read as a block that exists and
+    says nothing, and the two are different.
+
+    **Resolved rather than flattened**, which is the whole reason this is not
+    ``as_dict(target.safety)``. A patch merges into a template key by key, so
+    :attr:`~sopuli.config.model.Target.safety` on a generated target can hold an
+    override's ``readonly: false`` over a template's ``true`` -- the target layer's
+    literal statement, and not what the run does, because the ratchet takes the
+    safest of the two (#425). Reporting the flattened value here would put the
+    relaxed answer in the machine-readable contract while the tool refused the
+    run, which is the shape of lie this whole section exists to remove. So the
+    same contributions go through the same resolver, and it is correct in both
+    directions: an override may always refuse *more*.
+
+    **Only this target's block.** ``defaults``, a profile and a group can each
+    refuse a mutation too, and none of them is a property of a target -- folding
+    them in would make one object's answer depend on four, and hide which. They
+    are in ``config.declared`` as written, and in the text view's ``safety``
+    section by the key that writes them.
+    """
+    contributions: dict[str, list[Contribution]] = {}
+    for name, value, detail, layer in target_safety(expanded):
+        if value is None:
+            continue
+        contributions.setdefault(name, []).append(
+            Contribution(layer=layer, value=value, detail=detail)
+        )
+    if not contributions:
+        return None
+    resolved = resolve_all(contributions)
+    return {
+        name.split(".", 1)[1]: list(answer.value)
+        if isinstance(answer.value, tuple)
+        else answer.value
+        for name, answer in resolved.items()
     }
 
 

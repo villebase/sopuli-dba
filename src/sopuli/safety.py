@@ -160,7 +160,17 @@ def readonly_targets(config: Config) -> tuple[ReadonlyTarget, ...]:
 
 
 def _readonly_at(expanded: ExpandedTarget, config: Config) -> str | None:
-    """The key that marks this target ``readonly``, or ``None`` if none does."""
+    """The key that marks this target ``readonly``, or ``None`` if none does.
+
+    The template's block is consulted **before** the flattened one, because a
+    patch that tried to relax it lost the ratchet and the line that holds is the
+    template's (#424, found in review). Reading only the flattened value would
+    drop the target out of the message entirely while the refusal still fired --
+    the right refusal with a worse message, which is the failure that is hardest
+    to notice.
+    """
+    if expanded.template_safety is not None and expanded.template_safety.readonly:
+        return f"target_sets.{expanded.target_set}.safety.readonly"
     if expanded.target.safety is not None and expanded.target.safety.readonly:
         return str(declared_at(expanded, "safety").key("readonly"))
     for group in config.groups:

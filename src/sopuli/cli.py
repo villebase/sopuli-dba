@@ -1316,11 +1316,13 @@ def lock_break(
         raise click.UsageError(str(exc)) from exc
 
     # No `estate=`, and that is a decision rather than the one verb that was
-    # missed when layer 4 was wired up (#424). This one addresses a **vault
-    # document** by path and takes no selector at all, so there is no estate for a
-    # target's or a group's block to arrive from -- and a `readonly` on a target
-    # is a statement about that database, which is not what a lock on a secret
-    # guards. `defaults` and a profile still refuse it, as they always did.
+    # missed when layer 4 was wired up (#424, raised in review on #425).
+    # `01-configuration.md` §3a records it; the short form is that this verb
+    # addresses a **vault document** by path and takes no selector at all, so
+    # there is no estate for a target's or a group's block to arrive from -- and
+    # gating it here would guard nothing, because every verb that would use this
+    # lock to change that target is already refused by the same block.
+    # `defaults` and a profile still refuse it, as they always did.
     refuse_if_readonly(run.resolved, action=f"breaking the lock on {key}")
 
     paths = run.sources

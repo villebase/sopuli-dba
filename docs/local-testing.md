@@ -1913,6 +1913,12 @@ Exit 8, and `--dry-run` is refused with everything else. `creds generate`,
 `creds rotate` and `creds finish-rollover` refuse the same way; `creds check` and
 `creds status` still run and exit as they would have.
 
+**`lock break` does not**, from a target or a group — it names a vault document
+and takes no selector, so there is no estate for the block to come from, and
+every verb that would use that lock to change the target is already refused.
+Under `defaults:` or a profile it is refused like everything else. §3a of
+`01-configuration.md` has the reasoning.
+
 Move the block to a group and the refusal points at the group's key instead. A
 group is a label match, so nothing has to select *by* it — it applies because a
 target it matches is in the run:

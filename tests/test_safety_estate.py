@@ -159,6 +159,111 @@ def test_an_override_is_reported_against_the_override() -> None:
     assert one.detail == "target_sets.appdb.overrides.appdb-dev-beta.safety.readonly"
 
 
+# ---------------------------------- the override that must not relax (#424) ---
+#
+# `_patch_target` merges a patch into the template key by key, so a patch's
+# `readonly: false` replaces a template's `true` -- and until the review on #425
+# the safer of the two was gone before anything could ratchet them. Harmless
+# while nothing enforced a target's block, and an invariant 10 hole the moment
+# something did: a run narrowed to the patched target had nothing left to be
+# safest of. `_patch_target`'s docstring had claimed this could not happen since
+# it was written.
+
+
+def relaxing() -> Config:
+    """A template that refuses everything, and an override that asks not to."""
+    return sections(
+        target_sets={
+            "appdb": {
+                **TEMPLATE,
+                "safety": {"readonly": True, "max_targets": 1, "confirm_environments": ["dev"]},
+                "overrides": {
+                    "appdb-dev-beta": {
+                        "safety": {
+                            "readonly": False,
+                            "max_targets": 50,
+                            "confirm_environments": [],
+                        }
+                    }
+                },
+            }
+        }
+    )
+
+
+def only_beta(config: Config) -> Config:
+    """Narrowed to the patched target, so nothing else can hold the line."""
+    return filter_estate(config, Selection(targets=("appdb-dev-beta",)))
+
+
+def test_an_override_cannot_relax_what_the_template_set() -> None:
+    narrowed = only_beta(relaxing())
+    answers = folded(narrowed)
+
+    assert answers[READONLY].value is True
+    assert answers[MAX_TARGETS].value == 1
+    assert answers[CONFIRM_ENVIRONMENTS].value == ("dev",)
+
+
+def test_the_defeated_override_is_not_the_line_the_message_names() -> None:
+    """The template is where the value that held was written, and it is the only
+    line editing which changes anything."""
+    narrowed = only_beta(relaxing())
+    answers = folded(narrowed)
+
+    assert answers[READONLY].location == "target_sets.appdb.safety.readonly"
+    assert answers[MAX_TARGETS].location == "target_sets.appdb.safety.max_targets"
+
+
+def test_a_defeated_override_still_leaves_the_target_named() -> None:
+    """The flattened block says ``readonly: false``, so a message reading only
+    that would drop the target while the refusal still fired -- the right refusal
+    with a worse message, which is the failure hardest to notice."""
+    narrowed = only_beta(relaxing())
+
+    with pytest.raises(RefusedError) as raised:
+        refuse_if_readonly(folded(narrowed), action="applying a password", estate=narrowed)
+
+    assert "appdb-dev-beta (target_sets.appdb.safety.readonly)" in (raised.value.hint or "")
+
+
+def test_an_override_that_tightens_wins_and_is_reported() -> None:
+    """The ratchet runs both ways round: an override may always refuse *more*,
+    and then it is the line to point at."""
+    config = sections(
+        target_sets={
+            "appdb": {
+                **TEMPLATE,
+                "safety": {"max_targets": 50},
+                "overrides": {"appdb-dev-beta": {"safety": {"max_targets": 2}}},
+            }
+        }
+    )
+    narrowed = only_beta(config)
+
+    answer = folded(narrowed)[MAX_TARGETS]
+    assert answer.value == 2
+    assert answer.location == "target_sets.appdb.overrides.appdb-dev-beta.safety.max_targets"
+
+
+def test_a_key_the_override_left_alone_is_reported_against_the_template() -> None:
+    """A patch merges key by key, so the flattened block holds the template's
+    answer for every key the patch did not write. Contributing that at the
+    override's line would send the reader to a block that does not mention it."""
+    config = sections(
+        target_sets={
+            "appdb": {
+                **TEMPLATE,
+                "safety": {"readonly": True, "max_targets": 4},
+                "overrides": {"appdb-dev-beta": {"safety": {"max_targets": 2}}},
+            }
+        }
+    )
+    narrowed = only_beta(config)
+
+    assert folded(narrowed)[READONLY].location == "target_sets.appdb.safety.readonly"
+
+
 # ------------------------------------------------------------- the ratchet ---
 
 

@@ -1073,6 +1073,27 @@ sopuli: applying a password is a mutation, and `safety.readonly` is set on the t
 it: under `readonly` the mutating verbs are unavailable, and the read-only verb
 is how you ask.
 
+**`lock break` is the one mutating verb a target's or a group's block does not
+reach**, and that is a decision rather than a verb that was missed (#424, raised
+in review on #425). Three reasons, and the third is the one that settles it:
+
+- It addresses a **vault document by path** and takes no selector, so there is no
+  estate for layer 4 to arrive from. It acts on the lock named whether or not the
+  configuration declares a binding for it, which is #150's decision and the whole
+  reason the verb can clear a leftover at a path the file no longer names.
+- `readonly` on a *target* is a statement about that database. The lock is not
+  the database, and breaking it changes no credential — it takes an advisory lock
+  and fences its holder.
+- **It protects nothing that is not already protected.** Every verb that would
+  use the lock to change that target — `rotate`, `apply`, `generate`,
+  `finish-rollover` — is refused by the same block. So gating `lock break` here
+  would block a harmless cleanup and guard nothing, and the operator left holding
+  a stuck lock on a readonly population would have to edit their config to clear
+  a record that could not have been used against them.
+
+`defaults` and a profile still refuse it, and there the statement is a different
+one and coherent: *this file may not write anything*, lock store included.
+
 #### What `confirm_environments` does when it fires (#292)
 
 Parsed since this document was written and **enforced since #292**, which is

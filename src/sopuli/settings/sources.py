@@ -52,7 +52,7 @@ from collections.abc import Mapping
 
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Config, Locking, ProfileDb, Safety
+from sopuli.config.model import Config, ExpandedTarget, Locking, ProfileDb, Safety
 from sopuli.config.selection import matches
 from sopuli.config.vault_env import DEFAULT_STORE_SETTING, DEFAULT_STORE_VARIABLE
 from sopuli.settings.registry import Layer
@@ -222,15 +222,9 @@ def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
     reached = {binding.target for binding in config.bindings}
     found: list[tuple[str, object, str, Layer]] = []
     for expanded in config.expanded_targets:
-        if expanded.name not in reached or expanded.target.safety is None:
+        if expanded.name not in reached:
             continue
-        found.extend(
-            safety_block(
-                expanded.target.safety,
-                at=str(declared_at(expanded, "safety")),
-                layer=Layer.OBJECT,
-            )
-        )
+        found.extend(_target_safety(expanded))
     matched = [expanded.target for expanded in config.expanded_targets if expanded.name in reached]
     for group in config.groups:
         if group.safety is None or not any(matches(target, group.match) for target in matched):
@@ -278,6 +272,44 @@ def _safety(
     if safety is None:
         return []
     return safety_block(safety, at=f"{at}.safety", layer=layer)
+
+
+def _target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Layer]]:
+    """One target's ``safety:`` keys, and the line each was written on.
+
+    Usually one block. **Two, where an ``overrides:`` entry patched it** (#424,
+    found in review): `_patch_target` merges a patch into the template key by
+    key, so a patch's ``readonly: false`` replaces a template's ``true`` and the
+    safer of the two is gone before anything can ratchet them. A run narrowed to
+    the patched target would then have nothing left to be safest *of*, and the
+    override would simply win -- which invariant 10 forbids and which
+    `_patch_target`'s own docstring has always said cannot happen.
+
+    So both reach the resolver. The template's block goes first, and the patched
+    one contributes **only the keys whose value it changed**: a key the patch did
+    not write holds the template's answer, which is already contributed at the
+    template's line, and repeating it here would do nothing but win the
+    location tie and send the reader to a block that does not mention the key.
+    """
+    block = expanded.target.safety
+    if expanded.template_safety is None:
+        return (
+            []
+            if block is None
+            else safety_block(block, at=str(declared_at(expanded, "safety")), layer=Layer.OBJECT)
+        )
+    template = safety_block(
+        expanded.template_safety,
+        at=f"target_sets.{expanded.target_set}.safety",
+        layer=Layer.OBJECT,
+    )
+    written = {name: value for name, value, _, _ in template}
+    patched = (
+        []
+        if block is None
+        else safety_block(block, at=str(declared_at(expanded, "safety")), layer=Layer.OBJECT)
+    )
+    return [*template, *(row for row in patched if row[1] != written.get(row[0]))]
 
 
 def safety_block(safety: Safety, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:

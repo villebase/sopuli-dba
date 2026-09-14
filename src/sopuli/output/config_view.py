@@ -28,6 +28,7 @@ from typing import Any
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import Pairs, Safety, Vault
+from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
@@ -306,52 +307,13 @@ def _safety_rows(config: Config) -> list[str]:
     )
 
 
-def _defeated_keys(config: Config) -> frozenset[str]:
-    """Keys a ``safety:`` block writes that do not survive the ratchet (#426).
-
-    Exactly one thing can produce these today: an ``overrides:`` entry asking for
-    less than its target set's template -- ``readonly: false`` over a ``true``, or
-    a higher ``max_targets``. The two blocks sit at one layer and the safest wins
-    (invariant 10), so the override's value is in the file and is not what any run
-    will read.
-
-    **Marked rather than hidden.** Dropping the row would leave somebody who wrote
-    `readonly: false` with no sign of it anywhere -- which is the failure this
-    section exists to fix, in miniature. Showing it unmarked beside rows that *are*
-    in force is worse still, because the table reads as effective values.
-    :attr:`~sopuli.settings.resolver.Resolved.relaxations` already names the losers
-    and carries their locations, so the answer is the resolver's rather than a
-    comparison invented here.
-
-    **Defeated everywhere, not merely somewhere**, and this is the case the first
-    run of it got wrong. A template writes one line and generates many targets, so
-    a key can lose on the one an override patched and hold on every other -- and
-    marking the template's `max_targets: 4` as defeated because *one* generated
-    target lowered it would be telling the reader a line has no effect when it
-    governs the rest of the set. So a row is marked only where nothing it applies
-    to ever reads it.
-    """
-    won: set[str] = set()
-    lost: set[str] = set()
-    for expanded in config.expanded_targets:
-        contributions: dict[str, list[Contribution]] = {}
-        for name, value, detail, layer in target_safety(expanded):
-            if value is None:
-                continue
-            contributions.setdefault(name, []).append(
-                Contribution(layer=layer, value=value, detail=detail)
-            )
-        for answer in resolve_all(contributions).values():
-            won.add(answer.location)
-            lost.update(one.location for one in answer.relaxations)
-    return frozenset(lost - won)
-
-
 def _safety_keys(config: Config) -> list[tuple[str, object, str, Layer]]:
     """Every ``safety:`` key the file writes, with the path that writes it.
 
     In the order a reader would look for them: the two that govern the whole run
-    first, then the objects.
+    first, then the objects. **Every declared profile**, not only the active one --
+    the section says what the file contains, and a profile nobody selected is
+    still written down.
 
     **Targets go through** :func:`~sopuli.settings.sources.target_safety` rather
     than through :func:`~sopuli.config.expansion.declared_at` directly, and that
@@ -380,10 +342,91 @@ def _keys(block: Safety, *, at: str) -> list[tuple[str, object, str, Layer]]:
     """One block's keys. The contribution builder, reused so that a fourth key
     added to a ``safety:`` block appears here without a second edit.
 
-    Its ``layer`` is irrelevant to a view and is discarded by the caller: nothing
-    is resolved here, so any value would do.
+    Its ``layer`` is irrelevant to a listing and is discarded by the caller.
     """
     return safety_block(block, at=at, layer=Layer.OBJECT)
+
+
+def _defeated_keys(config: Config) -> frozenset[str]:
+    """Keys a ``safety:`` block writes that no run will ever read (#426).
+
+    A ratchet has losers wherever two layers disagree, and this section lists
+    every layer, so every pairing can produce one: an ``overrides:`` entry asking
+    for less than its template, a group asking for less than a target it matches,
+    an active profile asking for less than ``defaults``. The first version
+    resolved only the first of those and left the other two reading as effective
+    values (found in review) -- which is this section's own failure, one layer
+    along.
+
+    **Resolved per target, against the layers enforcement uses.**
+    :func:`sopuli.safety.for_estate` merges ``defaults`` and the active profile
+    with a target's own block and the blocks of the groups matching it; the same
+    contributions go through the same resolver here. Only the **active** profile,
+    because a profile nobody selected patches nothing -- a declared one still gets
+    a row, since the section says what the file contains, but it cannot lose a
+    ratchet it never entered.
+
+    **Defeated everywhere, not merely somewhere**, and this is the case the first
+    run of it got wrong in the other direction. A template writes one line and
+    generates many targets, so a key can lose on the one an override patched and
+    hold on every other -- marking it because *one* target lowered it would say a
+    line has no effect while it governs the rest of the set. So a row is marked
+    only where nothing it applies to ever reads it.
+    """
+    run = _run_contributions(config)
+    won: set[str] = set()
+    lost: set[str] = set()
+    per_target = [_estate_contributions(config, expanded) for expanded in config.expanded_targets]
+    # An estate with no targets still has a `defaults`/profile pair to resolve,
+    # and a defeat between those two is not about any target.
+    for extra in per_target or [{}]:
+        contributions = {
+            name: [*run.get(name, ()), *extra.get(name, ())] for name in {*run, *extra}
+        }
+        for answer in resolve_all(contributions).values():
+            won.add(answer.location)
+            lost.update(one.location for one in answer.relaxations)
+    return frozenset(lost - won)
+
+
+def _run_contributions(config: Config) -> dict[str, list[Contribution]]:
+    """``defaults`` and the active profile -- the layers that govern every target."""
+    found: list[tuple[str, object, str, Layer]] = []
+    if config.defaults.safety is not None:
+        found.extend(
+            safety_block(config.defaults.safety, at="defaults.safety", layer=Layer.DEFAULTS)
+        )
+    profile = config.active_profile
+    if profile is not None and profile.safety is not None:
+        found.extend(
+            safety_block(profile.safety, at=f"profiles.{profile.name}.safety", layer=Layer.PROFILE)
+        )
+    return _contributions(found)
+
+
+def _estate_contributions(
+    config: Config, expanded: ExpandedTarget
+) -> dict[str, list[Contribution]]:
+    """One target's own block, and the blocks of the groups that match it."""
+    found = list(target_safety(expanded))
+    for group in config.groups:
+        if group.safety is not None and matches(expanded.target, group.match):
+            found.extend(
+                safety_block(group.safety, at=f"groups.{group.name}.safety", layer=Layer.OBJECT)
+            )
+    return _contributions(found)
+
+
+def _contributions(
+    found: Sequence[tuple[str, object, str, Layer]],
+) -> dict[str, list[Contribution]]:
+    """Rows to contributions, dropping the keys nobody wrote."""
+    built: dict[str, list[Contribution]] = {}
+    for name, value, detail, layer in found:
+        if value is None:
+            continue
+        built.setdefault(name, []).append(Contribution(layer=layer, value=value, detail=detail))
+    return built
 
 
 def _vault_rows(config: Config) -> list[str]:
@@ -691,9 +734,13 @@ def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str
 def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
     """This target's ``safety:`` block as the run will read it (#426, schema 1.22).
 
-    ``None`` where neither the target nor the set that generated it writes one,
-    which is most targets: an empty object would read as a block that exists and
-    says nothing, and the two are different.
+    ``None`` where nothing constrains this target, which is most of them. That
+    covers a target with no block **and** one written as an empty ``safety: {}``,
+    and collapsing the two is deliberate (found in review): an empty block guards
+    exactly as much as no block, so a consumer branching on the difference would
+    be branching on nothing. Presence is not lost -- ``config.declared`` carries
+    the file as written, which is where a question about what somebody *typed*
+    belongs.
 
     **Resolved rather than flattened**, which is the whole reason this is not
     ``as_dict(target.safety)``. A patch merges into a template key by key, so

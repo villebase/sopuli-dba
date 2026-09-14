@@ -612,14 +612,27 @@ already ratcheted together:
 
 ```
 $ sopuli --config estate.yaml config show --resolved --output json
-{"name": "legacy-pdb", "safety": {"max_targets": 1, "readonly": true}}
-{"name": "appdb-dev-alpha", "safety": {"max_targets": 4}}
-{"name": "appdb-dev-beta", "safety": {"max_targets": 4, "readonly": true}}
+```
+```json
+{
+  "config": {
+    "targets": [
+      { "name": "legacy-pdb",      "safety": { "max_targets": 1, "readonly": true } },
+      { "name": "appdb-dev-alpha", "safety": { "max_targets": 4 } },
+      { "name": "appdb-dev-beta",  "safety": { "max_targets": 4, "readonly": true } }
+    ]
+  }
+}
 ```
 
-`null` where neither the target nor its set writes one. `defaults`, a profile and
-a group are **not** folded in — none of them is a property of a target, and
-`config.declared` carries every block as written.
+One document per run, so that is an excerpt: every target carries the other
+fields of §15's `config.targets[]` beside `safety`, and the run document's own
+sections sit above it.
+
+`null` where nothing constrains the target — it writes no block, or writes an
+empty one, which guards the same. `defaults`, a profile and a group are **not**
+folded in: none of them is a property of a target, and `config.declared` carries
+every block as written.
 
 ### `--vault-addr`, the one flag that redirects a store
 

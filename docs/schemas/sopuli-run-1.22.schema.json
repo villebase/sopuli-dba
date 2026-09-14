@@ -369,7 +369,7 @@
                   "object",
                   "null"
                 ],
-                "description": "The `safety:` block in force for this target, after a target set's template and its `overrides:` entry have been ratcheted together, or null where neither writes one. Additive in 1.22 (#426): the expanded estate said nothing about safety, so a consumer of the resolved view could not see that a target refuses mutation. Blocks written under `defaults`, a profile or a group are not folded in here -- they are not properties of a target, and `config.declared` already carries them as written.",
+                "description": "The `safety:` block in force for this target, after a target set's template and its `overrides:` entry have been ratcheted together, or null where nothing constrains it -- a target that writes no block, and one that writes an empty block, which guards identically. Additive in 1.22 (#426): the expanded estate said nothing about safety, so a consumer of the resolved view could not see that a target refuses mutation. Blocks written under `defaults`, a profile or a group are not folded in here -- they are not properties of a target, and `config.declared` already carries them as written.",
                 "additionalProperties": false,
                 "properties": {
                   "readonly": {

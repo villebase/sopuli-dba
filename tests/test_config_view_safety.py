@@ -244,6 +244,52 @@ def test_a_template_lowered_on_one_target_is_not_called_defeated() -> None:
     assert "defeated" not in rows["target_sets.appdb.overrides.appdb-dev-beta.safety.max_targets"]
 
 
+def test_a_group_asking_for_less_than_a_target_is_marked() -> None:
+    """A ratchet has losers wherever two layers disagree, and this section lists
+    every layer -- so resolving only the template/override pair left the other
+    pairings reading as effective values (found in review)."""
+    config = one_target(
+        {"max_targets": 2},
+        groups={"app-pdbs": {"match": {"tier": "app"}, "safety": {"max_targets": 50}}},
+    )
+
+    rows = {line.split()[0]: line for line in section(config)[1:]}
+    assert "defeated" in rows["groups.app-pdbs.safety.max_targets"]
+    assert "defeated" not in rows["targets[0].safety.max_targets"]
+
+
+def test_an_active_profile_asking_for_less_than_defaults_is_marked() -> None:
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+            "accounts": ["acme_app_user"],
+            "secret_template": "vault-dev:acme/{env}/db#{account}",
+            "targets": [{**TARGET, "name": "alpha-0", "labels": {"tier": "app"}}],
+            "defaults": {"safety": {"readonly": True}},
+            "profiles": {"ci": {"safety": {"readonly": False}}},
+        },
+        # Built here rather than through `one_target`, which selects no profile:
+        # an inactive one patches nothing and is the next test's subject.
+        profile="ci",
+    )
+
+    rows = {line.split()[0]: line for line in section(config)[1:]}
+    assert "defeated" in rows["profiles.ci.safety.readonly"]
+
+
+def test_a_profile_nobody_selected_is_listed_and_never_defeated() -> None:
+    """It patches nothing, so it cannot lose a ratchet it never entered -- and it
+    still gets a row, because the section says what the file contains."""
+    config = one_target(
+        defaults={"safety": {"readonly": True}},
+        profiles={"ci": {"safety": {"readonly": False}}},
+    )
+
+    rows = {line.split()[0]: line for line in section(config)[1:]}
+    assert "defeated" not in rows["profiles.ci.safety.readonly"]
+
+
 # ----------------------------------------------------- the JSON contract ---
 
 
@@ -284,6 +330,13 @@ def test_an_override_may_always_refuse_more() -> None:
 
     assert target_json(config, "appdb-dev-beta") == {"max_targets": 2}
     assert target_json(config, "appdb-dev-alpha") == {"max_targets": 50}
+
+
+def test_an_empty_block_reports_null_like_no_block_at_all() -> None:
+    """`safety: {}` is a distinct `Safety` object and guards exactly as much as
+    no block, so a consumer branching on the difference would branch on nothing
+    (found in review). What was written is in `config.declared`."""
+    assert target_json(one_target({}), "alpha-0") is None
 
 
 def test_a_group_is_not_folded_into_a_targets_block() -> None:

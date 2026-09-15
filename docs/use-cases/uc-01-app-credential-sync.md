@@ -1533,8 +1533,10 @@ for locked accounts. The `T:` verifier can be reproduced client-side — measure
 in #432 on 26ai, 21c and 18c (`02-oracle-privileges.md` §2), which is what makes
 this method possible at all; a rollover window's two verifiers (`T:` previous,
 `t:` current) are told apart the same way, so this reports `ROLLOVER_ACTIVE`
-rather than drift. Unconfirmed on 19c, and #433 still owns the no-`T:`
-degradation case; if either goes wrong on a release that matters, the method is
+rather than drift. An account with no `12C` verifier (11g, or any account whose
+`PASSWORD_VERSIONS` lacks it) has nothing to compare, so `hash` fails at plan
+time naming the target rather than falling back to a weaker verifier (#433).
+Unconfirmed only on 19c; if the derivation goes wrong there, the method is
 dropped from the CLI.
 
 Trade-offs to document honestly if it does ship:

@@ -135,12 +135,13 @@ equally. One is now partially closed:
   `../design/02-oracle-privileges.md` §4, and what is still open in
   `../design/04-testing.md` §6 gate 2.
 - **The `T:` (12C) verifier in `SYS.USER$.SPARE4`** — its *layout* was read in
-  #431 and the client-side *derivation* reproduces it byte-for-byte in #432
-  (both on 26ai, 21c and 18c; not 19c), recorded in
-  `../design/02-oracle-privileges.md` §2. `--method hash` depends on this, and it
-  now holds; the one part still open is how an account with no `T:` degrades
-  (#433). Confirm the derivation on a throwaway 19c before committing hash mode
-  to the CLI.
+  #431, the client-side *derivation* reproduces it byte-for-byte in #432, and the
+  *degradation* rule (compare `T:` only; an account with no `12C` fails at plan
+  time) was settled in #433 — all on 26ai, 21c and 18c, recorded in
+  `../design/02-oracle-privileges.md` §2. `--method hash` depends on this and it
+  now holds on every tier-2 release; the only target left is 19c, unread because
+  it is not pullable. Confirm the derivation on a throwaway 19c before committing
+  hash mode to the CLI.
 
 If this decision is ever reversed, write the package fresh against the design as
 it stands then, rather than recovering the draft from git history.

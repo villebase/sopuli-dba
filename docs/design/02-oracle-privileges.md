@@ -319,7 +319,10 @@ left is one degradation case. #90 is three parts:
   ```
 
   The password is fed as raw UTF-8 with no case folding and no normalisation —
-  the non-ASCII and 128-byte cases reproduce unchanged. 4096 is the count the
+  the non-ASCII case reproduces on the multibyte input unchanged, and a 128-byte
+  password reproduces on 26ai (it is rejected at DDL below 23ai, the 30-byte
+  limit of #383, which the probe reads from the server rather than a version).
+  4096 is the count the
   server sends at logon (the layout bullet), not a value in `SPARE4`, so a
   release sending a different one would not reproduce and must be measured, not
   assumed — which is why 19c is still marked (unverified: t-verifier). The

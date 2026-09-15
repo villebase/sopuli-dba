@@ -32,12 +32,16 @@ THE DERIVATION (measured; parameters confirmed in #431):
 
 HOW TO RUN (from the repo root, against the tier-2 stack):
 
+    set -o pipefail   # so a failed sqlplus is not hidden by the pipe
     docker exec -i -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 \
       sopuli-test-oracle-free-1 sqlplus -s / as sysdba \
       < sql/oracle/06_verifier_reproduce.sql \
       | python sql/oracle/06_verifier_reproduce.py
 
-Exit status is 0 only if every verifier the probe emitted reproduced.
+Exit status is 0 only if every verifier reproduced AND every label and rollover
+phase the probe always emits was present -- an empty or truncated pipe is a
+failure, not a silent pass. ``pipefail`` catches a non-zero sqlplus; this catches
+a sqlplus that exits 0 having printed only some rows.
 """
 
 from __future__ import annotations
@@ -63,33 +67,59 @@ def derive_12c(password: bytes, salt: bytes) -> bytes:
     return hashlib.sha512(inter + salt).digest()
 
 
-def twelve_c_verifiers(spare4: str) -> list[tuple[str, str, bytes]]:
-    """Every 12C verifier in a ``SPARE4`` string, as ``(prefix, digest_hex, salt)``.
+#: The static labels the SQL probe always emits, on every release. Checked for
+#: presence before success is declared: an empty or truncated pipe (a failed
+#: sqlplus, a dropped connection) would otherwise leave both collections empty
+#: and print ALL REPRODUCED over nothing. `set -o pipefail` in the shell catches
+#: the process exit; this catches the case where sqlplus exits 0 having printed
+#: only some rows.
+EXPECTED_STATIC = frozenset({"ascii", "symbols", "nonascii", "len30", "len128"})
+EXPECTED_PHASES = frozenset({"BEFORE", "DURING", "AFTER"})
+
+
+def twelve_c_verifiers(spare4: str) -> list[tuple[str, str]]:
+    """Every ``T:``/``t:`` token in a ``SPARE4`` string, as ``(prefix, value)``.
 
     The prefix is case-sensitive: a rollover window carries ``T:`` (the previous
     password) and ``t:`` (the current one), and telling them apart is the whole
     of question 2. ``S:`` (11G), ``H:`` (10G) and ``V:`` (the rollover marker)
-    are not 12C verifiers and are skipped. A 12C blob is 160 hex characters: a
-    128-hex (64-byte) digest followed by a 32-hex (16-byte) salt.
+    are not 12C verifiers and are skipped.
+
+    **A ``T:``/``t:`` token of any length is returned, not only the 160-hex one
+    this release uses.** Surfacing a changed format is the point of the spike, so
+    a malformed token has to reach the caller as a token it must reject, never be
+    filtered out and reported as "no verifier". A well-formed 12C blob is 160 hex
+    characters: a 128-hex (64-byte) digest then a 32-hex (16-byte) salt.
     """
-    out: list[tuple[str, str, bytes]] = []
-    for part in spare4.split(";"):
-        prefix, value = part[:2], part[2:]
-        if prefix in ("T:", "t:") and len(value) == 160:
-            out.append((prefix, value[:128], bytes.fromhex(value[128:160])))
-    return out
+    return [(part[:2], part[2:]) for part in spare4.split(";") if part[:2] in ("T:", "t:")]
+
+
+def check_verifier(prefix: str, value: str, candidates: dict[str, bytes]) -> tuple[str, bool]:
+    """Match one verifier against candidate passwords: ``(which, well_formed)``.
+
+    ``which`` is the candidate label whose derivation reproduces the stored
+    digest, ``"none"`` if none does, or ``"MALFORMED"`` if the token is not
+    160 hex characters -- the last counting as a failure, not a miss.
+    """
+    if len(value) != 160:
+        return "MALFORMED", False
+    digest_hex, salt = value[:128], bytes.fromhex(value[128:160])
+    for label, password in candidates.items():
+        if derive_12c(password, salt).hex().upper() == digest_hex.upper():
+            return label, True
+    return "none", True
 
 
 def main() -> int:
-    static: list[tuple[str, bytes, str]] = []
+    static: list[tuple[str, bool, bytes, str]] = []
     rollover_pw: dict[str, bytes] = {}
     rollover: list[tuple[str, str]] = []
 
     for raw in sys.stdin:
         line = raw.strip()
         if line.startswith("RESULT|"):
-            _, label, pwhex, spare4 = line.split("|", 3)
-            static.append((label, bytes.fromhex(pwhex), spare4))
+            _, label, applied, pwhex, spare4 = line.split("|", 4)
+            static.append((label, applied == "1", bytes.fromhex(pwhex), spare4))
         elif line.startswith("ROLLPW|"):
             _, which, pwhex = line.split("|", 2)
             rollover_pw[which] = bytes.fromhex(pwhex)
@@ -97,22 +127,28 @@ def main() -> int:
             _, phase, spare4 = line.split("|", 2)
             rollover.append((phase, spare4))
 
-    failures = 0
+    problems: list[str] = []
+    compared = 0
 
     print("== static passwords: does the stored T: reproduce byte-for-byte?")
     print(f"   {'label':<10} {'pw bytes':>8}  {'verifiers':>9}  result")
-    for label, password, spare4 in static:
+    for label, applied, password, spare4 in static:
+        nbytes = len(password)
+        if not applied:
+            print(f"   {label:<10} {nbytes:>8}  {'-':>9}  rejected by server (length not accepted)")
+            continue
         verifiers = twelve_c_verifiers(spare4)
         if not verifiers:
-            print(f"   {label:<10} {len(password):>8}  {'0':>9}  no T: (release has none)")
+            problems.append(f"{label}: applied but no 12C verifier stored (not a 12.2+ target?)")
+            print(f"   {label:<10} {nbytes:>8}  {'0':>9}  NO 12C VERIFIER")
             continue
-        ok = all(
-            derive_12c(password, salt).hex().upper() == digest_hex.upper()
-            for _prefix, digest_hex, salt in verifiers
-        )
-        failures += 0 if ok else 1
-        verdict = "MATCH" if ok else "MISMATCH"
-        print(f"   {label:<10} {len(password):>8}  {len(verifiers):>9}  {verdict}")
+        results = [check_verifier(prefix, value, {"pw": password}) for prefix, value in verifiers]
+        compared += sum(1 for _which, well_formed in results if well_formed)
+        ok = all(which == "pw" for which, _wf in results)
+        if not ok:
+            malformed = any(not wf for _which, wf in results)
+            problems.append(f"{label}: {'malformed token' if malformed else 'did not reproduce'}")
+        print(f"   {label:<10} {nbytes:>8}  {len(verifiers):>9}  {'MATCH' if ok else 'MISMATCH'}")
 
     if rollover:
         print("\n== rollover window: which verifier is current, which is previous?")
@@ -120,18 +156,32 @@ def main() -> int:
         for phase, spare4 in rollover:
             verifiers = twelve_c_verifiers(spare4)
             labelled = []
-            for prefix, digest_hex, salt in verifiers:
-                match = "unknown"
-                for which, password in rollover_pw.items():
-                    if derive_12c(password, salt).hex().upper() == digest_hex.upper():
-                        match = which
-                if match == "unknown":
-                    failures += 1
-                labelled.append(f"{prefix} = {match}")
+            for prefix, value in verifiers:
+                which, well_formed = check_verifier(prefix, value, rollover_pw)
+                compared += 1 if well_formed else 0
+                if which in ("none", "MALFORMED"):
+                    problems.append(f"rollover {phase} {prefix}: {which}")
+                labelled.append(f"{prefix} = {which}")
             print(f"   {phase:<7} {len(verifiers)} verifier(s): {', '.join(labelled) or '(none)'}")
 
-    print(f"\n{'ALL REPRODUCED' if failures == 0 else str(failures) + ' FAILED'}")
-    return 1 if failures else 0
+    missing_static = EXPECTED_STATIC - {label for label, *_ in static}
+    if missing_static:
+        problems.append(f"static labels missing (truncated run?): {sorted(missing_static)}")
+    missing_phases = EXPECTED_PHASES - {phase for phase, _ in rollover}
+    if missing_phases:
+        problems.append(f"rollover phases missing: {sorted(missing_phases)}")
+    if {"old", "new"} - set(rollover_pw):
+        problems.append("rollover passwords missing (ROLLPW old/new)")
+    if compared == 0:
+        problems.append("no 12C verifiers were compared at all -- nothing was proven")
+
+    if problems:
+        print("\nNOT REPRODUCED:")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    print("\nALL REPRODUCED")
+    return 0
 
 
 if __name__ == "__main__":

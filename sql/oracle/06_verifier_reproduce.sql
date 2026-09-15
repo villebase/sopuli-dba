@@ -21,20 +21,22 @@
 --
 -- RESULTS  (26ai / 21c / 18c, both runs)
 --
---   1. EVERY STORED T: REPRODUCES BYTE-FOR-FOR-BYTE. The Python companion
---      prints MATCH for all four static cases on 26ai and 21c, and for the
---      three that fit on 18c:
+--   1. EVERY STORED T: REPRODUCES BYTE-FOR-BYTE. The Python companion prints
+--      MATCH for every applied case, on all three releases:
 --
---        label     pw bytes   verifiers  result
---        ascii           12          1   MATCH
---        symbols         15          1   MATCH
---        nonascii        16          1   MATCH   (12 chars, Ä Ö Ω are 2 bytes)
---        longest        128 / 30      1   MATCH   (128 bytes on 26ai; 30 on 21c/18c)
+--        label     pw bytes   result (26ai)      21c / 18c
+--        ascii           12   MATCH              MATCH
+--        symbols         15   MATCH              MATCH
+--        nonascii        16   MATCH              MATCH   (12 chars, Ä Ö Ω are 2 bytes)
+--        len30           30   MATCH              MATCH
+--        len128         128   MATCH              rejected by server (ORA-00972)
 --
 --      The password is fed as raw UTF-8 with no case folding or normalisation:
---      the non-ASCII case matches on the multibyte input unchanged. `longest`
---      is the longest the release accepts (#383/#380: 30 bytes below 23ai), so
---      the parameters hold at the length limit, not only for short inputs.
+--      the non-ASCII case matches on the multibyte input unchanged. The 128-byte
+--      case is accepted and reproduces on 26ai and is rejected at DDL below 23ai
+--      (#383/#380: the limit is 30 bytes there) -- and that rejection is read
+--      from the server (SPARE4 did not change), not assumed from the version, so
+--      an unmeasured release that accepted 128 would be reported as accepting it.
 --
 --   2. THE ROLLOVER WINDOW CARRIES TWO 12C VERIFIERS, distinguishable by the
 --      client-side comparison. After rotating old -> new on a profile with
@@ -108,33 +110,50 @@ SELECT '== release ' || version || ', container '
 -- §1  Static password matrix
 --------------------------------------------------------------------------------
 -- Each ALTER USER is issued directly, never wrapped in a PL/SQL block
--- (invariant 13). RESULT|<label>|<password bytes as hex>|<SPARE4>.
+-- (invariant 13). RESULT|<label>|<applied 0/1>|<password bytes as hex>|<SPARE4>.
+--
+-- `applied` is measured, not assumed: it is 1 when this ALTER actually changed
+-- SPARE4 and 0 when the server rejected it (e.g. a password over the release's
+-- length limit). The Python compares only applied rows, so a rejected length is
+-- reported as "rejected", never as a reproduction failure -- and the length
+-- limit is read off the server rather than inferred from a version number,
+-- which is what #383 keeps open.
 WHENEVER SQLERROR CONTINUE
 DROP USER acme_kdf_user CASCADE;
 WHENEVER SQLERROR EXIT FAILURE
 CREATE USER acme_kdf_user IDENTIFIED BY "Acme-Probe-1";
 
-SELECT 'RESULT|ascii|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Acme-Probe-1'))
+SELECT 'RESULT|ascii|1|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Acme-Probe-1'))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
 
 ALTER USER acme_kdf_user IDENTIFIED BY "P@55-w0rd_#9=+.";
-SELECT 'RESULT|symbols|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('P@55-w0rd_#9=+.'))
+SELECT 'RESULT|symbols|1|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('P@55-w0rd_#9=+.'))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
 
 ALTER USER acme_kdf_user IDENTIFIED BY "Äcme-Pröbe-Ω9";
-SELECT 'RESULT|nonascii|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Äcme-Pröbe-Ω9'))
+SELECT 'RESULT|nonascii|1|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Äcme-Pröbe-Ω9'))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
 
--- The longest password the release accepts: 128 bytes on 23ai+, 30 below it
--- (#383/#380). Picked by version so the ALTER always succeeds and the case is
--- always "at this release's limit" rather than a length one release rejects.
-COLUMN longpw NEW_VALUE longpw NOPRINT
-SELECT RPAD('Lx9', CASE WHEN TO_NUMBER(REGEXP_SUBSTR(version, '^\d+')) >= 23
-                        THEN 128 ELSE 30 END, 'Ab7z') longpw
-  FROM v$instance;
-ALTER USER acme_kdf_user IDENTIFIED BY "&longpw";
-SELECT 'RESULT|longest|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('&longpw'))
+-- Two fixed lengths, attempted on every release: 30 bytes (accepted everywhere)
+-- and 128 bytes (accepted on 23ai+, rejected below it, #383/#380). Which one the
+-- server took is read from whether SPARE4 changed, captured just before each
+-- ALTER -- no version guard. `applied` = 0 marks a rejected length.
+WHENEVER SQLERROR CONTINUE
+
+COLUMN prev NEW_VALUE prev NOPRINT
+SELECT spare4 prev FROM sys.user$ WHERE name = 'ACME_KDF_USER';
+ALTER USER acme_kdf_user IDENTIFIED BY "Ab7zAb7zAb7zAb7zAb7zAb7zAb7zAb";
+SELECT 'RESULT|len30|' || CASE WHEN spare4 = '&prev' THEN '0' ELSE '1' END
+       || '|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Ab7zAb7zAb7zAb7zAb7zAb7zAb7zAb'))
        || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
+
+COLUMN prev NEW_VALUE prev NOPRINT
+SELECT spare4 prev FROM sys.user$ WHERE name = 'ACME_KDF_USER';
+ALTER USER acme_kdf_user IDENTIFIED BY "Lx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7c";
+SELECT 'RESULT|len128|' || CASE WHEN spare4 = '&prev' THEN '0' ELSE '1' END
+       || '|' || RAWTOHEX(UTL_RAW.CAST_TO_RAW('Lx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7cLx9zAb7c'))
+       || '|' || spare4 FROM sys.user$ WHERE name = 'ACME_KDF_USER';
+WHENEVER SQLERROR EXIT FAILURE
 
 DROP USER acme_kdf_user CASCADE;
 

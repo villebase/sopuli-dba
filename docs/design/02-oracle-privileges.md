@@ -291,11 +291,14 @@ That claim comes from a blog
 post, not Oracle documentation, and needs the same measure-don't-trust
 treatment #124 gives it before it goes anywhere near the install script.
 
-**`--method hash` is independent of the grant question**, and the `T:` (12C,
-PBKDF2-SHA512) verifier in `SPARE4` must be regenerated client-side for it to
-work at all (#90). The layout is read, the derivation reproduces, and the
-degradation rule is settled — all on the tier-2 releases; 19c stays the one
-unread target. #90 is three parts:
+**The reproduction question (#90) is independent of whether to *recommend* the
+grant (#124) — but hash mode itself is not independent of the grant.** The `T:`
+(12C, PBKDF2-SHA512) verifier must be regenerated client-side, which the grant
+does not touch, *and* read from `SPARE4`, which needs `SELECT ON SYS.USER$`. So
+`hash` mode requires the grant even though the derivation does not. The layout is
+read, the derivation reproduces, and the degradation rule is settled — all on the
+tier-2 releases; 19c is the pre-release target of interest (an OCI estate runs
+it) and 12.1/12.2 are also unread. #90 is three parts:
 
 - **The layout — read on 26ai 23.26.2.0.0, 21c 21.3.0.0.0, 18c 18.4.0.0.0 and
   11g 11.2.0.2.0 (#431), 2026-09-15; unread on 19c, 12.1 and 12.2.** `SPARE4`

@@ -64,7 +64,8 @@ reproduced client-side is #90: it reproduces byte-for-byte on the releases
 measured (26ai, 21c, 18c -- #432), and degradation is settled (#433) -- compare
 the ``12C`` verifier only, and an account without one fails at plan time
 (invariant 4) rather than falling back to a weaker verifier. It stays open
-(unverified: t-verifier) only until 19c is confirmed. Should it fail there then
+(unverified: t-verifier) until 19c -- the release an OCI estate runs -- is
+confirmed, 12.1 and 12.2 being unread too. Should it fail there then
 ``--method hash`` **and ``--method both``** are dropped from the CLI entirely --
 ``both`` is login plus that same comparison, so it cannot outlive it. So the
 vocabulary is representable -- it is the run document's, and the document was

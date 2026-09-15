@@ -139,8 +139,9 @@ equally. One is now partially closed:
   *degradation* rule (compare `T:` only; an account with no `12C` fails at plan
   time) was settled in #433 — all on 26ai, 21c and 18c, recorded in
   `../design/02-oracle-privileges.md` §2. `--method hash` depends on this and it
-  now holds on every tier-2 release; the only target left is 19c, unread because
-  it is not pullable. Confirm the derivation on a throwaway 19c before committing
+  now holds on every tier-2 release; 19c — the release an OCI estate runs, and so
+  the target of interest — is unread because it is not pullable, and 12.1/12.2
+  are unread too. Confirm the derivation on a throwaway 19c before committing
   hash mode to the CLI.
 
 If this decision is ever reversed, write the package fresh against the design as

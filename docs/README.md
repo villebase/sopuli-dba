@@ -351,8 +351,9 @@ three wrong answers.
   Degradation is settled too (#433): the comparison uses `T:` only, an account
   with no `12C` fails at plan time (invariant 4), and the gate is a per-account
   capability (`SPARE4` carries a `T:`), never a version. **All three parts are
-  answered on the tier-2 releases; the entry stays `unverified` for the one
-  target left — 19c (also 12.1/12.2), unread because it is not pullable.** Blocks
+  answered on the tier-2 releases; the entry stays `unverified` because 19c — the
+  release an OCI estate runs, and so the target of interest — is unread, as are
+  12.1 and 12.2, none of them pullable.** Blocks
   `--method hash|both` only — `check`'s default (`login`) no longer waits on
   this (#86). If it does not reproduce on 19c, **both non-login modes go**:
   `both` is login *plus* the verifier comparison, so it cannot survive a

@@ -140,8 +140,9 @@ than reasoning:
   `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt‖"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)‖
   salt)`, 4096 sent at logon not stored. Degradation is settled too (#433):
   compare `T:` only, and an account with no `12C` fails at plan time.
-  **Answered on every tier-2 release; still marked only because 19c is unread**
-  (not pullable) — do not treat the tier-2 result as 19c's. Probes:
+  **Answered on every tier-2 release; still marked because 19c — the release an
+  OCI estate runs, and so the target of interest — is unread (not pullable), and
+  12.1/12.2 are unread too.** Do not treat the tier-2 result as 19c's. Probes:
   `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per version (unverified: ddl-text-versions) —

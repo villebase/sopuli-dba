@@ -28,11 +28,13 @@ use case exists to reach.
 
 **Direction of truth.** There isn't one, and that is the first way this differs
 from UC-1. `docs/README.md` puts it as *a password is handed over, not synced*.
-Nothing fetches the value at runtime, so no vault is master of it, and after first
-use the only party that knows the password is the person. Invariants 6 and 7
-therefore have nothing to govern here (§7). **That does not make the database a
-source of truth either**: the tool reads account state from it, as UC-1 does, and
-never a password.
+Nothing reads the value to stay in step with it, so no vault is master of it. A
+delivery method may park the value in a store for the person to claim once — a
+Vault wrapping token (#444) does exactly that — but that is transport, not
+mastery: the claim is the last read, and after first use the only party that knows
+the password is the person. Invariants 6 and 7 therefore have nothing to govern
+here (§7). **That does not make the database a source of truth either**: the tool
+reads account state from it, as UC-1 does, and never a password.
 
 **Why this cannot be a mode of UC-1**, from the roadmap, each point being a place
 UC-1's design would do the wrong thing:
@@ -86,8 +88,9 @@ UC-1's vault payload answers three questions at once: when a password last chang
 - **Rollback is not a UC-2 operation.** The recovery for a lost or mistyped
   personal password is another reset. Nothing keeps the old value to go back to,
   and keeping one would be exactly the stored copy §1 says should not exist.
-- **The run's own output is always a record**, the run document and the jsonl
-  stream, and it never carries a password (invariant 2). Whether anything more
+- **The run document is always a record**, and it never carries a password
+  (invariant 2). So will the jsonl stream be, once there is one — `--output jsonl`
+  is a usage error in this build (`03-json-output.md`). Whether anything more
   durable exists is H2.
 - **The database can report when a password changed**, but not on every release by
   the same route: `DBA_USERS.PASSWORD_CHANGE_DATE` where it exists, `SYS.USER$.PTIME`
@@ -106,19 +109,24 @@ One direct statement, and the expiry is part of it:
 ALTER USER <account> IDENTIFIED BY "<password>" PASSWORD EXPIRE
 ```
 
-Everything UC-1 §6.1 and `02-oracle-privileges.md` §4 settle about issuing
-`ALTER USER` binds unchanged:
+What UC-1 §6.1 and `02-oracle-privileges.md` §4 settle about issuing `ALTER USER`
+binds here, with **invariant 11 authoritative** wherever older wording disagrees —
+UC-1 §6.1 said to escape an embedded `"` until #457 corrected it:
 
 - **issued directly, never inside a PL/SQL block** (invariant 13). A block
-  containing the DDL keeps its text verbatim in `V$SQL` — measured on 26ai, 21c,
-  18c and 11.2 — and adding `PASSWORD EXPIRE` to the statement changes nothing
-  about that;
-- **no password containing `"`** (invariant 11), which generation guarantees by
-  construction rather than by a check afterwards;
-- **what the direct DDL leaves behind is release-dependent.** On 26ai, 21c and 18c
-  no `V$SQL` cursor for it exists at all; on 11.2 `V$SQLSTATS` keeps the text until
-  the shared pool ages it out (#387); 12.1, 12.2 and 19c are unrun
-  (unverified: ddl-text-versions). Quote none of these without its release.
+  containing `ALTER USER … IDENTIFIED BY` keeps its text verbatim in `V$SQL` —
+  measured on 26ai, 21c, 18c and 11.2. Invariant 13's reasoning does not depend on
+  the suffix: a wrapper is an ordinary block whatever it contains;
+- **no password containing `"`** (invariant 11) — rejected, never escaped, and
+  generation guarantees it by construction rather than by a check afterwards;
+- **what the direct DDL leaves behind is release-dependent, and measured for
+  `IDENTIFIED BY` alone.** On 26ai, 21c and 18c no `V$SQL` cursor for it exists at
+  all; on 11.2 `V$SQLSTATS` keeps the text until the shared pool ages it out
+  (#387); 12.1, 12.2 and 19c are unrun (unverified: ddl-text-versions). **The
+  `PASSWORD EXPIRE` form has not been probed on any release**
+  (unverified: expire-ddl-text) — Oracle's masking is keyed to the statement type,
+  which gives no reason to expect a difference and is not a measurement of one.
+  Quote none of these without its release.
 
 ### 4.2 The password
 
@@ -139,12 +147,17 @@ after a suspected compromise leaves the compromised password working.
 
 How `PASSWORD EXPIRE` combines with an open window — whether expiring the new
 password also ends the old one's, and whether the statement is accepted at all
-during one — has not been run (unverified: expire-rollover). Until it has, the use
-case assumes nothing: a reset on an account with a non-zero rollover time is a
-plan-time finding, not a silent success, and ending the window is the same
-`EXPIRE PASSWORD ROLLOVER PERIOD` statement `creds finish-rollover` issues (#263).
-Whether a reset issues it by default is for this document to decide once the
-measurement exists.
+during one — has not been run (unverified: expire-rollover). Until it has, **a
+reset of an account whose profile sets a non-zero rollover time is refused at plan
+time**, naming the account and the profile, before any DDL is issued. That is
+invariant 4, and it is the project's standing rule for an unmeasured answer:
+refuse rather than guess. A warning that let the run proceed would execute exactly
+the behaviour this paragraph cannot describe.
+
+What replaces the refusal is decided against the measurement, not before it. Ending
+the window would be the same `EXPIRE PASSWORD ROLLOVER PERIOD` statement
+`creds finish-rollover` issues (#263), and whether a reset issues it by default is
+not a question anything reaches while the refusal stands.
 
 ### 4.4 Guardrails
 
@@ -195,10 +208,11 @@ it and every delivery issue is written against it:
 Where a single-use retrieval token falls — a Vault wrapping token, a one-time link
 — is for #456 to say, since both are ways to retrieve the secret.
 
-The methods, each its own issue: `manual` (#441, blocked on #439, which decides
+The methods #438 names are five: `manual` (#441, blocked on #439, which decides
 whether it may exist under invariant 2), `vault_wrapped` (#444) and its
 identity-scoped variant (#447), `one_time_link` (#445), `onepassword_share`
-(#446). The shared notify channel is #442, the config block #440, and how an
+(#446), and `smtp_encrypted`, which has no issue of its own yet and which #456
+carries. The shared notify channel is #442, the config block #440, and how an
 estate restricts the set is H6 (#453).
 
 ---
@@ -210,14 +224,14 @@ estate restricts the set is H6 (#453).
 | 1 | no secret in `argv` | binds unchanged, including every delivery credential |
 | 2 | redaction at the serialiser | binds; `manual` delivery would widen it and is #439 |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | binds — §4.3's rollover finding, §4.4's guardrails |
+| 4 | unavailable capability fails at plan time | binds — §4.3's rollover refusal, §4.4's guardrails |
 | 5 | the config is the whitelist | binds; *where* the account is declared is H1 |
 | 6 | vault is master | nothing to govern — no master (§1) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds |
 | 9 | idempotency | **does not fit** — a reset draws a new password every run; H7 (#454) |
-| 10 | safety settings only ratchet | binds; H6 would add an axis (#456) |
-| 11 | no `"` in a password | binds, by generation |
+| 10 | safety settings only ratchet | binds; H6 (#453) would add an axis, written in #456 |
+| 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
 | 13 | no password literal in a PL/SQL block | binds, `PASSWORD EXPIRE` included (§4.1) |
 | 14 | no password bound into a predicate | binds — relevant only if H4 verifies by hash |
@@ -237,12 +251,19 @@ invariant 13's assertion already lives for UC-1.
 
 What a test must show, once there is something to test:
 
-- after a reset, `DBA_USERS.ACCOUNT_STATUS` is `EXPIRED` and a logon with the
-  delivered password is forced to change it;
+- after a reset, `DBA_USERS.ACCOUNT_STATUS` carries the `EXPIRED` component —
+  `EXPIRED`, or `EXPIRED & LOCKED` for an account that was locked and stays locked
+  under whatever H4 decides — and, for an account that is not locked, a logon with
+  the delivered password is forced to change it;
 - the statement text sent is the direct DDL and carries `PASSWORD EXPIRE`;
-- the password appears in no run document, jsonl event or log sink;
-- §4.3's measurement, on 26ai and then 21c — run, not reasoned, which is the only
-  way that marker comes off.
+- the password appears in no run document or log sink, and in no jsonl event once
+  that stream exists;
+- §4.3's plan-time refusal, for an account on a profile with a rollover time;
+- the two measurements behind this document's new markers, each on 26ai and then
+  21c — gate 2's probe extended to the `PASSWORD EXPIRE` form
+  (unverified: expire-ddl-text), and §4.3's window behaviour
+  (unverified: expire-rollover). Run, not reasoned, which is the only way either
+  marker comes off.
 
 Tests declare the capabilities they need and skip with a reason when absent
 (`04-testing.md`), never on a version.
@@ -262,6 +283,9 @@ Tests declare the capabilities they need and skip with a reason when absent
 | H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
 | — | May `manual` delivery print a working password (invariant 2)? | #439 |
 
-Not yet a question with an issue: §4.4's collision between guardrail check 4 and
-DBA accounts in scope, and §4.3's default for ending a rollover window, which waits
-on its measurement.
+Deliberately not a question with an issue: §4.4's collision between guardrail
+check 4 and DBA accounts in scope, which is decided #89 applied to a population it
+was not written for, and is stated so that H1 and part 2 meet it rather than
+rediscover it. §4.3's default for ending a rollover window is not one either: the
+refusal stands until `expire-rollover` is measured, and the register entry is where
+that is tracked.

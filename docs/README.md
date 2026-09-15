@@ -309,7 +309,8 @@ anything, which is the cost this option accepts over option 3's thresholded
 **UC-2 (personal account passwords): all open.** Where a personal account is
 declared, so that invariant 5 still whitelists it (H1, #449); what is recorded
 about a reset with no vault as master (H2, #450); the noun and verbs (H3, #451);
-whether the lockout guard applies, and whether a reset unlocks (H4, #455);
+whether the lockout guard applies, whether a delivered password is verified, and
+whether a reset unlocks (H4, #455);
 whether self-service is in scope (H5, #452); how an estate restricts delivery
 methods — an `allowed_methods` intersection, which is a new ratchet shape, or a
 `forbidden_methods` union, which is the existing one (H6, #453); and a reset
@@ -451,6 +452,14 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   statement is accepted during an open window at all. Needs 26ai and 21c, tier 1
   and 2. `use-cases/uc-02-personal-account-passwords.md` §4.3 assumes nothing until
   it is measured.
+- `unverified` `expire-ddl-text` (#438, #457) — **Whether `ALTER USER … IDENTIFIED BY
+  … PASSWORD EXPIRE` is retained or masked the way the bare `IDENTIFIED BY` form
+  is.** Gate 2's probe (`sql/oracle/02_password_leak_probe.sql`) issues the bare
+  form only, so every retention result in `design/02-oracle-privileges.md` §4 is a
+  result for that statement. Oracle's protection is keyed to the statement type,
+  which gives no reason to expect the suffix to change it and is not a measurement
+  that it does not. UC-2's reset is the suffixed form, so the probe needs extending
+  to it, on 26ai and 21c first.
 - `verified` `vault-cas-conflict` (#103, #104) — **What a real Vault's
   compare-and-set conflict looks like on the wire** — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
   compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,

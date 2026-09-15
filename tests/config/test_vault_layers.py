@@ -462,6 +462,12 @@ def test_the_defeated_relaxation_is_reported_from_layer_three() -> None:
     message = config.warnings[0].message
     assert "profiles.ci.vaults.vault-prod.tls.verify asked for false" in message
     assert "vaults.vault-prod.tls.verify" in message
+    # And never the registry's `vaults.*.tls.verify`, which is the name the
+    # resolver has to be *asked* with and not one an operator can edit (#428,
+    # found in review). This warning said it for as long as it has existed; it
+    # became visible when `--explain` started quoting the same sentence under a
+    # row that spells the store out.
+    assert "vaults.*" not in message
 
 
 @pytest.mark.parametrize(

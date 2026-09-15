@@ -292,6 +292,24 @@ def _resolve_key(
     layer 5. The environment contributes at layer 2 or 3, already addressed to
     this store by :mod:`sopuli.config.vault_env`. Which is higher is the
     resolver's business and not restated here.
+
+    **The answer is renamed to the concrete store on the way out** (#428, found
+    in review). :func:`setting_name` is what the registry has to be asked with --
+    ``vaults.*.tls.verify``, for the reason its own docstring gives -- and it is
+    not what a reader can be told: the ``*`` stands for every store at once and is
+    not a key anybody can edit. That distinction had nowhere to be made until
+    something quoted the name back, and two things now do.
+    :func:`~sopuli.settings.ratchet_note` puts it in the sentence a defeated
+    ``tls.verify`` produces -- which reaches an operator twice, as a warning on
+    every command that loads the file and as the continuation line under this
+    store's row in ``config show --explain``, where ``vaults.*.tls.verify stays
+    true`` sat directly beneath a row named ``vaults.vault-dev.tls.verify``.
+
+    Renamed **here** rather than in either view, because there are two of them and
+    they must not spell one sentence two ways -- the argument
+    :func:`~sopuli.settings.render_value` makes about a value appearing in a table
+    and in a note three lines below it. The registry lookup is unaffected; only
+    the label the answer carries changes.
     """
     contributions = list(from_env.get(key, ()))
     declared = _read(vault, key)
@@ -305,7 +323,8 @@ def _resolve_key(
             contributions.append(
                 Contribution(layer=layer, value=value, detail=str(_at(where, key)))
             )
-    return resolve(setting_name(key), contributions)
+    answer = resolve(setting_name(key), contributions)
+    return None if answer is None else replace(answer, setting=str(_at(at, key)))
 
 
 def _read(entry: Vault | VaultPatch, key: str) -> Any:

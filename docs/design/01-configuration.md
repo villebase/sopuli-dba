@@ -1725,6 +1725,15 @@ provenance to report; `NOTE` still says `layered: auth`. It is also the one part
 of a store entry that addresses credentials, and a section whose every value is a
 setting is not where those belong.
 
+One knock-on, found in review of #428: `vaults.*.<key>` is the name the resolver
+is **asked** with — §9's registry is a literal, so a store's settings are one
+entry with `*` where the name goes — and it is not a name anybody can be told.
+Nothing quoted it back until this view existed; now the ratchet note under a
+defeated `tls.verify` does, and so does the warning every command that loads the
+file emits. Both name the concrete store, and they are renamed once where the
+merge happens rather than in either view — one sentence spelled two ways, three
+lines apart, is the defect §9's single resolver exists to make impossible.
+
 `config show --output json` carries the same answer for a consumer, as
 `config.vaults[]` — see `03-json-output.md`. It is there in **both** shapes,
 which is the part of this that was not a provenance question at all: `--explain`

@@ -214,6 +214,13 @@ def test_a_defeated_relaxation_is_named_under_the_store_s_own_row() -> None:
     assert f"[vaults.{STORE}.tls.verify]" in lines[verify]
     assert "asked for false" in lines[verify + 1]
     assert "ratchet toward safe" in lines[verify + 1]
+    # The note names the concrete store, not the registry's `vaults.*.tls.verify`
+    # (found in review). The first version of this test asserted the two fragments
+    # above and passed while the continuation line read `vaults.*.tls.verify stays
+    # true` directly beneath a row named `vaults.vault-dev.tls.verify` -- one
+    # three-line block disagreeing with itself about what the key is called.
+    assert "vaults.*" not in lines[verify + 1]
+    assert f"vaults.{STORE}.tls.verify stays true" in lines[verify + 1]
 
 
 def test_auth_gets_no_row() -> None:

@@ -13,24 +13,28 @@ new password reaches a person — is part 2, #456; §6 sets out what part 2 buil
 ## 1. Summary
 
 **Goal.** A person cannot get into their own database account — a developer's, a
-tester's, a DBA's — usually because the password expired before they renewed it.
-A DBA resets it, and the tool makes sure that **the only party able to use the new
-password is the person**. There are two ways to get there, and which one a reset
-takes decides almost everything else in this document:
+tester's, a DBA's — usually because the password expired and they no longer know
+it. A DBA resets it, and the tool makes the new password **the person's alone**.
+There are two ways to get there, they do not give the same guarantee, and which one
+a reset takes decides almost everything else in this document:
 
 | Path | The DBA sees the password | How the person gets it | Expired on reset |
 |---|---|---|---|
-| **unseen** — the default | no | fetches it from a place only they can read: Vault first (#444, #447), password managers later | **no** |
+| **unseen** — the default | no | fetches it from a store meant for them alone: a Vault path only their identity can read (#447), or a single-use wrapping token (#444) — a bearer credential, so owner-only only as far as its delivery is (#456); password managers later | **no** |
 | **seen** — `manual` | yes | the DBA passes it on — encrypted email or similar — with instructions to change it | **yes, always** |
 
 **The unseen path is the default**, and it is what the tool exists to make possible:
-a DBA resets a password without ever seeing it, and the value never reaches a log.
-Nothing needs expiring, because nobody but the person ever knew it.
+a DBA resets a password without ever seeing it, and the tool puts the value in none
+of its own output. Nothing needs expiring, because nobody but the person is meant
+ever to know it — §4.1 and H8 say where that intent meets its limits.
 
 **The seen path is the traditional one**, and it is not the default. The DBA
-generates the password, sees it, and sends it on. Expiry is what makes that safe —
-the password the DBA saw stops being the account's password at the person's first
-logon — so on this path expiry is forced, not offered, and the command asks for
+generates the password, sees it, and sends it on. **That is a deliberate,
+time-limited exposure, not the same guarantee by another route**: until the owner's
+first logon the DBA holds a working password, and `PASSWORD EXPIRE` forces a change
+at first logon without deciding *who* logs in first. Expiry is what ends the
+exposure — once the owner has set their own password, the one the DBA saw is dead —
+so on this path expiry is forced, not offered, and the command asks for
 confirmation before it runs (§2).
 
 **Actors.**
@@ -64,9 +68,9 @@ UC-1's design would do the wrong thing:
   `current`.
 
 **Non-goals.** Creating, dropping or granting accounts (UC-4). Application
-accounts (UC-1). A person changing their own password through the tool — before
-expiry they do that themselves with `ALTER USER … REPLACE` (§5). Keeping any copy
-of the password as a record of it.
+accounts (UC-1). A person changing their own password through the tool — an owner
+who knows their password changes it without one (§5). Keeping any copy of the
+password as a record of it.
 
 ---
 
@@ -78,16 +82,18 @@ it ends up being called:
 
 | Operation | What it does | Mutates |
 |---|---|---|
-| reset, unseen (default) | generate a password, set it, write it where only the owner can fetch it; show it to nobody | yes |
+| reset, unseen (default) | generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody | yes |
 | reset, seen (`manual`) | generate a password, set it **with expiry**, show it once — after confirmation | yes |
 | plan | either of the above under `--dry-run`, printing the plan and never a password (invariant 8) | no |
 | expire only | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
 
-**The seen reset asks for confirmation every time**, like `creds rotate` and
-`lock break` do, and for the same reason: it is not one of `safety.confirm_environments`'
-cases, and it is not a setting a layer could relax. Whether the one plaintext
-emission goes to stdout or a file, and how it is narrowed under invariant 2, is
-what remains of #439.
+**The seen reset asks for confirmation every time** — decided on review of #457,
+and recorded in P5 beside the two gates that already do, `creds rotate` and
+`lock break`. Like them it does not consult `safety.confirm_environments`, and it
+is not a setting a layer could relax. Whether `--confirm` answers it in advance, as
+it does those two, is not decided here: it is the one reset where the prompt is the
+point, and it belongs with the rest of how the seen path's one plaintext emission
+is narrowed, in #439.
 
 Whether *expire only* is its own verb, a flag, or out of scope is part of H3.
 Whether there is a read verb — "when was this person last reset" — depends on H2.
@@ -126,18 +132,20 @@ UC-1's vault payload answers three questions at once: when a password last chang
 
 ### 4.1 The statement
 
-One direct statement on each path. The seen path adds the expiry to it:
+One direct statement on each path. The seen path adds the expiry to it. The account
+is the quoted identifier in the spelling the dictionary gives back, as for UC-1 —
+`account.quoted()` in `sopuli/driver/oracle/statements.py`:
 
 ```sql
 -- unseen (default)
-ALTER USER <account> IDENTIFIED BY "<password>"
+ALTER USER "<ACCOUNT>" IDENTIFIED BY "<password>"
 -- seen (manual)
-ALTER USER <account> IDENTIFIED BY "<password>" PASSWORD EXPIRE
+ALTER USER "<ACCOUNT>" IDENTIFIED BY "<password>" PASSWORD EXPIRE
 ```
 
 Setting a password clears an existing `EXPIRED` state — Oracle's behaviour, which
 UC-1 §5 already relies on — so the unseen statement is the whole fix for an account
-that expired before its owner renewed it.
+that expired and whose owner no longer knows the password.
 
 What UC-1 §6.1 and `02-oracle-privileges.md` §4 settle about issuing `ALTER USER`
 binds on both paths, with **invariant 11 authoritative** wherever older wording
@@ -152,9 +160,12 @@ disagrees — UC-1 §6.1 said to escape an embedded `"` until #457 corrected it:
 - **what the direct DDL leaves behind is release-dependent.** For the unseen
   path's statement it is measured: on 26ai, 21c and 18c no `V$SQL` cursor exists at
   all; on 11.2 `V$SQLSTATS` keeps the text until the shared pool ages it out
-  (#387); 12.1, 12.2 and 19c are unrun (unverified: ddl-text-versions). This matters
-  most on the unseen path, whose whole claim is that the value reaches nowhere a
-  DBA can read. **The seen path's `PASSWORD EXPIRE` form has not been probed on any
+  (#387); 12.1, 12.2 and 19c are unrun (unverified: ddl-text-versions). **This is
+  the limit of the unseen path's claim.** The claim is about the tool: it puts the
+  value in none of its own output. On 11.2 the database itself keeps the statement
+  where a dictionary reader — which a DBA usually is — can read it until the shared
+  pool ages it out or is flushed (#387 decided to document that rather than refuse
+  it). **The seen path's `PASSWORD EXPIRE` form has not been probed on any
   release** (unverified: expire-ddl-text) — Oracle's masking is keyed to the
   statement type, which gives no reason to expect a difference and is not a
   measurement of one. Quote none of these without its release.
@@ -181,12 +192,15 @@ On a release with gradual password rollover (UC-1 §6.3), an account whose profi
 sets `PASSWORD_ROLLOVER_TIME` keeps accepting its **old** password after
 `IDENTIFIED BY`, until the window closes.
 
-**On the unseen path this is UC-1's measured behaviour and nothing new.** For the
-usual case — a password its owner forgot or let expire — an old password that keeps
-working briefly harms nobody. Whether a reset ends the window by default, with the
+**On the unseen path the behaviour is UC-1's and measured, and it leaves an
+exposure.** Anyone who knows the old password can still authenticate until the
+window closes. In the usual case that is nobody — the owner forgot it — but that is
+a likelihood, not a guarantee, and a reset after a suspected disclosure is exactly
+the case where it is not nobody. Closing the window early is the
 `EXPIRE PASSWORD ROLLOVER PERIOD` statement `creds finish-rollover` issues (#263),
-is a question about what else a reset does to the account, and is part of H4
-(#455).
+and UC-1 §6.3 refuses to choose it for anyone, because it is destructive to whoever
+still holds the old password. Whether a UC-2 reset closes it by default, offers it,
+or never does is part of H4 (#455).
 
 **On the seen path it is unmeasured.** How `PASSWORD EXPIRE` combines with an open
 window — whether expiring the new password also ends the old one's, and whether
@@ -227,16 +241,23 @@ survives is H4 (#455):
   they are locked out. But 01-configuration §8 makes every account attribute opt-in
   *as a rule, not a default*, and `unlock_if_locked` is `false` (#300). That rule
   was argued for a rotation nobody asked to change anything else; a person's reset
-  is arguably asked for.
+  is arguably asked for. **`LOCKED(TIMED)` is part of the same question, not a
+  variant of `LOCKED`**: Oracle clears it when `PASSWORD_LOCK_TIME` passes, so a
+  reset that does not unlock leaves the owner waiting on that timer rather than
+  locked indefinitely. Whether setting a password affects the timer has not been
+  run, and nothing here assumes it does.
 
-**Self-service here means fetching, not resetting.** Before a password expires,
-its owner changes it themselves with `ALTER USER … IDENTIFIED BY new REPLACE old`,
-which needs no privilege and no tool. After it expires they cannot log in to do
-that, a DBA resets it, and self-service is the owner **retrieving the new value**
-from a place only they can read — which is the unseen path. The person never uses
-the tool, and never the service account's `ALTER USER`, so ADR-001's premise that
-the operator is a DBA is untouched. H5 (#452) asked whether a person should reset
-through the tool, and is closed on this reading.
+**Self-service here means fetching, not resetting.** An owner who knows their
+password changes it themselves, without the tool: before expiry with
+`ALTER USER … IDENTIFIED BY new REPLACE old`, and after it at logon — a correct
+password against an expired account answers `ORA-28001` and Oracle's change flow,
+not a refusal (measured in `tests/driver/test_oracle_verify.py`). **A DBA reset is
+needed when the owner no longer knows the password**, and then self-service is the
+owner **retrieving the new value** from a store meant for them alone — which is the
+unseen path. The person never uses the tool, and never the service account's
+`ALTER USER`, so ADR-001's premise that the operator is a DBA is untouched. H5
+(#452) asked whether a person should reset through the tool, and is closed on this
+reading.
 
 ---
 
@@ -244,14 +265,19 @@ through the tool, and is closed on this reading.
 
 **Part 2 of this specification, #456.** What it builds on:
 
-- **The unseen path is the default, and Vault is the first store.** Two forms:
+- **The unseen path is the default, and Vault is the first store.** Two forms, and
+  they are not the same guarantee:
+  - a **path only the person's identity can read** (#447) — owner-only by the store's
+    own access control, for as long as the path's policy says so;
   - a **response-wrapping token** (#444) — single use, the unwrap is the last read.
     This is what "the person fetches it from a cubbyhole" means in practice: a
     cubbyhole belongs to the token that wrote it, so a DBA's own cubbyhole is
-    unreadable by anyone else, and the wrapping token's cubbyhole is the handover;
-  - a **path only the person's identity can read** (#447).
+    unreadable by anyone else, and the wrapping token's cubbyhole is the handover.
+    **But the wrapping token is a bearer credential**: whoever holds it can unwrap
+    it, whatever their identity. It is owner-only exactly as far as the channel it
+    travels by is, and that channel is #456's to decide.
 
-  Which is the default, or whether that is configuration, is #456's.
+  Which form is the default, or whether that is configuration, is #456's.
 - **Then other stores**: password managers (#446), one-time links (#445), and
   `smtp_encrypted` — encrypted email sent by the tool, which is unseen, unlike the
   DBA sending it by hand. It has no issue of its own yet; #456 carries it.
@@ -268,8 +294,8 @@ through the tool, and is closed on this reading.
   > secret may not.** "Your new password is ready" may go anywhere; the password,
   > or anything that retrieves it, may not.
 
-  Where a single-use retrieval token falls — a wrapping token, a one-time link — is
-  #456's to say, since both are ways to retrieve the secret.
+  A wrapping token and a one-time link both retrieve the secret, so by this rule
+  neither may travel by the notify channel; how each does travel is #456's.
 
 The shared notify channel is #442, the config block #440, and how an estate
 restricts the set of methods is H6 (#453).
@@ -281,14 +307,14 @@ restricts the set of methods is H6 (#453).
 | # | Invariant | Here |
 |---|---|---|
 | 1 | no secret in `argv` | binds unchanged, including every store credential |
-| 2 | redaction at the serialiser | binds; the unseen path's store write is already a permitted plaintext path, the seen path's display is not and is #439 |
+| 2 | redaction at the serialiser | binds. A **Vault** write is already a permitted plaintext path, so the Vault forms of the unseen path need no widening; the other stores (#445, #446, `smtp_encrypted`) are not automatically one, and #456 says how each keeps the invariant. The seen path's display is not a permitted path, and is #439 |
 | 3 | branch on capability, not version | binds — rollover (§4.3) is a capability |
 | 4 | unavailable capability fails at plan time | binds — §4.3's seen-path refusal, §4.4's guardrails, and possibly H8's store check |
 | 5 | the config is the whitelist | binds; *where* the account is declared is H1 |
 | 6 | vault is master | nothing to govern — no master (§1) |
 | 7 | never promote before confirmation | nothing to govern — no promotion (§1) |
 | 8 | `--dry-run` and a plan first | binds, on both paths; the seen path also confirms (§2) |
-| 9 | idempotency | **does not fit** — a reset draws a new password every run; H7 (#454) |
+| 9 | idempotency | **open** — a reset as sketched draws a new password on every run; H7 (#454) decides between an exemption and a convergent verb |
 | 10 | safety settings only ratchet | binds; H6 (#453) would add an axis, written in #456 |
 | 11 | no `"` in a password | binds, by generation; authoritative over UC-1 §6.1's older wording |
 | 12 | JSON output is versioned | binds — new verbs and events are schema bumps |
@@ -312,14 +338,17 @@ What a test must show, once there is something to test:
 
 - **unseen:** after a reset the account is not `EXPIRED`; the value is retrievable
   by the owner's identity or wrapping token and by nothing the DBA holds (H8); the
-  statement sent carries no `PASSWORD EXPIRE`;
+  statement sent carries no `PASSWORD EXPIRE`; the password appears in no output of
+  the tool's at all;
 - **seen:** the reset does not run without confirmation; afterwards
   `DBA_USERS.ACCOUNT_STATUS` carries the `EXPIRED` component — `EXPIRED`, or
   `EXPIRED & LOCKED` for an account that stays locked under whatever H4 decides —
   and, for an account that is not locked, a logon with the password is forced to
-  change it; a rollover profile is refused at plan time (§4.3);
-- **both:** the password appears in no run document or log sink, and in no jsonl
-  event once that stream exists;
+  change it; a rollover profile is refused at plan time (§4.3); the password is
+  emitted exactly once, by the path #439 decides, and nowhere else;
+- **both:** the password appears in no run document, diagnostic or log sink, and in
+  no jsonl event once that stream exists. The seen path's one deliberate emission
+  is the only exception, and it is what that path's confirmation guards;
 - the two measurements behind the seen path's markers, each on 26ai and then 21c —
   gate 2's probe extended to the `PASSWORD EXPIRE` form
   (unverified: expire-ddl-text), and §4.3's window behaviour
@@ -338,12 +367,12 @@ Tests declare the capabilities they need and skip with a reason when absent
 | H1 | Where is a personal account declared, so invariant 5 still whitelists it? | #449 |
 | H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
 | H3 | The noun and the verbs | #451 |
-| H4 | Does a reset verify the password, unlock, or end a rollover window? | #455 |
+| H4 | Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window? | #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |
 | H7 | A reset never converges: a second invariant-9 exemption, or a convergent verb? | #454 |
 | H8 | On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it? | #459 |
-| — | How the seen path's one plaintext emission is narrowed (invariant 2) — that it exists, non-default and confirmed, is decided | #439 |
+| — | How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance (invariant 2) — that it exists, non-default and confirmed, is decided | #439 |
 
 Deliberately not a question with an issue: §4.4's collision between guardrail
 check 4 and DBA accounts in scope, which is decided #89 applied to a population it

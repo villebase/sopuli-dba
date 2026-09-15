@@ -307,9 +307,12 @@ anything, which is the cost this option accepts over option 3's thresholded
 `diagnostics[]` warning).
 
 **UC-2 (personal account passwords).** Two paths: an **unseen** default, where the
-tool writes the password to a store only its owner can fetch from and nothing is
-expired, and a **seen** `manual` path — non-default, confirmed, always expired —
-decided on review of #457. ~~Is self-service in scope~~ (H5, #452 — **closed:**
+DBA never sees the password, the tool writes it to a store meant for its owner
+alone, and nothing is expired — owner-only by the store's access control on an
+identity-scoped path (#447), and only as far as its delivery on a wrapping token,
+which is a bearer credential (#444, #456) — and a **seen** `manual` path, which is
+a deliberate exposure until the owner's first logon: non-default, confirmed,
+always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #452 — **closed:**
 self-service means the owner fetching the password from a secure store, not
 resetting through the tool). Open: where a personal account is declared, so that
 invariant 5 still whitelists it (H1, #449); what is recorded about a reset with no
@@ -550,8 +553,9 @@ cannot be a mode of UC-1:
 argument for the use case existing; the document is where it is specified, and
 its questions are H1–H8. One correction to the paragraphs above: expiring
 deliberately is the point only on the **seen** path, where the DBA knows the
-password. The default, unseen path writes it where only its owner can fetch it,
-and expires nothing.
+password — a deliberate exposure that the owner's first logon ends. The default,
+unseen path writes it to a store meant for its owner alone and expires nothing;
+how far "alone" holds depends on the store form and its delivery (UC-2 §6, #456).
 
 ### UC-3 — run a statement across many targets
 

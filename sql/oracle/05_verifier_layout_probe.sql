@@ -108,9 +108,13 @@
 --
 --
 -- HOW TO RUN
---   As SYSDBA (or any session that can SELECT SYS.USER$), in the container the
---   test account should live in, with a UTF-8 client so §3's non-ASCII
---   password reaches the server as the bytes written here:
+--   As SYSDBA, in the container the test account should live in, with a UTF-8
+--   client so §3's non-ASCII password reaches the server as the bytes written
+--   here. SYSDBA rather than a list of grants: the script drops, creates and
+--   repeatedly alters ACME_VFR_USER, grants it CREATE SESSION, switches
+--   container, and reads SYS.USER$, DBA_USERS and V$PDBS -- and the MANUAL STEP
+--   changes a system parameter. Reading SYS.USER$ alone, the §2 grant in
+--   02-oracle-privileges.md, is enough to read a layout but not to run this.
 --
 --     export NLS_LANG=AMERICAN_AMERICA.AL32UTF8
 --     sqlplus -s "/ as sysdba" @05_verifier_layout_probe.sql

@@ -306,6 +306,19 @@ as fresh as the vault says, and nothing currently reads that column to decide
 anything, which is the cost this option accepts over option 3's thresholded
 `diagnostics[]` warning).
 
+**UC-2 (personal account passwords): all open.** Where a personal account is
+declared, so that invariant 5 still whitelists it (H1, #449); what is recorded
+about a reset with no vault as master (H2, #450); the noun and verbs (H3, #451);
+whether the lockout guard applies, and whether a reset unlocks (H4, #455);
+whether self-service is in scope (H5, #452); how an estate restricts delivery
+methods — an `allowed_methods` intersection, which is a new ratchet shape, or a
+`forbidden_methods` union, which is the existing one (H6, #453); and a reset
+never converges, so it needs either a second invariant-9 exemption or a
+convergent verb (H7, #454). The delivery section, and with it H6's amendment to
+invariant 10, is #456; whether `manual` delivery may print a password at all is
+#439. See
+[use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) §9.
+
 ### Settled
 
 **The privilege model is direct `ALTER USER`.** The definer-rights package was
@@ -429,6 +442,15 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   Purely a display question — Q9 decided `--max-age-days` reads only the vault —
   and the tier-1 test pinning `PTIME` equal to the column fails on any release
   where the two part, so running the suite there settles it.
+- `unverified` `expire-rollover` (#438) — **What `ALTER USER … IDENTIFIED BY …
+  PASSWORD EXPIRE` does to an account whose profile sets `PASSWORD_ROLLOVER_TIME`.**
+  UC-2's reset is that one statement, and on a rollover-capable release the old
+  password keeps authenticating after `IDENTIFIED BY` until the window closes —
+  which, for a reset after a suspected compromise, is the opposite of the point.
+  Not run: whether the expiry also ends the old password's window, and whether the
+  statement is accepted during an open window at all. Needs 26ai and 21c, tier 1
+  and 2. `use-cases/uc-02-personal-account-passwords.md` §4.3 assumes nothing until
+  it is measured.
 - `verified` `vault-cas-conflict` (#103, #104) — **What a real Vault's
   compare-and-set conflict looks like on the wire** — **answered.** Against `hashicorp/vault:2.0.4` dev mode: every lost
   compare-and-set, whatever caused it (a stale `cas: 0`, a stale nonzero `cas`,
@@ -508,6 +530,11 @@ cannot be a mode of UC-1:
   point is that no human is in the loop at 03:00.
 
 *Defers to it today:* UC-1 §5 (deliberate expiry, #302).
+
+**Now drafted** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
+(#438) — part 1, with delivery to follow in #456. The paragraphs above are the
+argument for the use case existing; the document is where it is specified, and
+its open questions are H1–H7.
 
 ### UC-3 — run a statement across many targets
 

@@ -118,12 +118,29 @@ def _docs_lane_from_probe() -> list[str]:
     return re.findall(r'"([^"]+)"', block.group(1))
 
 
-def _docs_job_modules() -> list[str]:
-    """The test paths `ci.yml`'s `docs` job passes to pytest."""
+#: The modules this whole arrangement exists to keep running, named outright.
+#:
+#: Asserting only that the job and the probe *agree* would pass on two empty
+#: lists, or on two lists changed in lockstep to something else entirely -- the
+#: `test_neither_list_is_empty` failure one file over, in a new place. The pair is
+#: therefore pinned rather than merely cross-checked.
+PROSE_READERS = (
+    "tests/test_doc_command_lines.py",
+    "tests/test_verification_register.py",
+)
+
+
+def _docs_job() -> str:
+    """The `docs:` job block from `ci.yml`."""
     text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
     job = re.search(r"\n  docs:\n(.*?)(?=\n  [a-z-]+:\n)", text, re.DOTALL)
     assert job is not None, "ci.yml has no `docs:` job"
-    line = re.search(r"run: pytest ([^\n]+)", job.group(1))
+    return job.group(1)
+
+
+def _docs_job_modules() -> list[str]:
+    """The test paths `ci.yml`'s `docs` job passes to pytest."""
+    line = re.search(r"run: pytest ([^\n]+)", _docs_job())
     assert line is not None, "the `docs` job runs no pytest command"
     return line.group(1).split()
 
@@ -135,8 +152,31 @@ def test_the_docs_job_runs_exactly_what_the_probe_deselects() -> None:
     ran a subset, the probe would be excusing a file nothing checks; if it ran a
     superset, that is a module doing prose work nobody deselected, and the probe
     would report a conflict for it on the next run.
+
+    Both are compared against :data:`PROSE_READERS` rather than only against each
+    other, so that changing them together cannot quietly turn the guard off.
     """
-    assert sorted(_docs_job_modules()) == sorted(_docs_lane_from_probe())
+    assert sorted(_docs_job_modules()) == list(PROSE_READERS)
+    assert sorted(_docs_lane_from_probe()) == list(PROSE_READERS)
+
+
+def test_the_docs_job_is_gated_on_prose_only() -> None:
+    """The `if:` is the whole mechanism, and nothing else here was checking it.
+
+    The guards above pin *what* the job runs and that `ci ok` waits for it. Invert
+    this condition to `'true'`, or delete it, and every one of them stays green
+    while prose-only pull requests skip the readers again -- #458 restored, with a
+    full set of passing tests over it. `needs: changes` is asserted alongside,
+    because the condition reads an output of that job and silently evaluates
+    false-y without the dependency.
+    """
+    block = _docs_job()
+
+    assert "if: needs.changes.outputs.code == 'false'" in block, (
+        "the docs job must run when `changes` reports prose only; it is the lane "
+        "that covers the tests the prose list lets the other lanes skip"
+    )
+    assert re.search(r"^    needs: changes$", block, re.MULTILINE), block
 
 
 def test_ci_ok_requires_the_docs_job() -> None:

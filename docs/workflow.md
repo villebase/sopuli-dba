@@ -55,16 +55,19 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   isolation. The run on `main` afterwards re-tested an identical tree and was
   billed again for it, which on a private repository's free minutes is the
   single largest duplicate there is.
-- **A prose-only pull request runs neither lane**, and the two arrange that
+- **A prose-only pull request runs neither *heavy* lane** — no tier 1, and no
+  `lint`, `test` or `install shape` — and the two workflows arrange that
   differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
   filters in a `changes` job that every other job carries an `if:` on, for the
-  branch-protection reason below. **Both lists are measured, not "docs"** — the
+  branch-protection reason below. It does still run the cheap `docs` job, which
+  is the bullet after this one. **Both lists are measured, not "docs"** — the
   suite reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
   every `docs/schemas/*.json`, every `examples/*.yaml` and
   `sql/oracle/00_install.sql`, so a blanket `docs/**` or an `examples/**` would
   switch off a test while leaving it green. `test/paths_ignore_probe.py` measures
-  what the suite opens; `tests/test_workflow_prose_list.py` keeps the two copies
-  of the list equal. The lists drifted seven patterns behind the tree between
+  what the **skipped** lanes open — it deselects the two modules the `docs` job
+  runs, since those are covered — and `tests/test_workflow_prose_list.py` keeps
+  the two copies of the list equal. The lists drifted seven patterns behind the tree between
   #370 and #373, which is what #375 fixed.
 - **A prose-only pull request still runs the `docs` job**, and that is what makes
   the skipping above safe (#458). Two tier-0 tests read the files the prose list

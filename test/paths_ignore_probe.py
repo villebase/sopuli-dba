@@ -1,5 +1,13 @@
-"""Probe: which files under `docs/`, `sql/` and `examples/` does the suite
-actually open, and does either workflow's `paths-ignore` list one of them?
+"""Probe: which files under `docs/`, `sql/` and `examples/` -- and the root
+`README.md` and `CLAUDE.md` -- does a **skipped lane** open, and does either
+workflow's `paths-ignore` list one of them?
+
+**"A skipped lane", not "the suite", and the distinction is #458's.** `ci.yml`'s
+`docs` job runs :data:`DOCS_LANE` on exactly the pull requests where the other
+lanes are skipped, so what those two modules read is covered by CI and is not a
+hole in the list. They are deselected below, and a conflict reported here is
+therefore a file that *nothing* would check on a prose-only pull request. Before
+that job existed the two questions had the same answer; they do not any more.
 
 Written for issue #375, where the list had drifted seven patterns behind the
 tree and every documentation pull request was starting both lanes. The
@@ -41,8 +49,11 @@ script says which it was, and refuses to call the answer complete without them::
     docker compose --profile tier1 up -d   # from test/
     python test/paths_ignore_probe.py       # from the repository root
 
-Exit status is 0 when nothing the suite opens is ignored by either workflow, and
-1 when something is -- so it can be read by a human or by a shell.
+Exit status is 0 when nothing the **non-docs-lane** suite opens is ignored by
+either workflow, and 1 when something is -- so it can be read by a human or by a
+shell. A green run says the prose list is safe *given* that `ci.yml`'s `docs` job
+still runs :data:`DOCS_LANE`; `tests/test_workflow_prose_list.py` is what holds
+that second half, since this script cannot see whether the job exists.
 """
 
 from __future__ import annotations

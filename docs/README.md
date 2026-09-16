@@ -455,10 +455,16 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   UC-2's **seen** (`manual`) reset is that one statement; its default, unseen reset
   issues no expiry and is unaffected. On a rollover-capable release the old
   password keeps authenticating after `IDENTIFIED BY` until the window closes.
-  Not run: whether the expiry also ends the old password's window, and whether the
-  statement is accepted during an open window at all. Needs 26ai and 21c, tier 1
-  and 2. Until it is measured, `use-cases/uc-02-personal-account-passwords.md` §4.3
-  refuses a seen reset on a rollover profile at plan time.
+  **Measured on 26ai 23.26.2.0.0, 2026-09-16** (#455,
+  `sql/oracle/07_lock_and_rollover_probe.sql` Q7), and the answer is worse than the
+  guess was: the statement **is** accepted on a rollover profile, the resulting
+  status is `EXPIRED & IN ROLLOVER` — both at once — and **the expiry does not end
+  the old password's window.** The old password answers `ORA-28001`, not
+  `ORA-01017`, so it still authenticates and is merely expired, which leaves it a
+  way to set the new one. **21c is unmeasured, so this stays open**: needs 21c,
+  tier 2. Until it has one, `use-cases/uc-02-personal-account-passwords.md` §4.3
+  still refuses a seen reset on a rollover profile at plan time — now for a
+  measured reason rather than an absent one.
 - `unverified` `expire-ddl-text` (#438, #457) — **Whether `ALTER USER … IDENTIFIED BY
   … PASSWORD EXPIRE` is retained or masked the way the bare `IDENTIFIED BY` form
   is.** Gate 2's probe (`sql/oracle/02_password_leak_probe.sql`) issues the bare

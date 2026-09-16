@@ -697,6 +697,15 @@ suite, while `creds apply` would happily issue `ALTER USER` against an
   cannot fire from a mutating verb today, because the bindings come from the same
   file — it is run anyway, because "enforced by construction" is a property of
   today's call graph rather than of the guardrail.
+
+  **That stops being true under UC-2's predicate declaration** (H1, #449). Where a
+  personal account is declared by a profile or a role rather than by name, the
+  declared set is a query result rather than the file's own list, so check 1 is the
+  thing standing between a `GRANT` somebody made in the database and an account
+  this tool will touch. The property it has today — unfireable because the set and
+  the check read the same file — is exactly what a predicate removes, which makes
+  the check load-bearing rather than ceremonial and is worth knowing before anyone
+  decides it is dead code.
 - **A refusal is `SKIPPED`, and `SKIPPED` is not counted in the exit code.** It
   is neither a success nor a failure: it is an account that left the run's scope,
   the same way one the config never declared never entered it. Counting it as
@@ -783,10 +792,11 @@ override does not prevent that rotation — it moves it to SQL\*Plus, where noth
 records that it happened. An audited override is the better failure.
 
 **It takes two deliberate acts, not one.** `--force` alone will not rotate
-`DBSNMP`: guardrail 1 still applies, so the account has to be declared in
-`accounts:` as well. That is invariant 5 — the config is the whitelist, and a
-flag cannot extend it — and it is what keeps "unusual account, deliberately
-managed" distinguishable from "typo that happened to be forced past".
+`DBSNMP`: guardrail 1 still applies, so the account has to be declared as well —
+in `accounts:` or an `applications:` entry, or, for a personal account, admitted
+by `personal_accounts:` (H1, #449). That is invariant 5 — the config is the
+whitelist, and a flag cannot extend it — and it is what keeps "unusual account,
+deliberately managed" distinguishable from "typo that happened to be forced past".
 
 **What it may never override is a safety setting.** `readonly`, `max_targets`,
 `confirm_environments` and `dry_run` ratchet toward safe and no

@@ -301,11 +301,18 @@ guarantee to learn something nobody asked for.
 
 **Reporting `ACCOUNT_STATUS` is not verification, and the reset always does it** —
 before and after. UC-1 §7's mitigation 6 is the single piece of that apparatus
-UC-2 keeps; mitigations 1–5 have nothing to guard. It costs no round trip:
-`describe_user` has already read the status, which is the input to the unlock
-decision below, to §4.3's window decision and to §4.4's guardrails. The status
-afterwards is what shows the reset did what it said — the `EXPIRED` component on
-the seen path, its absence on the unseen one.
+UC-2 keeps; mitigations 1–5 have nothing to guard.
+
+**The two reads are not the same cost, and only the first is free.** The
+*before* status is already in hand: `describe_user` reads it as the input to the
+unlock decision below, to §4.3's window decision and to §4.4's guardrails, so
+reporting it adds nothing. The *after* status is **a second dictionary read**, and
+it has to be — `ALTER USER` returns no status, so nothing about the DDL's success
+tells the tool what state the account ended in. An implementation that reported
+the pre-reset status as the outcome would be reporting stale state on exactly the
+runs where it matters: the reset that unlocked an account, or the one that did
+not. The status afterwards is what shows the reset did what it said — the
+`EXPIRED` component on the seen path, its absence on the unseen one.
 
 **A reset unlocks `LOCKED(TIMED)` by default, and refuses a deliberate `LOCKED`.**
 This is the one place UC-2 departs from 01-configuration §8's rule that every
@@ -445,7 +452,7 @@ What a test must show, once there is something to test:
 - **unseen:** after a reset the account is not `EXPIRED`; the value is retrievable
   by the owner's identity or wrapping token and by nothing the DBA holds (H8); the
   statement sent carries no `PASSWORD EXPIRE`; the password appears in no output of
-  the tool's at all;
+  the tool at all;
 - **seen:** the reset does not run without confirmation; afterwards
   `DBA_USERS.ACCOUNT_STATUS` carries the `EXPIRED` component — `EXPIRED`, or
   `EXPIRED & IN ROLLOVER` on a rollover profile, which is the combination §4.3
@@ -454,15 +461,20 @@ What a test must show, once there is something to test:
   change it; a rollover profile is refused at plan time (§4.3); the password is
   emitted exactly once, by the path #439 decides, and nowhere else;
 - **the H4 behaviours (§5, §4.3)**, and each of these is a tier-1 assertion
-  because each was a measurement first: a reset of a `LOCKED(TIMED)` account
-  leaves it `OPEN` and the owner able to log in with the new password *and
-  nothing else*; a reset of a deliberately `LOCKED` account is refused at plan
-  time and issues no DDL; an account that is not locked gets no `ACCOUNT UNLOCK`
-  statement at all, which is checked by reading `SYS.USER$.LCOUNT` across the
-  reset and finding it unmoved — the assertion that would have caught the Q1
-  behaviour had anyone thought to write it; and a reset on a rollover profile
-  leaves the old password answering `ORA-01017`, with the window-keeping flag the
-  one way to see `OPEN & IN ROLLOVER` afterwards;
+  because each was a measurement first. **The unlock assertion differs by path,
+  and saying so is the point**: on the **unseen** path a reset of a
+  `LOCKED(TIMED)` account leaves it `OPEN` and the owner able to log in with the
+  new password *and nothing else*; on the **seen** path the same reset leaves
+  `EXPIRED`, so what is asserted there is that the first logon is **forced to
+  change the password**, never a plain login — the expiry that path exists for is
+  not an obstacle the unlock removes. Then, on both: a reset of a deliberately
+  `LOCKED` account is refused at plan time and issues no DDL; an account that is
+  not locked gets no `ACCOUNT UNLOCK` statement at all, which is checked by
+  reading `SYS.USER$.LCOUNT` across the reset and finding it unmoved — the
+  assertion that would have caught the Q1 behaviour had anyone thought to write
+  it; and a reset on a rollover profile leaves the old password answering
+  `ORA-01017`, with the window-keeping flag the one way to see
+  `OPEN & IN ROLLOVER` afterwards;
 - **both:** the password appears in no run document, diagnostic or log sink, and in
   no jsonl event once that stream exists. The seen path's one deliberate emission
   is the only exception, and it is what that path's confirmation guards;
@@ -495,5 +507,9 @@ Deliberately not a question with an issue: §4.4's collision between guardrail
 check 4 and DBA accounts in scope, which is decided #89 applied to a population it
 was not written for, and is stated so that H1 and part 2 meet it rather than
 rediscover it. The seen path's default for ending a rollover window is not one
-either: the refusal stands until `expire-rollover` is measured, and the register
-entry is where that is tracked.
+either: the refusal stands until `expire-rollover` is settled, and the register
+entry is where that is tracked. **It is now measured on 26ai and still not
+settled** (#455) — the statement is accepted, the status is `EXPIRED & IN
+ROLLOVER`, and the expiry leaves the old password authenticating; what is missing
+is 21c, so what the refusal waits on is a second release rather than a first
+measurement (§4.3).

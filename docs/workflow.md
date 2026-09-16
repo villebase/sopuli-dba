@@ -66,6 +66,29 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   what the suite opens; `tests/test_workflow_prose_list.py` keeps the two copies
   of the list equal. The lists drifted seven patterns behind the tree between
   #370 and #373, which is what #375 fixed.
+- **A prose-only pull request still runs the `docs` job**, and that is what makes
+  the skipping above safe (#458). Two tier-0 tests read the files the prose list
+  ignores — `tests/test_verification_register.py`, which scans every
+  `docs/**/*.md` plus `README.md` and `CLAUDE.md` for `(unverified: <slug>)`
+  markers, and `tests/test_doc_command_lines.py`, which parses every fenced
+  `sopuli` command line against the real CLI. Without the job a typo'd slug or a
+  documented flag the CLI has not got merges green, which is what happened on
+  #457: docs-only, every lane skipped, and green only because the suite had been
+  run by hand.
+
+  **The direction was measured rather than argued.** Those two modules account
+  for all 21 ignored files the suite opens and run in 0.75 s; deleting their
+  paths from the prose list instead — effectively all of `docs/**` — buys the
+  same safety for roughly twenty billed `ci` minutes plus ten of tier 1 on every
+  documentation pull request. The job runs only when the heavy lanes do not,
+  since the `test` matrix already covers both modules on a code change.
+
+  Two consequences worth knowing before touching any of this. The probe now
+  **deselects** those modules, because the question is what a *skipped lane*
+  reads rather than what the suite reads, and `tests/test_workflow_prose_list.py`
+  asserts the job and the probe name the same pair. And `tier1.yml` needs no
+  change at all: no container test reads an ignored path, which the same
+  measurement established.
 - **`ruff` runs once**, on Linux. It is deterministic — same answer on every OS
   and interpreter — so six identical failures would be noise, not coverage.
 - **`mypy` runs on the whole matrix**, unlike `ruff`, because it is not

@@ -95,7 +95,7 @@ prompt — and it holds unchanged now that the answer is a different key.
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, show it once — after confirmation | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password — "make them change it" | yes |
 | `sopuli account list` | resolve the declaration — names, or a predicate over a profile or role — and report what it matched, with each account's state. Reads no password and writes none (H1, #449) | no |
-| either reset, under `--dry-run` | prints the plan and never a password (invariant 8) | no |
+| any of the mutating verbs, under `--dry-run` | prints the plan and never a password (invariant 8, which binds on every one of them — not the resets alone) | no |
 
 **The seen reset asks for confirmation every time** — decided on review of #457,
 and recorded in P5 beside the two gates that already do, `creds rotate` and
@@ -154,10 +154,19 @@ predicate does not admit. So one run touches exactly one account — and refusin
 selection that resolves to more than one is not a limit bolted onto the verb, it
 is what the verb is.
 
+**A name may not be declared twice.** An account that is both an application
+account and a personal one makes the whitelist ambiguous about which guarantee
+applies — mastered by a secret, or handed over — so the validator rejects the
+duplicate rather than picking one. The concrete rule lands with the config
+section (#467), together with §1's "two shapes" ceasing to be true.
+
 **The cost, stated rather than buried:** predicate membership is controlled in the
-database, by whoever grants the profile or role, and not by whoever reviews the
-file. Adding an account to an enumerated whitelist is a commit somebody reads;
-adding one to a predicate is a `GRANT`. `02-oracle-privileges.md` §4's checks
+database, by whoever **assigns the profile** or **grants the role**, and not by
+whoever reviews the file. The two are different operations —
+`ALTER USER … PROFILE` against `GRANT … TO`, which is why UC-1 §5 calls profile
+assignment an *attribute* — and the predicate inherits whichever governs it.
+Adding an account to an enumerated whitelist is a commit somebody reads; adding
+one to a predicate is a profile change or a grant. `02-oracle-privileges.md` §4's checks
 narrow that without closing it — check 2 still refuses `ORACLE_MAINTAINED` and
 check 4 still refuses `DBA`, `PDB_DBA`, `CDB_DBA` and `AUDIT_ADMIN`, whatever
 profile an account carries — and the blast radius is one named account, so a bad
@@ -402,10 +411,12 @@ Q4):
   silently cleared it would re-enable an account somebody disabled on purpose, and
   the DBA running the reset need not be the one who disabled it. H1 (#449) narrows
   this without closing it: under a **predicate** a departed person leaves the
-  declared set when their profile or role is revoked, which is usually the same
-  offboarding step that locked the account — but an enumerated `personal_accounts:`
-  entry stays declared until somebody edits the file, and a revocation nobody
-  performed leaves the predicate admitting them either way.
+  declared set when they are moved to another profile, or their role is revoked —
+  profiles are assigned and roles are granted, so the two exits are different
+  statements — and that is usually the same offboarding step that locked the
+  account. But an enumerated `personal_accounts:` entry stays declared until
+  somebody edits the file, and an offboarding nobody completed leaves the predicate
+  admitting them either way.
 - So plain `LOCKED` **fails at plan time**, naming the account and the lock, and
   `--force` or the explicit unlock flag is what proceeds. The unseen path has no
   confirmation prompt to catch it — only the seen path confirms (§2) — so the plan
@@ -564,9 +575,9 @@ Tests declare the capabilities they need and skip with a reason when absent
 
 | # | Question | Issue |
 |---|---|---|
-| ~~H1~~ | ~~Where is a personal account declared, so invariant 5 still whitelists it?~~ | **closed** — a `personal_accounts:` section, holding names or a predicate over a profile or role. The predicate amends invariant 5's first sentence and leaves its second intact, because it never widens what a mutating verb may touch: a reset names its account, `account list` resolves the rule, and predicate membership being a `GRANT` rather than a commit is the stated cost (§2) · #449 |
+| ~~H1~~ | ~~Where is a personal account declared, so invariant 5 still whitelists it?~~ | **closed** — a `personal_accounts:` section, holding names or a predicate over a profile or role. The predicate amends invariant 5's first sentence and leaves its second intact, because it never widens what a mutating verb may touch: a reset names its account and `account list` resolves the rule. The stated cost is that membership is a profile assignment or a role grant rather than a commit somebody reads; the keys and validators are #467 (§2) · #449 |
 | H2 | With no vault as master, what is recorded about a reset, and where? | #450 |
-| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, because the config declares `accounts:`; the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing folds into H1 (§2) · #451 |
+| ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, the configuration's own word for what is being managed, whichever key declares it (`accounts:`, an `applications:` entry, or H1's `personal_accounts:`); the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing is `account list`, which H1 earned (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | H6 | Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union? | #453 |

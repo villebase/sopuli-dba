@@ -637,8 +637,12 @@ radius than intended.** Worth keeping, worth being honest about.
 
 Before any `ALTER USER`, the tool refuses when the target account:
 
-1. is not among the config's declared `accounts` (inline, or in an `applications`
-   entry) — the config *is* the whitelist, just advisory rather than enforced
+1. is not among the config's **declared accounts** — `accounts:` inline, an
+   `applications:` entry, or, for a personal account, a name or a predicate in
+   `personal_accounts:` (H1, #449) — the config *is* the whitelist, just advisory
+   rather than enforced. The list matters here rather than in the prose below,
+   because an implementation written from this item alone would omit the
+   predicate form and silently refuse every personal account
 2. has `DBA_USERS.ORACLE_MAINTAINED = 'Y'` — covers SYS, SYSTEM, DBSNMP,
    GSMADMIN_INTERNAL and the rest without a hand-maintained list going stale
 3. appears in `V$PWFILE_USERS` — behind an **optional** grant, so on most

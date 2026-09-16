@@ -76,6 +76,12 @@ something specific.
    review. The predicate amends this invariant's first sentence and leaves the
    second intact: `--account` filters the resolved set, it does not widen it.
 
+   **A name may not be declared twice.** An account that is both an application
+   account and a personal one makes the whitelist ambiguous about which guarantee
+   applies — mastered by a secret, or handed over — so the validator rejects it
+   rather than picking. Enforced across `accounts:`, `applications:` and
+   `personal_accounts:` alike.
+
    **A predicate never widens what a mutating verb may touch.** A listing verb
    resolves it and shows what it matched; a mutating verb additionally requires the
    account named on the command line and refuses any name the predicate does not

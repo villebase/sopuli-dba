@@ -77,11 +77,18 @@ password as a record of it.
 ## 2. Commands
 
 **The noun is `account`** — H3 (#451), decided. Not `user`, although Oracle says
-user and the driver agrees with it (`describe_user`, `UserState`): the config
-declares `accounts:`, invariant 5 makes that list the whitelist, and every other
-noun in this CLI mirrors the file an operator edits rather than the database —
-`target`, `policy`, `lock`, `creds`. D2's noun-verb grammar is satisfied either
-way, so the tie goes to the vocabulary the config already uses.
+user and the driver agrees with it (`describe_user`, `UserState`): *account* is
+the word the configuration already uses for the thing being managed, and every
+other noun in this CLI mirrors the file an operator edits rather than the
+database — `target`, `policy`, `lock`, `creds`. D2's noun-verb grammar is
+satisfied either way, so the tie goes to the configuration's own vocabulary.
+
+**That settles the word and nothing about the file.** Whether a personal account
+is declared in today's `accounts:` list, in a shape of its own, or by a predicate
+over a profile or a role is H1 (#449), and it is open — so this deliberately does
+not rest on invariant 5 pointing at any particular key. The argument is only that
+somebody who reads `accounts:` in a configuration file should not have to type
+`user` at a prompt, and it holds whichever shape H1 chooses.
 
 | Command | What it does | Mutates |
 |---|---|---|

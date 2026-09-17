@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
+from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config, PersonalAccountRule
 from sopuli.config.selection import select
 
@@ -85,6 +86,27 @@ def admits(
     return False
 
 
+def rules_admitting(
+    config: Config,
+    account: str,
+    target: str,
+    *,
+    profile: str | None = None,
+    roles: Collection[str] = (),
+) -> tuple[PersonalAccountRule, ...]:
+    """Every rule that declares ``account`` on ``target``, in file order.
+
+    More than one is ordinary and not by itself a problem -- an enumerated entry
+    and a profile predicate can both be true of one person, and both carry the
+    same guarantee. What it costs is settled in :func:`declared_on`.
+    """
+    return tuple(
+        rule
+        for rule in rules_for(config, target)
+        if admits(rule, account, profile=profile, roles=roles)
+    )
+
+
 def declared_on(
     config: Config,
     account: str,
@@ -100,11 +122,35 @@ def declared_on(
     able to name what admitted the account. An audit record saying "declared"
     without saying by what is the kind of record nobody can check afterwards.
 
-    First match wins, in file order. Two rules admitting one account is not a
-    collision worth refusing: unlike #467's cross-declaration rule, both carry
-    the *same* guarantee, so there is nothing ambiguous about which applies.
+    **Two rules admitting one account is ordinary; two rules naming different
+    policies is not**, and the difference is what this refuses. Membership itself
+    is not ambiguous -- both rules say the same thing about the same account, and
+    unlike #467's cross-declaration rule they carry the same guarantee. A
+    ``policy:`` is a different matter: returning the first match would make which
+    password policy applies depend on the order somebody happened to write two
+    entries in, which is exactly the silent, file-order-dependent answer
+    invariant 5 exists to keep out of a whitelist.
+
+    It cannot be caught at load time, which is why it is here: whether a
+    predicate admits a given account is a fact about a database. So this is a
+    plan-time refusal (invariant 4) naming both rules, raised before anything is
+    issued.
     """
-    for rule in rules_for(config, target):
-        if admits(rule, account, profile=profile, roles=roles):
-            return rule
-    return None
+    admitting = rules_admitting(config, account, target, profile=profile, roles=roles)
+    if not admitting:
+        return None
+
+    policies = {rule.policy for rule in admitting if rule.policy is not None}
+    if len(policies) > 1:
+        named = ", ".join(sorted(f"`{policy}`" for policy in policies))
+        raise ConfigError(
+            f"account {account!r} on target {target!r} is declared by "
+            f"{len(admitting)} personal_accounts rules naming different policies ({named})",
+            at=ROOT.key("personal_accounts"),
+            hint=(
+                "the rules are "
+                + "; ".join(rule.label for rule in admitting)
+                + " -- give them the same `policy:`, or narrow one with `targets:`"
+            ),
+        )
+    return admitting[0]

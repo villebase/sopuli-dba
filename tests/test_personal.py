@@ -13,9 +13,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import PersonalAccountRule
-from sopuli.personal import admits, declared_on, rules_for
+from sopuli.personal import admits, declared_on, rules_admitting, rules_for
 
 TARGET = {
     "name": "appdb-dev-alpha",
@@ -42,6 +45,10 @@ def config(*rules: dict[str, Any]) -> Any:
             "version": 1,
             "targets": [TARGET, OTHER],
             "groups": {"dev-pdbs": {"match": {"env": "dev"}}},
+            "policies": {
+                "personal-standard": {"password": {"length": 24, "charset": "alnum"}},
+                "personal-strict": {"password": {"length": 32, "charset": "alnum"}},
+            },
             "personal_accounts": list(rules),
         }
     )
@@ -150,3 +157,60 @@ def test_a_rule_that_does_not_reach_this_target_does_not_declare_here() -> None:
 def test_a_file_declaring_no_personal_accounts_declares_none() -> None:
     resolved = build_config({"version": 1, "targets": [TARGET]})
     assert declared_on(resolved, "jdoe", "appdb-dev-alpha") is None
+
+
+# ------------------------------------------------- overlapping rules (#463) ---
+
+
+def test_two_rules_may_both_admit_one_account() -> None:
+    """Ordinary: an enumerated entry and a predicate can both be true of a person."""
+    resolved = config({"accounts": ["jdoe"]}, {"profile": "DEV_USERS"})
+
+    admitting = rules_admitting(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+
+    assert len(admitting) == 2
+    assert declared_on(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS") is not None
+
+
+def test_two_rules_agreeing_on_a_policy_are_not_a_conflict() -> None:
+    resolved = config(
+        {"accounts": ["jdoe"], "policy": "personal-standard"},
+        {"profile": "DEV_USERS", "policy": "personal-standard"},
+    )
+
+    rule = declared_on(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+
+    assert rule is not None
+    assert rule.policy == "personal-standard"
+
+
+def test_two_rules_naming_different_policies_are_refused() -> None:
+    """Otherwise which policy applies depends on the order somebody wrote them in.
+
+    Not catchable at load time -- whether `DEV_USERS` admits this account is a
+    fact about a database -- so it is a plan-time refusal naming both rules.
+    """
+    resolved = config(
+        {"accounts": ["jdoe"], "policy": "personal-standard"},
+        {"profile": "DEV_USERS", "policy": "personal-strict"},
+    )
+
+    with pytest.raises(ConfigError) as caught:
+        declared_on(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+
+    message = str(caught.value)
+    assert "different policies" in message
+    assert "personal-standard" in message
+    assert "personal-strict" in message
+
+
+def test_a_rule_with_no_policy_does_not_conflict_with_one_that_has_it() -> None:
+    """An absent `policy:` is "whatever `defaults:` says", not a third answer."""
+    resolved = config(
+        {"accounts": ["jdoe"]},
+        {"profile": "DEV_USERS", "policy": "personal-strict"},
+    )
+
+    rule = declared_on(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+
+    assert rule is not None

@@ -90,6 +90,7 @@ from sopuli.driver.protocol import (
     UNAVAILABLE,
     VERIFY_LOGIN,
     AccountAttributes,
+    AccountChange,
     AttributeChange,
     ChangeResult,
     Credential,
@@ -455,7 +456,7 @@ class OracleSession:
 
         return AttributeChange(ATTRIBUTE_SET, changed=True, detail=f"profile {was} -> {spelling}")
 
-    def suspend_account(self, account: str) -> AttributeChange:
+    def suspend_account(self, account: str) -> AccountChange:
         """``ALTER USER … ACCOUNT LOCK``, or report that it was already locked.
 
         **The state is read first** (invariant 9), for :meth:`_unlock`'s reason
@@ -476,7 +477,13 @@ class OracleSession:
         The capability is checked for the reason :meth:`_unlock` gives: it is
         structural on Oracle, and what makes it structural is a fact recorded in
         one place rather than something a caller should have to know.
+
+        **The read-only check comes first**, as it does in :meth:`set_password`
+        and :meth:`apply_attributes`: a physical standby answers
+        :meth:`describe_user` perfectly well, so without it the refusal would
+        arrive from the cursor after the run had already decided to mutate.
         """
+        require_read_write(self.scope(), target=self.target.name)
         require_capability(self.scope(), ACCOUNT_LOCK_STATE, target=self.target.name)
         state = self.describe_user(account)
         if state is None:
@@ -488,8 +495,11 @@ class OracleSession:
                 ),
             )
         if deliberately_locked(state.status):
-            return AttributeChange(
-                ACCOUNT_LOCK, changed=False, detail="the account is already locked"
+            return AccountChange(
+                ACCOUNT_LOCK,
+                changed=False,
+                status=state.status,
+                detail="the account is already locked",
             )
 
         was = state.status.lower()
@@ -500,7 +510,9 @@ class OracleSession:
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 raise from_error(error).as_error() from error
 
-        return AttributeChange(ACCOUNT_LOCK, changed=True, detail=f"account was {was}; locked")
+        return AccountChange(
+            ACCOUNT_LOCK, changed=True, status=state.status, detail=f"account was {was}; locked"
+        )
 
     def _unlock(self, account: str) -> AttributeChange:
         """``ALTER USER … ACCOUNT UNLOCK``, or report that there was no lock.

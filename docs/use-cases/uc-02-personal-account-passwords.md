@@ -209,6 +209,15 @@ predicate is a wrong *offer* rather than a wrong *action*. Against that: a list 
 four hundred developers is not meaningfully reviewed either, and a predicate is a
 policy statement somebody can actually read.
 
+**Two rules may admit one account; two rules naming different policies may not.**
+An enumerated entry and a profile predicate can both be true of one person, and
+that is ordinary — both say the same thing about the same account, and both carry
+the same guarantee, so membership is not ambiguous. A `policy:` is a different
+matter: taking the first match would make which password policy applies depend on
+the order somebody happened to write two entries in. That is refused at **plan
+time** rather than at load, naming both rules, because whether a predicate admits a
+given account is a fact about a database (#463).
+
 **Refusals follow §2 of `01-configuration.md`'s own asymmetry.** A predicate naming
 a profile or role that **does not exist** is refused — that is a misspelling. One
 that exists and **matches no accounts** is not an error, because that is a true

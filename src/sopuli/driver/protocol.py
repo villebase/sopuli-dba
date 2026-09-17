@@ -211,11 +211,20 @@ ATTRIBUTE_SET = "attribute_set"
 #:
 #: **Not one of** :data:`ATTRIBUTE_KINDS`, and the absence is deliberate. Those
 #: are the attributes a *policy* declares and `creds apply` enforces on its way
-#: past; this is a verb an operator types, about a person who has left. It is
-#: also not yet in the run schema's ``action_kind`` enum -- nothing emits a
+#: past; this is a verb an operator types, about a person who has left. So it
+#: reports as an :class:`AccountChange` rather than an
+#: :class:`AttributeChange` -- a value outside ``ATTRIBUTE_KINDS`` carried in a
+#: field documented as one of them would be a contract saying two things.
+#:
+#: It is also not yet in the run schema's ``action_kind`` enum: nothing emits a
 #: document with it until the verb ships, and an enum value with no emitter is a
 #: contract promising something that cannot happen.
 ACCOUNT_LOCK = "account_lock"
+
+#: What an account verb reports as. One entry today, and the tuple exists for the
+#: reason :data:`ATTRIBUTE_KINDS` does -- so a second verb cannot be added without
+#: a renderer noticing.
+ACCOUNT_ACTIONS = (ACCOUNT_LOCK,)
 
 #: The kinds an :class:`AttributeChange` reports as, in the order
 #: :meth:`Session.apply_attributes` enforces them.
@@ -743,6 +752,30 @@ class AttributeChange:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class AccountChange:
+    """What one **account verb** did to one account (UC-2, #463).
+
+    Distinct from :class:`AttributeChange`, which reports enforcing an attribute
+    a *policy* declared on `creds apply`'s way past. An account verb is something
+    an operator typed, so the two are different events even where the DDL is
+    similar, and one type carrying both would have an ``attribute`` field naming
+    something no policy can declare.
+
+    ``status`` is ``ACCOUNT_STATUS`` **as it was read**, before anything was
+    issued. It is on the result rather than left to the caller for the reason
+    UC-2 §5 gives: every one of these verbs reports the state it found, and a
+    caller that had to read it again could report a state a different run had
+    since changed.
+    """
+
+    #: One of :data:`ACCOUNT_ACTIONS`.
+    action: str
+    changed: bool
+    status: str
+    detail: str | None = None
+
+
 # --------------------------------------------------------------- interface ---
 
 
@@ -789,7 +822,7 @@ class Session(Protocol):
         """
         ...
 
-    def suspend_account(self, account: str) -> AttributeChange:
+    def suspend_account(self, account: str) -> AccountChange:
         """Lock ``account`` deliberately -- the offboarding state (UC-2, #463).
 
         **Idempotent, and the driver is what makes it so** (invariant 9), as
@@ -805,8 +838,12 @@ class Session(Protocol):
         ``changed: False`` there would say an offboarding had already happened
         when what is true is that a person mistyped their password.
 
-        Returns :data:`ACCOUNT_LOCK`, whether or not anything was issued, with a
-        detail naming the state it found.
+        Returns an :class:`AccountChange` whether or not anything was issued,
+        carrying the status it read and a detail naming it.
+
+        **Refused on a read-only target before anything is issued**, like every
+        other mutating call here: a physical standby would otherwise take the
+        statement as far as the cursor and fail there.
         """
         ...
 

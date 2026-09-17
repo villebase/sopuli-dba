@@ -132,7 +132,8 @@ def _lock_by_failing_a_login(session: Any, live_oracle: Environment) -> None:
 def test_an_open_account_is_suspended(account: Any) -> None:
     change = account.suspend_account(ACCOUNT)
 
-    assert change.attribute == ACCOUNT_LOCK
+    assert change.action == ACCOUNT_LOCK
+    assert change.status == "OPEN"
     assert change.changed is True
     assert "open" in (change.detail or "").lower()
     assert _status(account) == "LOCKED"
@@ -145,6 +146,7 @@ def test_a_second_suspend_reports_no_change(account: Any) -> None:
 
     assert first.changed is True
     assert second.changed is False
+    assert second.status == "LOCKED"
     assert "already locked" in (second.detail or "")
     assert _status(account) == "LOCKED"
 
@@ -162,6 +164,7 @@ def test_a_timed_lock_is_not_already_suspended(account: Any, live_oracle: Enviro
     change = account.suspend_account(ACCOUNT)
 
     assert change.changed is True
+    assert change.status == "LOCKED(TIMED)", "the status is the one it read, before it issued"
     assert "locked(timed)" in (change.detail or "").lower()
     assert _status(account) == "LOCKED"
 

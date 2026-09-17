@@ -143,6 +143,13 @@ already resolves the declaration and reports each account's state: H2 gives it t
 more columns — the database's password-change date and the metadata record's
 `reset_at` — and §3.2 says why both are shown rather than folded into one number.
 
+**Either column can be empty, and an empty one is not an error.** Where no store is
+configured there is no `reset_at` to report, and `SOPULI-W021`'s own rule applies to
+the pair: a documented column that vanishes with nothing saying why is a hole in the
+contract, so `account list` prints `-` and carries the §3.4 warning that says which
+absence it is. It is the listing verb reporting what exists, not a verb that fails
+because history does not.
+
 Every operation is limited to declared accounts, and **H1 (#449) settled what
 declares one: a `personal_accounts:` section**, holding either names or a
 **predicate** over a profile or a role. Not an application binding, because §1 of
@@ -197,7 +204,7 @@ a metadata record, and nowhere at all:
 
 | Question | Answered by | Why there |
 |---|---|---|
-| **when** the password last changed | the **database** — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant otherwise (#386) | it is the only thing that knows about a change the tool did not make, and on the seen path there is *always* one (§3.2) |
+| **when** the password last changed | the **database** — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant otherwise (#386), and 12.1 and 12.2 unmeasured on the fallback (unverified: pw-changed-source) | it is the only thing that knows about a change the tool did not make, and on the seen path there is *always* one (§3.2) |
 | **who** reset it, by **which path**, and **where** it was delivered | a **metadata record** in a store, written where an estate configures one (§3.1) | the database cannot know any of it, and the run document answers only for whoever kept that run's output |
 | **what to roll back to** | **nothing** | rollback is not a UC-2 operation: the recovery for a lost personal password is another reset |
 | **where the lock lives** | the metadata record's own path (§3.3) | it is the one location that exists on the seen path and the unseen one alike, and in both of the unseen path's delivery forms |
@@ -237,6 +244,13 @@ It carries what happened, and nothing that happened *to*:
  "by": {"host": "dba-ws-4.example.com", "os_user": "dba01"},
  "correlation_id": "01J..."}
 ```
+
+**`delivery.to` is present only where delivery has a location.** A store path or a
+cubbyhole reference is one; the seen path's destination is a person, by a route the
+tool did not carry, so `manual` records the method and omits `to` rather than
+inventing a value for stdout. What makes that unambiguous is `seen`, which is the
+field a reader is actually asking about there. #468 has the key optional for this
+reason and no other.
 
 `by` is the lock record's `holder` shape (`sopuli/lock/record.py`) rather than a
 second spelling of the same fact, and `correlation_id` is what joins this row to
@@ -288,7 +302,8 @@ the pair says:
 |---|---|
 | database **later** than `reset_at`, **seen** path | expected — the owner logged in and set their own password, which is what that path is for |
 | database **later** than `reset_at`, **unseen** path | **a finding.** Somebody changed the password after the tool delivered it, so the copy the person was told to fetch no longer works |
-| database **earlier** than `reset_at` | the reset did not take, or this release does not answer by the column the run read (§3.4) |
+| database **earlier** than `reset_at`, by more than the skew allowance | the reset did not take, or this release does not answer by the column the run read (§3.4) |
+| database **earlier** than `reset_at`, within it | says nothing, and is not reported as anything. The two timestamps come off two clocks — `reset_at` off the host that ran `sopuli`, the change date off the database — so a few seconds' disagreement is ordinary drift rather than evidence. The allowance is `sopuli/lock/record.py`'s `CLOCK_SKEW`, which exists for the same reason against the same pair of clocks, and reusing it keeps one number rather than two |
 | no database date | §3.4 — the release or the grant, and `SOPULI-W021` already says which |
 
 Whether the unseen-path disagreement gets a `diagnostics[]` code of its own or is
@@ -742,7 +757,7 @@ Tests declare the capabilities they need and skip with a reason when absent
 | # | Question | Issue |
 |---|---|---|
 | ~~H1~~ | ~~Where is a personal account declared, so invariant 5 still whitelists it?~~ | **closed** — a `personal_accounts:` section, holding names or a predicate over a profile or role. The predicate amends invariant 5's first sentence and leaves its second intact, because it never widens what a mutating verb may touch: a reset names its account and `account list` resolves the rule. The stated cost is that membership is a profile assignment or a role grant rather than a commit somebody reads; the keys and validators are #467 (§2) · #449 |
-| ~~H2~~ | ~~With no vault as master, what is recorded about a reset, and where?~~ | **closed** — three places, not one. The **database** answers *when* (`PASSWORD_CHANGE_DATE`, `PTIME` behind the grant), which is a divergence from Q9 and §3.2 says why: on the seen path the owner is required to change the password, so a record's own timestamp is designed to go stale. A **metadata record**, written wherever a store is configured, answers *who*, *which path* and *where it was delivered*, never a value — and its path is what Q2's lock finally has to key on. **Nothing** answers *what to roll back to*, because rollback is not a UC-2 operation. A reset with no store configured warns and runs; the keys, schema and validators are #468 (§3) · #450 |
+| ~~H2~~ | ~~With no vault as master, what is recorded about a reset, and where?~~ | **closed** — three places, not one. The **database** answers *when* (`PASSWORD_CHANGE_DATE`, `PTIME` behind the grant, with 12.1 and 12.2 unmeasured on that fallback (unverified: pw-changed-source)), which is a divergence from Q9 and §3.2 says why: on the seen path the owner is required to change the password, so a record's own timestamp is designed to go stale. A **metadata record**, written wherever a store is configured, answers *who*, *which path* and *where it was delivered*, never a value — and its path is what Q2's lock finally has to key on. **Nothing** answers *what to roll back to*, because rollback is not a UC-2 operation. A reset with no store configured warns and runs; the keys, schema and validators are #468 (§3) · #450 |
 | ~~H3~~ | ~~The noun and the verbs~~ | **closed** — the noun is `account`, the configuration's own word for what is being managed, whichever key declares it (`accounts:`, an `applications:` entry, or H1's `personal_accounts:`); the verbs are `reset-password` and `expire-password`, the latter its own verb rather than a flag; suspending an account is `account suspend`, named that way to avoid a second sense of `lock` and specified in #463; and listing is `account list`, which H1 earned (§2) · #451 |
 | ~~H4~~ | ~~Does a reset verify the password, unlock (including `LOCKED(TIMED)`), or end a rollover window?~~ | **closed** — never verifies (reports `ACCOUNT_STATUS` instead); unlocks `LOCKED(TIMED)` by default and refuses a deliberate `LOCKED`; ends the rollover window by default, with a flag to keep it (§4.3, §5) · #455 |
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |

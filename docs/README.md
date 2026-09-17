@@ -314,8 +314,21 @@ which is a bearer credential (#444, #456) — and a **seen** `manual` path, whic
 a deliberate exposure until the owner's first logon: non-default, confirmed,
 always expired. Decided on review of #457. ~~Is self-service in scope~~ (H5, #452 — **closed:**
 self-service means the owner fetching the password from a secure store, not
-resetting through the tool). Open: what is recorded about a reset with no
-vault as master (H2, #450); how an
+resetting through the tool). ~~What is recorded about a reset with no vault as
+master~~ (H2, #450 — **closed:** three places. The **database** answers *when* the
+password last changed, which diverges from Q9 deliberately — on the seen path the
+owner is required to change the password at first logon, so a record's own
+timestamp is designed to be overtaken by a change the tool never sees, and reading
+a timestamp is not invariant 6's business because invariant 6 governs the value. A
+**metadata record**, written wherever a store is configured and never where one is
+not, answers *who* reset it, by *which path*, and *where it was delivered*, and
+holds no password in any representation; its path is what Q2's lock keys on, which
+is the first key UC-2 has had, since the wrapping-token form writes no secret path
+and `manual` writes nothing at all. **Nothing** answers *what to roll back to*:
+rollback is not a UC-2 operation. A reset with no store configured warns at plan
+time and runs, because requiring one would take `manual` away from the estates it
+exists for. The keys, schema and validators are **#468**, split out in #467's shape).
+Open: how an
 estate restricts delivery methods — an `allowed_methods` intersection, which is a
 new ratchet shape, or a `forbidden_methods` union, which is the existing one (H6,
 #453); a reset never converges, so it needs either a second invariant-9 exemption

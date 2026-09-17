@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import ACCOUNT_LOCK
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
@@ -39,7 +40,7 @@ def build_result(
     changed: bool,
     detail: str | None,
     status: str | None = None,
-    overridden: Sequence[str] = (),
+    overridden: Sequence[Refusal] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
 ) -> dict[str, Any]:
@@ -78,8 +79,13 @@ def build_result(
     if overridden:
         # §4 requires a waived guardrail to survive the waiving, in the document
         # as well as in the audit event -- a `--force` that merely proceeded
-        # would leave this unable to say somebody did it on purpose.
-        entry["overridden"] = list(overridden)
+        # would leave this unable to say somebody did it on purpose. The pair is
+        # `apply`'s own shape, and the schema requires both halves: the check
+        # says which guardrail, and the reason is the sentence an operator reads
+        # when they go back and ask what was waived and why it had fired.
+        entry["overridden"] = [
+            {"check": refusal.check, "reason": refusal.reason} for refusal in overridden
+        ]
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms
     if error is not None:
@@ -168,10 +174,22 @@ def _verdict(
         count = would_suspend if would_suspend is not None else 0
         return paint(f"would suspend {account} on {count} of {len(rows)} targets", Role.HEADING)
 
-    if not changed:
+    failed = sum(1 for row in rows if row[2] not in {LOCKED, SKIPPED, ACCOUNT_MISSING})
+    if changed:
+        line = f"suspended {account} on {changed} of {len(rows)} targets"
+    else:
         already = sum(1 for row in rows if row[2] == LOCKED)
-        if already:
-            return paint(f"{account} was already locked on {already} of {len(rows)}", Role.HEADING)
-        return paint(f"{account} was not suspended on any of {len(rows)}", Role.HEADING)
+        line = (
+            f"{account} was already locked on {already} of {len(rows)}"
+            if already
+            else f"{account} was not suspended on any of {len(rows)}"
+        )
 
-    return paint(f"suspended {account} on {changed} of {len(rows)} targets", Role.HEADING)
+    # A target that could not be reached sets the exit code, so the line that
+    # summarises the run has to name it. Without this a run reading
+    # `[LOCKED, ERROR]` said "already locked on 1 of 2" and never mentioned the
+    # target it could not reach -- true, and the half a reader would act on is
+    # the half it left out.
+    if failed:
+        return paint(f"{line}; {failed} failed", Role.HEADING)
+    return paint(line, Role.HEADING)

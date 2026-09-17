@@ -1287,7 +1287,7 @@ class _Suspended:
     detail: str | None = None
     #: ``ACCOUNT_STATUS`` as it was **read**, before anything was issued.
     status: str | None = None
-    overridden: tuple[str, ...] = ()
+    overridden: tuple[guardrails.Refusal, ...] = ()
     #: Under ``--dry-run``, whether this row cleared every gate and would have
     #: been suspended. Always ``False`` on a real run, where ``changed`` is the
     #: answer -- one field serving both would make "would have" and "did"
@@ -1381,11 +1381,7 @@ def _suspend_one(
             state, config=config, account=account, target=target.name, force=force
         )
         status = state.status if state is not None else None
-        overridden = (
-            tuple(refusal.check for refusal in decision.review.overridden)
-            if decision.review is not None
-            else ()
-        )
+        overridden = decision.review.overridden if decision.review is not None else ()
         if not decision.proceed:
             return _Suspended(
                 account=account,

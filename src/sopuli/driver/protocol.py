@@ -207,6 +207,16 @@ ACCOUNT_UNLOCK = "account_unlock"
 #: per attribute on a contract consumers branch on, three more still to come.
 ATTRIBUTE_SET = "attribute_set"
 
+#: Suspend an account: ``ALTER USER … ACCOUNT LOCK`` (UC-2, #463).
+#:
+#: **Not one of** :data:`ATTRIBUTE_KINDS`, and the absence is deliberate. Those
+#: are the attributes a *policy* declares and `creds apply` enforces on its way
+#: past; this is a verb an operator types, about a person who has left. It is
+#: also not yet in the run schema's ``action_kind`` enum -- nothing emits a
+#: document with it until the verb ships, and an enum value with no emitter is a
+#: contract promising something that cannot happen.
+ACCOUNT_LOCK = "account_lock"
+
 #: The kinds an :class:`AttributeChange` reports as, in the order
 #: :meth:`Session.apply_attributes` enforces them.
 #:
@@ -776,6 +786,27 @@ class Session(Protocol):
         wrapped in a PL/SQL block, and the password is never bound. #171 is the
         statement builder those apply to; this is the call that issues what it
         built.
+        """
+        ...
+
+    def suspend_account(self, account: str) -> AttributeChange:
+        """Lock ``account`` deliberately -- the offboarding state (UC-2, #463).
+
+        **Idempotent, and the driver is what makes it so** (invariant 9), as
+        :meth:`apply_attributes` is: the implementation reads the state first and
+        issues nothing where the account is already locked. Oracle accepts
+        ``ACCOUNT LOCK`` against a locked account silently, so an implementation
+        that issued unconditionally would report a change every time.
+
+        **A `LOCKED(TIMED)` account is not already suspended**, and an
+        implementation must not treat it as one. The timed lock is what a
+        failed-login limit produced and `PASSWORD_LOCK_TIME` clears on its own;
+        this is somebody's decision, and it does not expire. Reporting
+        ``changed: False`` there would say an offboarding had already happened
+        when what is true is that a person mistyped their password.
+
+        Returns :data:`ACCOUNT_LOCK`, whether or not anything was issued, with a
+        detail naming the state it found.
         """
         ...
 

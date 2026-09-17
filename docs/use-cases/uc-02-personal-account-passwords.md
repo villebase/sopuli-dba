@@ -130,6 +130,28 @@ a person's account when they leave; `LOCKED` is what `ACCOUNT_STATUS` then says,
 and §5 already depends on that word meaning Oracle's fact rather than ours. The
 statement is still `ALTER USER … ACCOUNT LOCK`, and **#463** specifies the verb.
 
+**The statement and its idempotency are built** (#463, first half); the verb is
+not yet. Two things were measured on 26ai Free 23.26.2.0.0 on 2026-09-17, each
+twice, and the driver rests on both:
+
+- a second `ACCOUNT LOCK` against an already-`LOCKED` account is **accepted
+  silently** and changes nothing, so the driver reads the state first and reports
+  `changed: false` — invariant 9 held by the driver, as UC-1 §5's unlock is;
+- **`LOCKED(TIMED)` is not already suspended.** `ACCOUNT LOCK` takes it to
+  `LOCKED`, and that is a real change rather than a no-op on a technicality: the
+  timed lock expires on its own under `PASSWORD_LOCK_TIME` and this one does not,
+  and §4.4's reset clears the first while refusing the second. Reporting no change
+  there would claim an offboarding that never happened.
+
+**Which makes the state a parse rather than a comparison**, and that is worth
+writing down because both obvious spellings are wrong. `LOCKED(TIMED)` *contains*
+`LOCKED`, so a substring test calls a failed login an offboarding; and the status
+compounds — `EXPIRED & LOCKED`, `LOCKED & IN ROLLOVER`,
+`EXPIRED & LOCKED & IN ROLLOVER` are all real values — so equality against the
+whole string calls a deliberately locked account open. The answer is to split on
+` & ` and look for a `LOCKED` component, which is #309's `EXPIRED(GRACE)` lesson
+applied in the one other field that has the same shape.
+
 A **listing**
 verb is `account list`, and H1 (#449) is what earns it rather than H3. Under a
 predicate something has to resolve the rule and show what it matched, and

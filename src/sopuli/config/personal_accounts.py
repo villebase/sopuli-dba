@@ -36,7 +36,7 @@ from sopuli.config.fields import (
     sequence,
     string_list,
 )
-from sopuli.config.model import Application, PersonalAccounts
+from sopuli.config.model import Application, PersonalAccountRule
 
 PERSONAL_ACCOUNT_KEYS = ("accounts", "profile", "role", "targets", "policy")
 
@@ -45,7 +45,7 @@ PERSONAL_ACCOUNT_KEYS = ("accounts", "profile", "role", "targets", "policy")
 DECLARATION_KEYS = ("accounts", "profile", "role")
 
 
-def build_personal_accounts(document: dict[str, Any]) -> tuple[PersonalAccounts, ...]:
+def build_personal_accounts(document: dict[str, Any]) -> tuple[PersonalAccountRule, ...]:
     """Normalise `personal_accounts:` into entries. Absent means none declared."""
     if "personal_accounts" not in document:
         return ()
@@ -67,7 +67,7 @@ def build_personal_accounts(document: dict[str, Any]) -> tuple[PersonalAccounts,
     return tuple(built)
 
 
-def _build_entry(raw: Any, *, at: KeyPath) -> PersonalAccounts:
+def _build_entry(raw: Any, *, at: KeyPath) -> PersonalAccountRule:
     entry = mapping(raw, at=at)
     reject_unknown_keys(entry, allowed=PERSONAL_ACCOUNT_KEYS, at=at)
 
@@ -90,7 +90,7 @@ def _build_entry(raw: Any, *, at: KeyPath) -> PersonalAccounts:
             hint="write one entry per rule; the section is a list",
         )
 
-    return PersonalAccounts(
+    return PersonalAccountRule(
         accounts=_build_accounts(entry, at=at) if "accounts" in entry else (),
         profile=optional_string(entry, "profile", at=at),
         role=optional_string(entry, "role", at=at),
@@ -106,7 +106,7 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
     return accounts
 
 
-def _reject_duplicate_names(entries: list[PersonalAccounts], *, at: KeyPath) -> None:
+def _reject_duplicate_names(entries: list[PersonalAccountRule], *, at: KeyPath) -> None:
     """One account name may appear once across the whole section.
 
     Compared **case-insensitively**, because that is how a name is matched
@@ -130,7 +130,7 @@ def _reject_duplicate_names(entries: list[PersonalAccounts], *, at: KeyPath) -> 
 
 
 def reject_cross_declaration(
-    applications: tuple[Application, ...], personal: tuple[PersonalAccounts, ...]
+    applications: tuple[Application, ...], personal: tuple[PersonalAccountRule, ...]
 ) -> None:
     """A name may not be declared both as an application account and a personal one.
 

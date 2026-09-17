@@ -815,8 +815,14 @@ class ConfigWarning:
 
 
 @dataclass(frozen=True)
-class PersonalAccounts:
+class PersonalAccountRule:
     """One rule in `personal_accounts:` -- accounts belonging to people (H1, #449).
+
+    Named for the **rule** rather than the accounts because one entry is not one
+    account: it is a list of names, or a predicate that stands for however many
+    accounts a database says carry a profile. The rest of the model is singular
+    per entry (:class:`Application`, :class:`Policy`, :class:`Profile`) and this
+    follows it.
 
     Exactly one of ``accounts``, ``profile`` and ``role`` says *which*: a list of
     names, or a **predicate** over a profile or a role that a database resolves at
@@ -861,7 +867,7 @@ class Config:
     #: from `applications` because the two carry different guarantees, and a
     #: name may not appear in both -- see
     #: :func:`~sopuli.config.personal_accounts.reject_cross_declaration`.
-    personal_accounts: tuple[PersonalAccounts, ...] = ()
+    personal_accounts: tuple[PersonalAccountRule, ...] = ()
     vaults: tuple[Vault, ...] = ()
     targets: tuple[Target, ...] = ()
     target_sets: tuple[TargetSet, ...] = ()

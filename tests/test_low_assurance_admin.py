@@ -111,15 +111,36 @@ def test_the_sources_p2_prefers_are_silent(method: str) -> None:
     assert admin_diagnostics("orders-pdb", resolved(method)) == []
 
 
-def test_the_flag_follows_assurance_rather_than_the_method_name() -> None:
+def test_the_flag_follows_assurance_rather_than_the_method_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The set is the contract, so a second such source needs no new call site.
 
-    Pins the coupling rather than restating it: `admin_diagnostics` asks
-    `Resolved.low_assurance`, which asks `LOW_ASSURANCE`. A version that tested
-    `method == "env"` anywhere would pass every other test in this file.
+    **A synthetic second member, because today there is only one.** With
+    `LOW_ASSURANCE == {ENV}` every assertion about `env` is also an assertion
+    about the string "env", so an implementation asking `method == ENV` passes
+    the whole of the rest of this file. The first version of this test asserted
+    the set's contents and then looped over it, which proved nothing at all and
+    said in its own docstring that it did -- Copilot caught that reviewing #484.
+
+    Putting an imaginary method in the set and asserting it is *reported* is the
+    only form that fails for the coupling being wrong, because no implementation
+    hard-coding `env` can flag a method it has never heard of.
     """
-    assert frozenset({ENV}) == LOW_ASSURANCE
-    assert all(len(admin_diagnostics("t", resolved(one))) == 1 for one in LOW_ASSURANCE)
+    assert frozenset({ENV}) == LOW_ASSURANCE, "if this changed, the synthetic below is stale"
+
+    monkeypatch.setattr("sopuli.admin.LOW_ASSURANCE", frozenset({ENV, "carrier-pigeon"}))
+    invented = Resolved(
+        credential=Credential(username="C##SOPULI_SVC", secret=Secret(PASSWORD)),
+        method="carrier-pigeon",
+        source="a carrier pigeon",
+    )
+
+    assert [one.code for one in admin_diagnostics("orders-pdb", invented)] == [LOW_ASSURANCE_ADMIN]
+    # And joining the set is all it took: nothing else moved, and the sources
+    # outside it are still silent.
+    assert admin_diagnostics("orders-pdb", resolved(ENV)) != []
+    assert admin_diagnostics("orders-pdb", resolved(VAULT)) == []
 
 
 def test_the_code_is_in_the_registry() -> None:

@@ -39,9 +39,19 @@ from click.testing import CliRunner, Result
 
 from sopuli.admin import PasswordPrompt
 from sopuli.cli import cli
-from sopuli.driver.protocol import Credential, PrivilegeAudit, Scope
+from sopuli.driver.protocol import (
+    PASS,
+    ChangeResult,
+    Credential,
+    PrivilegeAudit,
+    Scope,
+    UserState,
+    VerifyResult,
+)
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import terminal_prompter
+from sopuli.secrets import Secret
+from sopuli.store import MemoryStore, SecretStore
 
 WriteConfig = Callable[[str], Path]
 
@@ -311,3 +321,131 @@ def test_the_password_is_not_in_the_document(
     result = _doctor(runner, config)
 
     assert TYPED not in result.output
+
+
+# ------------------------------------- the other two call sites, which differ ---
+#
+# `doctor` resolves through `_open_session`; `creds check` and `creds apply` each
+# resolve for themselves. Three call sites, and the bug was one missing argument
+# at each -- so a test that exercises one of them proves nothing about the other
+# two. Copilot made exactly this point reviewing #482, and it was right: the
+# first draft of this file covered `doctor` alone, and dropping `prompt=` from
+# either of the others would have kept it green.
+
+CHECK_CONFIG = """version: 1
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault-prod.example.com:8200
+targets:
+  - name: appdb-alpha
+    type: oracle
+    dsn: db-prod.example.com:1521/alpha.pdb.example.com
+    environment: prod
+    vault: vault-prod
+    admin: { username: C##SOPULI_SVC, auth: prompt }
+applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/{target}#password"
+"""
+
+
+class CredsSession:
+    """Enough of a session for `creds check` and `creds apply` to finish."""
+
+    def __init__(self) -> None:
+        self.changed: list[tuple[str, str]] = []
+
+    def scope(self) -> Scope:
+        return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=frozenset())
+
+    def privileges(self) -> PrivilegeAudit:
+        return PrivilegeAudit()
+
+    def describe_user(self, account: str) -> UserState:
+        return UserState(name=account.upper(), status="OPEN", password_file_member=False)
+
+    def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        return VerifyResult("login", PASS, latency_ms=7)
+
+    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+        self.changed.append((account.upper(), secret.reveal()))
+        return ChangeResult(changed=True)
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.fixture
+def creds_estate(monkeypatch: pytest.MonkeyPatch) -> Callable[[], list[Credential]]:
+    """A vault and a driver, recording the credential each connection was given."""
+
+    def install() -> list[Credential]:
+        seen: list[Credential] = []
+        store = MemoryStore()
+        store.write(
+            "apps/acme/appdb-alpha", {"password": TYPED, "pending": "Anchor-Marble-4"}, cas=0
+        )
+
+        def fake_connect(vault: Any, **_: Any) -> SecretStore:
+            return store
+
+        class FakeDriver:
+            def __init__(self, **_: Any) -> None:
+                pass
+
+            def connect(self, target: Any, credential: Credential) -> CredsSession:
+                seen.append(credential)
+                return CredsSession()
+
+        class FakeModule:
+            OracleDriver = FakeDriver
+
+        monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        return seen
+
+    return install
+
+
+@pytest.mark.parametrize("verb", [["creds", "check"], ["creds", "apply"]])
+def test_the_typed_password_reaches_the_driver_on_the_creds_verbs(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    creds_estate: Callable[[], list[Credential]],
+    asked: list[str],
+    watching: Callable[[bool], None],
+    verb: list[str],
+) -> None:
+    """`_check_target` and `_apply_target`, which resolve without `_open_session`."""
+    watching(True)
+    seen = creds_estate()
+    config = write_config(CHECK_CONFIG)
+
+    result = runner.invoke(cli, [*verb, "--config", str(config)])
+
+    assert seen, f"{' '.join(verb)} opened no connection: {result.output}"
+    assert [one.secret.reveal() for one in seen if one.secret] == [TYPED]
+    assert asked == ["password for C##SOPULI_SVC on appdb-alpha: "]
+
+
+@pytest.mark.parametrize("verb", [["creds", "check"], ["creds", "apply"]])
+def test_the_creds_verbs_refuse_without_a_terminal(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    creds_estate: Callable[[], list[Credential]],
+    asked: list[str],
+    watching: Callable[[bool], None],
+    verb: list[str],
+) -> None:
+    """A per-target finding on these verbs too, and no connection attempted."""
+    watching(False)
+    seen = creds_estate()
+    config = write_config(CHECK_CONFIG)
+
+    result = runner.invoke(cli, [*verb, "--config", str(config)])
+
+    assert seen == []
+    assert asked == []
+    assert "nobody here to ask" in result.output

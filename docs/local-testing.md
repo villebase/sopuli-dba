@@ -2317,8 +2317,8 @@ dictionary. The first build of this verb printed both. That is worth knowing bec
 it is the kind of bug a listing verb must not have: it misreports the size of the
 whitelist you are reviewing.
 
-**RESET_AT is empty and says why.** Nothing writes reset records yet, and this
-config declares no `reset_records:` block either, so:
+**RESET_AT is empty and says why.** This config declares no `reset_records:`
+block, so there is no journal to read:
 
 ```bash
 sopuli --output json account list | jq -r '.diagnostics[] | "\(.code) \(.message)"'
@@ -2326,6 +2326,34 @@ sopuli --output json account list | jq -r '.diagnostics[] | "\(.code) \(.message
 ```
 SOPULI-W023 no `reset_records:` block is declared, so there is no reset journal to read and RESET_AT is empty for every account; the database's own password-change date is unaffected and is reported beside it
 ```
+
+#### Filling that column in
+
+Nothing *writes* a reset record yet — `reset-password` does not exist — but the
+column is read for real, so you can prove it works by writing one by hand. Declare
+the journal (§10a's `reset_records:` block, below), then:
+
+```bash
+vault kv put -mount=kv sopuli/personal-resets/tier1-oracle/acme_dev_alice   account=acme_dev_alice target=tier1-oracle reset_at=2026-09-17T09:14:22Z   seen=false expired=false
+```
+```
+ACCOUNT         TARGET        DECLARED BY  STATUS  DB_PW_CHANGED  RESET_AT
+ACME_DEV_ALICE  tier1-oracle  names        OPEN    2026-09-18     2026-09-17T09:14:22Z
+
+1 declared account, 1 on the selected targets
+```
+
+The path is `<prefix>/<target>/<account>`, lowercased on the account — one record
+per (target, account), which is the pair two concurrent resets collide on (#468).
+No `SOPULI-W023` this time, because there is now a journal.
+
+**Look at those two dates.** The database says the password changed *after* the
+journal says it was reset. On the unseen path that is a **finding**, not a
+curiosity: somebody changed the password after the tool delivered it, so whatever
+the person was told to fetch no longer works. That is why UC-2 §3.2 keeps them as
+two columns off two clocks rather than folding them into one number — here the
+disagreement is only an artefact of a hand-written record, but the shape is the
+real one.
 
 #### The asymmetry worth causing on purpose
 

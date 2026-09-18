@@ -262,3 +262,122 @@ def test_the_summary_counts_what_exists_and_changes_nothing() -> None:
     assert summary.ok == 2
     assert summary.changed == 0
     assert summary.unchanged == 2
+
+
+# ------------------------------------- a target that could not be answered ---
+#
+# Both of these exist because Copilot's review of #493 found the first draft
+# reporting a down target as `ACCOUNT_MISSING` -- a connectivity failure stated
+# as a fact about an estate, with nothing in `results[]` to tell them apart.
+
+
+def unreachable() -> Row:
+    from sopuli.output.document import Error
+
+    return Row(
+        account=ABSENT,
+        target=TARGET,
+        rule=None,
+        state=None,
+        unreachable=Error(message="ORA-12541: TNS:no listener", category="database"),
+    )
+
+
+def test_a_target_that_could_not_be_answered_is_error_not_account_missing() -> None:
+    """A run that could not open a session knows nothing about any account there,
+    including whether it exists, so `ACCOUNT_MISSING` would assert what it never
+    learned."""
+    entry = build_result(unreachable())
+
+    assert entry["state"] == "ERROR"
+    assert entry["state"] != "ACCOUNT_MISSING"
+
+
+def test_the_failure_reaches_the_document_as_an_error_object() -> None:
+    """A consumer branches on `error`, not on prose in a detail string."""
+    entry = build_result(unreachable())
+
+    assert entry["error"]["message"] == "ORA-12541: TNS:no listener"
+    assert entry["error"]["category"] == "database"
+
+
+def test_a_failed_target_is_counted_as_failed_rather_than_unchanged() -> None:
+    """The summary used to report zero failures on a run that exited PARTIAL, so
+    the exit code and the document disagreed."""
+    summary = summarise([*rows(), unreachable()])
+
+    assert summary.failed == 1
+    assert summary.unchanged == 2
+    assert summary.total == 3
+
+
+def test_a_failed_target_is_not_counted_as_a_declared_account() -> None:
+    text = render_account_list([*rows(), unreachable()])
+
+    assert "2 declared accounts" in text
+    assert "1 target could not be answered" in text
+    assert "not present" not in text, "an unanswered target is not a missing account"
+
+
+# ------------------------------------------------------ reading the journal ---
+
+
+def test_the_reset_at_column_is_read_from_the_journal() -> None:
+    """The second half of Copilot's review of #493: `reset_at` was on the model
+    and in the schema and nothing ever populated it, so a documented column was
+    permanently `-` even where a journal existed and held a record."""
+    from sopuli.cli import _reset_at
+    from sopuli.store import MemoryStore
+
+    journal = MemoryStore()
+    journal.write(
+        "sopuli/personal-resets/appdb-dev-alpha/jdoe",
+        {"account": "jdoe", "target": TARGET, "reset_at": "2026-09-17T09:14:22Z"},
+        cas=None,
+    )
+    built = config(
+        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+    )
+
+    assert _reset_at(journal, built, TARGET, "jdoe") == "2026-09-17T09:14:22Z"
+
+
+def test_a_journal_with_no_record_for_this_account_is_not_a_finding() -> None:
+    """Nobody has reset them through this tool. That is not an absence worth a
+    code -- unlike a journal that is not configured at all, which is W023."""
+    from sopuli.cli import _reset_at
+    from sopuli.store import MemoryStore
+
+    built = config(
+        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+    )
+
+    assert _reset_at(MemoryStore(), built, TARGET, "jdoe") is None
+
+
+def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
+    """A listing verb that failed because a *metadata* store was unreachable
+    would be refusing to describe an estate over its history -- the priority
+    inversion UC-2 §3.4 rules out for the reset, and it applies at least as
+    strongly to a read."""
+    from sopuli.cli import _reset_at
+    from sopuli.store import MemoryStore
+
+    class Broken(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Any:
+            raise RuntimeError("the metadata store is down")
+
+    built = config(
+        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+    )
+
+    assert _reset_at(Broken(), built, TARGET, "jdoe") is None
+
+
+def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:
+    from sopuli.cli import _reset_at
+
+    assert _reset_at(None, config(), TARGET, "jdoe") is None

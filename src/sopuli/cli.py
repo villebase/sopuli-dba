@@ -73,7 +73,7 @@ from typing import Any, TypeVar
 
 import click
 
-from sopuli import account_list, preflight, suspend
+from sopuli import account_list, preflight, reset_record, suspend
 from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import constraints as constraint_source
@@ -1566,7 +1566,8 @@ def _list_one(
             return [_unreachable_row(target, _as_error(error))], 1
 
         names = _declared_names(session, config, target, wanted=wanted)
-        return [_describe_row(session, name, target, config) for name in names], 0
+        journal = _reset_journal(run, config)
+        return [_describe_row(session, name, target, config, journal=journal) for name in names], 0
     finally:
         if session is not None:
             with suppress(Exception):
@@ -1643,11 +1644,59 @@ def _no_such_predicate(target: ExpandedTarget, noun: str, name: str) -> click.Cl
     )
 
 
+def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
+    """The store UC-2's reset records live in, or ``None`` where none is declared.
+
+    Opened **once per target** rather than once per account, for
+    :func:`_stores_for`'s own reason: a store is a client, and an estate with
+    four hundred developers in one vault should authenticate once. The run's
+    client cache makes it once per *run* in practice.
+
+    ``None`` is the documented mode, not a failure (UC-2 3.4): a configuration
+    with no `reset_records:` block keeps no journal, `SOPULI-W023` says so, and
+    the listing still reports everything else.
+    """
+    records = config.reset_records
+    if records is None:
+        return None
+    opened = _stores_for({records.vault}, config, token_file=run.vault_token_file, cache=run.stores)
+    return opened.get(records.vault)
+
+
+def _reset_at(journal: SecretStore | None, config: Config, target: str, account: str) -> str | None:
+    """What the journal says about this account's last reset, if anything.
+
+    **Three absences, one rendering, and only one of them is a finding.** No
+    journal configured is `SOPULI-W023`, raised once for the run. A journal with
+    no record for this account is not a finding at all -- nobody has reset them
+    through this tool -- and gets no code. A journal that could not be read is
+    reported on the row.
+
+    Never raises. A listing verb that failed because a *metadata* store was
+    unreachable would be refusing to describe an estate over its history, which
+    is the priority inversion UC-2 3.4 rules out for the reset and which applies
+    at least as strongly to a read.
+    """
+    records = config.reset_records
+    if journal is None or records is None:
+        return None
+    try:
+        stored = journal.read(reset_record.record_path(records, target=target, account=account))
+    except Exception:  # noqa: BLE001 -- history is not worth failing a listing over
+        return None
+    if stored is None or not isinstance(stored.data, dict):
+        return None
+    moment = stored.data.get("reset_at")
+    return moment if isinstance(moment, str) else None
+
+
 def _describe_row(
     session: Any,
     name: str,
     target: ExpandedTarget,
     config: Config,
+    *,
+    journal: SecretStore | None = None,
 ) -> account_list.Row:
     """One account: its state, the rule that admitted it, and what is worth saying.
 
@@ -1697,18 +1746,27 @@ def _describe_row(
         target=target.name,
         rule=admitted,
         state=state,
+        reset_at=_reset_at(journal, config, target.name, name),
         notices=tuple(notices),
     )
 
 
 def _unreachable_row(target: ExpandedTarget, error: Error) -> account_list.Row:
-    """A target that could not be answered, reported as a row rather than a failure."""
+    """A target that could not be answered, reported as a row rather than a failure.
+
+    **`ERROR`, never `ACCOUNT_MISSING`**, and the row carries the error object.
+    The first draft left `state` to be inferred from "no `UserState`", which
+    rendered a down or unauthenticated target as *this account does not exist* --
+    a connectivity failure reported as a fact about an estate, with nothing in
+    `results[]` to tell the two apart. `account suspend` already draws that
+    distinction and this now matches it (Copilot's review of #493).
+    """
     return account_list.Row(
-        account="-",
+        account=account_list.ABSENT,
         target=target.name,
         rule=None,
         state=None,
-        notices=(error.message,),
+        unreachable=error,
     )
 
 

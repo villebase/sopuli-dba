@@ -40,6 +40,7 @@ needs a container to test.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sopuli.config.model import Config, PersonalAccountRule
 from sopuli.driver.protocol import UserState
@@ -66,6 +67,11 @@ DECLARED = "DECLARED"
 #: reused deliberately: it means the same thing here, and a second spelling of
 #: one fact is how a consumer ends up having to match two.
 ACCOUNT_MISSING = "ACCOUNT_MISSING"
+
+#: A target that could not be answered. **Never** :data:`ACCOUNT_MISSING`, which
+#: is a fact about an estate rather than about a run -- see
+#: :attr:`Row.unreachable`.
+ERROR = "ERROR"
 
 
 @dataclass(frozen=True)
@@ -106,11 +112,25 @@ class Row:
     reset_at: str | None = None
     #: Findings about this row that belong beside it rather than at the run level.
     notices: tuple[str, ...] = field(default_factory=tuple)
+    #: Why this target could not be answered at all, where it could not.
+    #:
+    #: Distinct from ``state is None``, and that distinction is the whole reason
+    #: the field exists: an account the declaration names and the database does
+    #: not have is ``ACCOUNT_MISSING``, a **fact about the estate**, while a
+    #: target that could not be reached is ``ERROR`` and a fact about this run.
+    #: Inferring the first from the second reported a down target as a missing
+    #: account (Copilot's review of #493).
+    unreachable: Any | None = None
 
     @property
     def exists(self) -> bool:
         """Whether the database has this account at all."""
         return self.state is not None
+
+    @property
+    def failed(self) -> bool:
+        """Whether this row is a target that could not be answered."""
+        return self.unreachable is not None
 
 
 def enumerated_names(rule: PersonalAccountRule) -> tuple[str, ...]:

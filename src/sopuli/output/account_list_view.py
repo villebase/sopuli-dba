@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.account_list import ABSENT, ACCOUNT_MISSING, DECLARED, Row
+from sopuli.account_list import ABSENT, ACCOUNT_MISSING, DECLARED, ERROR, Row
 from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN
 from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
@@ -60,7 +60,7 @@ def build_result(
     entry: dict[str, Any] = {
         "account": row.account,
         "target": row.target,
-        "state": DECLARED if row.exists else ACCOUNT_MISSING,
+        "state": _state(row),
         "changed": False,
         "actions": [{"kind": "none", "applied": False, "detail": _detail(row)}],
         "declared_by": row.rule.label if row.rule is not None else None,
@@ -71,8 +71,9 @@ def build_result(
         entry["reset_at"] = row.reset_at
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms
-    if error is not None:
-        entry["error"] = error.to_dict()
+    reported = error if error is not None else row.unreachable
+    if reported is not None:
+        entry["error"] = reported.to_dict()
     warnings = _warnings(row)
     if warnings:
         entry["warnings"] = warnings
@@ -107,7 +108,21 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
     return [entry.to_dict() for entry in found]
 
 
+def _state(row: Row) -> str:
+    """``ERROR`` for a target that could not be answered, and never the other two.
+
+    A run that could not open a session knows nothing about any account on that
+    target -- including whether it exists -- so reporting ``ACCOUNT_MISSING``
+    would be asserting a fact it did not learn.
+    """
+    if row.failed:
+        return ERROR
+    return DECLARED if row.exists else ACCOUNT_MISSING
+
+
 def _detail(row: Row) -> str:
+    if row.failed:
+        return "this target could not be answered, so nothing here was resolved"
     if row.rule is None:
         return "declared here, and the database has no such account"
     return f"declared by {row.rule.label}"
@@ -116,14 +131,18 @@ def _detail(row: Row) -> str:
 def summarise(rows: Sequence[Row]) -> Summary:
     """Counts for the run document.
 
-    ``changed`` is zero by construction. ``ok`` counts the accounts that exist and
-    ``unchanged`` every row, because every row is a row this verb left alone.
+    ``changed`` is zero by construction. ``ok`` counts the accounts that exist,
+    ``unchanged`` every row this verb looked at and left alone, and ``failed``
+    the targets it could not answer -- which used to be zero even on a run that
+    exited ``PARTIAL``, so the exit code and the summary disagreed (Copilot's
+    review of #493).
     """
     return Summary(
         total=len(rows),
         ok=sum(1 for row in rows if row.exists),
         changed=0,
-        unchanged=len(rows),
+        unchanged=sum(1 for row in rows if not row.failed),
+        failed=sum(1 for row in rows if row.failed),
     )
 
 
@@ -184,6 +203,8 @@ def _status(row: Row) -> Cell | str:
     view uses, so ``LOCKED`` looks the same here as it does after `account
     suspend` -- one vocabulary, one colour.
     """
+    if row.failed:
+        return state_cell(ERROR)
     if row.state is None:
         return state_cell(ACCOUNT_MISSING)
     return state_cell(row.state.status)
@@ -206,10 +227,13 @@ def _or_dash(value: str | None) -> str:
 
 
 def _count(rows: Sequence[Row]) -> str:
-    missing = sum(1 for row in rows if not row.exists)
-    accounts = len({row.account.casefold() for row in rows})
+    missing = sum(1 for row in rows if not row.exists and not row.failed)
+    failed = sum(1 for row in rows if row.failed)
+    accounts = len({row.account.casefold() for row in rows if not row.failed})
     noun = "account" if accounts == 1 else "accounts"
-    line = f"{accounts} declared {noun}, {len(rows)} on the selected targets"
+    line = f"{accounts} declared {noun}, {len(rows) - failed} on the selected targets"
     if missing:
         line += f" ({missing} not present)"
-    return paint(line, Role.NOTABLE) if missing else line
+    if failed:
+        line += f"; {failed} target{'' if failed == 1 else 's'} could not be answered"
+    return paint(line, Role.NOTABLE) if missing or failed else line

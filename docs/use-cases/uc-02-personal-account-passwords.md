@@ -843,13 +843,16 @@ What a test must show, once there is something to test:
   refuses at plan time and which #455's probe measured rather than predicted —
   and, for an account that is not locked, a logon with the password is forced to
   change it; a rollover profile is refused at plan time (§4.3); the password is
-  emitted exactly once, to stdout, and nowhere else. Each of §6's five guards is
-  its own assertion, and four of them are tier 0: the reveal site is unreachable
-  for any other delivery method, `--output json` and `--output jsonl` are refused,
-  a non-terminal stdout is refused, `--confirm` is refused as a usage error, and
-  `manual` without `force_expire: true` is refused at plan time. The fifth is the
-  schema's, and it is the one already written for `policy sample`: no property of a
-  result can hold a password;
+  emitted exactly once, to stdout, and nowhere else. **Each of §6's five guards is
+  its own assertion, and all five are tier 0** — none of them needs a database:
+  the reveal site is unreachable for any delivery method other than `manual`;
+  `--output json` and `--output jsonl` are refused; a non-terminal stdout is
+  refused; `--confirm` is refused as a usage error; and `manual` without
+  `force_expire: true` is refused at plan time. The schema restriction is **part of
+  the second guard rather than a sixth** — `--output json` is refused *and* no
+  property of a result could hold a password if it were not — and it is asserted
+  the way `policy sample`'s already is, against the published schema rather than
+  against a run;
 - **the H4 behaviours (§5, §4.3)**, and each of these is a tier-1 assertion
   because each was a measurement first. **The unlock assertion differs by path,
   and saying so is the point**: on the **unseen** path a reset of a

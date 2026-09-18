@@ -785,10 +785,12 @@ question is where their test database lives.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
-- Every mutating command supports **`--confirm`**. **Interactive confirmation
-  is required where the configuration asks for it, and nowhere else** — decided in
-  #294, and this bullet is the rewrite that decision called for. It asked for
-  three triggers and only one survives:
+- Every mutating command supports **`--confirm`**, with **one exception named
+  below**: UC-2's seen reset refuses it as a usage error (exit 2), because there
+  the prompt is what establishes that a person is present (#439). **Interactive
+  confirmation is required where the configuration asks for it, and nowhere
+  else** — decided in #294, and this bullet is the rewrite that decision called
+  for. It asked for three triggers and only one survives:
 
   | trigger | status |
   |---|---|

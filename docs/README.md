@@ -688,12 +688,10 @@ brings `CLAUDE.md` invariant 10, P3's safety bullet and `01-configuration.md` §
 merge-policy table with it.
 
 **What blocks what.** Every `delivery:` issue waits on #440, which waits on #456.
-**#439 is now closed**, so #456 waits on **#453** alone — H6's ratchet text — and
-the rest of #456 could be written before it. Both of those are decisions rather than work, which is the
-ordinary meaning of this repository's `decision` label — the queue is not short of
-implementation, it is short of two answers. The UC-2 work that *was* unblocked was a
-verb rather than a block, and it is now built: `account list` (#490) resolves a
-predicate and shows what it matched, needing no delivery method and no open
+**#439 is now closed**, so **#453** (H6's ratchet) is the one remaining decision in
+this chain — and #456's own body says the rest of it can be written first, so the
+queue is no longer blocked on an answer in the way it was. `account list` (#490) is
+built, and it was the UC-2 work that needed neither a delivery method nor an open
 decision.
 
 **Each block is a schema minor bump** — 1.4 became 1.5 with the record, and onward for

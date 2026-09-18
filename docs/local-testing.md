@@ -2145,7 +2145,7 @@ UC-2 is half built. There is **no `reset-password` and no `expire-password`** �
 verbs that change a password — and if that is what you sat down to test, stop here;
 the delivery half is still design documents. Both decisions that blocked it are
 settled now — #439 (the seen path prints, under five guards) and #453
-(`delivery.allowed_methods`, ratcheting by intersection) — but nothing implements
+(`safety.delivery.allowed_methods`, ratcheting by intersection) — but nothing implements
 either yet.
 
 What you can run is `account suspend`, which locks an account, and `account list`,

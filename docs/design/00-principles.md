@@ -592,9 +592,12 @@ Two deliberate exceptions, documented as such:
 - **Safety settings only ratchet toward safe.** `--dry-run`, `--confirm`,
   `safety.max_targets`, `readonly: true` and `safety.delivery.allowed_methods`
   cannot be relaxed by any source.
-  Two of those are flags and two are settings, and the spelling is not
+  Two of those are flags and three are settings, and the spelling is not
   decoration: this bullet said `--max-targets` until #392, for a flag that has
-  never existed and that P5 below now explains will not. If config
+  never existed and that P5 below now explains will not. The newest of the three
+  is scoped `safety.delivery.*` for the same reason — it is a **safety axis**
+  restricting what UC-2 delivery may do, not a key of the `delivery:` block it
+  governs, and a reader who filed it there would look for it in the wrong file. If config
   says `readonly: true`, no command-line flag re-enables writes — including
   `--force`, which is not a setting and has no layer to arrive on. The first
   command to consume `readonly` is `lock break` (#149), which refuses on **exit

@@ -150,10 +150,10 @@ something specific.
    be discovered in a diff, and adding a second one is a decision, not an
    implementation detail.
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
-    `max_targets`, `confirm_environments` and `delivery.allowed_methods` cannot
+    `max_targets`, `confirm_environments` and `safety.delivery.allowed_methods` cannot
     be relaxed by a higher-precedence source. See P3.
 
-    **`delivery.allowed_methods` ratchets by *intersection*, and it is the one
+    **`safety.delivery.allowed_methods` ratchets by *intersection*, and it is the one
     setting whose merge cannot be read off its type** (H6, decided in #453). The
     other four take one of three shapes chosen by type — a bool to its declared
     safe value, an int to the minimum, a list to the union — and this is a list

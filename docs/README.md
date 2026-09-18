@@ -317,7 +317,7 @@ narrowed is now decided too** (#439): five structural guards, invariant 2's four
 exception. ~~Is self-service in scope~~ (H5, #452 — **closed:**
 self-service means the owner fetching the password from a secure store, not
 resetting through the tool). ~~How an estate
-restricts delivery methods~~ (H6, #453 — **closed:** `delivery.allowed_methods`,
+restricts delivery methods~~ (H6, #453 — **closed:** `safety.delivery.allowed_methods`,
 ratcheting by **intersection**, so a layer may only narrow the set. Fail-closed:
 a method a later release adds is unusable until an estate names it, where the
 `forbidden_methods` union would have permitted it everywhere on upgrade. It costs

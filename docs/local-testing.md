@@ -1188,7 +1188,36 @@ client
 
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
 free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+
+1 note:
+  free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
 ```
+
+**That note is `SOPULI-W022`, and you will see it on every run in this guide**,
+because the config in §6 authenticates from a variable and §5 told you to export
+one. It is a flag rather than a complaint: P2 supports `method: env` — it is the
+bootstrap source, and an estate with no other way in is the case it exists for —
+and what the tool owes you is to say which variable it used, so that "who can
+read that" is a question you can go and answer. The same fact is
+`diagnostics[].code` under `--output json`:
+
+```json
+{
+  "level": "warning",
+  "code": "SOPULI-W022",
+  "target": "free-pdb",
+  "message": "free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance"
+}
+```
+
+To watch it go away, point the target at any other source: `auth: external`,
+`method: vault` and `auth: prompt` are none of them flagged.
+
+**Only `doctor` prints it.** `creds apply`, `check` and `rotate` all put
+`SOPULI-W022` in `diagnostics[]` — so anything alerting on JSON sees it on every
+command that connects — but none of them print a line, because the fact is a
+property of your config file and identical on every run. A note under every
+rotation forever is one you would stop reading by Thursday.
 
 The `vaults` section is the store half of the same survey: whether the address
 answers, whether the token authenticates, and the clock skew between this machine

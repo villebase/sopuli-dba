@@ -99,7 +99,24 @@ WALLET_ADMIN = (
 
 #: `method: vault` and nowhere to read from: no prefix, no `vault:` on the
 #: target, no `defaults.vault`.
-NO_STORE = """version: 1
+NO_STORE = (
+    VAULTS
+    + """targets:
+  - name: orders-pdb
+    type: oracle
+    dsn: "db.example.com:1521/orders"
+    admin:
+      username: C##SOPULI_SVC
+      auth: { method: vault, secret: "ops/dba#password" }
+"""
+)
+
+
+#: `defaults.vault` and no `vault:` on the target -- the third link.
+DEFAULTS_VAULT = (
+    VAULTS
+    + """defaults:
+  vault: vault-dev
 targets:
   - name: orders-pdb
     type: oracle
@@ -107,6 +124,14 @@ targets:
     admin:
       username: C##SOPULI_SVC
       auth: { method: vault, secret: "ops/dba#password" }
+"""
+)
+
+#: A profile naming a store, appended to `NO_STORE` so the file itself says
+#: nothing and only the run's layers can answer.
+PROFILE = """profiles:
+  ci:
+    vault: vault-dev
 """
 
 
@@ -179,15 +204,21 @@ def _doctor(runner: CliRunner, config: Path, *args: str) -> Result:
 # ----------------------------------------------------------- the store name ---
 
 
-def _config(text: str, tmp_path: Path) -> Config:
-    path = tmp_path / "sopuli.yaml"
-    path.write_text(text, encoding="utf-8")
-    return load_layers((path,), profile=None, env={})[1]
+def _config(write: WriteConfig, text: str, *, profile: str | None = None) -> Config:
+    """Load a file the P4 permission check will accept.
+
+    Through the `write_config` fixture rather than writing here: `tmp_path` is
+    0700 but a file inside it inherits the process umask, so a hand-written one
+    is 0644 on a CI runner and `load_layers` refuses it. Windows ACLs pass
+    either way, which is why the first version of this file was green locally
+    and failed every POSIX job.
+    """
+    return load_layers((write(text),), profile=profile, env={})[1]
 
 
-def test_the_refs_own_prefix_wins(tmp_path: Path) -> None:
+def test_the_refs_own_prefix_wins(write_config: WriteConfig) -> None:
     """§7 calls `vault-other:` an *explicit* vault, so nothing outranks it."""
-    config = _config(VAULT_ADMIN, tmp_path)
+    config = _config(write_config, VAULT_ADMIN)
     target = config.expanded_targets[0]
 
     found = store_name(
@@ -197,8 +228,8 @@ def test_the_refs_own_prefix_wins(tmp_path: Path) -> None:
     assert found == "vault-other"
 
 
-def test_the_targets_vault_comes_next(tmp_path: Path) -> None:
-    config = _config(VAULT_ADMIN, tmp_path)
+def test_the_targets_vault_comes_next(write_config: WriteConfig) -> None:
+    config = _config(write_config, VAULT_ADMIN)
     target = config.expanded_targets[0]
 
     found = store_name(target, parse_secret_ref("ops/dba#password"), config=config, env={})
@@ -206,9 +237,54 @@ def test_the_targets_vault_comes_next(tmp_path: Path) -> None:
     assert found == "vault-dev"
 
 
-def test_the_run_layers_fill_a_hole(tmp_path: Path) -> None:
+def test_defaults_vault_comes_after_the_target(write_config: WriteConfig) -> None:
+    """The third link, which nothing else in this file exercises.
+
+    It is the one an estate of thirty-four generated targets actually uses: one
+    `defaults.vault` line rather than the same `vault:` written thirty-four
+    times.
+    """
+    config = _config(write_config, DEFAULTS_VAULT)
+    target = config.expanded_targets[0]
+
+    found = store_name(target, parse_secret_ref("ops/dba#password"), config=config, env={})
+
+    assert found == "vault-dev"
+
+
+def test_a_profile_supplies_the_store(write_config: WriteConfig) -> None:
+    """The last link, and the one a reader is most likely to doubt.
+
+    A profile is P3's layer 3 and `defaults.vault` is layer 5, so this looks
+    backwards until you see that it only runs where the file said nothing at
+    all -- `test_the_run_layers_never_repoint_an_arrow` is the other half.
+    """
+    config = _config(write_config, NO_STORE + PROFILE, profile="ci")
+    target = config.expanded_targets[0]
+
+    found = store_name(target, parse_secret_ref("ops/dba#password"), config=config, env={})
+
+    assert found == "vault-dev"
+
+
+def test_the_variable_outranks_a_profile(write_config: WriteConfig) -> None:
+    """Both fill holes, and between themselves P3 orders them: layer 2 over 3."""
+    config = _config(write_config, NO_STORE + PROFILE, profile="ci")
+    target = config.expanded_targets[0]
+
+    found = store_name(
+        target,
+        parse_secret_ref("ops/dba#password"),
+        config=config,
+        env={"SOPULI_VAULT": "vault-other"},
+    )
+
+    assert found == "vault-other"
+
+
+def test_the_run_layers_fill_a_hole(write_config: WriteConfig) -> None:
     """`SOPULI_VAULT` supplies a store where the file named none."""
-    config = _config(NO_STORE, tmp_path)
+    config = _config(write_config, NO_STORE)
     target = config.expanded_targets[0]
     ref = parse_secret_ref("ops/dba#password")
 
@@ -216,7 +292,7 @@ def test_the_run_layers_fill_a_hole(tmp_path: Path) -> None:
     assert store_name(target, ref, config=config, env={"SOPULI_VAULT": "vault-dev"}) == "vault-dev"
 
 
-def test_the_run_layers_never_repoint_an_arrow(tmp_path: Path) -> None:
+def test_the_run_layers_never_repoint_an_arrow(write_config: WriteConfig) -> None:
     """The half that would be a security bug if it were precedence-ordered.
 
     A target naming its own store is a statement about *that database*. An
@@ -224,7 +300,7 @@ def test_the_run_layers_never_repoint_an_arrow(tmp_path: Path) -> None:
     -- must not silently send the credential that reaches production to a
     different vault. `binding_stores` makes the same choice for the same reason.
     """
-    config = _config(VAULT_ADMIN, tmp_path)
+    config = _config(write_config, VAULT_ADMIN)
     target = config.expanded_targets[0]
 
     found = store_name(
@@ -327,3 +403,53 @@ def test_an_empty_path_says_the_store_answered(
     # It got as far as opening the store, which is what distinguishes this from
     # the refusal above.
     assert harness["opened"] == ["vault-dev"]
+
+
+def test_one_store_serving_both_halves_is_opened_once(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copilot's correction on #488, as a test rather than as a claim.
+
+    The ordinary arrangement: the admin credential and the application's
+    documents live in the same vault. A cache private to `_admin_reader` made
+    "one client per store per run" true inside the reader and false across the
+    run -- `creds check` opened `vault-dev` once for the bindings and once more
+    for the admin ref, which is two authentications and two audit entries for
+    one scheduled run.
+
+    Asserted on `creds check` rather than `doctor` because `doctor` opens no
+    binding stores, so it is the verb where the bug could not appear.
+    """
+    opened: list[str] = []
+    store = MemoryStore()
+    store.write("ops/dba", {"password": STORED}, cas=0)
+    store.write("apps/acme/orders-pdb", {"password": STORED}, cas=0)
+
+    def fake_connect(vault: Any, **_: Any) -> SecretStore:
+        opened.append(vault.name)
+        return store
+
+    class FakeDriver:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Credential) -> FakeSession:
+            return FakeSession()
+
+    class FakeModule:
+        OracleDriver = FakeDriver
+
+    monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+    monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+    config = write_config(
+        VAULT_ADMIN
+        + """applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/{target}#password"
+"""
+    )
+
+    runner.invoke(cli, ["creds", "check", "--config", str(config)])
+
+    assert opened == ["vault-dev"]

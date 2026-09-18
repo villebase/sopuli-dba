@@ -287,21 +287,23 @@ class Invocation:
     #: carrying a piped password -- so ``--from-stdin`` and this can never be
     #: two readers of one stream.
     prompt: Prompter | None = None
-    #: Stores opened to read a target's ``method: vault`` admin credential, by
-    #: store name (#483). Filled lazily by ``cli._admin_reader`` and empty on
-    #: every run that authenticates some other way.
+    #: Every secret store this run has opened, by name (#483).
     #:
-    #: **Live clients rather than a value**, which is unlike everything else
-    #: here, and it is on the invocation for :attr:`prompt`'s reason rather than
-    #: by analogy: what has to be true is *one client per store per run*, and a
-    #: per-run thing is the only place that can be enforced without threading a
-    #: cache through all eight verbs that connect. An estate of thirty-four
-    #: targets sharing one vault authenticates once, not thirty-four times --
-    #: which is also thirty-four entries in that vault's audit log for one run.
+    #: **The run's client cache**, filled by ``cli._stores_for`` -- so the lock
+    #: stores, an application's binding stores and a target's ``method: vault``
+    #: admin credential all share one client per name. That is the whole of what
+    #: it is for: those are opened by different calls at different moments, and
+    #: without somewhere per-run to put them a config keeping its admin
+    #: credential and its application documents in one vault authenticated to it
+    #: twice (Copilot's review of #488).
     #:
-    #: It holds no secret: a client knows how to fetch one, and the value it
-    #: fetches is wrapped and handed straight to the driver.
-    admin_stores: dict[str, SecretStore] = field(default_factory=dict)
+    #: A client per *name* is safe because every one is built the same way, from
+    #: the ``vaults:`` entry and this run's token file, and nothing ever closes
+    #: one. Empty on a run that opens no store at all.
+    #:
+    #: It holds no secret: a client knows how to fetch one, and what it fetches
+    #: is wrapped on the way out.
+    stores: dict[str, SecretStore] = field(default_factory=dict)
     #: The configuration, read by the boundary before the verb ran (#153).
     #:
     #: ``None`` only where no file has been read: an :class:`Invocation` built

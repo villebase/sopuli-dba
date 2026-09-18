@@ -84,8 +84,10 @@ from sopuli import repair as repair_module
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
+from sopuli.admin import AdminCredentialError, RefReader
 from sopuli.admin import Resolved as AdminResolved
 from sopuli.admin import resolve as admin_resolve
+from sopuli.admin import store_name as admin_store_name
 from sopuli.apply import SOURCES, Source
 from sopuli.clock import as_utc, to_rfc3339, utc_now
 from sopuli.config import (
@@ -104,7 +106,9 @@ from sopuli.config import (
     parse_selector,
     refuse_unknown,
 )
-from sopuli.config.vault_env import ADDR_FLAG
+from sopuli.config.expansion import declared_at
+from sopuli.config.secret_refs import SecretRef
+from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
@@ -2160,7 +2164,7 @@ def _check_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = _admin_credential(target, run)
+            credential = _admin_credential(target, run, config)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -3965,7 +3969,7 @@ def _apply_target(
     try:
         try:
             module = resolve_driver(target.target)
-            credential = _admin_credential(target, run)
+            credential = _admin_credential(target, run, config)
             driver = module.OracleDriver(
                 env=os.environ,
                 correlation_id=run.document.correlation_id,
@@ -4368,7 +4372,76 @@ def _rollover_json(user: UserState) -> dict[str, Any]:
     return found
 
 
-def _admin_credential(target: ExpandedTarget, run: Invocation) -> AdminResolved:
+def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> RefReader:
+    """Read a target's `method: vault` admin credential through its store (#483).
+
+    `admin.resolve` has taken a `read_ref` supplier since #175 and no call site
+    ever passed one, so `_read_ref`'s "no store was available here" -- the branch
+    its own hint calls *a caller that supplied no reader* -- was the only
+    reachable one, and `method: vault` failed on every run of every verb. This is
+    the supplier. It is the same gap #476 fixed for `prompt`, in the source P2
+    ranks highest of the three that need something from this machine.
+
+    **Everything happens inside the closure, and that is the design.**
+    :func:`sopuli.admin.resolve` calls this only on the ``vault`` branch, so a
+    target authenticating by wallet, prompt or variable never resolves a store
+    name and never opens a socket -- which is the first consequence that module's
+    docstring claims for taking its sources as suppliers, and it would stop being
+    true the moment this function did any work eagerly. ADR-006's "base opens no
+    sockets" is the same property one layer down.
+
+    **One client per store per run**, cached on the invocation. An estate of
+    thirty-four targets sharing one vault authenticates once, which is the rule
+    :func:`_stores_for` states for the binding stores; thirty-four
+    authentications would also be thirty-four entries in that vault's audit log
+    for one scheduled run. The cache is keyed on the store name alone, because
+    :func:`_stores_for` builds a client from the ``vaults:`` entry and the run's
+    token file, and neither varies per target.
+
+    Deliberately **not** shared with the binding stores a verb may already hold.
+    Those are opened for the paths an *application's* credentials live at, and a
+    run may authenticate to a database from one vault while mastering its
+    accounts in another; resolving this through the admin ref's own chain is what
+    lets the two differ.
+    """
+
+    def read(ref: SecretRef) -> Secret:
+        name = admin_store_name(target, ref, config=config, env=os.environ)
+        if name is None:
+            raise AdminCredentialError(
+                f"target {target.name!r} authenticates from a vault, and nothing says which one",
+                at=declared_at(target, "admin").key("auth").key("secret"),
+                hint=(
+                    f"put a prefix on the ref (`{ref}` -> `vault-dev:{ref}`), or name a "
+                    f"store on the target's `vault:`, or set `defaults.vault` or "
+                    f"${DEFAULT_STORE_VARIABLE}"
+                ),
+            )
+        if name not in run.admin_stores:
+            run.admin_stores.update(_stores_for({name}, config, token_file=run.vault_token_file))
+        stored = read_secret(run.admin_stores[name], ref)
+        if stored is None:
+            # An empty path is the operator's mistake rather than a store
+            # failure, so it is worded as one: the store answered, and what it
+            # answered was that there is nothing there. `read_secret` returns
+            # `None` for every way of finding nothing (#183) -- no document, no
+            # field, no key -- and they have one remedy here, which is to go and
+            # look at the path.
+            raise AdminCredentialError(
+                f"target {target.name!r} authenticates from {name!r}, and there is "
+                f"nothing at {str(ref)!r}",
+                at=declared_at(target, "admin").key("auth").key("secret"),
+                hint=(
+                    "the store answered and the path is empty -- check the ref's path, "
+                    "its field, and that this run's token may read it"
+                ),
+            )
+        return stored.value
+
+    return read
+
+
+def _admin_credential(target: ExpandedTarget, run: Invocation, config: Config) -> AdminResolved:
     """Resolve one target's admin credential, and record where it came from (#477).
 
     The one place either happens, so that the reporting cannot be forgotten at a
@@ -4388,7 +4461,12 @@ def _admin_credential(target: ExpandedTarget, run: Invocation) -> AdminResolved:
     have to be per run, and the run already has one thing that is per run and
     holds diagnostics.
     """
-    credential = admin_resolve(target, env=os.environ, prompt=run.prompt)
+    credential = admin_resolve(
+        target,
+        env=os.environ,
+        prompt=run.prompt,
+        read_ref=_admin_reader(target, run, config),
+    )
     already = {(one.code, one.target) for one in run.document.diagnostics if one.code is not None}
     run.document.diagnostics.extend(
         one
@@ -4436,7 +4514,7 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     different thing from the one that runs.
     """
     module = resolve_driver(target.target)
-    credential = _admin_credential(target, run)
+    credential = _admin_credential(target, run, config)
     driver = module.OracleDriver(
         env=os.environ,
         correlation_id=run.document.correlation_id,

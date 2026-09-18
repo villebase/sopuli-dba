@@ -129,12 +129,27 @@ def _require_sub_block(block: dict[str, Any], method: str, *, at: KeyPath) -> No
 
 
 def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
-    """The selected method's settings, and `notify:`, checked for shape only.
+    """Every present method block, and `notify:`, checked for shape only.
 
     **Validated and not retained**, which is #440's boundary: the check that a
     method brought settings is common to all six and belongs here, while which
     keys it takes is its own issue. :class:`~sopuli.config.model.Delivery` says
     why nothing carries the content forward.
+
+    **Every block that is written, not only the selected one** (Copilot's review
+    of #499). The published schema types all six properties as objects, so
+    ``vault_wrapped: 15m`` beside ``method: manual`` was refused by the schema and
+    accepted here -- which inverts the relationship §9b documents. That section's
+    whole claim is that the schema is "the fast, local, incomplete check" and the
+    tool is the complete one, so a file the tool accepts and the schema refuses is
+    the one direction that must not happen.
+
+    **Three different things, and only one of them widened.** A sub-block for a
+    method that is *not* selected is still left alone in the senses that matter:
+    its presence is not refused, and its keys are not judged. What is checked now
+    is that it is an object at all, which is a claim about the file's grammar
+    rather than about the method's settings -- and an operator who typed
+    ``vault_wrapped: 15m`` meant ``ttl:`` and wants to be told.
 
     The consequence worth stating: until each method's issue lands, a typo *inside*
     a sub-block is accepted. That is why :func:`unserviceable` warns -- a file that
@@ -146,7 +161,9 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
     token or a one-time link is refused rather than rendered. That check needs the
     template grammar, which arrives with the channel.
     """
-    mapping(block[method], at=at.key(method))
+    for name in DELIVERY_METHODS:
+        if name in block:
+            mapping(block[name], at=at.key(name))
     if "notify" in block:
         mapping(block["notify"], at=at.key("notify"))
 

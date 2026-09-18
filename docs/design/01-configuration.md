@@ -220,6 +220,14 @@ rather than an inconsistency. A leftover top-level `secret_template:` silently
 *governs*; an unselected `vault_wrapped:` block silently does nothing, and keeping
 one is how somebody switches between configurations.
 
+**"Left alone" means its presence is not refused and its keys are not judged — not
+that it is unread.** Every method block that is written must be an object, selected
+or not, because the published schema says so and the tool must never be the looser
+of the two (§9b's whole division is that the schema is the incomplete check). So
+`vault_wrapped: 15m` is refused and `vault_wrapped: { tt1: 15m }` is not: the first
+is a claim about the file's grammar, and the second is a claim about a method's
+settings, which belongs to that method's issue.
+
 **What is inside a sub-block is not validated yet.** Which keys a method takes is
 that method's own issue, because the answer is a fact about the service behind it:
 a response-wrapping token is single-use by construction, so `num_uses` is a config

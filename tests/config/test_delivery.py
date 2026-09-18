@@ -200,3 +200,68 @@ def test_the_block_reaches_the_config() -> None:
 
 def test_a_file_with_no_delivery_carries_none() -> None:
     assert build_config({"version": 1}).delivery is None
+
+
+# ------------------------------------ the tool is never looser than the schema ---
+#
+# Both of these come from Copilot's review of #499.
+
+
+def test_an_unselected_block_that_is_not_an_object_is_refused() -> None:
+    """The published schema types all six method properties as objects, so
+    `vault_wrapped: 15m` beside `method: manual` was refused by the schema and
+    accepted here -- which inverts §9b's claim that the schema is the incomplete
+    check and the tool the complete one."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="manual", manual={}, vault_wrapped="15m"))
+    assert "delivery.vault_wrapped" in str(raised.value)
+
+
+def test_an_unselected_block_is_still_left_alone_in_the_senses_that_matter() -> None:
+    """Only the grammar widened. Its presence is not refused and its keys are not
+    judged -- `tt1` is still accepted, because which keys a method takes is that
+    method's own issue."""
+    section = built(
+        method="manual",
+        manual={"force_expire": True},
+        vault_wrapped={"tt1": "15m"},
+    )
+
+    assert section.method == "manual"
+
+
+def test_every_method_block_is_checked_not_only_the_selected_one() -> None:
+    for name in DELIVERY_METHODS:
+        if name == "manual":
+            continue
+        with pytest.raises(ConfigError, match=f"delivery.{name}"):
+            build_delivery(document(method="manual", manual={}, **{name: "not-an-object"}))
+
+
+# ----------------------------------------------- the warning reaches the run ---
+
+
+def test_the_warning_reaches_config_warnings_rather_than_only_the_helper() -> None:
+    """The wire, not the function. `_delivery_warnings` could be dropped from the
+    loader's return and every other test here would still pass -- which is the
+    failure `Setting.inert_reason`'s docstring lists four instances of: a complete
+    implementation with the one wire missing, found by somebody reading the code
+    rather than by a test."""
+    config = build_config(
+        {
+            "version": 1,
+            "delivery": {"method": "manual", "manual": {"force_expire": True}},
+        }
+    )
+
+    found = [warning for warning in config.warnings if "no delivery method" in warning.message]
+    assert len(found) == 1
+    assert found[0].at == "delivery.method"
+    assert found[0].hint is not None
+    assert "nothing is wrong with the file" in found[0].hint
+
+
+def test_a_file_with_no_delivery_carries_no_such_warning() -> None:
+    config = build_config({"version": 1})
+
+    assert not [w for w in config.warnings if "no delivery method" in w.message]

@@ -2562,8 +2562,21 @@ method takes belongs to that method's own issue, because the answer is a fact ab
 the service behind it — and the warning above is what stops a clean parse being
 mistaken for approval.
 
-A sub-block for a method you did **not** select is also left alone. Keeping a
-`vault_wrapped:` block beside `method: manual` is how you switch between them.
+A sub-block for a method you did **not** select is also left alone — keeping a
+`vault_wrapped:` block beside `method: manual` is how you switch between them, and
+its keys are unjudged too.
+
+But it must still be an *object*. `vault_wrapped: 15m` is refused wherever it
+appears:
+
+```
+sopuli: ...\loose.yaml: delivery.vault_wrapped: must be a mapping, not a string
+```
+
+That is the one thing checked about an unselected block, and it is checked because
+the published schema types all six method properties as objects — the tool must
+never accept a file the schema refuses, which is the wrong way round for §9b's
+division of labour.
 
 ---
 

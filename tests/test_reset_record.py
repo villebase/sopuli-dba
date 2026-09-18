@@ -124,6 +124,27 @@ def test_one_person_on_two_targets_is_two_records() -> None:
     )
 
 
+@pytest.mark.parametrize("name", ["a/b", "..", ".", "", " jdoe"])
+def test_a_name_that_is_not_one_path_segment_is_refused(name: str) -> None:
+    """Nothing validates a `targets:` key or an `accounts:` entry against a path
+    grammar -- both are "a non-empty string" -- so interpolating one is how two
+    different pairs end up sharing a record. Target ``a/b`` with account ``jdoe``
+    and target ``a`` with account ``b/jdoe`` would derive one path: one journal
+    describing two accounts, and one lock where there should be two."""
+    with pytest.raises(ValueError, match="record path component"):
+        record_path(RECORDS, target=name, account="jdoe")
+    with pytest.raises(ValueError, match="record path component"):
+        record_path(RECORDS, target="appdb-dev-alpha", account=name)
+
+
+def test_the_pair_that_would_have_collided_cannot_be_built() -> None:
+    """The collision stated as the two calls that used to produce one path."""
+    with pytest.raises(ValueError, match="same record path"):
+        record_path(RECORDS, target="a/b", account="jdoe")
+    with pytest.raises(ValueError, match="same record path"):
+        record_path(RECORDS, target="a", account="b/jdoe")
+
+
 def test_an_account_name_is_folded_and_a_target_name_is_not() -> None:
     """An Oracle account is matched case-insensitively everywhere else here, so a
     path that did not fold would let one account own two records that never find
@@ -202,9 +223,11 @@ def test_two_accounts_on_one_target_do_not_collide() -> None:
 PASSWORD = "Xq7!tvBm2LsdPw9r"
 
 
-def test_a_document_carrying_the_password_is_refused() -> None:
+def test_the_password_in_a_key_the_record_does_declare_is_refused() -> None:
+    """The value half, reached through a **permitted** key -- which is the case
+    the closed shape cannot catch, and the reason both halves exist."""
     with pytest.raises(AssertionError) as raised:
-        assert_no_secret({"account": "jdoe", "password": PASSWORD}, secret=PASSWORD)
+        assert_no_secret({"account": PASSWORD}, secret=PASSWORD)
     assert "invariant 2" in str(raised.value)
 
 
@@ -214,7 +237,7 @@ def test_it_is_refused_at_any_depth_and_in_a_key() -> None:
     with pytest.raises(AssertionError):
         assert_no_secret({"delivery": {"to": PASSWORD}}, secret=PASSWORD)
     with pytest.raises(AssertionError):
-        assert_no_secret({"by": [{"note": PASSWORD}]}, secret=PASSWORD)
+        assert_no_secret({"by": {"host": PASSWORD}}, secret=PASSWORD)
     with pytest.raises(AssertionError):
         assert_no_secret({PASSWORD: "jdoe"}, secret=PASSWORD)
 
@@ -223,3 +246,28 @@ def test_the_record_this_build_writes_passes_it() -> None:
     """The assertion wired to the type it guards: no writer here puts a password
     in, and this is what says so on every run rather than only in this test."""
     assert_no_secret(record().to_dict(), secret=PASSWORD)
+
+
+def test_a_key_nothing_specified_is_refused_even_with_no_password_in_it() -> None:
+    """The half a value comparison cannot do. A hash or a verifier is caught by
+    having nowhere to live, which only works if "nowhere" is checked -- so the
+    shape is closed, and a `verifier` key is refused on sight rather than on its
+    contents."""
+    document = record().to_dict()
+    document["verifier"] = "T:9c1f2e..."
+
+    with pytest.raises(AssertionError, match="verifier"):
+        assert_no_secret(document, secret=PASSWORD)
+
+
+def test_a_key_delivery_does_not_declare_is_refused() -> None:
+    document = record().to_dict()
+    document["delivery"]["password_hash"] = "sha512:..."
+
+    with pytest.raises(AssertionError, match="password_hash"):
+        assert_no_secret(document, secret=PASSWORD)
+
+
+def test_a_document_that_is_not_an_object_is_refused() -> None:
+    with pytest.raises(AssertionError, match="not an object"):
+        assert_no_secret([record().to_dict()], secret=PASSWORD)

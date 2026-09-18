@@ -48,7 +48,7 @@ from typing import Any
 
 from sopuli.clock import to_rfc3339
 from sopuli.config.model import ResetRecords
-from sopuli.config.secret_refs import normalise_path
+from sopuli.config.secret_refs import TRAVERSAL, normalise_path
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder
 
@@ -155,8 +155,43 @@ def record_path(records: ResetRecords, *, target: str, account: str) -> str:
     concurrent resets not colliding. A target name is a `targets:` key, matched
     exactly, and folding it would merge two targets an operator declared as
     distinct.
+
+    **A name that is not a single path segment is refused here** rather than
+    interpolated, because interpolating one is how two different (target,
+    account) pairs end up sharing a record. Nothing validates a `targets:` key or
+    an `accounts:` entry against a path grammar -- both are "a non-empty string"
+    -- so a target called ``a/b`` with account ``jdoe`` and a target called ``a``
+    with account ``b/jdoe`` derive the same path today. That is one journal
+    describing two accounts, and one lock where there should be two, which is the
+    exact failure this pair is keyed on to prevent. ``.`` and ``..`` are refused
+    for #344's reason: under a prefix they walk out of it.
+
+    :class:`ValueError` rather than a :class:`~sopuli.config.errors.ConfigError`,
+    matching :func:`~sopuli.config.secret_refs.normalise_path`'s own boundary: no
+    file is malformed, and the caller is a verb that turns this into a plan-time
+    refusal naming the target and the account (invariant 4). **That verb does not
+    exist yet**, so what this guarantees today is that the failure is specific and
+    tested rather than a bare traversal error from two frames down.
     """
+    for noun, value in (("target", target), ("account", account)):
+        _reject_unusable_component(noun, value)
     return normalise_path(f"{records.prefix}/{target}/{account.casefold()}")
+
+
+def _reject_unusable_component(noun: str, value: str) -> None:
+    """One name, checked for being usable as exactly one path segment."""
+    if not value or value != value.strip():
+        raise ValueError(f"{noun} {value!r} cannot be a record path component: it is not a name")
+    if "/" in value:
+        raise ValueError(
+            f"{noun} {value!r} cannot be a record path component: a `/` in it would "
+            f"derive the same record path as a different target and account"
+        )
+    if value in TRAVERSAL:
+        raise ValueError(
+            f"{noun} {value!r} cannot be a record path component: a relative segment "
+            f"resolves outside the prefix the record is written under"
+        )
 
 
 def record_lock_key(records: ResetRecords, *, target: str, account: str) -> LockKey:
@@ -176,20 +211,60 @@ def record_lock_key(records: ResetRecords, *, target: str, account: str) -> Lock
     return LockKey(store=records.vault, path=record_path(records, target=target, account=account))
 
 
+#: Every key a record document may carry, and the only ones. The closed set is
+#: half of what :func:`assert_no_secret` enforces -- see its note on why a value
+#: comparison alone cannot be the whole of it.
+RECORD_KEYS = frozenset(
+    {
+        "account",
+        "target",
+        "reset_at",
+        "seen",
+        "expired",
+        "delivery",
+        "by",
+        "correlation_id",
+    }
+)
+
+#: What ``delivery`` may carry (UC-2 §3.1). ``to`` is optional; nothing else is
+#: permitted, which is what keeps a provider's "reference" from becoming a place
+#: to put a retrievable value.
+DELIVERY_KEYS = frozenset({"method", "to"})
+
+
 def assert_no_secret(document: Any, *, secret: str) -> None:
-    """Refuse a record that carries ``secret`` anywhere in it.
+    """Refuse a record document that could carry the password.
 
     Invariant 2 held against the **serialised document**, which is where it has
     to be held. A type with no password field proves that no *writer in this
     build* puts one there; it proves nothing about a field added later, or about
     a delivery method that stuffs a value into ``delivery.to`` because the
-    provider's reference happened to be one. This walks what is about to be
-    written and refuses it outright.
+    provider's reference happened to be one.
 
-    Compared against the **whole** value rather than a substring of it, at every
-    depth, in keys as well as values: a record has no field a password is a
-    *part* of, so an occurrence at any depth is the failure, and checking keys
-    costs nothing while catching a document built by inverting a mapping.
+    **Two checks, because one of them cannot be done.** §3.1 says the record holds
+    no password "in any representation -- not the value, not a hash, not a
+    verifier", and no function can look at a string and decide whether it is a
+    derivation of a password it was not given. So the rule is enforced by shape
+    and by value, and neither half is the whole:
+
+    * **the shape is closed.** A document may carry only :data:`RECORD_KEYS`, and
+      ``delivery`` only :data:`DELIVERY_KEYS`. This is what a hash or a verifier
+      would fail: there is no key to put one in, and adding one is refused here
+      rather than noticed later. It is the structural guarantee made checkable,
+      rather than resting on the dataclass having no such attribute today.
+    * **the value is compared**, against the **whole** value rather than a
+      substring, at every depth, in keys as well as values: a record has no field
+      a password is a *part* of, so an occurrence anywhere is the failure, and
+      checking keys costs nothing while catching a document built by inverting a
+      mapping. This is what catches the password reaching a key that legitimately
+      exists.
+
+    What remains uncovered is a *derived* value written into one of the permitted
+    string fields -- a hash in ``delivery.to``. Saying so is better than implying
+    a check that is not there: the closed shape is what makes it unreachable in
+    practice, since ``to`` is a location and the one writer of it is the delivery
+    method's own reference.
 
     :class:`AssertionError` rather than a store error or a refusal with an exit
     code, because reaching it is a **programming** error and not a configuration
@@ -197,6 +272,10 @@ def assert_no_secret(document: Any, *, secret: str) -> None:
     tier-0 assertion UC-2 §8 asks for, wired into the write path so that it holds
     in a run and not only in a test.
     """
+    _assert_closed(document, allowed=RECORD_KEYS, what="record")
+    if isinstance(document, dict) and isinstance(document.get("delivery"), dict):
+        _assert_closed(document["delivery"], allowed=DELIVERY_KEYS, what="record's `delivery`")
+
     for value in _walk(document):
         if value == secret:
             raise AssertionError(
@@ -204,6 +283,23 @@ def assert_no_secret(document: Any, *, secret: str) -> None:
                 "out through the vault write, the driver call and `policy sample --reveal`, "
                 "and a metadata record is none of the three (UC-2 §3.1)"
             )
+
+
+def _assert_closed(document: Any, *, allowed: frozenset[str], what: str) -> None:
+    """Refuse a key the record has no business carrying.
+
+    The half of invariant 2 a value comparison cannot do. A password's *hash* is
+    caught by having nowhere to live, which only works if "nowhere" is checked.
+    """
+    if not isinstance(document, dict):
+        raise AssertionError(f"reset {what} is not an object: {type(document).__name__}")
+    unknown = sorted(key for key in document if key not in allowed)
+    if unknown:
+        raise AssertionError(
+            f"reset {what} carries {', '.join(repr(key) for key in unknown)}, which "
+            f"UC-2 §3.1 does not declare -- a record holds what happened, and a key "
+            f"nothing specified is where a password representation would go"
+        )
 
 
 def _walk(document: Any) -> list[Any]:

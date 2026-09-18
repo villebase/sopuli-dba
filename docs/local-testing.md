@@ -2300,6 +2300,27 @@ concurrent resets collide on, and it is what UC-2's advisory lock will key on. I
 is **not** where a password is delivered: on the unseen path that goes somewhere
 only the person can read, and the record holds no password in any representation.
 
+`config show` says where it was configured, which is the only way to confirm the
+block took:
+
+```bash
+sopuli --config sopuli.yaml config show
+```
+```
+personal_accounts
+DECLARED BY  ACCOUNTS  TARGETS  POLICY
+names        1         all      personal-standard
+
+reset_records
+STORE      PREFIX
+vault-dev  sopuli/personal-resets
+```
+
+Two columns rather than one rendered path, because the two fail differently: a
+store that is not declared is refused at load, while a prefix that is not the one
+you meant is accepted and looks entirely correct. Showing the pair is what lets the
+second be noticed.
+
 #### Failures worth causing
 
 All four exit **9**, and each names the key:

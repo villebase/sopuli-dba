@@ -621,7 +621,8 @@ cannot be a mode of UC-1:
 **Now specified** as [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md)
 (#438), both parts: the reset in #457 and delivery in #456. The paragraphs above are the
 argument for the use case existing; the document is where it is specified, and
-its questions are H1–H8. One correction to the paragraphs above: expiring
+its questions are H1–H9, the last of which the delivery section raised about
+itself. One correction to the paragraphs above: expiring
 deliberately is the point only on the **seen** path, where the DBA knows the
 password — a deliberate exposure that the owner's first logon ends. The default,
 unseen path writes it to a store meant for its owner alone and expires nothing;

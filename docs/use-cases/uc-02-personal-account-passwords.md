@@ -777,7 +777,7 @@ What that leaves open is the subject of H9 below.
 
 ### 6.2 The methods
 
-`delivery.method` is a closed set. Five values, and the sub-block for the selected
+`delivery.method` is a closed set. Six values, and the sub-block for the selected
 method must exist — both refused at load, config-invalid (exit 9), by #440.
 
 | `method` | Path | The person gets | Issue |

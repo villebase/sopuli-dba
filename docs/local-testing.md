@@ -1213,11 +1213,16 @@ read that" is a question you can go and answer. The same fact is
 To watch it go away, point the target at any other source: `auth: external`,
 `method: vault` and `auth: prompt` are none of them flagged.
 
-**Only `doctor` prints it.** `creds apply`, `check` and `rotate` all put
-`SOPULI-W022` in `diagnostics[]` — so anything alerting on JSON sees it on every
-command that connects — but none of them print a line, because the fact is a
-property of your config file and identical on every run. A note under every
-rotation forever is one you would stop reading by Thursday.
+**Only `doctor` prints it.** Every verb that opens a database session puts
+`SOPULI-W022` in `diagnostics[]` — `account suspend`, `creds status`, `creds
+generate` (unless `--offline`), `check`, `apply`, `rotate` and `finish-rollover`
+as well as `doctor` — so anything alerting on JSON sees it wherever a credential
+was used. None of them print a line, because the fact is a property of your
+config file and identical on every run: a note under every rotation forever is
+one you would stop reading by Thursday.
+
+They all resolve the credential through one function, so that list is what
+connects today rather than a set of verbs somebody wired up individually.
 
 The `vaults` section is the store half of the same survey: whether the address
 answers, whether the token authenticates, and the clock skew between this machine

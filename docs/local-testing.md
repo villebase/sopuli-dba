@@ -2405,11 +2405,12 @@ To create a *real* wallet you need one of these, **none verified here**:
 - Oracle's own container image from `container-registry.oracle.com/database/free`,
   which is the full product rather than a slimmed rebuild.
 
-**The Autonomous Database wallet is not a fourth way**, and this guide used to
+**The Autonomous Database wallet is not a third way**, and this guide used to
 say it was. "Wallet" means two different things in Oracle, and the ADB download
-is the other one — see §14. It holds TLS certificates; `auth: external` needs a
-credential store, and the zip contains no credential. Downloading it gets you a
-directory `sqlplus` can connect *through*, not one it can log in *with*.
+is the other one — see §14. It holds TLS certificates; authenticating *from a
+wallet* needs a credential store, and the zip contains no credential.
+Downloading it gets you a directory `sqlplus` can connect *through*, not one it
+can log in *with*.
 
 For reference, the real commands are:
 
@@ -2578,13 +2579,18 @@ This is the part that will cost you an afternoon if nobody says it, so:
 | | what it is | what needs it |
 |---|---|---|
 | **TLS certificates** | the client certificate and trust anchors that finish a mutual-TLS handshake | the *connection*, whatever login method you use |
-| **secure external password store** | a credential keyed on an alias, so `/@alias` can log in with no username or password | `auth: external`, and nothing else |
+| **secure external password store** | a credential keyed on an alias, so `/@alias` can log in with no username or password | `auth: external` **when a wallet is what authenticates** |
 
-**The ADB wallet zip is the first one.** It contains `cwallet.sso`,
+`auth: external` is wider than that second row: §3a's `external` is *a wallet or
+secure external password store, Kerberos, or OS auth*, and the Kerberos and OS
+paths need no password store at all. What follows is about the wallet path,
+because that is the one an ADB wallet looks like it satisfies.
+
+**The ADB wallet zip is the first row.** It contains `cwallet.sso`,
 `tnsnames.ora`, `sqlnet.ora` and the certificates, and it contains **no
-credential**. So `admin: { auth: external }` against an unmodified ADB wallet has
-nothing to log in with — which is why the example above authenticates by
-password instead.
+credential**. So `admin: { auth: external }` *authenticating from that wallet*
+has nothing to log in with — which is why the example above uses a password
+instead.
 
 Download the zip from the OCI console, unzip it, and set `TNS_ADMIN` to that
 directory. That is needed for the **TLS** half under mTLS, not for

@@ -565,7 +565,10 @@ and the print on the other.
 **The driver half is built** (#441): `Session.reset_password`, which issues all
 three statements as one operation, and `Session.require_no_rollover_window`, which
 is §4.3's refusal asked at plan time. The verb, the delivery and the record are the
-other half and are not built. Four things about the build belong here rather than
+other half; **the verb and the seen delivery are built too** (#441), and the
+record is the part that is not — every run warns that the run document and the
+database are its whole trace. Four things about the driver build belong here
+rather than
 in a diff, and the last two were measured on 26ai Free 23.26.2.0.0 on 2026-09-20
 because reasoning could not settle them:
 

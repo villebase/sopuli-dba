@@ -1210,7 +1210,8 @@
         "SKIPPED",
         "ERROR",
         "VAULT_ONLY",
-        "DECLARED"
+        "DECLARED",
+        "RESET"
       ],
       "description": "`VAULT_ONLY` (added in 1.20) is what `creds generate --promote` reports: the vault holds this password and no database has been asked. Distinct from `PENDING_APPLY`, which says a rotation is in flight — here there is none, and `creds apply` is what makes a database match. See `03-json-output.md` §3 for why none of the other values would have been true. `DECLARED` (added in 1.25) is `account list`'s ordinary row: the declaration matched this account and the database has it. It is not a claim about the password — that verb never asks — which is why it is a word of its own rather than `IN_SYNC`, and why an account the declaration names and the database does not have is `ACCOUNT_MISSING`, the value that already meant exactly that."
     },

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sopuli.config.delivery import MANUAL
+from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.config.errors import ArgumentError
 from sopuli.config.model import Config, Delivery
 from sopuli.driver.guardrails import Review, review
@@ -49,11 +49,6 @@ from sopuli.safety import RefusedError
 RESET = "RESET"
 ACCOUNT_MISSING = "ACCOUNT_MISSING"
 SKIPPED = "SKIPPED"
-
-#: The one delivery method this build implements (#441). The other five are
-#: #444-#447's, and `smtp_encrypted` has no issue at all -- which is why the
-#: refusal below names the method rather than listing what is coming.
-IMPLEMENTED = (MANUAL,)
 
 
 @dataclass(frozen=True)

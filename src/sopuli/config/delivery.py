@@ -28,8 +28,8 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.fields import choice, mapping, reject_unknown_keys
-from sopuli.config.model import Delivery
+from sopuli.config.fields import choice, mapping, optional_bool, reject_unknown_keys
+from sopuli.config.model import Delivery, ManualDelivery
 
 #: The methods UC-2 §6.2 defines, in the order that section lists them. **The
 #: whole set, not the subset with issues**: `smtp_encrypted` has no issue of its
@@ -57,6 +57,10 @@ DEFAULT_METHOD = "vault_wrapped"
 
 #: The seen path. Named because two rules key on it and neither should re-spell it.
 MANUAL = "manual"
+
+#: The keys `manual:` takes (#441). One, and it is required -- see
+#: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
+MANUAL_KEYS = ("force_expire",)
 
 #: Keys the block itself takes, beside one sub-block per method. `notify` nests
 #: here rather than sitting beside `delivery:` (§6.3): it is a property of a
@@ -97,7 +101,59 @@ def build_delivery(document: dict[str, Any]) -> Delivery | None:
     _require_sub_block(block, method, at=at)
     _check_shape(block, method, at=at)
 
-    return Delivery(method=method)
+    return Delivery(
+        method=method,
+        manual=_build_manual(block[MANUAL], at=at.key(MANUAL)) if method == MANUAL else None,
+    )
+
+
+def _build_manual(raw: Any, *, at: KeyPath) -> ManualDelivery:
+    """`manual:`'s own settings -- the first method to claim a typed field (#441).
+
+    **Only where `manual` is the selected method.** #440 left an unselected
+    method's sub-block unjudged on purpose, and reading this one whichever method
+    was chosen would take that back: a `manual:` block kept beside
+    `method: vault_wrapped`, so somebody can switch between them, would start
+    failing for a key the run never consults.
+
+    `force_expire` is **required and must be true**, which is the fifth of #439's
+    five guards and the only one that lives in the config layer. The other four
+    are properties of a run -- one reveal site, no JSON, a terminal, a prompt --
+    and this one is a property of the file, so it is refused here where the key is
+    rather than at the moment a password has already been drawn.
+
+    **`false` is refused rather than honoured.** The key exists so an estate says
+    the exposure is bounded, out loud; a `false` would be an estate asking for an
+    unbounded one, which UC-2 §1 does not offer. Refusing names the value it found,
+    because an operator who wrote `false` meant something and deserves to be told
+    what the tool does with it instead of having it flipped.
+    """
+    block = mapping(raw, at=at)
+    reject_unknown_keys(block, allowed=MANUAL_KEYS, at=at)
+
+    if "force_expire" not in block:
+        raise ConfigError(
+            "`manual` delivery needs `force_expire: true`",
+            at=at.key("force_expire"),
+            hint=(
+                "`manual` prints a working password to your terminal, and expiry at first "
+                "logon is what ends that exposure -- so it is written down rather than "
+                "assumed (UC-2 6.5). Use an unseen method if you do not want the account "
+                "expired"
+            ),
+        )
+    force_expire = optional_bool(block, "force_expire", at=at)
+    if force_expire is not True:
+        raise ConfigError(
+            "`manual` delivery requires `force_expire: true`, not false",
+            at=at.key("force_expire"),
+            hint=(
+                "there is no unexpiring seen path: until the owner's first logon the "
+                "password on your screen is a working credential, and expiry is the only "
+                "thing that ends that. An unseen method delivers without expiring"
+            ),
+        )
+    return ManualDelivery(force_expire=True)
 
 
 def _require_sub_block(block: dict[str, Any], method: str, *, at: KeyPath) -> None:

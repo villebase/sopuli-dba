@@ -41,7 +41,7 @@ a config emits them, `config show` in both its views as well as
 `config validate`: a warning that reached only the text output would be invisible
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
-Schemas: [`../schemas/sopuli-run-1.26.schema.json`](../schemas/sopuli-run-1.26.schema.json),
+Schemas: [`../schemas/sopuli-run-1.27.schema.json`](../schemas/sopuli-run-1.27.schema.json),
 [`../schemas/sopuli-event-1.0.schema.json`](../schemas/sopuli-event-1.0.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1977,6 +1977,29 @@ grace before it. A second rename does not get the same treatment.
 
 Every release validates its own sample outputs against the published schema in
 CI. The schema is the test fixture, not documentation written afterwards.
+
+**1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
+Two additive changes:
+
+- `account.reset-password` joins the `command` enum;
+- **`results[].delivered`** — how the password was handed over: the delivery
+  *method*, never a value and never a destination. `manual` records the method
+  and no location, because the seen path's destination is a person by a route the
+  tool did not carry, and UC-2 §3.1's record draws the same distinction. Absent on
+  a row that delivered nothing, which is every row a run refused.
+
+**No new `action_kind` and no new `state`**, which is worth saying because the
+verb issues three statements and reports each: `account_unlock`, `password_set`
+and `rollover_finish` have all been in that enum since it was written, and
+`RESET` is not a state — a reset row reports `RESET` from the existing set. A verb
+needing a new word would be saying something the contract has no vocabulary for,
+which is a schema question rather than a verb's.
+
+**There is no property a password could occupy, and that is a guard rather than
+an omission** (#439's second). Refusing `--output json` stops the seen path from
+running while a document is produced; this makes the document unable to carry the
+value whatever runs. The two are one guard asserted twice, and the second is the
+one that survives somebody adding an output mode.
 
 **1.25 became 1.26 with `safety.delivery.allowed_methods`** (#498), H6's ratchet.
 One additive change: **`config.targets[].safety.delivery`**, an object holding

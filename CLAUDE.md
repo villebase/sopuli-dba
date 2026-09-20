@@ -140,14 +140,17 @@ something specific.
    scope rule is, and a second exception is a decision rather than an
    implementation detail.
 8. **Every mutating command supports `--dry-run` and prints a plan first.**
-9. **Idempotency:** running any command twice must report `changed: false` the
-   second time and emit no mutation audit record.
+9. **Idempotency:** running a **convergent** command twice must report
+   `changed: false` the second time and emit no mutation audit record.
 
-   **It governs the *convergent* verbs — the ones with a state to converge on.**
-   `apply` converges the database on the vault, and it is the one that must
-   report `changed: false` on a re-run. `account suspend` is the same rule read
-   through the driver: it reads `ACCOUNT_STATUS` first, so a second
+   **A convergent command is one with a state to converge on, which is all of
+   them but the two below** — the qualifier narrows the sentence and is not a
+   loophole in it. `apply` converges the database on the vault, and it is the one
+   that must report `changed: false` on a re-run. `account suspend` is the same
+   rule read through the driver: it reads `ACCOUNT_STATUS` first, so a second
    `ACCOUNT LOCK` against an already-locked account reports `changed: false`.
+   `04-testing.md` §6's release gate states the criterion in the same words, and
+   the two must stay in step.
 
    **A verb that draws fresh randomness has nothing to converge on, and is
    outside the invariant rather than an exception to it.** `creds generate`

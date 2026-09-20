@@ -39,7 +39,7 @@ which paths ran and which are still untried.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-1.7.schema.json](schemas/sopuli-config-1.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.26.schema.json](schemas/sopuli-run-1.26.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.27.schema.json](schemas/sopuli-run-1.27.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.0.schema.json](schemas/sopuli-event-1.0.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -726,6 +726,13 @@ intersection across every layer, the plan-time refusal when two layers have no
 method in common, and the effective set in `config show --explain`. No verb
 consults the answer until a delivery method exists, so the registry marks it
 inert.
+
+**The seen path is built** (#441): `sopuli account reset-password` with
+`delivery.method: manual`, under #439's five guards, and the unseen methods
+refused at plan time on exit 5 until #444-#447 land. The reset record and the
+advisory lock keyed on its path are the part #468 shaped and nobody has written
+yet, so every run warns that the run document and the database are the whole
+record.
 
 **What blocks what.** **#456 is written and #440 and #498 have landed**, so every
 `delivery:` issue now waits on nothing — the config block and the ratchet are both

@@ -2798,6 +2798,30 @@ obvious question. A list of what is *refused* would have cost no new code and wo
 have permitted every method a later release adds, everywhere, on upgrade — silently
 widening a guard that stands in front of putting a live credential on a wire.
 
+#### Where a target's own list shows up in JSON
+
+Write the key on a *target* rather than in `defaults:`, and the resolved view
+carries it as a sub-block — run schema 1.26, and the shape matters because
+`config.targets[].safety` refuses any property it does not name:
+
+```bash
+sopuli --config tier1-target.yaml config show --resolved --output json
+```
+```json
+"safety": {
+  "delivery": {
+    "allowed_methods": [
+      "manual",
+      "vault_wrapped"
+    ]
+  }
+}
+```
+
+Sorted, and intersected with whatever a target set's template or `overrides:` entry
+wrote — so what the document carries is what a run would read rather than what the
+target's own line says.
+
 **What you cannot test yet**: any of this having an effect. No delivery method is
 implemented, so the set is resolved, ratcheted, reported here and read by no verb —
 which is what the registry means by marking it inert. The first method to land is
@@ -3308,7 +3332,7 @@ sopuli --config broken.yaml --output json config validate; echo "exit $?"
 ### The JSON contract
 
 `--output json` on any verb emits the run document
-[`schemas/sopuli-run-1.25.schema.json`](schemas/sopuli-run-1.25.schema.json) describes. `creds check`,
+[`schemas/sopuli-run-1.26.schema.json`](schemas/sopuli-run-1.26.schema.json) describes. `creds check`,
 trimmed to its shape:
 
 ```json

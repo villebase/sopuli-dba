@@ -602,9 +602,28 @@ class OracleSession:
                 ),
             )
 
-        changes = [self._reset_unlock(state), self._reset_set(state, secret, expire=expire)]
-        changes.append(self._reset_close_window(state, keep=keep_rollover))
-        return tuple(changes)
+        # Built before the first statement is issued, never between them
+        # (Copilot's review of #504). `alter_user_password` validates: invariant
+        # 11 refuses a password containing `"`, and `admissible` refuses one over
+        # the target's byte limit. Building it inside the sequence would let that
+        # refusal arrive *after* `ACCOUNT UNLOCK` had already run, leaving a
+        # timed-locked account open on behalf of a reset that never happened --
+        # a state change from a failed operation, which is the one outcome
+        # invariant 4's plan-time rule exists to prevent. `byte_limit()` is
+        # resolved by the same call and can fail the same way.
+        statement = alter_user_password(
+            Identifier(state.name),
+            secret,
+            scope=self.scope(),
+            limit=self.byte_limit(),
+            expire=expire,
+        )
+
+        return (
+            self._reset_unlock(state),
+            self._reset_set(state, statement, expire=expire),
+            self._reset_close_window(state, keep=keep_rollover),
+        )
 
     def _reset_unlock(self, state: UserState) -> AccountChange:
         """§4.1 statement 1 -- the timed lock only.
@@ -629,8 +648,13 @@ class OracleSession:
             detail=f"account was {state.status.lower()}; unlocked",
         )
 
-    def _reset_set(self, state: UserState, secret: Secret, *, expire: bool) -> AccountChange:
+    def _reset_set(self, state: UserState, statement: Statement, *, expire: bool) -> AccountChange:
         """§4.1 statement 2 -- the reset itself, always issued.
+
+        Takes the **built** statement rather than the secret, which is what keeps
+        every refusal ahead of the first `ACCOUNT UNLOCK`: this method can no
+        longer be the one that discovers a password is inadmissible, because by
+        the time it runs that question has been answered.
 
         ``changed`` is always ``True``, for :meth:`set_password`'s reason: *is
         the password already this value* is not a question a database can answer,
@@ -638,13 +662,6 @@ class OracleSession:
         at all (#454) -- a fresh draw has no fixed point -- and a row claiming
         ``changed: false`` here could only be a guess.
         """
-        statement = alter_user_password(
-            Identifier(state.name),
-            secret,
-            scope=self.scope(),
-            limit=self.byte_limit(),
-            expire=expire,
-        )
         self._issue(statement)
         return AccountChange(
             PASSWORD_SET,
@@ -668,8 +685,34 @@ class OracleSession:
         (measured on 26ai, §4.3), so an account whose profile grants none costs
         one statement and nothing else -- but reporting ``changed: true`` for it
         would be the same lie :meth:`finish_rollover` reads its state to avoid.
+
+        **Two conditions, not one** (Copilot's review of #504, and then a
+        measurement). The profile granting a window says the reset is about to
+        open one; a window already being open says something about the account
+        right now. They do come apart, which is the half of the review that was
+        right: setting a profile's ``PASSWORD_ROLLOVER_TIME`` to zero leaves an
+        already-open window reading ``OPEN & IN ROLLOVER``, so ``rollover_time``
+        says no and ``rollover_active`` says yes.
+
+        **What that state does is not what it looks like**, measured twice on
+        26ai Free 23.26.2.0.0 on 2026-09-20 because guessing would have put the
+        wrong sentence here. The review's stated consequence was that the old
+        password stays valid; on this release it does not -- the profile change
+        kills it immediately, ``ORA-01017``, and only the *status* is stale.
+        Closing is still right, for two reasons that survive that correction: the
+        status is what an operator reads and what `creds status` reports, and the
+        statement makes it true again (measured: accepted, and the account goes
+        to ``OPEN``); and the measurement is one release, while a release where
+        the old password *does* outlive the profile change is exactly the review's
+        case with its consequence intact.
+
+        So the wider condition is safe under both readings and costs one
+        silently-accepted statement under the one that holds here.
+        :meth:`finish_rollover` already keys on ``rollover_active`` for its own
+        half of the same question.
         """
         grants = is_enabled(state.rollover_time)
+        open_now = bool(state.rollover_active)
         if keep:
             return AccountChange(
                 ROLLOVER_FINISH,
@@ -677,11 +720,11 @@ class OracleSession:
                 status=state.status,
                 detail=(
                     "rollover window kept, as asked"
-                    if grants
+                    if grants or open_now
                     else "no rollover window to keep; this profile grants none"
                 ),
             )
-        if not grants:
+        if not grants and not open_now:
             return AccountChange(
                 ROLLOVER_FINISH,
                 changed=False,

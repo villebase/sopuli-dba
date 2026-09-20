@@ -34,8 +34,10 @@ import pytest
 
 from oracle_harness import Environment
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.driver.oracle.statements import PasswordNotAdmissibleError
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
+    PASSWORD_ROLLOVER,
     PASSWORD_SET,
     ROLLOVER_FINISH,
     Credential,
@@ -121,14 +123,20 @@ def account(session: Any) -> Iterator[Any]:
 def rollover_account(session: Any) -> Iterator[Any]:
     """An account whose profile grants a one-hour window.
 
-    Skips rather than fails where the release has no such feature: the profile's
-    creation is guarded in the init script for 18c and 11g, so an absent profile
-    here is the environment rather than a defect (`04-testing.md` §3).
+    **No try/except around the setup** (Copilot's review of #504). The first
+    draft skipped on any exception, which reads as tolerance for 18c and 11g --
+    where the init script's guarded `CREATE PROFILE` does not run -- and is
+    really tolerance for anything at all: a missing grant, a typo in the DDL, a
+    database that went away. Every one of those would have reported green while
+    running none of these cases, which is the failure `04-testing.md` §1 calls
+    worse than a red suite.
+
+    The release is declared instead, by `@pytest.mark.requires_capability` on
+    each test below. That is the mechanism the suite already has for exactly this
+    -- the rule being to declare the capability and never to branch on a version
+    -- and it skips with a reason before the fixture runs at all.
     """
-    try:
-        _create(session, profile=ROLLOVER_PROFILE)
-    except Exception as error:  # noqa: BLE001 -- the skip reason is the message
-        pytest.skip(f"{ROLLOVER_PROFILE} is unavailable on this release: {error}")
+    _create(session, profile=ROLLOVER_PROFILE)
     try:
         yield session
     finally:
@@ -273,6 +281,7 @@ def test_a_deliberate_lock_is_refused_and_nothing_is_issued(
 # -------------------------------------------------------------- the rollover ---
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_the_rollover_window_is_closed_by_default(
     rollover_account: Any, live_oracle: Environment
 ) -> None:
@@ -291,6 +300,7 @@ def test_the_rollover_window_is_closed_by_default(
     assert _logon(live_oracle, OLD) == "ORA-01017"
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_keeping_the_window_leaves_the_old_password_working(
     rollover_account: Any, live_oracle: Environment
 ) -> None:
@@ -312,6 +322,7 @@ def test_keeping_the_window_leaves_the_old_password_working(
     assert _logon(live_oracle, OLD) == "ok"
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_an_expiring_reset_is_refused_on_a_rollover_profile(
     rollover_account: Any, live_oracle: Environment
 ) -> None:
@@ -340,7 +351,79 @@ def test_the_plan_time_call_says_nothing_where_no_window_is_granted(account: Any
     assert account.require_no_rollover_window(ACCOUNT) is None
 
 
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
+def test_a_window_open_under_a_profile_since_set_to_zero_is_still_closed(
+    session: Any, live_oracle: Environment
+) -> None:
+    """The condition the grant alone would miss (Copilot's review of #504).
+
+    Its own profile rather than the shared fixture's, because the setup mutates
+    one: a test that altered `sopuli_rollover` would change what every other
+    rollover test sees.
+
+    **Measured twice on 26ai before this was written**, because the reasoning and
+    the behaviour disagree. Setting `PASSWORD_ROLLOVER_TIME` to zero leaves the
+    status reading `OPEN & IN ROLLOVER` while the old password is *already* dead
+    -- so the review's stated consequence does not hold on this release, and what
+    is actually wrong is that the status lies. Closing it makes the status true,
+    and on a release where the old password does outlive the profile change it
+    does the safety-critical thing as well.
+    """
+    profile = "sopuli_reset_stale"
+    _drop(session)
+    with contextlib.suppress(Exception):
+        _run(session, f"drop profile {profile} cascade")
+    _run(session, f"create profile {profile} limit password_rollover_time 1/24")
+    try:
+        _create(session, profile=profile)
+        _run(session, f'alter user {ACCOUNT} identified by "{OLD}-rolled"')
+        _run(session, f"alter profile {profile} limit password_rollover_time 0")
+        assert "IN ROLLOVER" in _status(session), "the setup did not leave a stale window"
+
+        changes = _by_action(session.reset_password(ACCOUNT, NEW, expire=False))
+
+        assert changes[ROLLOVER_FINISH].changed is True
+        assert _status(session) == "OPEN"
+        assert _logon(live_oracle, NEW.reveal()) == "ok"
+    finally:
+        _drop(session)
+        with contextlib.suppress(Exception):
+            _run(session, f"drop profile {profile} cascade")
+
+
 # ------------------------------------------------------------------- the rest ---
+
+
+def test_an_inadmissible_password_is_refused_before_the_account_is_unlocked(
+    account: Any, live_oracle: Environment
+) -> None:
+    """The ordering bug Copilot's review of #504 found, as a regression test.
+
+    Invariant 11 refuses a password containing `"` rather than escaping it, and
+    that refusal used to be discovered while building statement 2 -- *after*
+    statement 1 had already unlocked the account. A reset that raised would have
+    left a timed-locked account open on behalf of an operation that never
+    happened, which is a state change from a failed run.
+
+    The account being still locked afterwards is the whole assertion, and it
+    fails against the code this replaces: a list literal evaluates left to right,
+    so the unlock went out and the build raised after it.
+
+    `PasswordNotAdmissibleError` rather than a bare `Exception`, so the test
+    cannot pass on some unrelated failure that also left the account locked --
+    `Secret` itself accepts the quote, and `admissible` inside
+    `alter_user_password` is what refuses it.
+    """
+    _create(account, profile=LOCKOUT_PROFILE)
+    for _ in range(3):
+        assert _logon(live_oracle, "not-the-password") == "ORA-01017"
+    assert _status(account) == "LOCKED(TIMED)"
+
+    with pytest.raises(PasswordNotAdmissibleError, match="cannot escape"):
+        account.reset_password(ACCOUNT, Secret('has-a-"-in-it'), expire=False)
+
+    assert _status(account) == "LOCKED(TIMED)", "the unlock ran before the password was judged"
+    assert _logon(live_oracle, OLD) == "ORA-28000"
 
 
 def test_resetting_an_account_that_does_not_exist_is_an_error(session: Any) -> None:

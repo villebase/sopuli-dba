@@ -639,6 +639,16 @@ Three things follow, and the first two are measured
   only after the change is verified. UC-2 verifies nothing (§5), so the
   precondition is dropped rather than inherited. That is safe here for the same
   reason the default is: there is nobody holding the old password to strand.
+- **A window outlives the profile that granted it, and the status then lies.**
+  Measured twice on 26ai Free 23.26.2.0.0 on 2026-09-20, prompted by a review of
+  #504 that predicted the opposite: setting `PASSWORD_ROLLOVER_TIME` to zero while
+  a window is open leaves `ACCOUNT_STATUS` reading `OPEN & IN ROLLOVER`, and the
+  old password is **already dead** — `ORA-01017` — so what survives the profile
+  change is the *status* rather than the exposure. The close statement is accepted
+  in that state and takes the account back to `OPEN`. The driver therefore closes
+  on either signal, the profile's grant or an open window, which is safe under this
+  measurement and safety-critical under a release where the old password does
+  outlive the change. Unmeasured anywhere but 26ai (unverified: stale-rollover).
 - **An explicit flag keeps the window**, for the reset where the person *does*
   still know their old password and a grace period is a convenience. The
   asymmetry is worth stating: **a reset after a suspected disclosure is exactly

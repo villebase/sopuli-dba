@@ -255,6 +255,7 @@ from sopuli.safety import (
     RefusedError,
     confirmation_demanded,
     for_estate,
+    refuse_disallowed_method,
     refuse_if_over_limit,
     refuse_if_readonly,
     refuse_unconfirmed,
@@ -1567,6 +1568,11 @@ def account_reset_password(
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
+    # After the estate merge, because a target's or a group's `safety:` block is
+    # layer 4 and cannot narrow the set until a selector has run (#424, #498).
+    # `--force` is not passed and cannot be: this is a safety setting, and
+    # invariant 10 is that no source relaxes one.
+    refuse_disallowed_method(run.resolved, delivery.method)
 
     reached = config.expanded_targets
     plan = plan_builder.build_for_accounts(
@@ -1578,9 +1584,20 @@ def account_reset_password(
     document.plan = plan.as_json()
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
+    header = render_plan(plan, noun="account")
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
-        return render_plan(plan, noun="account") + "\n\nnothing to reset"
+        return header + "\n\nnothing to reset"
+
+    if not run.dry_run and delivery.is_seen:
+        # **The plan goes out before the first statement, and before the prompt**
+        # (invariant 8; Copilot's review of #505). The verb returns its whole
+        # output as a string, so without this the operator would be asked to
+        # expose a password before seeing what the run was about to do -- and by
+        # then the DDL has already run. On stderr, which is where
+        # `_confirm_environments` puts the same thing for the same reason: stdout
+        # carries the result.
+        click.echo(header, err=True)
 
     found = [
         _reset_one(
@@ -1599,10 +1616,10 @@ def account_reset_password(
     document.results = [one.as_json() for one in found]
     states = [one.state for one in found]
     changed = sum(1 for one in found if one.changed)
-    document.diagnostics.append(_no_record_written())
+    notice = _no_record_written()
+    document.diagnostics.append(notice)
     document.finish(_reset_exit(states), summarise_reset(states, changed=changed))
 
-    header = render_plan(plan, noun="account")
     body = render_reset(
         [(one.account, one.target, one.state, one.status, one.detail) for one in found],
         changed=changed,
@@ -1610,7 +1627,12 @@ def account_reset_password(
         would_reset=sum(1 for one in found if one.would_reset) if run.dry_run else None,
     )
     shown = "\n\n".join(one.shown for one in found if one.shown is not None)
-    return f"{header}\n\n{body}" + (f"\n\n{shown}" if shown else "")
+    # Printed as well as serialised (#309): a warning nobody can see in the
+    # default output is not surfaced, and this one says the run kept no record
+    # of itself -- which is what a terminal operator needs, and what
+    # `diagnostics[]` alone tells only a JSON consumer.
+    told = "\n".join(render_notices([notice.message]))
+    return "\n\n".join(part for part in (header, body, told, shown) if part)
 
 
 def _reset_intent() -> list[str]:
@@ -1820,7 +1842,15 @@ def _reset_one(
                 error=reported,
             )
 
-        return _Reset(
+        # The row is built **before** the hand-over, and that is not style
+        # (Copilot's review of #505). `_hand_over` prompts, and declining raises
+        # `click.Abort` -- which used to propagate out of the caller's list
+        # comprehension before `document.results` was ever assigned, so a run
+        # that had changed and expired a password reported only "aborted before
+        # completion". The boundary's own docstring names that case as the one a
+        # document exists for: *a confirmation declined halfway through is
+        # exactly when a scheduler wants to know which targets were touched.*
+        row = _Reset(
             account=account,
             target=target.name,
             state=reset.RESET,
@@ -1831,8 +1861,18 @@ def _reset_one(
             delivered=delivery.method,
             overridden=overridden,
             duration_ms=_elapsed(started),
-            shown=_hand_over(secret, account=account, target=target.name, delivery=delivery),
         )
+        try:
+            return replace(
+                row,
+                shown=_hand_over(secret, account=account, target=target.name, delivery=delivery),
+            )
+        except click.Abort:
+            # Recorded, then re-raised. The row carries no password -- there is
+            # no field for one -- so what survives is the fact of the mutation
+            # and nothing that would make declining to look pointless.
+            run.document.results = [*(run.document.results or []), row.as_json()]
+            raise
     finally:
         if session is not None:
             with suppress(Exception):

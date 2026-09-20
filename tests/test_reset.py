@@ -259,3 +259,70 @@ def test_the_seen_path_expires_and_the_unseen_one_does_not() -> None:
     caller, so one answer reaches the plan, the driver and the view."""
     assert decision(delivery=SEEN).expire is True
     assert decision(delivery=UNSEEN).expire is False
+
+
+# ------------------------------------------- the ratchet #498 left a consumer for ---
+
+
+def resolved_allowing(*methods: str) -> dict[str, Any]:
+    """`safety.delivery.allowed_methods` as one layer would resolve it."""
+    from sopuli.safety import ALLOWED_METHODS
+    from sopuli.settings import Contribution, Layer, resolve
+
+    answer = resolve(
+        ALLOWED_METHODS,
+        [Contribution(layer=Layer.DEFAULTS, value=methods, detail="defaults.safety.delivery")],
+    )
+    assert answer is not None
+    return {ALLOWED_METHODS: answer}
+
+
+def test_a_method_no_layer_permits_is_refused() -> None:
+    """H6's consumer, which #498 said would arrive with the first delivery method
+    and did (#441). Until this the set was resolved, ratcheted, reported by
+    `config show --explain` and read by nothing."""
+    from sopuli.safety import refuse_disallowed_method
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_disallowed_method(resolved_allowing("vault_wrapped"), "manual")
+
+    assert "is not permitted here" in str(caught.value)
+    assert caught.value.exit_code is ExitCode.ABORTED
+
+
+def test_a_permitted_method_passes() -> None:
+    from sopuli.safety import refuse_disallowed_method
+
+    refuse_disallowed_method(resolved_allowing("manual", "vault_wrapped"), "manual")
+
+
+def test_an_unset_allow_list_permits_everything() -> None:
+    """The intersection's first rule: an estate that wrote nothing has not
+    thereby forbidden everything (§9, H6)."""
+    from sopuli.safety import refuse_disallowed_method
+
+    refuse_disallowed_method({}, "manual")
+
+
+def test_the_refusal_names_where_the_set_was_written() -> None:
+    """Every refusal in `sopuli/safety.py` carries the location, because a
+    setting an operator did not know about is the whole reason one is confusing
+    when it arrives."""
+    from sopuli.safety import refuse_disallowed_method
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_disallowed_method(resolved_allowing("vault_wrapped"), "manual")
+
+    assert "defaults.safety.delivery" in (caught.value.hint or "")
+    assert "--force does not reach a safety setting" in (caught.value.hint or "")
+
+
+def test_the_setting_is_no_longer_declared_inert() -> None:
+    """The other half of #498's bargain. `inert_reason` claims *nothing reads
+    this*, and `tests/settings/test_settings_are_wired.py` fails in both
+    directions -- so the marking had to go when the consumer arrived, which is
+    the moment somebody checks whether the documents still say the right thing.
+    """
+    from sopuli.settings import setting
+
+    assert setting("safety.delivery.allowed_methods").inert_reason is None

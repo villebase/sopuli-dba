@@ -2324,6 +2324,28 @@ sopuli: no `delivery:` is configured, so a new password would have nowhere to go
 
 Exit **8**.
 
+#### The safety ratchet, refusing a method
+
+`safety.delivery.allowed_methods` (§10b) now has the consumer #498 said would
+arrive with the first delivery method. Narrow the set to something `manual` is
+not in:
+
+```yaml
+defaults:
+  safety:
+    delivery:
+      allowed_methods: [vault_wrapped]
+```
+```
+sopuli: `delivery.method: manual` is not permitted here; `safety.delivery.allowed_methods` allows vault_wrapped
+  hint: set at defaults.safety.delivery.allowed_methods; no layer can widen it (invariant 10), and --force does not reach a safety setting -- deliver by one of the permitted methods, or change the set where it is written
+```
+
+Exit **8**. Worth trying `--force` against it: it changes nothing, because
+`--force` waives the *account* guardrails and never a safety setting. Worth
+trying under `--dry-run` too — the refusal still fires, because it is about what
+the run is configured to do rather than about an emission.
+
 #### What is not built
 
 - **No reset record.** `reset_records:` parses and nothing writes to it, so every

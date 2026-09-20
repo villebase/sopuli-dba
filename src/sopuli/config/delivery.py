@@ -58,6 +58,12 @@ DEFAULT_METHOD = "vault_wrapped"
 #: The seen path. Named because two rules key on it and neither should re-spell it.
 MANUAL = "manual"
 
+#: The methods this build can actually serve (#441). Here rather than in
+#: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
+#: is what keeps `config validate`'s warning and the verb's refusal from
+#: disagreeing about which methods work.
+IMPLEMENTED = (MANUAL,)
+
 #: The keys `manual:` takes (#441). One, and it is required -- see
 #: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
 MANUAL_KEYS = ("force_expire",)
@@ -227,9 +233,14 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
 def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
-    **No method is implemented**, which is the true state of this build and has to
-    be said out loud. #440 builds the block; #441 and #444-#447 build the methods,
-    and until one of them lands a file naming `method: vault_wrapped` is a file
+    **`manual` is implemented and the other five are not** (#441). This used to
+    say *no method is implemented*, which was true when #440 wrote it and became
+    false the day the seen path landed -- so `config validate` told an estate with
+    a working `manual` configuration that nothing could hand a password over.
+    Caught by Copilot's review of #505.
+
+    The five that remain are #444-#447's, and `smtp_encrypted` has no issue at
+    all; until one of them lands, a file naming `method: vault_wrapped` is a file
     that parses and cannot hand anybody a password.
 
     A **warning rather than a refusal**, following E4/E5's shape for a configured
@@ -243,9 +254,9 @@ def unserviceable(delivery: Delivery | None) -> str | None:
     been drawn -- which is exactly the reading `docs/local-testing.md` calls the
     failure of an inventory that omits things.
     """
-    if delivery is None:
+    if delivery is None or delivery.method in IMPLEMENTED:
         return None
     return (
-        f"`delivery.method: {delivery.method}` is configured and no delivery method is "
-        f"implemented in this build, so nothing can hand a password over yet"
+        f"`delivery.method: {delivery.method}` is configured and is not implemented in "
+        f"this build, so nothing can hand a password over that way yet"
     )

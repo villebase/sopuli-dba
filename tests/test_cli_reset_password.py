@@ -509,3 +509,36 @@ def test_a_record_that_cannot_be_written_warns_on_a_successful_run(
     assert "could not be written" in result.output
     assert "permission denied by the test" in result.output
     assert account() == "EXPIRED", "a failed record write rolled back the reset"
+
+
+def test_a_journal_that_cannot_be_opened_warns_on_a_successful_run(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same absence one step earlier (Copilot's review of #513).
+
+    Opening the store resolves a credential and builds a client, and each of
+    those can fail on its own -- an unreachable Vault, a token that expired
+    since the run began, an extra that is not installed. That happens *after*
+    the password has changed, so it is §3.4's second absence however early it
+    fails, and not a failed run.
+    """
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    config = write_config(_journalled_config(live_oracle, journal, private_mount))
+
+    def unreachable(run: Any, config: Any) -> Any:
+        raise RuntimeError("the store could not be opened by the test")
+
+    monkeypatch.setattr("sopuli.cli._reset_journal", unreachable)
+
+    result = run(runner, config, "--account", ACCOUNT, input="y\n")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "could not be written" in result.output
+    assert "the store could not be opened by the test" in result.output
+    assert account() == "EXPIRED", "a store that would not open rolled back the reset"

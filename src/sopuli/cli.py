@@ -1746,7 +1746,18 @@ def _write_reset_record(
     into `SOPULI-W025`, because there is no failure here worth ending a run that
     has already succeeded.
     """
-    journal = _reset_journal(run, config)
+    try:
+        # **Opening is inside the guard, not beside it** (Copilot's review of
+        # #513). `_stores_for` resolves a credential and builds a client, and
+        # every one of those steps can fail -- an unreachable Vault, a token
+        # that has expired since the run began, a backend whose extra is not
+        # installed. Outside the guard that exception would escape a reset that
+        # had already succeeded and turn it into a failed run, which is exactly
+        # the false negative 3.4 rules out: the password has changed and the
+        # person still needs it.
+        journal = _reset_journal(run, config)
+    except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
+        return _RecordFailure(path=path, reason=_as_error(error).message)
     if journal is None:
         # Unreachable while `path` comes from `_record_paths`, which derives
         # nothing without a block -- and cheaper to answer than to prove at every

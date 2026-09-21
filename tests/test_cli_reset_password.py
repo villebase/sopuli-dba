@@ -30,7 +30,8 @@ from oracle_harness import Environment
 from sopuli.cli import cli
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.exit_codes import ExitCode
-from sopuli.lock.errors import LockDeniedError
+from sopuli.lock.errors import LockDeniedError, LockStolenError
+from sopuli.lock.manager import LockManager
 from sopuli.store.hashicorp.kv2 import Kv2Store
 
 ACCOUNT = "acme_dev_alice"
@@ -661,3 +662,69 @@ def test_a_preview_takes_no_lock(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert journal.client.get(f"/v1/{private_mount}/data/{LOCK_PATH}").status_code == 404
+
+
+#: The same estate with a second target pointed at the same database. Two
+#: targets rather than two databases: what is under test is the run's handling of
+#: a lost fence between one target and the next, and the number of Oracles in the
+#: tier-1 stack has nothing to do with it.
+TWO_TARGETS = """
+  - name: tier1-oracle-b
+    type: oracle
+    environment: dev
+    dsn: "{dsn}"
+    admin: {{ username: {user}, auth: {{ method: env }} }}
+"""
+
+
+def test_a_fence_lost_between_targets_stops_there_and_exits_four(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`creds generate`'s split, on this verb (Copilot's review of #515).
+
+    Exit 7 asserts that nothing happened. Once the first target's password has
+    been reset, that is a lie -- somebody is holding a password that works -- so
+    a fence lost before the *second* target is exit 4 with `SOPULI-W011`, and the
+    second target is not touched.
+
+    The steal is simulated at the fence rather than by racing a second process:
+    what is under test is this verb's branch, and a real race would assert the
+    lock manager's behaviour, which `tests/lock/` already holds.
+    """
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+    user = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
+    # Inserted into `targets:` rather than appended, which is where a second
+    # entry goes and not where the file ends.
+    marker = "\npolicies:"
+    written = _journalled_config(live_oracle, journal, private_mount).replace(
+        marker, TWO_TARGETS.format(dsn=live_oracle.dsn, user=user) + marker
+    )
+    config = write_config(written)
+
+    checks = {"count": 0}
+    real = LockManager.check
+
+    def fence(self: Any, *keys: Any) -> None:
+        checks["count"] += 1
+        if checks["count"] > 1:
+            raise LockStolenError("somebody else holds it now", key=keys[0])
+        real(self, *keys)
+
+    monkeypatch.setattr("sopuli.lock.manager.LockManager.check", fence)
+
+    result = run(runner, config, "--account", ACCOUNT, input="y\n")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "somebody else holds it now" in result.output
+    first = journal.client.get(f"/v1/{private_mount}/data/{RECORD_PATH}")
+    second = journal.client.get(
+        f"/v1/{private_mount}/data/sopuli/personal-resets/tier1-oracle-b/{ACCOUNT}"
+    )
+    assert first.status_code == 200, "the target that ran before the fence was lost"
+    assert second.status_code == 404, "the run carried on past the fence"

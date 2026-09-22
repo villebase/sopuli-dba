@@ -68,7 +68,6 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -112,7 +111,7 @@ from sopuli.config.model import Delivery, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints
-from sopuli.delivery import Receipt
+from sopuli.delivery import Handover, Receipt
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
     LOCK_LOST,
@@ -2042,14 +2041,17 @@ class _Reset:
     #: every guard passed.
     shown: str | None = None
     #: What an auditor can act on about the hand-over, and **nothing that could
-    #: perform it** (#444 part 2). The accessor names the hand-over in the store's
-    #: own audit log; `delivered_until` is when fetching stops. Both plain fields
-    #: rather than the :class:`~sopuli.delivery.Receipt` itself, deliberately: the
-    #: receipt carries the token, and a row that held one would put a retrieval
-    #: credential in a frozen dataclass's generated ``__repr__`` beside `shown`'s.
-    #: One carrier for the secret is enough to reason about.
-    accessor: str | None = None
-    delivered_until: datetime | None = None
+    #: perform it** (#444 part 2). ``None`` where nothing was delivered anywhere --
+    #: the seen path, a refused row -- and *present* where a delivery put the
+    #: password somewhere, which is what the run document's section keys on rather
+    #: than on either field being populated (Copilot's review of #519).
+    #:
+    #: A :class:`~sopuli.delivery.Handover` rather than the
+    #: :class:`~sopuli.delivery.Receipt` it came from, deliberately: the receipt
+    #: carries the token, and a row holding one would put a retrieval credential in
+    #: a frozen dataclass's generated ``__repr__`` beside `shown`'s. One carrier for
+    #: the secret is enough to reason about.
+    handover: Handover | None = None
 
     def as_json(self) -> dict[str, Any]:
         return build_reset_result(
@@ -2060,8 +2062,7 @@ class _Reset:
             actions=self.actions,
             status=self.status,
             delivered=self.delivered,
-            accessor=self.accessor,
-            delivered_until=self.delivered_until,
+            handover=self.handover,
             overridden=self.overridden,
             duration_ms=self.duration_ms,
             error=self.error,
@@ -2224,8 +2225,7 @@ def _reset_one(
             status=status,
             actions=tuple((one.action, one.changed, one.detail) for one in changes),
             delivered=delivery.method,
-            accessor=receipt.accessor if receipt is not None else None,
-            delivered_until=receipt.expires_at if receipt is not None else None,
+            handover=receipt.reported() if receipt is not None else None,
             overridden=overridden,
             duration_ms=_elapsed(started),
         )

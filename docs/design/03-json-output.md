@@ -2019,10 +2019,14 @@ whole guarantee. That is the argument the password's absence already rests on,
 applied to a different object, and UC-2 §6.1 is why it applies at all: the rule is
 about reach rather than value.
 
-**Absent rather than null on the seen path**, which has neither field to fill:
-`manual`'s destination is a person reading a screen, so there is no accessor to
-name and no store clock to expire. A consumer reads presence as "the tool put this
-somewhere", instead of having to tell two nulls from a hand-over it cannot see.
+**Present whenever a delivery put the password somewhere, and absent otherwise.**
+That is a fact about the *path*, not about how much the store was willing to say:
+a wrap that returned neither an accessor nor a usable TTL is still a hand-over, and
+the section is there with two nulls. Keying its presence on "is either field set"
+was a real bug in the first draft — it reported such a delivery as the seen path,
+which is the one thing the section exists to tell apart. On `manual` it is absent,
+because the destination is a person reading a screen: no accessor to name, and no
+store clock to expire.
 
 **`expires_at` comes from the store's clock, not this host's** — Vault's
 `creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may

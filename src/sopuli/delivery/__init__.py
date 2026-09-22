@@ -35,7 +35,29 @@ from typing import Protocol
 
 from sopuli.secrets import Secret
 
-__all__ = ["DeliveryBackend", "Receipt"]
+__all__ = ["DeliveryBackend", "Handover", "Receipt"]
+
+
+@dataclass(frozen=True)
+class Handover:
+    """The half of a :class:`Receipt` that may be written down.
+
+    **A type rather than two arguments, and that is the point of it** (Copilot's
+    review of #519). The run document's `handover` section exists when a delivery
+    put the password somewhere, which is not the same as either of these fields
+    being populated: a wrap that returned a token but no accessor and no usable
+    TTL is a real hand-over with nothing to say about itself, and building the
+    section out of "is either field set" reported it as the *seen* path -- the one
+    case the section's presence is supposed to distinguish. Presence of this
+    object is the signal; its fields are nullable inside it.
+
+    **It carries no token and has no field for one**, which is what makes the
+    output layer unable to receive one by mistake. :attr:`Receipt.token` stays on
+    the receipt, in the delivery package, beside the docstring that argues for it.
+    """
+
+    accessor: str | None = None
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +88,15 @@ class Receipt:
     token: Secret | None = None
     accessor: str | None = None
     expires_at: datetime | None = None
+
+    def reported(self) -> Handover:
+        """What may be written down about this hand-over.
+
+        The narrowing happens here rather than at each reader, so a caller cannot
+        reach the token by taking the wrong attribute: what it gets back has no
+        such attribute at all.
+        """
+        return Handover(accessor=self.accessor, expires_at=self.expires_at)
 
 
 class DeliveryBackend(Protocol):

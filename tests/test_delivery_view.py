@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sopuli.delivery import Receipt
+from sopuli.delivery import Handover, Receipt
 from sopuli.output.delivery_view import UNKNOWN_EXPIRY, render_handover
 from sopuli.output.reset_view import build_result
 from sopuli.secrets import Secret
@@ -106,8 +106,7 @@ def test_the_result_carries_the_accessor_and_the_expiry() -> None:
         state="RESET",
         changed=True,
         delivered="vault_wrapped",
-        accessor="EXAMPLEaccessor000000000",
-        delivered_until=WHEN,
+        handover=Handover(accessor="EXAMPLEaccessor000000000", expires_at=WHEN),
     )
 
     assert entry["handover"] == {
@@ -139,10 +138,47 @@ def test_a_hand_over_with_no_accessor_still_reports_the_expiry() -> None:
         state="RESET",
         changed=True,
         delivered="vault_wrapped",
-        delivered_until=WHEN,
+        handover=Handover(expires_at=WHEN),
     )
 
     assert entry["handover"] == {"accessor": None, "expires_at": "2026-09-22T10:21:00Z"}
+
+
+def test_a_handover_that_knows_nothing_about_itself_is_still_reported() -> None:
+    """Copilot's review of #519, and the bug was real: a wrap that returned a token
+    but no accessor and no usable TTL is a delivery that happened, and keying the
+    section on "is either field set" reported it as the **seen** path -- which is
+    the one thing the section's presence exists to tell apart.
+
+    Presence now comes from the `Handover` existing at all, which is a fact about
+    whether a delivery put the password somewhere rather than about how much the
+    store was willing to say."""
+    entry = build_result(
+        "acme_dev_alice",
+        "free-pdb",
+        state="RESET",
+        changed=True,
+        delivered="vault_wrapped",
+        handover=Handover(),
+    )
+
+    assert entry["handover"] == {"accessor": None, "expires_at": None}
+
+
+def test_the_reported_half_of_a_receipt_drops_the_token() -> None:
+    """The narrowing is a type rather than a convention: what the output layer is
+    handed has no token attribute, so it cannot take the wrong one."""
+    receipt = Receipt(
+        method="vault_wrapped",
+        token=Secret(TOKEN),
+        accessor="EXAMPLEaccessor000000000",
+        expires_at=WHEN,
+    )
+
+    reported = receipt.reported()
+
+    assert not hasattr(reported, "token")
+    assert (reported.accessor, reported.expires_at) == (receipt.accessor, receipt.expires_at)
 
 
 def test_no_property_in_the_result_could_hold_the_token() -> None:
@@ -152,5 +188,5 @@ def test_no_property_in_the_result_could_hold_the_token() -> None:
     rule also covers."""
     from inspect import signature
 
-    assert "token" not in signature(build_result).parameters
     assert not any("token" in name for name in signature(build_result).parameters)
+    assert not any("token" in name for name in Handover.__dataclass_fields__)

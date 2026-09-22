@@ -32,10 +32,10 @@ implementation detail (`CLAUDE.md` invariant 2).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
 from sopuli.clock import to_rfc3339
+from sopuli.delivery import Handover
 from sopuli.driver.guardrails import Refusal
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
@@ -92,8 +92,7 @@ def build_result(
     actions: Sequence[tuple[str, bool, str | None]] = (),
     status: str | None = None,
     delivered: str | None = None,
-    accessor: str | None = None,
-    delivered_until: datetime | None = None,
+    handover: Handover | None = None,
     overridden: Sequence[Refusal] = (),
     duration_ms: int | None = None,
     error: Error | None = None,
@@ -112,8 +111,12 @@ def build_result(
 
     **``handover`` is what an auditor can act on, and it is deliberately not what
     the person fetches with** (#444 part 2). ``accessor`` names the hand-over in
-    the store's own audit log and cannot perform it; ``delivered_until`` says when
-    fetching stops. The retrieval credential itself has no property here and never
+    the store's own audit log and cannot perform it; ``expires_at`` says when
+    fetching stops. It arrives as a :class:`~sopuli.delivery.Handover`, whose
+    *presence* is the signal and whose fields are nullable within it -- a type with
+    no token attribute, so this builder cannot be handed one.
+
+    The retrieval credential itself has no property here and never
     will -- a document is captured, shipped to log aggregation and kept, and a
     token in one outlives the TTL that is the method's whole guarantee. That is the
     same argument the password's absence rests on, made about a different object.
@@ -148,10 +151,18 @@ def build_result(
         entry["account_status"] = status
     if delivered is not None:
         entry["delivered"] = delivered
-    if accessor is not None or delivered_until is not None:
+    if handover is not None:
+        # **Presence says a delivery put the password somewhere**, and that is not
+        # the same as either field being populated (Copilot's review of #519). A
+        # wrap that returned a token but no accessor and no usable TTL is a real
+        # hand-over with nothing to say about itself, and building the section out
+        # of "is either field set" reported it as the seen path -- which is the one
+        # thing this section's presence exists to tell apart.
         entry["handover"] = {
-            "accessor": accessor,
-            "expires_at": to_rfc3339(delivered_until) if delivered_until is not None else None,
+            "accessor": handover.accessor,
+            "expires_at": (
+                to_rfc3339(handover.expires_at) if handover.expires_at is not None else None
+            ),
         }
     if overridden:
         entry["overridden"] = [

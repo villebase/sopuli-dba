@@ -34,7 +34,7 @@ from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import lock_path
 from sopuli.lock.record import DEFAULT_TTL, Holder, LockRecord
 from sopuli.output.document import SCHEMA_VERSION
-from sopuli.store import CAS, MemoryStore, SecretStore
+from sopuli.store import CAS, MemoryStore, SecretStore, StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -861,3 +861,35 @@ def test_the_document_with_a_reset_lock_validates(
     result = run(runner, write_config(RESET_CONFIG), "--output", "json")
 
     assert not list(validator.iter_errors(json.loads(result.output)))
+
+
+def test_an_unreachable_reset_store_fails_the_survey(
+    runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copilot's review of #517: the failure was verified by hand and by nothing
+    else.
+
+    Opening the journal store is what makes the survey honest, so a regression to
+    *not* opening it must not pass. Asserted from the store's side rather than on
+    the message: a build that left `reset_records.vault` out of the set it opens
+    would never reach this `connect` at all, and the run would succeed with the
+    same empty estate #514 was filed about.
+
+    Exit 1, not a warning, and the same answer a binding's store has always got.
+    Answering "what is held" without contacting the store the locks live in is
+    the false negative this whole change exists to remove -- which is the
+    difference from `SOPULI-W005`, where a store that cannot *list* is named and
+    the rest of the estate is still reported.
+    """
+    asked: list[str] = []
+
+    def refuse(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None) -> Any:
+        asked.append(vault.name)
+        raise StoreError("could not reach the store: refused by the test")
+
+    monkeypatch.setattr("sopuli.cli.connect", refuse)
+
+    result = run(runner, write_config(RESET_CONFIG))
+
+    assert asked == ["vault-dev"], "the journal's store was never opened"
+    assert result.exit_code != ExitCode.SUCCESS

@@ -2418,24 +2418,6 @@ against a database. And the `LOCK` cell is no longer truncated at 52 characters,
 which it had been since #105: the full key is what `lock break` takes, and a
 reset key is long enough (`<prefix>/<target>/<account>`) that every row was cut.
 
-Break it and ask again, which is the shape you see after an ordinary reset:
-
-```bash
-sopuli --config manual.yaml lock break vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice --force --confirm
-sopuli --config manual.yaml lock status
-```
-```
-personal-account resets, under the prefix this config declares:
-LOCK                                                      STATE     HOLDER   COMMAND           SINCE                 EXPIRES
-vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  unknown  account reset...  2030-01-01T12:00:00Z  2030-01-01T12:15:00Z
-
-1 reset lock under the declared prefix (0 held)
-```
-
-`released`, still listed, and `(0 held)` — the record stays because the version
-counter is the fence, and the survey reports what is there rather than only what
-is in the way.
-
 In JSON it is one `found[]` entry with the field that carries the distinction:
 
 ```bash
@@ -2467,6 +2449,24 @@ sopuli --config manual.yaml lock status --output json | jq '.lock.found[]'
 `reset_records` for this one, and `null` for a leftover. `declared` stays a
 boolean and now means "this configuration accounts for the path at all", which is
 what a consumer filtering its own locks was already asking it.
+
+Break it and ask again, which is the shape you see after an ordinary reset:
+
+```bash
+sopuli --config manual.yaml lock break vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice --force --confirm
+sopuli --config manual.yaml lock status
+```
+```
+personal-account resets, under the prefix this config declares:
+LOCK                                                      STATE     HOLDER   COMMAND           SINCE                 EXPIRES
+vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  unknown  account reset...  2030-01-01T12:00:00Z  2030-01-01T12:15:00Z
+
+1 reset lock under the declared prefix (0 held)
+```
+
+`released`, still listed, and `(0 held)` — the record stays because the version
+counter is the fence, and the survey reports what is there rather than only what
+is in the way.
 
 **The empty answer says which empty it is**, and that distinction is the whole
 reason #514 was a bug rather than a missing feature. With the claim cleared:

@@ -166,10 +166,50 @@ def check_template(template: str, *, at: KeyPath) -> None:
     estate whose message contains a brace would meet a refusal about a placeholder
     it did not write.
     """
-    for _, field, _, _ in Formatter().parse(template):
+    for _, field, spec, conversion in Formatter().parse(template):
         if field is None:
             continue
-        name = field.strip()
+        # **Not `field.strip()`, and not a discarded spec** (Copilot's finding on
+        # #520). `str.format` does neither: `{ account }` looks up the key
+        # ``" account "`` and raises `KeyError`, and `{expires_at:%Y}` applies
+        # ``%Y`` to a string and raises `ValueError`. Both passed this walk in the
+        # first build and raised in `render()` -- which happens after the password
+        # has changed, and is the one place UC-2 §6 has no answer for.
+        #
+        # Refused rather than normalised. Trimming the name would accept a template
+        # this validator and `str.format` read differently, and the estate wrote the
+        # file, so the file is what should say what it means.
+        if spec:
+            raise ConfigError(
+                f"a notify template may not give {{{field}}} a format spec",
+                at=at,
+                hint=(
+                    f"`{{{field}:{spec}}}` would be applied to a string and raise when the "
+                    "message is rendered -- which is after the password has changed. Every "
+                    "substitution is already formatted the way the run document formats it, "
+                    f"so write `{{{field}}}`"
+                ),
+            )
+        if conversion:
+            raise ConfigError(
+                f"a notify template may not give {{{field}}} a conversion",
+                at=at,
+                hint=(
+                    f"`{{{field}!{conversion}}}` converts a value that is already a string. "
+                    f"Write `{{{field}}}`"
+                ),
+            )
+        name = field
+        if name != name.strip():
+            raise ConfigError(
+                f"a notify template may not pad a placeholder with spaces: {{{field}}}",
+                at=at,
+                hint=(
+                    f"`str.format` looks up the name exactly as written, spaces included, so "
+                    f"`{{{field}}}` would raise when the message is rendered -- which is "
+                    f"after the password has changed. Write `{{{name.strip()}}}`"
+                ),
+            )
         if name in PLACEHOLDERS:
             continue
         if name.casefold() in NAMED_SECRETS:

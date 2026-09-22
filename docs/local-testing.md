@@ -2749,9 +2749,15 @@ Stop the listener and run the same reset again. **Exit 0**, the password is
 delivered, and:
 
 ```
-1 note:
-  the password for acme_dev_alice was delivered and the notification could not be sent, so nobody has been told it is waiting -- tell them another way today and look at `delivery.notify.webhook.url` afterwards: the webhook could not be reached: ConnectError
+2 notes:
+  no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
+  the password for acme_dev_alice on free-pdb was delivered and the notification could not be sent, so nobody has been told it is waiting -- tell them another way today and look at `delivery.notify.webhook.url` afterwards: the webhook could not be reached: ConnectError
 ```
+
+**The target is in that sentence, and it was not in the first build** (#520). One
+reset reaches every declared target and notifies once per target, so two failures
+out of three produced two identical notes and no way to tell whose person had not
+been told. The same defect #519 found in the hand-over block, one object over.
 
 `SOPULI-W026`, and a warning rather than a failure for `SOPULI-W025`'s reason and
 more easily: by the time anything is posted the password has changed and the person
@@ -2783,9 +2789,84 @@ delivery.notify.method: `delivery.notify.method: webhook` is configured and its 
 
 Exit 0, and it is **separate from the delivery method's** warning on purpose: an
 estate can have a working delivery and an inert notification, and one sentence
-covering both would say only that something in the block does not work. A reset then
-runs, delivers, and raises `SOPULI-W026` — the same note as an unreachable webhook,
-because from the person's side it is the same outcome.
+covering both would say only that something in the block does not work.
+
+**A reset then refuses, at exit 9, and does not change the password** (#520). The
+first build ran it, delivered, and raised `SOPULI-W026` — the same note as an
+unreachable webhook, on the argument that from the person's side it is the same
+outcome. It is not: an unreachable webhook is news that arrives after the password
+has changed and there is nothing better to do with it, while a client that is not
+installed is knowable before the run connects to anything. That is invariant 4, and
+E5's contract that configured-but-uninstalled fails use with exit 9:
+
+```
+sopuli: notify method 'webhook' needs a client this machine does not have
+  hint: pip install "sopuli-dba[notify]" -- or take `delivery.notify` out of the file if nobody should be told. The reset is refused rather than run without the notification, because it is refused *before* the password changes and running it would leave somebody holding a credential nobody told them about
+```
+
+**Two things about reproducing that, because neither is obvious.** The output above
+came from a `--dry-run`, which resolves the channel on purpose — telling you the
+client is missing is among the things a preview is for, and it is the one place this
+deliberately does *not* mirror the delivery backend, which a preview skips because
+opening a store would demand credentials the preview does not need.
+
+And `[notify]` and `[hashicorp]` both supply `httpx`, so you cannot see this on the
+default unseen path by uninstalling it: the HashiCorp store needs the same client and
+refuses first, with `SOPULI-20001` naming `vault-dev`. The configuration where
+`[notify]` is the only thing that supplies it is `manual` delivery with a notify
+channel, which is what the sample above ran.
+
+**The URL is resolved there too**, which went further than the review asked. An
+absent environment variable is a configuration error rather than news, so it is
+answered in the same place:
+
+```
+sopuli: delivery.notify.webhook.url: the environment variable SOPULI_NOTIFY_WEBHOOK is not set
+  hint: an empty value counts as unset (§6). Check the name, and that whatever exports it runs in the same process tree as this command
+```
+
+Exit 9, and the account is untouched.
+
+#### Three templates that look fine and are not
+
+**Found by Copilot on #520, and all three were holes in this guide's own claim**
+that a template is proved renderable at load. They passed validation and raised
+inside `render()` — which happens *after* the password has changed, and is the one
+moment UC-2 §6 has no answer for. `Formatter().parse()` hands back the format spec
+and the conversion separately, and the walk was discarding both; it also called
+`.strip()` on a name that `str.format` does not strip.
+
+```yaml
+      template: "fetch it before {expires_at:%Y}"
+```
+```
+sopuli: t.yaml: delivery.notify.webhook.template: a notify template may not give {expires_at} a format spec
+  hint: `{expires_at:%Y}` would be applied to a string and raise when the message is rendered -- which is after the password has changed. Every substitution is already formatted the way the run document formats it, so write `{expires_at}`
+```
+
+```yaml
+      template: "{ account } has a new password"
+```
+```
+sopuli: t.yaml: delivery.notify.webhook.template: a notify template may not pad a placeholder with spaces: { account }
+  hint: `str.format` looks up the name exactly as written, spaces included, so `{ account }` would raise when the message is rendered -- which is after the password has changed. Write `{account}`
+```
+
+```yaml
+      template: "{account!r} has a new password"
+```
+```
+sopuli: t.yaml: delivery.notify.webhook.template: a notify template may not give {account} a conversion
+  hint: `{account!r}` converts a value that is already a string. Write `{account}`
+```
+
+Exit 9 for each. **The middle one is refused rather than trimmed**, which is the
+decision worth knowing: accepting `{ account }` would mean this validator and
+`str.format` read the same file differently, and the estate wrote the file, so the
+file is what should say what it means. The third does not raise at render at all —
+`!r` merely quotes a string that is already one — and is refused anyway, because the
+closed set is about what a template may *ask for*, and a conversion is a second
+spelling of one placeholder.
 
 #### The refusal that is the point of the whole block
 

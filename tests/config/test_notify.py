@@ -185,3 +185,119 @@ def _uninstallable() -> Any:
 
 def test_no_notify_block_warns_about_nothing() -> None:
     assert unserviceable(None) is None
+
+
+# ------------------------------------- what `str.format` reads differently ---
+#
+# All three of these passed the first build's walk and raised inside `render()`,
+# which happens after the password has changed -- the one moment UC-2 §6 has no
+# answer for. Copilot found them on #520. The walk discarded the format spec and
+# the conversion, and called `.strip()` on a name that `str.format` does not
+# strip.
+
+
+def test_a_format_spec_is_refused_at_load() -> None:
+    """`{expires_at:%Y}` raises `ValueError: Invalid format specifier` at render,
+    because every substitution is already a string -- `Facts.as_fields` formats the
+    timestamp so that no channel has to."""
+    with pytest.raises(ConfigError) as raised:
+        build_notify(
+            {
+                "method": "webhook",
+                "webhook": {
+                    "url": {"env": "SOPULI_NOTIFY_WEBHOOK"},
+                    "template": "fetch it before {expires_at:%Y}",
+                },
+            },
+            at=AT,
+        )
+
+    assert "may not give {expires_at} a format spec" in str(raised.value)
+    assert "after the password has changed" in str(raised.value.hint)
+
+
+def test_a_conversion_is_refused_at_load() -> None:
+    """`{account!r}` does not raise -- it quotes a string that is already one. It
+    is refused anyway, because the closed set is about what a template may ask for
+    and a conversion is a second spelling of one placeholder."""
+    with pytest.raises(ConfigError) as raised:
+        build_notify(
+            {
+                "method": "webhook",
+                "webhook": {
+                    "url": {"env": "SOPULI_NOTIFY_WEBHOOK"},
+                    "template": "{account!r} has a password",
+                },
+            },
+            at=AT,
+        )
+
+    assert "may not give {account} a conversion" in str(raised.value)
+
+
+def test_a_padded_placeholder_is_refused_rather_than_trimmed() -> None:
+    """`{ account }` raises `KeyError: ' account '` at render: `str.format` looks
+    the name up exactly as written.
+
+    **Refused rather than normalised**, which is the decision in this fix. Trimming
+    it here would accept a template that this validator and `str.format` read
+    differently, and the estate wrote the file, so the file should say what it
+    means."""
+    with pytest.raises(ConfigError) as raised:
+        build_notify(
+            {
+                "method": "webhook",
+                "webhook": {
+                    "url": {"env": "SOPULI_NOTIFY_WEBHOOK"},
+                    "template": "{ account } has a password",
+                },
+            },
+            at=AT,
+        )
+
+    assert "may not pad a placeholder with spaces" in str(raised.value)
+    assert "{account}" in str(raised.value.hint)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{account} on {target} has a new password waiting",
+        "fetch it before {expires_at}",
+        "{{literal}} braces and {account}",
+        "no placeholders at all",
+    ],
+)
+def test_the_templates_an_estate_would_actually_write_still_load(template: str) -> None:
+    """The other half of the three refusals above: a guard that tightened until it
+    refused the documented samples would be worse than the hole it closed."""
+    build_notify(
+        {
+            "method": "webhook",
+            "webhook": {"url": {"env": "SOPULI_NOTIFY_WEBHOOK"}, "template": template},
+        },
+        at=AT,
+    )
+
+
+def test_every_loadable_template_can_actually_render() -> None:
+    """**The assertion that ties the two layers together.** The bug was not any one
+    of the three holes; it was that a template could pass the config layer and
+    raise in the renderer, and nothing in the suite crossed that boundary. Anything
+    `build_notify` accepts, `render` must survive."""
+    from sopuli.notify import Facts, render
+
+    for template in (
+        "{account} on {target} has a new password waiting",
+        "fetch it before {expires_at}",
+        "{{literal}} and {account}",
+        "plain text",
+    ):
+        notify = build_notify(
+            {
+                "method": "webhook",
+                "webhook": {"url": {"env": "SOPULI_NOTIFY_WEBHOOK"}, "template": template},
+            },
+            at=AT,
+        )
+        render(notify, Facts(account="acme_dev_alice", target="free-pdb"))

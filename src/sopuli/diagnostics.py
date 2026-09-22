@@ -599,6 +599,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         NOTIFICATION_UNSENT: (
             "The password was delivered and the notification saying so could not be sent. "
+            "The account and the target are both named, because a reset can notify once per "
+            "target and two failures would otherwise be indistinguishable. "
             "A warning on a successful run for the same reason `SOPULI-W025` is, and more "
             "easily: the notification carries nothing anybody needs (UC-2 §6.1 keeps it to "
             '"a password is ready"), so what is lost is that somebody has to be told '
@@ -958,17 +960,23 @@ def no_reset_record() -> Diagnostic:
     )
 
 
-def notification_unsent(account: str, reason: str) -> Diagnostic:
+def notification_unsent(account: str, target: str, reason: str) -> Diagnostic:
     """The password is waiting and the channel did not say so (#442).
 
     The reason last, and verbatim, for :func:`reset_record_unwritten`'s reason: a
     refused POST and an unreachable host send somebody to different places, and
     only the channel's own words distinguish them.
 
-    **The account is named and the URL is not.** A chat incoming-webhook URL is a
-    credential (C9), so repeating it in a warning would put one wherever warnings
-    go -- which on this verb includes a run document. What an operator needs in
-    order to act is *who was not told*, so that is what this carries.
+    **The account and the target are named, and the URL is not.** A chat
+    incoming-webhook URL is a credential (C9), so repeating it in a warning would
+    put one wherever warnings go -- which on this verb includes a run document.
+
+    **The target is named because one reset can notify more than once** (Copilot's
+    finding on #520). A personal account is reset on one account and possibly
+    several targets, so a notification is attempted per target; the first build
+    carried only the account, and two failures out of three targets produced two
+    identical warnings that no operator could act on. This is the same defect
+    #519's review found in the hand-over block, one object over.
 
     The remedy is in the message rather than in a ``hint``, because
     :class:`~sopuli.output.document.Diagnostic` has no hint field: a diagnostic is
@@ -979,9 +987,9 @@ def notification_unsent(account: str, reason: str) -> Diagnostic:
         level="warning",
         code=NOTIFICATION_UNSENT,
         message=(
-            f"the password for {account} was delivered and the notification could not be "
-            f"sent, so nobody has been told it is waiting -- tell them another way today "
-            f"and look at `delivery.notify.webhook.url` afterwards: {reason}"
+            f"the password for {account} on {target} was delivered and the notification "
+            f"could not be sent, so nobody has been told it is waiting -- tell them another "
+            f"way today and look at `delivery.notify.webhook.url` afterwards: {reason}"
         ),
     )
 

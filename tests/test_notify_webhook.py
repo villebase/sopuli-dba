@@ -185,3 +185,52 @@ def test_the_registered_channel_declares_the_client_it_needs() -> None:
     assert NOTIFIERS["webhook"].provides == frozenset({"httpx"})
     assert NOTIFIERS["webhook"].extra == "notify"
     assert NOTIFIERS["webhook"].available is True
+
+
+# ------------------------------------------- and what the warning has to say ---
+
+
+def test_the_warning_names_the_account_and_the_target() -> None:
+    """**Copilot's fourth finding on #520.** A personal account is reset on one
+    account and possibly several targets, and a notification is attempted per
+    target -- so two failures out of three produced two identical warnings and an
+    operator could not tell which host's person had not been told.
+
+    The same defect #519's review found in the hand-over block, one object over,
+    and the reason it recurred is worth naming: the first version's docstring
+    argued that "what an operator needs in order to act is *who* was not told",
+    which is true and incomplete.
+    """
+    from sopuli.diagnostics import NOTIFICATION_UNSENT, notification_unsent
+
+    one = notification_unsent("acme_dev_alice", "free-pdb", "the webhook refused it: HTTP 404")
+
+    assert one.code == NOTIFICATION_UNSENT
+    assert one.level == "warning"
+    assert "acme_dev_alice on free-pdb" in one.message
+    assert "HTTP 404" in one.message
+
+
+def test_two_targets_give_two_distinguishable_warnings() -> None:
+    """The assertion the fix is for: the messages must differ. Asserting the target
+    appears would pass against a message that mentioned it once and named the wrong
+    one twice."""
+    from sopuli.diagnostics import notification_unsent
+
+    first = notification_unsent("acme_dev_alice", "free-pdb", "ConnectError")
+    second = notification_unsent("acme_dev_alice", "alpha-pdb", "ConnectError")
+
+    assert first.message != second.message
+    assert "free-pdb" in first.message
+    assert "alpha-pdb" in second.message
+
+
+def test_the_warning_still_does_not_carry_the_url() -> None:
+    """Unchanged by the fix above, and re-asserted because the message was rewritten:
+    the URL is the credential, and warnings reach a run document."""
+    from sopuli.diagnostics import notification_unsent
+
+    one = notification_unsent("acme_dev_alice", "free-pdb", "the webhook could not be reached")
+
+    assert "chat.example.com" not in one.message
+    assert "EXAMPLEEXAMPLE" not in one.message

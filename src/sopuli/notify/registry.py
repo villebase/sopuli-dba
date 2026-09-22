@@ -110,8 +110,11 @@ def resolve(method: str) -> ModuleType:
             raise NotifierNotInstalledError(
                 f"notify method {method!r} needs a client this machine does not have",
                 hint=(
-                    f"{install_command(notifier.extra)} -- the password is still delivered "
-                    f"without it, and nobody is told it is waiting"
+                    f"{install_command(notifier.extra)} -- or take `delivery.notify` out of "
+                    f"the file if nobody should be told. The reset is refused rather than run "
+                    f"without the notification, because it is refused *before* the password "
+                    f"changes and running it would leave somebody holding a credential nobody "
+                    f"told them about"
                 ),
             ) from exc
         raise

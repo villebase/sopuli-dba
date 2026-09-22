@@ -2681,6 +2681,99 @@ what the run printed.
 have cut below what the file asked for. It is reported and never enforced — nothing
 here polices a TTL Vault is already policing.
 
+#### Telling the person a password is waiting
+
+`notify:` nests inside `delivery:` and is the **low-trust** half of UC-2 §6: it says
+that a password is ready, never what it is. #442 built the grammar; **nothing is
+sent yet** — the socket is that issue's second part — so everything below is
+`config validate` work, which is the cheapest place for it to be.
+
+```yaml
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+  notify:
+    method: webhook
+    webhook:
+      url: { env: SOPULI_NOTIFY_WEBHOOK }
+      template: "{account} on {target} has a new password waiting"
+```
+
+```bash
+export SOPULI_NOTIFY_WEBHOOK=https://chat.example.com/hooks/EXAMPLE
+sopuli --config wrapped.yaml config validate
+```
+```
+ok: 1 target, 0 bindings, 1 warning
+
+1 warning:
+  delivery.notify.method: `delivery.notify.method: webhook` is configured and is not implemented in this build, so nothing will be sent when a password is delivered
+    hint: the block is valid and this build cannot send through it; the password is still delivered, and nobody is told it is waiting
+```
+
+Exit 0, and the warning is E4's shape: the file is fine and the build cannot act on
+it. It is **separate from the delivery method's** warning on purpose — an estate can
+have a working delivery and an inert notification, and one sentence covering both
+would say only that something in the block does not work.
+
+#### The refusal that is the point of the whole block
+
+**A template may not name the secret, or anything that fetches it.** Try the thing
+everybody will try first:
+
+```yaml
+      template: "your new password is {wrap_token}"
+```
+```
+sopuli: notify_secret.yaml: delivery.notify.webhook.template: a notify template may not reference {wrap_token}
+  hint: UC-2 6.1: the channel that notifies may be low-trust and the channel that carries the secret may not -- and that covers the password *or anything that retrieves it*, because the rule is about reach rather than value. Say that a password is ready and let the person fetch it: available: `{account}`, `{target}`, `{expires_at}`
+```
+
+Exit 9, **at load** — before a password has been drawn, which is the only time a
+refusal about a template is any use. `{wrap_token}` is worth trying specifically
+because #442 proposed it as a placeholder before §6.1 settled the question, so it
+is the mistake the design itself nearly made.
+
+**The guard is the closed set, not that word.** Try a name nobody has ever listed:
+
+```yaml
+      template: "hello {full_name}"
+```
+```
+sopuli: notify_unknown.yaml: delivery.notify.webhook.template: unknown placeholder {full_name} in the notify template
+  hint: available: `{account}`, `{target}`, `{expires_at}`. An unknown name is refused rather than left empty, because a message with a hole in it is one somebody has to go and diagnose. Write `{{` for a literal brace
+```
+
+Same exit, different message, and the difference is the whole design: `{full_name}`
+is refused because it is *not in the allowed set*, not because it is on a forbidden
+list. A blocklist would have let `{wrapping_token}` through. The list of named
+secrets exists only to make the first message better than the second one.
+
+Worth doing both, because the second refusal is the one that proves the first is not
+load-bearing.
+
+#### A URL is named, not written
+
+```yaml
+      url: https://chat.example.com/hooks/T00/B00/XXXX
+```
+```
+sopuli: notify_literal.yaml: delivery.notify.webhook.url: a webhook URL is named, not written here
+  hint: write one of `env:`, `file:` -- e.g. `{ env: SOPULI_NOTIFY_WEBHOOK }`. P2: the config points at where the material comes from, never at the material itself
+```
+
+Exit 9. A chat incoming-webhook URL **is** a credential — the path segments are the
+token — so a literal one is a credential in a file people commit. That is C9, and
+it also answers something #442 asked for separately: the URL is redacted wherever
+the configuration is shown, and it is redacted *structurally*, because the model
+holds a location and never a value. There is nothing to redact.
+
+**That message used to say "auth material" and suggest `SOPULI_VAULT_SECRET_ID`.**
+The reader is shared with every `auth:` block, and #442 is the first caller that is
+not one — so it now takes the noun and the example from its caller. Somebody who
+pasted a chat URL should not be told about a vault secret id.
+
 #### Failures worth causing on purpose
 
 **A `num_uses` key.** Reach for the thing you already have:

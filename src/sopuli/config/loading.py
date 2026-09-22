@@ -43,6 +43,7 @@ from sopuli.config.expansion import expand_targets
 from sopuli.config.fields import describe, reject_unknown_keys
 from sopuli.config.groups import build_groups
 from sopuli.config.model import Config, ConfigWarning
+from sopuli.config.notify import unserviceable as unserviceable_notify
 from sopuli.config.permissions import check_permissions
 from sopuli.config.personal_accounts import build_personal_accounts, reject_cross_declaration
 from sopuli.config.policies import build_policies
@@ -349,18 +350,36 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
     warnings this joins carry none either, and a number reserved for a message
     that exists for one release is worse than prose.
     """
+    found = []
     notice = unserviceable(config.delivery)
-    if notice is None:
-        return ()
-    return (
-        ConfigWarning(
-            message=notice,
-            at=str(ROOT.key("delivery").key("method")),
-            hint=(
-                "the block is valid and this build cannot act on it; nothing is wrong with the file"
-            ),
-        ),
-    )
+    if notice is not None:
+        found.append(
+            ConfigWarning(
+                message=notice,
+                at=str(ROOT.key("delivery").key("method")),
+                hint=(
+                    "the block is valid and this build cannot act on it; nothing is wrong "
+                    "with the file"
+                ),
+            )
+        )
+    # The notify channel's own (#442). A second warning rather than a widened
+    # first: an estate can have a working delivery and an inert notification, and
+    # one sentence covering both would have to say "something here does not work"
+    # -- which is the message that sends somebody to read the whole block.
+    channel = unserviceable_notify(config.delivery.notify if config.delivery else None)
+    if channel is not None:
+        found.append(
+            ConfigWarning(
+                message=channel,
+                at=str(ROOT.key("delivery").key("notify").key("method")),
+                hint=(
+                    "the block is valid and this build cannot send through it; the password "
+                    "is still delivered, and nobody is told it is waiting"
+                ),
+            )
+        )
+    return tuple(found)
 
 
 def _read(path: Path) -> str:

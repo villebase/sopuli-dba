@@ -2684,9 +2684,18 @@ here polices a TTL Vault is already policing.
 #### Telling the person a password is waiting
 
 `notify:` nests inside `delivery:` and is the **low-trust** half of UC-2 §6: it says
-that a password is ready, never what it is. #442 built the grammar; **nothing is
-sent yet** — the socket is that issue's second part — so everything below is
-`config validate` work, which is the cheapest place for it to be.
+that a password is ready, never what it is. Built in #442, and it needs its own
+install extra:
+
+```bash
+pip install -e '.[oracle,hashicorp,notify]'
+```
+
+**`[notify]` rather than reusing `[hashicorp]`**, although both install `httpx`: an
+estate on OCI Vault that wants a chat message should not install a HashiCorp extra
+to get one, because ADR-006's whole point is that an extra names *why* a dependency
+is there (E7). Without it the block still validates and the run still delivers — a
+missing client is E4/E5's case, not a broken configuration.
 
 ```yaml
 delivery:
@@ -2700,22 +2709,83 @@ delivery:
       template: "{account} on {target} has a new password waiting"
 ```
 
+#### Watch one arrive
+
+You do not need a chat service. Run something that prints what it is posted:
+
 ```bash
-export SOPULI_NOTIFY_WEBHOOK=https://chat.example.com/hooks/EXAMPLE
-sopuli --config wrapped.yaml config validate
+python - <<'EOF' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("content-length", 0)))
+        print("POSTED to", self.path, flush=True)
+        print(json.dumps(json.loads(body), indent=2), flush=True)
+        self.send_response(204); self.end_headers()
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", 8477), H).serve_forever()
+EOF
+export SOPULI_NOTIFY_WEBHOOK=http://127.0.0.1:8477/hooks/T00/B00/EXAMPLE
+sopuli --config wrapped.yaml account reset-password --account acme_dev_alice
 ```
-```
-ok: 1 target, 0 bindings, 1 warning
 
-1 warning:
-  delivery.notify.method: `delivery.notify.method: webhook` is configured and is not implemented in this build, so nothing will be sent when a password is delivered
-    hint: the block is valid and this build cannot send through it; the password is still delivered, and nobody is told it is waiting
+The listener prints:
+
+```
+POSTED to /hooks/T00/B00/EXAMPLE
+{
+  "text": "acme_dev_alice on free-pdb has a new password waiting"
+}
 ```
 
-Exit 0, and the warning is E4's shape: the file is fine and the build cannot act on
-it. It is **separate from the delivery method's** warning on purpose — an estate can
-have a working delivery and an inert notification, and one sentence covering both
-would say only that something in the block does not work.
+**Read what is not in that body.** No password, no wrapping token, no accessor, and
+no second key: the body is `{"text": ...}` and nothing else, so a low-trust channel
+cannot accumulate the shape of an estate. `{account}` and `{target}` are there
+because the template asked for them.
+
+#### When the channel is down
+
+Stop the listener and run the same reset again. **Exit 0**, the password is
+delivered, and:
+
+```
+1 note:
+  the password for acme_dev_alice was delivered and the notification could not be sent, so nobody has been told it is waiting -- tell them another way today and look at `delivery.notify.webhook.url` afterwards: the webhook could not be reached: ConnectError
+```
+
+`SOPULI-W026`, and a warning rather than a failure for `SOPULI-W025`'s reason and
+more easily: by the time anything is posted the password has changed and the person
+can fetch it, so ending the run would report a false negative about the part that
+mattered. What is lost is that somebody has to be told another way, which is what
+the note says to do.
+
+**The URL is not in that message**, and that is deliberate rather than incidental:
+`httpx` puts it in the text of several of its own errors, and the URL *is* the
+credential — so a warning built from the exception's message would put a live chat
+webhook into `diagnostics[]`, a run document, and whatever ingests them. What is
+carried is the exception's class name.
+
+**Two things about producing that sample, because both nearly became wrong entries
+in this guide.** `pkill -f listener.py` does not stop a background Python on
+Windows, so the run that was supposed to fail succeeded and the absent warning
+looked like a bug in the tool — use `Stop-Process` and check the port. And `tail -6`
+of the output shows the hand-over block, not the note: notes print *before* it, so
+look for the note by name rather than at the end.
+
+#### Without the extra installed
+
+Uninstall `httpx` — or read this and take it on trust, because the dev environment
+has it for the HashiCorp store. `config validate` says:
+
+```
+delivery.notify.method: `delivery.notify.method: webhook` is configured and its client is not installed, so nothing will be sent when a password is delivered (pip install "sopuli-dba[notify]")
+```
+
+Exit 0, and it is **separate from the delivery method's** warning on purpose: an
+estate can have a working delivery and an inert notification, and one sentence
+covering both would say only that something in the block does not work. A reset then
+runs, delivers, and raises `SOPULI-W026` — the same note as an unreachable webhook,
+because from the person's side it is the same outcome.
 
 #### The refusal that is the point of the whole block
 

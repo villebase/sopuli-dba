@@ -37,6 +37,9 @@ from sopuli.config.auth import read_material
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.fields import choice, mapping, reject_unknown_keys, required_string
 from sopuli.config.model import Notify, WebhookNotify
+from sopuli.extras import install_command
+from sopuli.notify import PLACEHOLDERS
+from sopuli.notify.registry import NOTIFIERS
 
 #: The methods this block may select. **One, and deliberately not padded out.**
 #: `delivery.method` lists all six of UC-2 §6.2's values even where nobody has
@@ -45,15 +48,13 @@ from sopuli.config.model import Notify, WebhookNotify
 #: Nothing defines a set of notify channels: §6.3 shows `webhook` and #442 says
 #: `smtp` and `chat` get "their own issues if needed". Inventing two values to
 #: make the enum look finished would publish a contract nobody has decided.
-NOTIFY_METHODS = ("webhook",)
-
-#: The methods this build can serve. Both halves of #442's split: part 1 reads and
-#: refuses configuration, part 2 opens the socket. Until then a `notify:` block is
-#: valid and inert, which `config validate` says out loud rather than leaving an
-#: operator to conclude from silence that a message went out.
-IMPLEMENTED: tuple[str, ...] = ()
-
 WEBHOOK = "webhook"
+
+NOTIFY_METHODS = (WEBHOOK,)
+
+#: The methods this build can serve. `webhook` since #442's second part, which is
+#: what opens the socket -- part 1 read and refused configuration and sent nothing.
+IMPLEMENTED: tuple[str, ...] = (WEBHOOK,)
 
 #: The keys the block itself takes.
 NOTIFY_KEYS = ("method", WEBHOOK)
@@ -65,6 +66,12 @@ WEBHOOK_KEYS = ("url", "template")
 
 #: Every placeholder a template may use, and the closed set is the guard.
 #:
+#: **Imported rather than declared**, from :class:`sopuli.notify.Facts`'s own
+#: fields: the renderer's type is what a message can possibly say, so deriving the
+#: refusal from it means the config layer cannot refuse something the renderer
+#: would have filled, or accept something it could not. Two constants would have
+#: needed an assertion that somebody kept them in step.
+#:
 #: All three are facts an estate's own audit log would hold anyway: **who** the
 #: account is, **where** it lives, and **when** the hand-over stops working. None
 #: retrieves anything, which is §6.1's test -- the rule is about reach rather than
@@ -74,7 +81,6 @@ WEBHOOK_KEYS = ("url", "template")
 #: within fifteen minutes" is the difference between a notification that helps and
 #: one that makes somebody ask a DBA what the hurry is. It is empty for a method
 #: with no expiry, which is a fact about the method rather than a missing value.
-PLACEHOLDERS = ("account", "target", "expires_at")
 
 #: Names that get a message about §6.1 instead of a message about spelling.
 #:
@@ -190,20 +196,34 @@ def check_template(template: str, *, at: KeyPath) -> None:
 
 
 def unserviceable(notify: Notify | None) -> str | None:
-    """Why a configured channel cannot send yet, or ``None`` when it could.
+    """Why a configured channel cannot send, or ``None`` when it could.
 
-    E4/E5's shape, and the same argument `sopuli/config/delivery.py`'s twin makes:
-    a block that validates clean reads as a channel that will send, and finding
-    out otherwise once a password has changed is the failure that costs something.
-    **No method is implemented yet** -- #442's part 1 reads and refuses
-    configuration, and part 2 opens the socket.
+    E4's shape, and the same argument `sopuli/config/delivery.py`'s twin makes: a
+    block that validates clean reads as a channel that will send, and finding out
+    otherwise once a password has changed is the failure that costs something.
+
+    **Two conditions, and only the second survives a full install.** A method this
+    build has no code for is one answer; a method whose *client* is not installed is
+    the other, and it is E4's own case -- the file is valid, the install is
+    incomplete, and `pip` is the remedy. Asked without importing anything
+    (:attr:`sopuli.notify.registry.Notifier.available`), because a validator that
+    had to load a client in order to report it missing could not report it at all.
     """
-    if notify is None or notify.method in IMPLEMENTED:
+    if notify is None:
         return None
-    return (
-        f"`delivery.notify.method: {notify.method}` is configured and is not implemented in "
-        f"this build, so nothing will be sent when a password is delivered"
-    )
+    if notify.method not in IMPLEMENTED:
+        return (
+            f"`delivery.notify.method: {notify.method}` is configured and is not implemented "
+            f"in this build, so nothing will be sent when a password is delivered"
+        )
+    notifier = NOTIFIERS.get(notify.method)
+    if notifier is not None and not notifier.available and notifier.extra is not None:
+        return (
+            f"`delivery.notify.method: {notify.method}` is configured and its client is not "
+            f"installed, so nothing will be sent when a password is delivered "
+            f"({install_command(notifier.extra)})"
+        )
+    return None
 
 
 def _allowed() -> str:

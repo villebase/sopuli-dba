@@ -24,21 +24,20 @@ from datetime import datetime
 
 from sopuli.clock import to_rfc3339
 from sopuli.config.model import Notify
-from sopuli.config.notify import PLACEHOLDERS
 
-__all__ = ["Facts", "render"]
+__all__ = ["PLACEHOLDERS", "Facts", "render"]
 
 
 @dataclass(frozen=True)
 class Facts:
     """What a notification may say, and therefore all a template can ask for.
 
-    **A type with exactly the fields :data:`~sopuli.config.notify.PLACEHOLDERS`
-    names**, which is what makes the closed set enforced rather than agreed: a
-    placeholder nobody put here cannot be rendered even if the config layer let it
-    through, and a field added here without a placeholder is dead rather than
-    dangerous. :func:`sopuli.notify.render` asserts the two agree, so the failure
-    is a test failure rather than a template that silently produces a hole.
+    **:data:`PLACEHOLDERS` is derived from this type's fields**, which is what
+    makes the closed set enforced rather than agreed. The first draft kept the two
+    as separate constants and asserted at run time that they matched; deriving one
+    from the other means they *cannot* disagree, which is the same move #519's
+    `Handover` made -- let the type carry the guarantee rather than checking that
+    somebody maintained it.
 
     **There is no field for the password, the token, or a link**, and that absence
     is §6.1 made structural: this is the only thing a renderer is handed, so the
@@ -70,6 +69,12 @@ class Facts:
         }
 
 
+#: Every placeholder a template may use, **derived from :class:`Facts`** so the two
+#: cannot disagree. The closed set is the guard for UC-2 §6.1 -- see
+#: :mod:`sopuli.config.notify`, which refuses everything outside it at load.
+PLACEHOLDERS: tuple[str, ...] = tuple(Facts.__dataclass_fields__)
+
+
 def render(notify: Notify, facts: Facts) -> str:
     """The message this notification would send.
 
@@ -78,13 +83,14 @@ def render(notify: Notify, facts: Facts) -> str:
     against a mock of the thing it is supposed to prove, and a message pasted into
     a document from anything but a real render is a prediction.
 
-    :class:`AssertionError` if the placeholder set and :class:`Facts` disagree --
-    a programming error, not a configuration one, and the assertion is what keeps
-    "the closed set is the guard" true after somebody adds a fourth placeholder.
+    :class:`AssertionError` if :meth:`Facts.as_fields` stops covering every field
+    -- a programming error, not a configuration one. The *set* cannot drift, since
+    it is derived from the type; what a fourth field still needs is a line in
+    ``as_fields``, and this is what says so rather than rendering a hole.
     """
     fields = facts.as_fields()
     assert set(fields) == set(PLACEHOLDERS), (
-        f"notify placeholders and `Facts` disagree: {sorted(set(fields) ^ set(PLACEHOLDERS))}"
+        f"`as_fields` does not cover every field: {sorted(set(fields) ^ set(PLACEHOLDERS))}"
     )
     webhook = notify.webhook
     if webhook is None:  # pragma: no cover -- the builder fills it for every method

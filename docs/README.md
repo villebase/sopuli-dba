@@ -661,7 +661,7 @@ coming and what each one waits on.
 |---|---|---|
 | `personal_accounts:` | #467 | **built**, schema 1.4 |
 | `reset_records:` | #468, #511, #512, #514, #444 | **built**, schema 1.5; written by `account reset-password` since #511, locked on since #512, surveyed by `lock status` since #514, and carrying an unseen delivery's accessor in `delivery.to` since #444 |
-| `delivery:`, with `notify:` inside it | #440, #441, #442, #444 | **built** for two methods: `manual` (#441) and `vault_wrapped` (#444, the default). `notify:` has its grammar and §6.1's refusal since #442; **nothing is sent yet** -- that issue's second part opens the socket |
+| `delivery:`, with `notify:` inside it | #440, #441, #442, #444 | **built**. Two delivery methods -- `manual` (#441) and `vault_wrapped` (#444, the default) -- and `notify.method: webhook` (#442), which posts through the `[notify]` extra and warns rather than failing when it cannot |
 
 The verbs, for the same reason: `account suspend` (#463), `account list` (#490)
 and `reset-password` are built -- the latter on **both** the seen path (#441) and

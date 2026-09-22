@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 import pytest
 
 from sopuli.config.errors import ROOT
-from sopuli.config.notify import PLACEHOLDERS, build_notify
-from sopuli.notify import Facts, render
+from sopuli.config.notify import build_notify
+from sopuli.notify import PLACEHOLDERS, Facts, render
 
 AT = ROOT.key("delivery").key("notify")
 WHEN = datetime(2026, 9, 22, 10, 21, 0, tzinfo=UTC)
@@ -111,12 +111,20 @@ def test_a_renderer_cannot_be_handed_a_secret_at_all() -> None:
     assert set(signature(render).parameters) == {"notify", "facts"}
 
 
-def test_a_drifted_placeholder_set_fails_loudly() -> None:
-    """The run-time half of the first test in this section, exercised rather than
-    trusted: if `Facts` stops covering `PLACEHOLDERS`, rendering asserts instead of
-    producing a message with a hole in it."""
+def test_the_placeholder_set_cannot_drift_from_the_type() -> None:
+    """**Derived, not asserted.** `PLACEHOLDERS` is built from `Facts`'s fields, so
+    a fourth placeholder is a fourth field and there is no pair to keep in step --
+    the same move #519's `Handover` made, letting the type carry the guarantee.
+    This test is what says the derivation is the mechanism rather than a
+    coincidence."""
+    assert tuple(Facts.__dataclass_fields__) == PLACEHOLDERS
+
+
+def test_a_field_that_as_fields_forgot_fails_loudly() -> None:
+    """What is left to check after the derivation: a new field needs a line in
+    `as_fields`, and forgetting one would render a hole rather than raise."""
     broken = Facts(account="a", target="t")
     object.__setattr__(broken, "as_fields", lambda: {"account": "a"})
 
-    with pytest.raises(AssertionError, match="disagree"):
+    with pytest.raises(AssertionError, match="does not cover"):
         render(notify("{account}"), broken)  # type: ignore[arg-type]

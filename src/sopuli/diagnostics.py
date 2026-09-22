@@ -396,6 +396,22 @@ NO_RESET_RECORD = "SOPULI-W024"
 #: not write, or a store that is not there.
 RESET_RECORD_UNWRITTEN = "SOPULI-W025"
 
+#: The reset succeeded and nobody could be told it was waiting (#442).
+#:
+#: **A warning on a successful run**, for :data:`RESET_RECORD_UNWRITTEN`'s reason
+#: and more easily: by the time anything is posted the password has changed and the
+#: person can fetch it, so a run that failed over an unsent notification would
+#: report a false negative about the part that mattered. A notification carries
+#: nothing anybody needs -- §6.1 keeps it to "a password is ready" -- so the cost of
+#: losing it is that somebody has to be told another way.
+#:
+#: Distinct from the two above it because the object differs rather than the
+#: severity: those are about a *record*, which is read later and by other people,
+#: and this is about a *message*, which is read now and by one person. The next
+#: move differs too -- a failed notification is usually a revoked webhook, and the
+#: remedy is to tell the person directly today and fix the URL afterwards.
+NOTIFICATION_UNSENT = "SOPULI-W026"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -580,6 +596,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "run rather than a failure (UC-2 §3.4) -- but unlike an absent journal it is "
             "something to go and look at: a revoked token, a policy granting read and not "
             "write, or a store that is not reachable."
+        ),
+        NOTIFICATION_UNSENT: (
+            "The password was delivered and the notification saying so could not be sent. "
+            "A warning on a successful run for the same reason `SOPULI-W025` is, and more "
+            "easily: the notification carries nothing anybody needs (UC-2 §6.1 keeps it to "
+            '"a password is ready"), so what is lost is that somebody has to be told '
+            "another way. A revoked webhook is the usual cause; the URL is not repeated in "
+            "the message, because it is itself a credential."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -930,6 +954,34 @@ def no_reset_record() -> Diagnostic:
             "no `reset_records:` block is declared, so no record of this reset will be "
             "written and no advisory lock is taken on the account: the run document and "
             "the database are the whole record of it"
+        ),
+    )
+
+
+def notification_unsent(account: str, reason: str) -> Diagnostic:
+    """The password is waiting and the channel did not say so (#442).
+
+    The reason last, and verbatim, for :func:`reset_record_unwritten`'s reason: a
+    refused POST and an unreachable host send somebody to different places, and
+    only the channel's own words distinguish them.
+
+    **The account is named and the URL is not.** A chat incoming-webhook URL is a
+    credential (C9), so repeating it in a warning would put one wherever warnings
+    go -- which on this verb includes a run document. What an operator needs in
+    order to act is *who was not told*, so that is what this carries.
+
+    The remedy is in the message rather than in a ``hint``, because
+    :class:`~sopuli.output.document.Diagnostic` has no hint field: a diagnostic is
+    one sentence in ``diagnostics[]`` and the registry in ``03-json-output.md`` §3
+    is where the longer explanation lives.
+    """
+    return Diagnostic(
+        level="warning",
+        code=NOTIFICATION_UNSENT,
+        message=(
+            f"the password for {account} was delivered and the notification could not be "
+            f"sent, so nobody has been told it is waiting -- tell them another way today "
+            f"and look at `delivery.notify.webhook.url` afterwards: {reason}"
         ),
     )
 

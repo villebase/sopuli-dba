@@ -17,10 +17,10 @@ from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.notify import (
     NAMED_SECRETS,
     NOTIFY_METHODS,
-    PLACEHOLDERS,
     build_notify,
     unserviceable,
 )
+from sopuli.notify import PLACEHOLDERS
 
 AT = ROOT.key("delivery").key("notify")
 
@@ -151,15 +151,36 @@ def test_a_literal_brace_is_not_a_placeholder() -> None:
 # ------------------------------------------------------- nothing sends yet ---
 
 
-def test_a_configured_channel_says_it_cannot_send_yet() -> None:
-    """E4/E5's shape. A block that validates clean reads as a channel that will
-    send, and #442's part 2 is what opens the socket -- so until then the warning
-    is what keeps silence from being read as a message going out."""
+def test_a_served_channel_with_its_client_installed_warns_about_nothing() -> None:
+    """`webhook` is implemented since #442's second part, and `httpx` is installed
+    in the dev environment -- so there is nothing to say. This test said the
+    opposite while part 1 was the whole of it."""
+    assert unserviceable(built()) is None
+
+
+def test_a_channel_whose_client_is_missing_says_what_to_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E4's own case: the file is valid, the install is incomplete, and `pip` is the
+    remedy. Asked **without importing** the client, which is what lets a validator
+    report a missing one at all."""
+    monkeypatch.setattr("sopuli.config.notify.NOTIFIERS", {"webhook": _uninstallable()})
+
     notice = unserviceable(built())
 
     assert notice is not None
-    assert "not implemented in this build" in notice
-    assert "nothing will be sent" in notice
+    assert "its client is not installed" in notice
+    assert "sopuli-dba[notify]" in notice
+
+
+def _uninstallable() -> Any:
+    from sopuli.notify.registry import Notifier
+
+    return Notifier(
+        module="sopuli.notify.webhook",
+        extra="notify",
+        provides=frozenset({"a_module_nobody_has_installed"}),
+    )
 
 
 def test_no_notify_block_warns_about_nothing() -> None:

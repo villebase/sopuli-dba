@@ -129,6 +129,7 @@ from sopuli.diagnostics import (
     lock_diagnostics,
     no_reset_journal,
     no_reset_record,
+    notification_unsent,
     reset_record_unwritten,
     unlistable_stores,
     vault_diagnostics,
@@ -183,7 +184,12 @@ from sopuli.lock.takeover import (
     check_fenceable,
     plan_break,
 )
+from sopuli.material import environment as material_environment
+from sopuli.material import resolve as resolve_material
 from sopuli.material import strip_one_newline
+from sopuli.notify import Facts as NotifyFacts
+from sopuli.notify import registry as notify_registry
+from sopuli.notify import render as render_notification
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -1729,6 +1735,13 @@ def account_reset_password(
             failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
             document.diagnostics.append(failed)
             notices.append(failed)
+        # #442's, and appended after the record's so the two read in the order they
+        # happened: the notification goes out first, and the journal is written
+        # last because it holds what happened (§6.4).
+        if one.notify_error is not None:
+            unsent = notification_unsent(one.account, one.notify_error)
+            document.diagnostics.append(unsent)
+            notices.append(unsent)
     document.finish(
         _reset_exit(states, stolen=stolen is not None, changed=changed),
         summarise_reset(states, changed=changed),
@@ -2026,6 +2039,12 @@ class _Reset:
     #: field**: the caller turns it into `SOPULI-W025` in ``diagnostics[]``,
     #: which is where a consumer already looks for what a run could not do.
     record_error: _RecordFailure | None = None
+    #: Why this reset's notification could not be sent, where a channel was
+    #: configured and failed (#442). **Never serialised as a result field**, for
+    #: `record_error`'s reason: the caller turns it into `SOPULI-W026` in
+    #: ``diagnostics[]``, which is where a consumer already looks for what a run
+    #: could not do.
+    notify_error: str | None = None
     #: **What the operator is shown, and it is secret-bearing on both paths**: the
     #: password block on the seen path, and the wrapping token on an unseen one
     #: (#444). This comment said "the password block, on the seen path only" until
@@ -2230,6 +2249,22 @@ def _reset_one(
             duration_ms=_elapsed(started),
         )
 
+        # **After the database confirms, and before the record** (#442). The person
+        # is told a password is waiting only once it is -- notifying before the DDL
+        # would be a message that is false for as long as the statement takes, and
+        # false permanently if it fails. The record stays last, because §6.4 says
+        # it holds what happened and a notification is part of that.
+        #
+        # **A failure here never fails the run**, which is `SOPULI-W026` and UC-2
+        # §3.4's argument one object over: the password has changed and the person
+        # can fetch it, so ending the run would report a false negative about the
+        # part that mattered. What is lost is that somebody must be told another
+        # way, which is what the warning says.
+        notify_error = _notify(
+            run, config, delivery, account=account, target=target, receipt=receipt
+        )
+        row = replace(row, notify_error=notify_error)
+
         def journalled(one: _Reset) -> _Reset:
             """The record, written after the database and after delivery (§6.4).
 
@@ -2317,6 +2352,63 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
             ),
         )
     return chosen
+
+
+def _notify(
+    run: Invocation,
+    config: Config,
+    delivery: Delivery,
+    *,
+    account: str,
+    target: ExpandedTarget,
+    receipt: Receipt | None,
+) -> str | None:
+    """Say a password is waiting, or why nobody could be told (#442).
+
+    ``None`` both when it worked and when no channel is configured -- an estate
+    that configured none has not failed to notify, and a return value that
+    distinguished the two would invite a caller to warn about a choice somebody
+    made. `config validate` is where a missing channel is reported, at load, which
+    is the only place it can be reported before a password changes.
+
+    **Never raises.** Every failure comes back as a string the caller turns into
+    `SOPULI-W026`, because by here the password has changed and the person can
+    fetch it: UC-2 §3.4's argument, one object over, and the reason the whole call
+    is wrapped rather than only the POST -- resolving the URL reads a file or an
+    environment variable, and a missing variable is as much "nobody was told" as a
+    refused request is.
+
+    **Nothing here can reach the password.** It is not a parameter, and what the
+    channel sends is rendered from :class:`~sopuli.notify.Facts`, which has no
+    field one could occupy. That is §6.1 made structural rather than checked here.
+    """
+    notify = delivery.notify
+    if notify is None:
+        return None
+    try:
+        # Imported on first use, ADR-006 rule 1: `webhook` reaches `httpx`, and an
+        # offline verb must not load it. `resolve` turns a missing client into
+        # `SOPULI-20003` with an install line -- which lands in the warning below
+        # rather than ending the run, because a reset that already succeeded is not
+        # made better by failing over a `pip` command.
+        channel = notify_registry.resolve(notify.method)
+        message = render_notification(
+            notify,
+            NotifyFacts(
+                account=account,
+                target=target.name,
+                expires_at=receipt.expires_at if receipt is not None else None,
+            ),
+        )
+        url = resolve_material(
+            notify.webhook.url,  # type: ignore[union-attr]
+            env=material_environment(),
+            where="delivery.notify.webhook.url",
+        )
+        channel.send(url, message)
+    except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
+        return _as_error(error).message
+    return None
 
 
 def _delivery_backends(

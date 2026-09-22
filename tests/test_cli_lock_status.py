@@ -600,3 +600,264 @@ def test_it_takes_no_lock_of_its_own(
     for store in stores.values():
         assert store.read(lock_path(DEV)) is None
         assert store.read(lock_path(PROD)) is None
+
+
+# ------------------------------------------------- UC-2's reset locks (#514) ---
+
+#: A configuration with no `applications:` and no `accounts:` at all -- the
+#: shape UC-2 alone produces, and the one that reported an empty estate while a
+#: reset held a lock. `personal_accounts:` declares one name and one predicate,
+#: because the predicate is the reason the keys cannot be enumerated offline.
+RESET_CONFIG = """\
+version: 1
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com:8200
+targets:
+  - name: appdb-alpha
+    type: oracle
+    dsn: db-dev.example.com:1521/alpha.pdb.example.com
+    environment: dev
+    labels: { env: dev }
+    vault: vault-dev
+personal_accounts:
+  - accounts: [acme_dev_alice]
+    policy: personal-standard
+  - profile: ACME_DEV_PROF
+    policy: personal-standard
+reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets
+delivery:
+  method: manual
+  manual:
+    force_expire: true
+policies:
+  personal-standard:
+    password: { length: 20, charset: alnum_safe, first_char: alpha }
+"""
+
+#: Where a reset of `acme_dev_alice` on `appdb-alpha` takes its lock: the
+#: record's own path (UC-2 3.3), which no binding produces.
+RESET_LOCK = LockKey(store="vault-dev", path="sopuli/personal-resets/appdb-alpha/acme_dev_alice")
+
+#: The same, for somebody the file names nowhere -- admitted by the profile
+#: predicate, or not admitted at all. Offline there is no way to tell, which is
+#: why the region is reported by prefix rather than by key.
+PREDICATE_LOCK = LockKey(store="vault-dev", path="sopuli/personal-resets/appdb-alpha/acme_dev_zoe")
+
+
+#: `RESET_CONFIG` with an application beside the personal accounts, so one
+#: survey holds both kinds of record and the summary has to count them apart.
+BOUND_CONFIG = RESET_CONFIG.replace(
+    "personal_accounts:",
+    """applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/{target}#password"
+personal_accounts:""",
+    1,
+)
+
+#: `RESET_CONFIG` with the journal taken away -- a `manual` estate that keeps no
+#: record, which UC-2 3.4 calls a documented mode. Nothing declares a lock path
+#: here and nothing was listed, and that is the sentence this config exists to
+#: keep distinct from the one above it.
+NO_JOURNAL_CONFIG = RESET_CONFIG.replace(
+    """reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets
+""",
+    "",
+    1,
+)
+
+#: The same, with the application bound *under* the reset prefix. Nothing
+#: forbids it, and it is where the two membership rules meet.
+UNDER_PREFIX_CONFIG = RESET_CONFIG.replace(
+    "personal_accounts:",
+    """applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "sopuli/personal-resets/{target}#password"
+personal_accounts:""",
+    1,
+)
+
+
+def reset_held(**kwargs: Any) -> dict[str, Any]:
+    return held(command="account reset-password", **kwargs)
+
+
+def test_a_held_reset_lock_is_surveyed_although_no_binding_declares_it(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """#514, and it is the whole bug.
+
+    Measured on the tier-1 stack: with the reset lock held, a UC-2-only
+    configuration printed `no lock paths are declared` while `vault kv get`
+    showed a `held` record this tool had written a second earlier. A listing verb
+    answering "nothing" while something is held is the one wrong answer it must
+    not give.
+    """
+    with_locks((RESET_LOCK, reset_held()))
+
+    result = run(runner, write_config(RESET_CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "no lock paths are declared" not in result.output
+    assert RESET_LOCK.path in result.output
+
+
+def test_a_reset_lock_belongs_to_this_estate_rather_than_to_nobody(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The third answer. `declared: false` would tell an operator a colleague's
+    reset belongs to another configuration, and `declared_by: binding` would
+    claim the file enumerates a path it can only describe by prefix."""
+    with_locks((RESET_LOCK, reset_held()))
+
+    result = run(runner, write_config(RESET_CONFIG), "--output", "json")
+
+    entry = section(result)["found"][0]
+    assert entry["declared"] is True
+    assert entry["declared_by"] == "reset_records"
+
+
+def test_a_predicate_declared_account_is_reported_like_any_other(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The reason the region is listed rather than expanded.
+
+    `acme_dev_zoe` is in no `accounts:` list; whether the profile admits her is a
+    question only a database can answer, and this verb asks none. Listing the
+    prefix reports her lock without needing to know -- which an enumeration of
+    the name-declared accounts would not have done.
+    """
+    with_locks((RESET_LOCK, reset_held()), (PREDICATE_LOCK, reset_held()))
+
+    result = run(runner, write_config(RESET_CONFIG), "--output", "json")
+
+    entries = {entry["path"]: entry["declared_by"] for entry in section(result)["found"]}
+    assert entries == {
+        RESET_LOCK.path: "reset_records",
+        PREDICATE_LOCK.path: "reset_records",
+    }
+
+
+def test_a_record_outside_the_declared_prefix_is_still_a_leftover(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The region is a prefix, not the store. A record elsewhere in the same
+    mount belongs to whoever put it there, and claiming it because the store is
+    shared would undo exactly what #150 added."""
+    with_locks((RESET_LOCK, reset_held()), (LEFTOVER, held()))
+
+    result = run(runner, write_config(RESET_CONFIG), "--output", "json")
+
+    entries = {entry["path"]: entry["declared_by"] for entry in section(result)["found"]}
+    assert entries[LEFTOVER.path] is None
+    assert entries[RESET_LOCK.path] == "reset_records"
+
+
+def test_a_record_at_the_prefix_itself_is_not_claimed(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """`record_path` always appends a target and an account, so nothing this tool
+    writes sits at the bare prefix. Claiming one would take an estate's own
+    leftover on the strength of a shared spelling."""
+    at_prefix = LockKey(store="vault-dev", path="sopuli/personal-resets")
+    with_locks((at_prefix, held()))
+
+    result = run(runner, write_config(RESET_CONFIG), "--output", "json")
+
+    assert section(result)["found"][0]["declared_by"] is None
+
+
+def test_the_reset_store_is_opened_although_no_binding_names_it(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """Half of the bug was upstream of membership: with no bindings there was no
+    store in the set to open, so `discover()` never contacted the journal's vault
+    and there was nothing to classify."""
+    stores = with_locks()
+
+    result = run(runner, write_config(RESET_CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "vault-dev" in stores
+
+
+def test_an_empty_prefix_says_it_was_surveyed(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """*Nothing is held* and *nothing was surveyed* were the same sentence, and
+    telling them apart is what #514 was filed about. A configuration that
+    declares no journal keeps the shorter line."""
+    with_locks()
+
+    surveyed = run(runner, write_config(RESET_CONFIG))
+    unsurveyed = run(runner, write_config(NO_JOURNAL_CONFIG))
+
+    assert "nothing is held under the reset-record prefix" in surveyed.output
+    assert unsurveyed.output.rstrip().endswith("no lock paths are declared")
+
+
+def test_a_reset_lock_is_counted_beside_the_declared_paths_not_among_them(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """A leftover is out of the denominator because it is not this estate's; a
+    reset lock is out of it although it is, because there is no denominator to
+    put it in. Counting the records that happen to exist would print a proportion
+    whose bottom number is its top one."""
+    with_locks((DEV, held()), (RESET_LOCK, reset_held()))
+
+    result = run(runner, write_config(BOUND_CONFIG))
+
+    assert "1 of 1 declared lock paths held" in result.output
+    assert "1 reset lock under the declared prefix (1 held)" in result.output
+
+
+def test_a_reset_lock_gets_a_table_of_its_own(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """The heading carries the distinction, as #150's does: a table read by eye
+    answers "whose is this" once, above the rows, rather than in a seventh column
+    that is the same word on almost every line."""
+    with_locks((RESET_LOCK, reset_held()))
+
+    result = run(runner, write_config(RESET_CONFIG))
+
+    assert "personal-account resets, under the prefix this config declares:" in result.output
+    assert "not declared by this config" not in result.output
+
+
+def test_a_binding_under_the_reset_prefix_is_reported_as_the_binding_it_is(
+    runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
+) -> None:
+    """Specificity order. Nothing stops an operator pointing `reset_records:` at
+    a prefix an application also binds under, and there the enumerated
+    declaration is the one they can act on by name."""
+    binding = LockKey(store="vault-dev", path="sopuli/personal-resets/appdb-alpha")
+    with_locks((binding, held()))
+
+    result = run(runner, write_config(UNDER_PREFIX_CONFIG), "--output", "json")
+
+    assert section(result)["found"][0]["declared_by"] == "binding"
+
+
+def test_the_document_with_a_reset_lock_validates(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    validator: Draft202012Validator,
+) -> None:
+    """Invariant 12: `declared_by` is a new required field, so the schema moved
+    to 1.28 and a sample has to prove it -- including the `null` an entry nothing
+    declares carries."""
+    with_locks((RESET_LOCK, reset_held()), (LEFTOVER, held()))
+
+    result = run(runner, write_config(RESET_CONFIG), "--output", "json")
+
+    assert not list(validator.iter_errors(json.loads(result.output)))

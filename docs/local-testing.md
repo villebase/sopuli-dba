@@ -2534,12 +2534,27 @@ reset acme_dev_alice on 1 of 1 targets
 
 hand this to acme_dev_alice; it unwraps once:
 
-    hvs.CAESIB2WWn9A1NccToMYdHX4t2Z5L6885kwBUtU1Zn625o-cGh4KHGh2cy5LaEx1YXhjVjhYdXRnaGEyd1piYTN5ZkM
+    hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA
 
 It stops working at 2026-09-22T10:21:00.953243Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ```
+
+**The plan also went to stderr**, before anything was issued, which that capture
+does not show because it is stdout. Both streams carry it on a real run: stdout
+because the plan is part of the result, and stderr because the plan has to survive
+a run that raises part way through — a multi-target reset that fails on target
+three never builds the returned string at all, and the operator would otherwise be
+left with no record of what it had been about to touch. `--dry-run` echoes it once,
+to stdout, because a preview mutates nothing for an early copy to outlive.
+
+**The token above is substituted and nothing else is.** The run was real, against
+the tier-1 stack, and the value it printed is replaced here for the reason the
+password is in the seen path's sample and then some: a response-wrapping token *is*
+a credential that retrieves a password (UC-2 §6.1), and committing one to a
+repository is committing material pulled from a real environment. What this sample
+is for is the shape.
 
 **That run was redirected to a file**, which is the first thing to notice: it is
 the state `manual` refuses with exit 8. An unseen delivery is allowed a pipe on
@@ -2597,7 +2612,7 @@ sopuli --config wrapped.yaml account reset-password --account acme_dev_alice --o
 ```
 hand this to acme_dev_alice; it unwraps once:
 
-    hvs.CAESIPd7bpkB6tT7D_YY1DLnwqyDJYL88ByHFCNxzuoxFt6OGh4KHGh2cy5MVzN0MU5QSENDb1BtMXRjdUxJT1RHdVY
+    hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA
 
 It stops working at 2026-09-22T10:21:35.594645Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and

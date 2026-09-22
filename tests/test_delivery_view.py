@@ -15,7 +15,7 @@ from sopuli.delivery import Receipt
 from sopuli.output.delivery_view import UNKNOWN_EXPIRY, render_handover
 from sopuli.secrets import Secret
 
-TOKEN = "hvs.CAESIB2WWn9A1NccToMYdHX4t2Z5L6885kwBUtU1Zn625o-c"
+TOKEN = "hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA"
 WHEN = datetime(2026, 9, 22, 10, 21, 0, tzinfo=UTC)
 
 

@@ -1044,3 +1044,51 @@ def test_a_store_that_cannot_wrap_is_refused_before_the_ddl(
     assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
     assert "needs a HashiCorp store" in str(result.exception)
     assert account() == before, "the DDL ran although delivery could never have worked"
+
+
+def test_the_plan_reaches_the_operator_before_the_unseen_path_mutates(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """Invariant 8 on a path with no prompt (Copilot's review of #518).
+
+    The seen path echoes the plan early so the prompt cannot come first (#505);
+    here there is no prompt, and the argument is what happens when the run raises
+    part way through. The verb returns its whole output as one string, so a failure
+    before the return leaves the operator nothing at all -- no plan, no record of
+    what was about to be touched. Echoing to stderr makes the plan survive that.
+
+    Asserted on the stream rather than on ordering within one buffer, because that
+    is the claim: stdout carries the result and stderr carries the plan, and a
+    reader who lost stdout still knows what the run was for.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "Plan:" in result.stderr
+    assert ACCOUNT in result.stderr
+
+
+def test_a_preview_does_not_echo_the_plan_twice(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """`--dry-run` mutates nothing, so there is no failure for an early copy to
+    survive and no prompt for it to precede -- and a preview that printed its plan
+    on both streams would just be noisier."""
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT, "--dry-run")
+
+    assert "Plan:" in result.stdout
+    assert "Plan:" not in result.stderr

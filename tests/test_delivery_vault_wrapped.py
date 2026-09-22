@@ -35,14 +35,17 @@ from sopuli.store.hashicorp._transport import Response
 
 PASSWORD = "Correct#Horse9Battery"
 
-#: What Vault actually answers. Copied from a real wrap against the tier-1
-#: container rather than written from the documentation -- the `accessor` and the
-#: token's shape are both what that run returned.
+#: What Vault actually answers: the *shape* is from a real wrap against the tier-1
+#: container rather than from the documentation, which is what makes it worth
+#: having. **The token and the accessor are synthetic**, and deliberately look it.
+#: A response-wrapping token is a credential that retrieves a password (UC-2 §6.1)
+#: and a real one has no business in a repository -- and a fixture only needs to be
+#: a plausible string, because nothing here unwraps it.
 WRAPPED = {
     "request_id": "e4f3753a-3e93-fe57-f164-e506470b38fc",
     "wrap_info": {
-        "token": "hvs.CAESIB2WWn9A1NccToMYdHX4t2Z5L6885kwBUtU1Zn625o-c",
-        "accessor": "5pjuYin3cf8Iv8GOnZLL9qWn",
+        "token": "hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA",
+        "accessor": "EXAMPLEaccessor000000000",
         "ttl": 900,
         "creation_time": "2026-09-22T10:06:50.837130Z",
         "creation_path": "sys/wrapping/wrap",
@@ -142,20 +145,40 @@ def test_the_receipt_carries_the_accessor_which_names_without_using() -> None:
     """The one field the run document may carry: it identifies the handover and
     cannot fetch it, which is what lets a document describe a delivery without
     becoming the thing that leaks it."""
-    assert deliver(WRAPPED).accessor == "5pjuYin3cf8Iv8GOnZLL9qWn"
+    assert deliver(WRAPPED).accessor == "EXAMPLEaccessor000000000"
 
 
 def test_expiry_comes_from_the_answer_rather_than_from_the_configured_ttl() -> None:
     """A mount's `max_ttl` caps a wrap silently, so reporting the request back as
     though it were the outcome would tell an operator the handover lasts longer
     than it does. Asserted with a `ttl` the config did not ask for."""
-    before = datetime.now(UTC)
-
     receipt = deliver({"wrap_info": {**WRAPPED["wrap_info"], "ttl": 60}}, ttl="15m")  # type: ignore[dict-item]
 
+    assert receipt.expires_at == datetime(2026, 9, 22, 10, 7, 50, 837130, tzinfo=UTC)
+
+
+def test_expiry_is_the_server_s_creation_time_plus_the_server_s_ttl() -> None:
+    """Both numbers from the answer, which is what the docstring claimed and the
+    first draft did not do (Copilot's review of #518): it added the server's TTL to
+    the *client's* clock, wrong by the clock difference plus the round trip. Pinned
+    to an exact value, because "about right" is what the bug looked like."""
+    receipt = deliver(WRAPPED)
+
+    assert receipt.expires_at == datetime(2026, 9, 22, 10, 21, 50, 837130, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("created", ["not a timestamp", "", 12, None, {"t": 1}])
+def test_a_malformed_creation_time_falls_back_to_the_client_clock(created: Any) -> None:
+    """Rather than to an unknown expiry, which is where this departs from the
+    review's suggested fix. The TTL is the number that matters and it parsed;
+    dropping it would replace a figure wrong by milliseconds with no figure at all,
+    in the one line that tells somebody how long they have."""
+    before = datetime.now(UTC)
+
+    receipt = deliver({"wrap_info": {**WRAPPED["wrap_info"], "creation_time": created}})  # type: ignore[dict-item]
+
     assert receipt.expires_at is not None
-    seconds = (receipt.expires_at - before).total_seconds()
-    assert 55 <= seconds <= 65, "expiry was computed from the string, not the answer"
+    assert 890 <= (receipt.expires_at - before).total_seconds() <= 910
 
 
 @pytest.mark.parametrize("ttl", [0, -1, "900", None, True])

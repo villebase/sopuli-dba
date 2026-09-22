@@ -328,14 +328,15 @@ It carries what happened, and nothing that happened *to*:
  "reset_at": "2026-09-17T09:14:22Z",
  "seen": false,
  "expired": false,
- "delivery": {"method": "vault_wrapped", "to": "5pjuYin3cf8Iv8GOnZLL9qWn"},
+ "delivery": {"method": "vault_wrapped", "to": "EXAMPLEaccessor000000000"},
  "by": {"host": "dba-ws-4.example.com", "os_user": "dba01"},
  "correlation_id": "01J..."}
 ```
 
 **On `vault_wrapped`, `to` is the wrapping token's *accessor*, and this example
 used to read `cubbyhole/response`** — a placeholder written before the method
-existed. The accessor is what Vault returns beside the token; it names the handover
+existed. The accessor above is a synthetic stand-in. A real one is what Vault returns
+beside the token; it names the handover
 in Vault's own audit log and **cannot unwrap it**, which is the only reason a
 journal that "anyone who may know *that* a reset happened" can read is allowed to
 carry it at all. The token itself must never be written here: §6.1 makes it

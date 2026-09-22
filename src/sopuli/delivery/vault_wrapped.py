@@ -89,9 +89,11 @@ class NotWrappableError(RefusedError):
         super().__init__(
             f"`delivery.method: vault_wrapped` needs a HashiCorp store and {vault!r} is not one",
             hint=(
-                "response wrapping is a Vault feature with no equivalent elsewhere. Point "
-                "`reset_records.vault` -- and the delivery -- at a `type: hashicorp` entry, "
-                "or choose another method (UC-2 6.2)"
+                "response wrapping is a Vault feature with no equivalent elsewhere. Name a "
+                "`type: hashicorp` entry in `delivery.vault_wrapped.vault`, on the target, "
+                "or as `defaults.vault` -- or choose another method (UC-2 6.2). Not "
+                "`reset_records.vault`, which this does not read: the journal and the "
+                "delivery target are two objects with two lifetimes (§3.5)"
             ),
         )
 
@@ -166,7 +168,7 @@ def _receipt(body: Any) -> Receipt:
 
 
 def _expiry(info: dict[str, Any]) -> datetime | None:
-    """When the cubbyhole stops answering, per the server's own clock.
+    """When the cubbyhole stops answering, from the server's own two numbers.
 
     Computed from the response rather than from the configured string, because the
     TTL Vault applied may be shorter than the one asked for -- a mount's
@@ -174,13 +176,42 @@ def _expiry(info: dict[str, Any]) -> datetime | None:
     were the outcome would tell an operator the handover lasts longer than it
     does.
 
+    **``creation_time`` plus ``ttl``, not *now* plus ``ttl``** (Copilot's review of
+    #518). The first draft added the server's TTL to the *client's* clock while
+    this docstring claimed it was the server's answer, which is wrong by however
+    far the two clocks differ plus the round trip -- small, usually, and not
+    something to be casually wrong about in the one line that tells somebody how
+    long they have.
+
     ``None`` when the answer carries no usable ``ttl``: a receipt that admits to
     not knowing is better than one carrying a number this module made up.
+
+    **A malformed ``creation_time`` falls back to the client clock rather than to
+    ``None``**, which is where this departs from the review's suggested fix. The
+    TTL is the number that matters and it parsed; discarding it would replace a
+    figure that is wrong by milliseconds with no figure at all, and the operator
+    reading the line needs to know roughly when their hand-over stops working.
     """
     ttl = info.get("ttl")
     if not isinstance(ttl, int) or isinstance(ttl, bool) or ttl <= 0:
         return None
-    return datetime.now(UTC) + timedelta(seconds=ttl)
+    return (_created(info) or datetime.now(UTC)) + timedelta(seconds=ttl)
+
+
+def _created(info: dict[str, Any]) -> datetime | None:
+    """``wrap_info.creation_time``, or ``None`` when it is not a timestamp.
+
+    Vault sends RFC 3339 with a ``Z``, which :meth:`datetime.fromisoformat` reads
+    from 3.11 on -- the floor this project already requires.
+    """
+    created = info.get("creation_time")
+    if not isinstance(created, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(created)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def for_store(store: SecretStore, *, vault: str, ttl: str) -> VaultWrapped:
@@ -198,9 +229,21 @@ def for_store(store: SecretStore, *, vault: str, ttl: str) -> VaultWrapped:
     is guess -- a store with no transport is :class:`NotWrappableError`, named and
     refused at plan time.
     """
+    transport = getattr(store, "transport", None)
+    if transport is None:
+        # **Before the import, and that ordering is the whole of it** (Copilot's
+        # review of #518). A base install has no `httpx`, so importing the
+        # transport to compare against would raise `ModuleNotFoundError` for an
+        # estate whose delivery store is not a HashiCorp one at all -- burying the
+        # capability refusal this function exists to give under an import error
+        # about a client that was never relevant. A store with no transport cannot
+        # be a HashiCorp one, which is answerable without importing anything.
+        raise NotWrappableError(vault)
+
     from sopuli.store.hashicorp._transport import Transport
 
-    transport = getattr(store, "transport", None)
+    # Only reachable where a store *has* a transport, which means a HashiCorp
+    # backend was opened, which means the client is installed.
     if not isinstance(transport, Transport):
         raise NotWrappableError(vault)
     return VaultWrapped(transport=transport, ttl=ttl)

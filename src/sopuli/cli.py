@@ -1627,14 +1627,26 @@ def account_reset_password(
         document.diagnostics.append(unrecorded)
         notices.append(unrecorded)
 
-    if not run.dry_run and delivery.is_seen:
-        # **The plan goes out before the first statement, and before the prompt**
-        # (invariant 8; Copilot's review of #505). The verb returns its whole
-        # output as a string, so without this the operator would be asked to
-        # expose a password before seeing what the run was about to do -- and by
-        # then the DDL has already run. On stderr, which is where
-        # `_confirm_environments` puts the same thing for the same reason: stdout
-        # carries the result.
+    if not run.dry_run:
+        # **The plan goes out before the first statement** (invariant 8; Copilot's
+        # reviews of #505 and #518). The verb returns its whole output as a
+        # string, so without this nothing reaches the operator until the run is
+        # over. On stderr, which is where `_confirm_environments` puts the same
+        # thing for the same reason: stdout carries the result.
+        #
+        # **On the seen path the argument is the prompt**: without this the
+        # operator would be asked to expose a password before seeing what the run
+        # was about to do, and by then the DDL has already run (#505).
+        #
+        # **On an unseen path there is no prompt, and the argument is failure**
+        # (#518). That review read it as invariant 8 being broken outright, which
+        # is arguable -- the plan is still the first thing in the returned output,
+        # and a path with no consent step has no decision to protect. What is not
+        # arguable is the multi-target run that raises on target three: the
+        # returned string is never built, so the operator gets a traceback-shaped
+        # failure with no record of what the run had been about to touch. That is
+        # the same case #505's `click.Abort` handling exists for, reached by a
+        # different route, and echoing here is the same fix.
         click.echo(header, err=True)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that

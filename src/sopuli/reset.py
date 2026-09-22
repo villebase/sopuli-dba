@@ -125,8 +125,9 @@ class DeliveryUnavailableError(RefusedError):
         super().__init__(
             f"`delivery.method: {method}` is configured and is not implemented in this build",
             hint=(
-                "only `manual` can deliver today (#441); the unseen methods are #444-#447. "
-                "`config validate` warns about this before a run needs it"
+                "this build serves `manual` (#441) and `vault_wrapped` (#444); the methods "
+                "still to come are #445-#447 and `smtp_encrypted`. `config validate` warns "
+                "about this before a run needs it"
             ),
         )
 

@@ -2024,11 +2024,19 @@ class _Reset:
     #: field**: the caller turns it into `SOPULI-W025` in ``diagnostics[]``,
     #: which is where a consumer already looks for what a run could not do.
     record_error: _RecordFailure | None = None
-    #: The rendered password block, on the seen path only. **Never serialised**:
-    #: `as_json` cannot reach it, and there is no field in the schema it could
-    #: go in. It travels here because the caller prints it after the table, and
-    #: the ordering of those two is a display decision rather than a safety one
-    #: -- the safety is that the run never got this far unless every guard passed.
+    #: **What the operator is shown, and it is secret-bearing on both paths**: the
+    #: password block on the seen path, and the wrapping token on an unseen one
+    #: (#444). This comment said "the password block, on the seen path only" until
+    #: the code review of #518, which is worth noting because it is the field's
+    #: one statement about what it holds -- and :class:`_Reset` is a plain frozen
+    #: dataclass, so the generated ``__repr__`` renders this unredacted. Nothing
+    #: does that today; the comment is what tells the next reader not to.
+    #:
+    #: **Never serialised**: `as_json` cannot reach it, and there is no field in
+    #: the schema it could go in. It travels here because the caller prints it
+    #: after the table, and the ordering of those two is a display decision rather
+    #: than a safety one -- the safety is that the run never got this far unless
+    #: every guard passed.
     shown: str | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -2334,8 +2342,20 @@ def _delivery_backend(
     name = _delivery_store(config, delivery, target)
     store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
     wrapped = delivery.vault_wrapped
-    ttl = wrapped.ttl if wrapped is not None else ""
-    return vault_wrapped.for_store(store, vault=name, ttl=ttl)
+    if wrapped is None:  # pragma: no cover -- unreachable through a config file
+        # Unreachable through a file: `_require_sub_block` and `_build_wrapped`
+        # between them guarantee the block is populated whenever the method is
+        # selected. It is a refusal rather than an empty string anyway (the code
+        # review of #518), because `ttl=""` sends an empty `X-Vault-Wrap-TTL` and
+        # surfaces as Vault declining to wrap -- a message about a stripped header
+        # rather than about a missing TTL, after a password has been drawn. The
+        # module's own rule is that it must not guess.
+        raise RefusedError(
+            f"`delivery.method: {delivery.method}` has no settings, so no TTL is known",
+            at=ROOT.key("delivery").key(delivery.method),
+            hint="write a `ttl` under the method (UC-2 6.3)",
+        )
+    return vault_wrapped.for_store(store, vault=name, ttl=wrapped.ttl)
 
 
 def _reset_policy(
@@ -2402,7 +2422,11 @@ def _hand_over(
     pipe a handover script needs is the thing `manual` forbids on purpose.
     """
     if not delivery.is_seen:
-        return render_handover(receipt, account=account) if receipt is not None else None
+        return (
+            render_handover(receipt, account=account, target=target)
+            if receipt is not None
+            else None
+        )
     click.confirm(
         f"show the new password for {account} on {target} on this terminal?",
         abort=True,

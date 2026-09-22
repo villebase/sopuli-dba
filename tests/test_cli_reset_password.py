@@ -1092,3 +1092,56 @@ def test_a_preview_does_not_echo_the_plan_twice(
 
     assert "Plan:" in result.stdout
     assert "Plan:" not in result.stderr
+
+
+def test_a_delivery_with_no_store_anywhere_in_the_chain_is_refused(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """The code review of #518: the refusal existed and nothing exercised it.
+
+    §3's chain runs out when the method names no `vault:`, the target names none
+    and `defaults.vault` is unset. That is knowable from the file, so it is refused
+    before anything connects -- asserted against an address nothing answers, so a
+    passing test cannot be one that reached a database first.
+
+    Exit 8 rather than 9, following `deliverable`'s precedent for "no `delivery:`
+    is configured": the file is not malformed, it is a delivery with nowhere to
+    deliver.
+    """
+    config = OFFLINE.replace(
+        "method: manual\n  manual:\n    force_expire: true",
+        "method: vault_wrapped\n  vault_wrapped:\n    ttl: 15m",
+    )
+
+    result = run(runner, write_config(config), "--account", ACCOUNT)
+
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert "no store to deliver into" in str(result.exception)
+    assert "defaults.vault" in str(result.exception.hint)
+
+
+def test_each_target_s_handover_names_its_target(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    journal: Any,
+    private_mount: str,
+) -> None:
+    """The defect the code review of #518 found, from the operator's side.
+
+    A reset with no `--target` reaches every declared target and draws a *separate*
+    password for each, so the hand-over blocks have to be told apart. They were
+    not: each read "hand this to alice" and carried a different token, and sending
+    the wrong one hands somebody a password that does not work on the host they
+    were told about.
+
+    One target here, because the tier-1 stack has one -- so what this pins is that
+    the target reaches the block at all. `tests/test_delivery_view.py` holds the
+    rendering, where two of them can be compared without a database.
+    """
+    config = write_config(_wrapped_config(live_oracle, journal, private_mount))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert f"hand this to {ACCOUNT} for tier1-oracle" in result.output

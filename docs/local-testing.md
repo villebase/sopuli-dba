@@ -2532,7 +2532,7 @@ acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
 
 reset acme_dev_alice on 1 of 1 targets
 
-hand this to acme_dev_alice; it unwraps once:
+hand this to acme_dev_alice for free-pdb; it unwraps once:
 
     hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA
 
@@ -2565,6 +2565,14 @@ detectable, against a password good until somebody's first logon.
 
 **No prompt, either.** The seen path asks every time and `--confirm` cannot answer
 it; there is nothing to ask here, because nobody is being shown a password.
+
+**The heading names the target, and that was a defect worth knowing about.** Drop
+`--target` on an estate with several and the verb resets the account on every one,
+drawing a *separate* password for each — so you get one block per target, and until
+the code review of #518 they were identical apart from the token. Sending somebody
+the wrong one hands them a password that does not work on the host you named. The
+cubbyhole itself always carried the target, so the person unwrapping could tell;
+the DBA holding three tokens could not.
 
 #### Fetch it, and then fail to fetch it again
 
@@ -2610,7 +2618,7 @@ but the owner is meant ever to know the value, so there is nothing to end.
 sopuli --config wrapped.yaml account reset-password --account acme_dev_alice --output json > run.json
 ```
 ```
-hand this to acme_dev_alice; it unwraps once:
+hand this to acme_dev_alice for free-pdb; it unwraps once:
 
     hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA
 
@@ -2680,6 +2688,18 @@ and said the *second* message — `ttl: 15` is the spelling somebody will actual
 type, and it is a type error before it is ever a duration error. The shape is
 checked here and the grammar stays Vault's, which is what keeps the two from
 disagreeing about what `90m` means.
+
+**A delivery with nowhere to deliver.** Take `vault:` off the target *and*
+`defaults.vault` out, leaving `vault_wrapped:` naming none either:
+
+```
+sopuli: wrapped.yaml: delivery.vault_wrapped.vault: `delivery.method: vault_wrapped` has no store to deliver into
+  hint: name one under the method, on the target, or as `defaults.vault` -- the same chain a secret ref walks. A store is not guessed at, because the wrong one would hand somebody else's vault a working password
+```
+
+Exit **8**, before anything connects — the chain is knowable from the file. Note
+what it does *not* fall back to: `reset_records.vault` is still set in that file
+and is not used, because §3.5 keeps the journal and the delivery target apart.
 
 **A store that cannot wrap.** Point the delivery at a non-HashiCorp entry and it is
 refused with exit 5, naming the store: response wrapping is a Vault feature with no

@@ -1146,8 +1146,11 @@ and the third has no counterpart on the seen path:
 
 - **Never in the run document, and no property could hold it.** A document is
   captured, shipped to log aggregation and kept; a token in one outlives the TTL
-  that is this method's whole guarantee. What the document carries instead is the
-  *accessor*, which names the handover and cannot use it.
+  that is this method's whole guarantee. What it **will** carry instead is the
+  *accessor*, which names the hand-over and cannot use it — #444's second part adds
+  the field, and until it lands the document records the method and nothing else
+  about the hand-over. The receipt already holds the accessor; only its home is
+  outstanding.
 - **No terminal is required**, which is a deliberate departure from `manual`'s
   third guard. A pipe is how a handover script works, and forbidding one would
   leave an estate no way to deliver unattended except the path that shows a DBA a

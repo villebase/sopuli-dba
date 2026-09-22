@@ -331,14 +331,14 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
 def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
-    **`manual` is implemented and the other five are not** (#441). This used to
-    say *no method is implemented*, which was true when #440 wrote it and became
-    false the day the seen path landed -- so `config validate` told an estate with
-    a working `manual` configuration that nothing could hand a password over.
-    Caught by Copilot's review of #505.
+    **Two are implemented and four are not** (#441, #444), and this sentence has
+    now been wrong twice in the same way. It said *no method is implemented* until
+    the seen path landed, and *only `manual`* until the unseen default did -- both
+    caught in review rather than by a test, because what it describes lives in
+    :data:`IMPLEMENTED` and nothing makes the prose follow it.
 
-    The five that remain are #444-#447's, and `smtp_encrypted` has no issue at
-    all; until one of them lands, a file naming `method: vault_wrapped` is a file
+    The four that remain are #445-#447's and `smtp_encrypted`'s, which has no issue
+    at all; until one of them lands, a file naming `method: one_time_link` is a file
     that parses and cannot hand anybody a password.
 
     A **warning rather than a refusal**, following E4/E5's shape for a configured

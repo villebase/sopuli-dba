@@ -16,9 +16,11 @@ emits one. `tests/test_reveal_sites.py` records it with that reason.
 
 - **Never in the run document, and there is no property it could occupy.** The
   document is what gets captured, shipped to log aggregation and kept; a token in
-  it outlives the TTL that is the method's whole guarantee. What the document
-  carries instead is the *accessor*, which names the handover without being able
-  to use it.
+  it outlives the TTL that is the method's whole guarantee. **What the document
+  will carry instead is the *accessor***, which names the hand-over without being
+  able to use it -- `Receipt.accessor` holds it and #444's second part writes it.
+  Today the document records the method and nothing else about the hand-over, so
+  this bullet is a statement about the token and not yet about the accessor.
 - **No terminal is required**, which is where this departs from `manual`
   deliberately. A pipe is how a handover script works — `| mail`, `| chat-send` —
   and forbidding one would leave an estate with no way to deliver unattended
@@ -47,13 +49,27 @@ from sopuli.output.palette import Role, paint
 UNKNOWN_EXPIRY = "as soon as the store's TTL says"
 
 
-def render_handover(receipt: Receipt, *, account: str) -> str | None:
+def render_handover(receipt: Receipt, *, account: str, target: str) -> str | None:
     """The token, and what the operator has to do with it.
 
     ``None`` for a receipt with no token: a method that hands over nothing to
     carry (#447's path, mail that has been sent) leaves the operator nothing to
     pass on, and printing a heading over an empty value would suggest something
     had gone missing.
+
+    **The target is named, and leaving it out was a real defect** (the code review
+    of #518). `account reset-password` with no `--target` reaches every declared
+    target and draws a *separate* password for each, so an operator saw N blocks
+    reading "hand this to alice" with N different tokens and nothing saying which
+    database each belonged to -- and sending the wrong one hands somebody a
+    password that does not work on the host they were told about. The cubbyhole
+    itself already carried `target` for exactly this reason
+    (:mod:`sopuli.delivery.vault_wrapped`), so the person unwrapping was helped and
+    the DBA holding both tokens was not.
+
+    The seen path needs no such help, which is why the gap was easy to miss: its
+    per-target prompt names the target before each password is shown. An unseen
+    delivery has no prompt by design.
 
     **The instruction is part of the output rather than left to a runbook.** The
     single use is what makes interception detectable, and it only does that if
@@ -64,7 +80,7 @@ def render_handover(receipt: Receipt, *, account: str) -> str | None:
         return None
     return "\n".join(
         [
-            paint(f"hand this to {account}; it unwraps once:", Role.HEADING),
+            paint(f"hand this to {account} for {target}; it unwraps once:", Role.HEADING),
             "",
             # The one `reveal()` for a retrieval credential. Everything that makes
             # it allowable is in this module's docstring, and none of it is a

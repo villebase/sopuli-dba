@@ -19,6 +19,11 @@ TOKEN = "hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA"
 WHEN = datetime(2026, 9, 22, 10, 21, 0, tzinfo=UTC)
 
 
+def handover(**rest: object) -> str | None:
+    """One rendered hand-over, for the account and target every test here uses."""
+    return render_handover(receipt(**rest), account="acme_dev_alice", target="free-pdb")
+
+
 def receipt(**rest: object) -> Receipt:
     fields: dict[str, object] = {"method": "vault_wrapped", "token": Secret(TOKEN)}
     fields.update(rest)
@@ -29,7 +34,7 @@ def test_the_token_is_printed_because_the_password_cannot_be() -> None:
     """UC-2 §6.1 bars a retrieval credential from the notify channel and the tool
     carries no other, so the token comes back to the DBA to pass on out of band.
     That is the whole reason this module exists."""
-    rendered = render_handover(receipt(expires_at=WHEN), account="acme_dev_alice")
+    rendered = handover(expires_at=WHEN)
 
     assert rendered is not None
     assert TOKEN in rendered
@@ -39,7 +44,7 @@ def test_the_token_is_printed_because_the_password_cannot_be() -> None:
 def test_the_expiry_is_the_server_s_own_timestamp() -> None:
     """Reported rather than enforced: nothing here polices a TTL the store is
     already policing, and a second clock would only disagree with the first."""
-    rendered = render_handover(receipt(expires_at=WHEN), account="acme_dev_alice")
+    rendered = handover(expires_at=WHEN)
 
     assert rendered is not None
     assert "2026-09-22T10:21:00Z" in rendered
@@ -48,7 +53,7 @@ def test_the_expiry_is_the_server_s_own_timestamp() -> None:
 def test_an_unknown_expiry_says_so_rather_than_leaving_a_gap() -> None:
     """A line reading "it stops working at" and then nothing reads as a bug in the
     tool rather than as a fact about the answer."""
-    rendered = render_handover(receipt(expires_at=None), account="acme_dev_alice")
+    rendered = handover(expires_at=None)
 
     assert rendered is not None
     assert UNKNOWN_EXPIRY in rendered
@@ -60,7 +65,7 @@ def test_the_instruction_not_to_check_it_is_part_of_the_output() -> None:
     unwraps to check has spent the person's one read, and the person finding it
     spent is the only warning either of them gets -- so the line saying so is doing
     work rather than being polite."""
-    rendered = render_handover(receipt(expires_at=WHEN), account="acme_dev_alice")
+    rendered = handover(expires_at=WHEN)
 
     assert rendered is not None
     assert "Do not unwrap it" in rendered
@@ -71,7 +76,9 @@ def test_a_receipt_with_nothing_to_carry_renders_nothing() -> None:
     """#447's identity-scoped path hands over no bearer credential, and neither
     does mail that has been sent. A heading over an empty value would suggest
     something had gone missing."""
-    assert render_handover(Receipt(method="vault_path"), account="acme_dev_alice") is None
+    empty = Receipt(method="vault_path")
+
+    assert render_handover(empty, account="acme_dev_alice", target="free-pdb") is None
 
 
 def test_the_password_has_no_way_into_this_view() -> None:
@@ -81,5 +88,5 @@ def test_the_password_has_no_way_into_this_view() -> None:
     the caller's good behaviour."""
     from inspect import signature
 
-    assert set(signature(render_handover).parameters) == {"receipt", "account"}
+    assert set(signature(render_handover).parameters) == {"receipt", "account", "target"}
     assert set(Receipt.__dataclass_fields__) == {"method", "token", "accessor", "expires_at"}

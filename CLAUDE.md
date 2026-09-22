@@ -118,8 +118,9 @@ something specific.
 
    - **never in the run document, and no property could hold it.** The document is
      captured and kept, and a token in one outlives the TTL that is the method's
-     whole guarantee. What the document carries is the *accessor*, which names the
-     handover and cannot use it;
+     whole guarantee. What it will carry instead is the *accessor*, which names the
+     hand-over and cannot use it — #444's second part adds that field, and until it
+     lands the document records the method and nothing else about the hand-over;
    - **no terminal is required**, which is guard 3 deliberately not applied. A pipe
      is how a handover script works, and forbidding one would leave an estate no
      unattended path but `manual`. The cost is real and accepted: a redirect

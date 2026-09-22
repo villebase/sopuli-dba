@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from sopuli.delivery import Receipt
 from sopuli.output.delivery_view import UNKNOWN_EXPIRY, render_handover
+from sopuli.output.reset_view import build_result
 from sopuli.secrets import Secret
 
 TOKEN = "hvs.EXAMPLE-not-a-real-token-AAAAAAAAAAAAAAAAAAAAAAAA"
@@ -90,3 +91,66 @@ def test_the_password_has_no_way_into_this_view() -> None:
 
     assert set(signature(render_handover).parameters) == {"receipt", "account", "target"}
     assert set(Receipt.__dataclass_fields__) == {"method", "token", "accessor", "expires_at"}
+
+
+# ----------------------------------------- what the document says instead (#444) ---
+
+
+def test_the_result_carries_the_accessor_and_the_expiry() -> None:
+    """The half of Vault's answer that names the hand-over and cannot perform it.
+    An auditor ties this run to an entry in the vault's own log with it; nobody
+    fetches a password with it."""
+    entry = build_result(
+        "acme_dev_alice",
+        "free-pdb",
+        state="RESET",
+        changed=True,
+        delivered="vault_wrapped",
+        accessor="EXAMPLEaccessor000000000",
+        delivered_until=WHEN,
+    )
+
+    assert entry["handover"] == {
+        "accessor": "EXAMPLEaccessor000000000",
+        "expires_at": "2026-09-22T10:21:00Z",
+    }
+
+
+def test_the_seen_path_has_no_handover_section_at_all() -> None:
+    """Absent rather than two nulls. `manual`'s destination is a person reading a
+    screen, so there is no accessor to name and no store clock to expire -- and a
+    consumer reads presence as "the tool put this somewhere" instead of having to
+    tell an empty hand-over from one it cannot see."""
+    entry = build_result(
+        "acme_dev_alice", "free-pdb", state="RESET", changed=True, delivered="manual"
+    )
+
+    assert "handover" not in entry
+
+
+def test_a_hand_over_with_no_accessor_still_reports_the_expiry() -> None:
+    """Null for the field the answer did not carry, rather than dropping the
+    section: a store that wrapped without returning an accessor still gave an
+    expiry, and an auditor who cannot name the hand-over can still say when it
+    stopped being fetchable."""
+    entry = build_result(
+        "acme_dev_alice",
+        "free-pdb",
+        state="RESET",
+        changed=True,
+        delivered="vault_wrapped",
+        delivered_until=WHEN,
+    )
+
+    assert entry["handover"] == {"accessor": None, "expires_at": "2026-09-22T10:21:00Z"}
+
+
+def test_no_property_in_the_result_could_hold_the_token() -> None:
+    """The structural half, asserted rather than described. `build_result` has no
+    parameter a retrieval credential could arrive through -- which is the same
+    guarantee the password already has, made about the object UC-2 §6.1 says the
+    rule also covers."""
+    from inspect import signature
+
+    assert "token" not in signature(build_result).parameters
+    assert not any("token" in name for name in signature(build_result).parameters)

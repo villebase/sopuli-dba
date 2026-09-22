@@ -68,6 +68,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -1888,8 +1889,10 @@ def _write_reset_record(
     account: str,
     target: str,
     delivery: Delivery,
+    accessor: str | None,
     expired: bool,
     secret: Secret,
+    token: Secret | None = None,
 ) -> _RecordFailure | None:
     """Journal one reset, or say why it could not be (UC-2 §3.1, #511).
 
@@ -1939,7 +1942,7 @@ def _write_reset_record(
         reset_at=utc_now(),
         seen=delivery.is_seen,
         expired=expired,
-        delivery=reset_record.Delivery(method=delivery.method),
+        delivery=reset_record.Delivery(method=delivery.method, to=accessor),
         by=current_holder(),
         correlation_id=run.document.correlation_id,
     )
@@ -1950,7 +1953,7 @@ def _write_reset_record(
     # method puts its own reference in `delivery.to`. An `AssertionError` -- a
     # programming error, not a configuration one -- so it is deliberately not
     # caught below.
-    reset_record.assert_no_secret(document, secret=secret)
+    reset_record.assert_no_secret(document, secret=secret, token=token)
     try:
         # Unguarded: serialising two concurrent resets is the advisory lock's
         # job (#512, UC-2 §3.3), and a compare-and-set here would buy nothing it
@@ -2038,6 +2041,15 @@ class _Reset:
     #: than a safety one -- the safety is that the run never got this far unless
     #: every guard passed.
     shown: str | None = None
+    #: What an auditor can act on about the hand-over, and **nothing that could
+    #: perform it** (#444 part 2). The accessor names the hand-over in the store's
+    #: own audit log; `delivered_until` is when fetching stops. Both plain fields
+    #: rather than the :class:`~sopuli.delivery.Receipt` itself, deliberately: the
+    #: receipt carries the token, and a row that held one would put a retrieval
+    #: credential in a frozen dataclass's generated ``__repr__`` beside `shown`'s.
+    #: One carrier for the secret is enough to reason about.
+    accessor: str | None = None
+    delivered_until: datetime | None = None
 
     def as_json(self) -> dict[str, Any]:
         return build_reset_result(
@@ -2048,6 +2060,8 @@ class _Reset:
             actions=self.actions,
             status=self.status,
             delivered=self.delivered,
+            accessor=self.accessor,
+            delivered_until=self.delivered_until,
             overridden=self.overridden,
             duration_ms=self.duration_ms,
             error=self.error,
@@ -2210,6 +2224,8 @@ def _reset_one(
             status=status,
             actions=tuple((one.action, one.changed, one.detail) for one in changes),
             delivered=delivery.method,
+            accessor=receipt.accessor if receipt is not None else None,
+            delivered_until=receipt.expires_at if receipt is not None else None,
             overridden=overridden,
             duration_ms=_elapsed(started),
         )
@@ -2231,8 +2247,10 @@ def _reset_one(
                     account=account,
                     target=target.name,
                     delivery=delivery,
+                    accessor=receipt.accessor if receipt is not None else None,
                     expired=decision.expire,
                     secret=secret,
+                    token=receipt.token if receipt is not None else None,
                 ),
             )
 

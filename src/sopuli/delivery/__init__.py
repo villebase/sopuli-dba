@@ -8,7 +8,7 @@ knows that a database was involved.
 
 **What a backend returns is a receipt, not a location.** :class:`Receipt` carries
 the method, what the person needs in order to fetch (:attr:`Receipt.token`), and
-what an auditor will need in order to recognise the handover afterwards
+what an auditor needs in order to recognise the handover afterwards
 (:attr:`Receipt.accessor`). Those are two different things on purpose: the first
 produces a password in the wrong hands and the second does not, and keeping them
 in separate fields is what lets the output layer emit one and never the other.
@@ -50,16 +50,12 @@ class Receipt:
 
     ``accessor`` names the handover without being able to use it. Vault's
     wrapping tokens have one natively; other methods will have their own
-    equivalent, or none. It is what the run document **will** carry, and the
-    reason a document can describe a delivery at all without becoming the thing
-    that leaks it.
-
-    **Nothing reads it yet**, and that is worth saying here rather than leaving a
-    reader to grep for a consumer: #444's first part computes it and stops, and
-    the second adds `results[].handover` and the reset record's `to`. A field with
-    no consumer is normally the defect `SOPULI-W022` exists for -- it is here
-    because the alternative was reading the accessor out of the response in part
-    two and discarding the part of the receipt that already knows how.
+    equivalent, or none. It is what the run document carries, in
+    ``results[].handover``, and the reason a document can describe a delivery at
+    all without becoming the thing that leaks it. The reset record's
+    :attr:`sopuli.reset_record.Delivery.to` is the same value, for the same
+    reason: both are long-lived and widely readable, and the accessor is the one
+    of Vault's two return values that survives being either.
 
     ``expires_at`` is when fetching stops working, where the method knows. It is
     reported rather than enforced: nothing in this tool polices a TTL the store

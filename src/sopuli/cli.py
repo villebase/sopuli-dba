@@ -155,6 +155,7 @@ from sopuli.driver.protocol import (
     AccountChange,
     AttributeChange,
     DriverError,
+    PartialAccountChangeError,
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
@@ -1719,6 +1720,23 @@ def _expire_one(
 
         try:
             changes = session.expire_password(account)
+        except PartialAccountChangeError as error:
+            # The window closed and the expiry failed. Still an error, and
+            # still exit 4, but the row says what did happen: `changed` is true
+            # and the close is reported as applied (Copilot's review of #527).
+            reported = _as_error(error)
+            done = tuple((one.action, one.changed, one.detail) for one in error.completed)
+            return _Expired(
+                account=account,
+                target=target.name,
+                state=check_states.ERROR,
+                changed=True,
+                detail=f"{_expire_detail(error.completed)}; then: {reported.message}",
+                status=status,
+                actions=(*done, (PASSWORD_EXPIRE, False, reported.message)),
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _as_error(error)
             return _Expired(

@@ -1137,7 +1137,7 @@ def policy_sample(
         # A UsageError, for `config show --select`'s reason as well: two flags
         # that cannot both be honoured is a fact about argv, not about the file.
         raise click.UsageError(
-            "--reveal cannot be used with --output json\n"
+            "--reveal cannot be used with --output json or jsonl\n"
             "       json output is what gets captured and shipped to log "
             "aggregation, so a sample never\n"
             "       appears in it -- drop --reveal, or use the text output"

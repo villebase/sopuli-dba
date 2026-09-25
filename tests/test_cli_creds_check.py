@@ -736,3 +736,30 @@ def test_a_run_that_fails_before_any_target_still_opens_and_closes_the_stream(
     assert [line["event"] for line in lines] == ["run.started", "run.finished"]
     assert lines[-1]["data"]["exit_code"] == ExitCode.CONFIG_INVALID
     assert lines[-1]["data"]["error"]["category"] == "config"
+
+
+def test_streamed_payloads_are_the_run_schema_shapes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """The event schema checks the envelope and leaves `data` open; 03 §5 says the
+    payloads are the run schema's `$defs`. Checked against those here rather than
+    by a cross-file `$ref`, which would bind the event schema's version to the
+    run schema's (review of #534)."""
+    estate(answers={"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017")})
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl"), events)
+    defs = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+
+    def shape(name: str) -> Draft202012Validator:
+        return Draft202012Validator({"$defs": defs, "$ref": f"#/$defs/{name}"})
+
+    checks = [(shape("plan"), line["data"]) for line in lines if line["event"] == "plan.resolved"]
+    checks += [
+        (shape("result"), line["data"]) for line in lines if line["event"] == "target.finished"
+    ]
+    checks += [(shape("summary"), lines[-1]["data"]["summary"])]
+    assert len(checks) == 4
+    for validator, payload in checks:
+        assert [error.message for error in validator.iter_errors(payload)] == [], payload

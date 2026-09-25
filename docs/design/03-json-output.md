@@ -2111,7 +2111,7 @@ disagree with the first.
 
 **The event schema went 1.1 to 1.2 in the same change**, adding
 **`password.delivered`** — the event UC-2 §6.3 says every delivery emits. It has no
-emitter, for 1.1's reason exactly: `--output jsonl` is unimplemented (#9), so this
+emitter, for 1.1's reason exactly: `--output jsonl` was unimplemented then (#9), so this
 extends an artefact already ahead of its stream, and the word is registered with
 the change that knows why the event exists. Neither it nor `password.displayed`
 carries the password, and neither carries the retrieval credential — a consumer
@@ -2164,7 +2164,7 @@ event nothing emits: **`password.displayed`**, the seen reset's exposure.
 That is deliberate rather than an oversight, and it is the one place this
 document's usual rule bends. A contract value with no emitter is normally the
 defect `SOPULI-W022` was written to fix -- but the whole event schema has had no
-emitter since it was published, because `--output jsonl` is unimplemented (#9),
+emitter since it was published, because `--output jsonl` was unimplemented (#9),
 so this is extending an artefact that is already ahead of its stream rather than
 creating a new inconsistency. The word is registered with **the change that
 causes the exposure** rather than with the one that will carry it, because the
@@ -2173,7 +2173,8 @@ change that knows why the event exists is the one that should name it.
 **What records the exposure today is the run document**, which every run has:
 `results[].delivered` says the method was `manual`, and `manual` is by definition
 the path that shows somebody a password. `password.displayed` is what a *stream*
-consumer will read when there is a stream.
+consumer will read once the verb streams — `--output jsonl` exists since #9, and
+`account reset-password` refuses it until it has events of its own.
 
 **1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
 Two additive changes:

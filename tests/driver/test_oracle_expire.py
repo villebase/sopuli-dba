@@ -53,6 +53,12 @@ GRACE_PROFILE = "acme_expire_grace"
 #: `test/oracle-init/01_test_profiles.sql`, `PASSWORD_ROLLOVER_TIME 1/24`.
 ROLLOVER_PROFILE = "sopuli_rollover"
 
+#: `test/oracle-init/01_test_profiles.sql`, `FAILED_LOGIN_ATTEMPTS 3` and a
+#: one-minute `PASSWORD_LOCK_TIME` -- reachable by getting the password wrong.
+LOCKOUT_PROFILE = "sopuli_lockout"
+FAILED_LOGIN_ATTEMPTS = 3
+WRONG = "not-the-password"
+
 OLD = "Expire-Pa55-Old1"
 NEW = "Expire-Pa55-New2"
 
@@ -190,6 +196,26 @@ def test_a_lock_is_left_alone(account: Any) -> None:
 
     assert rows[PASSWORD_EXPIRE].changed is True
     assert _status(account) == "EXPIRED & LOCKED"
+
+
+def test_a_timed_lock_is_left_alone(clean: Any, live_oracle: Environment) -> None:
+    """The other lock: `LOCKED(TIMED)` becomes `EXPIRED & LOCKED(TIMED)` (#525 E5).
+
+    Reached the way an estate reaches it, by failed logins, so the test pins the
+    status Oracle actually produces rather than one the fixture asserted into
+    being. A regression that cleared the timed lock, or read it as a reason not
+    to expire, fails here.
+    """
+    _create(clean, LOCKOUT_PROFILE)
+    for _ in range(FAILED_LOGIN_ATTEMPTS):
+        _login(live_oracle, WRONG)
+    assert _status(clean) == "LOCKED(TIMED)", "the lockout profile did not lock the account"
+
+    rows = _by_action(clean.expire_password(ACCOUNT))
+
+    assert rows[PASSWORD_EXPIRE].changed is True
+    assert rows[PASSWORD_EXPIRE].status == "LOCKED(TIMED)", "the status it read, before it issued"
+    assert _status(clean) == "EXPIRED & LOCKED(TIMED)"
 
 
 def test_an_open_window_is_closed_first(clean: Any, live_oracle: Environment) -> None:

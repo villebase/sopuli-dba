@@ -374,8 +374,12 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                 message=channel,
                 at=str(ROOT.key("delivery").key("notify").key("method")),
                 hint=(
-                    "the block is valid and this build cannot send through it; the password "
-                    "is still delivered, and nobody is told it is waiting"
+                    "the block is valid and this build cannot send through it. `account "
+                    "reset-password` refuses rather than resetting without notifying -- "
+                    "before the password changes -- so install the client or take "
+                    "`delivery.notify` out of the file. `config validate` warns instead of "
+                    "failing because it is the question *is this file usable here*, and the "
+                    "answer is yes everywhere but this block"
                 ),
             )
         )

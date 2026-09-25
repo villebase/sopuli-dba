@@ -242,6 +242,12 @@ def unserviceable(notify: Notify | None) -> str | None:
     block that validates clean reads as a channel that will send, and finding out
     otherwise once a password has changed is the failure that costs something.
 
+    **Says what cannot send, not what will happen** (#520). The first wording ended
+    "so nothing will be sent when a password is delivered", which implied a password
+    *would* be delivered -- true when this warning was written and false since the
+    missing client became a plan-time refusal. What happens is the caller's to say,
+    and `sopuli/config/loading.py` says it in the hint.
+
     **Two conditions, and only the second survives a full install.** A method this
     build has no code for is one answer; a method whose *client* is not installed is
     the other, and it is E4's own case -- the file is valid, the install is
@@ -254,13 +260,13 @@ def unserviceable(notify: Notify | None) -> str | None:
     if notify.method not in IMPLEMENTED:
         return (
             f"`delivery.notify.method: {notify.method}` is configured and is not implemented "
-            f"in this build, so nothing will be sent when a password is delivered"
+            f"in this build, so nothing can send through it"
         )
     notifier = NOTIFIERS.get(notify.method)
     if notifier is not None and not notifier.available and notifier.extra is not None:
         return (
             f"`delivery.notify.method: {notify.method}` is configured and its client is not "
-            f"installed, so nothing will be sent when a password is delivered "
+            f"installed, so nothing can send through it "
             f"({install_command(notifier.extra)})"
         )
     return None

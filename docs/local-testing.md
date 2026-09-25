@@ -2694,8 +2694,9 @@ pip install -e '.[oracle,hashicorp,notify]'
 **`[notify]` rather than reusing `[hashicorp]`**, although both install `httpx`: an
 estate on OCI Vault that wants a chat message should not install a HashiCorp extra
 to get one, because ADR-006's whole point is that an extra names *why* a dependency
-is there (E7). Without it the block still validates and the run still delivers — a
-missing client is E4/E5's case, not a broken configuration.
+is there (E7). Without it the block still validates — a missing client is E4/E5's
+case, not a broken configuration — but a reset refuses before it changes anything
+([below](#without-the-extra-installed)).
 
 ```yaml
 delivery:
@@ -2784,8 +2785,20 @@ Uninstall `httpx` — or read this and take it on trust, because the dev environ
 has it for the HashiCorp store. `config validate` says:
 
 ```
-delivery.notify.method: `delivery.notify.method: webhook` is configured and its client is not installed, so nothing will be sent when a password is delivered (pip install "sopuli-dba[notify]")
+delivery.notify.method: `delivery.notify.method: webhook` is configured and its client is not installed, so nothing can send through it (pip install "sopuli-dba[notify]")
+    hint: the block is valid and this build cannot send through it. `account reset-password` refuses rather than resetting without notifying -- before the password changes -- so install the client or take `delivery.notify` out of the file. `config validate` warns instead of failing because it is the question *is this file usable here*, and the answer is yes everywhere but this block
 ```
+
+To produce it without uninstalling anything, hide the module from the lookup —
+`installed()` asks `importlib.util.find_spec`, which answers `None` for a
+`sys.modules` entry set to `None`:
+
+```bash
+python -c "import sys; sys.modules['httpx']=None; sys.argv=['sopuli','--config','sopuli.yaml','config','validate']; from sopuli.cli import main; main()"
+```
+
+The first wording ended "so nothing will be sent when a password is delivered",
+which promised a delivery that the refusal below no longer makes (#520).
 
 Exit 0, and it is **separate from the delivery method's** warning on purpose: an
 estate can have a working delivery and an inert notification, and one sentence

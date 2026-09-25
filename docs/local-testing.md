@@ -3101,8 +3101,8 @@ The last two are about having somewhere to deliver at all, and both refuse
 nowhere to put the password would have changed one nobody can be told:
 
 ```
-sopuli: `delivery.method: vault_wrapped` is configured and is not implemented in this build
-  hint: only `manual` can deliver today (#441); the unseen methods are #444-#447. `config validate` warns about this before a run needs it
+sopuli: `delivery.method: one_time_link` is configured and is not implemented in this build
+  hint: this build serves `manual` (#441) and `vault_wrapped` (#444); the methods still to come are #445-#447 and `smtp_encrypted`. `config validate` warns about this before a run needs it
 ```
 
 Exit **5** — the capability code, because the file is not wrong. And with no
@@ -3139,12 +3139,10 @@ the run is configured to do rather than about an emission.
 
 #### What is not built
 
-- **`lock status` does not survey the reset locks** (#514). They are taken and
-  released since #512, and `lock break` clears one by name, but the listing verb
-  builds its estate from `applications:` and cannot enumerate a predicate-declared
-  personal account offline.
-- **No unseen delivery**, which is the default and the one the use case is really
-  about. #444-#447.
+- **Four of the six delivery methods.** `manual` is this section and
+  `vault_wrapped` is [the unseen path](#account-reset-password--the-unseen-path-vault_wrapped);
+  `vault_path`, `one_time_link`, `onepassword_share` and `smtp_encrypted` are
+  refused at exit 5 as shown above (#445-#447).
 - **No `expire-password`**, the verb that forces a change without setting one.
 
 ### The two other UC-2 verbs
@@ -3564,7 +3562,7 @@ delivery:
 ```
 
 ```bash
-sopuli --config sopuli.yaml config validate
+sopuli --config ok.yaml config validate
 ```
 ```
 config: ok.yaml
@@ -3578,6 +3576,9 @@ ok: 1 target, 1 binding, 0 warnings
 Select one of the four that are not built, and `config validate` says so rather
 than letting a clean parse read as a working delivery:
 
+```bash
+sopuli --config unimpl.yaml config validate
+```
 ```
 config: unimpl.yaml
 

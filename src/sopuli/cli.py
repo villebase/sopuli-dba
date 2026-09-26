@@ -1910,9 +1910,12 @@ def account_reset_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     document.plan = plan.as_json()
-    # No-ops outside `--output jsonl` (#535). The seen path never reaches them:
-    # it is refused under every machine format above, before a selector is
-    # judged, so `password.displayed` has no emitter by construction.
+    # No-ops outside `--output jsonl` (#535). A seen reset reaches them only as
+    # a `--dry-run`: the real one is refused under every machine format above,
+    # and a preview is exempt from that refusal because it shows no password
+    # (#441's sixth guard). So `password.displayed` has no emitter by
+    # construction -- the one run that could stream the seen path displays
+    # nothing.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")

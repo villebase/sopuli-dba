@@ -1088,8 +1088,9 @@ implementation violates it:
   exposure, which is its own fact and not a variant of the first (#441). Neither
   event carries the password, and the run schema has no property that could.
   **`password.delivered` is emitted since #535**, when `account reset-password`
-  learned to stream; **`password.displayed` never will be**, because the seen path
-  it describes is refused under every machine format, `jsonl` included. Before
+  learned to stream; **`password.displayed` never will be**, because a seen reset
+  is refused under every machine format, `jsonl` included, and its `--dry-run` —
+  exempt, as under `json` — displays nothing. Before
   that, both words were registered with no emitter,
   so `password.displayed` arrived with #441 and
   `password.delivered` with #444, each with the change that knows why the event

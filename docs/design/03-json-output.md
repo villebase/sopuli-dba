@@ -1915,11 +1915,15 @@ preview of `generate` is for: `run.started`, `plan.resolved`,
 
 ### `account reset-password`
 
-**Streams since #535, on the unseen paths only.** The seen path (`manual`) is
-refused under every machine format before a password is drawn — invariant 2's
-guard 2, which has checked "machine format" rather than "JSON" since #9 — so
-`password.displayed` has no emitter *by construction*, and that is the design
-rather than a gap. A `vault_wrapped` reset against the tier-1 stack, trimmed
+**Streams since #535 — the unseen paths, and the seen path's preview.** A seen
+(`manual`) reset is refused under every machine format before a password is
+drawn — invariant 2's guard 2, which has checked "machine format" rather than
+"JSON" since #9. Its `--dry-run` is exempt, as it is under `json` (#441's sixth
+guard): a preview prints a plan and never a password, so it streams
+`run.started`, `plan.resolved`, `target.started`, `target.finished`, `run.finished` and no `password.*` event at all (review of #546).
+So `password.displayed` has no emitter *by construction* — the one seen-path run
+that can stream is the one that shows nothing — and that is the design rather
+than a gap. A `vault_wrapped` reset against the tier-1 stack, trimmed
 only where `…` says so:
 
 ```jsonl
@@ -2408,7 +2412,8 @@ optional `handover` of exactly the run schema's shape (`accessor`,
 `expires_at`) — `additionalProperties: false` at both levels, for the reason
 1.4 closed `password.applied`'s: the event sits next to a credential, and a
 field added later that could carry it must fail CI rather than a review.
-`password.displayed` keeps no emitter, by construction.
+`password.displayed` keeps no emitter, by construction: the seen path streams
+only as a `--dry-run`, which displays nothing.
 
 **The event schema went 1.4 to 1.5 with `creds rotate`** (#535), the first verb
 to emit `confirmation.required`: its `data` must carry the `prompt`. `vault.write`
@@ -2468,8 +2473,8 @@ change that knows why the event exists is the one that should name it.
 `results[].delivered` says the method was `manual`, and `manual` is by definition
 the path that shows somebody a password. `password.displayed` is what a *stream*
 consumer would read — and it never will: `account reset-password` streams since
-#535, but only its unseen paths, because the seen path is refused under every
-machine format. The run document remains what records the exposure.
+#535, but the seen path only as a `--dry-run`, which shows nothing; the real one
+is refused under every machine format. The run document remains what records the exposure.
 
 **1.26 became 1.27 with `sopuli account reset-password`** (#441), UC-2's reset.
 Two additive changes:

@@ -4942,7 +4942,9 @@ the row carries — and **the token is on stderr, not in the stream**, beside th
 plan and the hand-over instructions it always prints. Grep the stream for the
 token: `0`. Unwrap it and grep both files for the password: `0` and `0`.
 
-**The seen path is refused**, before anything is drawn or connected:
+**Its `--dry-run` streams** — `run.started`, `plan.resolved`, `target.started`, `target.finished`, `run.finished` — because a preview is exempt from
+guard 2 and shows no password; no `password.*` event appears. **The real seen
+reset is refused**, before anything is drawn or connected:
 
 ```
 sopuli: `delivery.method: manual` cannot be used with --output json or --output jsonl

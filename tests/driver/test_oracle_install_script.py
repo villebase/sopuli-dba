@@ -886,6 +886,56 @@ def test_the_report_refuses_the_obvious_wrong_fix(monkeypatch: pytest.MonkeyPatc
     assert "do not raise EXEC_TIMEOUT_S" in report
 
 
+PIPED = "SELECT 1 FROM dual;\nEXIT\n"
+
+
+class _Recorded:
+    """What `_exec` handed to :func:`subprocess.run`, and nothing else."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def __call__(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        self.calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+
+def test_a_file_script_is_run_without_attaching_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The #326 fix, pinned where it can be pinned deterministically.
+
+    The shipped scripts end without `EXIT`, so SQL*Plus exits on EOF, and with
+    `-i` that EOF had to be forwarded by `docker exec`. Twice it was not. The
+    tier-1 calls pass with `-i` restored until the stall happens to recur, so this
+    is the test that fails the moment a refactor puts it back (Copilot's review of
+    #538).
+    """
+    recorded = _Recorded()
+    monkeypatch.setattr(subprocess, "run", recorded)
+
+    _exec(CONTAINER, ROOT, "@00_install.sql", "COMMON", "acme_install_user")
+
+    [(command, kwargs)] = recorded.calls
+    assert command[:3] == ["docker", "exec", CONTAINER], "file scripts must not take -i"
+    assert "-i" not in command
+    assert kwargs.get("stdin") is subprocess.DEVNULL
+    assert "input" not in kwargs
+
+
+def test_a_piped_script_keeps_stdin_and_is_given_its_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half: without `-i` a piped script would reach SQL*Plus as nothing
+    at all, and every query this module makes through it would return empty."""
+    recorded = _Recorded()
+    monkeypatch.setattr(subprocess, "run", recorded)
+
+    _exec(CONTAINER, ROOT, script=PIPED)
+
+    [(command, kwargs)] = recorded.calls
+    assert command[:4] == ["docker", "exec", "-i", CONTAINER]
+    assert kwargs.get("input") == PIPED
+
+
 @pytest.mark.parametrize("output", [None, b"", "", b"only one line", "only one line"], ids=repr)
 def test_the_tail_survives_whatever_the_killed_process_left(output: object) -> None:
     """`TimeoutExpired.output` is `bytes` undecoded, `None` when nothing arrived,

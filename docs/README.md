@@ -541,8 +541,9 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   on both releases.
   **Q7 was measured from `OPEN`, and the start state turns out to decide it**
   (#529, `sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0, twice,
-  2026-09-26; **21c 21.3.0.0.0 identical in every status and every login**, twice,
-  2026-09-26, #461). From `EXPIRED`, and from `EXPIRED & IN ROLLOVER`, the same
+  2026-09-26; **21c 21.3.0.0.0 identical in every status and every login check**,
+  twice, 2026-09-26, #461, though its grace-period logins warn with `ORA-28002`
+  where 26ai sends `ORA-28098`). From `EXPIRED`, and from `EXPIRED & IN ROLLOVER`, the same
   statement opens **no** window and leaves every earlier password `ORA-01017`,
   so the new, expired one is the only password that works. From `EXPIRED(GRACE)`
   it behaves exactly as from `OPEN`, old password `ORA-28001`. So the exposure

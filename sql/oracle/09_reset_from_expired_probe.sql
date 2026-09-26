@@ -35,7 +35,8 @@
 -- only difference the second run's setup dropping the first run's accounts.
 -- Run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim), XEPDB1, as SYSTEM,
 -- 2026-09-26 (#461) -- twice, and identical to 26ai in every status and every
--- login. 18c and 11.2 have no rollover and stop at section 0. 19c UNRUN.
+-- login check in the results table; the setup's grace-period logins send a
+-- different warning code (RESULTS). 18c and 11.2 have no rollover and stop at section 0. 19c UNRUN.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops accounts and a profile, expires
 -- them, and plants known passwords.

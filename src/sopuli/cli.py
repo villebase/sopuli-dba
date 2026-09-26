@@ -4986,6 +4986,10 @@ def _promote_document(
     emitter = run.emitter()
     existing = store.read(write.key.path)
     emitter.event(run.document, "vault.read", data=_vault_event(write.key, existing))
+    # Before either refusal below, as `_stage` announces before its write: the
+    # passwords were drawn whatever becomes of this document, and the row says
+    # what did (review of #544).
+    _announce_draws(write, run, stage=CURRENT)
     cas = 0 if existing is None else existing.version
     data = existing.data if existing is not None else None
 
@@ -5037,7 +5041,6 @@ def _promote_document(
     # `vault.write`, because what a consumer watches that event for -- `current`
     # changed, applications will now fetch this -- is exactly what happens here.
     # A document refused before the write (above) sends none, as in `apply`.
-    _announce_draws(write, run, stage=CURRENT)
     patch = apply_states.promotion_patch(entries, at=utc_now(), by=_rotated_by())
     try:
         written = write_credential(store, write.key.path, patch, cas=cas)

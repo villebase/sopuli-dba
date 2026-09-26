@@ -1502,3 +1502,30 @@ def test_the_environment_gate_announces_its_prompt(
     ]
     assert prompts == ["staging a password in `dev`?"]
     assert store.read(PATH) is None
+
+
+def test_a_promotion_refused_before_its_write_still_announces_the_draws(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """A `current` that appeared after the plan was made is refused under the
+    lock, before the write. The passwords were drawn all the same, so they are
+    announced -- as `_stage` announces before a write that fails -- and no
+    `vault.promote` is sent, because none was attempted (review of #544)."""
+    store.write(PATH, {"DB_CREDENTIALS": {"acme_web_user": "Existing-Current-Value-1"}}, cas=0)
+    # The plan-time read sees nothing, which is the race the in-lock re-check
+    # exists for: somebody wrote `current` between the plan and the lock.
+    monkeypatch.setattr("sopuli.cli._current_holders", lambda writes, stores: {})
+
+    lines = stream(
+        run(runner, write_config(CONFIG), "--promote", "--output", "jsonl").stdout, events
+    )
+
+    drawn = [line["account"] for line in lines if line["event"] == "password.generated"]
+    assert drawn == ["acme_web_user", "acme_batch_user"]
+    assert "vault.promote" not in names(lines)
+    states = [line["data"]["state"] for line in lines if line["event"] == "target.finished"]
+    assert states == ["ERROR", "ERROR"]

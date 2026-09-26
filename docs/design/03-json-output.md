@@ -43,7 +43,7 @@ a config emits them, `config show` in both its views as well as
 to the scheduler, which is the reader that most needs it. A run with nothing to
 report omits the key rather than carrying an empty array.
 Schemas: [`../schemas/sopuli-run-1.30.schema.json`](../schemas/sopuli-run-1.30.schema.json),
-[`../schemas/sopuli-event-1.5.schema.json`](../schemas/sopuli-event-1.5.schema.json)
+[`../schemas/sopuli-event-1.6.schema.json`](../schemas/sopuli-event-1.6.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---

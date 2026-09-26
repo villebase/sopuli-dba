@@ -53,6 +53,8 @@ def is_a_terminal(stream: TextIO | None) -> bool:
     If we cannot establish that a human is there, the answer is no — do not
     decorate, do not animate, and do not ask a question nobody can answer.
     """
+    if stream is None:
+        return False
     isatty = getattr(stream, "isatty", None)
     if isatty is None:
         return False
@@ -61,8 +63,6 @@ def is_a_terminal(stream: TextIO | None) -> bool:
             return False
     except (ValueError, OSError):
         return False
-    if sys.platform != "win32":
-        return True
     return _is_a_windows_console(stream)
 
 
@@ -73,7 +73,14 @@ def _is_a_windows_console(stream: TextIO) -> bool:
     OS handle behind it — a test double, or a substitute that implements
     ``isatty`` itself — has no device to be ``NUL``, so its own answer stands;
     the check refines ``isatty()`` for real handles and does not replace it.
+
+    Anywhere but Windows ``isatty()`` already means a terminal, so the answer is
+    yes. The check sits here, first, rather than in the caller so that mypy
+    narrows ``sys.platform`` and does not read the ``msvcrt`` and ``WinDLL``
+    calls below on a Linux run -- ``color.enable_virtual_terminal``'s shape.
     """
+    if sys.platform != "win32":
+        return True
     try:
         fd = stream.fileno()
     except (AttributeError, ValueError, OSError):

@@ -95,6 +95,23 @@ def test_the_null_device_is_not_a_terminal() -> None:
         assert is_a_terminal(null) is False
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="CONOUT$ is a Windows device name")
+def test_on_windows_a_real_console_is_a_terminal() -> None:
+    """The half of #549 that must not regress: a console still counts.
+
+    ``CONOUT$`` is the process's own console output buffer, so this is the one
+    handle ``GetConsoleMode`` is supposed to succeed on. A process with no
+    console attached cannot open it, and has nothing here to test.
+    """
+    try:
+        with open("CONOUT$", "w", encoding="utf-8") as console:
+            answer = is_a_terminal(console)
+    except OSError as exc:
+        pytest.skip(f"no console attached to this process: {exc}")
+
+    assert answer is True
+
+
 def test_on_windows_a_tty_that_is_not_a_console_is_not_a_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

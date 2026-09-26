@@ -199,6 +199,20 @@ def _exec(
     prompt whose stdin is a terminal would **hang** the suite rather than fail
     it. Stdin at EOF is the difference between a red build and a stuck one.
 
+    **`-i` only where there is something to send** (#326, occurrence 3). A script
+    run from a file ends without an `EXIT` -- the shipped scripts must not
+    disconnect a DBA who runs them from an interactive session -- so SQL*Plus
+    goes back to reading stdin when the file is done and exits only on EOF. With
+    `-i` that EOF is `DEVNULL`'s, forwarded by `docker exec`, and it did not
+    always arrive: in two of the three stalls every statement had run and the
+    process never exited, with nothing waiting in `V$SESSION`. Without `-i` the
+    process's stdin is closed inside the container, so EOF is immediate and local
+    (measured: a file script returns in about 0.3s, and an undefined substitution
+    variable still fails at once with `SP2-0546` rather than hanging). The piped
+    path keeps `-i`, since it has input to deliver, and every piped script ends in
+    its own `EXIT`, so none of them waits on EOF. All three stalls were
+    file scripts.
+
     **A timeout asks the database what it was waiting for before it gives up**
     (#326). The call that hung had printed the label of a
     `GRANT ... CONTAINER=ALL` and never returned, and nothing survived the kill
@@ -207,18 +221,21 @@ def _exec(
     rather than in the test, because every one of this module's eighteen calls
     goes through this function and the next stall will not be in the same one.
     """
-    command = ["docker", "exec", "-i", container, "sqlplus", "-s", connect, *args]
     try:
         if script is None:
             return subprocess.run(
-                command,
+                ["docker", "exec", container, "sqlplus", "-s", connect, *args],
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,
                 timeout=EXEC_TIMEOUT_S,
             )
         return subprocess.run(
-            command, input=script, capture_output=True, text=True, timeout=EXEC_TIMEOUT_S
+            ["docker", "exec", "-i", container, "sqlplus", "-s", connect, *args],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=EXEC_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as expired:
         pytest.fail(_timeout_report(container, expired), pytrace=False)

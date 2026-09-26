@@ -336,3 +336,25 @@ def test_a_set_then_a_failed_close_still_shows_the_password_on_the_seen_path(
     assert "shown once" in result.output
     assert len(sent.records) == 1
     assert sent.records[0]["expired"] is True
+
+
+def test_the_failed_statement_is_named_from_the_last_that_committed() -> None:
+    """Not from how many rows there are (Copilot's review of #536).
+
+    The Oracle driver reports the unlock row even where it issued nothing, so a
+    count happens to work against it. The error promises no such prefix, and a
+    `completed` of the set alone must still name the close as what failed.
+    """
+    from sopuli.cli import _reset_actions
+    from sopuli.output.document import Error
+
+    failed = Error(category="policy", message="ORA-01031: insufficient privileges")
+
+    assert [(kind, applied) for kind, applied, _ in _reset_actions((SET,), failed)] == [
+        (PASSWORD_SET, True),
+        (ROLLOVER_FINISH, False),
+    ]
+    assert [(kind, applied) for kind, applied, _ in _reset_actions((UNLOCKED,), failed)] == [
+        (ACCOUNT_UNLOCK, True),
+        (PASSWORD_SET, False),
+    ]

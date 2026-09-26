@@ -2407,8 +2407,8 @@ class _Reset:
 
 
 #: UC-2 4.1's statements in the order the driver considers them, which is what
-#: names the one a :class:`PartialAccountChangeError` stopped at: the first one
-#: its ``completed`` does not reach.
+#: names the one a :class:`PartialAccountChangeError` stopped at: the one after
+#: the last row in its ``completed``.
 _RESET_STATEMENTS = (ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH)
 
 
@@ -2420,11 +2420,18 @@ def _reset_actions(
     ``failed`` appends the statement after the last completed one, unapplied and
     carrying the server's message, so a partial row still names all it tried --
     `_expire_one`'s shape for the same error (#527, #528).
+
+    **Named from the last completed row, not from how many there are** (Copilot's
+    review of #536). The Oracle driver reports the unlock row even where it issued
+    nothing, so a count would work against it today -- but the error does not
+    promise a full prefix, and a driver that left the no-op row out would have its
+    failed close reported as a second `password_set`.
     """
     done = tuple((one.action, one.changed, one.detail) for one in changes)
     if failed is None:
         return done
-    return (*done, (_RESET_STATEMENTS[len(changes)], False, failed.message))
+    after = _RESET_STATEMENTS.index(changes[-1].action) + 1 if changes else 0
+    return (*done, (_RESET_STATEMENTS[after], False, failed.message))
 
 
 def _partial_reset(

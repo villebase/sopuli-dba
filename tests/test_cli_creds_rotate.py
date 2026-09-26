@@ -52,7 +52,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.lock import Holder, LockKey, LockRecord, lock_path
+from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.plan import BlastRadius
@@ -1325,3 +1325,35 @@ def test_a_prompt_is_announced_on_the_stream_and_confirm_is_not(
     assert prompts == ["draw a new password for 1 account on 2 targets in `prod` and promote it?"]
     assert "confirmation.required" not in names(stream(answered.stdout, events))
     assert asked.exit_code == ExitCode.SUCCESS
+
+
+def test_a_denied_lock_streams_the_holder_and_nothing_after_it(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """Somebody else is rotating: `lock.denied` names them, and nothing is read,
+    staged or dialled after it (review of #543)."""
+    harness = estate()
+    key = LockKey(store="vault-prod", path="apps/acme/appdb-alpha")
+    harness["store"].require_cas(lock_path(key))
+    harness["store"].write(
+        lock_path(key),
+        LockRecord.acquired(
+            correlation_id="01JSOMEBODYELSE",
+            command="creds rotate",
+            holder=Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli"),
+            now=utc_now(),
+        ).to_dict(),
+        cas=0,
+    )
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "jsonl")
+
+    assert isinstance(result.exception, LockDeniedError), result.exception
+    lines = stream(result.stdout, events)
+    assert names(lines) == ["run.started", "plan.resolved", "lock.denied", "run.finished"]
+    assert lines[-2]["data"]["holder"]["correlation_id"] == "01JSOMEBODYELSE"
+    assert lines[-1]["data"]["exit_code"] == ExitCode.LOCK_HELD
+    assert harness["sessions"] == []

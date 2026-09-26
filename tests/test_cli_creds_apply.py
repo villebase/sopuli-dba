@@ -3258,3 +3258,34 @@ def test_no_event_carries_a_password_not_even_a_redrawn_one(
     assert [line["data"]["stage"] for line in lines if line["event"] == "vault.write"] == [
         "pending"
     ]
+
+
+def test_a_failure_after_the_statement_still_reports_the_change(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    events: Draft202012Validator,
+) -> None:
+    """The database took the password and the re-read after it failed. The row
+    is `ERROR`, and it is also `changed` -- the database was mutated -- so the
+    document counts it and the stream says `password.applied`. Found by review
+    on #542: the row used to say `changed: false`, hiding exactly the
+    applied-but-not-promoted state the stream exists to show."""
+
+    def fail_after_set(harness: dict[str, Any], event: str) -> None:
+        if event == "describe_user" and any(one.changed for one in harness["sessions"]):
+            raise RuntimeError("ORA-03113: end-of-file on communication channel")
+
+    config = write_config(CONFIG)
+    estate(on_call=fail_after_set)
+    lines = stream(run(runner, config, "--select", "tenant=alpha", "--output", "jsonl"), events)
+    estate(on_call=fail_after_set)
+    body = document(run(runner, config, "--select", "tenant=alpha", "--output", "json"))
+
+    assert [line["target"] for line in lines if line["event"] == "password.applied"] == [
+        "appdb-alpha"
+    ]
+    assert "vault.promote" not in [line["event"] for line in lines]
+    assert body["results"][0]["state"] == "ERROR"
+    assert body["results"][0]["changed"] is True
+    assert body["summary"]["changed"] == 1

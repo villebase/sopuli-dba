@@ -6145,6 +6145,7 @@ def _apply_one(
     overridden: tuple[guardrails.Refusal, ...] = ()
     caveats: tuple[guardrails.Caveat, ...] = ()
     enforced: tuple[AttributeChange, ...] = ()
+    issued = False
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(
@@ -6247,6 +6248,11 @@ def _apply_one(
 
         manager.check(_lock_key(binding))
         session.set_password(user.name, source.value)
+        # From here on the database holds the new password whatever else fails,
+        # and the row has to say so: an error in the re-read or the verification
+        # below used to be reported `changed: false`, which hid a mutated database
+        # from the summary, the document and `password.applied` alike (#535).
+        issued = True
         # Re-read the account rather than reusing what was read before the change:
         # `EXPIRED` clears when a password is set, a rollover window opens, and a
         # lock may have arrived in between. The state reported has to be the one
@@ -6287,7 +6293,7 @@ def _apply_one(
             binding,
             source,
             check_states.Outcome(check_states.ERROR, reported.message),
-            changed=False,
+            changed=issued,
             verified_before=before,
             # Empty where the failure came before the review, which is why both
             # are initialised above rather than assigned only on the path that
@@ -7216,6 +7222,16 @@ def _restage(
             _candidate(record.binding, config, name=None, supplied=None, enforce=True)
             for record in records
         )
+        # Sent as each password is drawn, before the write that stages it, so a
+        # write that fails still leaves the draw on the stream -- and never the
+        # value, which this event's closed payload has no room for (#535).
+        for record in records:
+            emitter.event(
+                run.document,
+                "password.generated",
+                account=record.binding.account,
+                data={"vault": key.store, "path": key.path, "stage": PENDING},
+            )
         stored = documents.get(key)
         manager.check(key)
         written = write_credential(
@@ -7225,16 +7241,8 @@ def _restage(
             cas=0 if stored is None else stored.version,
         )
         documents[key] = stores[key.store].read(key.path)
-        # A draw is streamed as what it did to the vault, never as the value:
-        # one `password.generated` per account, then the one write that staged
-        # them all (#535).
-        for record in records:
-            emitter.event(
-                run.document,
-                "password.generated",
-                account=record.binding.account,
-                data={"vault": key.store, "path": key.path, "stage": PENDING},
-            )
+        # The one write that staged them all, once it has landed (#535). A write
+        # that raised ends the run, and `run.finished` carries why.
         emitter.event(
             run.document,
             "vault.write",

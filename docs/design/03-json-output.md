@@ -1754,7 +1754,10 @@ carried by the events in between:
 - **`password.applied`**, once per (account, target) whose `ALTER USER` was
   issued, with the document version the value was read at and the account's
   state — and nothing else, which event schema 1.4 enforces by closing the
-  payload. A re-run that changes nothing sends no `password.applied` at all,
+  payload. That includes an account whose re-read or verification failed
+  *after* the statement: its row is `ERROR` **and** `changed: true`, because
+  the database was mutated (review of #542 found it reported `false`). A
+  re-run that changes nothing sends no `password.applied` at all,
   only `verification.done`: invariant 9, visible on the stream.
 - **`verification.done`**, with the result's own `verification` object.
 - **`vault.read`**, per document, with its version; `null` is a path with nothing

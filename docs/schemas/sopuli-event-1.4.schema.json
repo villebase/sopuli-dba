@@ -274,6 +274,14 @@
               },
               "released": {
                 "type": "boolean"
+              },
+              "acquired_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
               }
             }
           }
@@ -320,6 +328,14 @@
               },
               "released": {
                 "type": "boolean"
+              },
+              "acquired_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
               }
             }
           }
@@ -357,6 +373,14 @@
               },
               "reason": {
                 "type": "string"
+              },
+              "acquired_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
               }
             }
           }

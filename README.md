@@ -58,8 +58,11 @@ keep the database in agreement with the vault. That gives you:
 - **The new password is published only after it works.** The vault holds the new
   password as `pending` while the tool sets it on the database and then *logs in
   with it*. Only when that succeeds is it promoted to `current`, the version
-  applications read. A failure halfway leaves applications on the password that
-  still works.
+  applications read. If a run fails partway, nothing is promoted and the new
+  password stays in the vault as `pending`, so running `sopuli creds apply` again
+  finishes the job. That keeps the vault honest, but it does not by itself keep
+  applications running: once a database has the new password, the old one stops
+  working there, unless a rollover window (the next point) keeps it valid.
 - **Applications don't have to switch at the same second.** On Oracle releases
   with gradual password rollover, the tool can put the account on a profile that
   keeps the old password valid for a window you choose. Applications pick up the
@@ -72,8 +75,11 @@ keep the database in agreement with the vault. That gives you:
 - **You find out about drift before the applications do.** `sopuli creds check`,
   run from a scheduler, logs in with the vault's password and reports whether each
   database still accepts it. If someone changed the password by hand, you hear
-  about it from a report, not from an outage. It checks the account's failed-login
-  count before trying, so the check itself will never lock the account.
+  about it from a report, not from an outage. Before it tries, it reads the
+  account's failed-login count, and does not try if one more failure would come
+  too close to the lockout limit. Reading that count needs one optional grant
+  (`SELECT ON SYS.USER$`); without it the check still runs, and each result says
+  that the lockout guard was unavailable.
 - **You get evidence for the auditor.** Every run can produce a machine-readable
   report of what was checked and what was changed. `sopuli creds status` shows
   each account's vault version, how old that password is, and when the database

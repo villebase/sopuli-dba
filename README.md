@@ -231,8 +231,10 @@ could not check, and says why. Checking is never worth locking out the account
 you were checking on.
 
 That guard needs one optional grant: `SELECT ON SYS.USER$`, which lets the tool
-read the failed-login count. Without it, the check still runs, one attempt per
-account per run, and every result says that the lockout guard was unavailable.
+read the failed-login count. Without it, the check still runs. It logs in once
+per account per run (twice with `--include-previous`, which also tries the
+previous password), and every result from a login it attempted says that the
+lockout guard was unavailable.
 The grant is not part of the standard install, because it is a broad read.
 [`docs/security-model.md`](docs/security-model.md) §3 explains the trade-off.
 

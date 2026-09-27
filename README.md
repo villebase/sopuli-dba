@@ -236,7 +236,7 @@ per account per run (twice with `--include-previous`, which also tries the
 previous password), and every result from a login it attempted says that the
 lockout guard was unavailable.
 The grant is not part of the standard install, because it is a broad read.
-[`docs/security-model.md`](docs/security-model.md) §3 explains the trade-off.
+[`docs/security-model.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) §3 explains the trade-off.
 
 **Passwords do not reach your logs.** A password is held in a wrapper type whose
 text form is `***`, so printing one prints the mask, in ordinary output and in a

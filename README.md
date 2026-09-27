@@ -233,12 +233,14 @@ when an answer is not `IN_SYNC`, are in
 ## How this project is built
 
 sopuli-dba is developed with AI coding agents, under a process designed to make
-that safe for a tool that handles credentials. The maintainer makes every design
-decision and records it as a GitHub issue or decision record, including the
-options that were rejected and why. Agents implement against those documents,
-which are the specification rather than a description written afterwards. A
-change that alters behaviour updates the relevant document in the same pull
-request.
+that safe for a tool that handles credentials. Design decisions are the
+maintainer's, and each is recorded as a GitHub issue or decision record,
+including the options that were rejected and why. An agent that meets an open
+design question while implementing stops and asks, or proposes an answer in the
+pull request, and the answer stands only once the maintainer accepts it. Agents
+implement against the design documents, which are the specification rather than
+a description written afterwards. A change that alters behaviour updates the
+relevant document in the same pull request.
 
 What the tool claims about a database is measured on real releases, not reasoned
 about, and every sample output in the documentation is pasted from a real run.

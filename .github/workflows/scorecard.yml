@@ -21,7 +21,12 @@ permissions: read-all
 jobs:
   analysis:
     runs-on: ubuntu-latest
+    # A job-level block replaces `read-all` rather than adding to it, so the
+    # reads the job needs are restated: `contents` for the checkout on a private
+    # repository, `actions` for Scorecard's own workflow checks.
     permissions:
+      contents: read
+      actions: read
       security-events: write
       id-token: write
     steps:

@@ -16,9 +16,19 @@
 # fails there and falls back to the plain grant, which is the one the PDB needs.
 #
 # Sourced, not executed, by the image's runUserScripts.sh: no `exit` here.
+#
+# Only the container switch stops on error. Without the PDB, the file would run
+# in CDB$ROOT and fail every profile with ORA-65140 -- the thing this wrapper
+# exists to avoid -- so it is better not to run it at all. The file itself stays
+# continue-on-error, as it is everywhere: each section catches what a release
+# rejects and reports it, and section 6 prints which profiles exist. Neither
+# exit status reaches the healthcheck (checkDBStatus.sh asks the database), so
+# the log line is the signal, not the code.
 
 sqlplus -s / as sysdba <<SQL
+WHENEVER SQLERROR EXIT FAILURE
 ALTER SESSION SET CONTAINER = ${ORACLE_PDB:-ORCLPDB1};
+WHENEVER SQLERROR CONTINUE
 @/opt/sopuli/oracle-init/01_test_profiles.sql
 exit
 SQL

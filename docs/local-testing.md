@@ -301,14 +301,17 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 21c XE | `sopuli-test-oracle-xe21-1` | `127.0.0.1:1522/XEPDB1`, root `.../XE` | CDB + PDB |
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other three containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and 19c are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other four containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1, 12.2 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
-follows. All three images are already on the machine and reach healthy in about a
-minute; the 11g one is the smallest and fastest of the four.
+follows. The three XE images are freely pullable and reach healthy in about a
+minute; the 11g one is the smallest and fastest of them. 19c is the exception on
+both counts — you pull it yourself, and its first start takes a quarter of an
+hour or more (below).
 
 **One Instant Client covers all of them.** Measured 2026-09-08 with the
-23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect. That is worth knowing
+23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect, and so does 19.3
+(2026-09-27, #548). That is worth knowing
 before planning an evening, because `00-principles.md` D7 warns that a 23.x
 client reaches 19c and later, which reads like 18c and 11g need a second client
 and a second process. They do not. Note that connecting is not the same as being

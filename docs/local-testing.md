@@ -368,9 +368,10 @@ docker compose --profile tier1 up -d     # if you want the vault as well
 ```
 
 Its own profile, and nothing else pulls it: `tier1`, `tier2` and no profile at
-all leave it alone. **The first start runs DBCA and took 23 min 25 s here**
-(Docker Desktop, 8 CPUs, 7.7 GB) before `DATABASE IS READY TO USE!` in
-`docker logs`. The datafiles go to a named volume, so after that a removed and
+all leave it alone. **The first start runs DBCA: 23 min 25 s here, and
+15 min 44 s the second time** from an empty volume (Docker Desktop, 8 CPUs,
+7.7 GB; tier 1 was running beside it the second time and not the first, so the spread is not load) before
+`DATABASE IS READY TO USE!` in `docker logs`. The datafiles go to a named volume, so after that a removed and
 recreated container was **28 s** to healthy, and a `docker restart` — which
 shuts the instance down cleanly first — 52 s. `--profile '*' down` keeps the
 volume; `--profile '*' down -v` throws the database away and the next `up` is

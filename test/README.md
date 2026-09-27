@@ -38,7 +38,7 @@ docker compose --profile tier0 up -d      # Vault + PostgreSQL, seconds
 docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
 docker compose --profile tier2 up -d      # + 21c/18c/11g XE + toxiproxy, minutes
 docker compose --profile nne   up -d      # Oracle requiring Native Network Encryption
-docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, tens of minutes the first time
+docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile '*'   down       # tear down EVERYTHING — see below
 ```
 

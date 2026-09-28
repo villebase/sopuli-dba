@@ -4918,7 +4918,10 @@ TARGET    REACHABLE  SCOPE  CONTAINER             OPEN MODE   CAPABILITIES
 adb-acme  yes        pdb    GXXXXXXXXXXXXXX_ACME  READ WRITE  6
 ```
 
-The six are everything but `offline_verify`, which is the `SYS.USER$` probe.
+The six are `account_lock_state`, `expire_password`, `password_reuse_policy`,
+`password_rollover`, `profile_management` and `role_lookup`. Two are absent:
+`offline_verify`, which is the `SYS.USER$` probe, and `common_users`, because a
+PDB-local service account has no common `ALTER USER`.
 `db_version` in the JSON reads `23.0.0.0.0`, although `V$VERSION` says
 `23.26.3.3.0`.
 

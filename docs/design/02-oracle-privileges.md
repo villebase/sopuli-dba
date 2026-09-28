@@ -1,6 +1,8 @@
 # sopuli-dba — Oracle privileges and grants
 
-Status: draft / sketch. **The SQL in `sql/oracle/` is unrun and untested.**
+Status: the SQL in `sql/oracle/` has been run, per script and per release, and
+**each script's own `STATUS:` header says where** and what is still untried.
+Trust that header over any summary, including this one.
 Depends on: `00-principles.md`, `../use-cases/uc-01-app-credential-sync.md`
 
 ---

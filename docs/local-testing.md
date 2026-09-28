@@ -360,8 +360,7 @@ you cannot redistribute it. One-time setup:
    ```
 
    3.6 GB to pull, 12.1 GB unpacked. The registry also carries
-   `enterprise:19.19.0.0`, which is past the 19.12 rollover floor — that one is
-   #565, not this section.
+   `enterprise:19.19.0.0`, which is past the 19.12 rollover floor — below.
 
 Then, from `test/`:
 
@@ -481,6 +480,38 @@ That is the ordinary tier-1 rule and nothing 19c-specific — with `required` th
 same run fails, which is what a lane that exists to run it wants. **Wait for
 `healthy` after a `start`**: the listener answers before the PDB is open, and a
 run started in that gap fails in the install-script module rather than skipping.
+
+### Oracle 19.19, which needs an arm64 machine
+
+`enterprise:19.19.0.0`, from the same repository and on the same terms, is the
+one pullable 19c past 19.12 — so the one that can open a rollover window. It is
+`test/compose.yaml`'s `oracle-19c-ru`, port 1527, under its own
+`--profile oracle19c-ru` so that `--profile oracle19c` never starts two EE
+instances at once.
+
+**It is built for linux/arm64 only**, and the tag is a single-platform manifest
+rather than a list with an x86 entry. On an x86 machine Docker runs it under
+QEMU and **the instance does not start** — two minutes in, DBCA stops at 9%:
+
+```
+[WARNING] ORA-00443: background process "PMON" did not start
+[FATAL] ORA-01034: ORACLE not available
+```
+
+and the PMON trace names the cause:
+
+```
+Build label:    RDBMS_19.19.0.0.0DBRU_LINUX.ARM64_230331.230608
+Machine:        aarch64
+ORA-01096: program version (19.0.0.0.0) incompatible with instance (0.0.0.14.238)
+```
+
+That is emulation failing, not being slow; waiting does not help. Run it on an
+arm64 Docker host — Apple Silicon, or an OCI Ampere A1 VM — where it should run
+natively. **Nobody has done that yet (#565)**, so treat the service as a sketch
+by analogy with `oracle-19c` until someone does. Clean up a failed attempt with
+`docker compose --profile oracle19c-ru down -v`, which removes this volume and
+leaves 19.3's alone.
 
 ### Seeing 11.2 keep your password, on purpose
 
@@ -5308,8 +5339,9 @@ did wrote outside them, the accounts above, and Vault under `acme/` and `locks/`
   text does not survive in `V$SQLSTATS` (#387; 11.2 is still the only release
   that keeps it, with 12.1 and 12.2 unmeasured). §5's *Running all of this
   against a different Oracle version* is the map, including the 19c container.
-  What is left is a *patched* 19c: 19.19 with rollover (#565), and a current RU,
-  which needs the OCI tenancy (#547).
+  What is left is a *patched* 19c: 19.19 with rollover (#565), whose image is
+  arm64-only and does not start on an x86 machine, and a current RU, which needs
+  the OCI tenancy (#547).
 
 When those land, this document should grow with them — it is meant to stay a
 complete map of what can be exercised by hand, and a stale one is worse than none.

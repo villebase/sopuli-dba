@@ -87,6 +87,7 @@ volume (`oracle19c-data`), because its database takes tens of minutes to create;
 | oracle-xe11 | 1524 | 11g XE — non-CDB, SID `XE` not a PDB service; 30-byte passwords; amd64 only |
 | oracle-nne | 1525 | NNE required; thin mode must fail with `DPY-3001` |
 | oracle-19c | 1526 | **19.3.0.0.0 EE, `--profile oracle19c` only**, maintainer-only (Oracle account + licence acceptance to pull, never in CI). CDB `ORCLCDB`, PDB `ORCLPDB1`; `SYSTEM` / `sopuli-test`. No rollover (19.12+). Named volume, so it survives `down` |
+| oracle-19c-ru | 1527 | **19.19.0.0.0 EE, `--profile oracle19c-ru` only**, same terms as oracle-19c. **The image is linux/arm64 only and needs an arm64 host**: under QEMU on x86 DBCA dies with `ORA-00443` / `ORA-01096` (#565). The one pullable 19c past 19.12, so the one that can open a rollover window. Untested on arm64 so far |
 | toxiproxy | 8474 | fault injection in front of DB and vault |
 
 ## Before trusting any of this

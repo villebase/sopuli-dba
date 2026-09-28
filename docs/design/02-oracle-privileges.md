@@ -303,9 +303,10 @@ What ADB takes away is permanent rather than a version gap:
 - **`db_version` is the base release**, `23.0.0.0.0`, because it is
   `V$INSTANCE.VERSION`, and that column has carried only the base release since
   18c. 19.3 reports `19.0.0.0.0` in the same column, with `VERSION_FULL`
-  `19.3.0.0.0`. Its one reader is `driver/oracle/limits.py`'s password-limit
-  floor, which compares the first two components only, so the zeros change
-  nothing (#479).
+  `19.3.0.0.0`. `doctor` displays it as `scope.db_version`. The one thing that
+  *decides* anything with it is `driver/oracle/limits.py`'s password-limit floor,
+  which compares the first two components only, so the zeros change nothing
+  (#479).
 - **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS`
   (§4 check 3), and whether `01_audit_policy.sql` runs on ADB, where unified
   auditing is on by default.

@@ -102,6 +102,16 @@ services:
     ports: !override ["127.0.0.1:1527:1521"]
 YAML
 
+# Oracle Linux 9's standard image enforces SELinux, and test/ sits under
+# /home/opc as user_home_t, which a container may not read, so the init
+# wrapper's scripts would be denied. Relabel the two bind-mounted directories
+# here rather than adding :z to the mounts, so the override does not have to
+# restate compose.yaml's volume list.
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    say "relabelling the init directories for SELinux ($(getenforce))"
+    sudo chcon -R -t container_file_t "$TEST/oracle-init" "$TEST/oracle-init-19c"
+fi
+
 COMPOSE="$DOCKER compose -f $TEST/compose.yaml -f $TEST/compose.oci.yaml --profile oracle19c-ru"
 
 state=$($DOCKER inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$CONTAINER" 2>/dev/null || echo "absent/")
@@ -139,7 +149,9 @@ fi
 # -------------------------------------------------------------- report ----
 
 say "what the database says"
-$DOCKER exec -i "$CONTAINER" bash -c 'sqlplus -s / as sysdba' <<'SQL'
+$DOCKER exec -i "$CONTAINER" bash -c 'sqlplus -s / as sysdba' <<'SQL' || die "the report query failed -- see the ORA- above; nothing after it is a measurement"
+whenever sqlerror exit failure
+whenever oserror exit failure
 set pagesize 100 linesize 200 feedback off heading on
 column banner_full format a80
 column name format a12

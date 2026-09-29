@@ -71,6 +71,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Shape = 'VM.Standard.A1.Flex'
+$PurposeTag = 'sopuli-dba-565'
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) "sopuli-a1-$PID"
 New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
 
@@ -121,6 +122,23 @@ function Get-Live {
     })
 }
 
+function Select-Ours {
+    # The one live resource with this display name that this script made, or
+    # $null. Display names are not unique in OCI, so a same-named resource
+    # somebody else made would otherwise be reused -- and, under -Teardown,
+    # deleted. Refuse an untagged or duplicate match rather than pick one.
+    param($Result, [string] $What)
+    $live = @(Get-Live $Result)
+    $ours = @($live | Where-Object { $_.'freeform-tags'.purpose -eq $PurposeTag })
+    if ($live.Count -gt $ours.Count) {
+        throw ("A $What with this name exists without the purpose=$PurposeTag tag; it is not " +
+               "this script's, so it is neither reused nor deleted. Rename it or pass another -Name.")
+    }
+    if ($ours.Count -gt 1) { throw "$($ours.Count) tagged ${What}s share this name; remove the extra by hand." }
+    if ($ours.Count -eq 1) { return $ours[0] }
+    return $null
+}
+
 function Confirm-Plan {
     param([string] $Question)
     if ($Yes) { return }
@@ -150,8 +168,8 @@ $compartment = $found[0].id
 
 $vcnName = "$Name-vcn"; $igwName = "$Name-igw"; $slName = "$Name-ssh-only"; $subnetName = "$Name-public"
 
-$vcn = Get-Live (Invoke-Oci @('network', 'vcn', 'list', '--compartment-id', $compartment, '--display-name', $vcnName)) | Select-Object -First 1
-$instance = Get-Live (Invoke-Oci @('compute', 'instance', 'list', '--compartment-id', $compartment, '--display-name', $Name)) | Select-Object -First 1
+$vcn = Select-Ours (Invoke-Oci @('network', 'vcn', 'list', '--compartment-id', $compartment, '--display-name', $vcnName)) 'VCN'
+$instance = Select-Ours (Invoke-Oci @('compute', 'instance', 'list', '--compartment-id', $compartment, '--display-name', $Name)) 'instance'
 
 # ----------------------------------------------------------- teardown -----
 
@@ -251,7 +269,7 @@ Confirm-Plan 'Proceed?'
 
 # ------------------------------------------------------------ network -----
 
-$tags = Write-JsonFile 'tags.json' '{"purpose":"sopuli-dba-565"}'
+$tags = Write-JsonFile 'tags.json' "{`"purpose`":`"$PurposeTag`"}"
 
 if (-not $vcn) {
     Write-Host "Creating VCN $vcnName ..."
@@ -261,8 +279,8 @@ if (-not $vcn) {
             '--freeform-tags', $tags, '--wait-for-state', 'AVAILABLE')).data
 }
 
-$igw = Get-Live (Invoke-Oci @('network', 'internet-gateway', 'list', '--compartment-id', $compartment,
-        '--vcn-id', $vcn.id, '--display-name', $igwName)) | Select-Object -First 1
+$igw = Select-Ours (Invoke-Oci @('network', 'internet-gateway', 'list', '--compartment-id', $compartment,
+        '--vcn-id', $vcn.id, '--display-name', $igwName)) 'internet gateway'
 if (-not $igw) {
     Write-Host "Creating internet gateway $igwName ..."
     $igw = (Invoke-Oci @('network', 'internet-gateway', 'create', '--compartment-id', $compartment,
@@ -286,8 +304,8 @@ $ingress = Write-JsonFile 'ingress.json' (@"
 "@)
 $egress = Write-JsonFile 'egress.json' '[{"destination": "0.0.0.0/0", "protocol": "all", "isStateless": false}]'
 
-$sl = Get-Live (Invoke-Oci @('network', 'security-list', 'list', '--compartment-id', $compartment,
-        '--vcn-id', $vcn.id, '--display-name', $slName)) | Select-Object -First 1
+$sl = Select-Ours (Invoke-Oci @('network', 'security-list', 'list', '--compartment-id', $compartment,
+        '--vcn-id', $vcn.id, '--display-name', $slName)) 'security list'
 if ($sl) {
     # The one thing a re-run changes: your address may have moved.
     Invoke-Oci @('network', 'security-list', 'update', '--security-list-id', $sl.id,
@@ -300,8 +318,8 @@ if ($sl) {
             '--freeform-tags', $tags, '--wait-for-state', 'AVAILABLE')).data
 }
 
-$subnet = Get-Live (Invoke-Oci @('network', 'subnet', 'list', '--compartment-id', $compartment,
-        '--vcn-id', $vcn.id, '--display-name', $subnetName)) | Select-Object -First 1
+$subnet = Select-Ours (Invoke-Oci @('network', 'subnet', 'list', '--compartment-id', $compartment,
+        '--vcn-id', $vcn.id, '--display-name', $subnetName)) 'subnet'
 if (-not $subnet) {
     Write-Host "Creating subnet $subnetName ..."
     # Only the SSH-only list: the VCN's default list admits SSH from anywhere.
@@ -337,6 +355,25 @@ if (-not $instance) {
     }
     if (-not $instance) {
         throw "Every availability domain was out of A1 capacity. Nothing launched; the network stays for the next try."
+    }
+}
+
+# A reused instance need not be running, and "Ready" must mean SSH can answer.
+# Start a stopped one; wait out one that is on its way up; refuse the rest.
+switch ($instance.'lifecycle-state') {
+    'RUNNING' { }
+    'STOPPED' {
+        Write-Host "Starting $Name (was STOPPED) ..."
+        $instance = (Invoke-Oci @('compute', 'instance', 'action', '--instance-id', $instance.id,
+                     '--action', 'START', '--wait-for-state', 'RUNNING')).data
+    }
+    { $_ -in @('PROVISIONING', 'STARTING') } {
+        Write-Host "Waiting for $Name ($($instance.'lifecycle-state')) to reach RUNNING ..."
+        $instance = (Invoke-Oci @('compute', 'instance', 'get', '--instance-id', $instance.id,
+                     '--wait-for-state', 'RUNNING')).data
+    }
+    default {
+        throw "$Name is $($instance.'lifecycle-state'); re-run once it has settled. The instance was left alone."
     }
 }
 

@@ -45,7 +45,7 @@ docker compose --profile tier2 up -d      # + 21c/18c/11g XE + toxiproxy, minute
 docker compose --profile nne   up -d      # Oracle requiring Native Network Encryption
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
-docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only, ~30 s the first time
+docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only; run its init.sh once, then healthy
 docker compose --profile '*'   down       # tear down EVERYTHING — see below
 ```
 

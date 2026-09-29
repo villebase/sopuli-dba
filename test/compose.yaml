@@ -301,12 +301,16 @@ services:
       - ./oracle-init:/opt/sopuli/oracle-init:ro
       - ./oracle-init-12c:/opt/sopuli/oracle-init-12c:ro
     healthcheck:
-      # The image's own check (V$INSTANCE.STATUS = OPEN) AND the PDB's service
-      # registered. The image starts the listener after the database, so the
-      # instance is OPEN about a minute before PMON's next registration and a
-      # client meanwhile gets ORA-12514 -- measured 2026-09-29, "The listener
-      # supports no services" with the PDB already READ WRITE.
-      test: ["CMD-SHELL", "/bin/bash /home/oracle/setup/healthcheck.sh && lsnrctl status | grep -qi 'Service \"orclpdb1'"]
+      # Three conditions, so that `healthy` means ready for the suite:
+      #   - the image's own check, V$INSTANCE.STATUS = OPEN;
+      #   - the PDB's service registered. The image starts the listener after
+      #     the database, so the instance is OPEN about a minute before PMON's
+      #     next registration and a client meanwhile gets ORA-12514 -- measured
+      #     2026-09-29, "The listener supports no services" with the PDB READ WRITE;
+      #   - oracle-init-12c/init.sh has completed, which it marks in the /ORCL
+      #     volume as its last step. Until then this stays `starting`, and turns
+      #     `unhealthy` once start_period is spent -- the signal to run it.
+      test: ["CMD-SHELL", "test -f /ORCL/.sopuli-init-12c-done && /bin/bash /home/oracle/setup/healthcheck.sh && lsnrctl status | grep -qi 'Service \"orclpdb1'"]
       interval: 30s
       timeout: 30s
       retries: 10

@@ -303,14 +303,14 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
 | 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other four containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. The three XE images are freely pullable and reach healthy in about a
 minute; the 11g one is the smallest and fastest of them. 19c is the exception on
 both counts — you pull it yourself, and its first start takes a quarter of an
-hour or more (below). 12.2 is pulled the same way and starts in about half a
-minute, but needs one `docker exec` before it is usable (below).
+hour or more (below). 12.2 is pulled the same way and is up in a minute and a
+half, but needs one `docker exec` before it reports healthy (below).
 
 **One Instant Client covers all of them.** Measured 2026-09-08 with the
 23.26.3.0.0 client from §4: 21c, 18c and 11.2 all connect, and so do 19.3
@@ -498,13 +498,12 @@ docker compose --profile oracle12c up -d
 ```
 
 It is a 2017 image and nothing like the 19c ones inside. **There is no DBCA**: the
-first start untars prebuilt datafiles, and was **healthy 95 s** after `up` on an
-empty volume here (31 s of that is the database; the rest is waiting for the
-listener registration the healthcheck insists on, below). A recreated container
-on the kept volume was 89 s, a `docker restart` 73 s.
-
-**Then run the init script once**, because the image has no hook to run it for
-you:
+first start untars prebuilt datafiles: the database is open in about 30 s, and
+its PDB service reaches the listener **89 s** after `up` on an empty volume here.
+**It then stays `starting`**, and turns `unhealthy` once the start period is
+spent, until you run the init script once — the healthcheck requires the marker
+the script writes last, so `healthy` means ready for the suite rather than
+merely open. The image has no hook to run it for you:
 
 ```bash
 docker exec sopuli-test-oracle-12c-1 bash /opt/sopuli/oracle-init-12c/init.sh
@@ -515,15 +514,21 @@ created tablespace USERS in CDB$ROOT
 ...
 profiles created    : SOPULI_LOCKOUT, SOPULI_REUSE, SOPULI_STRONG
 rollover supported  : no
+init complete: /ORCL/.sopuli-init-12c-done written, the healthcheck will now pass
 ```
+
+`healthy` followed 3 s later (93 s after `up`). The marker lives in the volume,
+so a container recreated on it was healthy in 90 s with no second run; a
+`docker restart` was 73 s. `down -v` discards it with the database, and the
+next `up` needs the script again.
 
 It fixes the three things that make this image unlike a database you would
 connect to, and each cost a run to find:
 
 - **No password file.** The image's own setup runs `orapwd` in the 12.2 format,
   which enforces complexity, and `sopuli-test` has no digit. `docker logs` says
-  `ERROR : config DB failed` — and the database comes up **open and healthy
-  anyway**, with every remote `AS SYSDBA` refused. That line stays in the log on
+  `ERROR : config DB failed` — and the database comes up **open anyway**, with
+  every remote `AS SYSDBA` refused; the image's own healthcheck called that healthy. That line stays in the log on
   every first start; the init script is what answers it.
 - **No `USERS` tablespace in `CDB$ROOT`**, which a DBCA-built CDB has.
   `00_install.sql`'s COMMON mode defaults to it and failed `ORA-00959`.

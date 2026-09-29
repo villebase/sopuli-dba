@@ -38,15 +38,29 @@
 #
 # Safe to run twice: orapwd is force=y, and the SQL file is continue-on-error and
 # reports what exists in its section 6.
+#
+# Every step but the profiles file stops the script on failure -- set -e, and
+# WHENEVER SQLERROR/OSERROR EXIT in each block -- because a half-initialised
+# database is the thing this script exists to prevent. The profiles file keeps
+# its own continue-on-error: it expects release-dependent failures (no
+# SOPULI_ROLLOVER below 19.12) and reports them.
+#
+# The LAST thing it does is write $READY_MARKER, in the /ORCL volume, and the
+# compose healthcheck requires that file. So `healthy` means "initialised", not
+# merely "open": until this has run the container stays `starting` (and turns
+# `unhealthy` once the start period is spent), and a container recreated on the
+# kept volume is healthy without running it again.
 
 set -e
 source /home/oracle/.bashrc
+READY_MARKER=/ORCL/.sopuli-init-12c-done
 
 echo "$DB_PASSWD" | orapwd file="$ORACLE_HOME/dbs/orapw$ORACLE_SID" format=12 force=y
 echo "password file written: $ORACLE_HOME/dbs/orapw$ORACLE_SID (format 12)"
 
-set +e
 sqlplus -s / as sysdba <<'SQL'
+WHENEVER SQLERROR EXIT FAILURE
+WHENEVER OSERROR EXIT FAILURE
 SET SERVEROUTPUT ON
 DECLARE
   l_cnt PLS_INTEGER;
@@ -72,3 +86,6 @@ WHENEVER SQLERROR CONTINUE
 @/opt/sopuli/oracle-init/01_test_profiles.sql
 exit
 SQL
+
+touch "$READY_MARKER"
+echo "init complete: $READY_MARKER written, the healthcheck will now pass"

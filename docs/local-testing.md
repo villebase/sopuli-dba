@@ -73,7 +73,7 @@ OCI Vault as a secret store does not exist — see §14.
 | **Windows laptop** | the primary target. The ACL permission checks, the console encoding and the wallet report all behave differently here, and Windows is where the bugs have been |
 | **WSL** | the POSIX side of the same checks — file modes instead of ACLs. Cheap second opinion, and closer to where this would run scheduled |
 | **Docker** | Oracle and Vault. Neither needs installing on the host |
-| **OCI** | the only place a service that enforces Native Network Encryption (Base Database Service — not ADB, which uses TLS) and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
+| **OCI** | the only place a service that enforces Native Network Encryption (Base Database Service (unverified: nne-oci-default) — not ADB, which uses TLS (unverified: adb-thin-mode)) and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
 
 Run through §§3–12 on Windows first, then repeat §§6–12 in WSL. The interesting
 differences are called out as they come.
@@ -236,6 +236,21 @@ client
 `instant_client  not loaded` with a `detail:` line underneath means the library
 was not found; the detail says why. This is `doctor`'s one job that works with
 nothing else set up, so run it before anything else.
+
+**`DPY-3001` is the other way a missing client shows up, and it cannot be caused
+on purpose.** It is what the driver raises when a connection is attempted in thin
+mode and needs something only thick mode has, and sopuli never starts in thin
+mode deliberately — so there is no command here that produces it, and the hint
+below is what the tool attaches to it, printed by classifying the code directly
+rather than captured from a run:
+
+```
+$ python -c "from sopuli.driver.oracle.errors import classify; print(classify('DPY-3001', 'DPY-3001').hint)"
+this ran in thin mode, which sopuli never uses deliberately (D3): thin mode has no Native Network Encryption, cannot reach a database older than 12.1, and cannot log on through an external password store. Instant Client is missing or thick-mode initialisation did not happen
+```
+
+If you ever meet it, the last sentence is the one to act on: fix the client as
+above. The three reasons are why there is no thin-mode fallback to reach for.
 
 ---
 
@@ -5003,9 +5018,10 @@ Two halves, and only one exists.
 
 **A database in OCI — supported.** Which service it is matters on the wire and
 not in the config. Autonomous Database encrypts with TLS or mutual TLS and uses
-no Native Network Encryption at all; Base Database Service and Exadata Cloud are
-where NNE is required — by Oracle's documented default `sqlnet.ora`, which has
-not been measured here (#575). Thick mode reaches both. Point a
+no Native Network Encryption at all (unverified: adb-thin-mode); Base Database
+Service and Exadata Cloud are where NNE is required — by Oracle's documented
+default `sqlnet.ora` (unverified: nne-oci-default). Neither has been measured here:
+#575 is the run. Thick mode reaches both. Point a
 target at it exactly like any other:
 
 ```yaml
@@ -5214,8 +5230,9 @@ controlled by an ACL or a private endpoint — there is no wallet in the picture
 Copy the connect descriptor out of the OCI console and put it straight in `dsn:`,
 and leave `TNS_ADMIN` unset.
 
-**Locally you can approximate the NNE constraint** — Base Database's, which an ADB does not
-have — without OCI:
+**Locally you can approximate the NNE constraint** — Base Database's
+(unverified: nne-oci-default), which an ADB does not have
+(unverified: adb-thin-mode) — without OCI:
 
 ```bash
 docker compose --profile nne up -d      # Oracle on 1525, NNE required

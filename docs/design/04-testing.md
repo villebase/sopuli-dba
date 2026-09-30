@@ -108,8 +108,9 @@ release is cut.
   `sqlnet.ora` and assert that a thin-mode connection fails with `DPY-3001` and
   that the tool's diagnostics say something useful. That covers the failure path;
   the success path still needs a real server that enforces it — Base Database
-  Service, **not** Autonomous, which encrypts with TLS and would prove nothing
-  about NNE. That run has not been done (#575).
+  Service (unverified: nne-oci-default), **not** Autonomous, which encrypts with
+  TLS (unverified: adb-thin-mode) and would prove nothing about NNE. Neither has
+  been run (#575).
 
 ---
 

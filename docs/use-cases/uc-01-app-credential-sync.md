@@ -814,7 +814,9 @@ happens. Reported per account as `PENDING_APPLY`, the same word
 is, by construction, the password the account held one change ago, whenever this
 tool made that change — so where `PASSWORD_REUSE_MAX` or `PASSWORD_REUSE_TIME`
 is anything but `UNLIMITED`, the value is the one most likely of any to be in the
-history, and the statement fails with `ORA-28007`. Measured on ADB, whose own
+history, and the statement is likely to fail with `ORA-28007` — certain where
+one limit is `UNLIMITED` and the other a number, and dependent on elapsed time
+and intervening changes where both are numbers. Measured on ADB, whose own
 `DEFAULT` carries `4` / `1`, and on tier 1's `SOPULI_REUSE` (`5` / `UNLIMITED`):
 both refused, both failed safely, and `check` afterwards was `IN_SYNC` against
 `current`.
@@ -2009,8 +2011,8 @@ settled in #84): OCI holds exactly one `PREVIOUS`, and `01-configuration.md` §7
 stage vocabulary — `current` / `pending` / `previous` — has nothing to address an
 older generation with. Recovery further back is a matter of reading the store's
 own version history, which not every backend has. Nor does every profile allow
-it: one that restricts password reuse refuses `previous` with `ORA-28007`, and
-there the escape hatch is a rollover window opened by the rotation itself (§5,
+it: one that restricts password reuse is likely to refuse `previous` with
+`ORA-28007`, and there the escape hatch is a rollover window opened by the rotation itself (§5,
 #568).
 
 ---

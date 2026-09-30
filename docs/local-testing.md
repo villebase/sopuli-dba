@@ -73,7 +73,7 @@ OCI Vault as a secret store does not exist — see §14.
 | **Windows laptop** | the primary target. The ACL permission checks, the console encoding and the wallet report all behave differently here, and Windows is where the bugs have been |
 | **WSL** | the POSIX side of the same checks — file modes instead of ACLs. Cheap second opinion, and closer to where this would run scheduled |
 | **Docker** | Oracle and Vault. Neither needs installing on the host |
-| **OCI** | the only place Native Network Encryption and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
+| **OCI** | the only place a service that enforces Native Network Encryption (Base Database Service — not ADB, which uses TLS) and a real ADB wallet can be exercised — and note that an ADB wallet is TLS certificates, not a credential store (§14) |
 
 Run through §§3–12 on Windows first, then repeat §§6–12 in WSL. The interesting
 differences are called out as they come.
@@ -204,9 +204,10 @@ coloured, never a banner. That is what `about` exists to keep true.
 
 ## 4. Oracle Instant Client
 
-**Mandatory.** `python-oracledb` runs in *thick* mode here, because thin mode does
-not support Native Network Encryption and OCI-hosted databases require it. There
-is no configuration that avoids this.
+**Mandatory.** `python-oracledb` runs in *thick* mode here, for three reasons
+(`design/00-principles.md`, *Why thick mode*): thin mode does not support Native
+Network Encryption, it cannot connect to 11.2, and `auth: external` needs the
+client libraries. There is no configuration that avoids this.
 
 Download **Basic** plus **SQL\*Plus** (the second is not required by sopuli but
 you will want it for sanity checks) from Oracle's Instant Client downloads.
@@ -5000,8 +5001,11 @@ WSL.
 
 Two halves, and only one exists.
 
-**A database in OCI — supported.** This is the reason for thick mode: OCI-hosted
-databases require Native Network Encryption, which thin mode cannot do. Point a
+**A database in OCI — supported.** Which service it is matters on the wire and
+not in the config. Autonomous Database encrypts with TLS or mutual TLS and uses
+no Native Network Encryption at all; Base Database Service and Exadata Cloud are
+where NNE is required — by Oracle's documented default `sqlnet.ora`, which has
+not been measured here (#575). Thick mode reaches both. Point a
 target at it exactly like any other:
 
 ```yaml
@@ -5210,7 +5214,8 @@ controlled by an ACL or a private endpoint — there is no wallet in the picture
 Copy the connect descriptor out of the OCI console and put it straight in `dsn:`,
 and leave `TNS_ADMIN` unset.
 
-**Locally you can approximate the NNE constraint** without OCI:
+**Locally you can approximate the NNE constraint** — Base Database's, which an ADB does not
+have — without OCI:
 
 ```bash
 docker compose --profile nne up -d      # Oracle on 1525, NNE required

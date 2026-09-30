@@ -391,7 +391,7 @@ version: 1
 
 runtime:
   oracle:
-    # Optional. Thick mode is required (Native Network Encryption); the client is
+    # Optional. Thick mode is required (00-principles.md, D3); the client is
     # found on PATH unless this points elsewhere.
     client_lib_dir: C:\Oracle\instantclient_23_0
 

@@ -5460,7 +5460,7 @@ def creds_apply(
     # The whole declared estate, kept beside the narrowed one: the promotion gate
     # is asked about pairs this run was told to leave out (#406), and the filtered
     # config has forgotten them.
-    estate = binding_stores.complete(run.config, env=os.environ)
+    estate = _declared_estate(run.config)
     config = filter_estate(run.config, selection)
     # After the selectors, so the two compose as *and* the way every pair of
     # selectors does, and so `refuse_unknown` still judges names against the
@@ -7584,30 +7584,69 @@ def _left_out(
     ``scope`` is every binding the run selected, including the ones that owe
     nothing, so an account applied from `current` or skipped by a guardrail is in
     the run rather than left out of it (#286 keeps deciding what a skip means).
+
+    **"The same credential" is the same place in the same document**: the lock
+    key, then the field and the decoded pointer -- not the whole ref, whose raw
+    spelling can differ between two targets that address one value (found in
+    review on #578).
+
+    **An excluded binding with no store is counted, not skipped**, where its path
+    is one being promoted. Its store may resolve only when it is selected, so
+    "no store here" is not evidence that it lives somewhere else, and the gate
+    fails closed on it rather than promoting past it (also #578).
     """
     visited = {(binding.account, binding.target) for binding in scope}
-    credentials: dict[LockKey, set[SecretRef]] = {}
+    credentials: dict[LockKey, set[tuple[str | None, tuple[str, ...]]]] = {}
     forward: set[LockKey] = set()
     for binding, is_forward in owing:
         if binding.secret is None or binding.vault is None:
             continue
         key = _lock_key(binding)
-        credentials.setdefault(key, set()).add(binding.secret)
+        credentials.setdefault(key, set()).add(_credential_at(binding.secret))
         if is_forward:
             forward.add(key)
+    by_path: dict[str, list[LockKey]] = {}
+    for key in credentials:
+        by_path.setdefault(key.path, []).append(key)
 
     found: dict[LockKey, list[Binding]] = {}
     for binding in estate.bindings:
-        if binding.secret is None or binding.vault is None:
+        if binding.secret is None or (binding.account, binding.target) in visited:
+            continue
+        if binding.vault is None:
+            for key in by_path.get(normalise_path(binding.secret.path), []):
+                found.setdefault(key, []).append(binding)
             continue
         key = _lock_key(binding)
-        if key not in credentials or (binding.account, binding.target) in visited:
+        if key not in credentials:
             continue
-        if binding.secret in credentials[key] or (
+        if _credential_at(binding.secret) in credentials[key] or (
             key in forward and _has_pending(binding, documents)
         ):
             found.setdefault(key, []).append(binding)
     return found
+
+
+def _credential_at(ref: SecretRef) -> tuple[str | None, tuple[str, ...]]:
+    """Where in its document a ref's value lives: the field and the decoded pointer."""
+    return ref.field, ref.pointer_segments
+
+
+def _declared_estate(config: Config) -> Config:
+    """Every binding the file declares, with the stores that resolve without asking.
+
+    For the promotion gate only (#406), which needs the pairs a selector left out.
+    **It never refuses** (found in review on #578): `binding_stores.complete`
+    rejects a `SOPULI_VAULT` that names an undeclared store, which is right for a
+    run that needs the default and wrong for one that is refused over a binding
+    it excluded. Where completing would refuse, the bindings are returned as
+    loaded, and the ones left without a store are counted by :func:`_left_out`
+    rather than dropped.
+    """
+    try:
+        return binding_stores.complete(config, env=os.environ)
+    except ConfigError:
+        return config
 
 
 def _has_pending(binding: Binding, documents: Mapping[LockKey, Any]) -> bool:
@@ -8464,7 +8503,6 @@ def creds_rotate(
 
 
 def _refuse_narrow_rotation(
-    scope: Sequence[Binding],
     rotating: Sequence[Binding],
     documents: Mapping[LockKey, Any],
     run: Invocation,
@@ -8478,9 +8516,15 @@ def _refuse_narrow_rotation(
     same test (:func:`_left_out`) is a refusal here, before anything is staged,
     and the way to rotate part of an estate at a time stays `creds generate`
     followed by `creds apply` per target.
+
+    **The visited set is what is due, not what was selected** (found in review on
+    #578). `--max-age-days` drops an account from the rotation without dropping
+    it from the selection, so a sibling with a `pending` of its own that is not
+    due is exactly as unvisited as one a selector excluded.
     """
-    estate = binding_stores.complete(run.config, env=os.environ)
-    left_out = _left_out(scope, [(binding, True) for binding in rotating], documents, estate)
+    left_out = _left_out(
+        rotating, [(binding, True) for binding in rotating], documents, _declared_estate(run.config)
+    )
     if not left_out:
         return
     named = "; ".join(
@@ -8562,7 +8606,7 @@ def _rotate_estate(
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
-    _refuse_narrow_rotation(bindings, rotating, documents, run)
+    _refuse_narrow_rotation(rotating, documents, run)
 
     # Step 3, and unconditional. Every account about to be rotated, rather than
     # only those the vault already holds something for: there is no `pending`
@@ -8855,7 +8899,7 @@ def _preview_rotation(
         document.finish(ExitCode.SUCCESS, Summary(total=len(selections)))
         return _nothing_due(plan, selections, max_age_days)
     # A refusal under `--dry-run` is still a refusal, as the pre-flight's is.
-    _refuse_narrow_rotation(bindings, rotating, documents, run)
+    _refuse_narrow_rotation(rotating, documents, run)
 
     findings = _preflight(rotating, run, config, strategy=strategy, full=True)
     document.diagnostics.extend(_preflight_diagnostics(findings))

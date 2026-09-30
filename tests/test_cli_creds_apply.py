@@ -25,14 +25,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli import apply, check
 from sopuli.admin import Resolved
-from sopuli.cli import cli
+from sopuli.cli import _left_out, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.errors import ArgumentError
+from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import LOCK_TAKEN_OVER, PROMOTION_WITHHELD, REPAIR_DOCUMENT_STALE
@@ -2136,6 +2138,104 @@ def test_a_rotation_narrower_than_its_promotion_is_refused_before_staging(
     assert "acme_web_user on appdb-beta" in str(result.exception)
     assert harness["store"].read(REDRAW_DOCUMENT).version == before
     assert harness["sessions"] == []
+
+
+#: `REDRAW_CONFIG` with beta's store left to a default nobody set, so the binding
+#: the gate is asked about has no store at all (found in review on #578).
+STORELESS_BETA_CONFIG = REDRAW_CONFIG.replace(
+    "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    environment: prod\n"
+    "    vault: vault-prod\n",
+    "    dsn: db-prod.example.com:1521/beta.pdb.example.com\n    environment: prod\n",
+)
+
+
+def test_an_excluded_binding_with_no_store_holds_the_promotion_back(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Its store might resolve only when it is selected, so "no store" is not
+    evidence that it lives in another document. The gate fails closed."""
+    assert STORELESS_BETA_CONFIG != REDRAW_CONFIG
+    harness = estate(documents=staged())
+
+    result = run(runner, write_config(STORELESS_BETA_CONFIG), "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "acme_web_user on appdb-beta" in result.output
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"] == {"acme_web_user": STAGED}
+
+
+def test_an_unused_default_store_does_not_refuse_a_narrowed_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`SOPULI_VAULT` naming an undeclared store is wrong only for a run that
+    needed the default, and this one does not: the gate reads the whole estate,
+    and reading it must not add a refusal the selected run would never meet."""
+    monkeypatch.setenv("SOPULI_VAULT", "nosuch")
+    estate(documents=staged())
+
+    result = run(runner, write_config(STORELESS_BETA_CONFIG), "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "nosuch" not in result.output
+
+
+def test_the_same_credential_spelled_differently_is_still_the_same_credential() -> None:
+    """Two targets can address one value with refs that are not equal as
+    strings -- an explicit store prefix on one of them. A rollback compares the
+    credential and not the spelling (found in review on #578)."""
+    config = build_config(yaml.safe_load(REDRAW_CONFIG))
+    alpha, beta = config.bindings
+    assert alpha.secret is not None
+    assert beta.secret is not None
+    beta = replace(beta, secret=replace(beta.secret, vault="vault-prod", path="apps//acme/db"))
+    estate_ = replace(config, bindings=(alpha, beta))
+
+    found = _left_out([alpha], [(alpha, False)], {}, estate_)
+
+    assert [(one.account, one.target) for bindings in found.values() for one in bindings] == [
+        ("acme_web_user", "appdb-beta")
+    ]
+
+
+def test_a_sibling_that_is_not_due_is_not_visited_by_the_rotation(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--max-age-days` drops an account from the rotation without dropping it
+    from the selection. A sibling that is not due and has a `pending` of its own
+    is as unvisited as one a selector excluded (found in review on #578)."""
+    recent = to_rfc3339(utc_now() - timedelta(days=1))
+    old = to_rfc3339(utc_now() - timedelta(days=60))
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+                "rotated_at": {"acme_web_user": recent, "acme_batch_user": old},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+    )
+    before = harness["store"].read("apps/acme/db").version
+
+    result = runner.invoke(
+        cli,
+        [
+            "creds",
+            "rotate",
+            "--config",
+            str(write_config(SHARED_CONFIG)),
+            "--max-age-days",
+            "30",
+            "--confirm",
+        ],
+    )
+
+    assert isinstance(result.exception, RefusedError)
+    assert "acme_web_user on appdb-alpha" in str(result.exception)
+    assert harness["store"].read("apps/acme/db").version == before
 
 
 # -------------------------------------------------------------- the failures ---

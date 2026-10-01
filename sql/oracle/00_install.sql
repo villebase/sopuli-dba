@@ -248,15 +248,16 @@ END;
 -- DBA sets a real one. Store that password in the vault, or use an Oracle
 -- Wallet / external authentication and never give it a usable password at all.
 --
--- **27 + 3 = 30 bytes, and the 30 is a ceiling rather than a preference.**
--- Oracle raised the password limit past 30 bytes at 23ai; every earlier line
--- still refuses a 31st with `ORA-00972: identifier is too long`, and refuses it
--- from inside this block, so the script fails at step 1 having created nothing.
--- Measured 2026-09-08 (#380): 31 bytes is accepted on 26ai 23.26.2.0.0 and
--- rejected on 21c XE 21.3, 18c XE 18.4 and 11g XE 11.2. The script ran only on
--- 26ai until now, which is why a 31-byte password looked fine.
--- `aA1` is appended rather than left to chance because `STRING('X', n)` draws
--- from uppercase and digits only, and a verify function wants a lowercase too.
+-- **22 + 8 = 30 bytes, and the 30 is a ceiling rather than a preference.**
+-- A 31st byte is `ORA-00972: identifier is too long` on every release measured
+-- below 23ai, and refused from inside this block, so the script fails at step 1
+-- having created nothing. Measured 2026-09-08 (#380): 31 bytes is accepted on
+-- 26ai 23.26.2.0.0 and rejected on 21c XE 21.3, 18c XE 18.4 and 11g XE 11.2,
+-- and later on 19.3 and 12.2 (#548, #572). Where the limit changed is #383's
+-- open question; this stays at 30 so as not to answer it.
+-- The fixed tail is appended rather than left to chance because `STRING('X', n)`
+-- draws from uppercase and digits only, and a verify function wants more -- see
+-- the statement below. It was `aA1`, 27 + 3, until #581.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [1] account &eff_user
@@ -265,7 +266,7 @@ DECLARE
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = UPPER('&eff_user');
   IF l_cnt = 0 THEN
-    -- 30 bytes, the limit before 23ai (ORA-00972). The fixed tail carries two
+    -- 30 bytes (see above). The fixed tail carries two
     -- of every class ORA12C_STRONG_VERIFY_FUNCTION counts -- upper, lower,
     -- digit, special -- because an OCI Base Database DB system enforces it on
     -- DEFAULT out of the box, and the old 'aA1' tail was ORA-28003 there

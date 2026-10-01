@@ -320,7 +320,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
 | 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Six capabilities, rollover included; NNE required, so thick mode only. Measured 2026-10-01 — §14 has the tool's run, the scripts' headers the probes |
 | 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
-| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
+| 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 is unmeasured and 19.32.0.0.0 is the only 19c release update measured (#581). See [`security-model.md`](security-model.md) §5 and #387 |
 
 Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows. The three XE images are freely pullable and reach healthy in about a
@@ -5483,7 +5483,7 @@ acme_batch_user  oci-pdb  IN_SYNC  no rollover window is open
 no rollover window was open on any of 1
 ```
 
-The window was one hour. 19c renders `PASSWORD_ROLLOVER_TIME` in seconds (`1/24`
+The window was one hour. 19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds (`1/24`
 reads back as `3600`, `1` as `86400`, and `0` as `-1`), and the tool reads the
 number as days. Opening and closing the window go by `ACCOUNT_STATUS` and are
 right; the length, `status`'s `ROLLOVER` column (`3600d configured`) and the

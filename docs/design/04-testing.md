@@ -105,7 +105,7 @@ release is cut.
   `status` and `check --include-previous` report it, an `apply` re-run reports
   nothing changed, and `finish-rollover` closes it and then reports no window
   open. What it found: the window's *length* is reported wrong there, because
-  19c renders `PASSWORD_ROLLOVER_TIME` in seconds and the tool reads days
+  19.32.0.0.0 renders `PASSWORD_ROLLOVER_TIME` in seconds and the tool reads days
   (#583).
 - **Native Network Encryption**, one of the three things that force thick mode
   (`00-principles.md`, *Why thick mode*), is properly

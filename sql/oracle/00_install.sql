@@ -28,7 +28,19 @@
 --         already-exists; and COMMON mode in CDB$ROOT with the C## prefix this
 --         image keeps (grant_set_container=Y), where every system privilege
 --         reported COMMON = YES. Section 7's over-grant query was empty in
---         each. A patched 19c is unmeasured.
+--         each.
+--         Confirmed on 19c EE 19.32.0.0.0 (2026-10-01, #581), an OCI Base
+--         Database Service DB system, by hand as SYSDBA: PDB mode in ORCLPDB1
+--         (SOPULI_SVC, tablespace USERS, grant_pwfile=Y) and COMMON mode in
+--         CDB$ROOT (C##SOPULI_SVC, grant_set_container=Y, every system
+--         privilege COMMON = YES); section 7's over-grant query empty in each.
+--         It did NOT run there as written: the DB system's DEFAULT profile
+--         enforces ORA12C_STRONG_VERIFY_FUNCTION, and section 1's random
+--         password ('X' string + 'aA1') was ORA-28003 "must contain 2 or more
+--         lowercase characters", having created nothing. Section 1's tail
+--         now satisfies the function; see the comment there. Pass COMMON mode
+--         the bare name: it adds C## itself, so C##SOPULI_SVC gives
+--         C##C##SOPULI_SVC.
 --         Confirmed on 12c EE 12.2.0.1.0 (2026-09-29, #572), by hand as
 --         SYSDBA -- PDB mode in ORCLPDB1 (SOPULI_SVC, grant_pwfile=Y) and
 --         COMMON mode in CDB$ROOT (C##SOPULI_SVC, grant_set_container=Y) --
@@ -253,8 +265,13 @@ DECLARE
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = UPPER('&eff_user');
   IF l_cnt = 0 THEN
+    -- 30 bytes, the limit before 23ai (ORA-00972). The fixed tail carries two
+    -- of every class ORA12C_STRONG_VERIFY_FUNCTION counts -- upper, lower,
+    -- digit, special -- because an OCI Base Database DB system enforces it on
+    -- DEFAULT out of the box, and the old 'aA1' tail was ORA-28003 there
+    -- (19.32.0.0.0, 2026-10-01, #581). '#' and '_' need no quoting inside "".
     EXECUTE IMMEDIATE 'CREATE USER &eff_user IDENTIFIED BY "'
-                   || DBMS_RANDOM.STRING('X', 27) || 'aA1" '
+                   || DBMS_RANDOM.STRING('X', 22) || 'aaBB22#_" '
                    || 'DEFAULT TABLESPACE &svc_tablespace '
                    || 'PASSWORD EXPIRE' || '&cont_all';
     DBMS_OUTPUT.PUT_LINE('created &eff_user (random password, expired - set it now)');

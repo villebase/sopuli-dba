@@ -1,8 +1,11 @@
 """Rollover: the profile check, the window, the DDL we refuse to issue. Tier 0.
 
-Every literal here was read off 26ai Free 23.26.2.0.0 — in particular `.0416`,
+The days literals were read off 26ai Free 23.26.2.0.0 — in particular `.0416`,
 which is what `PASSWORD_ROLLOVER_TIME 1/24` reads back as and which the obvious
-implementation gets wrong.
+implementation gets wrong. The seconds literals (`3600`, `86400`, `604800`) and
+off's `-1` were read off 19c EE 19.32.0.0.0 on an OCI Base Database Service DB
+system (#583). `5184000` and `60` are the 60-day ceiling in each unit, derived
+from Oracle's documented bound rather than read back.
 """
 
 from __future__ import annotations

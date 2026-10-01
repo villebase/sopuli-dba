@@ -349,7 +349,9 @@ if ($Connect) {
     if (-not $session -or $session.'lifecycle-state' -ne 'ACTIVE') { throw "Session $sessionName did not become ACTIVE." }
     $session = (Invoke-Oci @('bastion', 'session', 'get', '--session-id', $session.id)).data
     # OCI hands back the command with <privateKey> and <localPort> placeholders.
-    $command = $session.'ssh-metadata'.command -replace '<privateKey>', $privateKey -replace '<localPort>', "$TunnelPort"
+    # Literal replacement, and the key path quoted: a Windows profile path can
+    # hold spaces, and -replace would read a `$` in it as a group reference.
+    $command = $session.'ssh-metadata'.command.Replace('<privateKey>', "`"$privateKey`"").Replace('<localPort>', "$TunnelPort")
     Write-Host ''
     Write-Host "Session $sessionName is ACTIVE for three hours. Leave this running:"
     Write-Host "  $command"
@@ -382,6 +384,33 @@ if ($Teardown) {
     Write-Host "  bastion   $BastionName  $(if ($bastion) { $bastion.id } else { '(none)' })  -- its sessions with it"
     Write-Host "  network   $vcnName  $(if ($vcn) { $vcn.id } else { '(none)' })  -- subnet, security list, gateway, VCN"
     if (-not $dbSystem -and -not $bastion -and -not $vcn) { Write-Host 'Nothing to remove.'; exit 0 }
+
+    # The VCN is ours by tag, but what is inside it need not be. Everything the
+    # loops below delete must be one of the three things this script creates,
+    # by name AND tag; anything else -- a subnet, gateway or security list
+    # somebody added later -- refuses the whole teardown before anything is
+    # deleted, rather than being swept away with the VCN.
+    $vcnContents = @()
+    if ($vcn) {
+        $subnets  = @(Get-Live (Invoke-Oci @('network', 'subnet', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id)))
+        $gateways = @(Get-Live (Invoke-Oci @('network', 'internet-gateway', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id)))
+        $lists    = @(Get-Live (Invoke-Oci @('network', 'security-list', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id)) |
+                      Where-Object { $_.id -ne $vcn.'default-security-list-id' })
+        $foreign = @()
+        foreach ($pair in @(@($subnets, $subnetName, 'subnet'), @($gateways, $igwName, 'internet gateway'),
+                            @($lists, $slName, 'security list'))) {
+            foreach ($r in $pair[0]) {
+                if ($r.'display-name' -ne $pair[1] -or $r.'freeform-tags'.purpose -ne $PurposeTag) {
+                    $foreign += "$($pair[2]) '$($r.'display-name')' ($($r.id))"
+                }
+            }
+        }
+        if ($foreign.Count -gt 0) {
+            throw ("$vcnName holds resources this script did not create, so nothing has been deleted:`n  " +
+                   ($foreign -join "`n  ") + "`nRemove or move them first, then re-run -Teardown.")
+        }
+        $vcnContents = @($subnets) + @($gateways) + @($lists)
+    }
     Confirm-Plan 'Delete all of the above? The database goes with it.'
 
     if ($dbSystem) {
@@ -398,7 +427,7 @@ if ($Teardown) {
                      '--wait-for-state', 'SUCCEEDED', '--wait-for-state', 'FAILED') | Out-Null
     }
     if ($vcn) {
-        foreach ($s in Get-Live (Invoke-Oci @('network', 'subnet', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id))) {
+        foreach ($s in $subnets) {
             Write-Host "Deleting subnet $($s.'display-name') ..."
             Invoke-Oci @('network', 'subnet', 'delete', '--subnet-id', $s.id, '--force', '--wait-for-state', 'TERMINATED') | Out-Null
         }
@@ -406,12 +435,11 @@ if ($Teardown) {
         # it still points at cannot be deleted either.
         Invoke-Oci @('network', 'route-table', 'update', '--rt-id', $vcn.'default-route-table-id',
                      '--route-rules', (Write-JsonFile 'no-routes.json' '[]'), '--force') | Out-Null
-        foreach ($g in Get-Live (Invoke-Oci @('network', 'internet-gateway', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id))) {
+        foreach ($g in $gateways) {
             Write-Host "Deleting internet gateway $($g.'display-name') ..."
             Invoke-Oci @('network', 'internet-gateway', 'delete', '--ig-id', $g.id, '--force', '--wait-for-state', 'TERMINATED') | Out-Null
         }
-        foreach ($l in Get-Live (Invoke-Oci @('network', 'security-list', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id))) {
-            if ($l.id -eq $vcn.'default-security-list-id') { continue }
+        foreach ($l in $lists) {
             Write-Host "Deleting security list $($l.'display-name') ..."
             Invoke-Oci @('network', 'security-list', 'delete', '--security-list-id', $l.id, '--force', '--wait-for-state', 'TERMINATED') | Out-Null
         }

@@ -792,7 +792,7 @@ Creating bastion sopuli19cbastion in sopuli-19c's subnet, admitting <your addres
 Opening a 3-hour port-forwarding session to 10.0.0.111:1521 ...
 
 Session sopuli-19c-20261001123607 is ACTIVE for three hours. Leave this running:
-  ssh -i C:\Users\<you>\.ssh\id_ed25519 -N -L 1529:10.0.0.111:1521 -p 22 ocid1.bastionsession.oc1.eu-frankfurt-1.…@host.bastion.eu-frankfurt-1.oci.oraclecloud.com
+  ssh -i "C:\Users\<you>\.ssh\id_ed25519" -N -L 1529:10.0.0.111:1521 -p 22 ocid1.bastionsession.oc1.eu-frankfurt-1.…@host.bastion.eu-frankfurt-1.oci.oraclecloud.com
   # then 127.0.0.1:1529 is the listener; the service names are in the Ready report
 ```
 
@@ -833,8 +833,20 @@ AVAILABLE after 04:54.
 
 The database comes back up with the node: the banner and `ORCLPDB1 READ WRITE`
 above were read after that start. `-Teardown` terminates the DB system, deletes
-the bastion, and then removes the network in reverse order. The database goes with it, and there are no
-backups to restore from. **`-Teardown` has not been run against this DB system
+the bastion, and then removes the network in reverse order. **It deletes only
+what it made.** Every subnet, internet gateway and non-default security list in
+the VCN must carry the script's name and `purpose` tag, or nothing is deleted at
+all. Add an untagged security list to the VCN and run it to see the refusal:
+
+```
+sopuli-19c-vcn holds resources this script did not create, so nothing has been deleted:
+  security list 'somebody-elses-list' (ocid1.securitylist.oc1.eu-frankfurt-1.…)
+Remove or move them first, then re-run -Teardown.
+```
+
+The database goes with it, and there are no backups to restore from. The
+refusal above has been run; it was checked against the real VCN with one
+untagged list added, and the list removed again afterwards. **`-Teardown` has not been run against this DB system
 yet.**
 
 ### Seeing 11.2 keep your password, on purpose

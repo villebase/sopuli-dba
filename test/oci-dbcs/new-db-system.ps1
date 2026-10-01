@@ -414,10 +414,19 @@ if ($Teardown) {
     Confirm-Plan 'Delete all of the above? The database goes with it.'
 
     if ($dbSystem) {
-        Write-Host "Terminating $Name (waits for TERMINATED, can take half an hour) ..."
+        Write-Host "Terminating $Name (waits for its work request, can take half an hour) ..."
         $t0 = Get-Date
+        # `db system terminate` waits on its WORK REQUEST (SUCCEEDED / FAILED), not
+        # on the resource's TERMINATED -- which the CLI refuses as a usage error,
+        # unlike `compute instance terminate`. So wait on the request, then read
+        # the DB system back to say what actually happened to it.
         Invoke-Oci @('db', 'system', 'terminate', '--db-system-id', $dbSystem.id, '--force',
-                     '--wait-for-state', 'TERMINATED', '--max-wait-seconds', '3600') | Out-Null
+                     '--wait-for-state', 'SUCCEEDED', '--wait-for-state', 'FAILED',
+                     '--max-wait-seconds', '3600') | Out-Null
+        $state = (Invoke-Oci @('db', 'system', 'get', '--db-system-id', $dbSystem.id)).data.'lifecycle-state'
+        if ($state -ne 'TERMINATED') {
+            throw "$Name is $state after its terminate request finished; the bastion and network were left alone."
+        }
         Write-Host ("Terminated after {0:hh\:mm\:ss}." -f ((Get-Date) - $t0))
     }
     if ($bastion) {

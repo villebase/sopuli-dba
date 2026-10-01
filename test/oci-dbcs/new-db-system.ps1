@@ -107,6 +107,16 @@ if ($HostName.Length -gt 16) { $HostName = $HostName.Substring(0, 16) }
 
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) "sopuli-dbcs-$PID"
 New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
+# Owner-only, explicitly: launch.json will hold the SYS password, and an
+# inherited ACL is only as private as wherever TEMP happens to point. icacls
+# rather than Set-Acl, which does not load in every PowerShell this runs in.
+# Refused before any prompt if it cannot be enforced.
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+& icacls $Tmp /inheritance:r /grant:r "*${me}:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
+    throw "Could not make $Tmp private to the current user (icacls exit $LASTEXITCODE); nothing has been done."
+}
 
 # ---------------------------------------------------------------- helpers ---
 
@@ -127,7 +137,10 @@ function Invoke-Oci {
     # the message empty.
     if ($code -ne 0) { throw "oci $($Arguments[0..2] -join ' ') failed (exit $code):`n$err$(($out | Out-String).Trim())" }
     $text = ($out | Out-String).Trim()
-    if ($text) { return $text | ConvertFrom-Json }
+    # -ErrorAction Stop: under 'Continue' a parse failure would return nothing,
+    # and a list call that returns nothing reads as "no such resource" -- which
+    # would plan a second, billable one.
+    if ($text) { return $text | ConvertFrom-Json -ErrorAction Stop }
     return $null
 }
 
@@ -330,6 +343,15 @@ if (-not $AllowSshFrom) {
     $ip = (Invoke-RestMethod -Uri 'https://checkip.amazonaws.com' -TimeoutSec 15).Trim()
     $AllowSshFrom = "$ip/32"
 }
+# One address, as the plan and the docs promise: a bare IPv4 becomes a /32, and
+# anything wider -- 0.0.0.0/0 included -- is refused rather than written into
+# the security list.
+if ($AllowSshFrom -match '^(\d{1,3}(\.\d{1,3}){3})(/32)?$' -and
+    ($Matches[1] -split '\.' | Where-Object { [int]$_ -gt 255 }).Count -eq 0) {
+    $AllowSshFrom = "$($Matches[1])/32"
+} else {
+    throw "-AllowSshFrom must be one IPv4 address (optionally with /32), not '$AllowSshFrom'."
+}
 
 if (-not $dbSystem -and [Console]::IsInputRedirected) {
     # A new DB system needs the password typed at a prompt, and redirected input
@@ -461,6 +483,14 @@ if (-not $subnet) {
             '--security-list-ids', (Write-JsonFile 'sl.json' "[`"$($sl.id)`"]"),
             '--prohibit-public-ip-on-vnic', 'false',
             '--freeform-tags', $tags, '--wait-for-state', 'AVAILABLE')).data
+} elseif (@($subnet.'security-list-ids').Count -ne 1 -or $subnet.'security-list-ids'[0] -ne $sl.id) {
+    # A reused subnet is ours by tag, but its lists may have been changed since.
+    # Put it back to the SSH-only list alone, so the restriction the report
+    # states is the one in force.
+    Write-Host "Subnet $subnetName had other security lists attached; resetting it to $slName only ..."
+    $subnet = (Invoke-Oci @('network', 'subnet', 'update', '--subnet-id', $subnet.id,
+            '--security-list-ids', (Write-JsonFile 'sl.json' "[`"$($sl.id)`"]"),
+            '--force', '--wait-for-state', 'AVAILABLE')).data
 }
 
 # ---------------------------------------------------------- DB system -----
@@ -556,5 +586,12 @@ Write-Host ''
 Write-Host "Stop it between sessions (-Stop) and remove it when done (-Teardown)."
 
 } finally {
+    # launch.json holds the SYS password until the launch call returns, and this
+    # is its only cleanup when a call fails. Say so if it survives.
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
+    if (Test-Path $Tmp) {
+        Write-Warning ("Could not remove $Tmp" +
+            $(if (Test-Path (Join-Path $Tmp 'launch.json')) { ', and launch.json in it holds the SYS password' } else { '' }) +
+            '. Delete it by hand.')
+    }
 }

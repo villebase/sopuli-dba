@@ -487,10 +487,13 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   where the Diagnostics Pack is enabled. Every image in this stack ships
   `control_management_pack_access = NONE`, so two snapshots taken on 11g XE
   captured nothing whatsoever and the clean result measured the image rather than
-  the release. Needs a licensed EE — which #581's OCI DB system is: it ships
-  `DIAGNOSTIC+TUNING`, licence included, so it is the one environment here that
-  can answer this. Not yet run there. **Untested, not clean** — the one row #407
-  could not close.
+  the release. **Half answered on 19.32.0.0.0** (#581, 2026-10-01), an OCI DB
+  system with `DIAGNOSTIC+TUNING`: one uncolored snapshot put the wrapped literal
+  (C3) verbatim into `DBA_HIST_SQLTEXT`, kept 8 days, while the `ALTER USER`
+  sopuli issues (C2) reached nothing, having no cursor to capture. **Open: 11.2**,
+  where the plain `ALTER USER` *is* retained in `V$SQLSTATS` and whether it
+  reaches AWR needs an 11.2 with the pack. That is why this stays `unverified`
+  rather than being called settled by the release that never retains it.
 - `verified` `ddl-text-trace` (#407) — **Whether a traced session captures the
   password.** Answered 2026-09-11 on 26ai and 21c, and it retires the pessimistic
   assumption rather than confirming it: at 10046 level 12 the cursor is written

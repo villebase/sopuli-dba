@@ -321,6 +321,17 @@
 --   run and no other numbered canary, and every CREATE/ALTER USER ACTION line
 --   in it is masked. Identical to 21c, 19.3 and 12.2.
 --
+--   AWR, the question every other run here had to leave (ddl-text-awr): the DB
+--   system ships CONTROL_MANAGEMENT_PACK_ACCESS = DIAGNOSTIC+TUNING. Straight
+--   after a position-1 run, one CDB$ROOT snapshot at flush level ALL put C3
+--   verbatim into DBA_HIST_SQLTEXT and AWR_ROOT_SQLTEXT (command_type 47, con
+--   3), with nothing colored; C1, C2 and C4 reached neither, and a second
+--   snapshot with C3's cursor colored changed nothing about them. AWR retention
+--   there is 8 days. So invariant 13's leak reaches disk, not just the shared
+--   pool. The sweep's DBA_HIST_SQLTEXT row reads before any snapshot, so it
+--   says pop=n or clean on its own; the snapshot and re-sweep are
+--   10_awr_snapshot_probe.sql, run straight after this file.
+--
 --   Also found on 12.2 and fixed: section 2's "traditional privilege opts" line
 --   read DBA_PRIV_AUDIT_OPTS.AUDIT_OPTION, a column that view does not have
 --   (it is PRIVILEGE), and printed ORA-00904.

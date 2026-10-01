@@ -854,7 +854,11 @@ its *work request*, whose states are `SUCCEEDED` and `FAILED`, and the CLI
 rejects `--wait-for-state TERMINATED` there as a usage error — unlike `compute
 instance terminate`, where that is the right state. The script now waits on the
 request, then reads the DB system back and refuses to touch the bastion or the
-network unless it says `TERMINATED`. The re-run, OCIDs shortened:
+network unless it says `TERMINATED`. A re-run while the DB system is still
+`TERMINATING` — after a timeout, or an interrupted run — refuses before deleting
+anything, rather than seeing no DB system and removing the network under it.
+That refusal is written and **unrun**: it needs a terminate caught mid-way. The
+re-run, OCIDs shortened:
 
 ```
 Teardown in compartment '<name>':

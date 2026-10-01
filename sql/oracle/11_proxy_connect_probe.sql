@@ -18,19 +18,22 @@
 --        SESSION_USER, PROXY_USER and AUTHENTICATED_IDENTITY report
 --   PX3  DBA_PROXIES while the grant exists
 --   PX4  the same account revokes the grant -- does DBA_PROXIES keep anything
---   PX5  unified audit for PX1..PX4, with the audit configuration as found
+--   PX5  unified audit for PX1..PX4, with the audit configuration as found;
+--        read after the revoke, so it covers all four
 --   PX6  PX1..PX4 again under a probe-local LOGON + ALTER USER policy
 --
 -- This MEASURES and decides nothing. Whether the principle is accepted, and
 -- with what condition, is #459 / #496.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM, 2026-10-01 -- five times, the fifth this file exactly as
--- committed. C1 and PX1..PX4 identical in all five. PX5 and PX6 are from the
--- last three only: the first two runs' audit queries were not scoped to the
--- run and read earlier runs' rows (the &t0/&t1 bounds below are the fix). One
--- further attempt stalled at PX6 and was stopped; its objects were gone when
--- checked. Untried on every other release. 11.2 has no unified audit,
+-- as SYSTEM, 2026-10-01 -- seven times, the last two this file exactly as it
+-- stands (via /nolog, exit 0 both times). C1 and PX1..PX4 identical in all
+-- seven. PX5 and PX6 as reported are from the last two: in runs 1 and 2 the
+-- audit queries were not scoped to the run and read earlier runs' rows (the
+-- &t0/&t1 bounds are the fix), and in runs 1 to 5 PX5 was read BEFORE the
+-- revoke, so it could not speak for it (review on #589; it now follows PX4).
+-- One further attempt stalled at PX6 and was stopped; its objects were gone
+-- when checked. Untried on every other release. 11.2 has no unified audit,
 -- so PX5 and PX6 do not apply there as written.
 --
 --
@@ -67,14 +70,22 @@
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), in
---   the PDB, against the tier-1 stack:
+--   the PDB. Against the tier-1 stack, whose SYSTEM password is the public one
+--   in test/compose.yaml, as it stands:
 --
---     docker exec -i sopuli-test-oracle-free-1 \
---       sqlplus -s system/sopuli-test@FREEPDB1 < 11_proxy_connect_probe.sql
+--     MSYS_NO_PATHCONV=1 docker exec -i sopuli-test-oracle-free-1 \
+--       sqlplus -S /nolog < 11_proxy_connect_probe.sql
 --
---   The script reconnects between identities, so it carries the connect
---   identifier and SYSTEM's credentials in the two DEFINEs below; change them
---   for any other database.
+--   /nolog, and every CONNECT made from the script, so no password is ever in
+--   argv (invariant 1). Against any other database, copy the file, edit the two
+--   DEFINEs in the copy, run the copy and delete it, as 07 prescribes -- never
+--   substitute them with sed, which puts the password in argv instead.
+--   MSYS_NO_PATHCONV is for Git Bash, which otherwise rewrites /nolog.
+--
+-- WHENEVER SQLERROR is EXIT FAILURE throughout, a failed CONNECT included
+-- (checked: ORA-01017 exits 1), and is relaxed to CONTINUE NONE only around C1,
+-- the one statement meant to fail. The setup's drop-if-exists blocks swallow
+-- their own errors and carry no secret.
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops three accounts and an audit
 -- policy, plants known passwords, and leaves rows in UNIFIED_AUDIT_TRAIL.
@@ -83,7 +94,8 @@ define svc      = FREEPDB1
 define sys_conn = system/sopuli-test
 
 set lines 220 pages 200 feedback off verify off
-whenever sqlerror continue
+whenever sqlerror exit failure
+connect &sys_conn@&svc
 col username for a14
 col proxy for a14
 col client for a14
@@ -119,7 +131,9 @@ prompt run starts &t0 UTC
 
 prompt === C1: no ALTER USER -> expect ORA-01031
 connect px_nopriv/"PxNoPw_4402"@&svc
+whenever sqlerror continue none
 alter user px_person grant connect through px_nopriv;
+whenever sqlerror exit failure
 
 prompt === PX1: ALTER USER only -> grant CONNECT THROUGH
 connect px_dba/"PxDbaPw_9137"@&svc
@@ -138,19 +152,19 @@ connect &sys_conn@&svc
 select proxy, client, authentication, authorization_constraint
   from dba_proxies where client = 'PX_PERSON';
 
-prompt === PX5: unified audit, audit configuration as found
+prompt === PX4: revoke by the same account
+connect px_dba/"PxDbaPw_9137"@&svc
+alter user px_person revoke connect through px_dba;
+connect &sys_conn@&svc
+select count(*) as proxies_after_revoke from dba_proxies where client = 'PX_PERSON';
+
+prompt === PX5: unified audit for PX1..PX4, audit configuration as found
 select policy_name from audit_unified_enabled_policies;
 select dbusername, dbproxy_username, action_name, return_code
   from unified_audit_trail
  where (dbusername like 'PX\_%' escape '\' or dbproxy_username like 'PX\_%' escape '\')
    and event_timestamp_utc >= to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
  order by event_timestamp_utc;
-
-prompt === PX4: revoke by the same account
-connect px_dba/"PxDbaPw_9137"@&svc
-alter user px_person revoke connect through px_dba;
-connect &sys_conn@&svc
-select count(*) as proxies_after_revoke from dba_proxies where client = 'PX_PERSON';
 
 prompt === PX6: PX1..PX4 again under a LOGON + ALTER USER policy
 column t1 new_value t1 noprint

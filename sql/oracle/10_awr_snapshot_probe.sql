@@ -10,6 +10,10 @@
 -- 11.2 -- where the plain ALTER USER IS retained (#387) -- is the case this
 -- cannot yet answer.
 --
+-- The WHENEVER SQLERROR line and the uncolour-on-failure handler came from
+-- review after that run, and are UNRUN: the node was stopped. The first run
+-- to use them should note it here.
+--
 -- The question 02's sweep leaves open (ddl-text-awr in docs/README.md): its
 -- DBA_HIST_SQLTEXT row reads before any snapshot exists, so it can only ever
 -- say pop=n. This takes the snapshot and sweeps again.
@@ -40,6 +44,10 @@
 -- removes it before then.
 --------------------------------------------------------------------------------
 set serveroutput on size unlimited lines 200 pages 100 feed off
+-- Fatal from here on: nothing below is expected to fail, and a run that
+-- carried on past a failed snapshot would still reach EXIT with status 0 and
+-- read as a measurement it never made.
+whenever sqlerror exit sql.sqlcode
 col name format a40
 col value format a30
 prompt === preconditions
@@ -92,8 +100,17 @@ begin
   if l_ids.count = 0 then
     dbms_output.put_line('no cursor holds C3 any more -- the coloured half cannot be run');
   else
-    snap('coloured');
-    sweep('after the coloured snapshot -- can it reach AWR?');
+    begin
+      snap('coloured');
+      sweep('after the coloured snapshot -- can it reach AWR?');
+    exception when others then
+      -- Never leave a cursor coloured behind a failure: every later snapshot
+      -- would capture it. Uncolour, then let the error stop the script.
+      for i in 1 .. l_ids.count loop
+        dbms_workload_repository.remove_colored_sql(sql_id => l_ids(i));
+      end loop;
+      raise;
+    end;
     for i in 1 .. l_ids.count loop
       dbms_workload_repository.remove_colored_sql(sql_id => l_ids(i));
     end loop;

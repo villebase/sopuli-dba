@@ -385,7 +385,7 @@ the first release update read. 12.1 is still unread. #90 is three parts:
   11g 11.2.0.2.0 (#431), 2026-09-15, on 19c 19.3.0.0.0 (#548), 2026-09-27, and
   on 12.2.0.1.0 (#572), 2026-09-29, and on 19.32.0.0.0 (#581), 2026-10-01;
   unread on 12.1.** `SPARE4`
-  is `S:<60 hex>;T:<160 hex>` on the five 12.2+ releases and `S:<60 hex>` alone
+  is `S:<60 hex>;T:<160 hex>` on the six 12.2+ releases and `S:<60 hex>` alone
   on 11g. There is no `H:` in `SPARE4` on any of them; 11g's 10G value is
   `USER$.PASSWORD`. `T:` is a 64-byte digest followed by a 16-byte salt, `S:` a
   20-byte digest followed by a 10-byte salt. The salt offsets are measured

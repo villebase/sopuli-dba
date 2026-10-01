@@ -1614,10 +1614,10 @@ rather than drift. An account with no `12C` verifier (11g, or any account whose
 `PASSWORD_VERSIONS` lacks it) has nothing to compare, so an explicit
 `--method hash` or `--method both` fails at plan time naming the capability and
 the target (invariant 4) rather than falling back to a weaker verifier or
-silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548) and 12.2.0.1.0
-(#572), unconfirmed on a patched 19c — the release an OCI estate runs, and so
-the target of interest — with 12.1 also unread; if the derivation goes wrong
-there, the method is dropped from the CLI.
+silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
+and 19.32.0.0.0 (#581), a release update and so the release an OCI estate runs,
+which settles it for 19c (register entry `t-verifier`). 12.1 is unread; if the
+derivation went wrong there, the method would be dropped from the CLI.
 
 Trade-offs to document honestly if it does ship:
 

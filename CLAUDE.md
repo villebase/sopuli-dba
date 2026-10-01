@@ -307,11 +307,11 @@ than reasoning:
   compare `T:` only, and an account with no `12C` fails at plan time.
   **Answered on every tier-2 release, on 19c 19.3.0.0.0 (#548), on 12.2.0.1.0
   (#572) and on 19c 19.32.0.0.0 (#581) -- the first release update, where the
-  two-verifier rollover result (`T:` old, `t:` new) holds too. **Settled for
+  two-verifier rollover result (`T:` old, `t:` new) holds too.** **Settled for
   19c** (register entry `t-verifier`, 2026-10-01); 12.1 is unread. 19.32's wire
   step could not be observed — the DB system requires NNE, so the `AUTH_`
   exchange is encrypted in a client trace — and 4096 is shown there by the
-  reproduction.** One refinement from 12.2's WE8DEC image:
+  reproduction. One refinement from 12.2's WE8DEC image:
   `pw_utf8` is the UTF-8 of the password *as the database holds it*, after
   conversion to the database character set — identical on AL32UTF8, lossy where
   the set cannot represent a character. Probes:

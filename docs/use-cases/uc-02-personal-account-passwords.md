@@ -38,8 +38,8 @@ that doing so is **detectable** — the person's fetch fails, and somebody knows
 rather than prevented. This section claims the first promise and not the second,
 which is a narrower claim than the table above used to imply.
 
-**What the unseen path guarantees, and on what condition** (decided on #459 and
-#496). It does not defend against a privileged DBA, and could not: whoever can
+**What the unseen path guarantees, and on what condition** (accepted as the
+principle on #459 and #496, both of which stay open). It does not defend against a privileged DBA, and could not: whoever can
 reset a personal account's password can also connect *as* that person, by
 `ALTER USER person GRANT CONNECT THROUGH dba` — which needs only `ALTER USER`, the
 privilege this tool's service account is built around — and connect with their own
@@ -73,7 +73,7 @@ password is not.
 reads none. Whether a reset should check that one is enabled, and warn, refuse or
 record what it found, is H10 (#591). Not measured: whether a DBA who also holds
 `AUDIT SYSTEM` can disable the policy first; and every release but 26ai. H8 and H9
-are decided against this sentence.
+are still open, and this sentence is the yardstick their answers are measured by.
 
 **The seen path is the traditional one**, and it is not the default. The DBA
 generates the password, sees it, and sends it on. **That is a deliberate,

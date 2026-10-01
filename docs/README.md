@@ -334,9 +334,10 @@ record an estate need not configure — and account state is not a signal on the
 unseen path, which issues no `PASSWORD EXPIRE`). Open: on the unseen path, what
 happens to the stored copy and how the DBA is shown unable to read it (H8, #459);
 and, raised by the delivery section itself, what "unseen" guarantees when the DBA
-holds the wrapping token (H9, #496). Both are decided against UC-2 §1's principle —
-attribution, not access, and only where the database audits `ALTER USER` and
-logons — and whether a reset checks that condition is H10 (#591).
+holds the wrapping token (H9, #496). Both stay open; whatever answers them is
+measured by the principle UC-2 §1 now states — attribution, not access, and only
+where the database audits `ALTER USER` and logons — and whether a reset checks
+that condition is H10 (#591).
 **H2 is decided** (#450): what a reset records lives in three places rather than
 one. The **database** answers *when* the password last changed
 — `DBA_USERS.PASSWORD_CHANGE_DATE`, `SYS.USER$.PTIME` behind the optional grant,

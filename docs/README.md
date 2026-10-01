@@ -335,9 +335,11 @@ unseen path, which issues no `PASSWORD EXPIRE`). **H8 and H9 are decided** (#459
 #496), both by the principle UC-2 §1 states: the unseen path guarantees
 attribution, not access, and only where the database audits `ALTER USER` and
 logons. The name may be left in any durable record the DBA does not control —
-database audit, Vault's audit device, or the reset record — so `vault_wrapped`
-meets it through #519's accessor, with a redirected token as the stated limit;
-`vault_path` refuses at plan time if the DBA's token can read the person's path;
+the database audit or Vault's audit device, not the reset record, which the DBA's
+own run writes — so the Vault methods also need an audit device on the Vault.
+`vault_wrapped` meets it through #519's accessor, which finds the wrap and the
+unwrap in that device, and a redirected token is where it stops; `vault_path`
+refuses at plan time if the DBA's token holds `read` or `root` on the person's path;
 and how long a `vault_path` copy lives moved to #447. Open: whether a reset checks
 the audit condition, H10 (#591).
 **H2 is decided** (#450): what a reset records lives in three places rather than
@@ -794,9 +796,10 @@ that retrieves it" counts as secret-bearing, so a wrapping token and a one-time
 link are refused in a notify template rather than rendered — the rule is about
 *reach* rather than about *value*, and a token that holds no password still
 produces one. What that leaves open is where such a credential does travel, which
-is H9 (#496), decided: nowhere the tool carries. The hand-over is out of band, an
-unwrap the person did not make is attributable through the accessor, and a
-redirected token is where that stops (UC-2 §6.8).
+is H9 (#496), decided: nowhere the tool carries. The hand-over is out of band; an
+unwrap the person did not make is attributable through the accessor where Vault
+has an audit device; and no device, or a redirected token, is where that stops
+(UC-2 §6.8).
 
 **The restriction axis is not a `delivery:` key**, which is the one thing in this
 map that is easy to file in the wrong place. **H6 is decided** (#453):

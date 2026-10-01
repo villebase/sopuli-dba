@@ -75,28 +75,51 @@ record what it found, is H10 (#591). Not measured: whether a DBA who also holds
 `AUDIT SYSTEM` can disable the policy first; and every release but 26ai.
 
 **Where the name is left: any durable record the DBA does not control** (decided
-on #459 and #496) — the database's audit trail, Vault's audit device, or this
-tool's own reset record — not the database trail alone. That reading is forced
-rather than chosen. On the database trail alone the default method would fail its
-own principle: a DBA who unwraps a token and logs in as the person leaves a
-database trail naming only the person. And it would ask more of the unseen path
-than the database gives the other two routes, which it names the DBA on only where
-audit is configured. Read this way, each Vault method meets it differently:
+on #459 and #496) — the database's audit trail or Vault's audit device — not the
+database trail alone. That reading is forced rather than chosen. On the database
+trail alone the default method would fail its own principle: a DBA who unwraps a
+token and logs in as the person leaves a database trail naming only the person.
+And it would ask more of the unseen path than the database gives the other two
+routes, which it names the DBA on only where audit is configured.
 
-- **`vault_wrapped` meets it by inference.** An unwrap the person did not make
-  fails their fetch, and the accessor in `results[].handover` and the record's
-  `delivery.to` (#519) ties it to the run whose `by` names the DBA. Vault records
-  the unwrap under the token, not under a person, so the tie holds only for as
-  long as the token went to nobody but the DBA. **A redirected token is the stated
-  limit of the guarantee.** One piped into a CI log or a file can be unwrapped by
-  whoever reads it, with no name attached — and if they unwrap first, the run
-  record points at the DBA rather than at them. #518 accepted the redirect so that
-  a hand-over can run unattended, and this does not reverse it; it says where the
-  guarantee stops (§6.6).
-- **`vault_path` meets it directly**, because Vault's audit device records a read
-  under the reader's own identity. The tool still checks before writing that the
-  DBA's token cannot read the path (§6.6), because a guarantee that records a read
-  is weaker than one that prevents it.
+**This tool's own reset record is not such a record**, and neither is the run
+document. Both are written by the DBA's own run with the DBA's own store
+credentials, and `by` is the run reporting who ran it. A DBA who means to act as
+the person can leave the record unwritten (§3.4 lets a reset succeed without one)
+or rewrite it afterwards. What the record carries is an **index** into the
+evidence, never the evidence.
+
+So **the Vault methods carry a second condition, the Vault half of the first**:
+the Vault the handover goes through must have an audit device enabled. Without
+one, nothing independent records the hand-over at all. Measured on the tier-1
+Vault (2.0.4, 2026-10-01, a file device enabled for the run and removed after):
+
+- **`vault_wrapped` meets it by inference.** The audit device records the wrap
+  under the DBA's own identity (`display_name`, policies), and its response
+  carries the HMAC of the wrapping token's accessor. It records the unwrap under
+  that **same** accessor HMAC, with policy `response-wrapping` and no identity,
+  only a remote address. `sys/audit-hash` on the plaintext accessor that
+  `results[].handover` and the record's `delivery.to` carry (#519) reproduces the
+  HMAC and finds both entries. So the device alone shows that a token issued to
+  this DBA was unwrapped, by somebody. An unwrap the person did not make also fails
+  their own fetch. That it was the DBA who unwrapped is the inference, and it holds
+  only for as long as the token went to nobody else. **A redirected token is
+  where it stops.** One piped into a CI log or a file can be unwrapped by whoever
+  reads it, with no name attached — and if they unwrap first, the evidence points
+  at the DBA rather than at them. #518 accepted the redirect so that a hand-over
+  can run unattended, and this does not reverse it; it says where the guarantee
+  stops (§6.6).
+- **`vault_path` meets it directly**, because the device records an
+  authenticated request under the caller's identity, as the wrap entry above
+  shows, so a read of the person's path names its reader. The tool still checks
+  before writing that the DBA's token cannot read the path (§6.6), because a
+  guarantee that records a read is weaker than one that prevents it.
+
+The Vault half is stated, not checked, like the database half, and it is part of
+H10 (#591). Two facts from the same run bear on it there. A token scoped to the
+DBA's job gets `403` on `sys/audit`, so it cannot even see whether a device
+exists. And a token that can write `sys/audit` can disable the device — the probe
+did, to clean up — which is the Vault form of the `AUDIT SYSTEM` question above.
 
 **The seen path is the traditional one**, and it is not the default. The DBA
 generates the password, sees it, and sends it on. **That is a deliberate,
@@ -1335,7 +1358,12 @@ store token can read the person's path could read the password back, and the uns
 path's reason for skipping expiry would be gone. **Decided** (H8, #459): the tool
 checks. Before writing, `vault_path` asks Vault for the DBA token's capabilities
 on the person's path (`sys/capabilities-self`) and **refuses at plan time if they
-include `read`**, naming the path and the policy (invariant 4). It neither
+include `read` or `root`**, naming the path and the policy (invariant 4). `root`
+is not a refinement: a root-policy token answers `["root"]` and never lists
+`read`, so a check for `read` alone would admit the one token that can read
+everything (measured on the tier-1 Vault, 2.0.4: a root token `["root"]`, a token
+scoped to the write `["create","update"]`, and one also granted read
+`["create","read","update"]`). It neither
 proceeds on documentation alone, which would let a misconfigured policy silently
 turn an unseen reset into a seen one that was never expired, nor degrades to the
 seen path, which would swap one guarantee for another without being asked. Built
@@ -1365,9 +1393,11 @@ DBA's terminal, and the handover to the person is out of band.
 **That is decided, not merely current** (H9, #496). "The DBA never sees the
 password" stays literally true, and "the DBA cannot obtain it" does not — the token
 is a bearer credential. What the method promises instead is §1's: an unwrap the
-person did not make is detectable through their failed fetch, and attributable,
-through #519's accessor, to the run and to the DBA it names. A redirected token is
-where that stops, and §1 and §6.6 say so.
+person did not make is detectable through their failed fetch. Where Vault has an
+audit device enabled, it is also attributable: the device records the wrap under
+the DBA's identity and the unwrap under the same accessor HMAC, and #519's
+accessor is what finds both. Without a device, or once a token has been
+redirected to somewhere other people read, that stops, and §1 and §6.6 say so.
 
 Two stronger answers were refused. **Making `vault_path` the default** fails §6.2's
 availability argument unchanged: it needs human-identity auth and a templated policy
@@ -1498,8 +1528,8 @@ Tests declare the capabilities they need and skip with a reason when absent
 | ~~H5~~ | ~~Is self-service part of UC-2?~~ | **closed** — self-service means fetching the password from a secure store, not resetting through the tool (§5) · #452 |
 | ~~H6~~ | ~~Restricting delivery methods: an `allowed_methods` intersection or a `forbidden_methods` union?~~ | **closed** — `safety.delivery.allowed_methods`, ratcheting by **intersection**. Fail-closed: a method added in a later release is unusable until an estate names it, where a `forbidden_methods` union would have permitted it everywhere on upgrade. It costs a fourth ratchet shape, declared per setting as `safe_bool` already is, since both keys would be lists of strings and the type cannot say which merges how. Unset means no constraint; two layers with disjoint lists refuse at plan time naming both; and there is no `forbidden_methods`, now or later · #453 |
 | ~~H7~~ | ~~A reset never converges: a second invariant-9 exemption, or a convergent verb?~~ | **closed** — neither, as asked. The reset reports `changed: true` every run and warns what it replaced, and invariant 9 is restated as a **scope** rule rather than gaining a second exemption: a verb that draws fresh randomness has nothing to converge on, which admits `creds generate` and this one by the same sentence and will admit UC-4's account creation without another argument. Convergence on a request id or on account state was refused for one reason each — the key is a record an estate need not configure and which is missing in exactly the runs somebody retries, and account state does not exist on the unseen path, which issues no `PASSWORD EXPIRE`. The stated cost is that an unattended retry delivers twice, and the warning is what carries it (§4.5) · #454 |
-| ~~H8~~ | ~~On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it?~~ | **closed** — split by method. On `vault_wrapped` nothing persists: the unwrap is the last read, measured (#444). On `vault_path` the tool **checks and refuses**: before writing it asks Vault for the DBA token's capabilities on the person's path and refuses at plan time if they include `read`, rather than documenting the requirement or degrading to the seen path (§6.6). How long a `vault_path` copy lives — until the next reset, or destroyed on a clock — moved to #447, where the method is designed · #459 |
-| ~~H9~~ | ~~On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead?~~ | **closed** — attribution, not access (§1). Any durable record the DBA does not control counts: the database audit, Vault's audit device, or the reset record. Read that way, an unwrap the person did not make is detectable and attributable through #519's accessor, and **a redirected token is the stated limit** — #518's no-terminal decision stands. No second channel: `vault_path` as default fails §6.2's availability argument, and a "trusted" notify channel would be a trust level asserted in configuration (§6.8) · #496 |
+| ~~H8~~ | ~~On the unseen path, what happens to the stored copy, and how is the DBA shown unable to read it?~~ | **closed** — split by method. On `vault_wrapped` nothing persists: the unwrap is the last read, measured (#444). On `vault_path` the tool **checks and refuses**: before writing it asks Vault for the DBA token's capabilities on the person's path and refuses at plan time if they include `read` or `root` — a root token reports only `root` — rather than documenting the requirement or degrading to the seen path (§6.6). How long a `vault_path` copy lives — until the next reset, or destroyed on a clock — moved to #447, where the method is designed · #459 |
+| ~~H9~~ | ~~On `vault_wrapped`, the DBA holds the token — so what does "unseen" guarantee, and is there a channel the tool should carry a retrieval credential by instead?~~ | **closed** — attribution, not access (§1). Any durable record the DBA does not control counts: the database audit or Vault's audit device — not the reset record, which the DBA's own run writes and which is only an index. Read that way, an unwrap the person did not make is detectable, and attributable where Vault has an audit device (measured: wrap under the DBA's identity, unwrap under the same accessor HMAC, found through #519's accessor). **No device, or a redirected token, is where it stops** — #518's no-terminal decision stands. No second channel: `vault_path` as default fails §6.2's availability argument, and a "trusted" notify channel would be a trust level asserted in configuration (§6.8) · #496 |
 | H10 | §1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found? | #591, raised by §1 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it, and `force_expire: true` required. `CLAUDE.md` invariant 2 gains a fourth exception, justified by the exposure being deliberate, witnessed and expired rather than harmless — so the narrowing is stricter than `--reveal`'s, not equal to it · #439 |
 

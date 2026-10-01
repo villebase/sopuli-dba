@@ -10,8 +10,10 @@ the one path that shows a DBA a working password.
 a value somebody else fetched first, and **interception is detectable even where
 it is not preventable**. That is the strongest property in the table and it comes
 with the weakest — the token is a *bearer* credential, so whoever holds it can
-unwrap it, whatever their identity. H9 (#496) is where that distinction is
-argued; nothing here claims more than the paragraph above.
+unwrap it, whatever their identity. H9 (#496) decided what that is worth: an
+unwrap the person did not make is attributable through the accessor this module
+returns, and a redirected token is where that stops (UC-2 §1). Nothing here
+claims more.
 
 **Single use is Vault's, not ours.** A response-wrapping token is single-use by
 construction, so there is no `num_uses` to configure and this module has no

@@ -318,7 +318,7 @@ docker compose --profile tier2 up -d oracle-xe21   # or oracle-xe18, oracle-xe11
 | 18c XE | `sopuli-test-oracle-xe18-1` | `127.0.0.1:1523/XEPDB1`, root `.../XE` | CDB + PDB, **no rollover** (5 capabilities, not 6), and no `PASSWORD_CHANGE_DATE` — `DB_PW_CHANGED` is read from `SYS.USER$.PTIME` where the grant exists, and is empty with a `SOPULI-W021` note saying why where it does not (#386) |
 | 19c EE 19.3 | `sopuli-test-oracle-19c-1` | `127.0.0.1:1526/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only** — pull it yourself, below. No rollover (19.12+), so `--strategy rollover` is exit 5 at plan time. The one container with `COMMON_USER_PREFIX = C##`, as a real CDB has |
 | 19c EE 19.19 | `sopuli-test-oracle-19c-ru-1` | `127.0.0.1:1527/ORCLPDB1`, root `.../ORCLCDB` | CDB + PDB, **maintainer-only and arm64 hosts only** — below. Does not start under emulation on x86; unrun on arm64, so its capabilities are unmeasured. `C##` prefix, as 19.3 |
-| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through an SSH tunnel; the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Running since 2026-10-01; nothing has been measured on it yet |
+| 19c EE 19.32 | not a container: an OCI DB system | `127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com` through a Bastion session (`-Connect`); the root's service name is generated per system | CDB + PDB, **maintainer-only and billed by the hour** — below (#581). Running since 2026-10-01; nothing has been measured on it yet |
 | 12c EE 12.2 | `sopuli-test-oracle-12c-1` | `127.0.0.1:1528/ORCLPDB1.localdomain`, root `.../ORCLCDB.localdomain` | CDB + PDB, **maintainer-only** — below. The service names carry `.localdomain`; a bare `ORCLPDB1` is `ORA-12514`. No rollover. **`WE8DEC`**, the one non-Unicode database in the stack. `C##` prefix, as 19.3. `DB_PW_CHANGED` through `SYS.USER$.PTIME`, as on 18c |
 | 11g XE | `sopuli-test-oracle-xe11-1` | `127.0.0.1:1524/XE` | **non-CDB** (`scope: non_cdb`, no `container:`), no rollover, `DB_PW_CHANGED` only through `SYS.USER$.PTIME` as on 18c, no unified auditing — `01_audit_policy.sql` refuses. **`V$SQLSTATS` retains the `ALTER USER` text here**, and does not on the other five containers, so a leak result from this one does not generalise — nor does a clean result from the others, since 12.1 and every 19c RU are unmeasured. See [`security-model.md`](security-model.md) §5 and #387 |
 
@@ -679,7 +679,9 @@ DB system the tenancy offers, and nothing else:
   at 256 GB, Enterprise Edition and no automatic backups;
 - CDB `ORCLCDB` and PDB `ORCLPDB1`;
 - a VCN of its own, whose security list admits SSH from your address only, and
-  the listener from inside the VCN only.
+  the listener from inside the VCN only;
+- on first `-Connect`, an OCI Bastion in the same subnet, admitting your address
+  only.
 
 The 19c release is the newest explicit one that `oci db version list` offers, and
 the plan names it.
@@ -728,8 +730,8 @@ Ready: sopuli-19c  ocid1.dbsystem.oc1.eu-frankfurt-1.…
   node       sopuli-19c  public <public IP>  private 10.0.0.111  (AVAILABLE)
   SSH        from <your address>/32 only; user 'opc'
 
-Reach the listener through a tunnel, never through the internet:
-  ssh -N -L 1529:10.0.0.111:1521 opc@<public IP>
+Reach the listener through a Bastion session, never through the internet:
+  ./new-db-system.ps1 -CompartmentName <name> -Connect
   # PDB  127.0.0.1:1529/ORCLPDB1.pub.sopulidb.oraclevcn.com
   # CDB  127.0.0.1:1529/ORCLCDB_x3w_fra.pub.sopulidb.oraclevcn.com
   # sopuli: oracle: { scope: pdb, container: ORCLPDB1 }
@@ -743,15 +745,62 @@ Three things in that report you could not guess:
   unique name rather than `ORCLCDB`.** The `_x3w_fra` part differs on every DB
   system. Copy both names from the report. The PDB's is stable, because the
   script fixes the DNS labels.
-- **Port 1529 is the local end of the tunnel**, because 1521–1528 are taken by
-  this stack's containers. The listener itself is on 1521, and is never
+- **Port 1529 is the local end of the session's tunnel**, because 1521–1528 are
+  taken by this stack's containers. The listener itself is on 1521, and is never
   reachable from the internet.
 - **SSH needs an agent, or a passphrase typed at a prompt.** Git Bash's `ssh`
   under `BatchMode` was refused even though the server accepted the key, because
   nothing could type the key's passphrase. Windows' own
   `C:\Windows\System32\OpenSSH\ssh.exe` signed through the running `ssh-agent`
   service and got in. An interactive `ssh` that prompts for the passphrase works
-  with either client.
+  with either client. This applies to `opc@` on the node and to the Bastion
+  session alike.
+
+#### Reaching the listener: a Bastion session, not `ssh -L` to the node
+
+**`ssh -L` through the node does not work, and fails quietly.** OCI hardens the
+DB node's sshd:
+
+```
+$ ssh opc@<public IP> 'sudo sshd -T | grep -iE "^(allowtcpforwarding|disableforwarding)"'
+allowtcpforwarding no
+disableforwarding yes
+```
+
+A tunnel to it still *opens*. The local port accepts a TCP connection, which is
+why a socket test calls it working, and then every database login through it dies:
+
+```
+OperationalError DPY-6005: cannot connect to database (CONNECTION_ID=…).
+DPY-4011: the database or network closed the connection
+[WinError 10054] An existing connection was forcibly closed by the remote host
+```
+
+That is thin mode. Thick mode gets `ORA-12547: TNS:lost contact`, and nothing
+reaches the listener log. This is the failure worth causing on purpose: it looks
+like an NNE refusal, and it is not one. A TCP connect to the tunnel's local
+end proves nothing; only a login does. The first version of this section printed
+that tunnel and called it checked.
+
+`-Connect` uses OCI's own way in instead. It creates a Bastion in the DB
+system's subnet on first use, admitting your address only, then opens a
+port-forwarding session to the listener and prints the command OCI hands back:
+
+```
+PS> .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name> -Connect
+Creating bastion sopuli19cbastion in sopuli-19c's subnet, admitting <your address>/32 only ...
+Opening a 3-hour port-forwarding session to 10.0.0.111:1521 ...
+
+Session sopuli-19c-20261001123607 is ACTIVE for three hours. Leave this running:
+  ssh -i C:\Users\<you>\.ssh\id_ed25519 -N -L 1529:10.0.0.111:1521 -p 22 ocid1.bastionsession.oc1.eu-frankfurt-1.…@host.bastion.eu-frankfurt-1.oci.oraclecloud.com
+  # then 127.0.0.1:1529 is the listener; the service names are in the Ready report
+```
+
+Run that `ssh` and leave it running; a login through it then reaches the database.
+A session lasts three hours, the bastion's maximum here. Run `-Connect` again for a
+new one; a re-run reuses the bastion and updates its allow-list if your address
+has moved. The Bastion service itself carries no charge. `-Teardown` deletes it
+before the subnet.
 
 Logged in as SYS on the node itself, the database reports:
 
@@ -783,8 +832,8 @@ AVAILABLE after 04:54.
 ```
 
 The database comes back up with the node: the banner and `ORCLPDB1 READ WRITE`
-above were read after that start. `-Teardown` terminates the DB system and then
-removes the network in reverse order. The database goes with it, and there are no
+above were read after that start. `-Teardown` terminates the DB system, deletes
+the bastion, and then removes the network in reverse order. The database goes with it, and there are no
 backups to restore from. **`-Teardown` has not been run against this DB system
 yet.**
 

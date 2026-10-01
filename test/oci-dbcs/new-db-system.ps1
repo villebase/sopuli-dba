@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Create, stop, start or tear down a minimal OCI Base Database Service 19c DB system (#581).
+  Create, connect to, stop, start or tear down a minimal OCI Base Database Service 19c DB system (#581).
 
 .DESCRIPTION
   sopuli-dba : a current 19c release update to measure against (#581)
@@ -12,7 +12,8 @@
 
     - a VCN, an internet gateway, a public subnet and a security list that admits
       SSH from ONE address (yours, detected, or -AllowSshFrom). The listener is
-      NOT open to the internet: it is reached through an SSH tunnel to the node;
+      NOT open to the internet: it is reached through an OCI Bastion
+      port-forwarding session (-Connect);
     - one single-node VM.BaseDB.x86 DB system, 4 ECPU (the shape's minimum), LVM
       storage at its 256 GB minimum, Enterprise Edition, LICENSE_INCLUDED, and
       automatic backups off. CDB ORCLCDB and PDB ORCLPDB1, the names
@@ -36,10 +37,17 @@
   deleted. It prints a plan and asks before creating anything; -Yes answers in
   advance.
 
+    -Connect    opens a Bastion port-forwarding session to the listener and
+                prints the `ssh -L` command that uses it. The bastion is created
+                on first use and admits only -AllowSshFrom; a session lasts three
+                hours. NOT `ssh -L` to the node itself: OCI hardens its sshd with
+                AllowTcpForwarding no and DisableForwarding yes, so a tunnel there
+                accepts locally and forwards nothing (measured 2026-10-01).
     -Stop       stops the DB node. ECPU billing stops; storage keeps billing.
     -Start      starts it again.
-    -Teardown   terminates the DB system and removes the network, in reverse
-                order. The database goes with it; there are no backups.
+    -Teardown   terminates the DB system, deletes the bastion, and removes the
+                network, in reverse order. The database goes with it; there are
+                no backups.
 
   COST. Unlike the A1 route this is not free: the DB system bills per ECPU-hour
   while the node runs and for its block storage until -Teardown. Stop it between
@@ -53,6 +61,8 @@
 
 .EXAMPLE
   ./new-db-system.ps1 -CompartmentName my-testing
+.EXAMPLE
+  ./new-db-system.ps1 -CompartmentName my-testing -Connect
 .EXAMPLE
   ./new-db-system.ps1 -CompartmentName my-testing -Stop
 .EXAMPLE
@@ -78,14 +88,18 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string] $AvailabilityDomain = '',
     [Parameter(ParameterSetName = 'Create')]
+    [Parameter(ParameterSetName = 'Connect')]
     [string] $SshPublicKeyFile = (Join-Path $HOME '.ssh\id_ed25519.pub'),
     # A /32 is normal. Detected from checkip.amazonaws.com when left empty.
     [Parameter(ParameterSetName = 'Create')]
+    [Parameter(ParameterSetName = 'Connect')]
     [string] $AllowSshFrom = '',
     # Not $Profile: that is PowerShell's own automatic variable.
     [string] $OciProfile = 'DEFAULT',
     [switch] $Yes,
 
+    [Parameter(ParameterSetName = 'Connect', Mandatory = $true)]
+    [switch] $Connect,
     [Parameter(ParameterSetName = 'Stop', Mandatory = $true)]
     [switch] $Stop,
     [Parameter(ParameterSetName = 'Start', Mandatory = $true)]
@@ -98,9 +112,11 @@ $ErrorActionPreference = 'Stop'
 $Shape = 'VM.BaseDB.x86'
 $DbName = 'ORCLCDB'
 $PdbName = 'ORCLPDB1'
-# 1521-1528 are test/compose.yaml's; the tunnel takes the next one.
+# 1521-1528 are test/compose.yaml's; the tunnel's local end takes the next one.
 $TunnelPort = 1529
 $PurposeTag = 'sopuli-dba-581'
+# Bastion names are alphanumeric only.
+$BastionName = ($Name -replace '[^A-Za-z0-9]', '') + 'bastion'
 # Hostname: at most 16 characters, alphanumeric and hyphens.
 $HostName = ($Name -replace '[^A-Za-z0-9-]', '')
 if ($HostName.Length -gt 16) { $HostName = $HostName.Substring(0, 16) }
@@ -241,6 +257,21 @@ function Wait-DbSystem {
     }
 }
 
+function Resolve-AllowSshFrom {
+    # One address, as the plan and the docs promise: a bare IPv4 becomes a /32,
+    # and anything wider -- 0.0.0.0/0 included -- is refused rather than written
+    # into a security list or a bastion's allow-list.
+    param([string] $Value)
+    if (-not $Value) {
+        $Value = (Invoke-RestMethod -Uri 'https://checkip.amazonaws.com' -TimeoutSec 15).Trim()
+    }
+    if ($Value -match '^(\d{1,3}(\.\d{1,3}){3})(/32)?$' -and
+        ($Matches[1] -split '\.' | Where-Object { [int]$_ -gt 255 }).Count -eq 0) {
+        return "$($Matches[1])/32"
+    }
+    throw "-AllowSshFrom must be one IPv4 address (optionally with /32), not '$Value'."
+}
+
 function Get-DbNode {
     param($DbSystem)
     $nodes = @(Get-Live (Invoke-Oci @('db', 'node', 'list', '--compartment-id', $compartment,
@@ -275,6 +306,56 @@ $vcnName = "$Name-vcn"; $igwName = "$Name-igw"; $slName = "$Name-ssh-only"; $sub
 
 $vcn = Select-Ours (Invoke-Oci @('network', 'vcn', 'list', '--compartment-id', $compartment, '--display-name', $vcnName)) 'VCN'
 $dbSystem = Select-Ours (Invoke-Oci @('db', 'system', 'list', '--compartment-id', $compartment, '--display-name', $Name)) 'DB system'
+$bastion = Select-Ours (Invoke-Oci @('bastion', 'bastion', 'list', '--compartment-id', $compartment, '--name', $BastionName, '--all')) 'bastion'
+
+# ------------------------------------------------------------ connect -----
+
+if ($Connect) {
+    if (-not $dbSystem) { throw "No DB system named $Name in '$CompartmentName'." }
+    $AllowSshFrom = Resolve-AllowSshFrom $AllowSshFrom
+    $privateKey = $SshPublicKeyFile -replace '\.pub$', ''
+    if (-not (Test-Path $SshPublicKeyFile) -or -not (Test-Path $privateKey)) {
+        throw "-Connect needs both halves of the key: $SshPublicKeyFile and $privateKey."
+    }
+    $node = Get-DbNode $dbSystem
+    if ($node.'lifecycle-state' -ne 'AVAILABLE') { throw "$Name's node is $($node.'lifecycle-state'); -Start it first." }
+    $privateIp = (Invoke-Oci @('network', 'vnic', 'get', '--vnic-id', $node.'vnic-id')).data.'private-ip'
+    $cidrs = Write-JsonFile 'cidrs.json' "[`"$AllowSshFrom`"]"
+
+    if (-not $bastion) {
+        Write-Host "Creating bastion $BastionName in $Name's subnet, admitting $AllowSshFrom only ..."
+        Invoke-Oci @('bastion', 'bastion', 'create', '--bastion-type', 'STANDARD',
+                     '--compartment-id', $compartment, '--target-subnet-id', $dbSystem.'subnet-id',
+                     '--name', $BastionName, '--client-cidr-list', $cidrs, '--max-session-ttl', '10800',
+                     '--freeform-tags', (Write-JsonFile 'tags.json' "{`"purpose`":`"$PurposeTag`"}"),
+                     '--wait-for-state', 'SUCCEEDED', '--wait-for-state', 'FAILED') | Out-Null
+        $bastion = Select-Ours (Invoke-Oci @('bastion', 'bastion', 'list', '--compartment-id', $compartment,
+                                             '--name', $BastionName, '--all')) 'bastion'
+        if (-not $bastion -or $bastion.'lifecycle-state' -ne 'ACTIVE') { throw "Bastion $BastionName did not become ACTIVE." }
+    } else {
+        # The one thing a re-run changes: your address may have moved.
+        Invoke-Oci @('bastion', 'bastion', 'update', '--bastion-id', $bastion.id, '--client-cidr-list', $cidrs,
+                     '--force', '--wait-for-state', 'SUCCEEDED', '--wait-for-state', 'FAILED') | Out-Null
+    }
+
+    Write-Host "Opening a 3-hour port-forwarding session to ${privateIp}:1521 ..."
+    $sessionName = "$Name-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    Invoke-Oci @('bastion', 'session', 'create-port-forwarding', '--bastion-id', $bastion.id,
+                 '--display-name', $sessionName, '--ssh-public-key-file', $SshPublicKeyFile,
+                 '--target-private-ip', $privateIp, '--target-port', '1521', '--session-ttl', '10800',
+                 '--wait-for-state', 'SUCCEEDED', '--wait-for-state', 'FAILED') | Out-Null
+    $session = @(Get-Items (Invoke-Oci @('bastion', 'session', 'list', '--bastion-id', $bastion.id,
+                 '--display-name', $sessionName, '--all')))[0]
+    if (-not $session -or $session.'lifecycle-state' -ne 'ACTIVE') { throw "Session $sessionName did not become ACTIVE." }
+    $session = (Invoke-Oci @('bastion', 'session', 'get', '--session-id', $session.id)).data
+    # OCI hands back the command with <privateKey> and <localPort> placeholders.
+    $command = $session.'ssh-metadata'.command -replace '<privateKey>', $privateKey -replace '<localPort>', "$TunnelPort"
+    Write-Host ''
+    Write-Host "Session $sessionName is ACTIVE for three hours. Leave this running:"
+    Write-Host "  $command"
+    Write-Host "  # then 127.0.0.1:$TunnelPort is the listener; the service names are in the Ready report"
+    exit 0
+}
 
 # ------------------------------------------------------- stop / start -----
 
@@ -298,8 +379,9 @@ if ($Stop -or $Start) {
 if ($Teardown) {
     Write-Host "Teardown in compartment '$CompartmentName':"
     Write-Host "  DB system $Name  $(if ($dbSystem) { $dbSystem.id } else { '(none)' })  -- database and storage with it, no backups"
+    Write-Host "  bastion   $BastionName  $(if ($bastion) { $bastion.id } else { '(none)' })  -- its sessions with it"
     Write-Host "  network   $vcnName  $(if ($vcn) { $vcn.id } else { '(none)' })  -- subnet, security list, gateway, VCN"
-    if (-not $dbSystem -and -not $vcn) { Write-Host 'Nothing to remove.'; exit 0 }
+    if (-not $dbSystem -and -not $bastion -and -not $vcn) { Write-Host 'Nothing to remove.'; exit 0 }
     Confirm-Plan 'Delete all of the above? The database goes with it.'
 
     if ($dbSystem) {
@@ -308,6 +390,12 @@ if ($Teardown) {
         Invoke-Oci @('db', 'system', 'terminate', '--db-system-id', $dbSystem.id, '--force',
                      '--wait-for-state', 'TERMINATED', '--max-wait-seconds', '3600') | Out-Null
         Write-Host ("Terminated after {0:hh\:mm\:ss}." -f ((Get-Date) - $t0))
+    }
+    if ($bastion) {
+        # Before the subnet: a bastion holds an endpoint in it.
+        Write-Host "Deleting bastion $BastionName ..."
+        Invoke-Oci @('bastion', 'bastion', 'delete', '--bastion-id', $bastion.id, '--force',
+                     '--wait-for-state', 'SUCCEEDED', '--wait-for-state', 'FAILED') | Out-Null
     }
     if ($vcn) {
         foreach ($s in Get-Live (Invoke-Oci @('network', 'subnet', 'list', '--compartment-id', $compartment, '--vcn-id', $vcn.id))) {
@@ -339,19 +427,7 @@ if ($Teardown) {
 if (-not (Test-Path $SshPublicKeyFile)) {
     throw "No SSH public key at $SshPublicKeyFile -- create one with: ssh-keygen -t ed25519"
 }
-if (-not $AllowSshFrom) {
-    $ip = (Invoke-RestMethod -Uri 'https://checkip.amazonaws.com' -TimeoutSec 15).Trim()
-    $AllowSshFrom = "$ip/32"
-}
-# One address, as the plan and the docs promise: a bare IPv4 becomes a /32, and
-# anything wider -- 0.0.0.0/0 included -- is refused rather than written into
-# the security list.
-if ($AllowSshFrom -match '^(\d{1,3}(\.\d{1,3}){3})(/32)?$' -and
-    ($Matches[1] -split '\.' | Where-Object { [int]$_ -gt 255 }).Count -eq 0) {
-    $AllowSshFrom = "$($Matches[1])/32"
-} else {
-    throw "-AllowSshFrom must be one IPv4 address (optionally with /32), not '$AllowSshFrom'."
-}
+$AllowSshFrom = Resolve-AllowSshFrom $AllowSshFrom
 
 if (-not $dbSystem -and [Console]::IsInputRedirected) {
     # A new DB system needs the password typed at a prompt, and redirected input
@@ -577,8 +653,8 @@ Write-Host "  version    $($dbHome.'db-version')  $($dbSystem.'database-edition'
 Write-Host "  node       $($node.hostname)  public $($vnic.'public-ip')  private $($vnic.'private-ip')  ($($node.'lifecycle-state'))"
 Write-Host "  SSH        from $AllowSshFrom only; user 'opc'"
 Write-Host ''
-Write-Host 'Reach the listener through a tunnel, never through the internet:'
-Write-Host "  ssh -N -L ${TunnelPort}:$($vnic.'private-ip'):1521 opc@$($vnic.'public-ip')"
+Write-Host 'Reach the listener through a Bastion session, never through the internet:'
+Write-Host "  ./new-db-system.ps1 -CompartmentName $CompartmentName -Connect"
 Write-Host "  # PDB  127.0.0.1:${TunnelPort}/$pdbService"
 Write-Host "  # CDB  127.0.0.1:${TunnelPort}/$cdbService"
 Write-Host "  # sopuli: oracle: { scope: pdb, container: $PdbName }"

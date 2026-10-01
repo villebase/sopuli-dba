@@ -1560,7 +1560,7 @@ sopuli creds check --application orders-app
 **As shipped (#248):** the selectors, `--include-previous`, `--lockout-margin`
 and `--output`. There is **no `--method` flag**, and its absence is the decision
 rather than an omission — Q1 (#86) made `login` unconditional, hash mode depends
-on #90 and may never ship, and a flag with one legal value advertises a choice
+on #90 (now reproduced, and not built), and a flag with one legal value advertises a choice
 that does not exist. It arrives with hash mode or not at all. `--application`,
 `--account`, `--target` and `--group` are the selectors this command shares with
 every other verb and are not built yet; `--select` is.

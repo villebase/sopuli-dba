@@ -414,7 +414,7 @@ issues whose verification is still outstanding: the decision was taken and the
 measurement was not. A reader who resolves these against the issue tracker gets
 three wrong answers.
 
-- `unverified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
+- `verified` `t-verifier` (#90) — **Whether a client can regenerate the `T:` (12C) verifier in `SYS.USER$.SPARE4`.**
   The layout is read (#431) and the derivation reproduces byte-for-byte (#432),
   both on 26ai, 21c and 18c: `SHA-512(PBKDF2-HMAC-SHA512(pw_utf8, salt ‖
   "AUTH_PBKDF2_SPEEDY_KEY", 4096, 64) ‖ salt)`, and a rollover window's two
@@ -432,13 +432,11 @@ three wrong answers.
   read: the same layout, every `T:` reproduced, and a rollover window's `T:` old
   and `t:` new). One step there could not be observed: the DB system requires
   NNE, so `VGEN_COUNT` is encrypted on the wire, and 4096 is shown only by the
-  reproduction succeeding. **The entry stays `unverified` while 12.1 is unread**,
-  and whether one RU settles 19c is the open part of the call. Blocks
-  `--method hash|both` only — `check`'s default (`login`) no longer waits on
-  this (#86). If it does not reproduce on 19c, **both non-login modes go**:
-  `both` is login *plus* the verifier comparison, so it cannot survive a
-  negative result either, and a mode that silently degraded to `login` would
-  report a stronger check than it performed.
+  reproduction succeeding. **Settled for 19c, 2026-10-01**: a base release and a
+  release update both reproduce, and the maintainer judged one RU enough (#581).
+  **12.1 is still unread**, and the derivation is not claimed there. What this
+  unblocks is `--method hash|both` being *built*; neither exists yet, and
+  `check`'s default (`login`) never waited on this (#86).
 - `unverified` `lcount-grant` (#124) — **Whether `SELECT_CATALOG_ROLE` via
   `SYS.KU$_USER_VIEW` exposes `LCOUNT` without `SPARE4`** — a narrower alternative to `SELECT ON SYS.USER$`
   for the `LCOUNT` guard, from a blog post rather than Oracle documentation.

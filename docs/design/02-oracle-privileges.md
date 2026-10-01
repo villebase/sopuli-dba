@@ -423,11 +423,10 @@ the first release update read. 12.1 is still unread. #90 is three parts:
   4096 is the count the
   server sends at logon (the layout bullet), not a value in `SPARE4`, so a
   release sending a different one would not reproduce and must be measured, not
-  assumed. That is why 19c was marked (unverified: t-verifier) until an RU had
-  been read. 19.32 has now been read and reproduces with 4096 (#581), so a
-  differing RU is no longer the open question; the marker stays until the
-  register entry is settled, with 19.32's count shown by reproduction rather
-  than read off the wire. The
+  assumed. That is why 19c stayed open until an RU had been read. 19.32 has now
+  been read and reproduces with 4096 (#581), with the count shown by the
+  reproduction rather than read off the wire, and the register entry is settled
+  for 19c on that basis. 12.1 is unread. The
   reference derivation and the probe are `sql/oracle/06_verifier_reproduce.py`
   and `.sql`.
 - **The rollover window carries two 12C verifiers, distinguishable client-side

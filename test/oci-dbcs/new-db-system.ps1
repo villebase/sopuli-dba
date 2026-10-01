@@ -529,10 +529,11 @@ if ($node.'lifecycle-state' -eq 'STOPPED') {
 }
 $vnic = (Invoke-Oci @('network', 'vnic', 'get', '--vnic-id', $node.'vnic-id')).data
 
+# The DB home is read for its version: the DB system's own `version` is empty.
 $dbHome = @(Get-Live (Invoke-Oci @('db', 'db-home', 'list', '--compartment-id', $compartment,
             '--db-system-id', $dbSystem.id)))[0]
 $database = @(Get-Live (Invoke-Oci @('db', 'database', 'list', '--compartment-id', $compartment,
-              '--db-home-id', $dbHome.id)))[0]
+              '--db-system-id', $dbSystem.id)))[0]
 $pdb = @(Get-Live (Invoke-Oci @('db', 'pluggable-database', 'list', '--database-id', $database.id)))[0]
 
 # The service names carry the subnet's domain; take them from what OCI reports

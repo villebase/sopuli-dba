@@ -1180,6 +1180,22 @@ class Session(Protocol):
         """
         ...
 
+    def require_verifier(self, account: str, secret: Secret) -> None:
+        """Refuse ``check --method hash`` or ``both`` for ``account``, or say nothing.
+
+        Asked at plan time, before any account is checked, so an explicit method
+        a target cannot honour fails as :class:`UnsupportedCapabilityError`,
+        exit 5, naming the target (invariant 4) rather than as a row partway
+        through a run. ``secret`` is the value about to be compared, because one
+        refusal is about it rather than about the account: a database character
+        set that cannot hold it means the server hashed a converted copy.
+
+        A missing account says nothing; the run reports it per account. On the
+        protocol as of #437, which is when it acquired a caller -- the rule
+        ``require_rollover`` arrived by (#262).
+        """
+        ...
+
     def require_rollover(self, account: str) -> None:
         """Refuse ``--strategy rollover`` for ``account`` here, or say nothing.
 

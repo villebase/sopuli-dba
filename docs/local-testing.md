@@ -351,9 +351,10 @@ each byte violation names its own — a 133-character one against that pair:
 $ python -c "print('A1#'+'b'*130, end='')" | sopuli --config sopuli-estate-40.yaml creds generate --from-stdin --dry-run
 sopuli: the supplied password for 'acme_app_user' violates policy 'long'
   hint: byte_length (is 133 bytes in utf-8, the limit on 'free-pdb' is 128); byte_length (is 133 bytes in utf-8, the limit on 'xe21-pdb' is 30) -- fix the password, or pass `--no-policy-check`, which records in the audit event what it let through
-``` At `length: 30` the
-same target generates, applies and checks clean, and the constraint line reads
-the target's real limit:
+```
+
+At `length: 30` the same target generates, applies and checks clean, and the
+constraint line reads the target's real limit:
 
 ```
 constraints: 30 bytes in AL32UTF8, from xe21-pdb

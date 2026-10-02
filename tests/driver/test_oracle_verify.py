@@ -29,6 +29,7 @@ from sopuli.driver.protocol import (
     FAIL,
     OFFLINE_VERIFY,
     PASS,
+    PASSWORD_ROLLOVER,
     SKIPPED,
     UNAVAILABLE,
     Credential,
@@ -45,6 +46,7 @@ CORRELATION_ID = "2f6c8a90-1b47-4e35-8d92-6a0f3c5b7e21"
 
 ACCOUNT = "acme_check_user"
 LOCKOUT_PROFILE = "sopuli_lockout"
+ROLLOVER_PROFILE = "sopuli_rollover"
 
 CORRECT = "Corr3ct-Pa55-word"
 WRONG = "Wr0ng-Pa55-word"
@@ -187,12 +189,135 @@ def test_a_missing_account_is_unavailable(session: Any) -> None:
     assert "no account" in result.detail
 
 
-def test_hash_verification_is_refused_rather_than_faked(account: Any) -> None:
-    """#90 is open and `--method hash` may never exist. A driver that quietly
-    did a login instead would be reporting "verified by hash" for something with
-    an entirely different lockout risk."""
-    with pytest.raises(UnsupportedCapabilityError):
+# --------------------------------------------------------- method="hash" ---
+#
+# #437: compare with the stored 12C verifier instead of logging in. Every test
+# here asserts on the *account* as well as on the result, because the claim being
+# tested is that nothing happened to it.
+#
+# Whether the account *has* a 12C verifier is read from the account, never from
+# the release (invariant 3): 11g's accounts are `10G 11G`, and a 12.1+ server can
+# hold one without `12C` too. The comparison tests skip where it is absent, and
+# the refusal test is the one that runs there instead.
+
+
+def _needs_12c(session: Any) -> None:
+    state = session.describe_user(ACCOUNT)
+    assert state is not None
+    if "12C" not in state.password_versions:
+        pytest.skip(
+            f"{ACCOUNT} has no 12C verifier here (PASSWORD_VERSIONS "
+            f"{' '.join(state.password_versions)}); the refusal test runs instead"
+        )
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_hash_passes_on_the_right_password_without_a_login(account: Any) -> None:
+    _needs_12c(account)
+    result = account.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert result.method == "hash"
+    assert result.result == PASS
+    assert result.detail is not None
+    assert "current 12C verifier" in result.detail
+    assert "no login was attempted" in result.detail
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_hash_fails_on_the_wrong_password(account: Any) -> None:
+    _needs_12c(account)
+    result = account.verify_password(ACCOUNT, Secret(WRONG), method="hash")
+
+    assert result.result == FAIL
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_hash_spends_nothing_against_the_lockout_counter(guarded_account: Any) -> None:
+    """Release gate 4's scenario, through the method that makes it moot.
+
+    Five wrong comparisons against `FAILED_LOGIN_ATTEMPTS 3`: under `login` the
+    second to fifth are refused by the guard; under `hash` all five are answered,
+    because none of them costs anything, and `LCOUNT` stays at zero.
+    """
+    _needs_12c(guarded_account)
+    results = [
+        guarded_account.verify_password(ACCOUNT, Secret(WRONG), method="hash") for _ in range(5)
+    ]
+
+    assert all(r.result == FAIL for r in results), "every one answered, none skipped"
+    assert not any(r.lockout_margin_hit for r in results)
+    assert results[-1].failed_logins == 0, "no attempt was made, so nothing was counted"
+    assert "LOCKED" not in _status(guarded_account)
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_hash_compares_a_locked_account(account: Any) -> None:
+    """The thing a login cannot do: a locked account answers `ORA-28000` to the
+    right password and the wrong one alike. Its lock is still `check`'s to report,
+    from the status; the comparison only says whether the vault has its password."""
+    _needs_12c(account)
+    _run(account, f"alter user {ACCOUNT} account lock")
+
+    assert account.verify_password(ACCOUNT, Secret(CORRECT), method="hash").result == PASS
+    assert account.verify_password(ACCOUNT, Secret(WRONG), method="hash").result == FAIL
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_hash_on_a_missing_account_is_unavailable(session: Any) -> None:
+    _drop(session)
+
+    result = session.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert result.result == UNAVAILABLE
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
+def test_hash_tells_the_two_passwords_of_a_rollover_window_apart(session: Any) -> None:
+    """Both authenticate during a window, so a login cannot say which the vault
+    holds. `T:` is the previous password and `t:` the current (#432)."""
+    _drop(session)
+    _run(
+        session,
+        f'create user {ACCOUNT} identified by "{WRONG}" profile {ROLLOVER_PROFILE}',
+        f'alter user {ACCOUNT} identified by "{CORRECT}"',
+    )
+    try:
+        current = session.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
+        previous = session.verify_password(ACCOUNT, Secret(WRONG), method="hash")
+        neither = session.verify_password(ACCOUNT, Secret("N31ther-Pa55-word"), method="hash")
+    finally:
+        _drop(session)
+
+    assert current.result == PASS
+    assert "current" in (current.detail or "")
+    assert previous.result == PASS, "it authenticates until the window closes"
+    assert "previous" in (previous.detail or "")
+    assert neither.result == FAIL
+
+
+@pytest.mark.requires_capability(OFFLINE_VERIFY)
+def test_hash_refuses_an_account_with_no_12c_verifier(account: Any) -> None:
+    """11g, or any account whose PASSWORD_VERSIONS lacks 12C: nothing to compare,
+    and `S:` or 10G are never a fallback because both are weaker than a login
+    (#433). A refusal naming the target, which is invariant 4's shape."""
+    state = account.describe_user(ACCOUNT)
+    assert state is not None
+    if "12C" in state.password_versions:
+        pytest.skip(f"{ACCOUNT} has a 12C verifier here; the comparison tests cover it")
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
         account.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert "12C verifier" in refused.value.capability
+    assert refused.value.target == "tier1-oracle"
+
+
+def test_both_is_still_refused_rather_than_faked(account: Any) -> None:
+    """`both` is login plus the comparison, and arrives with `check --method`. A
+    driver that quietly did one of the two would report a check it did not make."""
+    with pytest.raises(UnsupportedCapabilityError):
+        account.verify_password(ACCOUNT, Secret(CORRECT), method="both")
 
 
 # ---------------------------------------------------------- release gate 4 ---

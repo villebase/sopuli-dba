@@ -312,9 +312,9 @@ def test_an_empty_answer_is_refused_before_anything_is_sent() -> None:
     assert "answer was empty" in str(caught.value)
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert caught.value.category == "config"
-    assert "nothing was sent" in caught.value.hint
-    assert "type the password" in caught.value.hint
-    assert "paste" in caught.value.hint
+    assert "nothing was sent" in (caught.value.hint or "")
+    assert "type the password" in (caught.value.hint or "")
+    assert "paste" in (caught.value.hint or "")
 
 
 def test_an_empty_answer_is_not_cached() -> None:

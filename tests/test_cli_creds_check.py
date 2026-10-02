@@ -112,6 +112,7 @@ class FakeSession:
         self.budgets: list[int] = []
         self.methods: list[str] = []
         self.required: list[str] = []
+        self.required_values: list[str] = []
         self.refusal: Exception | None = None
         self.closed = False
 
@@ -137,6 +138,7 @@ class FakeSession:
 
     def require_verifier(self, account: str, secret: Secret) -> None:
         self.required.append(account)
+        self.required_values.append(secret.reveal())
         if self.refusal is not None:
             raise self.refusal
 
@@ -842,3 +844,65 @@ def test_an_unreachable_target_is_left_to_the_run_rather_than_refused(
 
     assert result.exit_code == ExitCode.FAILURE
     assert "ERROR" in result.output
+
+
+def test_under_include_previous_the_previous_value_is_asked_about_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Copilot on #600. One refusal is about the value, not the account -- a
+    character set that cannot hold it -- so a previous value the pre-flight never
+    saw would be refused mid-run as an `ERROR` row and exit 1."""
+    harness = estate(answers={"ACME_WEB_USER": VerifyResult("hash", PASS)})
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(
+            f"apps/acme/{target}",
+            {"password": STORED, "previous": "Old-Horse-Battery-8"},
+            cas=1,
+        )
+    run(runner, write_config(CONFIG), "--method", "hash", "--include-previous")
+
+    asked = [session for session in harness["sessions"] if session.required_values]
+    assert asked, "the pre-flight ran"
+    assert all(session.required_values == [STORED, "Old-Horse-Battery-8"] for session in asked)
+
+
+@pytest.mark.parametrize(
+    ("status", "flag", "state"),
+    [("LOCKED", "locked", check.LOCKED), ("EXPIRED", "expired", check.EXPIRED)],
+)
+def test_a_comparison_runs_on_an_account_a_login_would_not_try(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    status: str,
+    flag: str,
+    state: str,
+) -> None:
+    """UC-1 §7: hash mode works on a locked account, which a login cannot -- and
+    Copilot on #600 found `check` skipping it anyway, because status settled the
+    row before any method was consulted. The status is still the state; what the
+    comparison found rides after it."""
+    found = "matches none of the account's 12C verifiers, with no login attempted"
+    harness = estate(
+        users={"ACME_WEB_USER": user(status=status, **{flag: True})},
+        answers={"ACME_WEB_USER": VerifyResult("hash", FAIL, detail=found)},
+    )
+    result = run(runner, write_config(CONFIG), "--method", "hash")
+
+    checked = [session for session in harness["sessions"] if session.methods]
+    assert checked, "the comparison was made"
+    assert all(session.methods == ["hash"] for session in checked)
+    assert state in result.output
+    assert found in result.output
+
+
+def test_a_login_still_does_not_try_a_locked_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The other half of the same rule: under `login` the lock settles it, and
+    no attempt is spent finding out what the lock already says."""
+    harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
+    result = run(runner, write_config(CONFIG))
+
+    assert all(session.attempts == [] for session in harness["sessions"])
+    assert "the password was not tried" in result.output

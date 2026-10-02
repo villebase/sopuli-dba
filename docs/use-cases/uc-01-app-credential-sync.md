@@ -1586,7 +1586,7 @@ drift it was detecting. Mitigations, all of which must be in place:
 3. **Reset on success.** A successful login resets the counter, which is why the
    happy path is self-cleaning.
 4. **Offer hash mode** (below) as the safe alternative for high-frequency
-   checks, if it ships at all — see #90.
+   checks: `--method hash`, built in #437 on #90's derivation.
 5. Document the interaction with `PASSWORD_LOCK_TIME` and with profiles that set
    `FAILED_LOGIN_ATTEMPTS UNLIMITED`. (A documentation item, not a runtime
    check — excluded from the "1/3/6" runtime set above and below.)
@@ -1617,10 +1617,12 @@ the refusal reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`: `OLTP` on ADB
 serverless 23.26.3.3.0, NULL on 26ai Free, 21c and 18c, and `ORA-02003` on 11.2.
 
 Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
-`SYS.USER$.SPARE4`). Given read access to that column, the tool could derive
-the verifier from the vault password and compare — **no authentication
-attempt, no failed-login counter, no lockout risk** — and it would work even
-for locked accounts. The `T:` verifier can be reproduced client-side — measured
+`SYS.USER$.SPARE4`). Given read access to that column, the tool derives the
+verifier from the vault password and compares — **no authentication attempt, no
+failed-login counter, no lockout risk** — and it works on locked and expired
+accounts too. Those are still reported as `LOCKED` or `EXPIRED`, because the
+status is the more urgent fact, with what the comparison found beside it, so an
+operator can tell whether unlocking would be enough. The `T:` verifier can be reproduced client-side — measured
 in #432 on 26ai, 21c and 18c (`02-oracle-privileges.md` §2), which is what makes
 this method possible at all; a rollover window's two verifiers (`T:` previous,
 `t:` current) are told apart the same way, so this reports `ROLLOVER_ACTIVE`
@@ -1628,12 +1630,14 @@ rather than drift. An account with no `12C` verifier (11g, or any account whose
 `PASSWORD_VERSIONS` lacks it) has nothing to compare, so an explicit
 `--method hash` or `--method both` fails at plan time naming the capability and
 the target (invariant 4) rather than falling back to a weaker verifier or
-silently to `login` (#433). Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
+silently to `login` (#433). The pre-flight asks about every value the run will
+compare, including the previous one under `--include-previous`, because the
+character-set refusal is about the value. Confirmed on 19.3.0.0.0 (#548), 12.2.0.1.0 (#572)
 and 19.32.0.0.0 (#581), a release update and so the release an OCI estate runs,
 which settles it for 19c (register entry `t-verifier`). 12.1 is unread; if the
 derivation went wrong there, the method would be dropped from the CLI.
 
-Trade-offs to document honestly if it does ship:
+Trade-offs, stated because it shipped:
 
 - requires the same optional `SELECT ON SYS.USER$` grant as the `LCOUNT` guard
   (`02-oracle-privileges.md` §2), which some sites will not grant. Where no

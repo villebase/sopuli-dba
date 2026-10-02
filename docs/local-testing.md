@@ -2771,6 +2771,25 @@ profile, and nothing counted. Under `login` the second would already have been
 refused by the margin. `both` reports the comparison's `fail` without logging in
 — decided in #437 — because a login can no longer change the answer.
 
+**A locked account is still compared**, which a login cannot do. Lock it and
+check with each method:
+
+```
+$ sopuli --config sopuli.yaml creds check --method login
+acme_app_user  free-pdb  LOCKED  account is locked; the password was not tried
+
+$ sopuli --config sopuli.yaml creds check --method hash
+acme_app_user  free-pdb  LOCKED  account is locked; vault v2 matches the account's current 12C verifier, with no login attempted
+
+$ sopuli --config sopuli.yaml creds check --method both
+acme_app_user  free-pdb  LOCKED  account is locked; vault v2 matches the account's 12C verifier; the account is locked (LOCKED); no login was attempted
+```
+
+All three exit 0 with `1 unverifiable`, and the state is the lock every time:
+it is the more urgent fact. What `hash` adds is the half after the semicolon,
+which says whether unlocking would be enough. `both` makes the comparison and
+then has its login declined by the lock, and says both.
+
 **An explicit method the estate cannot honour is refused before anything is
 checked**, exit 5, naming the target. Against 11g XE, whose accounts carry no 12C
 verifier:

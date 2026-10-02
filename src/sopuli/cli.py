@@ -4117,7 +4117,7 @@ def creds_check(
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
 
     if method != VERIFY_LOGIN:
-        _refuse_uncomparable(by_target, config, run, stores=stores)
+        _refuse_uncomparable(by_target, config, run, stores=stores, previous=include_previous)
 
     rows: list[tuple[Binding, check_states.Outcome]] = []
     results: list[dict[str, Any]] = []
@@ -4168,6 +4168,7 @@ def _refuse_uncomparable(
     run: Invocation,
     *,
     stores: Mapping[str, SecretStore],
+    previous: bool,
 ) -> None:
     """Refuse an explicit ``--method hash`` or ``both`` before anything is checked.
 
@@ -4183,6 +4184,13 @@ def _refuse_uncomparable(
     has, which is exit 1 and a finding, and an unreachable target says nothing
     about whether it could compare. A missing account or an empty ref is passed
     over for the same reason -- each is a state the run reports per account.
+
+    **Every value the run will compare is asked about**, so under
+    ``--include-previous`` the previous one too. One refusal is about the value
+    rather than the account -- a character set that cannot hold it -- and a
+    previous value it caught only after the current one had been checked would
+    be an ``ERROR`` row and exit 1, the mid-run failure this exists to prevent
+    (Copilot on #600).
     """
     for target_name, bindings in _grouped(config.bindings).items():
         target = by_target[target_name]
@@ -4201,9 +4209,12 @@ def _refuse_uncomparable(
             except Exception:  # noqa: BLE001 -- the run reports it, per target
                 continue
             for binding in bindings:
-                stored = _stored_credential(binding, stores)
-                if stored is not None:
-                    session.require_verifier(binding.account, stored.value)
+                values = [_stored_credential(binding, stores)]
+                if previous:
+                    values.append(_previous_stored(binding, stores))
+                for stored in values:
+                    if stored is not None:
+                        session.require_verifier(binding.account, stored.value)
         finally:
             if session is not None:
                 with suppress(Exception):
@@ -4337,7 +4348,13 @@ def _check_one(
         # checks narrow for the branch below -- and read in the order they
         # matter: no account, no stored password, or an account whose status
         # already settles the answer.
-        if user is None or stored is None or _settled_by_status(user):
+        # Status settles a `login` without trying, because a login would be
+        # refused by the lock and could not tell a right password from a wrong
+        # one. A comparison is not refused by anything, so `hash` and `both` still
+        # make it, and the account is still reported LOCKED or EXPIRED -- with what
+        # the comparison found beside it (UC-1 §7, Copilot on #600).
+        settled = user is not None and method == VERIFY_LOGIN and _settled_by_status(user)
+        if user is None or stored is None or settled:
             outcome = check_states.decide(user, None)
             if stored is None and user is not None and not _settled_by_status(user):
                 outcome = check_states.Outcome(
@@ -4491,10 +4508,7 @@ def _previous_accepted(
     folding it into `DRIFT` would page somebody over a credential that is doing
     what a rollover window is supposed to make it do.
     """
-    ref = binding.secret
-    if ref is None or binding.vault is None:
-        return None
-    stored = read_secret(stores[binding.vault], replace(ref, stage=PREVIOUS))
+    stored = _previous_stored(binding, stores)
     if stored is None:
         return None
     result = session.verify_password(
@@ -4510,6 +4524,14 @@ def _previous_accepted(
     if result.result not in (PASS, FAIL):
         return None
     return bool(result.result == PASS)
+
+
+def _previous_stored(binding: Binding, stores: Mapping[str, SecretStore]) -> Any:
+    """The vault's ``previous`` value for ``binding``, or ``None`` where there is none."""
+    ref = binding.secret
+    if ref is None or binding.vault is None:
+        return None
+    return read_secret(stores[binding.vault], replace(ref, stage=PREVIOUS))
 
 
 def _nothing_to_compare(binding: Binding) -> str:

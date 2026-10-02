@@ -509,7 +509,7 @@ def test_a_drawn_refusal_names_the_target_whose_limit_governed() -> None:
         )
 
     assert "the limit on 'db-legacy' is 30" in str(caught.value)
-    assert "for 'db-legacy'" in caught.value.hint
+    assert "for 'db-legacy'" in (caught.value.hint or "")
 
 
 def test_a_drawn_refusal_names_the_first_of_equally_strict_targets() -> None:

@@ -275,7 +275,7 @@ def test_a_byte_limit_refusal_names_its_target_where_one_is_given() -> None:
         )
 
     assert "but the limit on 'xe21-pdb' is 30" in str(caught.value)
-    assert "lower `length:` for 'xe21-pdb'" in caught.value.hint
+    assert "lower `length:` for 'xe21-pdb'" in (caught.value.hint or "")
 
 
 def test_an_alphabet_the_target_cannot_store_is_refused() -> None:

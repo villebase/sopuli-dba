@@ -200,7 +200,7 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
                 f"the previous password still works too{suffix}",
                 verification,
             )
-        return Outcome(IN_SYNC, f"{where}verified by login{suffix}", verification)
+        return Outcome(IN_SYNC, f"{where}verified by {verification.method}{suffix}", verification)
     if verification.result == FAIL:
         detail = _one_line(verification.detail) or "rejected"
         return Outcome(DRIFT, f"{where}{detail}", verification)

@@ -38,6 +38,7 @@ from sopuli.driver.protocol import (
     VERIFY_LOGIN,
     Credential,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
@@ -109,6 +110,9 @@ class FakeSession:
         self.answers = answers
         self.attempts: list[str] = []
         self.budgets: list[int] = []
+        self.methods: list[str] = []
+        self.required: list[str] = []
+        self.refusal: Exception | None = None
         self.closed = False
 
     def scope(self) -> Scope:
@@ -128,7 +132,13 @@ class FakeSession:
     ) -> VerifyResult:
         self.attempts.append(account)
         self.budgets.append(attempts)
+        self.methods.append(method)
         return self.answers[account.upper()]
+
+    def require_verifier(self, account: str, secret: Secret) -> None:
+        self.required.append(account)
+        if self.refusal is not None:
+            raise self.refusal
 
     def close(self) -> None:
         self.closed = True
@@ -151,6 +161,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         users: Mapping[str, UserState | None] | None = None,
         answers: Mapping[str, VerifyResult] | None = None,
         connect_error: Exception | None = None,
+        refusal: Exception | None = None,
     ) -> dict[str, Any]:
         store = MemoryStore()
         if stored is not None:
@@ -177,6 +188,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     if answers is not None
                     else {"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, PASS, latency_ms=11)},
                 )
+                session.refusal = refusal
                 sessions.append(session)
                 return session
 
@@ -763,3 +775,70 @@ def test_streamed_payloads_are_the_run_schema_shapes(
     assert len(checks) == 4
     for validator, payload in checks:
         assert [error.message for error in validator.iter_errors(payload)] == [], payload
+
+
+# ------------------------------------------------------------------ --method ---
+
+
+def test_login_is_the_default_and_asks_nothing_at_plan_time(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Q1 (#86): `login` unconditionally, and a run that did not ask for a
+    comparison opens no pre-flight connection to ask whether it could."""
+    harness = estate()
+    run(runner, write_config(CONFIG))
+
+    assert all(session.methods == [VERIFY_LOGIN] for session in harness["sessions"])
+    assert all(session.required == [] for session in harness["sessions"])
+    assert len(harness["sessions"]) == 2, "one connection per target, as before"
+
+
+@pytest.mark.parametrize("method", ["hash", "both"])
+def test_an_explicit_method_reaches_the_driver(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, method: str
+) -> None:
+    harness = estate(answers={"ACME_WEB_USER": VerifyResult(method, PASS)})
+    result = run(runner, write_config(CONFIG), "--method", method)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    checked = [session for session in harness["sessions"] if session.methods]
+    assert all(session.methods == [method] for session in checked)
+    assert f"verified by {method}" in result.output
+
+
+def test_an_uncomparable_target_is_refused_before_anything_is_checked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """Invariant 4: exit 5 naming the capability and the target, at plan time.
+    Nothing is verified anywhere -- not on the first target, not on the second --
+    and nothing is quietly checked by `login` instead."""
+    harness = estate(
+        refusal=UnsupportedCapabilityError("offline_verify", target="appdb-alpha", hint="grant it")
+    )
+    result = run(runner, write_config(CONFIG), "--method", "hash", "--output", "json")
+
+    # `CliRunner` drives the group, so the refusal arrives as the exception, and
+    # `main` turns it into the process's exit code -- see `refused` above.
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.attempts == [] for session in harness["sessions"])
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    assert body["error"]["category"] == "capability"
+    assert "appdb-alpha" in body["error"]["message"]
+
+
+def test_an_unreachable_target_is_left_to_the_run_rather_than_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """An unreachable target says nothing about whether it could compare. The
+    pre-flight passes over it, and the run reports the `ERROR` row it always has:
+    exit 1, never exit 5."""
+    estate(connect_error=RuntimeError("ORA-12541: Cannot connect. No listener"))
+    result = run(runner, write_config(CONFIG), "--method", "hash")
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert "ERROR" in result.output

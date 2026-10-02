@@ -848,8 +848,9 @@ Three decisions inside the spine are worth stating here, because none of them is
 readable off the flag list:
 
 - **The database is asked before it is changed.** Invariant 9 names `apply` as
-  the convergent verb, and with `--method hash` unavailable (#86, #90) a login is
-  the only way to know whether a change is needed. So each account is verified
+  the convergent verb, and `apply` verifies by login: `check --method hash`
+  (#437) does not reach it, so a login is how `apply` knows whether a change is
+  needed. So each account is verified
   first, under §7's mitigations and with both logins budgeted as one run's worth
   of attempts, and a password that already works is left alone. A `pass` under an
   open rollover window is still a reason not to act: re-applying would restart the
@@ -1557,13 +1558,11 @@ sopuli creds check --application orders-app
                    [--output json]
 ```
 
-**As shipped (#248):** the selectors, `--include-previous`, `--lockout-margin`
-and `--output`. There is **no `--method` flag**, and its absence is the decision
-rather than an omission — Q1 (#86) made `login` unconditional, hash mode depends
-on #90 (now reproduced, and not built), and a flag with one legal value advertises a choice
-that does not exist. It arrives with hash mode or not at all. The driver's half
-of hash mode is built (#437, `02-oracle-privileges.md` §2), and the flag is the
-other half. `--application`,
+**As shipped (#248, #437):** the selectors, `--include-previous`,
+`--lockout-margin`, `--method` and `--output`. `--method` defaults to `login`
+unconditionally (Q1, #86). `hash` and `both` arrived with #437, once #90 had
+reproduced the verifier, and an explicit one the estate cannot honour is refused
+at plan time (below). `--application`,
 `--account`, `--target` and `--group` are the selectors this command shares with
 every other verb and are not built yet; `--select` is.
 
@@ -1598,11 +1597,24 @@ drift it was detecting. Mitigations, all of which must be in place:
    separately and surfaces `LOCKED` / `LOCKED (TIMED)` / `EXPIRED` as their own
    states rather than folding them into `DRIFT`.
 
-### `--method hash` — verification without a login attempt, if it ships at all
+### `--method hash` — verification without a login attempt
 
-**Unresolved — tracked in #90, not part of the default path.** `check`
-defaults to `login` unconditionally (Q1 — decided in #86); hash mode is an
-opt-in extra that may not exist at all, not a fallback the default depends on.
+**Built (#437); not part of the default path.** `check` defaults to `login`
+unconditionally (Q1 — decided in #86); hash mode is an opt-in extra, not a
+fallback the default depends on.
+
+**`--method both` compares first** (decided in #437, 2026-10-02). A mismatch is
+reported as drift from the comparison alone and no login is attempted, because
+spending lockout budget on a value already shown to be wrong buys nothing. Only
+a value that matches goes on to the ordinary guarded login, and the row says
+which half answered.
+
+**On Autonomous Database the refusal says so in its own words** (decided in
+#437). No account there can read `SYS.USER$`, `ADMIN` included (#478), so the
+no-grant message's advice to grant it would be advice nobody can follow. The
+capability probe cannot tell the two apart, since both answer `ORA-00942`, so
+the refusal reads `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`: `OLTP` on ADB
+serverless 23.26.3.3.0, NULL on 26ai Free, 21c and 18c, and `ORA-02003` on 11.2.
 
 Oracle stores a salted PBKDF2-SHA512 verifier (the `12C` verifier in
 `SYS.USER$.SPARE4`). Given read access to that column, the tool could derive

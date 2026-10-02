@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "NO_VERIFIER",
     "PREVIOUS",
     "Malformed12cVerifierError",
+    "NotComparableError",
     "compare",
     "derive",
     "twelve_c",
@@ -92,6 +94,20 @@ class Malformed12cVerifierError(ValueError):
     """
 
 
+class NotComparableError(ValueError):
+    """The password cannot be compared here, because the server did not hash it.
+
+    Oracle derives the verifier from the password *as the database holds it*,
+    after conversion to the database character set (#572: on WE8DEC, ``Ω``
+    became ``¿`` and the verifier reproduced from that). Where the character set
+    holds the password exactly, the conversion changes nothing and its UTF-8 is
+    what was hashed. Where it cannot, the stored password is a lossy substitute
+    this code cannot reproduce, and comparing anyway would report a mismatch for
+    a password that logs in -- false drift, and drift starts rotations. So it is
+    refused. The message names the character set, never a character.
+    """
+
+
 def derive(password: bytes, salt: bytes) -> bytes:
     """The 64-byte 12C digest for ``password`` under ``salt``."""
     inter = hashlib.pbkdf2_hmac("sha512", password, salt + SPEEDY_KEY, ITERATIONS, 64)
@@ -118,7 +134,7 @@ def twelve_c(spare4: str | None) -> dict[str, str]:
     return found
 
 
-def compare(secret: Secret, spare4: str | None) -> str:
+def compare(secret: Secret, spare4: str | None, *, limit: ByteLimit) -> str:
     """Which of this account's 12C verifiers ``secret`` reproduces.
 
     :data:`CURRENT`, :data:`PREVIOUS`, :data:`NO_MATCH`, or :data:`NO_VERIFIER`
@@ -126,17 +142,27 @@ def compare(secret: Secret, spare4: str | None) -> str:
     last into a refusal; it is never a mismatch, because nothing was compared.
 
     The password is fed as its UTF-8 bytes with no case folding or normalisation,
-    which is what reproduced on every release read. On a database whose character
-    set cannot hold every character, the server hashes the *converted* password
-    (#572); ``limits.py`` measures such a set in ASCII, so no password this tool
-    sets reaches that path.
+    which is what reproduced on every release read -- **provided the database
+    character set holds it exactly**, which ``limit`` says. It is required for the
+    reason it is required by the statement builder: a comparison cannot be made
+    by somebody who never asked the database. Where the set cannot hold the
+    password, :class:`NotComparableError`. A password this tool set never gets
+    there, since ``admissible`` refused it first; a value checked against an
+    account somebody else set can.
     """
     verifiers = twelve_c(spare4)
     if not verifiers:
         return NO_VERIFIER
 
+    text = secret.reveal()
+    if not limit.encodable(text):
+        raise NotComparableError(
+            f"the password has characters {limit.described} cannot hold, so the server "
+            "hashed a converted copy this comparison cannot reproduce"
+        )
+
     current = NEWER if NEWER in verifiers else OLDER
-    password = secret.reveal().encode("utf-8")
+    password = text.encode("utf-8")
     for prefix, answer in ((current, CURRENT), (OLDER, PREVIOUS)):
         if prefix not in verifiers or (answer == PREVIOUS and prefix == current):
             continue

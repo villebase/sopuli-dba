@@ -17,10 +17,15 @@ from sopuli.driver.oracle.verifier import (
     NO_VERIFIER,
     PREVIOUS,
     Malformed12cVerifierError,
+    NotComparableError,
     compare,
     twelve_c,
 )
+from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
+
+#: What 26ai answered for the database the vectors came from.
+AL32UTF8 = ByteLimit(max_bytes=128, encoding="utf-8", charset="AL32UTF8")
 
 #: ``CREATE USER ... IDENTIFIED BY "Acme-Vector-0001"``.
 PLAIN = (
@@ -60,25 +65,25 @@ ELEVEN_G = "S:5C300909F36EB8FAA304852C877F9248FF88782986A884533739056CD8C7"
 
 @pytest.mark.parametrize("spare4", [PLAIN, RESET])
 def test_the_right_password_reproduces_the_stored_verifier(spare4: str) -> None:
-    assert compare(Secret("Acme-Vector-0001"), spare4) == CURRENT
+    assert compare(Secret("Acme-Vector-0001"), spare4, limit=AL32UTF8) == CURRENT
 
 
 def test_a_wrong_password_does_not() -> None:
-    assert compare(Secret("Acme-Vector-0002"), PLAIN) == NO_MATCH
+    assert compare(Secret("Acme-Vector-0002"), PLAIN, limit=AL32UTF8) == NO_MATCH
 
 
 def test_the_comparison_is_case_sensitive() -> None:
     """Fed as raw UTF-8 with no case folding, which is what reproduced. A
     case-insensitive comparison would be 10G's weakness, imported."""
-    assert compare(Secret("acme-vector-0001"), PLAIN) == NO_MATCH
+    assert compare(Secret("acme-vector-0001"), PLAIN, limit=AL32UTF8) == NO_MATCH
 
 
 def test_in_a_rollover_window_the_two_passwords_are_told_apart() -> None:
     """What a login cannot do: during a window both passwords authenticate, and
     only the verifier says which of them the vault holds."""
-    assert compare(Secret("Acme-Vector-New2"), ROLLOVER) == CURRENT
-    assert compare(Secret("Acme-Vector-Old1"), ROLLOVER) == PREVIOUS
-    assert compare(Secret("Acme-Vector-0001"), ROLLOVER) == NO_MATCH
+    assert compare(Secret("Acme-Vector-New2"), ROLLOVER, limit=AL32UTF8) == CURRENT
+    assert compare(Secret("Acme-Vector-Old1"), ROLLOVER, limit=AL32UTF8) == PREVIOUS
+    assert compare(Secret("Acme-Vector-0001"), ROLLOVER, limit=AL32UTF8) == NO_MATCH
 
 
 def test_only_the_12c_verifiers_are_read() -> None:
@@ -92,7 +97,7 @@ def test_only_the_12c_verifiers_are_read() -> None:
 def test_no_12c_verifier_is_its_own_answer_and_not_a_mismatch(spare4: str | None) -> None:
     """Nothing was compared, so nothing can be said to differ. The driver turns
     this into a refusal naming the target (#433, invariant 4)."""
-    assert compare(Secret("Acme-Vector-0001"), spare4) == NO_VERIFIER
+    assert compare(Secret("Acme-Vector-0001"), spare4, limit=AL32UTF8) == NO_VERIFIER
 
 
 @pytest.mark.parametrize(
@@ -103,6 +108,29 @@ def test_a_malformed_12c_token_is_refused_rather_than_skipped(token: str) -> Non
     """Skipping it would report "no verifier", which hides the one thing this
     module cannot vouch for -- a release whose format changed."""
     with pytest.raises(Malformed12cVerifierError) as raised:
-        compare(Secret("Acme-Vector-0001"), f"S:{'0' * 60};{token}")
+        compare(Secret("Acme-Vector-0001"), f"S:{'0' * 60};{token}", limit=AL32UTF8)
 
     assert token[2:] not in str(raised.value), "the message names a length, never the token"
+
+
+def test_a_password_the_character_set_cannot_hold_is_refused_not_mismatched() -> None:
+    """#572: on WE8DEC the server stored `Ω` as `¿` and hashed that. Comparing the
+    vault's string would report a mismatch for a password that logs in -- false
+    drift, which starts rotations. Refused instead, naming the set and no
+    character of the password."""
+    we8dec = ByteLimit(max_bytes=30, encoding="ascii", charset="WE8DEC")
+
+    with pytest.raises(NotComparableError) as refused:
+        compare(Secret("Acme-Vector-Ω1"), PLAIN, limit=we8dec)
+
+    assert "WE8DEC" in str(refused.value)
+    assert "Ω" not in str(refused.value)
+
+
+def test_a_password_the_character_set_holds_exactly_is_compared() -> None:
+    """The conversion changes nothing when every character survives it, so the
+    UTF-8 of the vault's string is what the server hashed."""
+    cp1252 = ByteLimit(max_bytes=30, encoding="cp1252", charset="WE8MSWIN1252")
+
+    assert compare(Secret("Acme-Vector-0001"), PLAIN, limit=cp1252) == CURRENT
+    assert compare(Secret("Acme-Vectör-0001"), PLAIN, limit=cp1252) == NO_MATCH

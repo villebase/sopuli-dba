@@ -90,6 +90,7 @@ from sopuli.driver.oracle.verifier import (
     NO_VERIFIER,
     PREVIOUS,
     Malformed12cVerifierError,
+    NotComparableError,
     compare,
 )
 from sopuli.driver.protocol import (
@@ -1088,13 +1089,17 @@ class OracleSession:
         as hash mode's point -- and its lock is still reported, by ``check``
         from the account's status, where it has always come from.
 
-        **Two refusals, both** :class:`UnsupportedCapabilityError` **naming the
-        target**, and neither falls back to anything (#433, invariant 4):
+        **Four refusals, each an** :class:`UnsupportedCapabilityError` **naming
+        the target**, and none falls back to anything (#433, invariant 4):
 
         * the session cannot read ``SYS.USER$``, so there is no verifier to read;
         * the account has no 12C verifier -- 11g, or ``PASSWORD_VERSIONS``
           without ``12C`` -- and comparing ``S:`` or 10G instead would report a
-          check stronger than the one made.
+          check stronger than the one made;
+        * a ``T:``/``t:`` token is not the 160 hex characters every release read
+          has stored, so the format is one the comparison was never measured on;
+        * the database character set cannot hold the password exactly, so the
+          server hashed a converted copy that cannot be reproduced (#572).
 
         A pass says which verifier the password reproduced, because during a
         rollover window that is the one thing a login cannot tell: both passwords
@@ -1123,7 +1128,13 @@ class OracleSession:
             counter = failed_logins(cursor, state.name)
 
         try:
-            answer = compare(secret, spare4)
+            answer = compare(secret, spare4, limit=self.byte_limit())
+        except NotComparableError as error:
+            raise UnsupportedCapabilityError(
+                f"a hash comparison of this password for {state.name}",
+                target=self.target.name,
+                hint=f"{error}; verify by `login`, which the server converts for itself",
+            ) from error
         except Malformed12cVerifierError as error:
             raise UnsupportedCapabilityError(
                 f"a readable 12C verifier for {state.name}",

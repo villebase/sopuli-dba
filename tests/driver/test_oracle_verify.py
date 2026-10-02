@@ -313,6 +313,76 @@ def test_hash_refuses_an_account_with_no_12c_verifier(account: Any) -> None:
     assert refused.value.target == "tier1-oracle"
 
 
+def _offline_session(session_module: Any, capabilities: frozenset[str]) -> Any:
+    """A session with a scope and nothing behind it: the refusals below happen
+    before anything would reach a server."""
+    from sopuli.driver.protocol import Scope
+
+    offline = session_module.OracleSession(
+        connection=object(),
+        target=ExpandedTarget(
+            target=Target(name="orders-pdb", type="oracle", dsn="db.example.com:1521/orders"),
+            index=0,
+        ),
+        correlation_id=CORRELATION_ID,
+    )
+    offline._scope = Scope(type="pdb", capabilities=capabilities)
+    return offline
+
+
+def test_hash_without_the_sys_user_grant_is_refused_naming_the_target(
+    session_module: Any,
+) -> None:
+    """The branch every live test above skips: without `SELECT ON SYS.USER$`
+    there is no verifier to read, and `login` is not substituted for it."""
+    offline = _offline_session(session_module, frozenset())
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.verify_password(ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert refused.value.capability == OFFLINE_VERIFY
+    assert refused.value.target == "orders-pdb"
+    assert "GRANT SELECT ON SYS.USER$" in (refused.value.hint or "")
+
+
+def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#572's WE8DEC case at the session: a refusal naming the target and the
+    set, rather than a `fail` that would report drift on a password that logs in.
+    No live database in the stack has a non-Unicode set but 12.2's, which is
+    maintainer-only, so the dictionary reads are stubbed."""
+    from sopuli.driver.protocol import UserState
+    from sopuli.passwords import ByteLimit
+
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    offline._limit = ByteLimit(max_bytes=30, encoding="ascii", charset="WE8DEC")
+
+    class _Cursor:
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    offline.connection = type("_Connection", (), {"cursor": lambda self: _Cursor()})()
+    monkeypatch.setattr(
+        session_module,
+        "login_state",
+        lambda _cursor, _account: UserState(name="ACME_CHECK_USER", status="OPEN"),
+    )
+    monkeypatch.setattr(session_module, "failed_logins", lambda _cursor, _name: 0)
+    spare4 = "S:" + "0" * 60 + ";T:" + "A" * 160
+    monkeypatch.setattr(session_module, "stored_verifiers", lambda _cursor, _name: spare4)
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.verify_password(ACCOUNT, Secret("Corr3ct-Pa55-wΩrd"), method="hash")
+
+    assert refused.value.target == "orders-pdb"
+    assert "WE8DEC" in (refused.value.hint or "")
+    assert "Ω" not in str(refused.value) + (refused.value.hint or "")
+
+
 def test_both_is_still_refused_rather_than_faked(account: Any) -> None:
     """`both` is login plus the comparison, and arrives with `check --method`. A
     driver that quietly did one of the two would report a check it did not make."""

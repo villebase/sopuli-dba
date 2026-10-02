@@ -497,7 +497,10 @@ built (#437):** `verify_password(method="hash")` reads `SPARE4`, binds the
 account name and nothing else, and compares in
 `src/sopuli/driver/oracle/verifier.py`. It refuses, naming the target, where the
 session cannot read `SYS.USER$` or the account has no `12C` verifier, and also
-where a `T:`/`t:` token is not the measured 160 hex characters. During a window,
+where a `T:`/`t:` token is not the measured 160 hex characters. It also refuses
+where the database character set cannot hold the vault value exactly: the server
+hashed a converted copy (the WE8DEC case above), and a mismatch reported there
+would be false drift. During a window,
 it reports which of the two verifiers the password reproduced. The
 `check --method` flag, its plan-time refusals and `both` are the second half, and
 are not built. Were it ever to fail

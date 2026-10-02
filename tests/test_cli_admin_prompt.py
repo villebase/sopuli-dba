@@ -325,6 +325,10 @@ def test_an_empty_answer_never_reaches_the_driver(
     assert document["targets"][0]["reachable"] is False
     assert error["category"] == "config"
     assert "answer was empty" in error["message"]
+    # The hint is the actionable half, and the emitted document is where a
+    # reader meets it.
+    assert "nothing was sent" in error["hint"]
+    assert "paste" in error["hint"]
 
 
 def test_the_password_is_not_in_the_document(

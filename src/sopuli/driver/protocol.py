@@ -178,9 +178,10 @@ VERIFY_BOTH = "both"
 VERIFY_NONE = "none"
 
 #: The run document's ``verification.method``. ``login`` is what `check` defaults
-#: to, unconditionally (Q1, #86). The Oracle driver honours ``hash`` since #437,
-#: by comparing the stored 12C verifier; ``both`` arrives with `check --method`,
-#: and a driver that cannot honour a method refuses it rather than doing another.
+#: to, unconditionally (Q1, #86). The Oracle driver honours ``hash`` by comparing
+#: the stored 12C verifier, and ``both`` by comparing first and logging in only if
+#: that passed (#437). A driver that cannot honour a method refuses it rather than
+#: doing another.
 VERIFY_METHODS = (VERIFY_LOGIN, VERIFY_HASH, VERIFY_BOTH, VERIFY_NONE)
 
 PASS = "pass"

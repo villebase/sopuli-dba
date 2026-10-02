@@ -884,7 +884,9 @@ def test_a_comparison_runs_on_an_account_a_login_would_not_try(
     comparison found rides after it."""
     found = "matches none of the account's 12C verifiers, with no login attempted"
     harness = estate(
-        users={"ACME_WEB_USER": user(status=status, **{flag: True})},
+        users={
+            "ACME_WEB_USER": user(status=status, locked=flag == "locked", expired=flag == "expired")
+        },
         answers={"ACME_WEB_USER": VerifyResult("hash", FAIL, detail=found)},
     )
     result = run(runner, write_config(CONFIG), "--method", "hash")

@@ -3057,6 +3057,50 @@ def test_a_preflight_run_warns_once_not_twice(
     assert text.output.count('profile "SOPULI_REUSE" restricts password reuse') == 1
 
 
+def test_a_preflight_refusal_still_prints_the_reuse_warning(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A blocking finding beside W028 refuses the run, and the refusal is where
+    somebody is already reading -- so the warning is printed there too, not only
+    serialised. `_refuse_preflight` took the notes and dropped them (#580's
+    review, and #391's stale `--repair` note before it)."""
+    read_only = Scope(type="pdb", container="ALPHA", read_write=False, open_mode="READ ONLY")
+    for extra in (("--dry-run",), ()):
+        harness = estate(documents=_rolled(), users=_reusing(), scopes={"appdb-alpha": read_only})
+
+        result = _rollback(runner, write_config(CONFIG), "--preflight", *extra)
+
+        assert result.exit_code == ExitCode.FAILURE, extra
+        assert 'profile "SOPULI_REUSE" restricts password reuse' in result.output, extra
+        assert all(session.changed == [] for session in harness["sessions"])
+
+
+def test_no_reuse_warning_ahead_of_a_profile_move(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The policy moves the account onto `ACME_APP_PROF` before the password, so
+    the restricted profile read now is not the one the statement meets, and the
+    destination's limits are not read. No prediction rather than a false one."""
+    estate(documents=_rolled(), users=_reusing())
+
+    emitted = document(
+        run(
+            runner,
+            write_config(ASSIGNING_CONFIG),
+            "--select",
+            "tenant=alpha",
+            "--source",
+            "previous",
+            "--dry-run",
+            "--preflight",
+            "--output",
+            "json",
+        )
+    )
+
+    assert not _coded(emitted, "SOPULI-W028")
+
+
 # ------------------------------------------------------ the other two stages ---
 
 

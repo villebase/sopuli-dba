@@ -7168,18 +7168,24 @@ def _preflight_target(
             missing_accounts.append(binding.account)
             continue
 
-        if (
-            reuse is not None
-            and (target.name, binding.account) in rollbacks
-            and reuse_restricted(state.password_reuse_max, state.password_reuse_time)
-        ):
-            reuse.append((target.name, state))
-
         # §5's profile assignment, asked before anything is written (#301). Only
         # where the policy declares one and the account is not already on it: the
         # question is whether this run's *move* can land, and an account already
         # there is not moving.
         moving = strategies.moves_profile(state, apply_states.attributes_for(config, binding))
+
+        # #580. Only where the account stays on the profile read here: a move
+        # lands before the password does, so these limits are not the ones the
+        # statement meets, and the destination's are not read. The run's own
+        # W028, taken from the account as re-read after the move, still covers it.
+        if (
+            reuse is not None
+            and moving is None
+            and (target.name, binding.account) in rollbacks
+            and reuse_restricted(state.password_reuse_max, state.password_reuse_time)
+        ):
+            reuse.append((target.name, state))
+
         if moving is None:
             continue
         try:
@@ -7291,7 +7297,7 @@ def _refuse_preflight(
     )
     blocking = sum(1 for one in findings if one.blocking)
     document.finish(ExitCode.FAILURE, Summary(total=len(findings), failed=blocking))
-    return f"{header}\n\n{render_preflight(findings)}"
+    return "\n".join([f"{header}\n\n{render_preflight(findings)}", *render_notices(notes)])
 
 
 def _check_strategy(

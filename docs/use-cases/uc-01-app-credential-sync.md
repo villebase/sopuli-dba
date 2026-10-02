@@ -840,7 +840,10 @@ reuse-restricted profile raises the same `SOPULI-W028` there — under `--dry-ru
 in a real run, where the run does not raise it a second time for the same target
 and profile. Raised ahead of the statement it is a prediction: it cannot know
 that an account turns out to hold the password already, which the run's own
-reading does. A plain `--dry-run` still connects to nothing, and so cannot say it.
+reading does. Nor is it raised where the run would first move the account to
+another profile: the limits read are then not the ones the statement meets, and
+the run's own reading covers it. A plain `--dry-run` still connects to nothing,
+and so cannot say it.
 
 **On such a profile, the way back is a rollover window, not a rollback.** A
 profile with `PASSWORD_ROLLOVER_TIME` makes every rotation open one (§6.3): the

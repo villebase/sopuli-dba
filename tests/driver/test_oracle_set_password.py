@@ -227,19 +227,12 @@ def test_the_byte_limit_is_this_database_s_own(session: Any) -> None:
     fact about the images, not about the tool; what this test is named for is
     that the limit comes from the target.
 
-    **`max_bytes` is asserted against the tool's own rule and not the server's**,
-    and the difference is a live bug rather than a subtlety. `limits.max_bytes`
-    keys the limit to 12.2, but Oracle's 12.2 change raised *identifiers* and
-    passwords stayed at 30 bytes until 23ai -- measured on 21c and 18c, which
-    both refuse a 31st byte while the tool believes they accept 128 (#383). So
-    asserting what the server enforces would make this red on those two, and
-    asserting `== 128` everywhere made it red on 11g, where the tool happens to
-    be right for the wrong reason.
-
-    What is asserted here is therefore the narrow thing this test is named for:
-    the limit came from *this session's* reported version. #383 owns whether the
-    rule that maps a version to a number is correct, and cannot be answered
-    without 19c.
+    **`max_bytes` is asserted against the tool's own rule**, and since #595 that
+    rule and the server's agree on every release the stack runs: 30 bytes below
+    23, 128 from it. Until then the rule was keyed to 12.2 -- where Oracle raised
+    *identifiers*, not passwords -- so 21c and 18c refused a 31st byte while the
+    tool believed they accepted 128 (#383). What this test is named for is still
+    the narrow thing: the limit came from *this session's* reported version.
     """
     limit = session.byte_limit()
     with session.connection.cursor() as cursor:

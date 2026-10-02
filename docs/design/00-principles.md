@@ -179,7 +179,9 @@ counted as an answer.
 
 ### Version-dependent behaviour to detect at runtime, never assume
 
-- Max password length: 30 bytes (< 12.2) vs 128 bytes (12.2+)
+- Max password length: 30 bytes (< 23) vs 128 bytes (23+). **Not 12.2**, which
+  raised identifiers and left passwords at 30 — measured on 12.2, 18c, 19c and
+  21c (#383, #595)
 - Password verifiers present (`DBA_USERS.PASSWORD_VERSIONS`: 10G/11G/12C) and
   `SQLNET.ALLOWED_LOGON_VERSION_SERVER` — a generated password longer than 30
   bytes silently breaks clients still relying on 10G/11G verifiers

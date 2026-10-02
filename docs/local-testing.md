@@ -2816,11 +2816,28 @@ sopuli: target "free-pdb" does not support offline_verify
 Exit 5. Put the grant back afterwards, because the tier-1 suite needs it.
 
 **On Autonomous Database the same refusal says so instead of advising a grant**,
-because no account there can read `SYS.USER$`, `ADMIN` included (#478). The hint
-names the service that `SYS_CONTEXT('USERENV','CLOUD_SERVICE')` reports, which
-was `OLTP` on the serverless instance in §14. That wording is pinned by
-`tests/driver/test_oracle_verify.py` and has not yet been run against an ADB
-through the tool, so it has no pasted sample here.
+because no account there can read `SYS.USER$`, `ADMIN` included (#478). Run on
+2026-10-02 against the ADB serverless 23.26.3.3.0 in §14, with `ADMIN` behind
+`auth: prompt`:
+
+```
+$ sopuli --config adb.yaml creds check --method hash
+password for ADMIN on adb-acme:
+sopuli: target "adb-acme" does not support offline_verify
+  hint: this is Autonomous Database (OLTP), where no account can read SYS.USER$ -- not even ADMIN -- so `hash` cannot run here; verify by `login`
+```
+
+Exit 5. `OLTP` is what `SYS_CONTEXT('USERENV','CLOUD_SERVICE')` reports there,
+and it is the only thing that tells ADB from an ordinary target missing the
+grant: the capability probe gets `ORA-00942` from both. `--method both
+--output json` gives the same refusal, with `"exit_code": 5`, `"category":
+"capability"`, `"target_capability": "offline_verify"`, and no `results`.
+
+**Type the password correctly**, because a wrong one hides all of this. The
+pre-flight passes over a target whose admin login fails, so the run reports it
+as an `ERROR` row with exit 1. A wrong password is `ORA-01017`. An empty answer,
+such as a paste the hidden prompt did not take, is `DPY-4001: no credentials
+specified`. Both happened on the first attempt at this run.
 
 ### 10.6 `rotate` — the whole sequence under one lock
 

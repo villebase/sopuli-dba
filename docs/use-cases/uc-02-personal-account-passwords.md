@@ -809,8 +809,9 @@ is the exposure §4.3's default exists to remove.
 Generated from a policy, by the same tier-0 code UC-1 uses (01-configuration §8).
 A seen-path policy is likely to differ — a person types it once, from a message —
 but nothing about generation does. The maximum length is the same question it is
-for UC-1: 30 bytes below 23 and 128 from it (#595), so a long policy is refused at
-plan time on 21c and older rather than failing mid-run. What is still open is the
+for UC-1: the tool enforces 30 bytes below 23 and 128 from it (#595), so a long
+policy is refused at plan time on 21c and older rather than failing mid-run.
+That is the tool's rule, not a measured maximum for every release. What is still open is the
 part no release in the stack can answer (unverified: password-byte-limit).
 
 ### 4.3 The rollover window

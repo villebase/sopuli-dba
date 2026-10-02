@@ -510,7 +510,7 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
   answered in the same run (masked on 21c; no user-management DDL reaches it at
   all on 23ai+), as were self-rotation and `IDENTIFIED BY VALUES` — both masked.
 - `unverified` `password-byte-limit` (#383) — **What the maximum password length
-  actually is, on every release between 12.2 and 23ai.** `limits.py` derived the
+  actually is, on every release from 12.1 to 23ai.** `limits.py` derived the
   limit from the probed server version against `LONG_IDENTIFIER_FLOOR = (12, 2)`,
   and **the premise was wrong**: 12.2 raised *identifiers* from 30 bytes to 128
   and passwords did not move with them. #383 measured it — 31 bytes is

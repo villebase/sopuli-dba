@@ -227,9 +227,10 @@ def test_the_byte_limit_is_this_database_s_own(session: Any) -> None:
     fact about the images, not about the tool; what this test is named for is
     that the limit comes from the target.
 
-    **`max_bytes` is asserted against the tool's own rule**, and since #595 that
-    rule and the server's agree on every release the stack runs: 30 bytes below
-    23, 128 from it. Until then the rule was keyed to 12.2 -- where Oracle raised
+    **`max_bytes` is asserted against the tool's own rule**, not against what the
+    server enforces -- this test sends no over-long password, so it cannot show
+    the two agree. Since #595 the rule is 30 bytes below 23 and 128 from it. Until
+    then it was keyed to 12.2 -- where Oracle raised
     *identifiers*, not passwords -- so 21c and 18c refused a 31st byte while the
     tool believed they accepted 128 (#383). What this test is named for is still
     the narrow thing: the limit came from *this session's* reported version.

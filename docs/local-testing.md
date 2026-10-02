@@ -326,8 +326,11 @@ Change `dsn:` and `oracle.container:` in §6's config and the rest of the guide
 follows.
 
 **The password byte limit is the one difference you meet in §10 without looking
-for it.** Every release below 23 accepts 30 bytes and refuses a 31st with
-`ORA-00972`, so a policy asking for more is refused at plan time (#595). Against
+for it.** The tool enforces 30 bytes below 23 and 128 from it (#595), so on
+these containers a policy asking for more than 30 is refused at plan time. That
+is its rule rather than a measurement of every release: a 31st byte is
+`ORA-00972` on 11.2, 12.2, 18c, 19.3 and 21c, 19.32 was only tried at 30 and
+128, and 12.1 and an early 23ai are unmeasured. Against
 21c XE, with `length: 40` and the account created as in §5:
 
 ```

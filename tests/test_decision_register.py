@@ -124,12 +124,13 @@ def test_the_register_is_well_formed() -> None:
     assert entries, f"{README} has no {HEADING!r} table"
 
     problems = []
-    seen: set[tuple[str, str]] = set()
+    # Global, not per document: the docs and the code refer to a decision by
+    # its bare ID, so `D1` must mean one row.
+    seen: set[str] = set()
     for entry in entries:
-        key = (entry.where, entry.id)
-        if entry.id != "—" and key in seen:
-            problems.append(f"{entry.id} is listed twice under {entry.where}")
-        seen.add(key)
+        if entry.id != "—" and entry.id in seen:
+            problems.append(f"{entry.id} is listed twice")
+        seen.add(entry.id)
         if entry.status not in STATUSES:
             problems.append(f"{entry.id}: status {entry.status!r} is not one of {sorted(STATUSES)}")
         if entry.where not in TABLES and entry.where not in UNTABLED:
@@ -230,9 +231,10 @@ def test_every_adr_is_in_the_register_and_accepted() -> None:
         if entry is None:
             problems.append(f"{adr} ({path.name}) is not in the register")
             continue
-        accepted = "Status: **accepted**" in path.read_text(encoding="utf-8")
-        if accepted != (entry.status == "decided"):
-            problems.append(f"{adr}: register says {entry.status}, accepted={accepted}")
+        if entry.status != "decided":
+            problems.append(f"{adr}: the register says {entry.status}, not decided")
+        if "Status: **accepted**" not in path.read_text(encoding="utf-8"):
+            problems.append(f"{adr}: {path.name} does not say `Status: **accepted**`")
     problems += [f"{adr} is in the register and has no file" for adr in listed]
 
     assert not problems, "\n".join(problems)

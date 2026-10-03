@@ -135,14 +135,25 @@ def test_an_enum_list_is_the_schema_enum(enum: str) -> None:
     assert sorted(documented) == sorted(_schema()["$defs"][enum]["enum"])
 
 
+#: A state is written in capitals, which is how a row is told to be about states.
+#: Not filtered through the schema: a value the schema lacks must reach the
+#: comparison and fail it, not be dropped on the way.
+STATE_WORD = re.compile(r"^[A-Z][A-Z_]*$")
+
+
 def _state_rows(block: list[str]) -> Iterator[tuple[str, list[str]]]:
     """(first cell, states named in the last cell) for each table row naming a state."""
-    states = set(_schema()["$defs"]["state"]["enum"])
     for line in block:
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        named = [token for token in TOKEN.findall(cells[-1]) if token in states]
+        named = [token for token in TOKEN.findall(cells[-1]) if STATE_WORD.match(token)]
         if named:
             yield cells[0].strip("`"), named
+
+
+def test_a_state_the_schema_lacks_is_kept() -> None:
+    rows = list(_state_rows(["| `attention` | text | `state` ∈ `RESET`, `NOT_A_STATE` |"]))
+
+    assert rows == [("attention", ["RESET", "NOT_A_STATE"])]
 
 
 @pytest.mark.parametrize(

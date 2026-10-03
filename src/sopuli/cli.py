@@ -1813,6 +1813,14 @@ def _expire_one(
                 session.close()
 
 
+def _unseen_methods_built() -> str:
+    """The implemented unseen delivery methods, as reset-password's help names them."""
+    unseen = [f"`{m}`" for m in delivery_config.IMPLEMENTED if m != delivery_config.MANUAL]
+    if len(unseen) == 1:
+        return f"{unseen[0]} is the unseen method"
+    return f"{', '.join(unseen)} are the unseen methods"
+
+
 @account_group.command("reset-password")
 @click.option(
     "--account",
@@ -1854,9 +1862,7 @@ def _expire_one(
 )
 @global_options
 @help_with(
-    unseen=", ".join(
-        f"`{method}`" for method in delivery_config.IMPLEMENTED if method != delivery_config.MANUAL
-    ),
+    unseen=_unseen_methods_built(),
     manual=delivery_config.MANUAL,
 )
 def account_reset_password(
@@ -1877,9 +1883,9 @@ def account_reset_password(
 
     **Two paths, and the configuration chooses.** The unseen path -- the default
     -- puts the value where only the owner can fetch it and shows it to nobody.
-    Of the unseen methods, this build implements {unseen}; a file naming one
-    that is not built is refused here, before the password changes. The seen
-    path, `delivery.method: {manual}`, prints the password to your terminal and always
+    {unseen} this build implements; a file naming
+    one that is not built is refused here, before the password changes. The seen path,
+    `delivery.method: {manual}`, prints the password to your terminal and always
     expires the account, because expiry at first logon is what ends your sight of
     it.
 

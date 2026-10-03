@@ -52,6 +52,19 @@ def test_reset_password_help_names_every_implemented_unseen_method() -> None:
     assert "{" not in text
 
 
+def test_the_method_phrase_reads_for_one_method_or_several(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sopuli import cli as cli_module
+    from sopuli.config import delivery
+
+    monkeypatch.setattr(delivery, "IMPLEMENTED", (MANUAL, "a"))
+    assert cli_module._unseen_methods_built() == "`a` is the unseen method"
+
+    monkeypatch.setattr(delivery, "IMPLEMENTED", (MANUAL, "a", "b"))
+    assert cli_module._unseen_methods_built() == "`a`, `b` are the unseen methods"
+
+
 def test_a_placeholder_with_no_fact_fails_at_import_time() -> None:
     """A typo in a placeholder is an error when the module loads, not a `{typo}`
     in somebody's terminal."""

@@ -2167,10 +2167,14 @@ exit 3 alerts). Weekly `rotate --max-age-days 90 --strategy rollover`. The app
 refreshes credentials within the rollover window; a follow-up job runs
 `finish-rollover` once the window has elapsed.
 
-**S3 — One PDB was down during the last rotation.** `check` reports DRIFT for that
-PDB. `apply --target cdb1-pdb-billing` fixes only it, from the vault's
-`current`; `apply --repair FILE`, given that `check` run's document, does the same
-without naming the target. Idempotent for the ones already correct.
+**S3 — One PDB was down during the last rotation.** The other targets took the
+new password, and the promotion was withheld (invariant 7): `current` still holds
+the old password and `pending` the new one. Once the PDB is back, run `apply`
+without a target selector. It applies `pending` where a target does not hold it,
+confirms every target, and only then promotes. Idempotent for the ones already
+correct. `apply --target cdb1-pdb-billing` alone changes that PDB but still
+withholds the promotion (`SOPULI-W027`), because a narrowed run cannot confirm
+the targets it left out.
 
 **S4 — Emergency rotation after a leak.** `rotate --strategy direct
 --finish-rollover` — no grace window, old password invalid immediately, accepting
@@ -2180,9 +2184,12 @@ application errors as the price. The audit record captures who and when.
 `cdb1-root`, `container_clause: ALL`. One statement covers every PDB.
 
 **S6 — Vault write succeeds, database is unreachable.** `pending` exists, nothing
-applied, `current` unchanged, applications unaffected. `check` finds no drift,
-because the database still holds `current`; `creds status` shows the staged
-`pending`. Re-running `rotate` resumes rather than starting over.
+applied, `current` unchanged, applications unaffected. While the database is
+unreachable, `check` reports `ERROR` and exits 1. Once it is back, `check` finds
+no drift, because the database still holds `current`, and `creds status` shows
+the staged `pending`. Finish with `apply`, which applies the staged `pending`,
+confirms it, and promotes. Re-running `rotate` does not resume: it draws a fresh
+password and stages it over the old `pending`.
 
 **S7 — Application still holds the old password after the window closed.**
 Logins start failing. `check --include-previous` shows the old password is no

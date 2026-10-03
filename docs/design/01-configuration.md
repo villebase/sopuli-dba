@@ -355,7 +355,8 @@ the database has confirmed the new password. It needs the `notify` install extra
 a missing client is refused before anything connects (`SOPULI-20003`, exit 9). A
 failed post does not fail the run: the password has already changed, so the run
 reports it as warning `SOPULI-W026` and somebody tells the person another way.
-`config validate` prints no warning for a configured channel.
+`config validate` warns about a configured channel only when it cannot send:
+its method is not built, or its client is not installed.
 
 **`safety.delivery.allowed_methods` restricts the set an estate may use**, and it
 is not a key of this block: it is a safety axis, ratcheting by intersection under

@@ -77,7 +77,11 @@ DOCS_MARKER = re.compile(r"\(open: (#\d+(?:, #\d+)*)\)")
 LOOSE_TODO = re.compile(r"\bTODO\b(?!\(#(?:\d+|N)\))")
 #: The other medium's spelling, with a real issue number.
 CODE_SPELLING = re.compile(r"\bTODO\(#\d")
-DOCS_SPELLING = re.compile(r"\(open: #\d")
+DOCS_SPELLING = re.compile(r"\(open:\s*#\d")
+#: An `(open: ...)` in Markdown that `DOCS_MARKER` would not read, such as
+#: `(open: #445 and #447)`: the weekly check would never see its issues.
+#: `(open: #N)` and `(open: #N, #M)`, with letters, describe the spelling.
+LOOSE_OPEN = re.compile(r"\(open:(?! (?:#\d+(?:, #\d+)*|#N(?:, #M)?)\))")
 
 FENCE = re.compile(r"^\s*(```|~~~)")
 
@@ -153,7 +157,7 @@ def _misspelled(path: Path) -> list[Finding]:
     found = []
     for number, line in _lines(path):
         if _is_docs(path):
-            wrong = CODE_SPELLING.search(line)
+            wrong = CODE_SPELLING.search(line) or LOOSE_OPEN.search(line)
         else:
             wrong = DOCS_SPELLING.search(line) or LOOSE_TODO.search(line)
         if wrong:
@@ -252,6 +256,12 @@ def test_a_phrase_wrapped_across_comment_lines_is_found(
     [
         ("a.md", "Not built TODO(#445).", True),
         ("a.md", "The marker is `TODO(#N)` in code.", False),
+        ("a.md", "Not built (open: #445, #447).", False),
+        ("a.md", "The marker is `(open: #N, #M)`.", False),
+        ("a.md", "Not built (open: #445 and #447).", True),
+        ("a.md", "Not built (open: #445,#447).", True),
+        ("a.md", "Not built (open:#445).", True),
+        ("a.md", "Not built (open: 445).", True),
         ("b.py", "# Not built (open: #445).", True),
         ("b.py", "# TODO: map the rest", True),
         ("b.py", "# TODO(#4 follow-up): map the rest", True),

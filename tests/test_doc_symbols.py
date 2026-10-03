@@ -34,6 +34,7 @@ import inspect
 import re
 import tomllib
 from collections.abc import Iterator
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from types import ModuleType
@@ -247,37 +248,125 @@ def _source_roles() -> Iterator[tuple[str, int, str, bool | None]]:
                 )
 
 
-def _defined_names(tree: ast.Module) -> set[str]:
-    """Every name a test module defines or imports, anywhere in it."""
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            names.add(node.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
-    return names
+@dataclass(frozen=True)
+class _Scope:
+    """What a test module's top level binds: imported names to what they import,
+    and the names it defines itself, with the class bodies kept."""
+
+    imported: dict[str, str]
+    classes: dict[str, ast.ClassDef]
+    others: frozenset[str]
+
+
+def _module_scope(tree: ast.Module) -> _Scope:
+    imported: dict[str, str] = {}
+    classes: dict[str, ast.ClassDef] = {}
+    others: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    imported[alias.asname] = alias.name
+                else:
+                    head = alias.name.split(".")[0]
+                    imported[head] = head
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                imported[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.ImportFrom):
+            # `from repo_files import x` style relative helpers have no package.
+            others.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.ClassDef):
+            classes[node.name] = node
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            others.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                others.update(
+                    name.id
+                    for name in ast.walk(target)
+                    if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Store)
+                )
+    return _Scope(imported, classes, frozenset(others))
+
+
+def _class_members(node: ast.ClassDef) -> set[str]:
+    """What a class body binds, and what its methods set as ``self.name``."""
+    members: set[str] = set()
+    for child in node.body:
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            members.add(child.name)
+        elif isinstance(child, (ast.Assign, ast.AnnAssign)):
+            targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+            members.update(
+                name.id
+                for target in targets
+                for name in ast.walk(target)
+                if isinstance(name, ast.Name)
+            )
+    for each in ast.walk(node):
+        if (
+            isinstance(each, ast.Attribute)
+            and isinstance(each.ctx, ast.Store)
+            and isinstance(each.value, ast.Name)
+            and each.value.id == "self"
+        ):
+            members.add(each.attr)
+    return members
+
+
+def _resolves_in_test(target: str, scope: _Scope, around: list[str]) -> bool | None:
+    """Look ``target`` up the way Sphinx would from inside a test module.
+
+    ``None`` where the answer depends on something this cannot see, such as a
+    member inherited from a base class defined outside the module or an
+    attribute of an instance.
+    """
+    head, *rest = target.split(".")
+    if head in ("tests", "test"):
+        return (ROOT / Path(*target.split("."))).with_suffix(".py").exists()
+    if around and not rest and head in _class_members(scope.classes[around[0]]):
+        return True
+    if head in scope.imported:
+        return _imported(".".join([scope.imported[head], *rest]))
+    if head in scope.classes:
+        if not rest:
+            return True
+        node = scope.classes[head]
+        if rest[0] in _class_members(node):
+            return True if len(rest) == 1 else None
+        for base in node.bases:
+            name = ast.unparse(base).split(".")[0]
+            if name in scope.imported:
+                dotted = ast.unparse(base).replace(name, scope.imported[name], 1)
+                return _imported(".".join([dotted, *rest]))
+        return None if node.bases else False
+    if head in scope.others:
+        return True if not rest else None
+    if hasattr(builtins, head):
+        return _walk(builtins, [head, *rest])
+    return _imported(target)
 
 
 def _test_roles() -> Iterator[tuple[str, int, str, bool | None]]:
-    """Test modules are not a package, so their own names are read from the
-    source rather than imported. A `tests.` module path is checked as a file."""
+    """Test modules are not a package, so their names are read from the source
+    rather than imported. A `tests.` module path is checked as a file."""
     for path in sorted([*(ROOT / "tests").rglob("*.py"), *(ROOT / "test").rglob("*.py")]):
         text = path.read_text(encoding="utf-8")
-        names = _defined_names(ast.parse(text))
+        tree = ast.parse(text)
+        scope = _module_scope(tree)
+        classes = [(first, last, qualified) for first, last, qualified in _enclosing_classes(tree)]
         for number, line in enumerate(text.splitlines(), 1):
             for match in ROLE.finditer(line):
                 target = (match.group(2) or match.group(1)).strip()
-                head = target.split(".")[0]
-                if head in ("tests", "test"):
-                    found: bool | None = (
-                        (ROOT / Path(*target.split("."))).with_suffix(".py").exists()
-                    )
-                elif head in names or hasattr(builtins, head):
-                    found = True
-                else:
-                    found = _imported(target)
+                # The outermost class the line sits in, if it is a module-level one.
+                around = [
+                    qualified[0]
+                    for first, last, qualified in classes
+                    if first <= number <= last and qualified[0] in scope.classes
+                ][:1]
+                found = _resolves_in_test(target, scope, around)
                 yield path.relative_to(ROOT).as_posix(), number, match.group(0), found
 
 
@@ -300,3 +389,24 @@ def test_the_role_lookup_tells_a_real_name_from_a_missing_one() -> None:
     assert _resolves_in_source("NoSuchName", module, []) is False
     assert _imported("sopuli.config.errors.KeyPath") is True
     assert _imported("sopuli.config.errors.NoSuchName") is False
+
+
+def test_a_test_module_reference_is_walked_to_its_end() -> None:
+    """A member of a class, or of something imported, is checked as well as the
+    name it starts with (#637's review)."""
+    tree = ast.parse(
+        "from sopuli.config.errors import ConfigError as Bad\n"
+        "class Transport:\n"
+        "    def request(self):\n"
+        "        local = 1\n"
+        "        self.sent = local\n"
+    )
+    scope = _module_scope(tree)
+
+    assert _resolves_in_test("Transport.request", scope, []) is True
+    assert _resolves_in_test("Transport.sent", scope, []) is True
+    assert _resolves_in_test("Transport.no_such_method", scope, []) is False
+    assert _resolves_in_test("Bad.source", scope, []) is True
+    assert _resolves_in_test("Bad.no_such_attribute", scope, []) is False
+    assert _resolves_in_test("local", scope, []) is False
+    assert _resolves_in_test("request", scope, ["Transport"]) is True

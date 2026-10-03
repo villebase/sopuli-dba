@@ -35,6 +35,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from repo_files import requires_repo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,10 +57,13 @@ STANDALONE = re.compile(r"^\s*(\||#)")
 
 REFERENCE = re.compile(
     rf"(?P<doc>[\w-]+\.(?:md|sql|py))`?\]?(?:\([^)\s]*\))?\s*\(?\s*"
-    rf"(?:section\s+(?P<word>{SECTION})|§\s*(?P<after_doc>{SECTION}))"
-    rf"|(?P<uc>UC-\d+[a-z]?)(?:'s)?\s*§\s*(?P<after_uc>{SECTION})"
-    rf"|§\s*(?P<bare>{SECTION})(?:\s+of\s+(?:the\s+)?`?(?P<trailing>[\w-]+\.md))?"
+    rf"(?:section\s+(?P<word>{SECTION})|§§?\s*(?P<after_doc>{SECTION}))"
+    rf"|(?P<uc>UC-\d+[a-z]?)(?:'s)?\s*§§?\s*(?P<after_uc>{SECTION})"
+    rf"|§§?\s*(?P<bare>{SECTION})(?:\s+of\s+(?:the\s+)?`?(?P<trailing>[\w-]+\.md))?"
 )
+
+#: The far end of a range, `§1–2` or `§§3–12`, read from where a reference ends.
+RANGE_END = re.compile(rf"\s*[–-]\s*§?\s*({SECTION})\b")
 
 PRINCIPLE = re.compile(r"\bP(\d+)\b")
 
@@ -71,10 +76,10 @@ class Unresolved:
     file: str
     line: int
     reference: str
-    document: str
+    problem: str
 
     def __str__(self) -> str:
-        return f"{self.file}:{self.line}: {self.reference!r} has no heading in {self.document}"
+        return f"{self.file}:{self.line}: {self.reference!r} {self.problem}"
 
 
 def _headings(path: Path) -> set[str]:
@@ -88,16 +93,26 @@ def _headings(path: Path) -> set[str]:
     return found
 
 
-def _documents() -> dict[str, Path]:
-    """Each document under `docs/` by file name. A name used twice is left out,
-    because a reference by that name cannot say which one it means."""
+def _documents() -> dict[str, list[Path]]:
+    """The documents under `docs/`, by file name. Two share a name (`README.md`),
+    so a name maps to every document that has it."""
     by_name: dict[str, list[Path]] = {}
-    for path in DOCS.rglob("*.md"):
+    for path in sorted(DOCS.rglob("*.md")):
         by_name.setdefault(path.name, []).append(path)
-    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
+    return by_name
 
 
-def _use_case(label: str, documents: dict[str, Path]) -> str | None:
+def _sections(start: str, end: str | None) -> list[str]:
+    """The sections a reference names. A range of whole numbers names every
+    section in it; any other range names its two ends."""
+    if end is None:
+        return [start]
+    if start.isdigit() and end.isdigit():
+        return [str(number) for number in range(int(start), int(end) + 1)]
+    return [start, end]
+
+
+def _use_case(label: str, documents: dict[str, list[Path]]) -> str | None:
     """`UC-2` is `uc-02-*.md`. `UC-1b` and the later use cases have no document."""
     number = label.removeprefix("UC-")
     if not number.isdigit():
@@ -144,32 +159,46 @@ def _scanned_files() -> list[Path]:
 
 def _unresolved_sections() -> list[Unresolved]:
     documents = _documents()
-    headings = {name: _headings(path) for name, path in documents.items()}
+    headings = {path: _headings(path) for paths in documents.values() for path in paths}
     found: list[Unresolved] = []
 
     for path in _scanned_files():
-        own = path.name if documents.get(path.name) == path else None
         relative = path.relative_to(ROOT).as_posix()
         for line, paragraph in _paragraphs(path.read_text(encoding="utf-8")):
-            current = own
+            # The document a bare `§` points into. Keyed by path, so that each
+            # document checks its own references whatever its name.
+            current: Path | None = path if path in headings else None
             for match in REFERENCE.finditer(paragraph):
-                if match.group("doc"):
-                    current = match.group("doc")
-                    section = match.group("word") or match.group("after_doc")
-                elif match.group("uc"):
-                    current = _use_case(match.group("uc"), documents)
-                    section = match.group("after_uc")
-                    if current is None:
-                        found.append(Unresolved(relative, line, match.group(0), "no document"))
+                name = match.group("doc") or match.group("trailing")
+                if match.group("uc"):
+                    name = _use_case(match.group("uc"), documents)
+                    if name is None:
+                        found.append(Unresolved(relative, line, match.group(0), "has no document"))
                         continue
-                elif match.group("trailing"):
-                    current = match.group("trailing")
-                    section = match.group("bare")
-                else:
-                    section = match.group("bare")
+                if name is not None:
+                    candidates = documents.get(name, [])
+                    if len(candidates) > 1:
+                        problem = f"is ambiguous: {len(candidates)} documents are named {name}"
+                        found.append(Unresolved(relative, line, match.group(0), problem))
+                        current = None
+                        continue
+                    current = candidates[0] if candidates else None
+                if current is None:
+                    continue
 
-                if current in headings and section.rstrip(".") not in headings[current]:
-                    found.append(Unresolved(relative, line, match.group(0), current))
+                start = (
+                    match.group("word")
+                    or match.group("after_doc")
+                    or match.group("after_uc")
+                    or match.group("bare")
+                )
+                end = RANGE_END.match(paragraph, match.end())
+                reference = match.group(0) + (end.group(0) if end else "")
+                for section in _sections(start.rstrip("."), end and end.group(1).rstrip(".")):
+                    if section not in headings[current]:
+                        where = current.relative_to(ROOT).as_posix()
+                        problem = f"has no heading {section} in {where}"
+                        found.append(Unresolved(relative, line, reference, problem))
     return found
 
 
@@ -197,6 +226,19 @@ def test_every_principle_reference_is_a_principle_or_a_decision() -> None:
     assert not unknown
 
 
+@pytest.mark.parametrize(
+    ("text", "sections"),
+    [("§1–2 here", ["1", "2"]), ("§§3–5 here", ["3", "4", "5"]), ("§3a-4 here", ["3a", "4"])],
+)
+def test_a_range_names_every_section_in_it(text: str, sections: list[str]) -> None:
+    match = REFERENCE.search(text)
+    assert match is not None
+    end = RANGE_END.match(text, match.end())
+    assert end is not None
+
+    assert _sections(match.group("bare"), end.group(1)) == sections
+
+
 def test_the_checker_finds_a_broken_reference() -> None:
     """The scan above passing proves nothing if the pattern stopped matching."""
     documents = _documents()
@@ -206,6 +248,6 @@ def test_the_checker_finds_a_broken_reference() -> None:
     matches = [m.group(0) for m in REFERENCE.finditer(paragraph)]
 
     assert matches == ["01-configuration.md` §3a", missing, "UC-2 §6.1"]
-    assert "99" not in _headings(documents["01-configuration.md"])
+    assert "99" not in _headings(documents["01-configuration.md"][0])
     assert _use_case("UC-2", documents) == "uc-02-personal-account-passwords.md"
     assert _use_case("UC-1b", documents) is None

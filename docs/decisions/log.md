@@ -1100,8 +1100,9 @@ the register.
   is read on the same connection and is what the code branches on, and one fact
   stored twice is two things that can disagree. `common_users` is different: a
   root session can hold `ALTER USER` locally and still be unable to touch a
-  common user, and no scope field says so. Removing a capability is a major
-  schema change, and it was accepted, because nothing consumed the field.
+  common user, and no scope field says so. Removing it needed no schema change:
+  `scope.capabilities` is an array of plain strings with no enum, so no
+  capability name is part of the typed contract.
 - **Rejected:**
   - A corrected `container_scope` probe: a second copy of what `scope.type`
     says.

@@ -301,6 +301,10 @@ Each fact has one home. Everywhere else, link to that home instead of repeating
 the fact. A fact copied to several places goes stale in all but one of them,
 because the pull request that changes it rarely opens the other files.
 
+There is one exception. `.github/copilot-instructions.md` may summarise rules
+from other files, because the Copilot reviewer reads that file and cannot follow
+a link. A pull request that changes a rule it summarises updates that file too.
+
 ### Do not count without a test
 
 Do not write how many of something there are, or that something is "the only"

@@ -127,8 +127,10 @@ direction of truth.
 
 ## Writing documentation and comments
 
-`CONTRIBUTING.md`, section "Writing documentation and comments", has the rules.
-Apply them to new and changed text, and flag a change that breaks them:
+`CONTRIBUTING.md`, section "Writing documentation and comments", has the rules
+and is authoritative. This is a summary, kept because the reviewer cannot follow
+the link. Apply the rules to new and changed text, and flag a change that breaks
+them:
 
 - Plain English: short sentences, common words, active voice, no idioms or
   rhetorical framing. Many readers are not native English speakers.

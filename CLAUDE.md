@@ -368,17 +368,7 @@ written afterwards — if they disagree with the code, that is a bug in one of t
 and it needs resolving, not noting.
 
 **Write documentation and comments by the rules in `CONTRIBUTING.md`**,
-§*Writing documentation and comments*. In short:
-
-- plain English: short sentences, common words, active voice, no idioms;
-- present tense, describing the current build. History belongs in git, not in
-  the text;
-- keep the reason wherever a rule could look like a mistake;
-- one home for each fact, and links everywhere else;
-- no counts and no "the only" unless a test checks them;
-- an issue is cited once, as provenance ("decided in #N"), or as a pending-work
-  marker (`(open: #N)`, `TODO(#N)`). Never as narration;
-- a comment says what and why, not which issue changed the code.
+§*Writing documentation and comments*. Read it before writing prose or comments.
 
 When a fact changes, replace the old wording. Do not add a correction beside it.
 Agents add text reliably and remove it unreliably, and that is how the documents

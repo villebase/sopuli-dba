@@ -301,11 +301,12 @@ than reasoning:
   `sql/oracle/05_verifier_layout_probe.sql`, `06_verifier_reproduce.{sql,py}`
 - whether `ALTER USER` text leaks the password into `V$SQL` or
   `UNIFIED_AUDIT_TRAIL`, per release (unverified: ddl-text-versions). On every
-  release measured, unified audit masks the statement at write time, no `V$SQL`
-  cursor for the DDL exists, and the only leak is an anonymous PL/SQL block
-  carrying the password as a literal. That is invariant 13. **11.2 differs**:
-  `V$SQLSTATS` keeps the plain `ALTER USER` text there, readable by a dictionary
-  reader though not by the service account. Decided in #387: documented, not
+  release measured, no `V$SQL` cursor for the DDL exists, and an anonymous PL/SQL
+  block carrying the password as a literal leaks. That is invariant 13. From
+  12.2 on, unified audit masks the statement at write time and that block is the
+  only leak. **11.2 differs**: it has no unified auditing, and `V$SQLSTATS` keeps
+  the plain `ALTER USER` text, readable by a dictionary reader though not by the
+  service account. Decided in #387: documented, not
   warned about and not refused, because it ages out with the shared pool and one
   `FLUSH SHARED_POOL` clears it. The change is somewhere in (11.2, 12.2], and
   12.1 is unmeasured. Do not quote a leak result without its release

@@ -300,9 +300,9 @@ are `sql/oracle/04_password_leak_extensions.sql`, and the findings are in
 
 - `unverified` `ddl-text-versions` (#387) — **Whether `ALTER USER` text leaks the
   password into the shared pool, on the releases nobody has run.** On every
-  release measured, `V$SQL` holds no cursor for the DDL, and the one leak is an
-  anonymous PL/SQL block carrying the password as a literal. That is invariant
-  13. **11.2 differs**: `V$SQLSTATS` keeps the plain `ALTER USER` text there, so
+  release measured, `V$SQL` holds no cursor for the DDL, and an anonymous PL/SQL
+  block carrying the password as a literal leaks. That is invariant 13. From
+  12.2 on, that block is the only leak. **11.2 differs**: `V$SQLSTATS` keeps the plain `ALTER USER` text there, so
   the *conclusion* depends on the release even though the reasoning does not
   (#387). 12.2.0.1.0 and every later release measured keep nothing, so the change
   is somewhere in (11.2, 12.2]. **12.1 is unrun**, so read the 11.2 result as

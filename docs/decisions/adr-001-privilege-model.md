@@ -117,14 +117,15 @@ equally. Both have since been measured. The releases each ran on are in
 [`../measurements.md`](../measurements.md).
 
 - **Whether `ALTER USER` statement text leaks the password into `V$SQL` or
-  `UNIFIED_AUDIT_TRAIL`.** No cursor for the DDL is retained in `V$SQL`, and
-  unified audit masks the statement to `IDENTIFIED BY *` at write time, in the
-  base table `AUDSYS.AUD$UNIFIED` as well as the view. The probe also found one
-  real leak that neither model would have caught by reasoning: an anonymous
-  PL/SQL block whose own text carries the password as a literal is retained
-  verbatim, because Oracle's protection is keyed to the `CREATE/ALTER USER`
-  statement rather than to the password. That is invariant 13. 11.2 differs on
-  one row: `V$SQLSTATS` keeps the `ALTER USER` text there. 12.1 is unrun
+  `UNIFIED_AUDIT_TRAIL`.** On every release measured, no cursor for the DDL is
+  retained in `V$SQL`. The probe also found a leak that neither model would have
+  caught by reasoning: an anonymous PL/SQL block whose own text carries the
+  password as a literal is retained verbatim, because Oracle's protection is
+  keyed to the `CREATE/ALTER USER` statement rather than to the password. That
+  is invariant 13. From 12.2 on, unified audit masks the statement to
+  `IDENTIFIED BY *` at write time, in the base table `AUDSYS.AUD$UNIFIED` as well
+  as the view, and the block is the only leak. 11.2 has no unified auditing, and
+  there `V$SQLSTATS` also keeps the plain `ALTER USER` text. 12.1 is unrun
   (unverified: ddl-text-versions). A traced session does not capture the
   password, because the cursor is written cut short (#407). The probe is
   `sql/oracle/02_password_leak_probe.sql`, its extensions are

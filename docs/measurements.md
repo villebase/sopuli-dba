@@ -15,14 +15,16 @@ Each script in `sql/oracle/` has a header that records its own runs in detail.
 the same releases the *Scripts* table below lists for it. When you run a script
 on a new release, update both.
 
-The tier-1 suite runs on every pull request against 26ai Free `23.26.2.0.0`, so
-that release has no row for the suite.
+The tier-1 suite in CI is not a measurement here. It pulls the moving
+`gvenzl/oracle-free:latest` image, and it does not run on a pull request that
+changes only prose. So a green CI run does not show which release it ran on, and
+the suite has no rows in this file.
 
 ## Releases
 
 | Release | Product, and where it ran |
 |---|---|
-| `23.26.2.0.0` | 26ai Free, the `gvenzl/oracle-free` container. Tier 1 |
+| `23.26.2.0.0` | 26ai Free, the `gvenzl/oracle-free` container, as pulled for the runs below |
 | `23.26.3.3.0` | 26ai, an Autonomous Database (serverless) on OCI |
 | `21.3.0.0.0` | 21c XE, the `gvenzl/oracle-xe:21-slim` container |
 | `19.32.0.0.0` | 19c EE, an OCI Base Database Service DB system. A release update |

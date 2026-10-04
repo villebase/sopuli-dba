@@ -145,16 +145,17 @@ the register.
 - **Decision:** Document it, in `02-oracle-privileges.md` §4 and
   `../security-model.md` §5.
 - **Why:** Reading the view needs a dictionary grant. The service account itself
-  gets `ORA-00942`. The exposure is a window: the text ages out of the shared
-  pool, and `ALTER SYSTEM FLUSH SHARED_POOL` removes it at once. Both were
-  measured.
+  gets `ORA-00942`. The text stays until it ages out of the shared pool. On an
+  idle test instance it survived 2,000 further distinct statements, and on a
+  quiet database it can stay much longer. `ALTER SYSTEM FLUSH SHARED_POOL`
+  removes it at once. Both were measured.
 - **Rejected:**
   - Warn at run time: a session holding the tool's grants cannot ask whether a
     release keeps DDL text. The warning would have to branch on the version
     number, which invariant 3 forbids.
-  - Refuse on 11.2: it reverses D7 over a short, clearable exposure. The
-    operator would rotate in SQL\*Plus instead, which keeps the same text and
-    records nothing.
+  - Refuse on 11.2: it reverses D7 over an exposure that ends when the text
+    ages out and can be cleared at once. The operator would rotate in SQL\*Plus
+    instead, which keeps the same text and records nothing.
 
 ## Q1
 
@@ -247,8 +248,10 @@ the register.
   drifted. Whatever runs `check` on a schedule can act on those, so the tool
   needs no notification client of its own.
 - **Rejected:**
-  - Built-in notification: a client per notification service, for something
-    the caller can already do with the exit code.
+  - Built-in notification: the caller that schedules `check` can already
+    alert on exit code 3 and read the run document. UC-2's `delivery.notify`
+    exists for a different job, telling a person a password is ready, and
+    is not a drift alert.
 
 ## Q7
 

@@ -59,7 +59,8 @@ the register.
   where?
 - **Decision:** Three facts, three places.
   - When the password changed: the database. `DBA_USERS.PASSWORD_CHANGE_DATE`,
-    or `SYS.USER$.PTIME` where that grant exists.
+    or `SYS.USER$.PTIME` where that grant exists. The `PTIME` fallback is
+    unmeasured on 12.1 (unverified: pw-changed-source).
   - Who reset it, which path was used, and where it was delivered: a metadata
     record in a store, written when a store is configured. It never holds the
     password. The advisory lock keys on its path.
@@ -150,13 +151,14 @@ the register.
 - **Why:** The question assumed the person would reset through the tool. That
   would use the service account's `ALTER USER` for someone who does not hold it,
   which ADR-001's argument does not cover, and the tool has no way to
-  authenticate a person. It is also not needed. Before expiry, a person changes
-  their own password with `ALTER USER … IDENTIFIED BY new REPLACE old`, which
-  needs no privilege and no tool. After expiry they cannot log in, so the DBA
-  resets the password and the person fetches the new one.
+  authenticate a person. It is also not needed. A person who knows their
+  password changes it without the tool: before expiry with
+  `ALTER USER … IDENTIFIED BY new REPLACE old`, and after expiry through
+  Oracle's change flow at logon. A DBA reset is needed only when the person no
+  longer knows the password, and then the person fetches the new one.
 - **Rejected:**
   - The person runs the tool as themselves with `REPLACE old`: it needs the old
-    password, which is exactly what the person usually does not have.
+    password, which is exactly what a person who needs a reset does not have.
   - An identity provider in front of the tool: needs a server component and an
     identity mapping, and would reopen ADR-001.
 

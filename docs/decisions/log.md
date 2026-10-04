@@ -74,14 +74,15 @@ the register.
 - **Decision:** Best effort. The code stays portable, the README claims no
   support, and there is no macOS CI.
 - **Why:** Instant Client exists for macOS, including Apple Silicon, so the
-  tool can run there. The problem is testing: no Oracle database runs on macOS,
-  Oracle's container images are `linux/amd64` only, and Apple Silicon has only a
-  23.x client, which cannot reach 11.2. Excluding macOS would save nothing,
+  tool can run there. The problem is testing. There is no Oracle server build
+  for macOS, so a Mac cannot host the full test stack locally and needs a remote
+  database (`SOPULI_TEST_ORACLE_DSN`). The 11.2 test image is `linux/amd64`
+  only, and Apple Silicon has only a 23.x client, which cannot reach 11.2. Excluding macOS would save nothing,
   because the code has almost nothing macOS-specific. `00-principles.md` P4 has
   the detail.
 - **Rejected:**
-  - A supported tier: there is no way to run the integration suite on macOS,
-    and no evidence of demand.
+  - A supported tier: a Mac cannot run the test stack locally, there would be
+    no macOS CI behind the claim, and there is no evidence of demand.
   - Excluding macOS: saves nothing, and would have to be undone when someone
     asks.
 
@@ -107,7 +108,9 @@ the register.
   `V$SQLSTATS` finding.
 - **Why:** 11.2 is cheap to test: `gvenzl/oracle-xe:11.2.0.2-slim` pulls freely
   and starts in seconds (T1). On 11.2 the `ALTER USER` text stays in
-  `V$SQLSTATS`, where 18c and later keep nothing. 11.2 stayed in scope anyway,
+  `V$SQLSTATS`. Every later release measured keeps nothing: 12.2.0.1.0,
+  18.4.0.0.0, 19.3.0.0.0, 19.32.0.0.0, 21.3.0.0.0 and 26ai 23.26.2.0.0. 12.1 is
+  unmeasured, and one measured release update is not every release update. 11.2 stayed in scope anyway,
   because the text ages out of the shared pool and one `FLUSH SHARED_POOL`
   clears it, and dropping 11.2 would move the rotation to SQL\*Plus, which keeps
   the same text and records nothing (P8). Apple Silicon cannot reach 11.2,

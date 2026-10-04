@@ -1603,12 +1603,17 @@ the register.
 ## #531
 
 - **Decided:** 2026-09-25, #531
-- **Question:** `role:` predicates read `DBA_ROLES`, which the install did not
-  grant, so every role predicate was refused as a misspelling. What changes?
+- **Question:** `account list` resolves a `role:` predicate through
+  `DBA_ROLES`, which the install did not grant, so it refused every role
+  predicate as a misspelling. What changes? The mutating `account` verbs were
+  not affected: they check the named account's roles through `DBA_ROLE_PRIVS`,
+  which was already granted.
 - **Decision:** `GRANT SELECT ON SYS.DBA_ROLES` joins the base grant set and
-  `00_install.sql`. `role:` predicates are gated on the `role_lookup`
-  capability, so an estate installed before the grant is refused at plan time
-  with the capability and the target named.
+  `00_install.sql`. Resolving a `role:` predicate is gated on the
+  `role_lookup` capability, so an estate installed before the grant is refused
+  at plan time with the capability and the target named. The grant is not a
+  required read for `creds apply` or `rotate`, so older installs can still
+  rotate.
 - **Why:** Measured on 26ai 23.26.2.0.0: a service account holding exactly the
   documented grants gets `ORA-00942` from `DBA_ROLES`. Telling an operator a
   correctly spelled role is misspelled is the wrong refusal. Invariant 4 asks
@@ -1622,9 +1627,10 @@ the register.
 ## #568
 
 - **Decided:** 2026-09-30, #568
-- **Question:** A rollback (`apply --source previous`) is refused with
-  `ORA-28007` on any profile with reuse limits, including ADB's `DEFAULT`. Warn,
-  refuse at plan time, or only document it?
+- **Question:** A rollback (`apply --source previous`) can be refused with
+  `ORA-28007` on a profile with reuse limits, including ADB's `DEFAULT`. Whether
+  it is depends on how many changes and how much time have passed, some of them
+  outside the tool. Warn, refuse at plan time, or only document it?
 - **Decision:** Warn and document. `SOPULI-W028` names the profile's
   `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME` whichever way the statement
   goes. The docs name a rollover window as the way back on such a profile: the

@@ -173,10 +173,13 @@ the register.
 
 - **Decided:** 2026-08-08
 - **Question:** What is the section that binds accounts to secrets called?
-- **Decision:** `applications`. A file with one application can instead put the
-  binding keys at the top level. This inline form is the default shape.
-- **Why:** Most estates have one application, so the default shape is the
-  simplest one: a file that reads like a list of targets.
+- **Decision:** `applications`. A file whose one application applies to all
+  its targets can instead put the binding keys at the top level. This inline
+  form is the default shape. An application that covers only some targets needs
+  `applications:`, for example in an estate that also has a CDB root for
+  maintenance.
+- **Why:** The common case is one application over every target, so the default
+  shape is the simplest one: a file that reads like a list of targets.
   `01-configuration.md` §1 describes both forms. No reason was recorded for the
   name itself.
 - **Rejected:** No alternatives were weighed.
@@ -361,9 +364,9 @@ the register.
   `SOPULI_VAULT` may supply one, and neither is known while the bindings are
   built. Plan time is when the answer is exact.
 - **Rejected:**
-  - Refuse whenever a binding's store is unnamed: it rejects a valid file where
-    one profile sets `vault:` and the run uses another profile that inherits
-    `defaults.vault`.
+  - Refuse at load whenever a binding's store is unnamed: it rejects a valid
+    file that declares stores and names no `defaults.vault`, where the run's
+    profile or `SOPULI_VAULT` supplies the store's name.
 
 ## C16
 
@@ -377,9 +380,11 @@ the register.
   process list (invariant 1). A vault ref cannot help, because a ref is resolved
   by a store that is already authenticated.
 - **Rejected:**
-  - `--vault-token env:NAME`, reusing the MaterialRef grammar: in a SecretRef,
-    `env:` means "resolve through an authenticated store", so two grammars that
-    look the same would resolve in opposite orders.
+  - `--vault-token env:NAME` or `file:PATH`, borrowing MaterialRef's keys: on a
+    command line, `env:NAME` has the shape of a SecretRef (`[<vault>:]<path>`),
+    which would address path `NAME` in a store called `env`. One string would
+    read as one type and be the other, which blurs the line
+    `01-configuration.md` §3a draws between MaterialRef and SecretRef.
   - `--vault-token-stdin`: deferred rather than rejected, because
     `--from-stdin` already uses the pipe.
 

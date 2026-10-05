@@ -275,8 +275,8 @@ A document says what the tool does now, in the present tense.
 - A binding document does not carry a `Status: draft` or `Status: sketch`
   header. If the code is written against it, it is the specification.
 - A measured result names the Oracle release it ran on, because results differ
-  between releases. Dated measurement results belong in one place, the
-  measurement matrix (open: #618).
+  between releases. Dated measurement results belong in one place,
+  [`docs/measurements.md`](docs/measurements.md).
 - Work that waits on an open issue carries a marker, `(open: #N)` in Markdown
   and `TODO(#N)` in code. [`docs/README.md`](docs/README.md) §*Conventions*
   has the rule, and `tests/test_pending_work.py` checks it.

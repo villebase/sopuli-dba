@@ -7,7 +7,8 @@ Every sample was run on 2026-10-05 on Windows 11, with sopuli 0.69.0, Instant
 Client 23.26.3.0.0, and the `tier1` container stack (Oracle 26ai Free and Vault).
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs printed are replaced with
-`<TOKEN>` and `<PASSWORD>`, and nothing else is edited.
+`<TOKEN>` and `<PASSWORD>`, and the local user and host name with
+`op@ws1.example.com`. Nothing else is edited.
 
 Other places to read:
 
@@ -121,9 +122,12 @@ Two things to know about this stack:
   `stop` and `start`, run `docker compose --profile tier0 up -d vault-init` to
   create them again.
 
-The container has no application accounts. Save this as `accounts.sql`:
+The container has no application accounts. Save this as `accounts.sql`. The
+first line is the logon. SQL\*Plus reads it from stdin, so the password is not
+on a command line.
 
 ```sql
+system/sopuli-test@localhost:1521/FREEPDB1
 CREATE USER acme_app_user   IDENTIFIED BY "Placeholder#1";
 CREATE USER acme_batch_user IDENTIFIED BY "Placeholder#1" PROFILE sopuli_rollover;
 CREATE USER acme_priv_user  IDENTIFIED BY "Placeholder#1";
@@ -136,8 +140,7 @@ GRANT DBA TO acme_priv_user;
 Then run it with the container's own SQL\*Plus:
 
 ```bash
-docker exec -i sopuli-test-oracle-free-1 \
-  sqlplus -S system/sopuli-test@localhost:1521/FREEPDB1 < accounts.sql
+docker exec -i sopuli-test-oracle-free-1 sqlplus -S < accounts.sql
 ```
 
 The accounts are used like this:
@@ -517,8 +520,9 @@ acme_batch_user  free-pdb  IN_SYNC  rollover window closed, 59m early
 behind the tool's back, then check:
 
 ```bash
-echo 'ALTER USER acme_app_user IDENTIFIED BY "Changed-by-hand#1";' | \
-  docker exec -i sopuli-test-oracle-free-1 sqlplus -S system/sopuli-test@localhost:1521/FREEPDB1
+printf '%s\n' 'system/sopuli-test@localhost:1521/FREEPDB1' \
+  'ALTER USER acme_app_user IDENTIFIED BY "Changed-by-hand#1";' | \
+  docker exec -i sopuli-test-oracle-free-1 sqlplus -S
 ```
 
 ```
@@ -805,22 +809,18 @@ Exit 2.
 ### A lock somebody else holds
 
 Every command that changes a password first takes a lock in the vault. To see a
-held lock, write one by hand. Read the lock path's current version:
-
-```bash
-vault kv metadata get -mount=kv locks/acme/dev/acme
-```
-
-Save this as `held.json`, with an `expires_at` in the future:
+held lock, write one by hand. Save this as `held.json`, with an `expires_at` in
+the future:
 
 ```json
 {"state":"held","command":"creds rotate","correlation_id":"11111111-2222-3333-4444-555555555555","acquired_at":"2026-10-05T12:00:00.000000Z","expires_at":"2026-10-06T23:59:00.000000Z","holder":{"host":"beta.example.com","os_user":"someone-else","pid":1234}}
 ```
 
-Write it, with `-cas=` set to the version you read:
+The write must name the lock path's current version. Read it, then write:
 
 ```bash
-vault kv put -mount=kv -cas=18 locks/acme/dev/acme - < held.json
+ver=$(vault kv metadata get -mount=kv locks/acme/dev/acme | awk '/^current_version/ {print $2}')
+vault kv put -mount=kv -cas="$ver" locks/acme/dev/acme - < held.json
 ```
 
 `lock status` now shows the lock as held:
@@ -835,7 +835,7 @@ vault-dev:acme/dev/acme  held   someone-else@beta.example...  creds rotate  2026
 
 personal-account resets, under the prefix this config declares:
 LOCK                                                      STATE     HOLDER              COMMAND           SINCE                        EXPIRES
-vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  ville@Awesominator  account reset...  2026-10-05T15:57:59.277759Z  2026-10-05T16:12:59.277759Z
+vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  op@ws1.example.com  account reset...  2026-10-05T15:57:59.277759Z  2026-10-05T16:12:59.277759Z
 
 1 of 1 declared lock paths held; 1 reset lock under the declared prefix (0 held)
 ```
@@ -936,6 +936,7 @@ To keep the containers, remove only what this guide created. Save this as
 `cleanup.sql` and run it as in §4:
 
 ```sql
+system/sopuli-test@localhost:1521/FREEPDB1
 DROP USER acme_app_user CASCADE;
 DROP USER acme_batch_user CASCADE;
 DROP USER acme_priv_user CASCADE;

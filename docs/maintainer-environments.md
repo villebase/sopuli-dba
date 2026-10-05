@@ -13,8 +13,10 @@ environment up.
 
 ## 1. Other Oracle releases in containers
 
-`test/compose.yaml` has a service for each release. Change `dsn:` and
-`oracle.container:` in the guide's config, and everything else works unchanged.
+`test/compose.yaml` has a service for each release. To use one, change the
+target's `dsn:` and `oracle:` in the guide's config as the table says: the
+service name, the container, and for 11g `scope: non_cdb` with no `container:`.
+Everything else works unchanged.
 
 | Release | Profile | Container | DSN | Notes |
 |---|---|---|---|---|

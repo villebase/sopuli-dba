@@ -80,7 +80,7 @@ personal_accounts:
     policy: personal-standard
 ```
 
-**`personal_accounts:` is UC-2's** (H1), specified in
+**`personal_accounts:` is UC-2's** ([H1](../decisions/log.md#h1)), specified in
 [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §2.
 It is deliberately *not* an application binding, for the reason the next section
 gives: nothing masters a personal account's password, so none of the three things
@@ -136,7 +136,7 @@ reset_records:
 ```
 
 **`reset_records:` is where UC-2 journals a reset** — *who* reset a personal
-account, by which path, and where it was delivered (H2). It is specified in
+account, by which path, and where it was delivered ([H2](../decisions/log.md#h2)). It is specified in
 [`../use-cases/uc-02-personal-account-passwords.md`](../use-cases/uc-02-personal-account-passwords.md) §3.
 
 | Key | Meaning |
@@ -2649,7 +2649,7 @@ Otherwise the table above describes intent rather than behaviour.
 | Policy | Rule | Applies to |
 |---|---|---|
 | `override` | the highest-authority layer wins | everything not below |
-| `ratchet` | the *safest* layer wins, whichever it is | every setting in `SAFETY_SETTINGS`, such as `safety.readonly` and `vaults.*.tls.verify` |
+| `ratchet` | the *safest* layer wins, whichever it is | every setting in `SAFETY_SETTINGS`, such as `safety.readonly`, `locking.break_expired` and `vaults.*.tls.verify`. §3a's `tls:` says why certificate verification is a safety setting |
 
 The ratcheted set is invariant 10's, and it is one frozenset, `SAFETY_SETTINGS`, in
 `sopuli/settings/registry.py` so it can be reviewed at a glance. A setting
@@ -2665,7 +2665,7 @@ ratchets toward its safe value, an integer to the minimum, a list to the union �
 and the fourth is declared, because the type could not give it.
 
 **The declared one is `safety.delivery.allowed_methods`, which ratchets by
-intersection** (H6). It restricts which UC-2 delivery methods an estate may
+intersection** ([H6](../decisions/log.md#h6)). It restricts which UC-2 delivery methods an estate may
 use, and each layer may only narrow the set: a higher-authority layer cannot
 restore a method a lower one removed, which is what makes it a ratchet rather than
 a list somebody can edit upward. It cannot be read off the type because
@@ -2946,7 +2946,7 @@ notices until a rotation.
   or the intersection, and picking one silently is how a whitelist stops being
   readable. Two entries are the union, written down
 - a name declared **both** as an application account and a personal one → error
-  naming both sections (H1). The two carry different guarantees — mastered
+  naming both sections ([H1](../decisions/log.md#h1)). The two carry different guarantees — mastered
   by a secret, or handed to a person — so a name in both is ambiguous about which
   applies, and the tool refuses rather than choosing. Compared
   case-insensitively, because `sopuli/config/selection.py` casefolds and one

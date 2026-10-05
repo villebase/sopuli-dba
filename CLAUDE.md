@@ -2,8 +2,9 @@
 
 A CLI for DBAs that manages database account credentials with a vault as the
 master record. Oracle first, multi-product by design. The code is in
-`src/sopuli/`. Two use cases are specified: UC-1, application credentials, and
-UC-2, personal account passwords. Each document says which parts of it are built.
+`src/sopuli/`. The use cases are specified in `docs/use-cases/`, among them
+UC-1, application credentials, and UC-2, personal account passwords. Each
+document says which parts of it are built.
 
 This file is the working agreement for every assistant and contributor. It states
 each rule briefly and links to the document that explains it. Read the linked
@@ -65,9 +66,12 @@ detail.
       retrieves one, so it is a `Secret`. The tool has no other channel to hand it
       over on.
 
-   `tests/test_reveal_sites.py` parses `src/` and fails on a `reveal()` call at
-   any other place. The guards are in `docs/design/03-json-output.md` §4 (3 and
-   4), UC-2 §6.5 (4) and UC-2 §6.6 (5). Loosening any guard is a decision.
+   `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in
+   a module that holds none of these sites, and on a second call in the seen
+   path's view. It is a tripwire: it does not catch a second call in another
+   permitted module, or a call spelled another way. The guards are in
+   `docs/design/03-json-output.md` §4 (3 and 4), UC-2 §6.5 (4) and UC-2 §6.6
+   (5). Loosening any guard is a decision.
 
 3. **Never branch on a version number from config.** Query the database for its
    capabilities, cache them per session, and branch on the capability. See P1.
@@ -89,8 +93,9 @@ detail.
 7. **Never promote in the vault before every target has confirmed.** The
    `pending` → `current` ordering in UC-1 §3 is the safety design. "Every target"
    means every target the config declares, not every target this run visited.
-   `creds generate --promote` is the one exception. UC-1 §5 has the promotion
-   gate. Reasons: [#257](docs/decisions/log.md#257),
+   UC-1 §5 has the promotion gate. `creds generate --promote` over an existing
+   `current` is an exception, and it writes only with `--overwrite-current`. Seeding an absent `current` has no reader to protect,
+   so it is not an exception. Reasons: [#257](docs/decisions/log.md#257),
    [#406](docs/decisions/log.md#406).
 
 8. **Every mutating command supports `--dry-run` and prints a plan first.**
@@ -118,10 +123,11 @@ detail.
 
 13. **The password never appears as a literal inside a PL/SQL block sent to the
     server.** Issue `ALTER USER` directly, never inside `BEGIN`, `DECLARE` or
-    `EXECUTE IMMEDIATE`. A wrapper looks more careful, but Oracle keeps the text
-    of a block that contains the DDL, password included, in `V$SQL`. The direct
-    statement is never more exposed than the block. What each release retains is
-    in `docs/design/02-oracle-privileges.md` §4. Tier 0 checks the generated
+    `EXECUTE IMMEDIATE`. A wrapper looks more careful, but on every release
+    measured Oracle keeps the text of a block that contains the DDL, password
+    included, in `V$SQL`. The block is never less exposed than the direct
+    statement. What each release retains is in
+    `docs/design/02-oracle-privileges.md` §4. Tier 0 checks the generated
     statement text.
 
 14. **The password is never bound into a SQL predicate.** `V$SQL_BIND_CAPTURE`
@@ -189,7 +195,7 @@ and tier 1). Anything that needs more must skip, not fail. The Oracle 19.3 and
 a store, writes to one, or reports about one is not done when its tests pass.
 Start the tier-1 stack with `docker compose --profile tier1 up -d` from `test/`
 and run the verb end to end. A test checks only what its author already
-suspected. A real run catches three other kinds of fault:
+suspected. A real run catches faults like these:
 
 - output that was described rather than produced. Paste every sample in a
   document, PR body or docstring from a real run;
@@ -206,7 +212,7 @@ anything from a real environment.
 it, and fixing it later means rewriting a pushed branch.
 
 **Every PR gets a Copilot review, and every comment gets an answer.** Request the
-review, wait for it, and resolve each comment in one of two ways:
+review, wait for it, and resolve each comment by one of these:
 
 - **change the code**, or
 - **decline the change**, because it is wrong or the existing form is right for a

@@ -707,11 +707,58 @@ ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-05     -
 
 A reset draws a new password every time, so running it twice resets twice.
 
-**The seen path.** With `delivery: { method: manual, manual: { force_expire:
-true } }`, the tool prints the password on your terminal once and expires it,
-so the owner must change it at first logon. It asks for confirmation every time,
-and refuses when stdout is not a terminal or the output is JSON. UC-2 §6.5 lists
-its guards.
+### The seen path
+
+With this `delivery:` block, the tool prints the password on your terminal once
+and expires it, so the owner must change it at first logon:
+
+```yaml
+delivery:
+  method: manual
+  manual:
+    force_expire: true
+```
+
+It asks for confirmation every time, and `--confirm` does not answer the prompt.
+It refuses when stdout is not a terminal, or when the output is JSON. UC-2 §6.5
+lists its guards. This run used a config with no `reset_records:` block, so it
+ends with a note:
+
+```
+$ sopuli account reset-password --account acme_dev_alice
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT         TARGET    INTENT        SECRET
+acme_dev_alice  free-pdb  password_set  -
+show the new password for acme_dev_alice on free-pdb on this terminal? [y/N]: y
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT         TARGET    INTENT        SECRET
+acme_dev_alice  free-pdb  password_set  -
+
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
+
+reset acme_dev_alice on 1 of 1 targets
+
+
+1 note:
+  no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
+
+password for acme_dev_alice, shown once:
+
+    <PASSWORD>
+
+It is expired: the owner must change it at first logon, which is what ends
+your sight of it. It is not stored anywhere and will not be shown again.
+```
+
+The prompt comes after the password is set. Answer `n` and the account keeps a
+password nobody has seen; reset it again to fix that.
+
+The plan appears twice. The first copy goes to stderr before anything changes,
+so a run that fails part way still shows what it was about to touch. The second
+is part of the result on stdout.
 
 ### `account expire-password`
 

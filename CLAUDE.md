@@ -211,8 +211,12 @@ anything from a real environment.
 `Signed-off-by:` line that `CONTRIBUTING.md` requires (DCO). No CI check enforces
 it, and fixing it later means rewriting a pushed branch.
 
-**Every PR gets a Copilot review, and every comment gets an answer.** Request the
-review, wait for it, and resolve each comment by one of these:
+**Every PR gets one review, and every comment gets an answer.** The review is
+Copilot's. When the maintainer's Copilot budget for additional usage is spent,
+it is a Claude Code review (`/code-review`) instead, because Copilot reviews
+cost money past the included allowance. `/request-copilot-review` checks the
+budget before it requests anything. Wait for the review, and resolve each comment
+by one of these:
 
 - **change the code**, or
 - **decline the change**, because it is wrong or the existing form is right for a
@@ -225,6 +229,12 @@ choices that look like mistakes until you know the reason, such as invariants 13
 and 14. Where a comment is right about the problem and wrong about the fix, say
 both. If you accept a comment, push the fix and wait for CI to pass before you
 report the PR as ready.
+
+**A second review is the exception.** After you answer the first review, decide
+whether to request another, and say on the PR which you chose. Request one only
+when the fixes are large: more than about 100 changed lines, or new or rewritten
+logic in `src/` beyond what the comments asked for. Otherwise skip it. Most
+fixes are small and need no second review.
 
 `/request-copilot-review` does the mechanics. Request the reviewer
 `copilot-pull-request-reviewer[bot]` through the REST endpoint; GraphQL's

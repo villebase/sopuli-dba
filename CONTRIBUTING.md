@@ -42,8 +42,8 @@ why the documentation looks the way it does.
   open until the maintainer answers it. An agent that needs one answered stops and asks; that
   is the rule *surface, do not resolve*, and it applies to you too (see
   [Before you write code](#before-you-write-code)).
-- **Every review comment is answered.** Every pull request gets a Copilot
-  review. Each comment, Copilot's included, is judged on its merits, then either
+- **Every review comment is answered.** Every pull request gets a review,
+  from Copilot or from Claude Code. Each comment, Copilot's included, is judged on its merits, then either
   acted on or declined, with a reply saying which and why (see
   [Pull requests](#pull-requests)).
 

@@ -155,6 +155,7 @@ them:
 One GitHub issue maps to one reviewable PR; discuss a change that will exceed
 roughly 400 lines before implementing it. Use imperative Conventional Commit
 subjects that reference the issue, sign commits with `git commit -s`, and do not
-manually update the release-managed project version. Every PR requires a
-Copilot review, and every review comment needs an explicit PR reply explaining
-the change or reason for declining it.
+manually update the release-managed project version. Every PR gets one
+review, from Copilot or from Claude Code, and every review comment needs an
+explicit PR reply explaining the change or reason for declining it. A second
+review is requested only when the fixes are large.

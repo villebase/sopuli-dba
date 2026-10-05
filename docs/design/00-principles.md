@@ -86,7 +86,7 @@ match `Driver`, and a caller written against `Driver` would get a `TypeError`.
 `tests/driver/test_oracle_connect.py` asserts `isinstance(driver, Driver)`, so
 the two stay the same.
 
-The Oracle driver follows four more rules:
+The Oracle driver also follows these rules:
 
 - **It finds Instant Client in a fixed order.** First
   `SOPULI_ORACLE_CLIENT_LIB_DIR` (`01-configuration.md` §6), then
@@ -249,7 +249,7 @@ that returned only "ok" would leave the lock nothing to fence with.
 Pre-flight uses it to check that a lock path does not accept writes without a
 compare-and-set. The tool does not claim a guarantee it cannot check.
 
-**`list` has four properties.** A backend's own listing endpoint gives none of
+**`list` has these properties.** A backend's own listing endpoint gives none of
 them directly, and without them two adapters would disagree:
 
 - it returns **full paths**, which can be passed straight to `read`, not the
@@ -293,7 +293,7 @@ operations and decides no order. The `pending` → `current` ordering that
 invariant 7 depends on is UC-1 §3's, and `creds rotate` carries it out.
 
 **`health` is asked by `doctor`'s vault section.** It differs from the other
-methods in three ways:
+methods in these ways:
 
 - **it is not about a path.** It describes the store, not a document in it;
 - **it never raises for an unreachable store.** The other methods treat "could
@@ -400,7 +400,7 @@ pip install "sopuli-dba[all]"          # everything
 
 This is packaging, not architecture: nothing above about `SecretStore`, the
 SecretRef, or capability negotiation changes. What changes is that P2's
-pluggability becomes true at install time and not only at import time. Three
+pluggability becomes true at install time and not only at import time. These
 rules make that real:
 
 1. **A vendor client is imported inside its backend module, never at package
@@ -427,7 +427,7 @@ rules make that real:
 Every command that does not open a connection works with no backend installed:
 `config validate`, `config show --resolved --explain`, `target list`. Declaring a
 store is config, and only reaching it needs its client, so a file that names
-eleven backends validates with none of them installed. A backend that is
+every backend validates with none of them installed. A backend that is
 configured but not installed is a `config validate` **warning** and a `doctor`
 **failure**. `doctor` lists installed and configured backends on every run, not
 only when they differ.
@@ -466,10 +466,10 @@ Sources, in order of preference:
 Storing the admin password in the config file is not supported at all.
 
 `sopuli/admin.py` resolves one of these sources into a `Secret` at connect time.
-`01-configuration.md` §3a specifies the sources and four rules that come with
-them: the refusal when a target names no source, what `prompt` does with no
-terminal, how one prompt is shared across targets, and why the environment
-source is flagged and not refused.
+`01-configuration.md` §3a specifies the sources and the rules that come with
+them, such as the refusal when a target names no source, what `prompt` does
+with no terminal, how one prompt is shared across targets, and why the
+environment source is flagged and not refused.
 
 **The vault's own credential has the same problem.** The list above is about
 reaching the database. Reaching the store needs a credential too. A SecretRef
@@ -503,12 +503,12 @@ precedence order applies everywhere**, and the tool can print it.
 6. Built-in default                 (compiled into the tool)
 ```
 
-**Layer 2 has two ranks.** A `SOPULI_*` variable outranks the third-party
-variable for the same setting, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`. The
+**Within layer 2, a `SOPULI_*` variable outranks the third-party variable for
+the same setting**, so `SOPULI_VAULT_ADDR` beats `VAULT_ADDR`. The
 third-party variables are Vault's own, such as `VAULT_ADDR` and
 `VAULT_NAMESPACE`; `sopuli/config/vault_env.py` maps them to settings. The
-resolver records the two ranks as the sources `env` and `env_thirdparty`, and
-`sopuli/settings/registry.py` declares them as two members of `Layer`.
+resolver records them as the sources `env` and `env_thirdparty`, and
+`sopuli/settings/registry.py` declares them as separate members of `Layer`.
 
 Layers 3 to 5 all name the store, because **`vault:` is a store name everywhere
 in the config and never a block**. `SOPULI_VAULT` and a SecretRef's `[<vault>:]`
@@ -543,7 +543,7 @@ refuses instead of guessing. `01-configuration.md` §6 is the specification.
 **The tool reads the config file before a verb runs.** It must: a profile is
 layer 3 and may set `output`, and a verb that has started has already chosen how
 to write its output. So `sopuli/invocation.py` finds the file, reads it under the
-profile that `--profile` or `SOPULI_PROFILE` names, and resolves all six layers.
+profile that `--profile` or `SOPULI_PROFILE` names, and resolves all the layers.
 A verb receives the loaded config; it does not load one. The run document is
 opened first, from the command line alone, so that an unreadable file still
 reports itself with exit 9 and a document (J7).
@@ -727,7 +727,7 @@ still survey the estate when the person running it did not cause the problem.
 
 ### Why thick mode (D3)
 
-There are three independent reasons. Any one of them is enough:
+Each of these reasons is enough on its own:
 
 1. **Native Network Encryption.** python-oracledb thin mode does not implement
    NNE, and a server that requires NNE refuses the connection. Base Database
@@ -761,7 +761,7 @@ None of this reopens D3: thick mode, always, on every target.
 The obvious blocker does not exist. Oracle ships **Instant Client for macOS
 ARM64** — 23.26.x, notarized DMGs, with SQL\*Plus and the OCI libraries — so
 thick-mode drivers work on Apple Silicon. Intel macOS has its own 19.x line.
-Thin mode is unusable for this tool on every platform, for the three reasons
+Thin mode is unusable for this tool on every platform, for the reasons
 above, but that is not a macOS problem.
 
 These are the reasons against a supported tier:
@@ -798,8 +798,8 @@ first question is where their test database runs.
 - Every mutating command supports **`--confirm`**, with one exception: UC-2's
   seen reset refuses it as a usage error (exit 2), because there the prompt
   establishes that a person is present. **The tool asks for confirmation where
-  the configuration asks for it, and nowhere else.** D10 has the decision. One
-  trigger exists, and two were declined:
+  the configuration asks for it, and nowhere else.** D10 has the decision. The
+  table shows which triggers exist:
 
   | trigger | status |
   |---|---|
@@ -807,15 +807,15 @@ first question is where their test database runs.
   | ~~the target is marked `environment: prod`~~ | **declined** — it would be a built-in `[prod]` under another name, and `01-configuration.md` §9 forbids a built-in in a union ratchet, because no layer could ever remove `prod` again. §9's own example of the problem is `confirm` |
   | ~~blast radius exceeds `max_targets` (default 1)~~ | **declined** — every multi-target mutation would prompt on an estate that wrote no safety block. `max_targets` is a ceiling, not a confirmation threshold. An unset `max_targets` is no limit, which is not the same as a default limit chosen by the tool |
 
-  **The two declined triggers are declined, not deferred.** An estate that marks
+  **The declined triggers are declined, not deferred.** An estate that marks
   a target `environment: prod` and does not list `prod` gets no prompt, and that
   is the specified behaviour. `sopuli/safety.py` and
   `tests/test_cli_confirm_environments.py` test both.
 
-  Three gates confirm without reading the setting. `creds rotate` always confirms
-  (UC-1 §8 step 1). `lock break` always confirms. UC-2's seen (`manual`) reset,
-  where the DBA sees a working password, confirms every time
-  (`../use-cases/uc-02-personal-account-passwords.md` §2).
+  Some gates confirm every time, without reading the setting: `creds rotate`
+  (UC-1 §8 step 1), `lock break`, and UC-2's seen (`manual`) reset, where the
+  DBA sees a working password (`../use-cases/uc-02-personal-account-passwords.md`
+  §2).
 
   **`--confirm` does not answer the seen reset's gate.** For the other gates and
   for the setting, `--confirm` is a yes given in advance. Here it is a usage

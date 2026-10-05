@@ -65,7 +65,7 @@ on which Oracle release, and what it showed.
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| `../test/compose.yaml` | The test stack, by profile: Vault (KV v1 and v2), PostgreSQL, Oracle Free, 21c, 18c and 11g XE, an Oracle that requires NNE, and toxiproxy; the maintainer-only `oracle19c`, `oracle19c-ru` and `oracle12c` profiles; and the LocalStack and lowkey-vault emulators |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2). `tier1`: adds PostgreSQL and Oracle Free. `tier2`: adds 21c, 18c and 11g XE, and toxiproxy. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: LocalStack and lowkey-vault |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
@@ -296,15 +296,16 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
   Oracle's documented syntax, not a command run here. The tool has run against
   an Autonomous Database with a password from the vault (#479), which is
   unaffected. Nothing in the default path depends on this.
-- `verified` `nne-oci-default` (#575) — **Do OCI's Base Database Service and
-  Exadata Cloud require Native Network Encryption as provisioned?**
-  Base Database Service: yes. The shipped `sqlnet.ora` sets
+- `verified` `nne-oci-default` (#575) — **Does OCI's Base Database Service
+  require Native Network Encryption as provisioned?**
+  Yes. The shipped `sqlnet.ora` sets
   `SQLNET.ENCRYPTION_SERVER=REQUIRED` and `SQLNET.CRYPTO_CHECKSUM_SERVER=REQUIRED`.
   A thin-mode connection is refused with `DPY-3001`, and a thick-mode one
   negotiates AES256 and SHA256 with no client configuration
-  (`maintainer-environments.md` §5). Exadata Cloud is cited from Oracle's
-  documentation and is not measured. A sentence that names it says so instead of
-  carrying a marker. The local `nne` compose profile is an approximation and is
+  (`maintainer-environments.md` §5). Exadata Cloud is not part of this entry. Its
+  requirement is cited from Oracle's documentation, no run of it is planned, and
+  a sentence that names it says "documented, not measured" instead of carrying a
+  marker. The local `nne` compose profile is an approximation and is
   unrun. This is one of D3's reasons for thick mode (`design/00-principles.md`,
   *Why thick mode*).
 - `verified` `adb-thin-mode` (#575) — **Does Autonomous Database use TLS rather

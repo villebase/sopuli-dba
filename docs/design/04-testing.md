@@ -201,7 +201,8 @@ a property that nothing exercises is not a property you have.
 | one extra | `pip install ".[<name>]"`, each in turn | that backend imports on its own; no extra depends on another without saying so |
 | `all` | `pip install ".[all]"` | the shape every other test runs under, and the only one where the full suite means something |
 
-Base and `all` run on every pull request commit. Both are tier 0, and neither
+Base and `all` run on every commit of a pull request that changes code. Both
+are tier 0, and neither
 needs a container. Each per-extra cell is one install and one import. They
 matter most for an extra that nobody develops against, where a missing import
 would otherwise be found by a user.
@@ -234,12 +235,13 @@ So there are two rules:
 
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
-| 0 | every pull request commit | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
-| 1 | every pull request | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking |
+| 0 | every commit of a pull request that changes code | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
+| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking |
 | 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE; fault injection (open: #660) |
 | 3 | before a release | maintainer | by hand | 19c and 12.2 EE, OCI DB systems and Autonomous Database, OCI Vault, the release gates in §6 |
 
-No workflow runs tier 2. To run the suite against a tier-2 release, follow
+A pull request that changes only documentation runs the `docs` job in `ci.yml`
+instead of tiers 0 and 1. No workflow runs tier 2. To run the suite against a tier-2 release, follow
 [`../maintainer-environments.md`](../maintainer-environments.md) §1, *Pointing
 the automated suite at another release*.
 
@@ -341,7 +343,7 @@ These come from UC-1 §11. The second column is the environment each one needs.
 
 | Test | Needs |
 |---|---|
-| UC-1 happy path: generate, apply, verify, promote | any |
+| UC-1 happy path: `creds generate`, then `creds apply`, which verifies every target and promotes, then `creds check` | any |
 | Idempotency: every **convergent** command run twice reports `changed: false` the second time. `creds generate` and `account reset-password` draw a fresh password, so for them the second run must say what it replaced (invariant 9) | any |
 | Drift: change a password out of band; `check` reports `DRIFT` and exits 3 | any |
 | **Lockout regression:** with a profile set to `FAILED_LOGIN_ATTEMPTS 3`, run `check` five times against a drifted account; the account never locks | any |
@@ -373,7 +375,8 @@ reports about one is verified by running the verb against a real one before the
 pull request opens.** Tier 1 is the minimum, because it is the stack that runs
 locally. A change may use tier 2 or 3 when it needs to.
 
-CI already runs tier 1 on every pull request, so the point is not coverage. The
+CI already runs tier 1 on every pull request that changes code, so the point is
+not coverage. The
 point is that **a test asserts what its author already suspected.** A real run
 catches the faults nobody suspected. These got through before:
 

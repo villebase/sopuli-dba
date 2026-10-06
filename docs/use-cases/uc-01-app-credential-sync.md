@@ -1092,10 +1092,10 @@ Points that matter:
     **Third-party monitors that read trace files are untested.** What they keep
     is theirs, not Oracle's. The tool never enables trace on its own sessions,
     keeps the statement out of its own logs, and documents the remaining risk.
-  - **Never wrap the statement in an anonymous PL/SQL block.** Issue `ALTER USER`
-    directly. Wrapping does not move the DDL literal into the shared pool; it
-    never reaches it either way. Wrapping *adds* an exposure, because the block's
-    own text is kept verbatim in `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and
+  - **Never wrap the statement in an anonymous PL/SQL block.** Issue
+    `ALTER USER` directly. Wrapping does not keep the DDL literal out of the
+    shared pool. Wrapping *adds* an exposure, because the block's own text is kept
+    verbatim in `V$SQL`, `V$SQLAREA`, `V$SQLSTATS`, `GV$SQL` and
     `V$DB_OBJECT_CACHE`. Oracle's protection is tied to the `CREATE USER` or
     `ALTER USER` statement. A block that contains one is an ordinary block
     (invariant 13).
@@ -1306,7 +1306,7 @@ window answers "did the old password stop working just now".
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
 | ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declares it (§5) |
 | ORA-28001 | password expired | distinguish from drift; `apply` resolves it, because setting a password clears the expiry. The tool never expires a password on purpose (§5) |
-| ORA-28002 | password in grace period | informational: `check` and `status` report it as `SOPULI-W013`, **not** as a state. 26ai sends other codes; see below |
+| ORA-28002 | password in grace period | informational, **not** a state. `check` and `status` report the grace period as `SOPULI-W013`, read from `ACCOUNT_STATUS`; `check` carries the login's own notice, whatever its code, as `SOPULI-W014`. See below |
 | ORA-01031 | insufficient privileges | fail early in pre-flight, naming the missing grant |
 | ORA-65040 / ORA-65048 | container-clause misuse, error while applying to a PDB | scope guardrail message |
 | ORA-12154 / ORA-12541 | naming/listener | connectivity, a separate category |
@@ -1314,13 +1314,14 @@ window answers "did the old password stop working just now".
 | DPI-1047 / DPY-3001 | the *client* library, not the server: Instant Client missing, or thin mode reached because thick-mode initialisation did not happen | `config` and exit 9, as ADR-006 does for a backend that is configured and not installed, because the person reading the message fixes it on this machine |
 
 **The grace-period code depends on the release and the profile.** These are the
-measured results with `python-oracledb` in thick mode; `docs/measurements.md`
-has the dates:
+measured results. Each was measured with `python-oracledb` in thick mode, unless
+the row says otherwise. `docs/measurements.md` has the dates:
 
 | Release | In grace, `PASSWORD_GRACE_TIME` limited | In grace, `PASSWORD_GRACE_TIME UNLIMITED` |
 |---|---|---|
 | 26ai Free 23.26.2.0.0 | login **succeeds**; `connection.warning` carries `ORA-28098` | login **succeeds**; `connection.warning` carries `ORA-28011` |
-| 21.3.0.0.0, 19.3.0.0.0 | `ORA-28002` | not measured |
+| 19.3.0.0.0 | login **succeeds**; `connection.warning` carries `ORA-28002` | not measured |
+| 21.3.0.0.0 | `ORA-28002`, seen in SQL\*Plus; not measured through the driver | not measured |
 
 A hard-expired password raises `ORA-28001` on every release measured.
 
@@ -1455,7 +1456,7 @@ Answer one question per (account, target): does the vault's `current` password
 work against this database?
 
 ```
-sopuli creds check --application acme
+sopuli creds check [--application acme]          # and the other selectors (§2)
                    [--method {login,hash,both}]  # default: login
                    [--include-previous]          # is the old password still accepted?
                    [--lockout-margin N]          # default 2
@@ -1535,7 +1536,8 @@ answered.
 advice to grant it would be advice nobody can follow. The capability probe gets
 `ORA-00942` in both cases and cannot tell them apart. So the refusal reads
 `SYS_CONTEXT('USERENV','CLOUD_SERVICE')`. It is `OLTP` on ADB serverless
-23.26.3.3.0, NULL on 26ai Free, 21c and 18c, and `ORA-02003` on 11.2.
+23.26.3.3.0, NULL on 26ai Free 23.26.2.0.0, 21.3.0.0.0 and 18.4.0.0.0, and
+`ORA-02003` on 11.2.0.2.0.
 
 Trade-offs:
 
@@ -1543,7 +1545,7 @@ Trade-offs:
   (`02-oracle-privileges.md` §2), which some sites will not grant. With no
   `--method`, the default is `login`, and nothing is lost. An *explicit*
   `--method hash` or `--method both` against a target without the grant or the
-  `12C` verifier fails at plan time, like an explicit `--strategy` (UC-1 §6.3). A
+  `12C` verifier fails at plan time, instead of silently becoming `login`. A
   narrower grant might expose just enough (unverified: lcount-grant).
 - It confirms the *stored verifier*, not that a login would succeed. An expired
   password, a locked account or a failed listener still means the application
@@ -1599,7 +1601,7 @@ the reporting.
 `generate`, `apply` and `check`, with their failure handling tied together.
 
 ```
-sopuli creds rotate --application acme
+sopuli creds rotate [--application acme]          # and the other selectors (§2)
                     [--strategy rollover|staged|direct]
                     [--max-age-days N]    # only rotate what is older than N
                     [--finish-rollover]   # end the window at the end of the run
@@ -1705,8 +1707,8 @@ something did.
 Exit 4 alone is ambiguous: a run whose targets failed also exits 4, and that one
 *is* repaired by running `apply` again. So a fenced-out run carries the
 diagnostic `SOPULI-W011`, and its text says what stopped it **instead of** the
-repair line. The tool must not advise a re-run while somebody else holds this
-estate's lock.
+`repair with:` line (§5). The tool must not advise a re-run while somebody else
+holds this estate's lock.
 
 `check` and `status` take no lock, and neither does any `--dry-run`. An hourly
 scheduled check that blocked rotations would be a worse problem than the one the
@@ -1988,9 +1990,11 @@ the **database's** age, from `PASSWORD_CHANGE_DATE`. The vault's age is a
 Reasons and rejected options: [#386](../decisions/log.md#386).
 
 `DBA_USERS.PASSWORD_CHANGE_DATE` does not exist on every supported release. It
-is present on 26ai, 21c and 19c, and absent (`ORA-00904`) on 18c, 12.2 and 11.2
-(`docs/measurements.md`). Where it is absent and no fallback answers, the column
-reads `-` and the run document omits `password_age_days`.
+is present on 26ai Free 23.26.2.0.0, 21.3.0.0.0 and 19.24.0.0.0, and absent
+(`ORA-00904`) on 18.4.0.0.0, 12.2.0.1.0 and 11.2.0.2.0 (`docs/measurements.md`).
+On 19.24.0.0.0 only the column's presence was checked. Where it is absent and no
+fallback answers, the column reads `-` and the run document omits
+`password_age_days`.
 
 - **The tool falls back to `SYS.USER$.PTIME` where the optional grant exists.**
   `PTIME` moves on `ALTER USER … IDENTIFIED BY`, and equals the column to the
@@ -2010,9 +2014,9 @@ reads `-` and the run document omits `password_age_days`.
   answer. Adding to P1's list would have changed the driver protocol, `doctor`,
   the schema and the skip vocabulary to report a display column.
 
-12.1 would take the fallback too, and is unmeasured
-(unverified: pw-changed-source). See `docs/README.md`, "Verify before
-implementing".
+12.2.0.1.0 takes the fallback, and `PTIME` tracked a rotation there. 12.1 would
+take the fallback too, and is unmeasured (unverified: pw-changed-source). See
+`docs/README.md`, "Verify before implementing".
 
 ---
 
@@ -2036,9 +2040,10 @@ targets that are already correct. `apply --target cdb1-pdb-billing` alone change
 that PDB but still withholds the promotion (`SOPULI-W027`), because a narrowed
 run cannot confirm the targets it left out.
 
-**S4: emergency rotation after a leak.** `rotate --strategy direct
---finish-rollover`. There is no grace window, the old password stops working at
-once, and application errors are the price. The audit record says who and when.
+**S4: emergency rotation after a leak.**
+`rotate --strategy direct --finish-rollover`. There is no grace window, the old
+password stops working at once, and application errors are the price. The audit
+record says who and when.
 
 **S5: common user across a CDB.** One application entry, one secret, target
 `cdb1-root`, `container_clause: ALL`. One statement covers every PDB.
@@ -2065,15 +2070,17 @@ matrix is fault injection. Environments, tiers and the capability-driven matrix
 are in [`../design/04-testing.md`](../design/04-testing.md). This is the UC-1
 list.
 
-- **Matrix:** Oracle 11.2 non-CDB, 18c and 21c XE, 23ai CDB+PDB, and a real
-  19.12+ with rollover configured, against HashiCorp KV v2, KV v1, OCI Vault and
-  the file backend. Rollover exists on 23ai Free and on a patched real 19.12+,
-  but not on the buildable 19.3 image, so that capability has no middle tier.
+- **Matrix:** Oracle 11.2.0.2.0 non-CDB, 18.4.0.0.0 and 21.3.0.0.0 XE, and 26ai
+  Free 23.26.2.0.0 CDB+PDB, plus the maintainer-only 19.3.0.0.0, 12.2.0.1.0 and
+  19.32.0.0.0 (`docs/maintainer-environments.md`), against HashiCorp KV v2, KV
+  v1, OCI Vault and the file backend. `docs/measurements.md` says which releases
+  have rollover. The buildable 19.3.0.0.0 image has none.
 - **Fault injection at every step of §8:** kill the process between apply and
   promote; make the vault unreachable mid-run; close a PDB mid-run; revoke
   `ALTER USER` mid-run (open: #660).
-- **Charset fuzzing:** generated passwords through the whole path: shell,
-  connect string, JDBC URL, `.env` file, PL/SQL literal.
+- **Charset fuzzing:** generated passwords through every path an operator uses:
+  shell, connect string, JDBC URL, `.env` file (open: #670). Never a PL/SQL
+  literal: invariant 13 keeps the password out of every PL/SQL block.
 - **Lockout regression test:** run `check` against a deliberately drifted
   account N times with `FAILED_LOGIN_ATTEMPTS 3`, and assert the account never
   locks.

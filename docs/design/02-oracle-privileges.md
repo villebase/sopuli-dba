@@ -937,7 +937,7 @@ kept text is a window, not a record.** On 11g XE 11.2.0.2.0:
 
 | Question | Result |
 |---|---|
-| Can the service account read it? | **No.** `SOPULI_SVC` gets `ORA-00942` from `V$SQLSTATS` and `V$SQL` alike. A user who can read the dictionary can |
+| Can the service account read it? | **No.** `SOPULI_SVC` gets `ORA-00942` from `V$SQLSTATS` and `V$SQL` alike. A user who can read the dictionary can read it |
 | Does `V$SQLSTATS` age the row out? | **Yes.** With `V$SQLSTATS` at its limit on this instance (about 5,590 rows), a planted canary survived 2,000 more distinct statements and was gone by 3,000. Planted into a nearly empty pool it survived longer, and 20,000 removed it |
 | Does `ALTER SYSTEM FLUSH SHARED_POOL` clear it? | **Yes, at once.** The canary was present before and absent after, both times. This is the operator's remedy, not the tool's: `ALTER SYSTEM` is a privilege §3 refuses, and flushing a production shared pool affects performance, which nobody should get as a side effect of a rotation |
 | Does it reach AWR? | **Not known** (unverified: ddl-text-awr). XE ships `control_management_pack_access = NONE`, so AWR snapshots on 11g XE capture nothing. Answering this needs an 11.2 Enterprise Edition with the Diagnostics Pack |

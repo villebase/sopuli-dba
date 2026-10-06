@@ -61,14 +61,16 @@ retried on its own.
 Every command takes the same target/account selection options:
 
 ```
---application NAME      one entry from the `applications:` config section
+--application NAME      an entry from the `applications:` config section; alias --app
                         (omit it in a single-application config)
---account NAME          repeatable; filters accounts within the selection
---target NAME           repeatable
+--account NAME          filters accounts within the selection
+--target NAME
 --group NAME            a named or selector-based group
 --select k=v[,k=v]      filter by target labels, e.g. --select env=dev,tenant=beta
 --dry-run / --output {text,json,jsonl}
 ```
+
+Each selector can be repeated.
 
 `--output jsonl` is accepted only by the verbs that stream events
 (`03-json-output.md` §5). Each verb lists its other options in its own section.
@@ -76,8 +78,7 @@ Every command takes the same target/account selection options:
 There is no `--all` and no `--limit`. With no selector, a command already covers
 everything the config declares. The ceiling on how many targets a run may touch
 is `safety.max_targets`, which the command line cannot set (`00-principles.md`
-P5). The run document still has `all` and `limit` slots in
-`invocation.selection` (`03-json-output.md` §1).
+P5).
 
 **Selectors filter what the config declares. They are not a second way to name
 things.** The tool never acts on an account that is not in the config. A
@@ -98,16 +99,15 @@ For each (account, scope) pair the tool reasons about a small state:
 VaultState  = { current, pending?, previous?, version, updated_at, updated_by }
 DbState     = { exists, lock_status, profile, password_versions,
                 password_change_date, rollover_active?, scope }
-SyncState   = IN_SYNC | DRIFT | PENDING_APPLY | ROLLOVER_ACTIVE
-            | ACCOUNT_MISSING | LOCKED | UNVERIFIABLE
+SyncState   = the result's `state`; 03-json-output.md §3 lists the values
 ```
 
-`SyncState` is what `check` reports and what `apply` acts on. The three fields in
-the vault payload are the whole rotation mechanism:
+`SyncState` is what `check` reports and what `apply` acts on. The three stage
+fields in the vault payload, `password`, `pending` and `previous`, are the whole
+rotation mechanism:
 
 ```json
 {
-  "username": "ORDERS_APP",
   "password": "<current>",
   "pending":  "<generated, not yet applied>",
   "previous": "<the one before current>",
@@ -115,7 +115,7 @@ the vault payload are the whole rotation mechanism:
   "rotated_at": "2026-08-04T09:12:33Z",
   "rotated_by": "approle:sopuli-ci",
   "policy": "app-standard",
-  "targets": ["cdb1-pdb-orders", "cdb1-pdb-billing"]
+  "targets": ["appdb-alpha", "appdb-beta"]
 }
 ```
 
@@ -149,7 +149,7 @@ account, they are maps keyed the same way:
   "rotated_at":     { "acme_web_user": "2026-08-04T09:12:33Z", "acme_api_user": "…" },
   "rotated_by":     { "acme_web_user": "approle:sopuli-ci", "acme_api_user": "…" },
   "policy":         { "acme_web_user": "app-standard", "acme_api_user": "app-standard" },
-  "targets":        { "acme_web_user": ["cdb1-pdb-orders"], "acme_api_user": ["…"] } }
+  "targets":        { "acme_web_user": ["appdb-alpha"], "acme_api_user": ["…"] } }
 ```
 
 The rule has these consequences:
@@ -164,7 +164,7 @@ The rule has these consequences:
 - **The stamps sit beside the value they describe.** They are per account,
   because one account can be rotated inside a shared document. A root-level
   `rotated_at` would then describe some of the document and not the rest.
-  `username` has no counterpart in the shared layout. The map key is the
+  The document has no `username` key. In the shared layout the map key is the
   username, and a second copy could disagree with it.
 
 **Native staging is the exception.** An OCI or AWSSM version stage belongs to
@@ -326,8 +326,9 @@ of `AL32UTF8`, but *fewer distinct* characters, so neither contains the other.
 The run keeps every reading and asks two separate questions:
 
 - A **generated** password is drawn against the smallest byte count and nothing
-  else. §8's alphabets are ASCII, and an ASCII character is one byte in every
-  character set the driver maps. So the count is the only limit that applies.
+  else. The alphabets in `01-configuration.md` §8 are ASCII, and an ASCII
+  character is one byte in every character set the driver maps. So the count is
+  the only limit that applies.
 - A **supplied** password (`--from-stdin`) is checked against *every* target
   that answered. A character that one target's set can store and another's
   cannot is a violation on that target, whichever target had the smallest
@@ -395,9 +396,10 @@ behaves exactly like a run by hand.
 
 **The value `current` held moves into `previous`**, in the same write that
 replaces it. It is the prior password, never the one being written. Otherwise
-§8's rollback has nothing to roll back to. An account being seeded has no prior
-value and gets no `previous`. One CAS write per document carries all of this,
-plus the §3 stamps, like every other write this command makes.
+§5's rollback (`--source previous`) has nothing to roll back to. An account
+being seeded has no prior value and gets no `previous`. One CAS write per
+document carries all of this, plus the §3 stamps, like every other write this
+command makes.
 
 **It has its own flag instead of `--confirm`, so that the choice can be undone.**
 `--confirm` already means *proceed without asking* on this verb, and P5 gives
@@ -476,8 +478,10 @@ sopuli creds apply --application acme
    verifiers. A missing account is `ACCOUNT_MISSING`. The tool does not create it
    (Q8).
 4. Change the password (§6 has the Oracle statement). Where the server refuses
-   the *value*, because of a verify function or a reuse rule, draw another and try
-   again, a bounded number of times (§6.4).
+   the *value*, because of a verify function or a reuse rule, and the tool drew
+   the staged password (`origin: generated`, §3), draw another, write it to the
+   vault's `pending`, and apply it again, a bounded number of times. A password
+   with any other `origin` is never redrawn. §6.4 has the rules.
 5. Verify at once, with a fresh connection as that user (§7).
 6. Record a result for the target.
 
@@ -492,7 +496,9 @@ sopuli creds apply --application acme
   and exit 4 (partial). The remedy is to run `apply` again, narrowed by
   `--repair FILE` where the run's document was captured. It is safe to run again
   either way.
-- All failed: nothing changed anywhere. Exit 1.
+- None confirmed: do not promote. Exit 1. Usually nothing changed. But where the
+  server accepted the statement and the verification then failed, that database
+  did change, and its row says the password was changed.
 
 These rules decide what `apply` does with each account:
 
@@ -561,16 +567,16 @@ sequence for a group of PDBs that share one secret:
 ```
   pending written
      │
-     ├─ apply → PDB ORDERS   ok
-     ├─ apply → PDB BILLING  ok
+     ├─ apply → appdb-alpha  ok
+     ├─ apply → appdb-beta   ok
      │
   promote current  ← only now do applications see the new password
 ```
 
-If BILLING fails, ORDERS has already changed, but `current` still holds the old
-password. That is why **the rollover strategy is the default on databases that
-support it**. During the rollover window both passwords work, so a partial apply
-causes no outage.
+If `appdb-beta` fails, `appdb-alpha` has already changed, but `current` still
+holds the old password. That is why **the rollover strategy is the default on
+databases that support it**. During the rollover window both passwords work, so
+a partial apply causes no outage.
 
 **Attributes.** `apply` can also enforce non-password attributes that the
 policy declares, each opt-in: account unlock and profile assignment. Each is
@@ -704,8 +710,8 @@ never promoted (§5's promotion gate), and the run exits 4.
 **It is a real operation for personal accounts.** A DBA who resets a person's
 password wants that person to change it at first logon. That is UC-2
 (`uc-02-personal-account-passwords.md`). There `account expire-password` does
-this, and so does the `PASSWORD EXPIRE` that the seen reset path always issues. There the password is handed over to a person, not
-synced to an application.
+this, and so does the `PASSWORD EXPIRE` that the seen reset path always issues.
+There the password is handed over to a person, not synced to an application.
 
 Two neighbouring operations are often confused with it:
 
@@ -756,8 +762,9 @@ the vault already holds what went on the database.
 
 **`previous` is the rollback.** Its *success* stops an application's credential
 from working. So it needs `--confirm`. Where nothing can ask, it refuses with
-exit 8 instead of prompting into a closed stdin. `--dry-run` needs no confirmation: if a preview had to be
-authorised, operators would stop running previews.
+exit 8 instead of prompting into a closed stdin. `--dry-run` needs no
+confirmation: if a preview had to be authorised, operators would stop running
+previews.
 
 **A rollback swaps the vault stages.** Once every target confirms, `current`
 takes the rolled-back value, and `previous` takes the value just removed from the
@@ -782,9 +789,10 @@ run happens. The account is reported as `PENDING_APPLY`, the word
 the value most likely to be in the history, and the statement is likely to fail
 with `ORA-28007`. The failure is certain where one limit is `UNLIMITED` and the
 other is a number. Where both are numbers, it depends on the time elapsed and on
-changes made since. On ADB, whose own `DEFAULT` profile has `4` / `1`, and on
-tier 1's `SOPULI_REUSE` profile (`5` / `UNLIMITED`), both rollbacks were refused,
-both failed safely, and `check` afterwards reported `IN_SYNC` against `current`.
+changes made since. On ADB serverless 23.26.3.3.0, whose own `DEFAULT` profile
+has `4` / `1`, and on tier 1's `SOPULI_REUSE` profile (`5` / `UNLIMITED`) on
+Oracle Free 23.26.2.0.0, both rollbacks were refused, both failed safely, and
+`check` afterwards reported `IN_SYNC` against `current`.
 
 The run says so, and does not refuse in advance. Every rollback that reaches the
 statement on such a profile carries `SOPULI-W028`, one per target and profile,

@@ -1488,7 +1488,7 @@ not contract and may improve.
 | `SOPULI-W026` | A password was delivered, and the notification saying so could not be sent. The account **and the target** are named, because a reset can notify once per target, and two failures would otherwise read the same. A warning on a successful run, for `SOPULI-W025`'s reason and more so: the notification carries nothing anybody needs (UC-2 §6.1 limits it to "a password is ready"), so all that is lost is that somebody must be told another way. The webhook URL is never in the message. It is itself a credential ([C9](../decisions/log.md#c9)), and `httpx` puts it in the text of its own errors, so the message carries the exception's class name instead |
 | `SOPULI-W027` | A secret document was not promoted, because the run was narrowed past pairs the promotion needs (UC-1 §5's *promotion gate*): the same credential on a target outside the run, or another account in the document with its own `pending`. The databases in scope **were** changed, `pending` stays, and the run exits 4. It has its own code for `SOPULI-W011`'s reason. A run whose targets failed also exits 4, and the same narrowed run repairs it. This one is finished only by a **wider** run that covers the pairs the message names; repeating the narrow run withholds the promotion again. It is also raised under `--dry-run`, where it says what the run would withhold |
 | `SOPULI-W028` | A rollback (`creds apply --source previous`) reached the statement on an account whose profile restricts password reuse, or, under `--preflight`, is planned against one. One entry per target and profile, naming `PASSWORD_REUSE_MAX` and `PASSWORD_REUSE_TIME` as the database spells them. `previous` is usually a password the account held one change ago, so `ORA-28007` is likely. Where one limit is `UNLIMITED` and the other a number, a password the account has held is never accepted again. Reported, not interpreted, as UC-1 §4 does with the same two values, and raised whichever way the statement went. Under `--preflight` the survey raises it before any statement, from the profile it already reads, which is the only way a `--dry-run` carries it. The run then does not repeat it for that target and profile. It is not raised in advance where the run would first move the account to another profile, because the new profile's limits are not read; the run's own reading covers that case. It has its own code, not a wider `SOPULI-W017`, because that code means a *supplied* password, and a consumer branching on it would be told something false. On such a profile the way back is a rollover window (UC-1 §6.3), not a rollback |
-| `SOPULI-W029` | The server refused a password the run applied, with `ORA-28003` or `ORA-28007`, so the run drew another and staged it, to be applied again to every target of that account (UC-1 §6.4). One entry per draw, naming the account, the version staged and the server's message. It says a draw happened, not that the new password was accepted: the result rows say whether the second apply succeeded, and `results[].redraws` counts the draws |
+| `SOPULI-W029` | The server refused a password the run applied, with `ORA-28003` or `ORA-28007`, so the run drew another and staged it, to be applied again to every target of that account (UC-1 §6.4). One entry per draw, naming the account, the version staged and the server's message. It says a draw happened, not that the new password was accepted: the result rows say whether the re-apply succeeded, and `results[].redraws` counts the draws |
 | `SOPULI-W030` | The server refused a password the run applied, and the run was not allowed to draw another (UC-1 §6.4). The reason is one of these: nothing shows this tool drew the password, the redraw limit was reached, the account has no policy to draw from, or the run is a rollback. The message names which. The target that refused keeps the password it had. Another target of the same account may already hold the refused value, and the result rows say which |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
@@ -1543,8 +1543,10 @@ consumer that already branches on `config` handles it without a change.
 One rule, enforced in one place: **redaction happens at the serialiser, not at
 each call site.** Every secret value the process holds is wrapped in a type whose
 serialisation is the literal string `"***"`, and whose `__str__` and `__repr__`
-are the same. No call site can emit a secret by forgetting a helper, because
-plaintext leaves the process only at the sites `CLAUDE.md` invariant 2 lists:
+are the same. No call site can emit a secret by forgetting a helper.
+
+A password, or a credential that retrieves one, leaves the process only at the
+sites `CLAUDE.md` invariant 2 lists:
 
 1. the vault write;
 2. the driver call;
@@ -1552,9 +1554,16 @@ plaintext leaves the process only at the sites `CLAUDE.md` invariant 2 lists:
 4. `account reset-password` on the seen (`manual`) path;
 5. the wrapping token that an unseen (`vault_wrapped`) delivery returns.
 
+The tool also presents credentials to the services it calls: the vault login,
+the vault token on the wire, and a webhook URL ([C9](../decisions/log.md#c9)).
+Each is a `Secret`, revealed only where it is sent. That is a separate class, not
+an exception to invariant 2: a credential that never reached the wire would
+authenticate nothing.
+
 `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in a
-module that holds none of these sites. It is a tripwire, not a proof: a second
-call in a permitted module, or a call spelled another way, passes it.
+module that holds none of these sites, of either class. It is a tripwire, not a
+proof: a second call in a permitted module, or a call spelled another way,
+passes it.
 
 These consequences show in the schema:
 

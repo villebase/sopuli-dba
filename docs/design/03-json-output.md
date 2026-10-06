@@ -2325,12 +2325,16 @@ new event types, new diagnostic codes.
 **Major** (announced, with an overlap release): removing or renaming a property,
 removing an enum value, changing a type, changing the meaning of a field.
 
-**Consumers must ignore unknown properties.** Both schemas set
-`additionalProperties: false`, so the tool's own tests catch a property added by
-accident. That strictness guards the producer; it is not a requirement on
+**Consumers must ignore unknown properties.** The run schema sets
+`additionalProperties: false`, and the event schema sets
+`unevaluatedProperties: false` on each event, so the tool's own tests catch a
+property added by accident. An event's `data` is open, except for the closed
+payloads below. That strictness guards the producer; it is not a requirement on
 consumers. The tool is a consumer too: `creds apply --repair` reads an earlier
-run document, so `src/sopuli/repair.py` requires no property the schema marks
-optional and never branches on `schema_version`.
+run document, and `src/sopuli/repair.py` never branches on `schema_version`. It
+requires one optional property, `invocation.config_files`, because it refuses a
+document that cannot show it came from the same configuration. Every other
+optional property may be absent.
 
 **A meaning is contract; wording is not.** What an enum value or a diagnostic
 code means may not change, and changing it is not a bump: it is a false
@@ -2355,7 +2359,9 @@ These rules follow from the two lists:
 
 **Every bump publishes a new schema file, and the old ones stay published.** A
 build that emits `schema_version: "1.20"` must be able to fetch the schema it
-validates against. A bump is made even when the file is identical apart from its
+validates against. Every event schema version is published. The run schema
+follows the rule from 1.16. Earlier run schema bumps renamed the file instead,
+so 1.0 to 1.9 and 1.15 are not published. A bump is made even when the file is identical apart from its
 `$id`, as it is for a new diagnostic code: `schema_version` tells a consumer
 which builds can emit what.
 

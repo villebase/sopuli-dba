@@ -21,9 +21,16 @@ Run commands from the project root. Do not prefix them with `cd`.
 
 1. Note the time. The record needs the wall time.
 2. Note the commit: `git rev-parse --short HEAD`. Audit a clean `main`.
-3. Install the build, so that the agents can run the CLI:
-   `.venv/Scripts/sopuli.exe --help` on Windows, `.venv/bin/sopuli --help`
-   elsewhere. If it fails, run `pip install -e ".[dev]"` first.
+3. Check that the build is installed in `.venv`, because the agents run the CLI
+   from there: `.venv/Scripts/sopuli.exe --help` on Windows,
+   `.venv/bin/sopuli --help` elsewhere. If it fails, create the environment and
+   install into it with its own interpreter: `python -m venv .venv`, then
+   `.venv/Scripts/python -m pip install -e ".[dev]"` on Windows or
+   `.venv/bin/python -m pip install -e ".[dev]"` elsewhere.
+
+The `pytest` commands below mean that environment's `pytest`. Activate `.venv`
+first, or call `.venv/Scripts/python -m pytest` (Windows) or
+`.venv/bin/python -m pytest`.
 
 ## 2. Run the checkers first
 
@@ -36,10 +43,17 @@ changed, use that list. A failure here is a finding in its own right. Fix it or
 file it before the sweep, because the sweep does not repeat these checks.
 
 Then run the checks that ask GitHub for issue states. The weekly `pending-work`
-workflow runs them too. Without `SOPULI_CHECK_ISSUES` they skip:
+workflow runs them too. Without `SOPULI_CHECK_ISSUES` they skip. In bash:
 
 ```bash
 SOPULI_CHECK_ISSUES=1 pytest tests/test_pending_work.py tests/test_decision_register.py tests/test_decision_log.py -k "closed_issue or issue_has_a_row or matches_its_issue or closed_decision_issue"
+```
+
+In PowerShell, set the variable first:
+
+```powershell
+$env:SOPULI_CHECK_ISSUES = "1"
+pytest tests/test_pending_work.py tests/test_decision_register.py tests/test_decision_log.py -k "closed_issue or issue_has_a_row or matches_its_issue or closed_decision_issue"
 ```
 
 ## 3. Sweep each area

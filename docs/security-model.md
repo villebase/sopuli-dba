@@ -86,7 +86,7 @@ vault and nothing is sent to the database.
 
 **A confirmation never blocks `--dry-run`.** A preview is how you work out
 whether to agree to something, so blocking the preview would block the wrong
-thing. Two settings do refuse a dry run, and both exit 8:
+thing. These settings do refuse a dry run, with exit 8:
 
 - `safety.readonly` makes every changing command unavailable, dry run included.
   The read-only commands are how you ask questions under it.
@@ -128,12 +128,12 @@ Four things are worth knowing about it:
   the run stops with a message naming the setting, where it was written, and both
   `--confirm` and `--dry-run` as the two ways forward.
 
-Four commands confirm every time regardless of this setting: `creds rotate`,
+These commands confirm every time regardless of this setting: `creds rotate`,
 `creds apply --source previous`, `lock break`, and `account reset-password` in
-the mode where the DBA sees the new password (`delivery.method: manual`). The
-first three accept `--confirm` as the yes given in advance. The fourth refuses
-it and always asks, because if nobody is there to answer, nobody is there to
-receive the password either
+the mode where the DBA sees the new password (`delivery.method: manual`). All
+but the last accept `--confirm` as the yes given in advance.
+`account reset-password` refuses it and always asks, because if nobody is there
+to answer, nobody is there to receive the password either
 (`docs/use-cases/uc-02-personal-account-passwords.md`).
 
 ### The safety ratchet: settings can only get stricter
@@ -162,7 +162,7 @@ setting would override it. If the ordinary rule applied here, that team file
 could switch the site-wide rule off — probably by accident, and nothing would say
 so. Under the ratchet it cannot. It can only add more restrictions.
 
-Note the sixth row: `locking.break_expired` is *permission* rather than a guard,
+Note the `locking.break_expired` row: it is *permission* rather than a guard,
 so for that one the safe direction is `false`, and one layer saying `false` wins.
 The direction is declared per setting rather than guessed from its name.
 

@@ -209,8 +209,8 @@ tool does to protect you once you do trust it with something that matters.
 **You can always see a change before it happens.** Every command that changes
 something takes `--dry-run`, which prints exactly what the command would do and
 then stops without doing it. A confirmation never blocks a dry run, because a
-preview is how you work out whether to say yes. Two settings do refuse one:
-`safety.readonly`, which makes every changing command unavailable, and
+preview is how you work out whether to say yes. `safety.readonly` does refuse
+one, because it makes every changing command unavailable. So does
 `safety.max_targets`, which will not show a plan bigger than its limit as though
 it could run.
 

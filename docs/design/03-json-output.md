@@ -516,8 +516,9 @@ over the same paths are the same estate for that question. A file edited between
 them is a question of staleness, for whatever compares the documents.
 
 **It is absent, not empty, when the run loaded no configuration layer**: the
-file was missing, unreadable or rejected. Every command loads a config before
-its body runs, so absence always means the run stopped while trying, and the
+file was missing, unreadable or rejected. Every command that writes a run
+document loads a config before its body runs (`sopuli about` writes none), so
+absence always means the run stopped while trying, and the
 `error` on exit 9 names the path. An empty array would say that the run looked
 and found nothing, which is a different statement.
 

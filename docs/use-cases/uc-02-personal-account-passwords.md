@@ -187,9 +187,10 @@ types `account` at the prompt.
 | `sopuli account list` | resolve the declaration (names, or a predicate over a profile or role) and report what it matched, with each account's state. Reads no password and writes none | no |
 | any of the mutating verbs, under `--dry-run` | prints the plan and never a password (invariant 8, which binds on every one of them) | no |
 
-**The seen reset asks for confirmation every time.** P5 records it beside the
-other two gates that always ask, `creds rotate` and `lock break`. Like them, it
-does not consult `safety.confirm_environments`, and no layer can relax it.
+**The seen reset asks for confirmation every time.** `00-principles.md` P5
+records it beside the other two gates that always ask, `creds rotate` and
+`lock break`. Like them, it does not consult `safety.confirm_environments`, and
+no layer can relax it.
 
 **`--confirm` does not answer it** (decided in #439). So it is a gate that cannot
 be given a yes in advance. The reason is not that this operation is more
@@ -237,8 +238,9 @@ These rules follow:
 
 **The cost:** somebody who knows only the old password loses the self-service
 change the window would have given them, and needs a reset. The benefit is that
-the safety does not depend on a release nobody has measured. On 26ai and 21c the
-expiry leaves the old password working, so there the close is what ends it. A
+the safety does not depend on a release nobody has measured. On 26ai Free
+23.26.2.0.0, the expiry leaves the old password working
+(`08_expire_password_probe.sql`), so there the close is what ends it. A
 close with no window open is accepted silently (§4.3). So on a release where the
 expiry already ends the old password, the close costs one statement that does
 nothing.
@@ -337,7 +339,7 @@ says why both are shown instead of one number.
 **Either column can be empty, and an empty one is not an error.** Where no store
 is configured, there is no `reset_at` to report. `SOPULI-W021`'s rule applies to
 the pair: a documented column that is empty with nothing saying why is a gap in
-the contract. So `account list` prints `-` and carries the §3.4 warning that says
+the contract. So `account list` prints `-` and carries a warning that says
 which absence it is. **That warning is `SOPULI-W023`**, once per run, not once per
 account, because a missing journal is a property of the configuration, while a
 missing database date is a property of one account. It reports what exists; the
@@ -434,15 +436,18 @@ independently.
 The record holds what happened:
 
 ```json
-{"account": "jdoe",
- "target": "appdb-dev-alpha",
- "reset_at": "2026-09-17T09:14:22Z",
- "seen": false,
+{"account": "acme_dev_alice",
+ "by": {"host": "dba-ws-4.example.com", "os_user": "dba01", "pid": 45180},
+ "correlation_id": "06aec33c-e88b-4f36-ba25-3a4b0fedaed3",
+ "delivery": {"method": "vault_wrapped", "to": "PYfXbFKBlw3U0ieUm0lvdCkY"},
  "expired": false,
- "delivery": {"method": "vault_wrapped", "to": "EXAMPLEaccessor000000000"},
- "by": {"host": "dba-ws-4.example.com", "os_user": "dba01"},
- "correlation_id": "01J..."}
+ "reset_at": "2026-10-06T13:13:03.981152Z",
+ "seen": false,
+ "target": "free-pdb"}
 ```
+
+That record is from a tier-1 run, with the host and the operating-system user
+replaced.
 
 **On `vault_wrapped`, `to` is the wrapping token's *accessor*.** The accessor
 above is a made-up example. A real one is what Vault returns beside the token. It
@@ -747,9 +752,11 @@ The password is generated from a policy, by the same tier-0 code UC-1 uses
 (`01-configuration.md` §8). A seen-path policy is likely to differ, because a
 person types the password once, from a message, but generation is the same. The
 maximum length is the same question as in UC-1. The tool enforces 30 bytes below
-release 23 and 128 bytes from 23, so a long policy is refused at plan time on 21c
-and older, instead of failing mid-run. That is the tool's rule, not a measured
-maximum for every release (unverified: password-byte-limit).
+release 23 and 128 bytes from 23. The draw asks each target for its limit, after
+connecting and before any DDL, so a long policy is refused on that target with an
+`ERROR` row, instead of failing at the statement. A `--dry-run` does not ask
+(open: #671). That is the tool's rule, not a measured maximum for every release
+(unverified: password-byte-limit).
 
 ### 4.3 The rollover window
 
@@ -812,21 +819,24 @@ set the new one. So on this path, the expiry that should end the DBA's exposure
 leaves a second working password for the length of the window. 19.32.0.0.0, the
 19c release with rollover, has not been measured.
 
-**From `EXPIRED`, the answer is different** (`sql/oracle/09_reset_from_expired_probe.sql`,
-26ai 23.26.2.0.0 and 21c 21.3.0.0.0). This section's main case, an account whose
-password expired and whose owner no longer knows it, is in that state. There the
-same statement opens no window. Every earlier password gives `ORA-01017`,
-including the pre-window one on an account that started `EXPIRED & IN ROLLOVER`,
-and the new, expired password is the only one that works. `EXPIRED(GRACE)` behaves
-like `OPEN`, because its password still authenticates. So on both releases, the
-exposure Q7 found depends on whether the old password still works, not on what
-the profile grants.
+**From `EXPIRED`, the answer is different**
+(`sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0 and 21c
+21.3.0.0.0). This section's main case, an account whose password expired and
+whose owner no longer knows it, is in that state. There the same statement opens
+no window. Every earlier password gives `ORA-01017`, including the pre-window
+one on an account that started `EXPIRED & IN ROLLOVER`, and the new, expired
+password is the only one that works. `EXPIRED(GRACE)` behaves like `OPEN`,
+because its password still authenticates. So on both releases, the exposure Q7
+found depends on whether the old password still works, not on what the profile
+grants.
 
 **A seen reset of an account whose profile sets a non-zero rollover time is
-refused at plan time**, naming the account and the profile, before any DDL
-(invariant 4). The refusal keys on the profile. Narrowing it to accounts whose old
-password still authenticates is an open decision (open: #541). The unseen path is
-available for the same account.
+refused on that target**, naming the account and the profile, before a password
+is drawn or any DDL is issued. The row is `ERROR`. A `--dry-run` does not ask
+this question, so a preview shows the account as one that would be reset
+(open: #671). The refusal keys on the profile. Narrowing it to accounts whose
+old password still authenticates is an open decision (open: #541). The unseen
+path is available for the same account.
 
 ### 4.4 Guardrails
 
@@ -1069,7 +1079,7 @@ delivery:
   method: vault_wrapped
   vault_wrapped:
     ttl: 15m
-    # vault: vault-handover   # optional; §3's chain otherwise
+    # vault: vault-handover   # optional; else the target's vault, then defaults.vault
   notify:
     method: webhook
     webhook:
@@ -1091,18 +1101,21 @@ implementation breaks it:
   exit 9. `manual` is the only method in the table that needs no extra. So the
   fallback for an estate that can install nothing is the path that shows the DBA
   the password. That is an argument for building `smtp_encrypted`.
-- **Every delivery emits an event**, named `noun.verb` (`03-json-output.md` §5).
+- **Delivery events are named `noun.verb`** (`03-json-output.md` §5).
   `password.delivered` is emitted on success when `account reset-password`
   streams under `--output jsonl`. `password.displayed`, the seen path's exposure,
   is a registered name that is never emitted: a seen reset refuses every machine
   format, `jsonl` included, and its `--dry-run` displays nothing. Neither event
-  carries the password, and the run schema has no property that could. Every run
-  records a delivery in `results[].handover` in the run document: the accessor
-  that names the handover, never the credential that performs it.
+  carries the password, and the run schema has no property that could. A real
+  unseen delivery records the handover in `results[].handover` in the run
+  document: the accessor that names the handover, never the credential that
+  performs it. A `manual` row and a `--dry-run` row have no `handover`.
 
-**`manual` requires `force_expire: true`**, and is refused at plan time without
-it (§6.5). That is the runtime half of the seen path's guarantee: the exposure
-ends at the person's next logon, or it does not end at all.
+**`manual` requires `force_expire: true`**. A `manual` block without it is
+refused when the config is loaded, as config-invalid (exit 9), so
+`config validate` fails too (§6.5). That is the configuration half of the seen
+path's guarantee: the exposure ends at the person's next logon, or it does not
+end at all.
 
 ### 6.4 The order of the two steps
 
@@ -1187,7 +1200,7 @@ invariant 2 lists it as its fourth exception. The five guards are:
 | refused with `--output json` and `--output jsonl`; no schema property can hold the value | as `--reveal` already is: a machine-readable document must never carry it |
 | **refused unless stdout is a terminal** | `--reveal` has no such guard, and this is the guard that carries the argument. A value redirected to a file or captured in a CI log outlives the single logon it is good for, because a log is read later and by other people, and expiry does not unpublish it. `\| clip` stops working; that cost is accepted |
 | confirmed every time, and `--confirm` does not answer it (§2) | a yes given in advance asserts what the prompt exists to establish |
-| `force_expire: true` required, refused at plan time when absent | the exposure ends at the person's next logon, or it does not end at all |
+| `force_expire: true` required; a `manual` block without it is refused when the config is loaded (exit 9) | the exposure ends at the person's next logon, or it does not end at all |
 
 **A `--dry-run` is exempt from guards 2 to 4.** A preview prints a plan and never a
 password (§2), so those guards have no emission to guard. Refusing a preview for
@@ -1339,13 +1352,13 @@ Reasons: [H6](../decisions/log.md#h6).
 | 1 | no secret in `argv` | applies unchanged, including every store credential |
 | 2 | redaction at the serialiser | applies. §3's metadata record is inside it, not an exception to it: it holds no password in any form, not a hash and not a verifier. A **Vault** write is already a permitted plaintext site, so the Vault methods need no widening. The other stores (`one_time_link`, `onepassword_share`, `smtp_encrypted`) are not automatically permitted, and each says how it keeps the invariant when it is built. **The seen path's display is the invariant's fourth exception** (decided in #439), under §6.5's five guards. It is allowed because the exposure is deliberate, witnessed and expired, not because it is harmless; harmlessness is the third exception's argument and does not apply here. The wrapping token an unseen delivery returns is the fifth (§6.6) |
 | 3 | branch on capability, not version | applies: rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | applies: §4.3's seen-path refusal, §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
+| 4 | unavailable capability fails at plan time | applies: §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §4.3's seen-path refusal is asked on each target before any DDL, and a `--dry-run` does not ask it (open: #671). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | applies, with H1's addition: a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch. Selectors still cannot extend the declared set (§2) |
 | 6 | vault is master | nothing to govern, because there is no master (§1). H2 makes the database authoritative for **when** a password last changed. That does not break this invariant: invariant 6 governs the value, and a timestamp about the account is not the value (§3.2) |
 | 7 | never promote before confirmation | nothing to govern: there is no promotion (§1) |
 | 8 | `--dry-run` and a plan first | applies, on both paths; the seen path also confirms (§2) |
 | 9 | idempotency | **applies, and does not govern the reset** (H7). A verb that draws a fresh random password has no target state to converge on, so `account reset-password` is outside the invariant, like `creds generate`. It reports `changed: true` every run and warns what it replaced (§4.5). `expire-password`, `suspend` and `list` are inside the invariant and hold it |
-| 10 | safety settings only ratchet | applies, and H6 adds a setting: `safety.delivery.allowed_methods`, ratcheting by **intersection** (§6.8). `01-configuration.md` §9 has the shape, and P3 says why it is not a union. It is a `delivery:` sub-block of a `safety:` block, not a key of the `delivery:` block it governs |
+| 10 | safety settings only ratchet | applies, and H6 adds a setting: `safety.delivery.allowed_methods`, ratcheting by **intersection** (§6.8). `01-configuration.md` §9 has the shape, and `00-principles.md` P3 says why it is not a union. It is a `delivery:` sub-block of a `safety:` block, not a key of the `delivery:` block it governs |
 | 11 | no `"` in a password | applies, by generation |
 | 12 | JSON output is versioned | applies: new verbs and events are schema bumps |
 | 13 | no password literal in a PL/SQL block | applies to both statements (§4.1) |
@@ -1372,18 +1385,18 @@ A test must show:
   nothing the DBA's token can read (§6.6). The statement sent carries no
   `PASSWORD EXPIRE`. The password appears in no output of the tool at all.
 - **seen:** the reset does not run without confirmation. Afterwards,
-  `DBA_USERS.ACCOUNT_STATUS` has the `EXPIRED` component, and for an account that
-  is not locked, a logon with the password is forced to change it. A rollover
-  profile is refused at plan time (§4.3). The password is emitted exactly once, to
-  stdout, and nowhere else. **Each of §6.5's five guards is its own test, and all
-  five are tier 0**, because none needs a database: the reveal site is unreachable
-  for any delivery method other than `manual`; `--output json` and
-  `--output jsonl` are refused; a non-terminal stdout is refused; `--confirm` is
-  refused as a usage error; and `manual` without `force_expire: true` is refused at
-  plan time. The schema restriction is **part of the second guard**: `--output
-  json` is refused, *and* no property of a result could hold a password. It is
-  checked against the published schema, as `policy sample`'s is, not against a
-  run.
+  `DBA_USERS.ACCOUNT_STATUS` has the `EXPIRED` component, and for an account
+  that is not locked, a logon with the password is forced to change it. A
+  rollover profile is refused before any DDL (§4.3). The password is emitted
+  exactly once, to stdout, and nowhere else. **Each of §6.5's five guards is its
+  own test, and all five are tier 0**, because none needs a database: the reveal
+  site is unreachable for any delivery method other than `manual`;
+  `--output json` and `--output jsonl` are refused; a non-terminal stdout is
+  refused; `--confirm` is refused as a usage error; and `manual` without
+  `force_expire: true` is refused when the config is loaded. The schema
+  restriction is **part of the second guard**: `--output json` is refused, *and*
+  no property of a result could hold a password. It is checked against the
+  published schema, as `policy sample`'s is, not against a run.
 - **H4's behaviours (§5, §4.3).** Each is a tier-1 test, because each was a
   measurement first. **The unlock test differs by path.** On the **unseen** path,
   a reset of a `LOCKED(TIMED)` account leaves it `OPEN`, and the owner can log in
@@ -1403,10 +1416,10 @@ A test must show:
 - **Both paths:** the password appears in no run document, diagnostic or log
   sink, and in no jsonl event. The seen path's one deliberate emission is the only
   exception, and its confirmation guards it.
-- **The two measurements behind the seen path's markers**, each on 26ai and then
-  21c: gate 2's probe extended to the `PASSWORD EXPIRE` form
-  (unverified: expire-ddl-text), and §4.3's window behaviour, which agreed on 26ai
-  and 21c. Only a run can remove either marker.
+- **The measurement behind the seen path's open marker**: gate 2's probe extended
+  to the `PASSWORD EXPIRE` form (unverified: expire-ddl-text). Only a run can
+  remove the marker. §4.3's window behaviour on the seen path is already measured
+  on 26ai Free 23.26.2.0.0 and 21.3.0.0.0.
 
 Tests declare the capabilities they need and skip with a reason when one is
 absent (`04-testing.md`). They never branch on a version.

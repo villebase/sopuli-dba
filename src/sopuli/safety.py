@@ -275,9 +275,7 @@ def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
     "narrow the run" would be advice that cannot work, so the message says so and
     names the verbs that read instead.
     """
-    named = ", ".join(f"{one.name} ({one.location})" for one in marked[:NAMED_TARGETS])
-    if len(marked) > NAMED_TARGETS:
-        named += f", and {len(marked) - NAMED_TARGETS} more"
+    named = _named([f"{one.name} ({one.location})" for one in marked])
     them = "it" if len(marked) == 1 else "them"
     reads = "read instead with `sopuli creds check` or `sopuli creds status`"
     escape = (
@@ -286,6 +284,14 @@ def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
         else f"no narrowing of this run can avoid {them}, so {reads}"
     )
     return f"readonly: {named}; no layer can relax it (invariant 10) -- {escape}"
+
+
+def _named(items: Sequence[str]) -> str:
+    """``items`` joined, cut at :data:`NAMED_TARGETS` with a count of the rest."""
+    named = ", ".join(items[:NAMED_TARGETS])
+    if len(items) > NAMED_TARGETS:
+        named += f", and {len(items) - NAMED_TARGETS} more"
+    return named
 
 
 def refuse_if_over_limit(
@@ -361,11 +367,18 @@ def refuse_if_nobody_to_ask(
     reach and reports it, because one target nobody can reach must not hide what
     the others say.
 
-    **``targets`` is what the run will connect to**, and the caller decides it.
-    A ``--dry-run`` whose preview connects passes its targets and is refused
-    like the real run. ``creds apply --dry-run`` with no ``--preflight`` and no
-    ``--strategy`` reads only the vault, so it passes none and still prints its
-    plan.
+    **``targets`` is every target the run may connect to**, judged from the
+    config before any vault document is read, and the caller decides it. That
+    is more than the run will always reach: a ``creds`` verb skips an account
+    with nothing staged or nothing due, and only the vault says which those are.
+    A run that needs a password on some days and not on others is not one a
+    scheduler can rely on, so it is refused every time, and the operator narrows
+    it.
+
+    A ``--dry-run`` whose preview connects is refused like the real run, before
+    the plan is printed, as the ``readonly`` and ``max_targets`` refusals are.
+    ``creds apply --dry-run`` with no ``--preflight`` and no ``--strategy`` reads
+    only the vault, so its caller passes no targets and it still prints its plan.
 
     The refusal points at each target's ``admin.auth`` key, because that is the
     line to edit for a run that has to go unattended. One target's key is the
@@ -383,21 +396,18 @@ def refuse_if_nobody_to_ask(
         )
         at = auth_at(asking[0])
     else:
-        named = ", ".join(f"{one.name} ({auth_at(one)})" for one in asking[:NAMED_TARGETS])
-        if len(asking) > NAMED_TARGETS:
-            named += f", and {len(asking) - NAMED_TARGETS} more"
+        named = _named([f"{one.name} ({auth_at(one)})" for one in asking])
         message = (
             f"{action} reaches {len(asking)} targets that ask for their admin passwords "
             f"interactively, and there is nobody here to ask: {named}"
         )
         at = ROOT
+    them = "it" if len(asking) == 1 else "them"
+    narrow = f"narrow the run so it does not reach {them}, " if len(asking) < len(targets) else ""
     raise NobodyToAskError(
         message,
         at=at,
-        hint=(
-            f"nothing was changed; run it from a terminal, narrow the run with "
-            f"--target, --group or --select, or {UNATTENDED_SOURCES}"
-        ),
+        hint=f"nothing was changed; run it from a terminal, {narrow}or {UNATTENDED_SOURCES}",
     )
 
 

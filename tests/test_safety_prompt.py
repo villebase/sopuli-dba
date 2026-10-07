@@ -63,6 +63,23 @@ def test_no_terminal_and_a_prompt_target_refuses_at_exit_8() -> None:
     assert str(caught.value.at) == "targets[0].admin.auth"
 
 
+def test_the_hint_offers_narrowing_only_when_it_can_help() -> None:
+    """A run whose every target prompts cannot be narrowed out of the refusal."""
+    with pytest.raises(NobodyToAskError) as some:
+        refuse_if_nobody_to_ask(
+            [target("orders-pdb", "env"), target("billing-pdb", "prompt")],
+            None,
+            action="applying a password",
+        )
+    with pytest.raises(NobodyToAskError) as every:
+        refuse_if_nobody_to_ask(
+            [target("billing-pdb", "prompt")], None, action="applying a password"
+        )
+
+    assert "narrow the run so it does not reach it" in str(some.value)
+    assert "narrow" not in str(every.value)
+
+
 def test_every_prompt_target_is_named_up_to_the_ceiling() -> None:
     """The operator fixes them all at once, so the message names them all."""
     names = [f"appdb-{n}" for n in range(NAMED_TARGETS + 2)]

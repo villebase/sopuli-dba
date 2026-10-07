@@ -132,7 +132,8 @@ class NobodyToAskError(AdminCredentialError):
     The exit code reaches the process only from a verb that changes something:
     :func:`~sopuli.safety.refuse_if_nobody_to_ask` raises it before the run
     connects (decision #481). A verb that only reads reports it as one target's
-    finding, and the run exits 1.
+    finding, and the run exits 1. ``creds generate`` reads targets only for their
+    password limits, and treats it as a caveat.
     """
 
     exit_code = ExitCode.ABORTED

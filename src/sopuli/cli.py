@@ -5682,10 +5682,11 @@ def creds_apply(
         config, intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
     # A dry run connects only for the pre-flight; without one it reads the vault.
     connects = not run.dry_run or strategy is not None or preflight_all
     refuse_if_nobody_to_ask(
-        _mastered_targets(config) if connects else [], run.prompt, action="applying a password"
+        _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
     )
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535), as in `creds check`: nothing here
@@ -5698,7 +5699,6 @@ def creds_apply(
     # about.
     _confirm_environments(plan, run, action="applying a password", confirmed=confirm, noun="apply")
 
-    bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
         return "\n".join(
@@ -8243,8 +8243,9 @@ def creds_finish_rollover(
     refuse_if_readonly(run.resolved, action="ending a rollover window", estate=config)
     plan = plan_builder.build(config, intent=["verify", "rollover_finish"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="ending a rollover window")
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
     refuse_if_nobody_to_ask(
-        _mastered_targets(config), run.prompt, action="ending a rollover window"
+        _targets_of(config, bindings), run.prompt, action="ending a rollover window"
     )
     document.plan = plan.as_json()
     # The one verb here whose purpose is to stop something working, so the gate
@@ -8254,7 +8255,6 @@ def creds_finish_rollover(
         plan, run, action="ending a rollover window", confirmed=confirm, noun="window"
     )
 
-    bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="window") + "\n\nnothing to end"
@@ -8668,13 +8668,13 @@ def creds_rotate(
         ],
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
-    refuse_if_nobody_to_ask(_mastered_targets(config), run.prompt, action="rotating a password")
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    refuse_if_nobody_to_ask(_targets_of(config, bindings), run.prompt, action="rotating a password")
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535).
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
 
-    bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="rotation") + "\n\nnothing to rotate"
@@ -9399,14 +9399,10 @@ def _expanded(config: Config, name: str) -> ExpandedTarget:
     return next(one for one in config.expanded_targets if one.name == name)
 
 
-def _mastered_targets(config: Config) -> list[ExpandedTarget]:
-    """The targets a `creds` verb may connect to: those with a vault-mastered account.
-
-    A binding with no ``secret`` is skipped by every `creds` verb before it
-    connects, so a target that has only those is never reached.
-    """
-    mastered = {binding.target for binding in config.bindings if binding.secret is not None}
-    return [one for one in config.expanded_targets if one.name in mastered]
+def _targets_of(config: Config, bindings: Sequence[Binding]) -> list[ExpandedTarget]:
+    """The targets ``bindings`` are on, in the config's order."""
+    named = {binding.target for binding in bindings}
+    return [one for one in config.expanded_targets if one.name in named]
 
 
 def _survey_target(

@@ -1576,8 +1576,8 @@ the register.
 - **Decided:** 2026-10-07, #481
 - **Question:** `auth: prompt` with no terminal was meant to exit 8, and every
   verb reported it as one target's finding and exited 1. Where does the run stop?
-- **Decision:** A verb that changes something checks the targets it will connect
-  to before it connects. If any of them would ask for a password and stdin is
+- **Decision:** A verb that changes something checks every target it may connect
+  to, judged from the config, before it reads the vault or connects. If any of them would ask for a password and stdin is
   not a terminal, the whole run is refused at exit 8, and the message names
   those targets. A `--dry-run` is refused when its preview connects, and
   `creds apply --dry-run` without `--preflight` or `--strategy` does not. A verb that only reads, such as `doctor`,
@@ -1593,6 +1593,9 @@ the register.
     that asks, which is the opposite of what it is for.
   - Exit 8 only when every selected target was refused: a scheduler cannot write
     a reliable branch on an exit code that depends on a count.
+  - Check only the targets with something staged or due: that needs the vault
+    read first, and the same scheduled run would pass on some days and fail on
+    others.
 
 ## #525
 

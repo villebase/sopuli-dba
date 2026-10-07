@@ -97,7 +97,7 @@ PASSWORD_ROLLOVER = "password_rollover"
 
 #: A password can be verified against a stored hash without a login attempt.
 #: Oracle: needs the optional ``SELECT ON SYS.USER$`` grant, which is **not**
-#: part of the default install (P2). It gates ``--method hash`` and ``both``,
+#: part of the default install (decision P2). It gates ``--method hash`` and ``both``,
 #: UC-1 §7's ``LCOUNT`` guard, and the ``PTIME`` fallback.
 OFFLINE_VERIFY = "offline_verify"
 
@@ -574,7 +574,7 @@ class UserState:
       guessing would be all cost. Saying *why* there is nothing is
       :attr:`password_changed_unknown`.
     * ``failed_logins`` -- ``None`` where ``SELECT ON SYS.USER$`` was not
-      granted, which is the default (P2). The ``LCOUNT`` guard is then
+      granted, which is the default (decision P2). The ``LCOUNT`` guard is then
       unavailable and `check` must say so plainly rather than run a weaker
       version of it silently.
     * ``vendor_maintained`` -- ``None`` on 11.2, where the column does not

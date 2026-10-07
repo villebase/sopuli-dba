@@ -80,11 +80,10 @@ def _build_prefix(block: dict[str, Any], *, at: KeyPath) -> str:
     **A traversal segment is refused here rather than normalised**, with a
     located message, which is :func:`~sopuli.config.secret_refs.parse_secret_ref`'s
     arrangement applied to the one other place a file names a store path
-    (decision #344). The
-    backstop in ``normalise_path`` raises a bare :class:`ValueError`, and a config
-    file is entitled to be told which key is wrong; more to the point, a ``..`` under
-    a prefix walks out of it, and what it would walk into here is whatever else the
-    estate keeps in that store.
+    (decision #344). The backstop in ``normalise_path`` raises a bare
+    :class:`ValueError`, and a config file is entitled to be told which key is
+    wrong; more to the point, a ``..`` under a prefix walks out of it, and what it
+    would walk into here is whatever else the estate keeps in that store.
     """
     where = at.key("prefix")
     if "prefix" not in block:

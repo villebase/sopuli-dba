@@ -447,9 +447,9 @@ def _patch_target(
 
     **That last paragraph holds only while the template and the override are two
     things the ratchet can see** (decision #424). Merged here they become one
-    target-layer value, and a run narrowed to the patched target has nothing left to be safest
-    *of* -- a `readonly: false` in an override would simply win. So the
-    template's block is kept on
+    target-layer value, and a run narrowed to the patched target has nothing left
+    to be safest *of* -- a `readonly: false` in an override would simply win. So
+    the template's block is kept on
     :attr:`~sopuli.config.model.ExpandedTarget.template_safety` and both reach
     the resolver, which is what makes the claim structural rather than merely
     stated.

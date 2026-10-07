@@ -149,8 +149,8 @@ def read_method(
     a vault's material is a MaterialRef, a target's ``admin.auth.secret`` is a
     SecretRef, and an identity field such as ``role`` is written inline. A sentence
     fixed here would be wrong for one of those positions. A message such as
-    "required for this method: role_id, secret_id" would be wrong for
-    all of them, because it repeated the message instead of answering it.
+    "required for this method: role_id, secret_id" is wrong for all of them,
+    because it repeats the message instead of answering it.
 
     It returns a predicate **without its verb** -- "named, not written -- ``{ env:
     NAME }``" rather than "is named" -- because :func:`_explain` groups the keys

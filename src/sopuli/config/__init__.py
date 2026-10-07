@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Final
 #: one is a name that silently stops being exported.
 #: ``tests/config/test_package_exports.py`` holds it to ``__all__`` in both
 #: directions and checks every name resolves to the same object the submodule
-#: holds, so this cannot drift from ``__all__``.
+#: holds, so the table cannot drift from the submodules.
 _EXPORTS: Final[dict[str, str]] = {
     "AT_SELECT": "selection",
     "AccountPolicy": "model",

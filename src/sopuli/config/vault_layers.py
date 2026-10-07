@@ -293,8 +293,7 @@ def _resolve_key(
 
     **The answer is renamed to the concrete store on the way out**
     (decision #428). :func:`setting_name` is what the registry has to be asked
-    with --
-    ``vaults.*.tls.verify``, for the reason its own docstring gives -- and it is
+    with -- ``vaults.*.tls.verify``, for the reason its own docstring gives -- and it is
     not what a reader can be told: the ``*`` stands for every store at once and is
     not a key anybody can edit. Two things quote the name back.
     :func:`~sopuli.settings.ratchet_note` puts it in the sentence a defeated

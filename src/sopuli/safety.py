@@ -28,9 +28,10 @@ what differs is exactly those two class attributes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from sopuli.admin import UNATTENDED_SOURCES, NobodyToAskError, Prompter, needs_prompt
 from sopuli.config.errors import ConfigError
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Config, ExpandedTarget
@@ -337,6 +338,50 @@ def refuse_if_over_limit(
             f"set at {answer.location}; no layer can raise it (invariant 10) -- "
             f"narrow the run with --select, --target or --group, or raise the "
             f"ceiling where it is written"
+        ),
+    )
+
+
+def refuse_if_nobody_to_ask(
+    targets: Sequence[ExpandedTarget], prompt: Prompter | None, *, action: str
+) -> None:
+    """Stop a mutating command that would ask for a password nobody can type.
+
+    ``prompt`` is ``None`` when stdin is not a terminal
+    (:func:`~sopuli.invocation.terminal_prompter`). A target with
+    ``auth: prompt`` then cannot be reached, and every run that reaches it fails
+    on it. Invariant 4 says such a run says so before it touches anything, so
+    this asks :func:`~sopuli.admin.needs_prompt` over the selected targets
+    first. Without it, a run would change the targets it can reach and then fail
+    on the one it cannot, and a rollover left half applied is one that cannot be
+    promoted (invariant 7).
+
+    **Only the mutating verbs call this** (decision #481). A verb that only reads,
+    such as ``doctor`` or ``creds check``, keeps going past a target it cannot
+    reach and reports it, because one target nobody can reach must not hide what
+    the others say.
+
+    **This refuses a ``--dry-run`` too**, because the preview connects to every
+    target it describes and so needs the same password.
+    """
+    if prompt is not None:
+        return
+    asking = [target.name for target in targets if needs_prompt(target)]
+    if not asking:
+        return
+    named = ", ".join(asking[:NAMED_TARGETS])
+    if len(asking) > NAMED_TARGETS:
+        named += f", and {len(asking) - NAMED_TARGETS} more"
+    which = (
+        "a target that asks for its admin password"
+        if len(asking) == 1
+        else f"{len(asking)} targets that ask for their admin passwords"
+    )
+    raise NobodyToAskError(
+        f"{action} reaches {which} interactively ({named}), and there is nobody here to ask",
+        hint=(
+            f"nothing was changed; run it from a terminal, narrow the run with "
+            f"--target, --group or --select, or {UNATTENDED_SOURCES}"
         ),
     )
 

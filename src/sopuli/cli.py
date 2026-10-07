@@ -289,6 +289,7 @@ from sopuli.safety import (
     confirmation_demanded,
     for_estate,
     refuse_disallowed_method,
+    refuse_if_nobody_to_ask,
     refuse_if_over_limit,
     refuse_if_readonly,
     refuse_unconfirmed,
@@ -1330,6 +1331,7 @@ def account_suspend(
         config, [(account, target.name) for target in reached], intent=["account_lock"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    refuse_if_nobody_to_ask(reached, run.prompt, action=action)
     document.plan = plan.as_json()
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
@@ -1607,6 +1609,7 @@ def account_expire_password(
         config, [(account, target.name) for target in reached], intent=[PASSWORD_EXPIRE]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    refuse_if_nobody_to_ask(reached, run.prompt, action=action)
     document.plan = plan.as_json()
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
@@ -1959,6 +1962,7 @@ def account_reset_password(
         intent=_reset_intent(),
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    refuse_if_nobody_to_ask(reached, run.prompt, action=action)
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535). A seen reset reaches them only as
     # a `--dry-run`: the real one is refused under every machine format above,
@@ -5678,6 +5682,7 @@ def creds_apply(
         config, intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
+    refuse_if_nobody_to_ask(_bound_targets(config), run.prompt, action="applying a password")
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535), as in `creds check`: nothing here
     # branches on the mode.
@@ -8234,6 +8239,7 @@ def creds_finish_rollover(
     refuse_if_readonly(run.resolved, action="ending a rollover window", estate=config)
     plan = plan_builder.build(config, intent=["verify", "rollover_finish"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="ending a rollover window")
+    refuse_if_nobody_to_ask(_bound_targets(config), run.prompt, action="ending a rollover window")
     document.plan = plan.as_json()
     # The one verb here whose purpose is to stop something working, so the gate
     # is if anything more apt: closing a window early is what takes the old
@@ -8656,6 +8662,7 @@ def creds_rotate(
         ],
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
+    refuse_if_nobody_to_ask(_bound_targets(config), run.prompt, action="rotating a password")
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535).
     emitter = run.emitter()
@@ -9384,6 +9391,12 @@ class _Surveyed:
 
 def _expanded(config: Config, name: str) -> ExpandedTarget:
     return next(one for one in config.expanded_targets if one.name == name)
+
+
+def _bound_targets(config: Config) -> list[ExpandedTarget]:
+    """The targets a `creds` verb connects to: those with an account bound to them."""
+    bound = {binding.target for binding in config.bindings}
+    return [one for one in config.expanded_targets if one.name in bound]
 
 
 def _survey_target(

@@ -83,6 +83,13 @@ RefReader = Callable[[SecretRef], Secret]
 #: :class:`PasswordPrompt`.
 Prompter = Callable[[ExpandedTarget, "str | None"], Secret]
 
+#: The admin credential sources that need nobody at a terminal, for a hint.
+UNATTENDED_SOURCES = (
+    "name a source that needs no one: "
+    "`auth: { method: vault, secret: … }`, `auth: { method: env }` "
+    f"reading ${ADMIN_PASSWORD_ENV}, or `auth: external` with a wallet"
+)
+
 #: Shows a line and reads a password without echoing it. Returns a ``str``, and
 #: that is deliberate: :func:`getpass.getpass` is the obvious implementation and
 #: this makes it usable *as it is*, with :class:`PasswordPrompt` wrapping the
@@ -121,6 +128,11 @@ class NobodyToAskError(AdminCredentialError):
     right, and the run stopped because it needed a human and there was not one.
     A scheduler branching on 9 would send somebody to look at a config file that
     has nothing wrong with it.
+
+    The exit code reaches the process only from a verb that changes something:
+    :func:`~sopuli.safety.refuse_if_nobody_to_ask` raises it before the run
+    connects (decision #481). A verb that only reads reports it as one target's
+    finding, and the run exits 1.
     """
 
     exit_code = ExitCode.ABORTED
@@ -336,7 +348,8 @@ def needs_prompt(target: ExpandedTarget) -> bool:
 
     :func:`resolve` refuses on the same condition rather than trusting the plan
     to have asked, because the guard that must not be forgotten is the one
-    nearest the pipe. TODO(#481): the plan phase does not call this.
+    nearest the pipe. The plan-phase caller is
+    :func:`~sopuli.safety.refuse_if_nobody_to_ask`.
     """
     auth = _auth(target)
     return auth is not None and auth.method == PROMPT
@@ -416,11 +429,7 @@ def _from_prompt(
             f"target {target.name!r} asks for its admin password interactively, "
             f"and there is nobody here to ask",
             at=_at(target, "auth"),
-            hint=(
-                f"run it from a terminal, or name a source that needs no one: "
-                f"`auth: {{ method: vault, secret: … }}`, `auth: {{ method: env }}` "
-                f"reading ${ADMIN_PASSWORD_ENV}, or `auth: external` with a wallet"
-            ),
+            hint=f"run it from a terminal, or {UNATTENDED_SOURCES}",
         )
     return prompt(target, username), "an interactive prompt"
 

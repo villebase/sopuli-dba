@@ -3,7 +3,7 @@
 UC-1's vault payload answers three questions at once -- when a password last
 changed, what to roll back to, and where the lock lives -- because the payload
 *is* the secret and all three are facts about it. UC-2 has no payload, and H2
-split the three apart: the **database** answers *when*, **nothing**
+splits the three apart: the **database** answers *when*, **nothing**
 answers *what to roll back to* because rollback is not a UC-2 operation, and this
 block says where the record that answers *who, which path and where delivered*
 lives.

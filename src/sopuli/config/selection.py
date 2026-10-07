@@ -47,7 +47,7 @@ KEY_SEPARATOR = "="
 #:
 #: That location is also why these raise `ArgumentError` rather than a plain
 #: `ConfigError`: nothing is wrong with any file, so the exit code is 2 and there
-#: is no run document (J7, issue #8). The message shape is identical.
+#: is no run document (J7). The message shape is identical.
 AT_SELECT = ROOT.key("--select")
 
 

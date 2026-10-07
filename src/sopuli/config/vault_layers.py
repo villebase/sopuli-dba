@@ -168,15 +168,15 @@ def _merge(
     """One store, resolved key by key. Returns it and any defeated relaxation.
 
     **Every store goes through the resolver, including one nobody patched**
-    (decision #428). A single contribution resolves to itself, so the *value* is
-    the same either way. The resolver keeps the provenance too, and a store with
-    no layers has provenance worth reporting:
+    (decision #428). A single contribution resolves to itself, so skipping the
+    resolver for that store would give the same *value*. It would lose the
+    provenance, and a store with no layers has provenance worth reporting:
     ``[vaults.vault-dev.addr]`` is the answer "the file wrote it, here", and it is
     only distinguishable from "nobody wrote it" because the pair exists.
 
-    :attr:`~sopuli.config.model.Vault.patched` is unaffected either way. It names
+    :attr:`~sopuli.config.model.Vault.patched` does not depend on this. It names
     the keys some *other* layer supplied, which is the ``layer is not OBJECT``
-    test below rather than anything the early return was guarding.
+    test below.
     """
     values: dict[str, Any] = {}
     patched: list[str] = []
@@ -293,8 +293,8 @@ def _resolve_key(
 
     **The answer is renamed to the concrete store on the way out**
     (decision #428). :func:`setting_name` is what the registry has to be asked
-    with -- ``vaults.*.tls.verify``, for the reason its own docstring gives -- and it is
-    not what a reader can be told: the ``*`` stands for every store at once and is
+    with -- ``vaults.*.tls.verify``, for the reason its own docstring gives --
+    and it is not what a reader can be told: the ``*`` stands for every store at once and is
     not a key anybody can edit. Two things quote the name back.
     :func:`~sopuli.settings.ratchet_note` puts it in the sentence a defeated
     ``tls.verify`` produces -- which reaches an operator twice, as a warning on

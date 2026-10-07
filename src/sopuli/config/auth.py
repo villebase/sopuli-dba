@@ -95,8 +95,7 @@ def read_material(
     webhook URL is a MaterialRef for C9's reason -- it embeds its own
     credential -- and telling somebody who pasted a chat URL that "auth material is
     named, not written here", with `SOPULI_VAULT_SECRET_ID` as the example, answers
-    a question they did not ask. Both default to what every auth caller already
-    said, so the defaults are the existing behaviour rather than a new one.
+    a question they did not ask. Both default to the wording auth callers use.
     """
     if isinstance(raw, str | int | float):
         raise ConfigError(

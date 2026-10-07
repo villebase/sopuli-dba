@@ -10,7 +10,7 @@ one document:
 
 * **``targets``** -- who receives this password. One secret backing three PDBs
   means rotating it changes what three databases' applications read, whether or
-  not all three were selected. This is UC-1 §4's original case.
+  not all three were selected. This is the case UC-1 §4 describes.
 * **``accounts``** -- whose credentials share the document. Q7 makes one
   secret per application the documented default: a write to
   ``acme_orders_user`` lands in the document ``acme_batch_user`` reads.
@@ -139,9 +139,9 @@ def shared_secrets(bindings: Iterable[Binding]) -> tuple[SharedSecret, ...]:
 # --------------------------------------------------- when sharing goes wrong ---
 #
 # Everything above reports sharing. This reports the one shape of it that cannot
-# work, and it is here rather than beside `stage_layout` because
-# it is a property of the *set* of bindings for one document, and nothing
-# that looks at one ref at a time can see it.
+# work, and it is here rather than beside `stage_layout` because it is a property
+# of the *set* of bindings for one document, and nothing that looks at one ref at
+# a time can see it.
 
 #: The remedy, phrased once. Both callers -- the load-time refusal in
 #: :mod:`sopuli.config.bindings` and the write-time guard in

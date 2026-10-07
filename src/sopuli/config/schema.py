@@ -467,9 +467,9 @@ def _vault_patches() -> Schema:
         "description": (
             "Settings *of* stores declared at the top level, keyed by name. `vault:` "
             "is always a store name and never a block, so a layer that wants to say "
-            "something about a store names it here (C13). The "
-            "entries are partial: they patch a declaration rather than making one, and "
-            "a name not declared under the top-level `vaults:` is an error. Under "
+            "something about a store names it here (C13). The entries are partial: they "
+            "patch a declaration rather than making one, and a name not declared under "
+            "the top-level `vaults:` is an error. Under "
             "`defaults:` this is precedence layer 5, so it is outranked by the "
             "declaration; in a profile it is layer 3, so it outranks it (P3)."
         ),

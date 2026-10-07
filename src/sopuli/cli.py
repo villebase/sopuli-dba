@@ -761,7 +761,8 @@ def doctor(
     point is to survey an estate and say which parts of it are unwell, so one
     unreachable database must not end the run before the next target is tried.
     Each failure lands in its own ``targets[]`` entry with the vendor code and
-    the server's own message. Any unreachable target fails the run, at exit 1.
+    the server's own message. An unreachable target fails the run at exit 1,
+    unless a configured driver or backend is missing, which is exit 9 (below).
 
     **Install shape is reported on every run, not only when it is wrong**
     (ADR-006 E6). Which backends and drivers this build can serve, which the

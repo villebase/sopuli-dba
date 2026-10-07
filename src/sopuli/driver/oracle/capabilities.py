@@ -4,26 +4,26 @@ Invariant 3, made real: **ask the database, cache per session, branch on the
 capability.** Nothing here reads a version from a file, and nothing here is
 reachable from a command that has not connected.
 
-Two things about this module are decisions rather than mechanics, and both rest
-on a measurement (decision #195).
+Two things about this module are decisions rather than mechanics.
 
 **A probe that fails is not automatically a "no".** Reading *any* exception as
 absent is tempting, because a missing view, a missing column and a missing grant
 all mean the same thing to a caller. They do. That rule would also swallow
 ``ORA-02003: invalid USERENV attribute`` -- a probe asking a question Oracle does
-not have -- and report ``container_scope`` absent on every database, including
-the ones where it is plainly present, looking exactly like a measurement. So the
+not have -- and report the capability absent on every database, including the
+ones where it is present, looking exactly like a measurement (decision #195,
+measured on 26ai 23.26.2.0.0). So the
 negative answers are enumerated (:data:`ABSENT_CODES`) and everything else is
 :class:`ProbeError`. The tool refuses rather than guesses, which is CLAUDE.md's
 rule.
 
 **One question per capability, several round trips.** The probe set is many
-statements, not one, and not reluctantly: each answer is
-attributable to the question that produced it, a probe that fails names itself,
-and the alternative is a single ``select`` whose seventh column silently becomes
-``null`` on the release nobody tested. A session opens once and answers eight
-short questions against ``dual`` and two dictionary views; the cost is not
-measurable next to the connection itself.
+statements, not one, and not reluctantly: each answer is attributable to the
+question that produced it, a probe that fails names itself, and the alternative
+is a single ``select`` whose seventh column silently becomes ``null`` on the
+release nobody tested. A session opens once and answers eight short questions
+against ``dual`` and two dictionary views; the cost is not measurable next to
+the connection itself.
 
 **Nothing here imports ``oracledb``.** The SQL, the reading of an answer and the
 mapping onto a :class:`~sopuli.driver.protocol.Scope` are pure, so they are
@@ -91,7 +91,7 @@ class ProbeError(DriverError):
 #: * ``ORA-00904`` -- the column is not there, which is how a feature added in a
 #:   later release announces itself to a query written for it.
 #: * ``ORA-01031`` -- the privilege is not held. `offline_verify` is the case
-#:   this exists for: ``SELECT ON SYS.USER$`` is an optional grant (P2), so its
+#:   this exists for: ``SELECT ON SYS.USER$`` is an optional grant (decision P2), so its
 #:   absence is the ordinary configuration rather than a fault.
 #: * ``ORA-41900`` -- the ``READ`` privilege is not held, which is what a modern
 #:   release says instead of ``ORA-00942`` when the asker is privileged enough to
@@ -109,7 +109,7 @@ ABSENT_CODES = frozenset({"ORA-00942", "ORA-00904", "ORA-01031", "ORA-41900"})
 #: One question per capability, each answering with a truthy first column.
 #:
 #: ``common_users`` is the one worth reading twice, because it asks about a
-#: **privilege** and not about a place. Measured on 26ai (decision #195): an account
+#: **privilege** and not about a place. Measured on 26ai 23.26.2.0.0 (decision #195): an account
 #: holding ``ALTER USER`` commonly reads 1 here and successfully alters a common
 #: user from the root; an account holding the identical privilege *locally* reads
 #: 0 and gets ``ORA-01031`` for the same statement. Where the session is standing

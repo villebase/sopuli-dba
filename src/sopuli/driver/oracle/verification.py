@@ -126,7 +126,7 @@ def margin_reason(
     * **``UNLIMITED``** -- there is no lockout on this profile, so there is
       nothing to protect and the attempt goes ahead.
     * **``failed_logins is None``** -- ``SELECT ON SYS.USER$`` was never granted
-      (an optional grant, P2), so the guard is *unavailable*. The attempt still
+      (an optional grant, decision P2), so the guard is *unavailable*. The attempt still
       goes ahead, because `check` runs without a site-specific grant -- but the
       caller is expected to say so plainly rather than let an absent guard look
       like a satisfied one.

@@ -7,8 +7,9 @@ and the tool should notice rather than quietly benefit from it.
 
 **This reports; it does not enforce.** The refusal is
 :mod:`sopuli.driver.guardrails`, §4 is the guardrail set, and neither is here.
-P5 decides that ``doctor`` **warns** and does not fail: failing would block somebody mid-incident
-over a condition they did not create and cannot fix from this side.
+``doctor`` **warns** and does not fail (decision P5): failing would block
+somebody mid-incident over a condition they did not create and cannot fix from
+this side.
 
 ## It is self-inspection, and that is what makes it possible
 
@@ -47,12 +48,12 @@ dropped one of its rows would read as a clean audit. The same applies to a view
 that raises: "I looked and found nothing" and "I could not look" are answers a
 report must never merge.
 
-``SYSDBA`` and ``SYSOPER`` are the other two, and are answered wherever the
-estate lets them be. They live in ``V$PWFILE_USERS``, which §2 makes
-an **optional** grant (§2) rather than one it never gives — so the question
-is asked, and the rows join :data:`UNAUDITABLE` only where the answer came back
-absent. Saying *I could not look* about something it could have read is the merge this
-module exists to refuse, seen from the other side.
+The ``SYSDBA`` and ``SYSOPER`` rows of §3 are answered wherever the estate lets
+them be. They live in ``V$PWFILE_USERS``, which §2 makes an **optional** grant
+rather than one it never gives -- so the question is asked, and the rows join
+:data:`UNAUDITABLE` only where the answer came back absent. Saying *I could not
+look* about something the tool could have read is the merge this module exists
+to refuse, seen from the other side.
 """
 
 from __future__ import annotations
@@ -429,7 +430,7 @@ def _common_privileges(cursor: Any) -> frozenset[str]:
     common" is the true answer. :func:`classify` then treats it exactly as it
     treats a PDB whose grants are all local.
 
-    ``USER_SYS_PRIVS.COMMON`` exists from multitenant in 12.1. On 11.2 the
+    ``USER_SYS_PRIVS.COMMON`` came with multitenant, in 12.1. On 11.2 the
     column does not exist and this query is ``ORA-00904`` -- measured on 11g XE
     11.2.0.2.0. An unhandled ``ORA-00904`` would take the whole of
     `doctor --check-privileges` down with it. The audit is three reads per target

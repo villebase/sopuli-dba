@@ -52,10 +52,10 @@ safety report must never merge, which is what
 
 ### `--force` overrides 2 to 5, and never 1
 
-P3 decides this. `DBSNMP` is the case it exists for: rotating its password is
-ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no override does
-not prevent that rotation — it moves it to SQL\\*Plus, where nothing records that
-it happened. An audited override is the better failure.
+This is decision P3 in ``docs/decisions/log.md``. `DBSNMP` is the case it exists
+for: rotating its password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a
+tool with no override does not prevent that rotation — it moves it to SQL\\*Plus,
+where nothing records that it happened. An audited override is the better failure.
 
 **It takes two deliberate acts, not one.** `--force` alone will not rotate
 `DBSNMP`: check 1 still applies, so the account has to be declared in
@@ -185,13 +185,13 @@ class Refusal:
 class Caveat:
     """One check that could not be run, on an account nothing refused.
 
-    The third answer :class:`Review` carries. It is a type rather than a ``None``
-    somewhere because "I looked and found nothing" and "I could not look" are
-    answers a safety report must never merge --
-    :mod:`sopuli.driver.oracle.privileges` says so about ``SYSDBA`` in the
-    privilege audit, and guardrail 3 would make exactly that merge one layer
-    down. A check with no input reads as a pass, and a pass is what a guardrail
-    is there not to give away by accident.
+    A :class:`Review` carries three answers: refused, passed, and this one, *could
+    not check*. It is a type rather than a ``None`` somewhere because "I looked and
+    found nothing" and "I could not look" are answers a safety report must never
+    merge -- :mod:`sopuli.driver.oracle.privileges` says so about ``SYSDBA`` in the
+    privilege audit, and guardrail 3 would make exactly that merge one layer down. A
+    check with no input reads as a pass, and a pass is what a guardrail is there not
+    to give away by accident.
 
     **A caveat does not refuse**, and that is the decision rather than a
     consequence of where the field sits. Check 3's input is ``V$PWFILE_USERS``,

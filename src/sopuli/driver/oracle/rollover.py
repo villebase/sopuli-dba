@@ -34,9 +34,9 @@ views were searched for a column named for rollover and there is none;
 admits to it. So :func:`window_end` **derives** the value from two that were
 read -- the password change date and the profile's rollover time -- and it is
 the one field in :class:`~sopuli.driver.protocol.UserState` that is computed
-rather than reported. ``null`` would be a worse answer than Oracle's own documented arithmetic over
-two measured inputs. It is
-populated **only while a window is actually open**, since ending one early
+rather than reported. Reporting ``null`` instead would be a worse answer than
+Oracle's own documented arithmetic over two measured inputs. It is populated
+**only while a window is actually open**, since ending one early
 leaves the change date untouched and the derivation pointing into a future that
 no longer applies.
 """

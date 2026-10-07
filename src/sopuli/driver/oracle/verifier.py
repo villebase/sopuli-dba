@@ -8,8 +8,8 @@ and a locked account can be compared as readily as an open one.
 
 The derivation is ported from ``sql/oracle/06_verifier_reproduce.py``, the
 evidence behind ``02-oracle-privileges.md`` §2, and nothing about it is guessed.
-It reproduced byte-for-byte on 26ai, 21c, 18c, 19.3.0.0.0, 12.2.0.1.0 and
-19.32.0.0.0. 12.1 is unread::
+The releases on which it reproduced byte-for-byte are the
+``06_verifier_reproduce.sql`` rows of ``docs/measurements.md``. 12.1 is unread::
 
     salt   = the last 16 bytes of the T: blob (its 32 trailing hex characters)
     inter  = PBKDF2-HMAC-SHA512(password_utf8, salt || b"AUTH_PBKDF2_SPEEDY_KEY", 4096, 64)
@@ -22,7 +22,7 @@ is :data:`NO_VERIFIER` rather than a comparison against something else.
 
 **Two 12C verifiers mean a rollover window.** During one, ``SPARE4`` carries
 ``T:`` for the *previous* password and ``t:`` for the *current* one, sharing a
-salt (on a real 19.12+, shown by 19.32). Outside a window there is one,
+salt (measured on 26ai 23.26.2.0.0 and 19.32.0.0.0). Outside a window there is one,
 ``T:``, and it is current. :func:`compare` says which one the password
 reproduced, because that is the thing a login cannot tell: during a window both
 passwords authenticate.

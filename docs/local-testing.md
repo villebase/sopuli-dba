@@ -3,12 +3,12 @@
 This guide sets up the local test stack and runs the usual commands against it.
 You see each command succeed, and a few of them refuse on purpose.
 
-Every sample was run between 2026-10-05 and 2026-10-07 on Windows 11, with sopuli 0.69.0, Instant
-Client 23.26.3.0.0, and the `tier1` container stack (Oracle 26ai Free and Vault).
-Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
-marks the cut. The tokens and passwords the runs printed are replaced with
-`<TOKEN>` and `<PASSWORD>`, and the local user and host name with
-`op@ws1.example.com`. Nothing else is edited.
+Every sample was run between 2026-10-05 and 2026-10-07 on Windows 11, with
+sopuli 0.69.0, Instant Client 23.26.3.0.0, and the `tier1` container stack
+(Oracle 26ai Free and Vault). Commands are written for Git Bash or WSL. Where a
+sample was shortened, `...` marks the cut. The tokens and passwords the runs
+printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
+host name with `op@ws1.example.com`. Nothing else is edited.
 
 Other places to read:
 
@@ -409,6 +409,10 @@ targets:
     oracle: { scope: pdb, container: FREEPDB1 }
 ```
 
+The prompt needs a console. On Windows, run it in PowerShell, in Windows
+Terminal or in WSL. The default Git Bash window is not a console, so there the
+run does not ask.
+
 Run `doctor` and type `sopuli-test` at the prompt:
 
 ```
@@ -437,7 +441,10 @@ This config declares no vault, so the `vaults` list is empty. There is no
 `SOPULI-W022` note, because the password did not come from the environment.
 
 The rest of the guide uses `sopuli.yaml`. With `auth: prompt`, every command
-asks for the password again, and a command run with no terminal refuses.
+that connects to the target asks for the password again. With no console there
+is nobody to ask: the target is reported unreachable, with the message
+`asks for its admin password interactively, and there is nobody here to ask`,
+and the run exits 1.
 
 ---
 

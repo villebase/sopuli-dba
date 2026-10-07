@@ -80,7 +80,7 @@ class ConfigError(Exception):
 
     Not exit 2. That is the *pre-invocation* code, and a config error is the
     opposite case: argv resolved, the run began, and then the file it was told to
-    read turned out to be unusable. J7 (issue #8) puts the seam exactly there, so
+    read turned out to be unusable. J7 puts the seam exactly there, so
     that this can carry a run document while a usage error cannot.
     """
 
@@ -174,7 +174,7 @@ class ArgumentError(ConfigError):
     ``click.UsageError`` is not available where the problem is found.
 
     Everything about it is a :class:`ConfigError` except the exit code, and that
-    is the whole point. J7 (issue #8) puts the seam at "did the invocation
+    is the whole point. J7 puts the seam at "did the invocation
     resolve": a malformed selector means it did not, so this exits 2 and carries
     no run document, while its parent exits 9 and does. The boundary needs no
     special case -- it already exits with ``exc.exit_code``.

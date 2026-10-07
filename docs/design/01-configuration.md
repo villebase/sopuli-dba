@@ -1213,9 +1213,12 @@ right, and the run stopped because it needed a human and there was not one;
 sending a scheduler's owner to a config file with nothing wrong with it is the
 worse message. The condition is answerable *before* anything is touched, which
 is invariant 4's shape applied to a source rather than to a capability.
-`safety.refuse_if_nobody_to_ask()` asks `needs_prompt()` over the selected
-targets before the run connects. If any target would prompt, the whole run is
-refused, `--dry-run` included, and the message names every such target. The
+`safety.refuse_if_nobody_to_ask()` asks `needs_prompt()` over the targets the
+run will connect to, before it connects. If any target would prompt, the whole
+run is refused, and the message names every such target and its `admin.auth`
+key. A `--dry-run` is refused too when its preview connects. `creds apply
+--dry-run` with no `--preflight` and no `--strategy` reads only the vault, so it
+still prints its plan. The
 verbs that call it are `creds apply`, `creds rotate`, `creds finish-rollover`,
 `account suspend`, `account expire-password` and `account reset-password`.
 `resolve()` refuses on the same condition at connect time, because the guard

@@ -1576,10 +1576,11 @@ the register.
 - **Decided:** 2026-10-07, #481
 - **Question:** `auth: prompt` with no terminal was meant to exit 8, and every
   verb reported it as one target's finding and exited 1. Where does the run stop?
-- **Decision:** A verb that changes something checks the selected targets before
-  it connects. If any of them would ask for a password and stdin is not a
-  terminal, the whole run is refused at exit 8, `--dry-run` included, and the
-  message names those targets. A verb that only reads, such as `doctor`,
+- **Decision:** A verb that changes something checks the targets it will connect
+  to before it connects. If any of them would ask for a password and stdin is
+  not a terminal, the whole run is refused at exit 8, and the message names
+  those targets. A `--dry-run` is refused when its preview connects, and
+  `creds apply --dry-run` without `--preflight` or `--strategy` does not. A verb that only reads, such as `doctor`,
   `creds check` or `creds status`, reports the target as unreachable and exits 1.
   `creds generate` is not gated: it reads the targets only for password limits,
   and a target it cannot read is already a caveat, not an error.

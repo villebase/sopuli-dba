@@ -5682,7 +5682,11 @@ def creds_apply(
         config, intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
-    refuse_if_nobody_to_ask(_bound_targets(config), run.prompt, action="applying a password")
+    # A dry run connects only for the pre-flight; without one it reads the vault.
+    connects = not run.dry_run or strategy is not None or preflight_all
+    refuse_if_nobody_to_ask(
+        _mastered_targets(config) if connects else [], run.prompt, action="applying a password"
+    )
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535), as in `creds check`: nothing here
     # branches on the mode.
@@ -8239,7 +8243,9 @@ def creds_finish_rollover(
     refuse_if_readonly(run.resolved, action="ending a rollover window", estate=config)
     plan = plan_builder.build(config, intent=["verify", "rollover_finish"])
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="ending a rollover window")
-    refuse_if_nobody_to_ask(_bound_targets(config), run.prompt, action="ending a rollover window")
+    refuse_if_nobody_to_ask(
+        _mastered_targets(config), run.prompt, action="ending a rollover window"
+    )
     document.plan = plan.as_json()
     # The one verb here whose purpose is to stop something working, so the gate
     # is if anything more apt: closing a window early is what takes the old
@@ -8662,7 +8668,7 @@ def creds_rotate(
         ],
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
-    refuse_if_nobody_to_ask(_bound_targets(config), run.prompt, action="rotating a password")
+    refuse_if_nobody_to_ask(_mastered_targets(config), run.prompt, action="rotating a password")
     document.plan = plan.as_json()
     # No-ops outside `--output jsonl` (#535).
     emitter = run.emitter()
@@ -9393,10 +9399,14 @@ def _expanded(config: Config, name: str) -> ExpandedTarget:
     return next(one for one in config.expanded_targets if one.name == name)
 
 
-def _bound_targets(config: Config) -> list[ExpandedTarget]:
-    """The targets a `creds` verb connects to: those with an account bound to them."""
-    bound = {binding.target for binding in config.bindings}
-    return [one for one in config.expanded_targets if one.name in bound]
+def _mastered_targets(config: Config) -> list[ExpandedTarget]:
+    """The targets a `creds` verb may connect to: those with a vault-mastered account.
+
+    A binding with no ``secret`` is skipped by every `creds` verb before it
+    connects, so a target that has only those is never reached.
+    """
+    mastered = {binding.target for binding in config.bindings if binding.secret is not None}
+    return [one for one in config.expanded_targets if one.name in mastered]
 
 
 def _survey_target(

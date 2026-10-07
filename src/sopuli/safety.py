@@ -31,8 +31,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from sopuli.admin import UNATTENDED_SOURCES, NobodyToAskError, Prompter, needs_prompt
-from sopuli.config.errors import ConfigError
+from sopuli.admin import UNATTENDED_SOURCES, NobodyToAskError, Prompter, auth_at, needs_prompt
+from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Config, ExpandedTarget
 from sopuli.config.selection import matches
@@ -361,24 +361,39 @@ def refuse_if_nobody_to_ask(
     reach and reports it, because one target nobody can reach must not hide what
     the others say.
 
-    **This refuses a ``--dry-run`` too**, because the preview connects to every
-    target it describes and so needs the same password.
+    **``targets`` is what the run will connect to**, and the caller decides it.
+    A ``--dry-run`` whose preview connects passes its targets and is refused
+    like the real run. ``creds apply --dry-run`` with no ``--preflight`` and no
+    ``--strategy`` reads only the vault, so it passes none and still prints its
+    plan.
+
+    The refusal points at each target's ``admin.auth`` key, because that is the
+    line to edit for a run that has to go unattended. One target's key is the
+    error's location; several are each named with theirs.
     """
     if prompt is not None:
         return
-    asking = [target.name for target in targets if needs_prompt(target)]
+    asking = [target for target in targets if needs_prompt(target)]
     if not asking:
         return
-    named = ", ".join(asking[:NAMED_TARGETS])
-    if len(asking) > NAMED_TARGETS:
-        named += f", and {len(asking) - NAMED_TARGETS} more"
-    which = (
-        "a target that asks for its admin password"
-        if len(asking) == 1
-        else f"{len(asking)} targets that ask for their admin passwords"
-    )
+    if len(asking) == 1:
+        message = (
+            f"{action} reaches target {asking[0].name!r}, which asks for its admin "
+            f"password interactively, and there is nobody here to ask"
+        )
+        at = auth_at(asking[0])
+    else:
+        named = ", ".join(f"{one.name} ({auth_at(one)})" for one in asking[:NAMED_TARGETS])
+        if len(asking) > NAMED_TARGETS:
+            named += f", and {len(asking) - NAMED_TARGETS} more"
+        message = (
+            f"{action} reaches {len(asking)} targets that ask for their admin passwords "
+            f"interactively, and there is nobody here to ask: {named}"
+        )
+        at = ROOT
     raise NobodyToAskError(
-        f"{action} reaches {which} interactively ({named}), and there is nobody here to ask",
+        message,
+        at=at,
         hint=(
             f"nothing was changed; run it from a terminal, narrow the run with "
             f"--target, --group or --select, or {UNATTENDED_SOURCES}"

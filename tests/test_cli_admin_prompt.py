@@ -496,7 +496,7 @@ delivery:
     ("verb", "body"),
     [
         (["creds", "apply"], CHECK_CONFIG),
-        (["creds", "apply", "--dry-run"], CHECK_CONFIG),
+        (["creds", "apply", "--dry-run", "--preflight"], CHECK_CONFIG),
         (["creds", "rotate"], CHECK_CONFIG),
         (["creds", "finish-rollover"], CHECK_CONFIG),
         (["account", "suspend", "--account", "acme_dev_alice"], ACCOUNT_CONFIG),
@@ -528,5 +528,29 @@ def test_a_mutating_verb_refuses_before_it_connects(
     assert isinstance(result.exception, NobodyToAskError), result.output
     assert result.exception.exit_code == ExitCode.ABORTED
     assert "appdb-alpha" in str(result.exception)
+    assert seen == []
+    assert asked == []
+
+
+def test_an_apply_preview_that_does_not_connect_is_not_refused(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    creds_estate: Callable[[], list[Credential]],
+    asked: list[str],
+    watching: Callable[[bool], None],
+) -> None:
+    """With no `--preflight` and no `--strategy`, the preview reads only the vault.
+
+    It needs no admin password, so it prints its plan with nobody at a terminal
+    (invariant 8).
+    """
+    watching(False)
+    seen = creds_estate()
+    config = write_config(CHECK_CONFIG)
+
+    result = runner.invoke(cli, ["--config", str(config), "creds", "apply", "--dry-run"])
+
+    assert result.exception is None, result.output
+    assert result.exit_code == ExitCode.SUCCESS
     assert seen == []
     assert asked == []

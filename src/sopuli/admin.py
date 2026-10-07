@@ -336,6 +336,11 @@ def store_name(
     return None if profile is None else profile.vault
 
 
+def auth_at(target: ExpandedTarget) -> KeyPath:
+    """The ``admin.auth`` key of a target: the line to edit to change its source."""
+    return _at(target, "auth")
+
+
 def needs_prompt(target: ExpandedTarget) -> bool:
     """Whether reaching this target will stop and ask for a password.
 

@@ -57,10 +57,10 @@ def test_no_terminal_and_a_prompt_target_refuses_at_exit_8() -> None:
     assert caught.value.exit_code == ExitCode.ABORTED
     assert caught.value.category == "policy"
     message = str(caught.value)
-    assert "applying a password reaches a target that asks" in message
-    assert "billing-pdb" in message
+    assert "applying a password reaches target 'billing-pdb', which asks" in message
     assert "orders-pdb" not in message
     assert "nothing was changed" in message
+    assert str(caught.value.at) == "targets[0].admin.auth"
 
 
 def test_every_prompt_target_is_named_up_to_the_ceiling() -> None:
@@ -74,6 +74,6 @@ def test_every_prompt_target_is_named_up_to_the_ceiling() -> None:
 
     message = str(caught.value)
     assert f"{NAMED_TARGETS + 2} targets that ask for their admin passwords" in message
-    assert all(name in message for name in names[:NAMED_TARGETS])
+    assert all(f"{name} (targets[0].admin.auth)" in message for name in names[:NAMED_TARGETS])
     assert names[NAMED_TARGETS] not in message
     assert "and 2 more" in message

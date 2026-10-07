@@ -257,8 +257,8 @@ is for an owner who still knows the old password.
 Disabling an account, the offboarding case, is `sopuli account suspend`. The verb
 is not `lock`, because `lock` already means something else in this CLI:
 `lock status` and `lock break`, the advisory locks on vault paths. A second sense
-of that word would give one surface two meanings. Living with that, or renaming
-the advisory-lock noun, were the other choices; naming this verb differently
+of that word would give one surface two meanings. The other choices are to live
+with that, or to rename the advisory-lock noun. Naming this verb differently
 costs nothing.
 
 **Only the verb has a different name, not the state.** `suspend` is what a DBA does to a

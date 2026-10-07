@@ -2,8 +2,8 @@
 
 What each environment is, and what to know before using it:
 
-- **tier 0 and tier 1** bring up Vault with both KV versions mounted, and Oracle
-  Free with the profiles in `oracle-init/`.
+- **tier 0** brings up Vault, with both KV versions mounted, and PostgreSQL.
+- **tier 1** adds Oracle Free, with the profiles in `oracle-init/`.
 - **21c XE** (`oracle-xe21`) is healthy in about a minute. The `oracle-init/`
   profiles are created, including `SOPULI_ROLLOVER`. **Set `AUDIT_TRAIL` before
   you believe anything about auditing on it.** The image ships `NONE`, which
@@ -151,8 +151,8 @@ without `-v`.
   [`../docs/design/04-testing.md`](../docs/design/04-testing.md) §2.
 - Oracle Free usually reaches `healthy` in **30–60 s**, because the image ships
   a pre-built database. The `start_period: 120s` is generous, not necessary.
-- `gvenzl/oracle-xe:11-slim` exists and `oracle-init/01_test_profiles.sql` runs
-  against it, so Oracle 11.2 stays in tier 2 ([T1](../docs/decisions/log.md#t1)).
+- `gvenzl/oracle-xe:11.2.0.2-slim`, the image `oracle-xe11` uses, exists and
+  `oracle-init/01_test_profiles.sql` runs against it, so Oracle 11.2 stays in tier 2 ([T1](../docs/decisions/log.md#t1)).
 
 ## What is *not* here, on purpose
 

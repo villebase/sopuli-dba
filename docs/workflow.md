@@ -105,7 +105,7 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   documented flag the CLI does not have would merge green, because every other
   lane skips on a prose-only pull request.
 
-  **The direction was measured rather than argued.** The job runs only the
+  **The direction rests on a measurement, not an argument.** The job runs only the
   tier-0 modules that read ignored files, and they take seconds. Deleting their
   paths from the prose list instead — effectively all of `docs/**` — buys the
   same safety for roughly twenty billed `ci` minutes plus ten of tier 1 on every

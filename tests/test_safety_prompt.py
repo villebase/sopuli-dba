@@ -20,7 +20,7 @@ from sopuli.secrets import Secret
 def target(name: str, method: str | None) -> ExpandedTarget:
     admin = None
     if method is not None:
-        admin = AdminCredential(username="C##SOPULI_SVC", auth=AdminAuth(method=method))  # type: ignore[arg-type]
+        admin = AdminCredential(username="C##SOPULI_SVC", auth=AdminAuth(method=method))
     return ExpandedTarget(
         target=Target(name=name, type="oracle", dsn="db.example.com:1521/orders", admin=admin),
         index=0,

@@ -298,7 +298,7 @@ class OracleSession:
 
         ``None`` is UC-1's ``ACCOUNT_MISSING`` and not an error -- the tool does
         not create accounts (Q8). The reads are all on the baseline grant set,
-        so `check` needs no site-specific privilege to run (P2).
+        so `check` needs no site-specific privilege to run (decisions P2 and Q1).
 
         One read goes further where the optional grant was made: on a release
         with no ``DBA_USERS.PASSWORD_CHANGE_DATE``, the date comes from
@@ -491,8 +491,8 @@ class OracleSession:
 
         **Never ``ALTER PROFILE``** (Q4). What moves is one account the config
         whitelists; the profile itself is left exactly as its owner wrote it. The
-        rollover check reports the ``ALTER PROFILE`` an operator would run and
-        never issues it, and this method never has cause to.
+        :mod:`sopuli.driver.oracle.rollover` check reports the ``ALTER PROFILE`` an
+        operator would run and never issues it, and this method never has cause to.
 
         **The state is read first**, which is invariant 9 here as everywhere in
         this method's neighbours: an account already on the profile is a
@@ -841,7 +841,7 @@ class OracleSession:
         Keyed on ``rollover_active`` alone, unlike :meth:`_reset_close_window`,
         which also closes where the profile merely grants a window. The reset
         needs the wider test because its own ``IDENTIFIED BY`` opens a window; a
-        bare ``PASSWORD EXPIRE`` opens none (measured; decision #525, E6), so a profile
+        bare ``PASSWORD EXPIRE`` opens none (measured; decision #525), so a profile
         that grants one with none open has nothing to close.
 
         ``rollover_active`` is read from the status, so it also catches the
@@ -868,7 +868,7 @@ class OracleSession:
 
         Read from the state taken before statement 1, which is safe: closing a
         window changes the ``IN ROLLOVER`` component and never the ``EXPIRED``
-        one (measured; decision #525, E8 and E9).
+        one (measured; decision #525).
         """
         if state.expired:
             return AccountChange(
@@ -996,7 +996,7 @@ class OracleSession:
         carried from earlier in the run is a lockout guard computing on a number
         that has moved. That is also why the state read here is
         :func:`~sopuli.driver.oracle.accounts.login_state` rather than
-        ``describe`` -- `check` needs no site-specific grant (Q1), and
+        ``describe`` -- `check` needs no site-specific grant (decisions P2 and Q1), and
         roles are a guardrail input for mutations, not for reading.
 
         Where ``SELECT ON SYS.USER$`` was never granted the guard is
@@ -1432,8 +1432,8 @@ class OracleSession:
         driver that just issued it would report ``changed: true`` for a run that
         did nothing, every time.
 
-        **Whose window it is, is not decided here.** The question has `lock
-        break`'s shape, but the shapes diverge where it matters: a lock carries a
+        **Whose window it is, is not decided here.** The question "whose window is
+        this?" has `lock break`'s shape, but the shapes diverge where it matters: a lock carries a
         record naming its holder, and a rollover window carries nothing at all --
         the database cannot say which run opened one. So the driver is the
         mechanism and reports the facts a caller needs (``rollover_active``, and

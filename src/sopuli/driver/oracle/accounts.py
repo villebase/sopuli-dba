@@ -1,7 +1,7 @@
 """Reading an account's state from the dictionary.
 
 `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and -- opportunistically --
-`V$PWFILE_USERS`: all reads, no `SYS.USER$`, which is an optional grant (P2) and
+`V$PWFILE_USERS`: all reads, no `SYS.USER$`, which is an optional grant (decision P2) and
 which nothing here touches. Three consumers want this object: UC-1 §5's pre-flight
 step 3, the client-side guardrails, and `creds status`'s inventory.
 
@@ -35,7 +35,7 @@ number. :data:`PROFILE_QUERY` resolves it in the database, and what reaches
 
 **``PASSWORD_VERIFY_FUNCTION`` reads as ``FROM ROOT`` inside a PDB**, and the
 numeric limits do not. Whether the other resources behave like the verify
-function decides whether the profile check can trust the dictionary at all.
+function decides whether :mod:`sopuli.driver.oracle.rollover` can trust the dictionary at all.
 Measured on a common profile with `CONTAINER=ALL`, read from `CDB$ROOT` and from `FREEPDB1`:
 
     resource                    root                             pdb
@@ -75,8 +75,8 @@ and on 19c it does (19.24.0.0.0) — though the server's ``ORA-00904`` is what
 decides, not a version. Decision #386: the value comes from ``SYS.USER$.PTIME``
 there, behind the optional grant, rather than going missing. That is a second
 source for one field, and it is admitted only because it is **the same clock**
-rather than an estimate of it —
-measured on 26ai, 21c, 18c and 11.2: ``PTIME`` equals
+rather than an estimate of it — measured on 23.26.2.0.0, 21.3.0.0.0, 18.4.0.0.0
+and 11.2.0.2.0 (``docs/measurements.md``): ``PTIME`` equals
 ``PASSWORD_CHANGE_DATE`` to the second where both exist, moves on ``ALTER USER
 ... IDENTIFIED BY`` where only it exists, and ``CTIME`` beside it does not move.
 See :data:`PTIME_QUERY` for the rules that keep the two from disagreeing, and
@@ -216,7 +216,7 @@ ROLES_QUERY = (
 #: that is a decision rather than an omission: the accounts check 3 catches are
 #: largely caught by checks 2 and 4 as well, and widening what every service
 #: account needs for the remainder is a poor trade. So the grant is **optional**,
-#: the way ``SELECT ON SYS.USER$`` is (P2), and the answer here is three-valued:
+#: the way ``SELECT ON SYS.USER$`` is (decision P2), and the answer here is three-valued:
 #: a member, not a member, or *nobody looked*.
 #:
 #: ``count(*)`` rather than selecting the row, because the question is membership
@@ -305,7 +305,7 @@ ACCOUNTS_WITH_ROLE_QUERY = (
 )
 
 #: Consecutive failed logins, behind the optional ``SELECT ON SYS.USER$`` grant
-#: (P2). Gated on the ``offline_verify`` capability, which gates this and
+#: (decision P2). Gated on the ``offline_verify`` capability, which gates this and
 #: :data:`PTIME_QUERY` in this build and nothing else.
 #:
 #: Read immediately before an attempt and never cached: it changes with every
@@ -405,8 +405,8 @@ def deliberately_locked(status: str) -> bool:
     string is wrong the other way -- the status compounds, so a deliberately
     locked account can read ``EXPIRED & LOCKED``, ``LOCKED & IN ROLLOVER`` or
     ``EXPIRED & LOCKED & IN ROLLOVER``. Splitting on the separator answers both,
-    which is the lesson of ``EXPIRED(GRACE)``, read as a hard expiry by a
-    substring test.
+    as it does for :attr:`~sopuli.driver.protocol.UserState.expired`, where a
+    substring test would read ``EXPIRED(GRACE)`` as a hard expiry.
     """
     return LOCKED in {part.strip().upper() for part in status.split(STATUS_SEPARATOR)}
 
@@ -526,7 +526,7 @@ def describe(cursor: Cursor, account: str, *, user_dollar: bool = False) -> User
 def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> UserState | None:
     """The account without its roles, for the callers that must not need them.
 
-    `creds check` is the caller. It needs no site-specific grant to run (Q1),
+    `creds check` is the caller. It needs no site-specific grant to run (decisions P2 and Q1),
     and reading roles is a *guardrail* input consulted before a mutation -- so
     making a read-only command depend on `DBA_ROLE_PRIVS` would widen what
     `check` requires for a reason that has nothing to do with checking.
@@ -567,10 +567,10 @@ def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> U
         password_expires_at=_expires_at(row),
         failed_login_limit=limits.get(FAILED_LOGIN_ATTEMPTS),
         # Carried rather than discarded, because one query already resolved
-        # them: the rollover check reads the rollover time at plan time, and UC-1 §4's bounded
-        # regeneration exists because of the reuse policy. Reading them again
-        # from a second, uncoordinated query would be a second chance to
-        # disagree about the same profile.
+        # them: `sopuli.driver.oracle.rollover` reads the rollover time at plan
+        # time, and UC-1 §4's bounded regeneration exists because of the reuse
+        # policy. Reading them again from a second, uncoordinated query would be
+        # a second chance to disagree about the same profile.
         rollover_time=limits.get(PASSWORD_ROLLOVER_TIME),
         password_reuse_max=limits.get(PASSWORD_REUSE_MAX),
         password_reuse_time=limits.get(PASSWORD_REUSE_TIME),

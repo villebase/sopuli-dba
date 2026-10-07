@@ -907,8 +907,8 @@ class ManualDelivery:
     what makes that allowable is not that it is harmless but that the exposure is
     deliberate, witnessed and *time-limited* (UC-2 §1). Expiry is what ends it: a
     `manual` delivery without `force_expire: true` would be an exposure with no
-    end, so the fifth of the five guards (decision #439) refuses one at plan time
-    rather than quietly supplying the safe value.
+    end, so the fifth of the five guards (decision #439) refuses one when the file
+    is loaded, rather than quietly supplying the safe value.
 
     **Defaulting it to `True` would have been worse than refusing**, which is why
     it is a required key and not a field with a default. An estate that never

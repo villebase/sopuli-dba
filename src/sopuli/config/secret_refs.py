@@ -211,7 +211,7 @@ def normalise_path(path: str) -> str:
     ``lock break 'kv:../secrets/acme/db'`` would build
     ``locks/../secrets/acme/db``, which httpx collapses to the *secret's* own
     path, and the run would CAS-write a lock record onto the credential
-    document. Measured against a real Vault.
+    document. Decision #344 records the case.
 
     :func:`sopuli.lock.keys.lock_key` says normalisation can only ever *merge*
     keys, "which over-locks at worst". **This refusal is what makes that true.**

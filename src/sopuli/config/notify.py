@@ -52,7 +52,8 @@ WEBHOOK = "webhook"
 
 NOTIFY_METHODS = (WEBHOOK,)
 
-#: The methods this build can serve. `webhook` is the one that opens a socket.
+#: The methods this build can send with, not only parse. Sending opens a socket,
+#: so a method's client is an install extra (ADR-006).
 IMPLEMENTED: tuple[str, ...] = (WEBHOOK,)
 
 #: The keys the block itself takes.

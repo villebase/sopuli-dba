@@ -8,9 +8,10 @@ documents what is *built*, and this is the layer that makes the second true.
 the sub-block with the same name carries that method's own settings. Both halves
 are checked here. This module refuses a method UC-2 §6.2 does not define and a
 method whose sub-block is missing, which is the part that is common to all six.
-It reads the keys of `manual:` and `vault_wrapped:`, the methods that are built.
-The keys of `vault_path:` (TODO(#447)), `one_time_link:` (TODO(#445)) and
-`onepassword_share:` (TODO(#446)) are not read yet.
+Where the selected method is `manual` or `vault_wrapped`, the methods that are
+built, it also reads that method's keys. The keys of `vault_path:`
+(TODO(#447)), `one_time_link:` (TODO(#445)) and `onepassword_share:`
+(TODO(#446)) are not read yet.
 
 **Why the sub-block must exist at all**, rather than defaulting: every method
 needs something. A wrapping token needs a TTL, a link needs a backend and a base
@@ -318,8 +319,9 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
     file's grammar rather than about the method's settings -- and an operator who
     typed ``vault_wrapped: 15m`` meant ``ttl:`` and wants to be told.
 
-    The consequence: a typo *inside* the sub-block of a method that is not built
-    is accepted. That is why :func:`unserviceable` warns -- a file that validates
+    The consequence: a typo *inside* the sub-block of an unselected method is
+    accepted, and so is one inside the selected method's block where that method
+    is not built. That is why :func:`unserviceable` warns -- a file that validates
     clean must not be read as a file that would deliver.
 
     The rule that governs `notify:` is UC-2 §6.1's rather than this module's:

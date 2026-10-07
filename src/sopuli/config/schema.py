@@ -105,9 +105,10 @@ from sopuli.config import (
 #: -- `required: ["ttl"]`, a pattern on it, `additionalProperties: false` -- would
 #: refuse a file the tool accepts, which is the one direction §9b forbids: the
 #: schema is the fast incomplete check, and the tool must never be the looser of
-#: the two. An editor offers the method names and checks nothing inside them,
-#: which is why `sopuli config validate` warns that a configured method cannot
-#: deliver yet rather than letting a clean parse read as a working delivery.
+#: the two. An editor offers the method names and checks nothing inside them.
+#: The tool checks the selected method's keys where that method is built, and
+#: `sopuli config validate` warns where the selected method is not built, so a
+#: clean parse does not read as a working delivery.
 #:
 #: Closing a sub-block would need a **conditional** schema -- `if` on `method`,
 #: `then` the constraints -- and the condition is not a one-liner, because
@@ -1023,10 +1024,10 @@ def _delivery() -> Schema:
     ``method`` is the closed set and the sub-blocks are **open objects**, which is
     the one thing about this schema worth explaining. The builder judges a
     method's keys only where that method is selected, so closing them here would
-    refuse a file the tool accepts -- and the generator's own rule, that an
-    object's properties come from the constant its builder validates against, has
-    no constant to read for a section whose builder deliberately validates only
-    the shape.
+    refuse a file the tool accepts. The generator's own rule, that an object's
+    properties come from the constant its builder validates against, does not
+    apply: `MANUAL_KEYS` and `WRAPPED_KEYS` hold only while their method is
+    selected, and the methods that are not built have no constant.
 
     ``method`` is **not required**: absent means :data:`~sopuli.config.delivery.DEFAULT_METHOD`,
     and §6.2 says why that default is `vault_wrapped` rather than the

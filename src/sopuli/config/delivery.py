@@ -6,10 +6,11 @@ documents what is *built*, and this is the layer that makes the second true.
 
 **One key selects, and the rest describe.** `method` names one of six values, and
 the sub-block with the same name carries that method's own settings. Both halves
-are checked here and only the first is *understood* here for a method that is
-built. The keys of `vault_path:` (TODO(#447)), `one_time_link:` (TODO(#445)) and
-`onepassword_share:` (TODO(#446)) are not understood yet. This module refuses a
+are checked here. This module refuses a method UC-2 §6.2 does not define and a
 method whose sub-block is missing, which is the part that is common to all six.
+It reads the keys of `manual:` and `vault_wrapped:`, the methods that are built.
+The keys of `vault_path:` (TODO(#447)), `one_time_link:` (TODO(#445)) and
+`onepassword_share:` (TODO(#446)) are not read yet.
 
 **Why the sub-block must exist at all**, rather than defaulting: every method
 needs something. A wrapping token needs a TTL, a link needs a backend and a base
@@ -306,7 +307,7 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
     **Every block that is written, not only the selected one.** The published
     schema types all six properties as objects, so ``vault_wrapped: 15m`` beside
     ``method: manual`` would be refused by the schema and accepted here -- which
-    inverts the relationship §9b documents. That section's whole claim is that the
+    would invert the relationship §9b documents. That section's whole claim is that the
     schema is "the fast, local, incomplete check" and the tool is the complete
     one, so a file the tool accepts and the schema refuses is the one direction
     that must not happen.

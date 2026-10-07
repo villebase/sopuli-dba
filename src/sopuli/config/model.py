@@ -366,8 +366,8 @@ class Vault:
     #: here is the one bit a reader of this table needs, which is *this was not
     #: written here*.
     patched: tuple[str, ...] = ()
-    #: Every merged key with the layer that supplied it, as sorted pairs (decision
-    #: #428).
+    #: Every merged key with the layer that supplied it, as sorted pairs
+    #: (decision #428).
     #:
     #: The rest of :attr:`patched`'s answer. :mod:`sopuli.config.vault_layers`
     #: resolves each reach key through :mod:`sopuli.settings` and keeps the
@@ -1001,32 +1001,33 @@ class Delivery:
     ``method`` is one of :data:`~sopuli.config.delivery.DELIVERY_METHODS`, and it
     is the whole type on purpose.
 
-    **The per-method sub-block is validated, and kept only as a typed field.**
-    The block checks that the selected method brought settings. *Which* keys a
-    method takes is a fact about the service behind it -- a response-wrapping
-    token is single-use by construction, so `num_uses` is a config error rather
-    than a key with a default -- and nothing in a config layer can know that. A
-    field holding the sub-block as opaque pairs would carry unvalidated content
-    through the model and invite a consumer to read it, which is the shape of the
-    mistake `01-configuration.md` §1 calls the one with the worst consequences.
-    Each method has a typed field of its own.
+    **A per-method sub-block reaches the model only as a typed field.** Every
+    sub-block is checked for shape, and the selected method must have brought
+    one. *Which* keys a method takes is a fact about the service behind it -- a
+    response-wrapping token is single-use by construction, so `num_uses` is a
+    config error rather than a key with a default -- and nothing in a config layer
+    can know that. A field holding the sub-block as opaque pairs would carry
+    unvalidated content through the model and invite a consumer to read it, which
+    is the shape of the mistake `01-configuration.md` §1 calls the one with the worst consequences.
+    Each built method has a typed field of its own. A method that is not built
+    has none, and its sub-block is not retained.
 
     The same applies to `notify:`, which nests under delivery because it is
     a property of a delivery rather than of a run -- and which may never carry the
     secret or anything that retrieves it (UC-2 §6.1), a rule its own builder must
     enforce because it needs the template grammar.
 
-    **`manual` has a typed field of its own**, as each method does, rather than a
-    bag. It is ``None`` where `manual` is not the selected method --
-    an unselected method's settings are not read, and a field holding them would
+    **`manual` has a typed field of its own**, as each built method does, rather
+    than a bag. It is ``None`` where `manual` is not the selected method -- an
+    unselected method's settings are not read, and a field holding them would
     invite a consumer to act on a block the run is not using.
     """
 
     method: str
     #: `manual`'s settings, where `manual` is selected.
     manual: ManualDelivery | None = None
-    #: `vault_wrapped`'s settings, where it is selected. Each method has a typed
-    #: field, ``None`` for every method the run is not using.
+    #: `vault_wrapped`'s settings, where it is selected. Each built method has a
+    #: typed field, ``None`` for every method the run is not using.
     vault_wrapped: WrappedDelivery | None = None
     #: The channel that says a password is ready, or ``None`` where the
     #: estate configured none. Read whichever `method` is selected, unlike a

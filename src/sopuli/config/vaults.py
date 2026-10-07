@@ -75,8 +75,8 @@ UNPATCHABLE_KEYS = {
 
 #: What a partial entry may carry: the complement, never a second list.
 #:
-#: Deriving it means a key added to :data:`VAULT_KEYS` becomes patchable unless somebody
-#: writes down why it is not, which is the direction that fails safe for
+#: Deriving it means a key added to :data:`VAULT_KEYS` becomes patchable unless
+#: somebody writes down why it is not, which is the direction that fails safe for
 #: readers of the file and loudly for whoever adds a guardrail.
 PATCHABLE_KEYS = tuple(key for key in VAULT_KEYS if key not in UNPATCHABLE_KEYS)
 
@@ -323,8 +323,8 @@ def _build_tls(raw: Any, *, at: KeyPath) -> VaultTls | None:
         client_key=optional_string(entry, "client_key", at=at),
         server_name=optional_string(entry, "server_name", at=at),
         # Stays None when unwritten. `VaultTls.verified` is the effective value;
-        # the distinction is for the ratchet over C13's partial
-        # blocks, which has to tell "nobody said" from "somebody agreed".
+        # the distinction is for the ratchet over C13's partial blocks, which has
+        # to tell "nobody said" from "somebody agreed".
         verify=optional_bool(entry, "verify", at=at),
     )
 

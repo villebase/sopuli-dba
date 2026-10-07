@@ -18,13 +18,12 @@ layer"). Position is recorded in ``source_detail`` and nowhere else.
 **Except for the safety set, which is trailing-only.** ``--dry-run`` is declared
 on the group as a hidden *trap* that refuses rather than resolves, and the rule
 is written for the set rather than for that one flag: ``--confirm`` and
-``--force``, which P3 says exists, belong to it too and are
-declared on the verbs that take them. ``--max-targets`` is not in that set,
-because there is no such flag: ``safety.max_targets`` does not declare
-``Layer.CLI``, and ``00-principles.md`` P5 says why it is a setting rather than a
-flag (decision #392). ``--force`` belongs by *position* though not by merge
-policy: it overrides
-account guardrails rather than ratcheting a safety setting
+``--force``, which decision P3 keeps, belong to it too and are declared on the
+verbs that take them. ``--max-targets`` is not in that set, because there is no
+such flag: ``safety.max_targets`` does not declare ``Layer.CLI``, and
+``00-principles.md`` P5 says why it is a setting rather than a flag (decision
+#392). ``--force`` belongs by *position* though not by merge policy: it
+overrides account guardrails rather than ratcheting a safety setting
 (``02-oracle-privileges.md`` §4), but group position and verb position express
 the same intent for it as for the others, so there is nothing to merge there
 either. Group position and verb position express identical intent for a safety
@@ -59,7 +58,7 @@ resolves all six layers -- and a verb receives the loaded config on its
 :class:`Invocation` rather than loading one of its own. Every verb needs the
 file; none of them decides *when* it is read.
 
-It happens in two steps, and the order is J7's (#8) rather than convenience.
+It happens in two steps, and the order is J7's rather than convenience.
 :func:`resolve_invocation` runs first over the command line and the environment
 alone, which opens the run document -- so a file that turns out to be unreadable
 has somewhere to report itself, on exit 9 with a document, instead of failing
@@ -148,8 +147,8 @@ GLOBAL_PARAMS = (
 #: `tests/settings/test_settings_are_wired.py` refuses that shape.
 #: `vaults.*` is absent for a different reason -- it is resolved inside the file,
 #: by `sopuli/config/vault_layers.py`, because it describes a store rather than
-#: a run. `vault` is the one next to it that *is* a run setting and so is here
-#: It names which store the run defaults to, which is what §6's unnamed
+#: a run. `vault` is the one next to it that *is* a run setting and so is here:
+#: it names which store the run defaults to, which is what §6's unnamed
 #: `SOPULI_VAULT_ADDR` and `VAULT_ADDR` need before they know what they address.
 #: It is resolved twice per run for that reason -- here, so the document reports
 #: where the name came from, and again in `sopuli/config/vault_env.py`, which
@@ -706,7 +705,7 @@ def terminal_prompter(stdin: TextIO | None) -> Prompter | None:
     the two can never both read the pipe.
 
     :func:`~sopuli.output.tty.is_a_terminal` rather than ``stdin.isatty()``,
-    which is the reason for it: under a scheduler or a service manager stdin is
+    because ``isatty()`` can raise: under a scheduler or a service manager stdin is
     detached, and a detached stream raises on being asked. That is exactly the
     run whose answer must be "nobody is watching" rather than a traceback from
     inside the code that was finding out.

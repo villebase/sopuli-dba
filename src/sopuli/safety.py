@@ -311,14 +311,14 @@ def refuse_if_over_limit(
     would put that default somewhere a reviewer reading the registry would not find
     it.
 
-    P5 does say "default 1", about *confirmation* rather than about this ceiling.
-    **C17 decided that trigger away**: a threshold that prompted on every
-    multi-target mutation would fire on estates
-    that configured nothing, and a ceiling is not a confirmation threshold in the
-    first place. So this function is the only consumer `max_targets` has and the
-    only one it is going to get -- which is worth knowing before reading the
-    absent built-in as an oversight. Confirmation is `confirm_environments` and
-    nothing else (:func:`confirmation_demanded`).
+    P5's struck-through "default 1" is about *confirmation*, not about this ceiling,
+    and **C17 declined that trigger**: a threshold that prompted on every
+    multi-target mutation would fire on estates that configured nothing, and a
+    ceiling is not a confirmation threshold in the first place. So this function is
+    the only consumer `max_targets` has and the only one it is going to get -- which
+    is worth knowing before reading the absent built-in as an oversight.
+    Confirmation is `confirm_environments` and nothing else
+    (:func:`confirmation_demanded`).
 
     **Refuses a `--dry-run` too**, for :func:`refuse_if_readonly`'s reason and one
     more of its own: the plan is what the operator is being shown, and showing a

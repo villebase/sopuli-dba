@@ -179,7 +179,7 @@ PASSWORD_REUSE_ENFORCED = "SOPULI-W017"
 #: would otherwise be told the same fact forty times.
 GUARDRAIL_UNCHECKED = "SOPULI-W018"
 
-#: An estate uses ``auth: external`` and this machine has no wallet it can read
+#: An estate uses ``auth: external`` and this machine has no wallet it can read.
 #: Its own code rather than a widening of anything above: the remedy is a
 #: file on this machine, and a consumer that alerts on "sopuli cannot reach a
 #: store" is watching a different outage from one that alerts on "the wallet the
@@ -245,8 +245,7 @@ LOCK_LOST = "SOPULI-W011"
 ROTATION_UNCONFIRMED = "SOPULI-W012"
 
 #: A lock path was created without the store being made to require a
-#: compare-and-set on it, because this run's credential may not set metadata
-#:
+#: compare-and-set on it, because this run's credential may not set metadata.
 #:
 #: Emitted once per path, on the run that creates it and never again -- a path
 #: whose metadata *is* set never reaches this, and one somebody else created
@@ -317,8 +316,8 @@ PASSWORD_CHANGE_DATE_UNKNOWN = "SOPULI-W021"
 #:
 #: **Keyed on assurance, not on the method.** :data:`sopuli.admin.LOW_ASSURANCE`
 #: is the set, so a second low-assurance source starts emitting this without
-#: finding every reporting site again -- which is the mistake the property's
-#: docstring warns against.
+#: finding every reporting site again -- which is the mistake the comment on
+#: :data:`sopuli.admin.LOW_ASSURANCE` warns against.
 #:
 #: **One per target per run**, and the message names the variable rather than
 #: the method: ``Resolved.source`` is the half an operator can act on, because

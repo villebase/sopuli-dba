@@ -292,7 +292,8 @@ def refuse_if_over_limit(
 ) -> None:
     """Stop a run that reaches more targets than any layer allowed.
 
-    P5's "prevents a wildcard from hitting 200 PDBs by accident".
+    This is the check behind P5's "prevents a wildcard from hitting 200 PDBs by
+    accident".
 
     **There is no `--limit` or `--max-targets` flag.** ``Setting.layers`` does not
     include ``Layer.CLI`` for this setting, so the resolver would refuse the flag
@@ -372,9 +373,9 @@ def confirmation_demanded(
 
     P5 says every mutating command supports ``--confirm`` and that confirmation
     is required in some circumstances; this is **all** of the circumstances. The
-    setting had been parsed, ratcheted as a union, and this is its consumer.
+    setting ratchets as a union, and this function is what reads it.
 
-    **There is no second trigger to come.** P5 asked for two more -- a built-in
+    **There is no other trigger.** P5 asked for two more -- a built-in
     `prod` and a blast radius over ``max_targets`` -- and C17 declined both: the
     first is an unremovable floor under ``01-configuration.md`` §9's union
     ratchet, and the second would prompt on every multi-target mutation for an

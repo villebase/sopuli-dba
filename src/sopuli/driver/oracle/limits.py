@@ -15,7 +15,7 @@ harness, and the version here is :attr:`~sopuli.driver.protocol.Scope.db_version
 **The character set needs no grant.** ``NLS_DATABASE_PARAMETERS`` answered
 ``AL32UTF8`` to a service account holding exactly `02-oracle-privileges.md` §2's
 grants and nothing else -- measured, because a probe requiring a grant nobody
-made is a failure the capability probes already met once. It is the *database* character set
+made fails in a way that looks like an answer. It is the *database* character set
 rather than the session's, which is what §8 specifies: the limit is counted in
 the character set the server stores the password in, not the one this client
 happens to be speaking.

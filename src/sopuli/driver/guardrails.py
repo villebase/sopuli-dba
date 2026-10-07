@@ -52,7 +52,7 @@ safety report must never merge, which is what
 
 ### `--force` overrides 2 to 5, and never 1
 
-Decided in P3. `DBSNMP` is the case it exists for: rotating its password is
+P3 decides this. `DBSNMP` is the case it exists for: rotating its password is
 ordinary DBA work and it is `ORACLE_MAINTAINED`, so a tool with no override does
 not prevent that rotation — it moves it to SQL\\*Plus, where nothing records that
 it happened. An audited override is the better failure.

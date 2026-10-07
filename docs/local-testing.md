@@ -3,7 +3,7 @@
 This guide sets up the local test stack and runs the usual commands against it.
 You see each command succeed, and a few of them refuse on purpose.
 
-Every sample was run on 2026-10-05 on Windows 11, with sopuli 0.69.0, Instant
+Every sample was run between 2026-10-05 and 2026-10-07 on Windows 11, with sopuli 0.69.0, Instant
 Client 23.26.3.0.0, and the `tier1` container stack (Oracle 26ai Free and Vault).
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs printed are replaced with
@@ -392,6 +392,52 @@ the tool does not need. Against `SYSTEM` that list is long. For a realistic
 setup, create the least-privilege service account with
 [`../sql/oracle/00_install.sql`](../sql/oracle/00_install.sql), and point the
 target at it.
+
+### A typed admin password
+
+A target can ask for the admin password instead of reading it from the
+environment. Save this as `prompt.yaml`:
+
+```yaml
+version: 1
+targets:
+  - name: free-pdb
+    type: oracle
+    environment: dev
+    dsn: "127.0.0.1:1521/FREEPDB1"
+    admin: { username: SYSTEM, auth: prompt }
+    oracle: { scope: pdb, container: FREEPDB1 }
+```
+
+Run `doctor` and type `sopuli-test` at the prompt:
+
+```
+$ sopuli --config prompt.yaml doctor
+password for SYSTEM on free-pdb:
+install
+  KIND     NAME       STATUS           CONFIGURED
+  backend  file       not_implemented  -
+  backend  hashicorp  installed        -
+  backend  keyring    not_implemented  -
+  backend  oci        not_implemented  -
+  driver   oracle     installed        1 target
+
+vaults
+
+client
+  tns_admin         (unset)
+  instant_client    23.26.3.0.0
+  reaches           19.1 and later
+
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
+```
+
+This config declares no vault, so the `vaults` list is empty. There is no
+`SOPULI-W022` note, because the password did not come from the environment.
+
+The rest of the guide uses `sopuli.yaml`. With `auth: prompt`, every command
+asks for the password again, and a command run with no terminal refuses.
 
 ---
 

@@ -8,7 +8,7 @@ leave the same flag standing in four other places. Recording that SQL trace has
 been measured can leave ``uc-01-app-credential-sync.md`` saying "SQL trace
 remains untested" and ``adr-001-privilege-model.md`` saying "unchecked on every
 version" -- a use case and an ADR, the two kinds of document `CLAUDE.md` tells a
-reader to trust. A reviewer can catch this. Nothing else in the repository does.
+reader to trust. Without this file, only a reviewer would catch it.
 
 **Why a checker cannot read the prose.** "SQL trace remains untested", "SQL trace
 is unchecked on every version" and the §4 table row answering them share no

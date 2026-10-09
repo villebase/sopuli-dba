@@ -1,11 +1,9 @@
 """Every `sopuli` command line in `docs/` parses against the real CLI. Tier 0.
 
-**What went wrong.** Three worked examples in `01-configuration.md` §9 named
-options the binary has not got -- `--vault-addr`, `--method`, `--no-dry-run` --
-and one of them printed the refusal it was illustrating. `sopuli` rejects an
-unknown option before any precedence or safety check runs, so that output was a
-prediction, not a pasted sample, in the document that specifies the refusal -- a
-rule broken where it is executable. The same defect in prose is as easy to make.
+**What this catches.** A worked example can name an option the binary has not
+got, and can even print the refusal it is illustrating. `sopuli` rejects an
+unknown option before any precedence or safety check runs, so such output is a
+prediction, not a pasted sample, in the document that specifies the refusal.
 
 **Why this parses command lines instead of grepping for flags.** A grep of
 `docs/` for `--[a-z-]+` finds two dozen tokens the CLI has not got, and almost all

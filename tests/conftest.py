@@ -108,9 +108,9 @@ def config_file(write_config: WriteConfig) -> Path:
 #: The environment variables that reach a store's settings
 #: (`01-configuration.md` §6). A developer running the tier-1 suite has
 #: ``VAULT_ADDR`` exported by definition -- `vault_stack` below reads it -- and
-#: that variable *is* a precedence layer, so without this every CLI test that loads a file with a
-#: `defaults.vault` would resolve a different address on their machine than on
-#: CI. Cleared per test rather than at import, because the module constants above
+#: that variable *is* a precedence layer, so without this every CLI test that
+#: loads a file with a `defaults.vault` would resolve a different address on their
+#: machine than on CI. Cleared per test rather than at import, because the module constants above
 #: are read once and the tier-1 fixtures carry their own copy.
 VAULT_ENV = ("SOPULI_VAULT", "SOPULI_VAULT_ADDR", "VAULT_ADDR", "VAULT_NAMESPACE", "VAULT_CACERT")
 

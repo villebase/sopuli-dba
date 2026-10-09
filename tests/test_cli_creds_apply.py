@@ -157,8 +157,8 @@ defaults:
 )
 
 #: Two accounts in one document, both opted in to the unlock. The pairing is what
-#: makes the exposure visible: the fence is checked once per account, so
-#: an account after the first in the same target is one the run reaches with a
+#: puts a second account behind the fence: the fence is checked once per account,
+#: so an account after the first in the same target is one the run reaches with a
 #: lock it may no longer hold.
 SHARED_UNLOCKING_CONFIG = (
     SHARED_CONFIG
@@ -1769,9 +1769,9 @@ def test_an_unreadable_audit_is_a_caveat_and_not_a_refusal(
 def test_an_unreadable_audit_is_printed_in_the_text_as_well(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, mode: tuple[str, ...]
 ) -> None:
-    """Decision #606: a survey that passed with a check missing must not read, in a
-    terminal, like one that made every check -- least of all under `--dry-run`,
-    where nothing runs afterwards to meet the cause."""
+    """Decision #606: a survey that passed with a check missing must not read,
+    in a terminal, like one that made every check -- least of all under
+    `--dry-run`, where nothing runs afterwards to meet the cause."""
     estate(audits={"appdb-alpha": RuntimeError("ORA-00942: table or view does not exist")})
 
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--preflight", *mode)

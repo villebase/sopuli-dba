@@ -245,8 +245,8 @@ def test_an_overridden_guardrail_is_a_check_and_a_reason() -> None:
 
 
 def test_a_forced_result_validates_against_the_published_schema() -> None:
-    """`additionalProperties: false` here
-    means a wrong item shape is a document nobody can consume."""
+    """`additionalProperties: false` here means a wrong item shape is a document
+    nobody can consume."""
     schema = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))
     result_schema = schema["$defs"]["result"]
     result_schema["$defs"] = schema["$defs"]

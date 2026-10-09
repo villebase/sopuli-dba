@@ -234,9 +234,9 @@ def test_a_staged_rotation_outranks_an_open_window() -> None:
 
 # ------------------------------------------------------------ the grace period ---
 #
-# `creds status` is where UC-1 §6.4 says the grace period belongs. A row in
-# grace is not a hard expiry: the table counts it separately and names the
-# window in a note.
+# `creds status` is where UC-1 §6.4 says the grace period belongs.
+# `EXPIRED(GRACE)` is not a hard expiry, so a row in grace must not read as
+# `EXPIRED` and must still reach `PENDING_APPLY`.
 
 
 def grace_row(**fields: object) -> status.Row:

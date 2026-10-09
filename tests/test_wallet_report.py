@@ -285,8 +285,8 @@ def test_an_unreadable_sqlnet_is_treated_as_absent(tmp_path: Path) -> None:
 def test_a_wallet_others_can_read_is_reported_and_does_not_fail(tmp_path: Path) -> None:
     """An auto-login wallet is a credential, so P4's config-file check applies.
 
-    A **warning**, for the reason decision P5 gives for over-granted accounts: it is
-    somebody else's file, and a `doctor` that refused to run over it would block
+    A **warning**, for the reason decision P5 gives for over-granted accounts: it
+    is somebody else's file, and a `doctor` that refused to run over it would block
     the person who ran it, mid-incident, over a condition they did not create.
     """
     directory = _wallet_dir(tmp_path, AUTO_LOGIN)

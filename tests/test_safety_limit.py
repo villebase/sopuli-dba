@@ -1,8 +1,7 @@
 """`safety.max_targets`, asked of the run's plan.
 
 The resolver ratchets the setting, and `refuse_if_over_limit` reads the answer.
-P5:
-"`--limit` / `--max-targets` prevents a wildcard from hitting 200 PDBs by
+P5: "`--limit` / `--max-targets` prevents a wildcard from hitting 200 PDBs by
 accident."
 
 What is worth testing here is not the arithmetic. It is the two places a

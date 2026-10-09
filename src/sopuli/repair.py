@@ -221,8 +221,8 @@ def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[P
             f"{path}: names no usable config files, so it cannot be shown to describe this estate",
             at=AT_REPAIR,
             hint=(
-                "`invocation.config_files` arrived in #402 and is a list of paths -- re-run "
-                "the command that produced this document to get one that carries it"
+                "`invocation.config_files` must be a list of paths -- re-run the command "
+                "that produced this document with this build to get one that carries it"
             ),
         )
 

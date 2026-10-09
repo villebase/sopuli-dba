@@ -6,12 +6,12 @@ Fixtures use the fictional vocabulary the provenance note requires.
 One accept and one reject per rule, and the rejects assert on the *message*: a rule
 that fires without saying which key is wrong has not finished its job.
 
-**What is deliberately not tested here** is anything *inside* a method's sub-block.
-Which keys `vault_wrapped:` takes has a section of its own below, and
-`one_time_link:`'s is TODO(#445), because the answer is a fact about the service
-behind the method rather than about this file. What this layer owes is the part
-common to all six: the method is one of the six, and the selected one brought
-settings.
+Which keys a method's sub-block takes is a fact about the service behind the
+method, so only built methods have keys to test. `vault_wrapped:`'s have a
+section of their own below; `vault_path:` (TODO(#447)), `one_time_link:`
+(TODO(#445)) and `onepassword_share:` (TODO(#446)) are not read yet. What this
+layer owes every method is the part common to all six: the method is one of the
+six, and the selected one brought settings.
 """
 
 from __future__ import annotations
@@ -86,10 +86,9 @@ def test_the_enum_is_the_whole_set_including_the_method_with_no_issue() -> None:
 
 
 def test_a_notify_block_is_read_now_that_its_issue_landed() -> None:
-    """The block is read, not *accepted and left alone*.
-    `tests/config/test_notify.py` holds what its grammar is; what belongs here is
-    that `delivery:` reaches it, and that it does so whichever method is
-    selected."""
+    """`tests/config/test_notify.py` holds the notify block's grammar; what
+    belongs here is that `delivery:` reaches it, and that it does so whichever
+    method is selected."""
     section = built(
         method="vault_wrapped",
         vault_wrapped={"ttl": "15m"},

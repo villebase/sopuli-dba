@@ -1,34 +1,32 @@
 """Every declared setting either reaches a consumer or says why it does not.
 
-Four times a setting or a field was resolved, ratcheted, validated, rendered by
-`config show`, and then read by nothing:
+A setting or a field can be resolved, ratcheted, validated and rendered by
+`config show`, and still be read by nothing. Four real cases had that shape:
 
 * `safety.confirm_environments`, parsed and ratcheted and consulted by no
   command;
 * `UserState.password_file_member`, typed and read by guardrail 3 and populated
   by nothing;
 * `locking.break_expired`, cross-checked in two places and implemented in
-  `decide()`, with no `LockManager` ever built with it;
+  `decide()`, with no `LockManager` built with it (decision #348);
 * `lock_diagnostics`, written and unit-tested and called by nothing.
 
-Each looked like protection and was not. Each was found by somebody reading the
-code, which is why this file exists: the registry knows every setting, so the
-sweep can run on every commit instead of on the next person who happens to look.
+Each looks like protection and is not, and only somebody reading the code would
+find it. The registry knows every setting, so this sweep runs on every commit
+instead of waiting for the next person who happens to look.
 
 **A tripwire, not a proof.** What it checks is that the *name* reaches a module
 that is not the settings machinery -- not that the value changes behaviour. A
 setting read into a variable and then dropped would pass, and so would one
 mentioned in the wrong branch. Catching those needs dataflow analysis; all four
-instances above were the simpler thing, and so is the fifth this found
-(`db.query_timeout_s`).
+cases above are the simpler thing, and so is `db.query_timeout_s`.
 
 **Both directions are checked, and the second is the one that lasts.** A setting
 carrying `inert_reason` must have *no* consumer, so wiring one up fails this
 suite until somebody deletes the reason -- which is the moment to ask whether the
-design documents still say the right thing. `01-configuration.md` §5 claimed
-`db.query_timeout_s` was inert because "nothing calls the driver from a command
-line yet"; by the time anyone looked, `_timeouts()` did exactly that and passed
-the sibling key. Prose was the only thing holding the claim, and it decayed
+design documents still say the right thing. A document can call a setting
+inert after code has started to read it, as `_timeouts()` reads
+`db.query_timeout_s`; prose alone cannot hold that claim, because it decays
 without failing anything.
 """
 

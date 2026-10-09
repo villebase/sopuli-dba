@@ -177,7 +177,7 @@ def test_there_are_two_outcomes_and_neither_of_them_is_waiting() -> None:
 
     Nothing blocks, so two runs cannot each hold half of what the other needs --
     which is what makes deadlock impossible rather than rare. A `Wait` member
-    added here later would be a change to Q2, not an implementation detail, so
+    added here later would be a change to UC-1 §8, not an implementation detail, so
     the union is pinned rather than left to be inferred from the branches above.
     """
     assert set(get_args(Decision)) == {Acquire, Denied}

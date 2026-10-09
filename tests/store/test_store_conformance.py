@@ -97,7 +97,7 @@ class _VaultAdmin:
 
     `vault kv metadata delete` for the wipe -- data *and* the version counter,
     which is the only way to make a path new again and is deliberately not
-    something the tool itself ever does (Q2).
+    something the tool itself ever does (UC-1 §8).
     """
 
     def __init__(self, client: Any, mount: str) -> None:
@@ -375,7 +375,7 @@ def test_a_deleted_path_reads_as_nothing_but_keeps_its_history(harness: Harness)
     it does for a path that never existed -- but the version counter stands, so
     `cas: 0` fails and will keep failing forever. A lock released by deleting
     would leave a path no first acquisition could ever take again, which is why
-    Q2 releases by writing a `released` record instead.
+    The tool releases by writing a `released` record instead (UC-1 §8).
     """
     harness.store.write(harness.path, {"holder": "one"}, cas=0)
     harness.admin.soft_delete(harness.path)

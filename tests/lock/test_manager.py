@@ -183,7 +183,7 @@ def test_a_deleted_lock_record_is_refused_with_the_reason_it_cannot_be_taken() -
     A deleted path reads as empty, so acquisition tries `cas: 0` -- and fails,
     because the version history stands. Re-running will never fix it, so the hint
     says what happened rather than only "somebody beat you to it". The tool never
-    deletes (Q2), which is what makes this always somebody else's doing.
+    deletes (UC-1 §8), which is what makes this always somebody else's doing.
     """
     store = MemoryStore()
     run = manager(store)
@@ -475,9 +475,10 @@ def test_a_takeover_between_the_check_and_the_renewal_write_is_a_takeover() -> N
 
     The check is not the whole guard: a takeover can land between it and the
     write, or on lock two after lock one has already been rewritten. `_write`
-    must not translate **every** lost compare-and-set into `LockDeniedError` -- exit 7,
-    "nothing has been touched" -- in a message saying the run was *acquiring* a
-    lock it had held since the first target. Neither half is true of a renewal.
+    must not translate **every** lost compare-and-set into `LockDeniedError` --
+    exit 7, "nothing has been touched" -- in a message saying the run was
+    *acquiring* a lock it had held since the first target. Neither half is true
+    of a renewal.
     """
     store = Contested()
     clock = Clock()
@@ -880,10 +881,10 @@ def test_a_pre_flight_refusal_is_a_capability_refusal_and_not_a_held_lock() -> N
 
     Neither is a held lock, and the difference is what a scheduler does next. A
     KV v1 mount nobody marked `locking: advisory-only` is a fact about the store
-    that is true again on the next run and the one after that, so exit 7 would have an
-    unattended runner retrying for ever on a condition that can never clear.
-    Exit 5 says the tool cannot do this here, which is invariant 4's answer and
-    the one `sopuli lock break` already gave for the identical fact.
+    that is true again on the next run and the one after that, so exit 7 would
+    have an unattended runner retrying for ever on a condition that can never
+    clear. Exit 5 says the tool cannot do this here, which is invariant 4's
+    answer and the one `sopuli lock break` already gave for the identical fact.
     """
     no_cas = MemoryStore(capabilities=frozenset())
     no_promise = MemoryStore()
@@ -1012,7 +1013,7 @@ def test_a_store_failing_the_metadata_write_for_any_other_reason_stops_the_run()
 
 
 def test_max_versions_is_not_enforced() -> None:
-    """Q2 names `max_versions: 10`, and it is deliberately not a refusal.
+    """UC-1 §8 recommends `max_versions: 10`, and it is deliberately not a refusal.
 
     Pruning old versions does not reset the version counter, so fencing survives
     any value of it -- refusing a working vault over a housekeeping preference

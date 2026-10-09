@@ -18,8 +18,8 @@ construction.
 Everything here runs on the `private_mount` fixture rather than on the shared
 `kv` mount, because `lock status` surveys the **whole** `locks/` prefix.
 On the shared mount its estate is every record anything else has left there, so
-one `sopuli creds apply` run by hand against the local stack would turn them
-red -- the assertions are right and the fixture would be the whole container.
+one `sopuli creds apply` run by hand against the local stack would leave a
+record there and break assertions that are right about an estate of their own.
 `foreign_lock` writes such a record on the shared mount for every test
 that has to survive one, so the isolation cannot quietly rot back.
 """
@@ -108,7 +108,7 @@ def their_lock(vault_stack: Any, private_mount: str) -> Iterator[None]:
     """Somebody else's held record, written straight to the API.
 
     Cleaned up with a metadata delete, which wipes the version counter as well as
-    the data -- something the tool itself never does (Q2) and exactly what a
+    the data -- something the tool itself never does (UC-1 §8) and exactly what a
     test needs between runs. The mount is torn down after each test as well,
     which makes this redundant; it stays because it states what the test expects
     to find rather than leaving that to be inferred from the mount's lifetime.
@@ -123,11 +123,11 @@ def their_lock(vault_stack: Any, private_mount: str) -> Iterator[None]:
 def foreign_lock(vault_stack: Any) -> Iterator[None]:
     """A record on the **shared** mount, which no assertion here may see.
 
-    The regression guard for the mount's isolation: every assertion below holds on
-    the shared mount until something else writes to it, and nothing else in the
-    file says the estate has to be the test's own. With this in place, a change that puts
-    these tests back on `kv` fails at once rather than the next time somebody
-    exercises the tool by hand.
+    The regression guard for the mount's isolation: every assertion below holds
+    on the shared mount until something else writes to it, and nothing else in
+    the file says the estate has to be the test's own. With this in place, a
+    change that puts these tests back on `kv` fails at once rather than the next
+    time somebody exercises the tool by hand.
     """
     mount = vault_stack.kv2_mount
     vault_stack.client.post(f"/v1/{mount}/data/{FOREIGN_LOCK_PATH}", json={"data": RECORD})
@@ -237,7 +237,7 @@ def test_no_token_anywhere_is_reported_as_an_incomplete_machine(
 
 @pytest.mark.usefixtures("their_lock", "token_in_env")
 def test_the_survey_writes_nothing(config_path: Path, vault_stack: Any, private_mount: str) -> None:
-    """`check`, `status` and every `--dry-run` take no lock (Q2). Asserted
+    """`check`, `status` and every `--dry-run` take no lock (UC-1 §8). Asserted
     against the store's version counter, because a write is what a lock is --
     and against a *real* store, where an accidental write would persist."""
     before = vault_stack.client.get(f"/v1/{private_mount}/metadata/{LOCK_PATH}").json()

@@ -163,7 +163,7 @@ def path(_vault_reachable: None) -> Iterator[str]:
 
     Full metadata delete -- wipes data *and* the version counter -- which is
     fine here because this path is the test's own scratch space, never a
-    lock (Q2 is the reason release writes a record instead of using this).
+    lock (UC-1 §8 says why release writes a record instead of using this).
     """
     _call("DELETE", f"{MOUNT}/metadata/{PATH}")
     yield PATH

@@ -1,7 +1,7 @@
 """Release gate: the lock holds under contention (Q2).
 
-`04-testing.md` §5 and UC-1 §11 both list the concurrency case, and Q2's design adds
-the fencing one. Both are covered in tier 0 already — two managers over one
+`04-testing.md` §5 and UC-1 §11 both list the concurrency case, and Q2's design
+adds the fencing one. Both are covered in tier 0 already — two managers over one
 dictionary with an injected clock (`tests/lock/test_manager.py`) — and that is
 not the same claim. Tier 0 forces the race by driving the store in a chosen
 order, so it proves the *manager* reacts correctly to a lost compare-and-set. It
@@ -214,7 +214,7 @@ def lock_path(vault_stack: Any) -> Iterator[str]:
     Two things, and the second is the more interesting.
 
     A full metadata delete, which wipes the version counter as well as the data.
-    That is deliberately something the *tool* never does (Q2: release writes a
+    That is deliberately something the *tool* never does (UC-1 §8: release writes a
     `released` record, because a delete would leave a path no first acquisition
     could ever take again) and exactly what a test needs between runs.
 
@@ -334,7 +334,7 @@ def _steal(stack: Any, path: str, *, attempts: int = 40) -> bool:
 
 
 def test_a_deleted_lock_path_can_never_be_acquired_again(vault_stack: Any, lock_path: str) -> None:
-    """The fact behind "release writes a record, never deletes one" (Q2).
+    """The fact behind "release writes a record, never deletes one" (UC-1 §8).
 
     Vault keeps a soft-deleted path's version counter, so `cas: 0` fails there
     forever. A lock released by deleting would leave a path no first acquisition

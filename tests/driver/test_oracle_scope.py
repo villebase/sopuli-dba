@@ -24,15 +24,23 @@ from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Targ
 from sopuli.driver.oracle.capabilities import (
     APPLICATION_PDB,
     APPLICATION_ROOT,
+    CONNECT_INFO,
     CONTAINER_NAME,
+    NETWORK_PROTOCOL,
     NO_CONTAINERS,
     PROBES,
     ProbeError,
     ScopeAssertionError,
     application_of,
     read,
+    read_all,
 )
-from sopuli.driver.protocol import SCOPE_TYPES, UNKNOWN, Credential
+from sopuli.driver.protocol import (
+    ENCRYPTION_METHODS,
+    SCOPE_TYPES,
+    UNKNOWN,
+    Credential,
+)
 from sopuli.secrets import Secret
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
@@ -155,6 +163,35 @@ def test_the_scope_is_what_the_database_says_it_is(
         assert scope.type != UNKNOWN, "a reachable database should resolve to a real scope"
         assert scope.db_version, "V$INSTANCE is in the documented grant set"
         assert scope.read_write is True, "the tier-1 container is not a standby"
+
+
+def test_the_encryption_questions_are_ones_oracle_can_answer(
+    live_oracle: Environment, session_module: Any
+) -> None:
+    """Both statements are understood, and the view is readable with no grant.
+
+    ``PUBLIC`` reads ``V$SESSION_CONNECT_INFO`` on every release measured, so a
+    ``None`` here is a database that revoked it, which the tier-1 one has not.
+    """
+    with (
+        _session(session_module, live_oracle.dsn) as session,
+        session.connection.cursor() as cursor,
+    ):
+        protocol = read(cursor, NETWORK_PROTOCOL)
+        banners = read_all(cursor, CONNECT_INFO)
+
+    assert protocol is not None
+    assert str(protocol[0]).lower() in ("tcp", "tcps")
+    assert banners, "PUBLIC reads the view on every release measured"
+
+
+def test_the_encryption_is_a_real_answer(live_oracle: Environment, session_module: Any) -> None:
+    """Not ``unknown``: the connection is TCP or TCPS and the view is readable."""
+    with _session(session_module, live_oracle.dsn) as session:
+        encryption = session.scope().encryption
+
+    assert encryption.method in ENCRYPTION_METHODS
+    assert encryption.method != UNKNOWN
 
 
 def test_the_container_and_the_scope_agree(live_oracle: Environment, session_module: Any) -> None:

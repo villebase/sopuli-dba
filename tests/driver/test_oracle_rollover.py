@@ -231,10 +231,10 @@ def test_a_release_without_rollover_refuses_at_plan_time(plain_account: Any) -> 
     and **at plan time** — not as an execution error two targets into a run.
 
     **Only a release without rollover can run this.** On 26ai Free 23.26.2.0.0
-    `password_rollover` is always present, so the marker skips it there — a test
-    asserting the negative case needs a negative case to assert it against. That
-    is the shape `04-testing.md` §3 warns about, and running 18c turns it from a
-    declaration into a measurement.
+    `password_rollover` is always present, so the marker skips it there. A test of
+    the negative case that meets only servers with the capability skips on every
+    one of them, which is the shape `04-testing.md` §3 warns about; running 18c
+    turns it from a declaration into a measurement.
 
     The hint is asserted because this half has no local remedy: unlike the
     profile refusal below it, no `ALTER PROFILE` reaches it and the release is

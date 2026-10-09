@@ -157,7 +157,7 @@ def test_a_matching_assertion_is_reported_as_matching(
     # `container:` is omitted where the driver found none, rather than fed back as
     # the string `None`. A non-CDB has no container, so a round trip that wrote
     # `container: None` was declaring a container called "None" and asserting
-    # itself into a mismatch -- measured on 11g.
+    # itself into a mismatch -- measured on 11g XE 11.2.0.2.0.
     keys = f"scope: {found['type']}"
     if found["container"] is not None:
         keys = f"{keys}, container: {found['container']}"

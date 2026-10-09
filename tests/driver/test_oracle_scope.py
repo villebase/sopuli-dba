@@ -212,8 +212,8 @@ def test_a_wrong_container_is_caught_against_a_real_database(
         found = session.scope().container
         if found is None:
             # A non-CDB has no container to name, and the refusal still fires on
-            # the declaration alone -- measured on 11g, where the message reads
-            # `found scope='non_cdb' container=None`. The assertion below is
+            # the declaration alone -- measured on 11g XE 11.2.0.2.0, where the
+            # message reads `found scope='non_cdb' container=None`. The assertion below is
             # about the *found* name appearing next to the declared one, which
             # needs there to be a found one.
             return

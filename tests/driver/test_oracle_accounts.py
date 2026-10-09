@@ -260,11 +260,11 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     **Skipped where the release has no column to read**, on the account's own
     answer rather than on a version. `DBA_USERS.PASSWORD_CHANGE_DATE` arrived in
     19c: 23.26.2.0.0 and 21.3.0.0.0 have it, 18.4.0.0.0 and 11.2.0.2.0 do not
-    (`docs/measurements.md`). Note that `ORACLE_MAINTAINED` does *not* travel
-    with it, which is what `_user_row`'s three shapes exist for. The account was created
-    moments ago by the fixture, so a release that has the column has already
-    filled it; `None` here can only mean the column is absent, which makes this a
-    reading and not a version test.
+    (`docs/measurements.md` has the full list). Note that `ORACLE_MAINTAINED`
+    does *not* travel with it, which is what `_user_row`'s three shapes exist
+    for. The account was created moments ago by the fixture, so a release that
+    has the column has already filled it; `None` here can only mean the column
+    is absent, which makes this a reading and not a version test.
 
     There is deliberately no capability for it, and decision #386 says there will
     not be: the query is its own probe. Where the column is absent the driver

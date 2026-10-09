@@ -15,8 +15,8 @@ connection problem would stop instead of drawing another password.
 
 The verify-function case is asserted **on the error, never on `DBA_PROFILES`**:
 in a PDB the `PASSWORD_VERIFY_FUNCTION` limit reads `FROM ROOT` while the
-function is in fact enforcing (measured), so the dictionary is the one
-witness that cannot be trusted here.
+function is in fact enforcing (measured on 26ai Free 23.26.2.0.0), so the
+dictionary is the one witness that cannot be trusted here.
 """
 
 from __future__ import annotations
@@ -205,9 +205,9 @@ def test_a_password_the_verify_function_refuses_arrives_as_policy(strict_account
 
 
 def test_reusing_the_current_password_arrives_as_policy(strict_account: Any) -> None:
-    """`ORA-28007`. The same value must never be sent again — the rule is that
-    an unmapped code is terminal and never regenerates, and this one regenerates
-    with a *different* value or not at all."""
+    """`ORA-28007`. The same value must never be sent again — the error mapper's
+    rule is that an unmapped code is terminal and never regenerates, and this
+    one regenerates with a *different* value or not at all."""
     with pytest.raises(DriverError) as raised:
         strict_account.set_password(ACCOUNT, Secret(COMPLIANT))
 

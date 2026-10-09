@@ -191,7 +191,7 @@ def test_a_missing_account_is_unavailable(session: Any) -> None:
 
 # --------------------------------------------------------- method="hash" ---
 #
-# Compare with the stored 12C verifier instead of logging in (decision #437).
+# Compare with the stored 12C verifier instead of logging in (UC-1 §7).
 # Every test here asserts on the *account* as well as on the result, because the
 # claim being tested is that nothing happened to it.
 #
@@ -381,7 +381,7 @@ def test_hash_without_the_sys_user_grant_is_refused_naming_the_target(
 def test_on_autonomous_database_the_refusal_does_not_advise_a_grant(
     session_module: Any,
 ) -> None:
-    """Decision #437: on ADB no account can read `SYS.USER$`, `ADMIN`
+    """UC-1 §7: on ADB no account can read `SYS.USER$`, `ADMIN`
     included, so "grant it" is advice nobody there can follow.
     `CLOUD_SERVICE` read `OLTP` on ADB serverless 23.26.3.3.0, and it is what tells
     the two apart: the capability probe gets `ORA-00942` from both."""
@@ -444,7 +444,7 @@ def test_both_compares_and_then_logs_in(guarded_account: Any) -> None:
 def test_both_does_not_spend_a_login_the_comparison_already_answered(
     guarded_account: Any,
 ) -> None:
-    """Decision #437: a mismatch is `fail` from the comparison alone.
+    """UC-1 §7: a mismatch is `fail` from the comparison alone.
     Five of them against `FAILED_LOGIN_ATTEMPTS 3` leave the counter at zero,
     which a login half would not."""
     _needs_12c(guarded_account)

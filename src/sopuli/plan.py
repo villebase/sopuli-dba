@@ -1,4 +1,4 @@
-"""What a run intends to do, decided before it does any of it (#247).
+"""What a run intends to do, decided before it does any of it.
 
 The `plan` section of the run document, and the only section every `creds` verb
 needs before it can start. `03-json-output.md` is explicit that this is **not a
@@ -216,8 +216,8 @@ def build_for_accounts(
 
     :func:`build` reads its units from ``config.bindings``, which is right for
     every verb whose unit of work is *an account mastered by a secret*. UC-2's
-    accounts are mastered by nothing (H1, #449), so they produce no binding and
-    that function would plan an empty run over them.
+    accounts are mastered by nothing (H1), so they produce no binding and that
+    function would plan an empty run over them.
 
     **The pairs are the caller's, and invariant 5 is therefore the caller's too.**
     That is the real difference from :func:`build`, where the config *is* the
@@ -271,15 +271,15 @@ def _secret_json(binding: Binding) -> dict[str, Any] | None:
     is why this returns ``None`` for two different reasons. ``secret_ref`` requires
     ``vault`` as a *string*, so there is no shape for half an address, and the
     schema makes ``units[].secret`` optional precisely so a unit can say it does
-    not have one. C15/#118 is why the case exists: §3's chain deliberately leaves
+    not have one. C15 is why the case exists: §3's chain deliberately leaves
     out a profile's ``vault:`` and ``SOPULI_VAULT``, because which profile is
     active is a property of a run and bindings are built once at load, so a file
     that gets its store from either has ``binding.vault is None`` here and is
     perfectly valid. ``config show --resolved`` already renders ``-`` for such a
     binding rather than a verdict, and this matches it.
 
-    **This is not the place that refuses one**, and C15 is what says so. It is
-    decided (#118), and what it decided is "mostly plan time": the null is a real
+    **This is not the place that refuses one**, and C15 is what says so.
+    It decided "mostly plan time": the null is a real
     temporary state, `config show --resolved` shows it as ``-``, and *the command
     that actually needs a store* is what fails -- once a run's profile is known
     and the answer is exact. A refusal written into this function would fire
@@ -290,8 +290,8 @@ def _secret_json(binding: Binding) -> dict[str, Any] | None:
     *file* can be refused for at load -- ``vaults:`` declaring nothing at all, so
     no run could ever complete the binding -- it already is. C15's other half --
     a run completing the store from a profile or ``SOPULI_VAULT`` -- is
-    :mod:`sopuli.config.binding_stores` (#250). **A command that needs a store is
-    required to run it before building a plan**, and to call
+    :mod:`sopuli.config.binding_stores` (decision #250). **A command that needs
+    a store is required to run it before building a plan**, and to call
     ``refuse_unresolved`` after; this function does not, and cannot, check that
     it happened. A unit that still has no store is therefore either a binding
     with no ref or a caller that skipped the step -- and the second is why the

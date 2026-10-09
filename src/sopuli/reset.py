@@ -198,9 +198,9 @@ def refuse_seen_path(
 
     if confirm_given:
         # The one gate in the tool that cannot be given a yes in advance (P5;
-        # decision #439). A flag cannot testify to its own premise: `--confirm` would be
-        # asserting that somebody is watching, when establishing that somebody is
-        # watching is the entire purpose of the prompt.
+        # decision #439). A flag cannot testify to its own premise: `--confirm`
+        # would be asserting that somebody is watching, when establishing that
+        # somebody is watching is the entire purpose of the prompt.
         raise ArgumentError(
             "--confirm cannot answer the prompt `delivery.method: manual` asks",
             hint=(

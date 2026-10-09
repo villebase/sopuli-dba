@@ -5,14 +5,15 @@ credential mutation, and it changes nothing in a database -- which is what lets 
 take the advisory lock at all: the lock lives in the vault (Q2), so a
 database-side one could not have protected the write below.
 
-**It does connect, and that argument still holds.** UC-1 §4 step 2 reads one
-constraint per selected target -- how long a password may be, in that database's
-own character set -- because a policy written by somebody who never saw the
-estate can otherwise stage a `pending` no target can hold. The lock's case was
-never "this command opens no session"; it was that there is no *change* here for
-a database-side lock to protect, and reading does not make one. The connecting
-is :func:`sopuli.cli._constraints_for`; the merge is :mod:`sopuli.constraints`;
-what arrives here is a :class:`~sopuli.passwords.ByteLimit` or ``None``.
+**It connects to read, and that does not change the argument.** UC-1 §4 step 2
+reads one constraint per selected target -- how long a password may be, in that
+database's own character set -- because a policy written by somebody who never
+saw the estate can otherwise stage a `pending` no target can hold. The lock's
+case was never "this command opens no session"; it was that there is no *change*
+here for a database-side lock to protect, and reading does not make one. The
+connecting is :func:`sopuli.cli._constraints_for`; the merge is
+:mod:`sopuli.constraints`; what arrives here is a
+:class:`~sopuli.passwords.ByteLimit` or ``None``.
 
 Pure, like :mod:`sopuli.check`. Drawing is :mod:`sopuli.passwords` and writing is
 :mod:`sopuli.store.credentials`; what lives here is the arithmetic between them --
@@ -63,10 +64,9 @@ from sopuli.secrets import Secret
 from sopuli.store.credentials import staged_patch
 
 #: What ``--promote`` reports (decision #257): the vault holds this password and
-#: no database has been asked. A new value rather than a reused one, because
-#: each existing state asserts something untrue here, and ``PENDING_APPLY`` in
-#: particular would send `check` and `apply` looking for a ``pending`` that does
-#: not exist.
+#: no database has been asked. A new value rather than a reused one: ``SKIPPED``
+#: would not be true, and ``PENDING_APPLY`` would send `check` and `apply`
+#: looking for a ``pending`` that does not exist.
 #:
 #: **Not the same claim as ``PENDING_APPLY`` with the stage swapped.** That state
 #: says a rotation is in flight; this one says there is none, and the next thing
@@ -224,10 +224,10 @@ def _refuse_colliding_stages(write: DocumentWrite) -> None:
     cleanly. That is the layout `01-configuration.md`'s worked example and the
     sharing fixtures use.
 
-    **A load-time check refuses this spelling**, so a file spelled this way does
-    not reach here. This guard stays for the case that one cannot
-    cover: it fires only where the store is known, and a binding whose ``vault``
-    C15 completes later from a profile or ``SOPULI_VAULT`` has no backend
+    **:mod:`sopuli.config.bindings` refuses this spelling at load time**, so a file
+    spelled this way does not reach here. This guard stays for the case that one
+    cannot cover: it fires only where the store is known, and a binding whose
+    ``vault`` C15 completes later from a profile or ``SOPULI_VAULT`` has no backend
     while the file is being read -- so whether the rule applies is not knowable
     there. Those arrive here unchecked.
 

@@ -665,7 +665,7 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         # no longer has a value, and the next reader of it would be `may_redraw`
         # deciding whether it may redraw. "Cleared" is RFC 7396's clearing and not a
         # root delete: promoting the last staged account empties the container
-        # rather than removing the key, exactly as `pending` above has always done.
+        # rather than removing the key, exactly as `pending` above does.
         # `tests/test_payload.py` pins that and says why it stays.
         patches.append(layout.patch(ORIGIN, REMOVE))
         patches.append(layout.patch("rotated_at", stamp))

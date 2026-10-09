@@ -5532,9 +5532,11 @@ def creds_apply(
     **The database is asked before it is changed.** Invariant 9 names this the
     convergent verb -- the one that must report `changed: false` on a re-run -- and
     it learns whether a change is needed by logging in, as `creds check` does by
-    default. So every account is verified first, under the same lockout mitigations
-    `creds check` uses, and a password that already works is left alone. Two logins
-    per account per run, budgeted up front rather than counted afterwards.
+    default. Comparing verifiers instead would need the optional `SELECT ON
+    SYS.USER$` grant, which no account can hold on Autonomous Database. So every
+    account is verified first, under the same lockout mitigations `creds check`
+    uses, and a password that already works is left alone. Two logins per account
+    per run, budgeted up front rather than counted afterwards.
 
     **A locked account is not changed at all.** The statement would succeed and
     the verification could never pass, which would end the run holding a database
@@ -5862,8 +5864,8 @@ def creds_apply(
         # command knows what it had applied: 7 says nothing happened, which is true
         # of a run fenced out before its first change and a lie about one fenced out
         # after its ninth. The diagnostic is what separates this exit 4 from the
-        # ordinary one -- that one is repaired by running `apply` again (decision
-        # #264), and this one must not be.
+        # ordinary one -- that one is repaired by running `apply` again
+        # (decision #264), and this one must not be.
         document.diagnostics.append(
             Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
         )
@@ -5917,8 +5919,8 @@ def creds_apply(
         stopped=None if stolen is None else str(stolen),
     )
     # Printed as well as put in `diagnostics[]`, which is `creds generate`'s rule
-    # and UC-1 §6.4's: the emitter prints the command's text and not the document,
-    # so a run-level warning is invisible to somebody reading a terminal -- and a
+    # (UC-1 §4): the emitter prints the command's text and not the document, so a
+    # run-level warning is invisible to somebody reading a terminal -- and a
     # guardrail that did not run, reported only in JSON, is reported to nobody who
     # ran this by hand.
     notes = render_notices(
@@ -6078,11 +6080,11 @@ def _record_locks(
 ) -> None:
     """The lock section, and what the run should say about how it got its locks.
 
-    Called **after** the lock has been let go: `release()` flips
+    Called **after** the lock has been let go, on every path out of
+    `manager.holding(...)`, early returns included. `release()` flips
     `HeldLock.released`, so a section built while the run still held its locks would
     report `released: false` for locks it gives back immediately afterwards, and the
-    document would disagree with the store record. That includes every early return
-    inside `manager.holding(...)`.
+    document would disagree with the store record.
 
     One function because the two halves must not come apart. Without
     `lock_diagnostics` here, a run that took over an expired lock would say so
@@ -6142,7 +6144,7 @@ def _lock_events(run: Invocation) -> Callable[[str, HeldLock], None]:
 def _lock_notices(manager: LockManager) -> list[str]:
     """Lock findings a person reading a terminal has to see.
 
-    UC-1 §6.4's rule that a warning is *surfaced*, applied to the one lock
+    UC-1 §4's rule that a warning is *surfaced*, applied to the one lock
     diagnostic that asks the reader to go and do something: a warning that cannot be
     seen in the default output is not surfaced, and the emitter prints the command's
     text rather than the document. A path created without `cas_required` is a thing

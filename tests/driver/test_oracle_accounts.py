@@ -260,8 +260,8 @@ def test_password_change_date_tracks_a_rotation(account: Any) -> None:
     **Skipped where the release has no column to read**, on the account's own
     answer rather than on a version. `DBA_USERS.PASSWORD_CHANGE_DATE` arrived in
     19c: 23.26.2.0.0 and 21.3.0.0.0 have it, 18.4.0.0.0 and 11.2.0.2.0 do not
-    (measured; and note that `ORACLE_MAINTAINED` does *not* travel with it, which
-    is the bug `_user_row`'s three shapes exist for). The account was created
+    (`docs/measurements.md`). Note that `ORACLE_MAINTAINED` does *not* travel
+    with it, which is what `_user_row`'s three shapes exist for. The account was created
     moments ago by the fixture, so a release that has the column has already
     filled it; `None` here can only mean the column is absent, which makes this a
     reading and not a version test.
@@ -463,12 +463,12 @@ def password_file_account(session: Any) -> Iterator[Any]:
     `ORA-28227: Gradual password rollover is not supported for administrative
     users`, and allowed on 26ai -- measured on 21.3.0.0.0 and 23.26.2.0.0.
 
-    The dependency is incidental: what this test needs is an
-    account an operator would have made, and rollover has nothing to do with the
-    password file. So it gets its own rather than a version guard, and the
-    difference is recorded in `docs/design/02-oracle-privileges.md` §2's
-    `V$PWFILE_USERS` subsection -- where it is a fact about the password file and
-    about profiles, rather than about this fixture.
+    The dependency is incidental: what this test needs is an account an operator
+    would have made, and rollover has nothing to do with the password file. So
+    it gets its own rather than a version guard, and the difference is recorded
+    in `docs/design/02-oracle-privileges.md` §2's `V$PWFILE_USERS` subsection --
+    where it is a fact about the password file and about profiles, rather than
+    about this fixture.
 
     The `alter user ... profile` route reaches the same state on 21c and is not
     used here for the same reason: it would preserve a coupling this test never
@@ -625,7 +625,8 @@ def _touch(session: Any) -> None:
 
 
 def test_a_password_in_its_grace_period_is_not_read_as_expired(grace_account: Any) -> None:
-    """The `EXPIRED(GRACE)` reading, against the database rather than against a string a test wrote.
+    """`EXPIRED(GRACE)`, read from the database rather than from a string a test
+    wrote.
 
     `EXPIRED(GRACE)` carries the token `EXPIRED`, and reading the two as one
     made `check` report a working account as expired and skip the login that
@@ -654,7 +655,7 @@ def test_the_grace_window_has_an_end_the_dictionary_reports(grace_account: Any) 
 def test_the_password_still_authenticates_during_the_grace_period(grace_account: Any) -> None:
     """The fact the whole decision rests on, and the one a status column cannot
     prove on its own. If this ever came back `fail`, reporting `IN_SYNC` for an
-    account in grace would be wrong and the grace handling would need reopening."""
+    account in grace would be wrong, and so would the grace reading."""
     result = grace_account.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
 
     assert result.result == PASS

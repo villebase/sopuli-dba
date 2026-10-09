@@ -25,7 +25,7 @@ A fourth needs a *second* account: §2's optional
 `V$PWFILE_USERS` grant, taken. What the pair proves is that the audit's answer
 about `SYSDBA` and `SYSOPER` follows the estate rather than a constant — one
 account reports them unchecked and the other reports them, and a suite that only
-ever built the first would pass on a constant.
+ever built the first would pass with the answer hard-coded.
 
 The grants come from `sopuli/driver/oracle/privileges.py` rather than from a list
 written here, so this account is by construction the one the tool asks for; that
@@ -288,8 +288,8 @@ def installed_before_531(admin: Any, live_oracle: Environment) -> Iterator[Any]:
 
 
 def test_a_correct_install_is_short_of_nothing(service_account: Any) -> None:
-    """`missing` is empty for an
-    account granted exactly what §2 documents, measured rather than reasoned.
+    """`missing` is empty for an account granted exactly what §2 documents,
+    measured rather than reasoned.
 
     This is where a wrong view name or a `V$` that should have been `V_$` shows
     up. Tier 0 cannot catch either, because it is handed the answer.
@@ -405,11 +405,10 @@ def test_an_account_is_still_described_with_the_password_file_unreadable(
     The account described here is the service account itself, which is the only
     one this fixture is sure exists.
 
-    **Returning at all is the control**, and the first draft of this test got
-    that wrong: it asserted `state.roles` was non-empty, on the assumption that
-    an account reachable through `DBA_ROLE_PRIVS` must hold something. §2 grants
-    privileges directly and no roles, so this account holds none and the
-    assertion failed against a database that was behaving exactly as documented.
+    **Returning at all is the control**, not a non-empty `state.roles`. An
+    account reachable through `DBA_ROLE_PRIVS` need not hold anything: §2 grants
+    privileges directly and no roles, so this account holds none, and asserting
+    otherwise would fail against a database behaving exactly as documented.
     What proves the roles view was read is that `describe_user` did not raise --
     an empty set and an unreadable view are precisely the two things
     `RolesUnreadableError` exists to keep apart.

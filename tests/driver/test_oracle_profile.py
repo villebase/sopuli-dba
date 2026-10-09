@@ -21,9 +21,9 @@ everything except the one test that is about rollover limits. Both come from
 `test/oracle-init/01_test_profiles.sql`, so the suite is not asserting against a
 profile it invented in the same breath -- but that script cannot create
 `SOPULI_ROLLOVER` below 19.12 and says so rather than aborting, so on 18c and
-11g it is simply absent. Used as "some other profile that exists", it would fail
-on 18c with `resolve_profile` answering `None`. What
-they need is a second profile; only `test_the_move_carries_the_new_profiles_limits`
+11g it is simply absent. A test that used it as "some other profile that
+exists" would fail on 18c with `resolve_profile` answering `None`. What the tests
+need is a second profile; only `test_the_move_carries_the_new_profiles_limits`
 needs that profile to grant a rollover window, and it declares the capability.
 """
 

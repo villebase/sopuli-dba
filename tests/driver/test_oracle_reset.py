@@ -17,10 +17,10 @@ and the four facts this file exists for are all ones the design turned on:
   default the opposite way to UC-1 and this is where that claim meets a database.
 
 The fifth is a refusal rather than a behaviour: an expiring reset of an account
-on a rollover profile is refused before any DDL, because Q7 measured that
-`PASSWORD EXPIRE` does *not* end the window -- the old password answers
-`ORA-28001` rather than `ORA-01017`, so it still authenticates and is itself a
-way to set the new one.
+on a rollover profile is refused before any DDL, because
+`sql/oracle/07_lock_and_rollover_probe.sql` measured that `PASSWORD EXPIRE` does
+*not* end the window -- the old password answers `ORA-28001` rather than
+`ORA-01017`, so it still authenticates and is itself a way to set the new one.
 """
 
 from __future__ import annotations
@@ -326,8 +326,8 @@ def test_keeping_the_window_leaves_the_old_password_working(
 def test_an_expiring_reset_is_refused_on_a_rollover_profile(
     rollover_account: Any, live_oracle: Environment
 ) -> None:
-    """Q7, as a refusal. Expiring does **not** end the window, so the seen
-    path would leave a second live password behind it.
+    """The rollover probe's finding, as a refusal. Expiring does **not** end the
+    window, so the seen path would leave a second live password behind it.
 
     Both entry points refuse, and both are asserted: the plan-time call a verb
     makes before drawing a password, and the reset itself, which asks again

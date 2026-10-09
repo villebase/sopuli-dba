@@ -167,8 +167,8 @@ def test_an_override_is_reported_against_the_override() -> None:
 # `readonly: false` would replace a template's `true`, and the safer of the two
 # would be gone before anything could ratchet them. A run narrowed to the
 # patched target would have nothing left to be safest of, which is an invariant
-# 10 hole. `_patch_target` keeps the template's block beside the merged one, so
-# both reach the resolver.
+# 10 hole. Its caller keeps the template's block on
+# `ExpandedTarget.template_safety`, so both reach the resolver.
 
 
 def relaxing() -> Config:

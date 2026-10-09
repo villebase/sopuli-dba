@@ -152,7 +152,7 @@ def test_guard_3_has_no_escape_flag_on_the_command() -> None:
     There must be no way to defeat the terminal check from the command line: a
     flag that exists to weaken a guard ends up in scripts, which is the exact
     place this value must never reach. `| clip` not working is the accepted cost
-    (decision #439). Checked by looking at every option the verb declares, so
+    (UC-2 §6.5). Checked by looking at every option the verb declares, so
     adding one called `--no-tty-check` fails here rather than in review.
     """
     from sopuli.cli import account_reset_password
@@ -255,7 +255,7 @@ def test_a_timed_lock_is_not_refused() -> None:
 
 
 def test_a_compound_status_carrying_a_deliberate_lock_is_still_refused() -> None:
-    """`EXPIRED & LOCKED` is a real value, so equality against the whole string
+    """`EXPIRED & LOCKED` is a real value. Equality against the whole string
     would call a deliberately locked account open, so the status is read as
     tokens."""
     answer = decision(state(status="EXPIRED & LOCKED", locked=True, expired=True))

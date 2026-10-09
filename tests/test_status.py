@@ -254,9 +254,9 @@ def grace_row(**fields: object) -> status.Row:
 
 
 def test_a_grace_period_is_not_a_row_nobody_needs_to_look_at() -> None:
-    """A grace period is a finding, so it is counted. Reading the two apart
-    without counting it would turn a mislabelled finding into no finding at
-    all."""
+    """A grace period is a finding, so it is counted. Reading it as `expired`
+    would mislabel it but keep it visible; telling the two apart without
+    counting it would turn a mislabelled finding into no finding at all."""
     text = render_status_table([grace_row()])
 
     assert "nothing to act on" not in text

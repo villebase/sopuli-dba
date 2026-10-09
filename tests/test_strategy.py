@@ -186,8 +186,8 @@ def test_every_strategy_is_answerable_for_every_account(name: str) -> None:
 
 
 def test_a_declared_profile_the_account_is_not_on_is_a_move() -> None:
-    """The profile decides the regime (decision #301), so whether one is about
-    to change is a question the strategy check has to ask first."""
+    """The profile decides the regime, so whether one is about to change is a
+    question the strategy check has to ask first."""
     moving = strategy.moves_profile(user(), AccountAttributes(profile="acme_app_prof"))
 
     assert moving == "acme_app_prof"
@@ -215,7 +215,7 @@ def test_an_unreported_profile_reads_as_a_move() -> None:
 
 
 def test_a_named_regime_and_a_profile_move_are_refused_together() -> None:
-    """The interaction decision #301 designs against: `unhonourable` answers about
+    """The interaction to guard against: `unhonourable` answers about
     the profile the account holds *now*, so judging a named regime for an account
     this run is about to move would clear `staged` against the profile it is
     leaving and then run it under one that opens a window."""

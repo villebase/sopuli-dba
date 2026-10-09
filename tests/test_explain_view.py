@@ -1,4 +1,4 @@
-"""``--explain``'s rendering, fed resolved settings directly (#53).
+"""``--explain``'s rendering, fed resolved settings directly.
 
 Tier 0 (04-testing.md §4): a pure function of a mapping, so there is no config
 file, no environment and no command here.
@@ -8,10 +8,9 @@ Two settings are wired today -- `output` and `safety.dry_run` -- so a run can
 show a value from the command line, from the environment, and from a built-in
 default, and nothing else. It cannot show a profile that tried to relax a ratchet
 and lost, because no layer can supply a looser value yet; and it cannot show a
-secret-valued setting, because none exists. Those are two of the three cases the
-issue asks for, and both are properties of the *view*, which takes whatever the
-resolver produced. Testing them here is what makes them true when the settings
-that need them arrive, rather than a year from now when somebody notices.
+secret-valued setting, because none exists. Both are properties of the *view*,
+which takes whatever the resolver produced. Testing them here makes them true
+when the settings that need them arrive.
 """
 
 from __future__ import annotations
@@ -223,14 +222,14 @@ def test_a_clean_run_has_no_ratchet_diagnostics() -> None:
 def test_a_secret_valued_setting_shows_its_layer_and_never_its_value() -> None:
     """Invariant 2, from the direction this view could have broken it.
 
-    No setting is secret-valued today, and #145 makes that more than an accident:
-    the command line names a token's *location* and never carries one, and §3a's
-    chain is resolved outside the settings registry. Which is exactly why this is
-    here now: the view renders whatever the resolver hands
-    it, and the day one arrives, the redaction has to already be true. It is,
-    because the value is rendered through `render_value`, which stringifies, and
-    a `Secret` stringifies to `***`. There is no branch here that could be
-    forgotten.
+    No setting is secret-valued today, and ADR-007 makes that more than an
+    accident: the command line names a token's *location* and never carries one,
+    and §3a's chain is resolved outside the settings registry. That is why this
+    test exists now: the view renders whatever the resolver hands it, and the
+    day a secret-valued setting arrives, the redaction has to already be true.
+    It is, because the value is rendered through `render_value`, which
+    stringifies, and a `Secret` stringifies to `***`. There is no branch here
+    that could be forgotten.
 
     The provenance is the useful half and is kept: *where* a token came from is
     what an operator needs, and the token itself is what they must not be shown.

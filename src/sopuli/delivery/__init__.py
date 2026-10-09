@@ -47,7 +47,7 @@ class Handover:
     somewhere, which is not the same as either of these fields being populated:
     a wrap that returned a token but no accessor and no usable TTL is a real
     hand-over with nothing to say about itself, and building the section out of
-    "is either field set" reported it as the *seen* path -- the one case the
+    "is either field set" would report it as the *seen* path -- the one case the
     section's presence is supposed to distinguish. Presence of this object is
     the signal; its fields are nullable inside it.
 

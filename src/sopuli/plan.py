@@ -278,25 +278,24 @@ def _secret_json(binding: Binding) -> dict[str, Any] | None:
     perfectly valid. ``config show --resolved`` already renders ``-`` for such a
     binding rather than a verdict, and this matches it.
 
-    **This is not the place that refuses one**, and C15 is what says so.
-    It decided "mostly plan time": the null is a real
-    temporary state, `config show --resolved` shows it as ``-``, and *the command
-    that actually needs a store* is what fails -- once a run's profile is known
-    and the answer is exact. A refusal written into this function would fire
-    before either of those is true and would reject every file whose store comes
-    from ``SOPULI_VAULT``, which is the arrangement C15 explicitly preserved.
-    Invariant 4 puts it in the command, which is also where
+    **This is not the place that refuses one**, and C15 is what says so. It decided
+    "mostly plan time": the null is a real temporary state, `config show --resolved`
+    shows it as ``-``, and *the command that actually needs a store* is what fails
+    -- once a run's profile is known and the answer is exact. A refusal written into
+    this function would fire before either of those is true and would reject every
+    file whose store comes from ``SOPULI_VAULT``, which is the arrangement C15
+    explicitly preserved. Invariant 4 puts it in the command, which is also where
     ``_check_has_somewhere_to_resolve_from``'s docstring says it belongs. What a
-    *file* can be refused for at load -- ``vaults:`` declaring nothing at all, so
-    no run could ever complete the binding -- it already is. C15's other half --
-    a run completing the store from a profile or ``SOPULI_VAULT`` -- is
-    :mod:`sopuli.config.binding_stores` (decision #250). **A command that needs
-    a store is required to run it before building a plan**, and to call
-    ``refuse_unresolved`` after; this function does not, and cannot, check that
-    it happened. A unit that still has no store is therefore either a binding
-    with no ref or a caller that skipped the step -- and the second is why the
-    refusal belongs to the caller rather than here, where it would fire before a
-    run's profile is even known.
+    *file* can be refused for at load -- ``vaults:`` declaring nothing at all, so no
+    run could ever complete the binding -- it already is. C15's other half -- a run
+    completing the store from a profile or ``SOPULI_VAULT`` -- is
+    :mod:`sopuli.config.binding_stores` (decision #250). **A command that needs a
+    store is required to run it before building a plan**, and to call
+    ``refuse_unresolved`` after; this function does not, and cannot, check that it
+    happened. A unit that still has no store is therefore either a binding with no
+    ref or a caller that skipped the step -- and the second is why the refusal
+    belongs to the caller rather than here, where it would fire before a run's
+    profile is even known.
 
     ``updated_at`` is absent by construction: it describes what the store holds,
     and reading the store here would make a plan a function of something other

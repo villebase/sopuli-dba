@@ -3,9 +3,9 @@
 UC-1 §8. The verb is a sequence over parts that already exist -- `generate`
 stages a password, `apply` converges the database and promotes the document,
 `finish-rollover` closes the window -- and the two properties that make it a
-verb rather than a shell script arrived before it: one lock held across the
-whole sequence and the fence re-read at every boundary, and the pre-flight that
-asks the estate before anything is written.
+verb rather than a shell script are these: one lock held across the whole
+sequence and the fence re-read at every boundary, and the pre-flight that asks
+the estate before anything is written.
 
 So what is genuinely new is the *decisions between* the steps, and they are here:
 

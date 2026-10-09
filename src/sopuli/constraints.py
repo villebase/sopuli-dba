@@ -13,7 +13,7 @@ handles those by redrawing. What is predictable is the *deterministic* pair -- a
 password longer than the target's maximum, counted in bytes in the target's own
 character set, and characters the target will not accept. Those hit every
 account in the selection identically and one policy fix ends them, which is
-exactly why they were the wrong answer to those refusals and are worth fixing on
+exactly why they are the wrong answer to those refusals and are worth fixing on
 their own.
 
 **There is no single strictest limit, and inventing one loses information.** A

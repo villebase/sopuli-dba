@@ -86,7 +86,7 @@ def at_least_as_safe(
 
     ``safe_bool`` and ``list_merge`` are the two things taken from the registry,
     because both are *declarations* rather than merge rules: `readonly: true`
-    refuses more and `locking.break_expired: true` refuses less (Q2);
+    refuses more and `locking.break_expired: true` refuses less;
     `confirm_environments` unions and `delivery.allowed_methods` intersects
     (H6). No property of the values themselves says which, in either case.
     Everything about how layers combine is still written out here -- and the two

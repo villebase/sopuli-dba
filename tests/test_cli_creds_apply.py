@@ -53,6 +53,7 @@ from sopuli.driver.protocol import (
     AttributeChange,
     ChangeResult,
     Credential,
+    Encryption,
     PrivilegeAudit,
     Scope,
     UnsupportedCapabilityError,
@@ -309,6 +310,11 @@ def validator() -> Draft202012Validator:
     return Draft202012Validator(json.loads(RUN_SCHEMA.read_text(encoding="utf-8")))
 
 
+#: An encrypted connection, the fakes' default, so SOPULI-W031/W032 appear only
+#: in the tests about them.
+TLS = Encryption(method="tls", protocol="tcps")
+
+
 class FakeSession:
     """One target's worth of answers, and a record of everything it was asked.
 
@@ -329,6 +335,7 @@ class FakeSession:
         rollover_refusal: Exception | None = None,
         on_call: Callable[[str], None] | None = None,
         scope: Scope | None = None,
+        encryption: Encryption = TLS,
         audit: PrivilegeAudit | Exception | None = None,
         describe_error: Exception | None = None,
         profile_error: Exception | None = None,
@@ -337,6 +344,7 @@ class FakeSession:
         self.describe_error = describe_error
         self.on_call = on_call
         self.given_scope = scope
+        self.encryption = encryption
         self.audit = audit
         self.users = dict(users)
         self.answers = {name: list(results) for name, results in answers.items()}
@@ -367,8 +375,16 @@ class FakeSession:
 
     def scope(self) -> Scope:
         if self.given_scope is not None:
-            return replace(self.given_scope, capabilities=self.capabilities)
-        return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=self.capabilities)
+            return replace(
+                self.given_scope, capabilities=self.capabilities, encryption=self.encryption
+            )
+        return Scope(
+            type="pdb",
+            container="ALPHA",
+            read_write=True,
+            capabilities=self.capabilities,
+            encryption=self.encryption,
+        )
 
     def privileges(self) -> PrivilegeAudit:
         """What `--preflight` reads, and what `doctor --check-privileges` does.
@@ -562,6 +578,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
         describe_error: Exception | None = None,
         profile_error: Exception | None = None,
+        encryption: Encryption = TLS,
     ) -> dict[str, Any]:
         store = MemoryStore()
         for path, body in (documents or _staged_two_targets()).items():
@@ -607,6 +624,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                     audit=None if audits is None else audits.get(target.name),
                     describe_error=describe_error,
                     profile_error=profile_error,
+                    encryption=encryption,
                 )
                 sessions.append(session)
                 return session
@@ -747,6 +765,66 @@ def test_a_second_run_changes_nothing(
     assert result.exit_code == ExitCode.SUCCESS
     assert harness["sessions"][0].changed == []
     assert document(result)["results"][0]["changed"] is False
+
+
+# ---------------------------------------------------- connection encryption ---
+
+CLEAR = Encryption(method="none", protocol="tcp", hint="require NNE or TLS on the server")
+UNKNOWN_ENCRYPTION = Encryption(method="unknown", protocol="tcp", hint="grant the view")
+
+
+def _codes(result: Result) -> list[str]:
+    return [one.get("code") for one in document(result).get("diagnostics", [])]
+
+
+def test_a_password_sent_in_clear_warns_once_per_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#697: warn, never refuse. The change still happens, on both targets."""
+    harness = estate(encryption=CLEAR)
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert all(session.changed for session in harness["sessions"])
+    found = [one for one in document(result)["diagnostics"] if one.get("code") == "SOPULI-W031"]
+    assert sorted(one["target"] for one in found) == ["appdb-alpha", "appdb-beta"]
+    assert all("require NNE or TLS on the server" in one["message"] for one in found)
+
+
+def test_an_unknown_encryption_has_a_code_of_its_own(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Could not tell is not the same finding as in clear."""
+    estate(encryption=UNKNOWN_ENCRYPTION)
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert _codes(result).count("SOPULI-W032") == 2
+    assert "SOPULI-W031" not in _codes(result)
+
+
+def test_no_warning_where_no_password_was_sent(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """An account already in sync sends nothing, so there is nothing to warn about."""
+    estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        answers={"ACME_WEB_USER": passes(1)},
+        encryption=CLEAR,
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert "SOPULI-W031" not in _codes(result)
+
+
+def test_the_warning_is_printed_as_well(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(encryption=CLEAR)
+    result = run(runner, write_config(CONFIG))
+
+    assert "appdb-alpha: a password was sent over a connection that is not encrypted" in (
+        result.output
+    )
 
 
 def test_nothing_is_promoted_when_nothing_was_staged(

@@ -1,10 +1,10 @@
-"""The decision register is the one place a decision's status is written (#615).
+"""The decision register is the one place a decision's status is written.
 
 Tier 0, except the last two tests, which ask GitHub and run weekly.
 
-Status used to live in four places: the `decision` label, a prose list in
-`docs/README.md`, each document's own table, and code comments. They disagreed.
-The register in `docs/README.md` now holds it. Each document keeps its table,
+Status is written in the register in `docs/README.md` and nowhere else. The
+`decision` label, a prose list, each document's own table and code comments
+could each state it too, and they would disagree. Each document keeps its table,
 because the table carries the question and the reasoning, and this module checks
 that the two agree:
 

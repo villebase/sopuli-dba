@@ -437,8 +437,9 @@ client
   instant_client    23.26.3.0.0
   reaches           19.1 and later
 
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  7
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 This config declares no vault, so the `vaults` list is empty. There is no

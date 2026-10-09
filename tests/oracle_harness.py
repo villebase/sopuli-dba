@@ -1,7 +1,5 @@
 """Capability probing for the tier-1 suite (`04-testing.md` §3).
 
-What matters here is not the code but which list the probes are keyed on.
-
 **The harness does not own the questions; it imports them.** A second copy of
 the driver's list would be one probe with a spare place to disagree. If the copy
 held a question that was invalid on every release, the harness would answer it

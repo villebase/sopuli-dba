@@ -4,8 +4,7 @@ Tier 0, except the last test, which needs the network and runs on a schedule.
 
 Prose that waits on an issue stays in place after the issue closes. "Until #N
 lands" reads as true for as long as nobody rereads it, and the pull request that
-closes #N rarely touches the files that mention it. A documentation audit
-found 59 such references to issues that had already closed.
+closes #N rarely touches the files that mention it.
 
 **The marker.** Pending work names its issue in one fixed spelling:
 

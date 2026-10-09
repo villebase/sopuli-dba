@@ -4,7 +4,7 @@ Tier 0 (``04-testing.md`` §4): reads files, opens no socket, needs no container
 
 **What goes wrong.** A measured result lands in one document and the others go
 on asserting the opposite. Striking ``--limit`` from ``00-principles.md`` can
-leave the same flag standing in four other places. Recording that SQL trace has
+leave the same flag standing in other documents. Recording that SQL trace has
 been measured can leave ``uc-01-app-credential-sync.md`` saying "SQL trace
 remains untested" and ``adr-001-privilege-model.md`` saying "unchecked on every
 version" -- a use case and an ADR, the two kinds of document `CLAUDE.md` tells a
@@ -38,8 +38,8 @@ worked example. A marker inside that docstring breaks its indentation, and
 **What this cannot check, and it is worth being plain about it.** The rule below
 requires that an open entry be marked *somewhere*, which is not the same as
 *everywhere*. Whether a given paragraph asserts a given open question is a
-judgement about prose, and no test makes it -- a first pass at marking missed
-seven sites, although the convention says every site gets one. So the marker
+judgement about prose, and no test makes it -- a marking pass can miss sites
+although the convention says every site gets one. So the marker
 narrows the problem rather than removing it: it turns "remember every document"
 into "remember at the moment you write the claim", and it makes the *settling*
 step mechanical even when the *marking* step is not. A site nobody marks is

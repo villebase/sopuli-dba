@@ -2,11 +2,11 @@
 
 Tier 0, except the last two tests, which ask GitHub and run weekly.
 
-Status is written in the register in `docs/README.md` and nowhere else. The
-`decision` label, a prose list, each document's own table and code comments
-could each state it too, and they would disagree. Each document keeps its table,
-because the table carries the question and the reasoning, and this module checks
-that the two agree:
+The register in `docs/README.md` is the authority for a decision's status. The
+`decision` label, a prose list and code comments do not state it, because copies
+disagree. Each document keeps its own table, because the table carries the
+question and the reasoning, and its status marks must match the register. This
+module checks that they agree:
 
 * every row in a document's table has a register row, and the other way round;
 * a question struck through (`~~…~~`) in the document is `decided` in the

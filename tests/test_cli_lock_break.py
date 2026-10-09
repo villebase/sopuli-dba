@@ -254,8 +254,9 @@ def test_a_live_lock_is_left_untouched_when_it_is_refused(
 def test_force_takes_a_live_lock_and_says_so(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """Decision P3 settled `--force` as an audited override of a guardrail that
-    is not a safety setting. `expired: false` in the entry is the audit: it is
+    """`--force` is an audited override of a guardrail that is not a safety
+    setting (decision P3), and on `lock break` it takes a lock that has not
+    expired (UC-1 §8). `expired: false` in the entry is the audit: it is
     the case somebody reading the trail afterwards most needs to see named."""
     with_locks((PROD, held()))
 

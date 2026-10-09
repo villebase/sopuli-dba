@@ -416,9 +416,9 @@ def test_the_reason_names_every_check_that_refused(
 def test_force_waives_checks_two_to_five(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Decision P3's case: rotating `DBSNMP` is ordinary DBA work, and a tool with no
-    override does not prevent it — it moves it to SQL*Plus, where nothing records
-    that it happened."""
+    """Decision P3's case: rotating `DBSNMP` is ordinary DBA work, and a tool
+    with no override does not prevent it — it moves it to SQL*Plus, where
+    nothing records that it happened."""
     harness = estate(
         {
             "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
@@ -526,8 +526,9 @@ def test_a_clean_account_carries_no_overridden_key(
 def test_force_never_waives_check_one(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Invariant 5 and decision P3: acting on an account absent from the config would
-    make the tool's own audit trail meaningless, so no flag reaches check 1.
+    """Invariant 5 and decision P3: acting on an account absent from the config
+    would make the tool's own audit trail meaningless, so no flag reaches
+    check 1.
 
     The database answers to a name the config does not declare -- which is what
     a renamed account looks like -- and `--force` must not get past it.

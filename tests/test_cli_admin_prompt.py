@@ -306,9 +306,9 @@ def test_an_empty_answer_never_reaches_the_driver(
     monkeypatch: pytest.MonkeyPatch,
     watching: Callable[[bool], None],
 ) -> None:
-    """Enter on its own, or a paste the hidden prompt did not take. Sent,
-    it would be `DPY-4001` under `connectivity`; refused, it is a `config` finding on
-    the target and no connection is opened -- `seen` is the driver's side of
+    """Enter on its own, or a paste the hidden prompt did not take. Sent, it
+    would be `DPY-4001` under `connectivity`; refused, it is a `config` finding
+    on the target and no connection is opened -- `seen` is the driver's side of
     "nothing was sent"."""
     watching(True)
     seen = estate()

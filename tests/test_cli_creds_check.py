@@ -614,12 +614,11 @@ def test_a_low_assurance_admin_source_is_recorded_but_not_printed(
 ) -> None:
     """`diagnostics[]` is on every verb and printed by `doctor` alone.
 
-    `01-configuration.md` asks for the `env` source to be flagged in output and
-    this verb records it -- but what is being reported is a property of the
-    config file, the same on every run until somebody edits it. Printed here it
-    would be a line under every check forever, which is a note a reader stops
-    seeing. `doctor` is the verb that reports on the setup and is where it is
-    printed.
+    Principle P2 asks for the `env` source to be flagged in output and this verb
+    records it -- but what is being reported is a property of the config file, the
+    same on every run until somebody edits it. Printed here it would be a line under
+    every check forever, which is a note a reader stops seeing. `doctor` is the verb
+    that reports on the setup and is where it is printed.
     """
     estate()
     monkeypatch.setattr(

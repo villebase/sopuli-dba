@@ -8,9 +8,9 @@ the only reachable branch, with a hint reading *this is a caller that supplied
 no reader*.
 
 So `method: vault` would fail on every run of every verb, in the source
-`01-configuration.md` ranks highest of the three that need something from this
-machine: `env` is flagged low-assurance and `prompt` needs a human, which would
-leave no working unattended source at all.
+principle P2 ranks highest of the three that need something from this machine:
+`env` is flagged low-assurance and `prompt` needs a human, which would leave no
+working unattended source at all.
 
 `tests/test_admin.py` covers `resolve` with an injected reader, and those tests
 would pass without the wiring. This file gives the same answer as

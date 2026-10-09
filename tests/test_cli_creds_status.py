@@ -268,7 +268,8 @@ def test_the_age_is_the_vault_s(
     assert "400" not in found
 
 
-#: What the Oracle driver says on 18c without the `SYS.USER$` grant (decision #386).
+#: What the Oracle driver says on a release without `DBA_USERS.PASSWORD_CHANGE_DATE`
+#: and without the `SYS.USER$` grant (decision #386).
 NO_COLUMN = (
     "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON "
     "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"

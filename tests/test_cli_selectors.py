@@ -332,8 +332,8 @@ def test_an_unknown_name_is_refused_before_the_estate_is_narrowed(
 def test_the_document_reports_the_selectors_as_given(
     runner: CliRunner, write_config: Callable[[str], Path]
 ) -> None:
-    """`invocation.selection` has carried slots for all of these since the schema
-    was written, and until now only `select` was ever populated."""
+    """`invocation.selection` has a slot for each of these, and each is
+    populated, not only `select`."""
     body = document(
         runner,
         write_config(CONFIG),

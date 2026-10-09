@@ -230,7 +230,7 @@ def states(result: Result) -> dict[str, str]:
     return {entry["account"]: entry["state"] for entry in document(result)["results"]}
 
 
-# ------------------------------------------------------ the checks now fire ---
+# ---------------------------------------------------------- the checks fire ---
 
 
 def test_a_vendor_maintained_account_is_not_touched(
@@ -789,13 +789,13 @@ def test_a_target_that_can_answer_says_nothing(
 def test_a_password_file_member_is_still_refused(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """Check 3, firing for the first time.
+    """Check 3, on the account only it catches.
 
     Measured on 26ai 23.26.2.0.0: an account granted `SYSDBA` inside a PDB
     appears in `V$PWFILE_USERS` with its own `CON_ID`, reads
     `ORACLE_MAINTAINED = N`, and holds no roles at all -- so checks 2, 4 and 5
-    all pass it and only this one does not. That is the account the issue says
-    exists in real estates, and until now the tool would have rotated it.
+    all pass it and only this one does not. Such accounts exist in real
+    estates, and without check 3 the tool would rotate one.
     """
     harness = estate(
         {

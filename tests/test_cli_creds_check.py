@@ -849,9 +849,9 @@ def test_an_unreachable_target_is_left_to_the_run_rather_than_refused(
 def test_under_include_previous_the_previous_value_is_asked_about_too(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """One refusal is about the value, not the account -- a
-    character set that cannot hold it -- so a previous value the pre-flight never
-    saw would be refused mid-run as an `ERROR` row and exit 1."""
+    """One refusal is about the value, not the account -- a character set that
+    cannot hold it -- so a previous value the pre-flight never saw would be
+    refused mid-run as an `ERROR` row and exit 1."""
     harness = estate(answers={"ACME_WEB_USER": VerifyResult("hash", PASS)})
     for target in ("appdb-alpha", "appdb-beta"):
         harness["store"].write(

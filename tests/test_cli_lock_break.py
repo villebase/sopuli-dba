@@ -273,10 +273,9 @@ def test_force_takes_a_live_lock_and_says_so(
 def test_force_cannot_relax_readonly(
     runner: CliRunner, write_config: Callable[[str], Path], with_locks: Stores
 ) -> None:
-    """The line decision P3 drew and invariant 10 depends on: `--force`
-    overrides guardrails asked of one lock at one moment, and never a safety
-    setting. It is not a registered setting, so there is no layer for it to
-    arrive on."""
+    """Invariant 10: `--force` overrides guardrails asked of one lock at one
+    moment (UC-1 §8), and never a safety setting. It is not a registered
+    setting, so there is no layer for it to arrive on."""
     with_locks((PROD, held(ago=LAPSED)))
     config = write_config(CONFIG + "defaults:\n  safety:\n    readonly: true\n")
 

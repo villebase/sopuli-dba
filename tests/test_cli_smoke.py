@@ -35,7 +35,7 @@ def runner() -> CliRunner:
 def show(config_file: Path) -> list[str]:
     """``config show`` against a config file that definitely exists.
 
-    Every command discovers a config now, so a bare ``config show`` in a test
+    Every command discovers a config, so a bare ``config show`` in a test
     would search the working directory and the user's config directory and
     answer differently on the machine of anyone who happens to have one. Naming
     the file is what keeps these tests about the CLI.
@@ -64,16 +64,15 @@ def test_config_show_succeeds_in_text_mode(runner: CliRunner, show: list[str]) -
 def test_human_output_is_ascii(runner: CliRunner, show: list[str], config_file: Path) -> None:
     """The tool's own prose stays ASCII.
 
-    This started as a workaround for the stream encoding bug and outlived it.
-    The streams are UTF-8 now (``sopuli.output.stream``), so this is no longer
-    about what can be written -- it is about decoration being opt-in and
-    deliberate. Box drawing and status glyphs belong to the presentation layer,
-    where the choice to use them is made once and can be turned off; an em dash
-    that arrived in a message because it looked nice is not that choice.
+    The streams are UTF-8 (``sopuli.output.stream``), so this is not about what can
+    be written -- it is about decoration being opt-in and deliberate. Box drawing
+    and status glyphs belong to the presentation layer, where the choice to use them
+    is made once and can be turned off; an em dash that arrived in a message because
+    it looked nice is not that choice.
 
     User-supplied text -- account names, ORA- messages -- is exempt: it passes
-    through as it came, which is exactly what the encoding fix makes safe. The
-    config path is exactly that, and it is now printed: it comes from
+    through as it came, which is exactly what UTF-8 streams make safe. The
+    config path is exactly that, and it is printed: it comes from
     ``tmp_path``, so on a machine whose username is not ASCII this would fail on
     text the rule does not cover. Removing it first is what keeps the assertion
     about the prose around it.

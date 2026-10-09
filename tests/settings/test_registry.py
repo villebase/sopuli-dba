@@ -46,9 +46,9 @@ def test_layer_values_match_the_published_source_enum() -> None:
     than from a copy of its values, which would only assert the copy.
 
     Read from ``$defs/resolved_setting``, which is where the triple moved in 1.23
-    when ``config.vaults[].settings`` became a second consumer of it (#428). One
-    definition of the layer enum rather than one per section, for the reason this
-    test exists at all: a second copy is a copy that can disagree.
+    when ``config.vaults[].settings`` became a second consumer of it (decision
+    #428). One definition of the layer enum rather than one per section, for the
+    reason this test exists at all: a second copy is a copy that can disagree.
     """
     document: Any = json.loads(SCHEMA.read_text(encoding="utf-8"))
     published = document["$defs"]["resolved_setting"]["properties"]["source"]["enum"]
@@ -91,14 +91,14 @@ def test_the_safety_settings_are_the_ones_p3_names() -> None:
     yet; when they arrive they belong here, and this assertion is where the
     reminder lives.
 
-    ``locking.break_expired`` joined the set with the advisory lock (#83). P3 does
+    ``locking.break_expired`` joined the set with the advisory lock (Q2). P3 does
     not name it because it did not exist when P3 was written, which is the case
     this assertion is meant to catch: it is here on the same argument, not by
-    resemblance. ``vaults.*.tls.verify`` joined with C13's partial blocks (#136)
+    resemblance. ``vaults.*.tls.verify`` joined with C13's partial blocks
     on the same argument again: §3a puts it under the ratchet, and until a second
     layer could supply it there was nothing for the ratchet to do.
 
-    ``safety.delivery.allowed_methods`` joined with H6 (#453, #498), and P3 now
+    ``safety.delivery.allowed_methods`` joined with H6, and P3 now
     names it: which UC-2 delivery methods an estate may use is a guard in front
     of putting a live credential on a wire, and it is the fifth member on the
     same argument as the two before it rather than by resemblance.

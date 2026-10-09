@@ -1,15 +1,15 @@
-"""Every declared setting either reaches a consumer or says why it does not (#358).
+"""Every declared setting either reaches a consumer or says why it does not.
 
 Four times a setting or a field was resolved, ratcheted, validated, rendered by
 `config show`, and then read by nothing:
 
-* #292 -- `safety.confirm_environments`, parsed and ratcheted and consulted by
-  no command;
-* #296 -- `UserState.password_file_member`, typed and read by guardrail 3 and
-  populated by nothing;
-* #348 -- `locking.break_expired`, cross-checked in two places and implemented
-  in `decide()`, with no `LockManager` ever built with it;
-* #356 -- `lock_diagnostics`, written and unit-tested and called by nothing.
+* `safety.confirm_environments`, parsed and ratcheted and consulted by no
+  command;
+* `UserState.password_file_member`, typed and read by guardrail 3 and populated
+  by nothing;
+* `locking.break_expired`, cross-checked in two places and implemented in
+  `decide()`, with no `LockManager` ever built with it;
+* `lock_diagnostics`, written and unit-tested and called by nothing.
 
 Each looked like protection and was not. Each was found by somebody reading the
 code, which is why this file exists: the registry knows every setting, so the
@@ -163,7 +163,7 @@ def consumers(names: set[str]) -> dict[str, list[str]]:
 
 
 def test_every_setting_that_is_not_declared_inert_has_a_consumer() -> None:
-    """#348's sweep. A key nobody reads is a key that lies about what it does."""
+    """A key nobody reads is a key that lies about what it does."""
     wired = consumers(set(SETTINGS))
     orphans = {
         name: definition.inert_reason
@@ -202,7 +202,7 @@ def test_every_setting_declared_inert_really_is() -> None:
 
 
 def test_every_wired_setting_can_actually_be_resolved() -> None:
-    """The hole the sweep above cannot see, found the day it was written (#360).
+    """The hole the sweep above cannot see (decision #360).
 
     A consumer is half a wire. `_timeouts()` read `db.connect_timeout_s` off
     `Invocation.resolved` while the name was absent from `RESOLVED_SETTINGS`, so
@@ -262,7 +262,7 @@ def test_the_sweep_does_not_count_the_registry_as_a_consumer() -> None:
     """The other way it could be vacuous. Every setting is a literal in
     `settings/registry.py` by construction, so a sweep that counted the
     declaration would report the whole registry wired -- which is exactly the
-    answer that let #292, #348 and the rest through."""
+    answer that let those four through."""
     wired = consumers(set(SETTINGS))
 
     assert not [where for found in wired.values() for where in found if "settings/" in where]

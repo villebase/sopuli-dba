@@ -153,8 +153,9 @@ def test_a_limit_no_profile_can_hold_is_unreadable() -> None:
 def test_the_unit_is_read_off_the_value(limit: str, expected_days: float) -> None:
     """One hour to 60 days is `(0, 60]` in days and `[3600, 5184000]` in seconds,
     and the two do not overlap -- so the value names its own unit, and nothing
-    asks which release sent it (invariant 3). Read as days, `3600` was a 150-day
-    window, and `finish-rollover` said `3599d23h left` of a one-hour one."""
+    asks which release sent it (invariant 3). Read as days, `3600` would be a
+    3600-day window, and `finish-rollover` would say `3599d23h left` of a
+    one-hour one."""
     assert days(limit) == pytest.approx(expected_days)
     assert is_enabled(limit)
 
@@ -166,8 +167,8 @@ def test_a_seconds_window_ends_an_hour_after_the_change() -> None:
 
 @pytest.mark.parametrize("limit", ["-1", "0", "-1.0"])
 def test_off_is_disabled_in_both_renderings(limit: str) -> None:
-    """26ai reads "off" as `0` and 19.32.0.0.0 as `-1`. Both are DISABLED by
-    rule now, where `-1` used to be disabled only because it is not above zero."""
+    """26ai reads "off" as `0` and 19.32.0.0.0 as `-1`. `days` maps any value
+    at or below zero to DISABLED, so both come back as `0.0`."""
     assert days(limit) == 0.0
     assert not is_enabled(limit)
     assert window_end(CHANGED, limit) is None

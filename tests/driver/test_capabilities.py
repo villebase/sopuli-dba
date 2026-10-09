@@ -109,12 +109,11 @@ def test_every_structural_capability_says_why_it_is_not_probed() -> None:
 def test_no_two_capabilities_share_a_question() -> None:
     """Each capability has its own probe (decision #195).
 
-    Sharing one probe between `container_scope` and `common_users` would rest on
-    the reasoning that a common user is a thing which exists only in a CDB — so
-    two separately-worded probes would agree by construction and give a future
-    editor two places to make them disagree. A real measurement contradicted the
-    reasoning while agreeing with the answer, which is the specific way that
-    argument fails. Two capabilities are two questions.
+    A common user exists only in a CDB, so one probe can look like enough for
+    `container_scope` and `common_users` both. It is not: holding the privilege
+    to manage a common user is a separate question from being in a CDB, and a
+    probe shared between them was measured reporting both absent everywhere.
+    Two capabilities are two questions.
     """
     assert len(set(PROBES.values())) == len(PROBES)
 

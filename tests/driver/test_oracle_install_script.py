@@ -118,9 +118,9 @@ COMMON_SVC_OTHER = f"C##{SVC_OTHER.upper()}"
 #: :func:`test_the_optional_grants_are_off_unless_asked_for` is 1.93s and runs the
 #: script twice -- and the container operations are faster still, so this is
 #: roughly 300x headroom over the slowest thing it governs and nothing that merely
-#: *finishes slowly* can reach it. The stall it detects is a
+#: *finishes slowly* can reach it. It covers every call; the known case is a
 #: `GRANT CREATE SESSION ... CONTAINER=ALL` that prints its label and never
-#: returns.
+#: returns (TODO(#326)).
 #:
 #: One number for both because it is one question -- *did a docker call stop?* --
 #: and a second constant would be a second thing to keep proportionate to a
@@ -223,10 +223,9 @@ def _exec(
     file scripts.
 
     **A timeout asks the database what it was waiting for before it gives up.**
-    The call that hung had printed the label of a `GRANT ... CONTAINER=ALL` and
-    never returned, and nothing survived the kill that could say whether Oracle
-    was blocked or `docker exec` was -- so the second occurrence would have been
-    a second identical report. It is asked here rather than in the test, because
+    A killed call leaves nothing behind that says whether Oracle was blocked or
+    `docker exec` was, so without the question each stall would be another
+    identical report. It is asked here rather than in the test, because
     every one of this module's eighteen calls goes through this function and the
     next stall will not be in the same one.
     """
@@ -762,17 +761,16 @@ def _policies(container: str) -> set[str]:
 def test_uninstall_with_keep_audit_n_drops_every_policy(
     container: str, scripts: str, clean: None, cdb_only: None, unified_audit_only: None
 ) -> None:
-    """`keep_audit=N` removes both policies. Regression test for a bug in the
-    policy-dropping loop.
+    """`keep_audit=N` removes both policies.
 
     `audit_unified_policies` returns one row **per policy per audit option** --
-    six for `SOPULI_POL`. The cursor loop dropped it on the first iteration,
-    raised `ORA-46357` on the second, and the exception aborted the block before
-    `SOPULI_LOGON_POL` was reached.
+    six for `SOPULI_POL`. A loop over those rows would drop the policy on the
+    first iteration, raise `ORA-46357` on the second, and abort the block before
+    `SOPULI_LOGON_POL` is reached.
 
-    Asserting on `returncode` alone would still pass against that bug:
+    Asserting on `returncode` alone would pass against that:
     `WHENEVER SQLERROR CONTINUE` holds the exit code at 0, so the uninstall
-    reported success while leaving both policies behind. The assertion has to be
+    would report success while leaving both policies behind. The assertion has to be
     that they are gone.
     """
     assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0

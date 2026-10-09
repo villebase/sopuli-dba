@@ -233,7 +233,8 @@ def test_a_common_user_outside_the_root_is_refused() -> None:
 
 
 def test_an_application_root_is_refused_whatever_the_account_looks_like() -> None:
-    """Measured: there is no safe branch to take in an application root.
+    """Measured on 23.26.2.0.0 (`sql/oracle/03_app_container_probe.sql`): there
+    is no safe branch to take in an application root.
 
     Every account there is application-common -- a local one is ``ORA-65049`` --
     and a statement with no container clause is already container-wide, confirmed

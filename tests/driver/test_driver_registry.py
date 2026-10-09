@@ -255,8 +255,7 @@ def test_the_warning_is_a_warning_here_and_an_error_in_doctor() -> None:
     `config validate` says the file is fine and this machine is not; `doctor`
     says it cannot reach the estate and exits 9. Both read the same survey
     through the same function, so the sentence cannot drift between them --
-    which is the whole point of deleting the pair that used to compute it
-    separately.
+    which is why one function computes it rather than one per command.
     """
     config = Config(version=1, expanded_targets=(generated("pdb-0"),))
     shape = survey(config, backends={}, drivers={"oracle": NO_MODULE})

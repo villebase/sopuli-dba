@@ -12,7 +12,8 @@ The assertions that matter are the two kinds of *quiet*:
   learn to run with their eyes shut;
 * a view that could not be read reports **something**, because "I looked and
   found nothing" and "I could not look" are the two answers a report must never
-  merge — which is the failure decision #195 records in a capability probe.
+  merge. An unreadable `DBA_SYS_PRIVS` read as *holds nothing* is one way to
+  merge them; the capability probe that decision #195 records is another.
 
 P5 is decided and is not tested here because it is not this module's: `classify`
 returns findings and never an exit code. That `doctor` warns rather than fails on
@@ -108,8 +109,8 @@ def test_each_forbidden_role_is_found(role: str) -> None:
 
 
 def test_a_role_held_through_another_role_is_found() -> None:
-    """Measured: `ACME_APP_ADMIN` granted `DBA`, then granted to the
-    account, reads as `ACME_APP_ADMIN` alone flat and as both traversed. The
+    """Measured on 26ai Free 23.26.2.0.0: `ACME_APP_ADMIN` granted `DBA`, then
+    granted to the account, reads as `ACME_APP_ADMIN` alone flat and as both traversed. The
     traversal is the query's; what this asserts is that the classifier does not
     care how the role arrived."""
     audit = audit_of(roles=frozenset({"ACME_APP_ADMIN", "DBA", "SELECT_CATALOG_ROLE"}))

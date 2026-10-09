@@ -200,9 +200,10 @@ def test_the_two_rows_are_answered_separately() -> None:
 
 
 def test_asked_and_not_held_is_not_the_same_as_nobody_looked() -> None:
-    """The distinction this section is about. An estate that took the grant and holds neither
-    privilege has been *audited*, and saying otherwise is the merge this module
-    exists to refuse -- arrived at from the side that under-reports."""
+    """The distinction this section is about. An estate that took the grant and
+    holds neither privilege has been *audited*, and saying otherwise is the
+    merge this module exists to refuse -- arrived at from the side that
+    under-reports."""
     asked = audit_of(password_file=())
     unasked = audit_of(password_file=UNGRANTED)
 

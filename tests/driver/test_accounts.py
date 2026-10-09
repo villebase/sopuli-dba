@@ -202,9 +202,10 @@ def test_the_status_is_reported_verbatim_as_well_as_parsed() -> None:
 def test_an_open_rollover_window_reports_a_derived_end_date() -> None:
     """The dictionary says a window is open and never when it closes.
 
-    No column in `DBA_*` or the `V$` views exposes the end, so the choice is
-    between Oracle's own documented arithmetic over two values that *were* read
-    and telling an operator nothing about their deadline. It is the one computed field in `UserState`.
+    No column in `DBA_*` or the `V$` views exposes the end, so the choice is between
+    Oracle's own documented arithmetic over two values that *were* read and telling
+    an operator nothing about their deadline. It is the one computed field in
+    `UserState`.
     """
     state = describe(
         _cursor(

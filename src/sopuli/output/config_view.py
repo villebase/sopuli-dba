@@ -418,8 +418,7 @@ def _defeated_keys(config: Config) -> frozenset[str]:
     a row, since the section says what the file contains, but it cannot lose a
     ratchet it never entered.
 
-    **Defeated everywhere, not merely somewhere**, and this is the case the first
-    run of it got wrong in the other direction. A template writes one line and
+    **Defeated everywhere, not merely somewhere.** A template writes one line and
     generates many targets, so a key can lose on the one an override patched and
     hold on every other -- marking it because *one* target lowered it would say a
     line has no effect while it governs the rest of the set. So a row is marked

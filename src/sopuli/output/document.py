@@ -139,19 +139,18 @@ class Error:
     it (:attr:`sopuli.config.errors.ConfigError.category`) rather than the
     boundary guessing from the exception type.
 
-    ``code`` arrived with the first error that has one: a configured backend
-    whose client is not installed is ``SOPULI-20001`` (ADR-006, E5). It stays
-    optional and omitted-when-absent, because most failures have no code and a
-    ``null`` would invite a consumer to branch on a field that is empty almost
-    always.
+    ``code`` is set where an error has one: a configured backend whose client is
+    not installed is ``SOPULI-20001`` (ADR-006, E5). It is optional and
+    omitted-when-absent, because most failures have no code and a ``null`` would
+    invite a consumer to branch on a field that is empty almost always.
 
     ``target_capability`` is filled in from
     :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`, which reaches
     this object rather than the boundary's catch-all. It is set only for
     ``category: "capability"``, which is the schema's own rule for it, and is
     what a consumer branches on instead of parsing the capability's name back
-    out of the message. ``retryable`` is still absent for the original reason:
-    nothing yet knows whether it is true.
+    out of the message. ``retryable`` is absent because nothing yet knows
+    whether it is true.
 
     ``message`` is documented as redacted (``03-json-output.md`` §4). What makes
     that true here is the same thing that makes it true everywhere: a

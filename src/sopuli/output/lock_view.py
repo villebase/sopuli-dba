@@ -330,7 +330,8 @@ def _table(states: Sequence[LockState]) -> list[str]:
 #: Rotation paths are short. A reset lock is `<prefix>/<target>/<account>`, so
 #: `vault-dev:sopuli/personal-resets/appdb-alpha/acme_dev_alice` is 58
 #: characters before an estate picks its own names. A cap at the width of
-#: `config_view`'s `_REF` (52) would cut every reset row.
+#: `config_view`'s `_REF` (52) would cut a row like that one, and many reset
+#: rows are that long.
 _HOLDER = 28
 _COMMAND = 16
 

@@ -13,9 +13,10 @@ rather than relying on which stream it went to. :meth:`~sopuli.output.emit.Emitt
 viewer with no TTY can still render ANSI — there is no reader for whom
 ``\\r``-driven animation in a log file is better than silence. So there is no
 ``--spinner`` flag, no ``SOPULI_SPINNER``, no precedence rule and nothing for
-``tests/test_cli_precedence.py``'s walk to learn. At :data:`INTERVAL_S` this is
-400 characters a second, or about 12,000 over the 30-second default vault
-timeout — which is what a flag forcing it on would put in somebody's log.
+``tests/test_cli_precedence.py``'s walk to learn. At :data:`INTERVAL_S`, with a
+message of about 37 characters, this is 400 characters a second, or about 12,000
+over the 30-second default vault timeout — which is what a flag forcing it on
+would put in somebody's log.
 
 **ASCII, and no ANSI at all.** :data:`FRAMES` is four ASCII characters and the
 only control character emitted is a carriage return. That is what makes

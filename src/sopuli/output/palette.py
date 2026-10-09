@@ -13,12 +13,12 @@ distinguishable only by being coloured, so the ``NO_COLOR`` path is lossless by
 construction rather than by care, and ``tests/test_palette.py`` asserts exactly
 that: strip the escapes and the output is the plain output, byte for byte.
 
-**The palette maps onto what the machine view emits.** §1 wrote that rule
-against the result vocabulary (``state``, ``by_state``, ``drift``), because
-results were the only text output anticipated. ``config show`` came first and
-has no states at all, so these roles map onto the fields its ``config`` section
-*does* emit -- ``overridden``, ``environment``, ``non_production``, and absence.
-Same vocabulary, reinforced; not a second one that could disagree with it.
+**The palette maps onto what the machine view emits.** §1 states that rule
+against the result vocabulary (``state``, ``by_state``, ``drift``).
+``config show`` has no states at all, so these roles map onto the fields its
+``config`` section *does* emit -- ``overridden``, ``environment``,
+``non_production``, and absence. Same vocabulary, reinforced; not a second one
+that could disagree with it.
 
 **The result palette** (decision #395) has four roles -- :attr:`Role.GOOD`,
 :attr:`Role.ATTENTION`, :attr:`Role.BAD`, :attr:`Role.INCONCLUSIVE` -- and

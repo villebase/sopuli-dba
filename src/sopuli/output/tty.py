@@ -9,7 +9,8 @@ manager, or a test harness is precisely where stdin is detached and stderr is a
 pipe, and it is precisely where the answer must be "nobody is watching" rather
 than a traceback from inside the code that was trying to find out.
 
-Colour, prompting and the spinner all ask it, so there is one copy, here.
+Colour, prompting, the spinner and the seen path's terminal guard all ask it,
+so there is one copy, here.
 
 **It lives in its own module rather than in ``color.py``**, whose docstring is
 emphatic that it answers one question — *is colour on?* — and "deliberately stops

@@ -266,11 +266,9 @@ def merge(*patches: Mapping[str, Any]) -> dict[str, Any]:
 def apply_patch(document: Any, patch: Mapping[str, Any]) -> dict[str, Any]:
     """``document`` with ``patch`` applied to it: RFC 7396, in full.
 
-    **7396 and not 7386**, which this file and its neighbours used to cite. The
-    two are the same specification a month apart -- 7386 (October 2014) was
-    replaced by 7396 (November 2014) to correct its pseudocode and examples -- so
-    nothing about the semantics moved, but the obsolete number is the one a
-    reader would have gone looking up.
+    **7396 and not 7386.** The two are the same specification a month apart -- 7386
+    (October 2014) was replaced by 7396 (November 2014) to correct its pseudocode
+    and examples -- so the semantics are the same, but 7386 is the obsolete number.
 
     The other half of :func:`merge`, and the difference between them is one rule
     that is easy to read past. **Combining two patches and applying a patch to a

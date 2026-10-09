@@ -85,11 +85,12 @@ def settled_before_closing(
 
     * **No account.** ``ACCOUNT_MISSING``. Nothing to close and nothing to
       create (Q8).
-    * **No window open.** ``IN_SYNC`` with ``changed: false`` -- invariant 9,
-      and the ordinary answer for the scheduled job S2 describes, which mostly
-      finds nothing to do. Measured on 23.26.2.0.0 (`docs/measurements.md`),
-      issuing the statement anyway is accepted silently and changes nothing, so
-      a run that just issued it would report a change every night.
+    * **No window open.** ``IN_SYNC`` with ``changed: false`` -- invariant 9, and
+      the ordinary answer for the scheduled job S2 describes, which mostly finds
+      nothing to do. Measured on 23.26.2.0.0
+      (`sql/oracle/07_lock_and_rollover_probe.sql`, step 3), issuing the statement
+      anyway is accepted silently and changes nothing, so a run that just issued it
+      would report a change every night.
     * **A database that is not open read-write.** ``ERROR``, exit 1. A physical
       standby cannot take the ``ALTER USER``, so it is refused here, before the
       login a close would otherwise spend and before a preview can promise a

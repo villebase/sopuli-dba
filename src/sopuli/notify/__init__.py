@@ -1,8 +1,8 @@
 """Saying that a password is ready, without saying what it is (UC-2 §6.1).
 
 The low-trust half of UC-2 §6. Every unseen delivery method reuses it —
-`vault_wrapped`, and `one_time_link` and `onepassword_share` when they land.
-They share it so that it is built once.
+`vault_wrapped` now, and `one_time_link` (TODO(#445)) and `onepassword_share`
+(TODO(#446)) when they are built. They share it so that it is built once.
 
 **What can be sent is decided in the config layer, not here.**
 :mod:`sopuli.config.notify` refuses a template whose placeholders are not in a

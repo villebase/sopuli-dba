@@ -130,10 +130,10 @@ def resolve_token(
     reaches a store never reads the file.
 
     **The chain stays inside one method**, and that is the property worth
-    protecting. An earlier draft fell through to AppRole after the last step;
-    falling into a *different* method makes an authentication failure impossible
-    to explain, because the thing that failed is not the thing the file names.
-    So the end of this chain is an error, never a different method.
+    protecting. Falling through to AppRole after the last step, into a *different*
+    method, would make an authentication failure impossible to explain, because the
+    thing that failed is not the thing the file names. So the end of this chain is
+    an error, never a different method.
     """
     if ref is not None:
         return resolve(ref, env=env, where=where)

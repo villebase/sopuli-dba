@@ -25,7 +25,8 @@ answers depending on which clock is asked. Only the vault's is acted on, because
 nothing to aggregate, and no "oldest, newest, or any" rule to invent for an
 account spanning a CDB's PDBs.
 
-`apply` writes ``rotated_at``, and this module reads it back.
+`apply` and `creds generate --promote` write ``rotated_at``, both through
+:func:`sopuli.apply.promotion_patch`, and this module reads it back.
 """
 
 from __future__ import annotations

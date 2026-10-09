@@ -6,15 +6,14 @@ password no target can hold -- and nobody finds out until `apply` connects, by
 which time the vault has a `pending` that cannot be applied anywhere.
 
 **This does not answer the server's refusals, and must not be described as doing
-so** (decision #268). A verify function is arbitrary PL/SQL that cannot be
-consulted (invariants 13 and 14) and a reuse history is hashed, so `ORA-28003`
-and `ORA-28007` cannot be predicted before the statement is issued; `apply`
-handles those by redrawing. What is predictable is the *deterministic* pair -- a
-password longer than the target's maximum, counted in bytes in the target's own
-character set, and characters the target will not accept. Those hit every
-account in the selection identically and one policy fix ends them, which is
-exactly why they are the wrong answer to those refusals and are worth fixing on
-their own.
+so.** A verify function is arbitrary PL/SQL that cannot be consulted (invariants
+13 and 14) and a reuse history is hashed, so `ORA-28003` and `ORA-28007` cannot
+be predicted before the statement is issued; `apply` handles those by redrawing
+(decision #268). What is predictable is the *deterministic* pair -- a password
+longer than the target's maximum, counted in bytes in the target's own character
+set, and characters the target will not accept. Those hit every account in the
+selection identically and one policy fix ends them, which is exactly why they
+are the wrong answer to those refusals and are worth fixing on their own.
 
 **There is no single strictest limit, and inventing one loses information.** A
 :class:`~sopuli.passwords.ByteLimit` is a count *and* the character set it is

@@ -3633,7 +3633,7 @@ def lock_break(
     # is no estate for a target's or a group's block to arrive from -- and gating it
     # here would guard nothing, because every verb that would use this lock to
     # change that target is already refused by the same block. `defaults` and a
-    # profile still refuse it, as they always did.
+    # profile still refuse it.
     refuse_if_readonly(run.resolved, action=f"breaking the lock on {key}")
 
     paths = run.sources
@@ -3741,11 +3741,13 @@ def _confirm_environments(
 
     ``safety.confirm_environments`` is parsed and ratcheted as a union across
     layers, and this is its consumer. A setting that nothing read would look like
-    protection and not be, which is worse than the setting not existing. It is
-    the only trigger: P5's other two -- a built-in `prod`, and a blast radius
-    over `max_targets` -- were **declined** rather than left for later (decision
-    C17). A target marked `environment: prod` that no layer listed is not
-    prompted for, by design.
+    protection and not be, which is worse than the setting not existing. It is the
+    only one of the three triggers P5 asked for that exists: a built-in `prod`, and
+    a blast radius over `max_targets`, were **declined** rather than left for later
+    (decision D10). A target marked `environment: prod` that no layer listed is not
+    prompted for, by design. `creds rotate` and `lock break` confirm every time,
+    which is a separate rule, and a profile's `confirm: false` makes this gate
+    refuse rather than ask.
 
     **The flag satisfies the setting**, rather than being a separate gate that
     also has to pass. P5 says every mutating command supports ``--confirm``, and
@@ -4514,7 +4516,7 @@ def _result_warnings(
     Order is the order they were learned: the account's state is read before the
     login is attempted, and on a run where the lockout guard declined there is no
     server entry at all. ``changed_unknown`` is read with that state, so it sits
-    beside the grace period rather than after the login (decision #386).
+    beside the grace period rather than after the login.
     """
     found = []
     if grace is not None:
@@ -4706,10 +4708,9 @@ def creds_generate(
     **The database is read and never written.** Step 2 of the use case asks one
     connection per selected target for the one constraint that can be known in
     advance -- how long a password may be, in that database's own character set --
-    and the strictest answer governs the draw. Nothing is issued, and the argument
-    for taking the advisory lock is untouched: the lock lives in the vault (Q2)
-    because this command makes no *change* a database-side lock could have
-    protected, which was never the same claim as making no connection.
+    and the strictest answer governs the draw. Nothing is issued, so reading the
+    database does not change where the advisory lock lives: in the vault (Q2),
+    where this command's writes go.
 
     A target that cannot be reached is not a failure. The policy's declared
     length governs instead, which is the documented fallback, and the run says
@@ -4733,11 +4734,11 @@ def creds_generate(
     in the same write, and any `pending` is cleared -- a staged password left
     behind is one the next `apply` would prefer to what was just promoted.
 
-    **A second run replaces what was staged, and reports a change.** That is
-    outside the idempotency invariant rather than excused from it:
-    the invariant governs commands that converge on a state, and drawing a fresh
-    random secret has no state to converge on. The run warns that it replaced a
-    staged password, because anything already holding the old one is now stale.
+    **A second run replaces what was staged, and reports a change.** That is outside
+    the idempotency invariant rather than excused from it: the invariant governs
+    commands that converge on a state, and drawing a fresh random secret has no
+    state to converge on. The run warns that it replaced a staged password, because
+    anything already holding the old one is now stale.
 
     **One document is one write.** Where several accounts share a secret -- the
     documented default -- their passwords go in a single compare-and-set write under
@@ -4756,6 +4757,9 @@ def creds_generate(
 
     Help text stays ASCII throughout, which is P4's rule.
     """
+    # Why a second run is outside invariant 9 rather than an exception to it:
+    # decision #254 and H7. They are cited here and not in the docstring, because
+    # the docstring is `creds generate --help`.
     document = run.document
     refuse_if_readonly(
         run.resolved, action="promoting a password" if promote else "staging a password"

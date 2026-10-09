@@ -31,7 +31,7 @@ from sopuli.store import StoreError
 
 #: A chat webhook's URL *is* its credential -- the path segments are the token --
 #: which is C9's reason for the config key being a MaterialRef and this being a
-#: `Secret`. Synthetic, because a real URL would be a credential.
+#: `Secret`. Synthetic, so the repository holds no real credential.
 URL = Secret("https://chat.example.com/hooks/T00000/B00000/EXAMPLEEXAMPLEEXAMPLE")
 MESSAGE = "acme_dev_alice on free-pdb has a new password waiting"
 

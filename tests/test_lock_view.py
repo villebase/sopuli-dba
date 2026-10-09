@@ -266,8 +266,9 @@ def test_an_ordinary_run_warns_about_nothing() -> None:
 
 
 def test_an_advisory_store_warns_on_every_run() -> None:
-    """Q2: the weakening reaches each run's audit trail rather than only the
-    config file, which is the only place it would otherwise be visible."""
+    """The advisory-only weakening (Q2) reaches each run's audit trail rather
+    than only the config file, which is the only place it would otherwise be
+    visible."""
     store = MemoryStore(capabilities=frozenset())
     run = manager(store, locking=LOCK_ADVISORY_ONLY)
     run.acquire([KEY])

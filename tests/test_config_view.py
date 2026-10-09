@@ -611,7 +611,7 @@ def test_a_shared_document_with_no_store_named_still_validates(
     """A binding can resolve with no store, and `secret_document.vault` is
     nullable for exactly that case -- unlike `secret_ref`, which describes a ref
     after resolution and requires one (C14). A profile still names a store here
-    (C15 option 3), which is what keeps this file from being the narrow case
+    (C15), which is what keeps this file from being the narrow case
     C15 refuses at load: `vaults:` declares nothing for a profile or
     `SOPULI_VAULT` to point at."""
     document = {

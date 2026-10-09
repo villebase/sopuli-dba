@@ -134,8 +134,8 @@ def acquisition_order(keys: Iterable[LockKey]) -> tuple[LockKey, ...]:
     **Sorted** makes deadlock structurally impossible rather than unlikely. Two
     runs whose selections overlap take the shared locks in the same order, so one
     of them fails to get the first contested lock and gives up -- instead of each
-    holding half of what the other needs. Nothing here ever waits, which is the
-    other half of that argument (UC-1 §8: there is no ``--lock-wait``).
+    holding half of what the other needs. Nothing here ever waits (UC-1 §8),
+    which is the other half of that argument.
 
     **Deduplicated** because a run that touches one secret from several bindings
     -- the one-secret-many-targets case UC-1 §5 exists to handle -- would

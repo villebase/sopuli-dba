@@ -112,9 +112,10 @@ class NoFenceError(StoreError):
     keeps that from being a special case at the boundary.
 
     :meth:`~sopuli.lock.manager.LockManager.preflight` raises it for the same
-    fact on the acquisition path -- after reading the lock path's
-    metadata, which is how it knows, and before touching the record itself. Both
-    verbs therefore answer the same way about the same store: exit 5.
+    fact on the acquisition path -- after reading the lock path's metadata, which
+    is how it knows, and before touching the record itself. So ``lock break`` and
+    a verb that takes locks, such as ``creds apply``, answer the same way about
+    the same store: exit 5.
     """
 
     category = "capability"

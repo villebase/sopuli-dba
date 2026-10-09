@@ -411,10 +411,10 @@ def _vault_setting(
 
     ``cli`` is layer 1, and it is per key for the same reason and true of exactly
     one of them (decision #422): ``--vault-addr`` is the only flag that hoists a
-    store's setting onto the command line. There is deliberately no ``--vault-mount`` or
-    ``--vault-namespace`` -- a flag per reach key would be six spellings of what
-    ``vaults:`` already says once, and the case for this one is that an address is
-    the thing an operator redirects for a single run.
+    store's setting onto the command line. There is deliberately no
+    ``--vault-mount`` or ``--vault-namespace`` -- a flag per reach key would be six
+    spellings of what ``vaults:`` already says once, and the case for this one is
+    that an address is the thing an operator redirects for a single run.
     """
     return _setting(
         f"vaults.*.{key}",

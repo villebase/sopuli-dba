@@ -38,10 +38,10 @@ of layer 4 works the same way in :mod:`sopuli.config.vault_layers`, which resolv
 ``vaults.*`` inside the file rather than through the invocation.
 
 :func:`estate_contributions` is that layer, and it is here rather than somewhere
-of its own so that both halves of one merge are read together (decision #424).
-It is asked later -- once a verb has selected its estate -- and the answer goes
-back through the same resolver, which is what keeps the ratchet one mechanism
-instead of two that have to agree. Without it the keys would parse, validate, appear in
+of its own so that both halves of one merge are read together. It is asked
+later -- once a verb has selected its estate -- and the answer goes back through
+the same resolver, which is what keeps the ratchet one mechanism instead of two
+that have to agree. Without it the keys would parse, validate, appear in
 ``config show`` and refuse nothing, which is a config that reads like protection
 and is not.
 """
@@ -273,13 +273,13 @@ def target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Laye
     its own would report an ``overrides:`` entry as the source of keys it never
     wrote, which is the defect this function exists to avoid one layer down.
 
-    Usually one block. **Two, where an ``overrides:`` entry patched it**
-    (decision #424): `_patch_target` merges a patch into the template key by
-    key, so a patch's ``readonly: false`` replaces a template's ``true`` and the
-    safer of the two is gone before anything can ratchet them. A run narrowed to
-    the patched target would then have nothing left to be safest *of*, and the
-    override would simply win -- which invariant 10 forbids and which
-    `_patch_target`'s own docstring has always said cannot happen.
+    Usually one block. **Two, where an ``overrides:`` entry patched it**:
+    `_patch_target` merges a patch into the template key by key, so a patch's
+    ``readonly: false`` replaces a template's ``true`` and the safer of the two is
+    gone before anything can ratchet them. A run narrowed to the patched target
+    would then have nothing left to be safest *of*, and the override would simply
+    win -- which invariant 10 forbids and which `_patch_target`'s own docstring
+    says cannot happen.
 
     So both reach the resolver. The template's block goes first, and the patched
     one contributes **only the keys whose value it changed**: a key the patch did
@@ -312,8 +312,8 @@ def safety_block(safety: Safety, *, at: str, layer: Layer) -> list[tuple[str, ob
     """The same four keys, given the path of the **block** rather than of what
     contains it.
 
-    Split out for the one caller that cannot compute the first from the second
-    (decision #424): a generated target's block may have been written in an
+    Split out for the one caller that cannot compute the first from the second:
+    a generated target's block may have been written in an
     ``overrides:`` entry rather than in the template, and
     :func:`~sopuli.config.expansion.declared_at` is the function that knows which.
     Reporting an override against the template would point the reader at the one

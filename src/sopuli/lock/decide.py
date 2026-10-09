@@ -97,8 +97,8 @@ def decide(
 
     This never returns "wait". Nothing in the lock design blocks, so there is no
     third outcome for a caller to implement, and a run that loses a lock reports
-    it rather than queueing behind it (UC-1 §8: no ``--lock-wait``, which is what
-    makes deadlock impossible rather than rare).
+    it rather than queueing behind it. UC-1 §8 says a run never waits, and that
+    is what makes deadlock impossible rather than rare.
     """
     if found is None:
         return Acquire(cas=FRESH)

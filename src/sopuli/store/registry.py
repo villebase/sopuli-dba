@@ -176,8 +176,8 @@ def resolve(vault: Vault) -> ModuleType:
     itself is a bug in this project, and reporting it as anything else buys the
     user a wrong instruction and costs us the stack trace.
 
-    Returns the module. **What a backend module must expose is not settled
-    here**: :func:`connect` states it.
+    Returns the module. What a backend module must expose is stated in
+    :func:`connect`, not here.
     """
     backend = BACKENDS[vault.type]
     try:

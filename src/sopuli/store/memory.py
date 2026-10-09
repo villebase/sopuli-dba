@@ -194,9 +194,9 @@ class MemoryStore:
             # by the real thing -- and the lock's pre-flight checks this exact
             # setting, so the emulation has to mean it.
             #
-            # `StoreError` and **not** `CasConflictError`, which is what the
-            # real backend raises too, and the conformance suite holds the two
-            # to the same answer. Nothing raced: the write was refused because
+            # `StoreError` and **not** `CasConflictError`. The real backend
+            # raises `StoreError` here too, and the conformance suite holds the
+            # two to the same answer. Nothing raced: the write was refused because
             # it carried no version, not because the version moved. ADR-005
             # names the same confusion from the other end -- Vault's message for
             # this case opens with the same words as the conflict's, and
@@ -225,8 +225,9 @@ class MemoryStore:
             # **A fake that skipped this would hide a bug in tier 0.** The
             # lock's pre-flight reads "no metadata" as "new path, nothing to
             # check", so against such a store every run on a path would look
-            # like the first one, and the bug -- second run refused, for
-            # metadata the first run created -- could not happen there. A fake
+            # like the first one. A pre-flight that left a first acquisition to
+            # create the metadata would then pass here, though against Vault its
+            # second run is refused, for metadata the first run created. A fake
             # that is wrong in the direction of *nothing going wrong* is the
             # expensive kind, which is the argument for this module living in
             # `src/` and being held to the conformance suite.
@@ -276,9 +277,9 @@ class MemoryStore:
         never written still has ``version == 0``, so the ``cas: 0`` write a
         first acquisition makes still succeeds -- which is what makes it safe to
         arrange the guarantee *before* taking the lock rather than after.
-        Checked against Vault 2.0.4 before it was written here, because a fake
-        that quietly bumped the counter would have let an implementation pass
-        that locks every new path out of its own first acquisition.
+        Vault 2.0.4 behaves the same way. A fake that quietly bumped the counter
+        would let an implementation pass that locks every new path out of its
+        own first acquisition.
 
         Refusal is not modelled: this store has no policy, and the one refusal
         that matters -- :class:`~sopuli.store.protocol.MetadataNotPermittedError` --

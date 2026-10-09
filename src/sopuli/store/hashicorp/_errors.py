@@ -23,9 +23,9 @@ parameter``
 
 Which is why **the match is on the full phrase and not a prefix.** Matching
 ``check-and-set parameter`` would catch all three, turning a malformed request
-and a missing-CAS refusal into "somebody beat me to it" -- and the lock sets
-``cas_required: true`` on each lock path, so the second row is reachable by
-design rather than hypothetically.
+and a missing-CAS refusal into "somebody beat me to it" -- and the lock's
+pre-flight sets ``cas_required: true`` on a new lock path where the token allows
+it, so the second row is reachable by design rather than hypothetically.
 
 And why the rule is **fail closed**: anything unrecognised is a
 :class:`~sopuli.store.protocol.StoreError`, never a conflict. Misclassifying a

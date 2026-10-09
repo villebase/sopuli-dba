@@ -145,14 +145,13 @@ def _examine(
     and exit code on the exception, which the boundary reads back out; nothing
     is flattened here.
 
-    **The store is not closed**, and that is the existing arrangement rather
-    than an oversight: :func:`sopuli.cli._stores_for` opens one per store for
-    `lock status` and lets the run's exit reclaim them. There is no ``close`` on
-    the interface to call -- adding one would be a demand on every
-    implementation, which is the cost P2 weighs before any method goes on that
-    protocol, and it is not a decision to make as a side effect of a survey. The
-    holding is a connection pool per configured store for the seconds a `doctor`
-    run lasts.
+    **The store is not closed**, on purpose: :func:`sopuli.cli._stores_for`
+    opens one per store for `lock status` and lets the run's exit reclaim them.
+    There is no ``close`` on the interface to call -- adding one would be a
+    demand on every implementation, which is the cost P2 weighs before any
+    method goes on that protocol, and it is not a decision to make as a side
+    effect of a survey. The holding is a connection pool per configured store
+    for the seconds a `doctor` run lasts.
     """
     started = time.monotonic()
     try:

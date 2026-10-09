@@ -448,8 +448,8 @@ class SecretStore(Protocol):
         lock's first acquisition of a path. That path has no metadata -- the
         ordinary state of a path nobody has locked -- and an acquisition left to
         create it would leave ``cas_required`` unset, so every later run would
-        be refused until somebody set it by hand. The guard arranges the
-        guarantee rather than only reading it.
+        be refused until somebody set it by hand. So the lock's pre-flight
+        arranges the guarantee rather than only reading it.
 
         **Creating metadata does not create a version**, which is what makes
         this safe to do before a first write. Measured against Vault 2.0.4:

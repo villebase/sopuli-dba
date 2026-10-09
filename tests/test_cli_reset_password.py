@@ -1372,7 +1372,8 @@ def test_a_missing_webhook_url_refuses_before_the_password_changes(
 def test_a_profile_that_cannot_answer_refuses_a_seen_reset_before_connecting(
     runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A profile's `confirm: false` refuses the seen path at plan time (decision #610).
+    """A profile's `confirm: false` refuses the seen path at plan time
+    (decision #610).
 
     At a terminal, so the refusal is the profile's and not guard 3's. The target
     is unroutable, so reaching the driver would fail differently: exit 8 with the

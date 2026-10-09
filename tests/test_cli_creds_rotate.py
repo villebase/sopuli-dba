@@ -1380,7 +1380,8 @@ def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rotate's gate is unconditional, and `confirm: false` refuses it (decision #610)."""
+    """Rotate's gate is unconditional, and `confirm: false` refuses it
+    (decision #610)."""
     monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
     estate()
     config = write_config(CONFIG + "profiles:\n  ci:\n    confirm: false\n")

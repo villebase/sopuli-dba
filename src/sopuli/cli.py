@@ -5204,8 +5204,8 @@ def _promote_document(
     existing = store.read(write.key.path)
     emitter.event(run.document, "vault.read", data=_vault_event(write.key, existing))
     # Before either refusal below, as `_stage` announces before its write: the
-    # passwords were drawn whatever becomes of this document, and the row says
-    # what did.
+    # passwords were drawn whatever becomes of this document, and the row says what
+    # did.
     _announce_draws(write, run, stage=CURRENT)
     cas = 0 if existing is None else existing.version
     data = existing.data if existing is not None else None
@@ -5253,11 +5253,11 @@ def _promote_document(
             stage=CURRENT,
         )
 
-    # Invariant 7's one exception, on the stream as what it is: a
-    # promotion no database confirmed. `vault.promote` rather than
-    # `vault.write`, because what a consumer watches that event for -- `current`
-    # changed, applications will now fetch this -- is exactly what happens here.
-    # A document refused before the write (above) sends none, as in `apply`.
+    # Invariant 7's one exception, on the stream as what it is: a promotion no
+    # database confirmed. `vault.promote` rather than `vault.write`, because what a
+    # consumer watches that event for -- `current` changed, applications will now
+    # fetch this -- is exactly what happens here. A document refused before the
+    # write (above) sends none, as in `apply`.
     patch = apply_states.promotion_patch(entries, at=utc_now(), by=_rotated_by())
     try:
         written = write_credential(store, write.key.path, patch, cas=cas)
@@ -5559,13 +5559,13 @@ def creds_apply(
     a breach of the vault-is-master rule: both values came out of the vault, and
     no database was ever read for one.
 
-    Rollback is bounded to one generation, because that is all the stage
-    vocabulary can address (Q3). It needs `--confirm`, and it refuses
-    where a password is staged -- rolling back under a rotation in flight leaves
-    a `pending` that the next run would move the estate forward with. A profile
-    that restricts password reuse usually refuses it, since `previous` is a
-    password the account has held: the run says so (SOPULI-W028), and on such a
-    profile the way back is a rollover window rather than a rollback.
+    Rollback is bounded to one generation, because that is all the stage vocabulary
+    can address (Q3). It needs `--confirm`, and it refuses where a password is
+    staged -- rolling back under a rotation in flight leaves a `pending` that the
+    next run would move the estate forward with. A profile that restricts password
+    reuse usually refuses it, since `previous` is a password the account has held:
+    the run says so (SOPULI-W028), and on such a profile the way back is a rollover
+    window rather than a rollback.
 
     **The rollover regime is chosen per account, and refused as a whole.** Where
     the database has gradual password rollover and the account's profile grants a
@@ -5641,12 +5641,12 @@ def creds_apply(
         stale = repair_module.staleness(repair_set)
         if stale is not None:
             document.diagnostics.append(stale)
-            # Printed as well as serialised: the emitter writes
-            # the document or the text and never both, so a diagnostic alone is
-            # invisible to the person who ran this by hand -- and they are
-            # exactly who a staleness warning is for. Carried on every return
-            # path below, including the two that do nothing: "nothing to apply"
-            # from a stale document is the case most worth explaining.
+            # Printed as well as serialised: the emitter writes the document or the
+            # text and never both, so a diagnostic alone is invisible to the person
+            # who ran this by hand -- and they are exactly who a staleness warning
+            # is for. Carried on every return path below, including the two that do
+            # nothing: "nothing to apply" from a stale document is the case most
+            # worth explaining.
             repair_notes.append(stale.message)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
@@ -5667,8 +5667,8 @@ def creds_apply(
         _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
     )
     document.plan = plan.as_json()
-    # No-ops outside `--output jsonl`, as in `creds check`: nothing here
-    # branches on the mode.
+    # No-ops outside `--output jsonl`, as in `creds check`: nothing here branches on
+    # the mode.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     # `--confirm` already means "proceed without asking" here -- it is what
@@ -5698,8 +5698,8 @@ def creds_apply(
         # its whole survey without one.
         previewed = _read_documents(keys, stores, run=run)
         sources = _sources(bindings, previewed, stage=source_stage)
-        # Said in the preview as well as in the run, because "would this promote"
-        # is what somebody previewing a narrowed apply is asking (decision #406).
+        # Said in the preview as well as in the run, because "would this promote" is
+        # what somebody previewing a narrowed apply is asking (decision #406).
         withheld = _withheld(_left_out(bindings, _owing(sources), previewed, estate))
         document.diagnostics.extend(withheld)
         repair_notes.extend(one.message for one in withheld)
@@ -5719,8 +5719,8 @@ def creds_apply(
             reuse=foreseen,
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
-        # The warning the run would raise after the statement, raised
-        # before it -- which is the whole point of asking under `--preflight`.
+        # The warning the run would raise after the statement, raised before it --
+        # which is the whole point of asking under `--preflight`.
         reuse_ahead = rollback_reuse(foreseen)
         document.diagnostics.extend(reuse_ahead)
         repair_notes.extend(one.message for one in reuse_ahead)
@@ -5728,8 +5728,9 @@ def creds_apply(
             return _refuse_preflight(
                 findings, document, header=_header(plan, sources), notes=repair_notes
             )
-        # A survey that passed with a check missing says so here as well
-        # as in `diagnostics[]`. A refusal has already printed them in its table.
+        # A survey that passed with a check missing says so here as well as in
+        # `diagnostics[]` (decision #606). A refusal has already printed them in its
+        # table.
         repair_notes.extend(caveat_notes(findings))
         document.finish(ExitCode.SUCCESS, Summary(total=len(sources)))
         return "\n".join(
@@ -5800,10 +5801,10 @@ def creds_apply(
                 requested=source_stage,
             )
             if stolen is None:
-                # §6.4's redraw, between the estate pass and the promotion.
-                # After, because a refusal is only discoverable by issuing the
-                # statement; before, because nothing may be promoted until the
-                # password every target holds is the one `pending` carries.
+                # §6.4's redraw, between the estate pass and the promotion. After,
+                # because a refusal is only discoverable by issuing the statement;
+                # before, because nothing may be promoted until the password every
+                # target holds is the one `pending` carries.
                 applied, stolen = _redraw_estate(
                     applied,
                     documents,
@@ -5838,9 +5839,9 @@ def creds_apply(
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
     # A (target, profile) the pre-flight already warned about is not warned about
-    # again: the same code twice in one document would read as two
-    # problems. The run's own reading still covers every pair the pre-flight did
-    # not see -- all of them, when `--preflight` was not passed.
+    # again: the same code twice in one document would read as two problems. The
+    # run's own reading still covers every pair the pre-flight did not see -- all of
+    # them, when `--preflight` was not passed.
     warned = {(target, state.profile) for target, state in foreseen}
     reuse_notices = rollback_reuse(
         [
@@ -5853,16 +5854,16 @@ def creds_apply(
     document.diagnostics.extend(reuse_notices)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
-    # re-password changed, and a summary counting only the DDL would call a run
-    # that touched the estate an unchanged one.
+    # re-password changed, and a summary counting only the DDL would call a run that
+    # touched the estate an unchanged one.
     changed = sum(1 for record in applied if record.mutated)
     if stolen is not None:
         # `sopuli.lock.errors` leaves this split to the command, because only the
-        # command knows what it had applied: 7 says nothing happened, which is
-        # true of a run fenced out before its first change and a lie about one
-        # fenced out after its ninth. The diagnostic is what separates this exit 4
-        # from the ordinary one -- that one is repaired by running `apply` again
-        # (decision #264), and this one must not be.
+        # command knows what it had applied: 7 says nothing happened, which is true
+        # of a run fenced out before its first change and a lie about one fenced out
+        # after its ninth. The diagnostic is what separates this exit 4 from the
+        # ordinary one -- that one is repaired by running `apply` again (decision
+        # #264), and this one must not be.
         document.diagnostics.append(
             Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
         )
@@ -5890,12 +5891,12 @@ def creds_apply(
     #
     # No remedy is offered after a takeover, and the suppression is the point: the
     # remedy line says "run this again", which is the one thing not to do while
-    # somebody else holds this estate's lock. `stopped` says what happened
-    # instead, and `render_apply` refuses to print both.
+    # somebody else holds this estate's lock. `stopped` says what happened instead,
+    # and `render_apply` refuses to print both.
     #
     # One exception to "narrowed the way this run was narrowed": a promotion
-    # withheld because the run was too narrow (decision #406) is finished only by
-    # a wider one, so echoing the selectors back would name the invocation that
+    # withheld because the run was too narrow (decision #406) is finished only by a
+    # wider one, so echoing the selectors back would name the invocation that
     # withholds it again.
     repair = (
         repair_invocation(
@@ -5916,10 +5917,10 @@ def creds_apply(
         stopped=None if stolen is None else str(stolen),
     )
     # Printed as well as put in `diagnostics[]`, which is `creds generate`'s rule
-    # and `config validate`'s: the emitter prints the command's text and not the
-    # document, so a run-level warning is invisible to somebody reading a terminal
-    # -- and a guardrail that did not run, reported only in JSON, is reported to
-    # nobody who ran this by hand.
+    # and UC-1 §6.4's: the emitter prints the command's text and not the document,
+    # so a run-level warning is invisible to somebody reading a terminal -- and a
+    # guardrail that did not run, reported only in JSON, is reported to nobody who
+    # ran this by hand.
     notes = render_notices(
         repair_notes
         + [one.message for one in reuse_notices]
@@ -5954,26 +5955,26 @@ class _Applied:
     #: Empty on every estate that declares none, which is every estate that has not
     #: opted in.
     attributes: tuple[AttributeChange, ...] = ()
-    #: §4 guardrails `--force` waived for this account. Empty on every
-    #: ordinary run, which is the point: §4 requires the override to survive the
-    #: waiving, so the row carries what was gone past rather than merely that the
-    #: run was allowed to proceed.
+    #: §4 guardrails `--force` waived for this account. Empty on every ordinary run,
+    #: which is the point: §4 requires the override to survive the waiving, so the
+    #: row carries what was gone past rather than merely that the run was allowed to
+    #: proceed.
     overridden: tuple[guardrails.Refusal, ...] = ()
-    #: §4 checks that could not be run against this account. Empty where
-    #: every check had its input; on Oracle, non-empty for check 3 on any target
-    #: that has not taken the optional `V$PWFILE_USERS` grant, which is most of
-    #: them. Reported as a run-level warning rather than on the row, because what
-    #: could not be read is a grant on the *target* and one entry per account
-    #: would say the same thing forty times.
+    #: §4 checks that could not be run against this account. Empty where every check
+    #: had its input; on Oracle, non-empty for check 3 on any target that has not
+    #: taken the optional `V$PWFILE_USERS` grant, which is most of them. Reported as
+    #: a run-level warning rather than on the row, because what could not be read is
+    #: a grant on the *target* and one entry per account would say the same thing
+    #: forty times.
     caveats: tuple[guardrails.Caveat, ...] = ()
     duration_ms: int | None = None
     error: Error | None = None
     #: Whether the server refused the *password itself* -- the vendor-neutral
-    #: :attr:`~sopuli.driver.protocol.DriverError.regenerate`. Kept on the
-    #: record rather than read back off :attr:`error`, which is the run
-    #: document's ``Error`` and carries only what the contract emits: adding a
-    #: field there to satisfy an internal question would put a decision this tool
-    #: makes into a schema other people parse.
+    #: :attr:`~sopuli.driver.protocol.DriverError.regenerate`. Kept on the record
+    #: rather than read back off :attr:`error`, which is the run document's
+    #: ``Error`` and carries only what the contract emits: adding a field there to
+    #: satisfy an internal question would put a decision this tool makes into a
+    #: schema other people parse.
     refused: bool = False
     #: How many *extra* passwords this account was given, over the one the run
     #: arrived with. Zero on every ordinary run.
@@ -6078,10 +6079,10 @@ def _record_locks(
     """The lock section, and what the run should say about how it got its locks.
 
     Called **after** the lock has been let go: `release()` flips
-    `HeldLock.released`, so a section built while the run still held its locks
-    would report `released: false` for locks it gives back immediately
-    afterwards, and the document would disagree with the store record. That
-    includes every early return inside `manager.holding(...)`.
+    `HeldLock.released`, so a section built while the run still held its locks would
+    report `released: false` for locks it gives back immediately afterwards, and the
+    document would disagree with the store record. That includes every early return
+    inside `manager.holding(...)`.
 
     One function because the two halves must not come apart. Without
     `lock_diagnostics` here, a run that took over an expired lock would say so
@@ -6091,8 +6092,8 @@ def _record_locks(
     `03-json-output.md` lists `SOPULI-W001` for the second.
 
     Reporting is not decoration here: `_taken_over`'s own docstring says the
-    evidence is gone from the path the moment the takeover write lands, so if
-    this run does not report it, nothing ever does.
+    evidence is gone from the path the moment the takeover write lands, so if this
+    run does not report it, nothing ever does.
     """
     document.lock = build_lock_section(manager, denied=denied)
     document.diagnostics.extend(lock_diagnostics(manager))
@@ -6141,11 +6142,12 @@ def _lock_events(run: Invocation) -> Callable[[str, HeldLock], None]:
 def _lock_notices(manager: LockManager) -> list[str]:
     """Lock findings a person reading a terminal has to see.
 
-    The printed-and-serialised rule, applied to the one lock diagnostic that asks
-    the reader to go and do something: a warning that cannot be seen in the default
-    output is not surfaced, and the emitter prints the command's text rather than
-    the document. A path created without `cas_required` is a thing to fix in the
-    vault, and a JSON-only report of it reaches nobody who ran this by hand.
+    UC-1 §6.4's rule that a warning is *surfaced*, applied to the one lock
+    diagnostic that asks the reader to go and do something: a warning that cannot be
+    seen in the default output is not surfaced, and the emitter prints the command's
+    text rather than the document. A path created without `cas_required` is a thing
+    to fix in the vault, and a JSON-only report of it reaches nobody who ran this by
+    hand.
 
     **Only that one.** `SOPULI-W001` and `SOPULI-W002` stay in `diagnostics[]`
     alone, which is a gap rather than a decision -- do not read this function's
@@ -6157,12 +6159,12 @@ def _lock_notices(manager: LockManager) -> list[str]:
 def _break_expired(run: Invocation) -> bool:
     """Whether this run may take over a lock whose holder's claim has lapsed.
 
-    `locking.break_expired` is resolved, ratcheted, cross-checked against
-    `locking: advisory-only` at load *and* in `LockManager.__post_init__`, and
-    implemented in `decide()`. This is what passes it to every `LockManager`
-    (decision #348). Without it the key would always be `False`: an operator who
-    set it would get exit 7 on an expired lock, be told by `_hint_for` to set the
-    key they had already set, and have no way to see that it was not consulted.
+    `locking.break_expired` is resolved, ratcheted, cross-checked against `locking:
+    advisory-only` at load *and* in `LockManager.__post_init__`, and implemented in
+    `decide()`. This is what passes it to every `LockManager` (decision #348).
+    Without it the key would always be `False`: an operator who set it would get
+    exit 7 on an expired lock, be told by `_hint_for` to set the key they had
+    already set, and have no way to see that it was not consulted.
 
     Absent is not `false`: the setting has no built-in, because nobody having
     asked is a different statement from somebody having written `false`, and
@@ -6209,13 +6211,13 @@ def _read_documents(
     six different versions, which is a compare-and-set nobody could reason about.
 
     **The tool's one spinner lives here**, and it is here rather than at
-    `_stores_for` because that is what measuring said. `_stores_for` looked like
-    the slow step and is not: with `auth: { method: token }` nothing on that path
-    opens a socket at all -- `connect` reads the token and constructs an
-    `httpx.Client`, which is local work. Against a vault at an unroutable address
-    with `timeout_s: 8`, opening the store took 0.7s and *this* function took the
-    remaining eight. The round trip is here, on every auth method rather than on
-    some of them, which is also why one spinner here covers what two would have.
+    `_stores_for` because that is what measuring said. `_stores_for` looked like the
+    slow step and is not: with `auth: { method: token }` nothing on that path opens
+    a socket at all -- `connect` reads the token and constructs an `httpx.Client`,
+    which is local work. Against a vault at an unroutable address with `timeout_s:
+    8`, opening the store took 0.7s and *this* function took the remaining eight.
+    The round trip is here, on every auth method rather than on some of them, which
+    is also why one spinner here covers what two would have.
 
     One per document rather than one for the loop: they are sequential, and
     naming the path is the difference between "something is happening" and
@@ -6231,8 +6233,8 @@ def _read_documents(
     for key in keys:
         with emitter.spinner(f"Reading `{key.store}:{key.path}`"):
             documents[key] = stores[key.store].read(key.path)
-        # Where the document was and which version was read -- never what it
-        # holds. `version: null` is a path with nothing at it.
+        # Where the document was and which version was read -- never what it holds.
+        # `version: null` is a path with nothing at it.
         emitter.event(run.document, "vault.read", data=_vault_event(key, documents[key]))
     return documents
 
@@ -6420,9 +6422,9 @@ def _apply_target(
                 selection=selection,
                 force=force,
                 requested=requested,
-                # Resolved per binding rather than per run: two accounts on
-                # one target can sit on different policies, and only one of
-                # them may have opted into an attribute.
+                # Resolved per binding rather than per run: two accounts on one
+                # target can sit on different policies, and only one of them may
+                # have opted into an attribute.
                 attributes=apply_states.attributes_for(config, binding),
             )
             out.append(record)
@@ -6512,13 +6514,13 @@ def _apply_one(
     where it could not run (:func:`_check_strategy`), so by here it
     is a regime this account can honour.
 
-    **The fence is re-read immediately before every mutating call** (UC-1 §8),
-    and narrowed to this account's own document: that is the lock the change is
-    about to be made under, and checking the run's other twenty would be twenty
-    store reads to establish nineteen facts nothing here is about to act on.
-    *Every* matters: the attribute pass and the rollover close are mutations
-    too, and each carries its own check rather than resting on the distance to
-    the one before `set_password`.
+    **The fence is re-read immediately before every mutating call** (UC-1 §8), and
+    narrowed to this account's own document: that is the lock the change is about to
+    be made under, and checking the run's other twenty would be twenty store reads
+    to establish nineteen facts nothing here is about to act on. *Every* matters:
+    the attribute pass and the rollover close are mutations too, and each carries
+    its own check rather than resting on the distance to the one before
+    `set_password`.
 
     *Call*, not *statement*: `apply_attributes` may issue both an
     `ACCOUNT UNLOCK` and a `PROFILE` change under one check. The check is per
@@ -6532,19 +6534,19 @@ def _apply_one(
     estate now" into a footnote and apply to the next account anyway. So it is
     re-raised ahead of the catch-all, and the run ends.
 
-    **UC-1 §5's attributes are enforced before the first login**, and only
-    where the policy declared one. Before, because an unlock is what makes the
-    login worth attempting at all -- a locked account refuses every one of them --
-    and after the guardrail review, because §4 decides whether this account may be
-    touched and an unlock is touching it.
+    **UC-1 §5's attributes are enforced before the first login**, and only where the
+    policy declared one. Before, because an unlock is what makes the login worth
+    attempting at all -- a locked account refuses every one of them -- and after the
+    guardrail review, because §4 decides whether this account may be touched and an
+    unlock is touching it.
 
-    **A guardrail refusal is a `SKIPPED` row and never an error** (§4). It
-    is the one case where the tool declining to act is the tool working: the run
-    does the rest of its job and the account carries its reason. ``declared`` is
-    the config's whitelist for check 1, and it is the **unfiltered** set on
-    purpose -- a selector narrows what a run touches and cannot un-declare an
-    account (invariant 5), so passing the filtered estate would let `--select`
-    change the answer to "is this account allowed at all".
+    **A guardrail refusal is a `SKIPPED` row and never an error** (§4). It is the
+    one case where the tool declining to act is the tool working: the run does the
+    rest of its job and the account carries its reason. ``declared`` is the config's
+    whitelist for check 1, and it is the **unfiltered** set on purpose -- a selector
+    narrows what a run touches and cannot un-declare an account (invariant 5), so
+    passing the filtered estate would let `--select` change the answer to "is this
+    account allowed at all".
     """
     started = time.monotonic()
     before = None
@@ -6567,17 +6569,17 @@ def _apply_one(
             raise ValueError(f"nothing to apply for {binding.account!r} and no reason given")
 
         # §4's account guardrails, before the first login rather than before the
-        # statement. Two reasons for the position: a refused account must
-        # cost no login attempt, and `describe_user` above has already read every
-        # fact the checks need -- so this is free where the alternative would have
-        # been another round trip.
+        # statement. Two reasons for the position: a refused account must cost no
+        # login attempt, and `describe_user` above has already read every fact the
+        # checks need -- so this is free where the alternative would have been
+        # another round trip.
         review = guardrails.review(user, declared=declared, force=force)
         if not review.permitted:
-            # §4's two cases, and the only thing separating them is how the
-            # account got into this run. Named: the operator asked for
-            # something the tool will not do, and a run that reported success
-            # would be reporting it for work nobody did. Fell inside a broader
-            # selection: skipped, and the run does the rest of its job.
+            # §4's two cases, and the only thing separating them is how the account
+            # got into this run. Named: the operator asked for something the tool
+            # will not do, and a run that reported success would be reporting it for
+            # work nobody did. Fell inside a broader selection: skipped, and the run
+            # does the rest of its job.
             named = selection.names(binding.account)
             return _Applied(
                 binding,
@@ -6590,19 +6592,18 @@ def _apply_one(
                 duration_ms=_elapsed(started),
             )
         overridden = review.overridden
-        # §4's third answer, carried on the accounts this run went on to act on
-        # Not on the refused ones above: an account the guardrails turned away
-        # was not touched, so what an unread check might have said about it
-        # changes nothing.
+        # §4's third answer, carried on the accounts this run went on to act on. Not
+        # on the refused ones above: an account the guardrails turned away was not
+        # touched, so what an unread check might have said about it changes nothing.
         caveats = review.caveats
 
         if attributes.requested():
-            # Fenced like every other mutation (P5). `apply_attributes`
-            # issues `ALTER USER ... ACCOUNT UNLOCK` and `ALTER USER ... PROFILE`
-            # -- a smaller blast radius than a password, and still a database
-            # change this run must not make on a lock it no longer holds. The
-            # next check is the one just before `set_password`, after the login,
-            # so without this one the attribute change would be unfenced.
+            # Fenced like every other mutation (P5). `apply_attributes` issues
+            # `ALTER USER ... ACCOUNT UNLOCK` and `ALTER USER ... PROFILE` -- a
+            # smaller blast radius than a password, and still a database change this
+            # run must not make on a lock it no longer holds. The next check is the
+            # one just before `set_password`, after the login, so without this one
+            # the attribute change would be unfenced.
             manager.check(_lock_key(binding))
             # The driver decides what still needs doing and reports a row either
             # way, which is where invariant 9 lives for these: an account that is
@@ -6661,10 +6662,10 @@ def _apply_one(
             reuse = user
         manager.check(_lock_key(binding))
         session.set_password(user.name, source.value)
-        # From here on the database holds the new password whatever else fails,
-        # and the row has to say so: an error in the re-read or the verification
-        # below must not be reported `changed: false`, which would hide a mutated
-        # database from the summary, the document and `password.applied` alike.
+        # From here on the database holds the new password whatever else fails, and
+        # the row has to say so: an error in the re-read or the verification below
+        # must not be reported `changed: false`, which would hide a mutated database
+        # from the summary, the document and `password.applied` alike.
         issued = True
         # Re-read the account rather than reusing what was read before the change:
         # `EXPIRED` clears when a password is set, a rollover window opens, and a
@@ -6684,12 +6685,12 @@ def _apply_one(
             # stopped working and whose new one is not known to work -- the one
             # state worse than the grace period `direct` exists to avoid.
             #
-            # Checked again rather than resting on the check before
-            # `set_password`. A DDL, a `describe_user` and a login with
-            # `attempts=2` sit between the two, so the window is real -- but the
-            # reason is the rule rather than the size of the window: `creds
-            # finish-rollover` fences this same call, and one operation cannot
-            # encode two different rules about whether the fence applies to it.
+            # Checked again rather than resting on the check before `set_password`.
+            # A DDL, a `describe_user` and a login with `attempts=2` sit between the
+            # two, so the window is real -- but the reason is the rule rather than
+            # the size of the window: `creds finish-rollover` fences this same call,
+            # and one operation cannot encode two different rules about whether the
+            # fence applies to it.
             manager.check(_lock_key(binding))
             session.finish_rollover(after_user.name)
             after_user = session.describe_user(binding.account) or after_user
@@ -6858,12 +6859,12 @@ def _rollover_json(user: UserState) -> dict[str, Any]:
 def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> RefReader:
     """Read a target's `method: vault` admin credential through its store.
 
-    This is the `read_ref` supplier :func:`sopuli.admin.resolve` takes. Without
-    it, `_read_ref`'s "no store was available here" -- the branch its own hint
-    calls *a caller that supplied no reader* -- would be the only reachable one,
-    and `method: vault` would fail on every run of every verb. `prompt` has a
-    supplier of its own; `vault` is the source P2 ranks highest of the three
-    that need something from this machine.
+    This is the `read_ref` supplier :func:`sopuli.admin.resolve` takes. Without it,
+    `_read_ref`'s "no store was available here" -- the branch its own hint calls *a
+    caller that supplied no reader* -- would be the only reachable one, and `method:
+    vault` would fail on every run of every verb. `prompt` has a supplier of its
+    own; `vault` is the source P2 ranks highest of the three that need something
+    from this machine.
 
     **Everything happens inside the closure, and that is the design.**
     :func:`sopuli.admin.resolve` calls this only on the ``vault`` branch, so a
@@ -6911,12 +6912,11 @@ def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> Re
         store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
         stored = read_secret(store, ref)
         if stored is None:
-            # An empty path is the operator's mistake rather than a store
-            # failure, so it is worded as one: the store answered, and what it
-            # answered was that there is nothing there. `read_secret` returns
-            # `None` for every way of finding nothing -- no document, no
-            # field, no key -- and they have one remedy here, which is to go and
-            # look at the path.
+            # An empty path is the operator's mistake rather than a store failure,
+            # so it is worded as one: the store answered, and what it answered was
+            # that there is nothing there. `read_secret` returns `None` for every
+            # way of finding nothing -- no document, no field, no key -- and they
+            # have one remedy here, which is to go and look at the path.
             raise AdminCredentialError(
                 f"target {target.name!r} authenticates from {name!r}, and there is "
                 f"nothing at {str(ref)!r}",

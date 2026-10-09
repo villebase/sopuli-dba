@@ -4,7 +4,7 @@ The days literals were read off 26ai Free 23.26.2.0.0 — in particular `.0416`,
 which is what `PASSWORD_ROLLOVER_TIME 1/24` reads back as and which the obvious
 implementation gets wrong. The seconds literals (`3600`, `86400`, `604800`) and
 off's `-1` were read off 19c EE 19.32.0.0.0 on an OCI Base Database Service DB
-system (#583). `5184000` and `60` are the 60-day ceiling in each unit, derived
+system. `5184000` and `60` are the 60-day ceiling in each unit, derived
 from Oracle's documented bound rather than read back.
 """
 
@@ -79,7 +79,7 @@ def test_the_window_end_is_the_change_date_plus_the_limit() -> None:
     [(None, "1"), (CHANGED, None), (CHANGED, "0"), (None, None), (CHANGED, "nonsense")],
 )
 def test_a_window_end_needs_both_halves(changed: datetime | None, limit: str | None) -> None:
-    """11.2 is the case with neither: no `PASSWORD_CHANGE_DATE` (#87) and no
+    """11.2 is the case with neither: no `PASSWORD_CHANGE_DATE` and no
     rollover either, so the pair are never both wanted there."""
     assert window_end(changed, limit) is None
 
@@ -88,7 +88,7 @@ def test_a_window_end_needs_both_halves(changed: datetime | None, limit: str | N
 
 
 def test_the_alter_profile_is_reported_and_never_issued() -> None:
-    """Q4 (#88) decided that the tool never alters a profile, and this is that
+    """Q4 decided that the tool never alters a profile, and this is that
     answer: profiles are shared, so changing one affects accounts nobody selected,
     and `02-oracle-privileges.md` §3 keeps `ALTER PROFILE` off the service
     account deliberately.
@@ -124,9 +124,9 @@ def test_a_non_finite_limit_is_unreadable_rather_than_a_window(limit: str) -> No
 
 def test_a_limit_no_profile_can_hold_is_unreadable() -> None:
     """Finite, parseable, and outside both renderings of Oracle's one-hour to
-    60-day bound. It used to count as a window whose end could not be expressed
-    (`timedelta(days=1e10)` overflows); since #583 it is not a window at all,
-    because no unit makes it one."""
+    60-day bound. It is not a window at all, because no unit makes it one --
+    counting it as one would need an end that cannot be expressed
+    (`timedelta(days=1e10)` overflows)."""
     assert days("1e10") is None
     assert not is_enabled("1e10")
     assert window_end(CHANGED, "1e10") is None
@@ -138,7 +138,7 @@ def test_a_limit_no_profile_can_hold_is_unreadable() -> None:
 @pytest.mark.parametrize(
     ("limit", "expected_days"),
     [
-        # Each one read back on 19.32.0.0.0 (#583) from a profile created as:
+        # Each one read back on 19.32.0.0.0 from a profile created as:
         ("3600", 1 / 24),  # 1/24
         ("86400", 1.0),  # 1
         ("604800", 7.0),  # 7
@@ -160,7 +160,7 @@ def test_the_unit_is_read_off_the_value(limit: str, expected_days: float) -> Non
 
 
 def test_a_seconds_window_ends_an_hour_after_the_change() -> None:
-    """What #583 got wrong in the run document: `window_end` was 3600 days out."""
+    """A limit of `3600` is seconds: the window ends an hour on, not 3600 days."""
     assert window_end(CHANGED, "3600") == CHANGED + timedelta(hours=1)
 
 

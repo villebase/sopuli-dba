@@ -60,10 +60,10 @@ from sopuli.config import (
     vaults,
 )
 
-#: The artefact's own version, which is not the config file's ``version:``. It
-#: follows invariant 12 the way the run schema's version does: a new optional key
-#: is a minor bump, and a file that says `version: 1` stays valid. What each shape
-#: accepts and refuses, and why, is in the docstring of the function that builds it.
+#: The schema contract's version, which is not the config file's ``version:``.
+#: `01-configuration.md` §9b says when it changes. What each shape accepts and
+#: refuses, and why, is in the function that builds it: its docstring or its
+#: ``description``.
 SCHEMA_VERSION = "1.8"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
@@ -910,10 +910,9 @@ def _personal_account() -> Schema:
     ``minProperties`` is not the rule here and would be the wrong one: an entry
     must name **exactly one** of ``accounts``, ``profile`` and ``role``, which is
     a relation between three keys rather than a count, so it stays with the
-    builder where the message can say which two were found. Two would be refused
-    rather than read as a union or an intersection, because neither reading is the
-    obvious one and an ambiguous whitelist is what invariant 5 prevents
-    (`01-configuration.md` §1). What the artefact does carry is the absence of
+    builder where the message can say which two were found. Two are refused
+    rather than read as a union or an intersection; `01-configuration.md` §1 says
+    why. What the artefact does carry is the absence of
     ``secret`` and ``secret_template`` -- an editor offering them here would be
     offering mastery over a password nothing masters.
     """
@@ -963,11 +962,9 @@ def _delivery() -> Schema:
     is that the selected method's sub-block exists -- a cross-key rule, so it stays
     with the builder where the message can name the method (§9b).
 
-    Closing a sub-block would need a **conditional** schema -- ``if`` on
-    ``method``, ``then`` the constraints. The condition is not simple, because
-    ``method`` is optional and its absence selects ``vault_wrapped``. One such
-    shape would serve every method. Without it the sub-blocks stay open, and the
-    tool is the stricter of the two, which is the safe direction.
+    Closing a sub-block would need a conditional schema on ``method``.
+    `01-configuration.md` §1 says why that is not simple, and why leaving the
+    sub-blocks open is the safe direction.
     """
     sub_block: Schema = {
         "type": "object",
@@ -1080,10 +1077,9 @@ def _reset_records() -> Schema:
     say, in a store the file does name, so an operator could not tell where the
     journal is by reading the configuration.
 
-    The block itself is optional, and that is specified behaviour, not
-    compatibility. A reset with no store configured warns and runs, because the
-    seen (`manual`) path may have no store at all, and that is the site `manual`
-    exists for (UC-2 §3.1).
+    The block itself is optional by specification, not for compatibility. A
+    reset with no store configured still runs, for the reason UC-2 §3.1 gives,
+    and warns as UC-2 §3.4 describes.
 
     What the artefact cannot carry is the rule that matters most -- that no key
     here may hold a password in any representation. That is a property of the

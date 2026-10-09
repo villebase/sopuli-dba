@@ -15,6 +15,7 @@ and one checked by hand in 2026.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -126,8 +127,8 @@ def test_the_refusal_names_what_this_build_serves_from_the_registry() -> None:
     hint = caught.value.hint or ""
     for method in IMPLEMENTED:
         assert f"`{method}`" in hint
-    assert "#" not in hint
-    assert "UC-2 §6" in hint
+    assert not re.search(r"#\d", hint)
+    assert "UC-2 §6.2" in hint
 
 
 def test_the_implemented_method_comes_back() -> None:

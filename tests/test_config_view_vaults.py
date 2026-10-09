@@ -240,9 +240,10 @@ def test_auth_gets_no_row() -> None:
 
 
 def test_the_effective_settings_reach_json_in_both_shapes() -> None:
-    """The half that is not a provenance question at all: the JSON carries the
-    effective settings, not `config.declared` (the address the *file* wrote), and
-    `--resolved` carries the stores as well as targets and bindings. Otherwise a
+    """The half that is not a provenance question at all: `config.vaults[]`
+    carries the effective settings beside `config.declared` (the address the
+    *file* wrote), and `--resolved` carries the stores as well as targets and
+    bindings. Otherwise a
     consumer could not ask which vault a run would use, under any layer."""
     for resolved in (False, True):
         [store] = json_vaults(built(vault_addr="https://standby.example.com"), resolved=resolved)

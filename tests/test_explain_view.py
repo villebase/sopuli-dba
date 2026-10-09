@@ -7,10 +7,10 @@ file, no environment and no command here.
 Two settings are wired today -- `output` and `safety.dry_run` -- so a run can
 show a value from the command line, from the environment, and from a built-in
 default, and nothing else. It cannot show a profile that tried to relax a ratchet
-and lost, because no layer can supply a looser value yet; and it cannot show a
+and lost, because no layer can supply a looser value; and it cannot show a
 secret-valued setting, because none exists. Both are properties of the *view*,
-which takes whatever the resolver produced. Testing them here makes them true
-when the settings that need them arrive.
+which takes whatever the resolver produced, so testing them here makes them true
+for any setting that needs them.
 """
 
 from __future__ import annotations
@@ -222,11 +222,11 @@ def test_a_clean_run_has_no_ratchet_diagnostics() -> None:
 def test_a_secret_valued_setting_shows_its_layer_and_never_its_value() -> None:
     """Invariant 2, from the direction this view could have broken it.
 
-    No setting is secret-valued today, and ADR-007 makes that more than an
-    accident: the command line names a token's *location* and never carries one,
-    and §3a's chain is resolved outside the settings registry. That is why this
-    test exists now: the view renders whatever the resolver hands it, and the
-    day a secret-valued setting arrives, the redaction has to already be true.
+    No setting is secret-valued, and ADR-007 makes that more than an accident:
+    the command line names a token's *location* and never carries one, and §3a's
+    chain is resolved outside the settings registry. The view renders whatever
+    the resolver hands it, so the redaction has to hold for a secret-valued
+    setting before one exists.
     It is, because the value is rendered through `render_value`, which
     stringifies, and a `Secret` stringifies to `***`. There is no branch here
     that could be forgotten.

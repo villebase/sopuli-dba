@@ -1,4 +1,4 @@
-"""What `creds generate` decides before it writes (decision #254).
+"""What `creds generate` decides before it writes.
 
 Pure: which policy governs an account, what its candidate is, and which accounts
 share a write. The write itself is `tests/test_cli_creds_generate.py`.

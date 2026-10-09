@@ -700,7 +700,7 @@ def test_the_promotion_is_one_patch_doing_five_things() -> None:
 def test_the_origin_is_cleared_with_the_pending_it_described() -> None:
     """The `origin` key is a property of `pending`, not of the credential. Left
     behind, it would assert the provenance of a stage with no value in it -- and
-    the next reader is the redraw check, which decides whether `apply` may
+    the next reader is `apply.may_redraw`, which decides whether `apply` may
     redraw."""
     entry = apply.Promotable(binding(), Secret("new"), None, "app-standard", ("t",))
 

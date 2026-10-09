@@ -1,7 +1,7 @@
 """Posting a notification, with the HTTP call mocked. Tier 0.
 
 The channel is unit-tested with no network (the HTTP call is mocked), and the
-base install is still shown to open no sockets. The template refusal, which
+base install is shown to open no sockets. The template refusal, which
 rejects a template that references the secret, is `tests/config/test_notify.py`'s,
 because it happens at load. The install shape is
 `tests/store/test_install_shape.py`'s, which derives its exemptions from

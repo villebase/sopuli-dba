@@ -45,8 +45,8 @@ def test_a_server_behind_this_host_reads_negative_and_still_trips() -> None:
     """Both directions are hazards, and only one of them is intuitive.
 
     A vault behind this host makes locks look older than they are, so this run
-    takes over leases that are still live -- the failure the lock's 15-minute
-    TTL (UC-1 §8) exists to prevent. Judging `abs(delta)` rather than the raw
+    takes over leases that are still live -- the failure the lock's expiry rule
+    (UC-1 §8) exists to prevent. Judging `abs(delta)` rather than the raw
     difference is what covers it.
     """
     skew = measure_skew(

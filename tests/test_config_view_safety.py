@@ -1,10 +1,11 @@
 """`config show`'s `safety` section, and `config.targets[].safety` (decision #426).
 
 A `safety:` block outside `defaults` is enforced, so `config show` has to
-report it. Otherwise `config show --explain` would say `safety.readonly = false
-[built-in default]` for a file whose target set it, and §9 defines that phrase
-as precisely *nothing else spoke*. The row would be right about the run and
-silent about the file, and silence in that direction reads as an answer.
+report it. `config show --explain` says `safety.readonly = false [built-in
+default]` for a file whose target set it, and that row is right: `config show`
+applies no selector, and §9 defines the phrase as *nothing else spoke*. But the
+row is silent about the file, and silence in that direction reads as an answer,
+so a separate `safety` section names each block.
 
 Tier 0: a document in, rendered lines and a JSON dict out.
 

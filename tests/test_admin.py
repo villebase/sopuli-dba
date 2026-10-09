@@ -301,8 +301,8 @@ def test_an_empty_answer_is_refused_before_anything_is_sent() -> None:
     """Oracle has no empty password, so one can never authenticate. Sent, it
     would come back as `DPY-4001` under `connectivity` -- the wrong place to
     look for one keystroke at the operator's own terminal. The prompt refuses it
-    instead, as it refuses an empty `method: env` variable: `config`, exit 9,
-    naming the target."""
+    instead, the same way an empty `method: env` variable is refused: `config`,
+    exit 9, naming the target."""
     prompt = PasswordPrompt(ask=lambda _: "")
 
     with pytest.raises(AdminCredentialError) as caught:

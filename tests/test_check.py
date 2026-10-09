@@ -53,7 +53,7 @@ UNGUARDED = "the lockout guard is unavailable: SELECT ON SYS.USER$ is not grante
 
 def test_a_pass_without_the_lockout_guard_says_so() -> None:
     """The driver notes a missing `SYS.USER$` grant in the detail, and a pass
-    keeps that note rather than replace it with its own words. Otherwise an
+    keeps that note rather than replacing it with its own words. Otherwise an
     unguarded check would read exactly like a guarded one."""
     outcome = check.decide(user(), attempt(PASS, detail=UNGUARDED), version=7)
 

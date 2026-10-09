@@ -50,7 +50,7 @@ def test_an_unreachable_store_is_a_report_and_not_a_raise(
 ) -> None:
     """`doctor` surveys an estate: one dead store must not end the run.
 
-    The same rule `targets[]` has followed, and the reason `health`
+    The rule `targets[]` follows, and the reason `health`
     returns `unreachable` instead of raising it.
     """
     monkeypatch.setenv("VAULT_TOKEN", "unused-because-nothing-answers")

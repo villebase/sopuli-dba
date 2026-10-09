@@ -9,7 +9,8 @@ Any place they disagree is either a bug in the adapter or a fake that was lying,
 and both are worth finding. The fake is the one nobody would suspect, and it is
 the one every lock test in the suite rests on.
 
-Three of these are the properties Q2's design actually depends on:
+Three of these are the properties the lock's design actually depends on
+(Q2, UC-1 §8):
 
 * **``cas: 0`` succeeds only on a path with no history**, and a *deleted* path
   still has history. That is what makes "release by writing a record, never by
@@ -375,7 +376,7 @@ def test_a_deleted_path_reads_as_nothing_but_keeps_its_history(harness: Harness)
     it does for a path that never existed -- but the version counter stands, so
     `cas: 0` fails and will keep failing forever. A lock released by deleting
     would leave a path no first acquisition could ever take again, which is why
-    The tool releases by writing a `released` record instead (UC-1 §8).
+    the tool releases by writing a `released` record instead (UC-1 §8).
     """
     harness.store.write(harness.path, {"holder": "one"}, cas=0)
     harness.admin.soft_delete(harness.path)
@@ -579,7 +580,7 @@ def test_a_read_does_not_hand_back_the_stores_own_state(harness: Harness) -> Non
 
 # ----------------------------------------------------------------- health ---
 #
-# The last of decision P2's sketch, and the one where the fake is least
+# The last of principle P2's sketch, and the one where the fake is least
 # able to stand in for the real thing: `MemoryStore` has no network and nothing
 # that can be down, so `ok` is a constant for it rather than a finding. What is
 # worth asserting jointly is the *shape* of the answer -- that both report the

@@ -1,9 +1,10 @@
 """Acquire, take over, or refuse -- every branch, and both sides of each edge.
 
-This is the test the whole package is arranged for. Q2's concurrency and
-fencing gates ultimately run against a real Vault, but what they check is a
-version comparison and a clock, and both are here without a container: the
-takeover that fences a zombie is one `decide` call whose `cas` is not 0.
+This is the test the whole package is arranged for. The concurrency and fencing
+gates (`04-testing.md` §5) ultimately run against a real Vault, but what they
+check is a version comparison and a clock, and both are here without a
+container: the takeover that fences a zombie is one `decide` call whose `cas` is
+not 0.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
-"""Release gate: the lock holds under contention (Q2).
+"""Release gate: the lock holds under contention.
 
-`04-testing.md` §5 and UC-1 §11 both list the concurrency case, and Q2's design
-adds the fencing one. Both are covered in tier 0 already — two managers over one
+`04-testing.md` §5 and UC-1 §11 both list the concurrency case and the fencing
+one. Both are covered in tier 0 already — two managers over one
 dictionary with an injected clock (`tests/lock/test_manager.py`) — and that is
 not the same claim. Tier 0 forces the race by driving the store in a chosen
 order, so it proves the *manager* reacts correctly to a lost compare-and-set. It
@@ -218,12 +218,11 @@ def lock_path(vault_stack: Any) -> Iterator[str]:
     `released` record, because a delete would leave a path no first acquisition
     could ever take again) and exactly what a test needs between runs.
 
-    Then `cas_required: true` on the path, because **pre-flight refuses without
-    it** -- a lock on a path that accepts unguarded writes is one another writer
-    can replace, so the manager will not claim to hold it. Without this
-    step every run is refused at exit 7 before any race begins, which is the
-    guarantee working as Q2 describes and is an operator's one-time setup step in
-    production too.
+    Then `cas_required: true` on the path, because **pre-flight checks it** -- a
+    lock on a path that accepts unguarded writes is one another writer can
+    replace, so the manager will not claim to hold it. On a path with no metadata
+    at all, pre-flight sets it itself (UC-1 §8); setting it here keeps the race
+    from depending on that step, so each test measures only the lock.
     """
     mount = vault_stack.kv2_mount
     vault_stack.client.delete(f"/v1/{mount}/metadata/{LOCK_PATH}")

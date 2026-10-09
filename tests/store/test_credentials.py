@@ -325,9 +325,10 @@ def test_a_pinned_version_against_a_store_that_keeps_none_is_refused() -> None:
 
 def test_two_accounts_in_one_document_read_back_their_own_values() -> None:
     """The read-side half of the sibling rule. The write half -- a patch that
-    omits every account it did not come for -- is the other half of this rule, and
-    this is the property it has to preserve: one document, two refs, two
-    different passwords, and neither ref able to reach the other's."""
+    omits every account it did not come for -- is tested in
+    `test_credentials_write.py`, and this is the property it has to preserve:
+    one document, two refs, two different passwords, and neither ref able to
+    reach the other's."""
     store = store_with(PER_APPLICATION, path=SHARED)
 
     web = read_secret(store, ref(f"{SHARED}#DB_CREDENTIALS/acme_web_user"))

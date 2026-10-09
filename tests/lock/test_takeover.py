@@ -103,7 +103,7 @@ class Unfenced:
     def health(self) -> StoreHealth:  # pragma: no cover - not asked
         # `check_fenceable` never asks, and the method is here because a
         # `Protocol` demands it of every implementation -- which is the cost
-        # decision P2 weighs when it says a method nothing calls obliges every
+        # principle P2 weighs when it says a method nothing calls obliges every
         # store to write a body for a caller that does not exist.
         return StoreHealth(status=OK)
 
@@ -236,9 +236,10 @@ def test_a_live_lock_is_refused_and_names_its_holder() -> None:
 
 
 def test_force_takes_a_live_lock() -> None:
-    """Decision P3 settles `--force` as an audited override of a guardrail that
-    is not a safety setting, and a live holder is exactly that kind of
-    guardrail."""
+    """`--force` is an audited override of a guardrail that is not a safety
+    setting (decision P3), and a live holder is exactly that kind of guardrail:
+    `lock break` takes a lock that has not expired only with `--force`
+    (UC-1 §8)."""
     outcome = plan_break(
         state_of(store_with(record().to_dict()), now=NOW + timedelta(minutes=1)), force=True
     )

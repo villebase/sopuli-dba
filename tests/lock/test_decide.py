@@ -1,6 +1,6 @@
 """Acquire, take over, or refuse -- every branch, and both sides of each edge.
 
-This is the test the whole package is arranged for. #83's concurrency and
+This is the test the whole package is arranged for. Q2's concurrency and
 fencing gates ultimately run against a real Vault, but what they check is a
 version comparison and a clock, and both are here without a container: the
 takeover that fences a zombie is one `decide` call whose `cas` is not 0.
@@ -177,7 +177,7 @@ def test_there_are_two_outcomes_and_neither_of_them_is_waiting() -> None:
 
     Nothing blocks, so two runs cannot each hold half of what the other needs --
     which is what makes deadlock impossible rather than rare. A `Wait` member
-    added here later would be a change to #83, not an implementation detail, so
+    added here later would be a change to Q2, not an implementation detail, so
     the union is pinned rather than left to be inferred from the branches above.
     """
     assert set(get_args(Decision)) == {Acquire, Denied}

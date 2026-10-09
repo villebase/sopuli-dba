@@ -1,4 +1,4 @@
-"""The decision table behind `creds status` (#275).
+"""The decision table behind `creds status`.
 
 UC-1 §9's inventory. Most of this file is about the line the verb holds: what it
 will report from two dictionary views and a vault document, and what it refuses
@@ -234,9 +234,9 @@ def test_a_staged_rotation_outranks_an_open_window() -> None:
 
 # ------------------------------------------------------------ the grace period ---
 #
-# #309. `creds status` is where UC-1 §6.4 says the grace period belongs, and it
-# was the command that misreported it hardest: `EXPIRED(GRACE)` read as a hard
-# expiry, so the row said `EXPIRED` and never reached `PENDING_APPLY`.
+# `creds status` is where UC-1 §6.4 says the grace period belongs. A row in
+# grace is not a hard expiry: the table counts it separately and names the
+# window in a note.
 
 
 def grace_row(**fields: object) -> status.Row:
@@ -254,9 +254,9 @@ def grace_row(**fields: object) -> status.Row:
 
 
 def test_a_grace_period_is_not_a_row_nobody_needs_to_look_at() -> None:
-    """Before #309 such a row was `expired` and counted as *locked or expired* --
-    the wrong words, but visible. Reading the two apart without counting this
-    would have turned a mislabelled finding into no finding at all."""
+    """A grace period is a finding, so it is counted. Reading the two apart
+    without counting it would turn a mislabelled finding into no finding at
+    all."""
     text = render_status_table([grace_row()])
 
     assert "nothing to act on" not in text

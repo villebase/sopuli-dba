@@ -7318,10 +7318,11 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
 
     ``level`` carries the distinction -- ``error`` for a finding that refused the
     run, ``warning`` for one that could not establish anything. No diagnostic *code*
-    is allocated: the rule is that a code exists for what the exit code cannot tell
-    you, and on a refusal the run-level `error.category` already says which kind of
-    problem stopped it -- ``connectivity``, ``authorization`` or ``database``, which
-    is the branch a consumer needs. A code would be a fourth spelling of `check`.
+    is allocated: `03-json-output.md` §3's rule is that a code exists for what the
+    exit code cannot tell you, and on a refusal the run-level `error.category`
+    already says which kind of problem stopped it -- ``connectivity``,
+    ``authorization`` or ``database``, which is the branch a consumer needs. A code
+    would be a fourth spelling of `check`.
     """
     return [
         Diagnostic(
@@ -7348,9 +7349,10 @@ def _refuse_preflight(
     ``notes`` carries the run-level notices the ordinary return paths render, so a
     refusal does not silently drop them. Otherwise a stale ``--repair`` document
     under ``--preflight`` would be serialised into ``diagnostics[]`` and printed
-    nowhere, which is exactly the invisibility UC-1 §4's *surfaced* rule exists to
-    prevent -- and a refusal is a worse place to lose a warning than a success,
-    because it is where somebody is already reading.
+    nowhere. `03-json-output.md` §3 says `SOPULI-W020` is printed as well as
+    serialised, because the person who typed the flag is who it is for -- and a
+    refusal is a worse place to lose a warning than a success, because it is where
+    somebody is already reading.
     """
     first = preflight.refusal(findings)
     if first is None:  # pragma: no cover - the caller asks before calling
@@ -7395,11 +7397,11 @@ def _check_strategy(
         if user is None:
             continue
 
-        # Decision #301, and it comes first because it says the question below
-        # cannot be answered rather than answering it. A profile decides whether a
-        # rollover window opens, so judging a named regime against the profile an
-        # account is about to *leave* would clear `--strategy staged` on one profile
-        # and then run it under another that opens a window.
+        # The profile-assignment check (decision #301) comes first because it says
+        # the question below cannot be answered rather than answering it. A profile
+        # decides whether a rollover window opens, so judging a named regime against
+        # the profile an account is about to *leave* would clear `--strategy staged`
+        # on one profile and then run it under another that opens a window.
         moving = strategies.moving_profile(
             strategy,
             user,
@@ -7448,8 +7450,8 @@ def _redraw_estate(
     unacceptable, and neither can be known before the statement is issued -- a
     verify function is arbitrary PL/SQL that cannot be consulted (invariants 13 and
     14), and a reuse history is hashed. So this is the only place the answer can be
-    found, and telling an operator to re-run `creds generate` and hope was the loop
-    §6.4 was written about.
+    found. Telling an operator to re-run `creds generate` and hope is the loop §6.4
+    rules out.
 
     **The unit is an account, not a document and not the estate.** Passwords are
     drawn per account even where accounts share a document (§4), so a refusal
@@ -7738,10 +7740,10 @@ def _restage(
 def _redraws_by_document(wanted: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     """Accounts to redraw, grouped into the write that will stage them.
 
-    Two accounts of one application refused on the same run share a document, and
-    Q7's rule is that one document is one write however many accounts land in it --
-    three writes would be three versions, two of which describe a state nobody
-    intended.
+    Accounts of one application refused on the same run share a document, and UC-1
+    §3's rule is that one document is one write however many accounts land in it --
+    one write per account would be one version per account, all but the last
+    describing a state nobody intended.
     """
     grouped: dict[LockKey, list[_Applied]] = {}
     for record in wanted:

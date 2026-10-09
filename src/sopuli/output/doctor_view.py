@@ -13,7 +13,7 @@ credential sync — ``IN_SYNC``, ``DRIFT``, ``ACCOUNT_MISSING``. `doctor` manage
 no credential and touches no account, so every one of those would have been a
 word that means something else. Widening `result` instead would have meant
 making ``account`` optional, which breaks any consumer reading it
-unconditionally; adding a section is additive, so 1.11 is a minor bump and no
+unconditionally; adding a section is additive, so it is a minor bump and no
 existing consumer sees it.
 
 **A target that asserts nothing gets no ``asserted`` object at all**, rather

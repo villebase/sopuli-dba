@@ -4,7 +4,7 @@ The environment's half of C13. A store's settings belong to the store rather
 than to the run, so ``vaults.<name>.*`` is merged **inside the file** rather than
 through the invocation -- :mod:`sopuli.config.vault_layers` says why, and
 :func:`sopuli.settings.sources.config_contributions` says the same thing from the
-other end about a profile's block. This module is where layer 2 joins that
+other end about a profile's block. This module is where layers 1 and 2 join that
 merge, which is why it lives beside it rather than in
 :mod:`sopuli.settings.sources` with the rest of §6's table.
 

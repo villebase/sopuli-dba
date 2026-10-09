@@ -452,10 +452,10 @@ def test_the_token_file_flag_reaches_the_store(
     """The flag's wiring, end to end: it is a *location* all the way down.
 
     `lock status` opens a socket to the store, so the command line can supply a
-    token here at all. What is asserted is what
-    arrives at the backend -- a path, never a `Secret` -- because that is the
-    property invariant 1 rests on: no signature between the parser and §3a's
-    chain has a slot a credential could sit in.
+    token here at all. What is asserted is what arrives at the backend -- a path,
+    never a `Secret` -- because that is the property invariant 1 rests on: no
+    signature between the parser and §3a's chain has a slot a credential could sit
+    in.
     """
     seen: list[Path | None] = []
 
@@ -694,8 +694,8 @@ def test_it_takes_no_lock_of_its_own(
 # -------------------------------------------------------- UC-2's reset locks ---
 
 #: A configuration with no `applications:` and no `accounts:` at all -- the
-#: shape UC-2 alone produces, which must not report an empty estate while a
-#: reset holds a lock. `personal_accounts:` declares one name and one predicate,
+#: shape UC-2 alone produces, for which `lock status` must not report an empty
+#: estate while a reset holds a lock. `personal_accounts:` declares one name and one predicate,
 #: because the predicate is the reason the keys cannot be enumerated offline.
 RESET_CONFIG = """\
 version: 1

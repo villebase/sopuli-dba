@@ -980,7 +980,7 @@ def test_the_notes_are_visible_to_somebody_reading_a_terminal(
     store: MemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A warning nobody can see in the default output is not surfaced. The
+    """A warning nobody can see in the default output is not a warning. The
     emitter prints the command's text and not the document, so a verify function
     reported only in `diagnostics[]` is reported to nobody who ran this by hand."""
     _reachable(monkeypatch, {"appdb-alpha": ASCII_128}, GUARDED)

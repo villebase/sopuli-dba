@@ -6,8 +6,11 @@ script's behaviour changing silently.
 
 Tier 1 for the two things only a database can answer. The first is that a
 `--dry-run` resets nothing: it draws no password, issues no DDL and leaves the
-account open (invariant 8). The second is that the seen path prints a password
-that works and expires the account.
+account open (invariant 8). It has to be tier 1 because the preview flag is
+threaded through the verb, and a flag that is passed along and never read looks
+correct to every tier-0 test; only the account's state shows whether DDL went
+out. The second is that the seen path prints a password that works and expires
+the account.
 """
 
 from __future__ import annotations
@@ -534,8 +537,8 @@ def test_a_journal_that_cannot_be_opened_refuses_before_anything_is_issued(
     """Not 3.4's absence, and the difference is *when*.
 
     A declared journal is opened before the first statement, because the lock
-    lives in it. So a store that cannot be reached stops the
-    run where UC-1's lock stores already stop one -- before the DDL, with the
+    lives in it. So a store that cannot be reached stops the run where UC-1's
+    lock stores already stop one -- before the DDL, with the
     person's old password still working and nothing to explain. 3.4's absences
     are all about a store that went away *after* the password changed; there the
     reset stands and `SOPULI-W025` carries it.

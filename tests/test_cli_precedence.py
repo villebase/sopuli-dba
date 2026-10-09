@@ -965,9 +965,10 @@ def test_jsonl_from_a_profile_is_refused_by_a_verb_that_does_not_stream(
     to produce what was asked for, and the message still names the key.
 
     The profile validator admits the three modes, and `jsonl` is the one a verb
-    can still refuse -- so it guards this regression: the handler asks the
-    invocation whether the run is JSON on the way past, and an error there would
-    replace a clean exit 2 with a traceback on exit 1.
+    can still refuse -- so it guards this path: the handler asks the invocation
+    whether the run is JSON on the way past, by reading the mode through
+    `OutputMode`, and a `ValueError` there would replace a clean exit 2 with a
+    traceback on exit 1.
     """
     path = write_config("version: 1\nprofiles:\n  ci:\n    output: jsonl\n")
 

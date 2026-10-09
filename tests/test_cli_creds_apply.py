@@ -207,8 +207,9 @@ BREAK_EXPIRED_PROFILE_CONFIG = (
 """
 )
 
-#: The same estate again, opted in to §5's profile assignment. The profile
-#: is one `FakeSession` knows about; `MISSING_PROFILE_CONFIG` names one no database has.
+#: The same estate again, opted in to §5's profile assignment (decision #301). The
+#: profile is one `FakeSession` knows about; `MISSING_PROFILE_CONFIG` names one no
+#: database has.
 ASSIGNING_CONFIG = (
     CONFIG
     + """policies:
@@ -933,8 +934,8 @@ def test_the_dry_run_unlocks_nothing(
 def test_an_account_is_moved_to_the_profile_the_policy_names(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """§5's second attribute: `ALTER USER … PROFILE …`, and then the
-    rotation, in one run."""
+    """§5's second attribute (decision #301): `ALTER USER … PROFILE …`, and
+    then the rotation, in one run."""
     harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
     result = run(runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha")
 
@@ -984,8 +985,9 @@ def test_the_move_is_reported_as_its_own_action_naming_both_profiles(
 def test_a_profile_this_database_has_not_got_is_refused_before_anything_is_written(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """UC-1 §8 step 3: the survey asks, and the run refuses rather than
-    discovering it on target nine with eight accounts already moved."""
+    """UC-1 §8 step 3 (decision #301): the survey asks, and the run refuses
+    rather than discovering it on target nine with eight accounts already
+    moved."""
     harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
     result = run(runner, write_config(MISSING_PROFILE_CONFIG), "--preflight")
 
@@ -1147,9 +1149,9 @@ def test_one_failed_target_stops_the_promotion_for_that_document(
 def test_a_partial_run_names_the_invocation_that_repairs_it(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The `repair with:` line (decision #264) points at a remedy, and the remedy
-    has to be narrowed the way this run was narrowed -- otherwise the repair
-    spends a login on every target the partial run already spent one on."""
+    """The `repair with:` line points at a remedy, and the remedy has to be narrowed
+    the way this run was narrowed -- otherwise the repair spends a login on every
+    target the partial run already spent one on."""
     estate(
         per_target={
             "appdb-alpha": {"ACME_WEB_USER": drifted()},
@@ -3259,9 +3261,9 @@ def test_a_supplied_password_is_reported_and_never_replaced(
 def test_a_document_with_no_origin_is_not_redrawn(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """A document with no `origin` is the supplied case without the evidence.
-    Guessing wrong here overwrites a dictated password, and the next
-    `creds generate` heals it."""
+    """A document with no `origin` is treated as supplied, because nothing shows
+    the tool drew it. Guessing wrong here overwrites a dictated password, and the
+    next `creds generate` heals it."""
     harness = estate(documents=staged(origin=None), set_error=refusal(), refusals=1)
 
     result = run(runner, write_config(REDRAW_CONFIG), "--output", "json")
@@ -3878,7 +3880,8 @@ def test_a_failure_after_the_statement_still_reports_the_change(
 
 
 def test_the_redraw_codes_are_registered() -> None:
-    """The redraw codes are in the registry, under its `SOPULI-W` spelling."""
+    """The redraw codes are in the registry, under its `SOPULI-W` spelling
+    (decision #610)."""
     from sopuli.diagnostics import PASSWORD_NOT_REDRAWN, PASSWORD_REDRAWN, WARNINGS
 
     assert (PASSWORD_REDRAWN, PASSWORD_NOT_REDRAWN) == ("SOPULI-W029", "SOPULI-W030")

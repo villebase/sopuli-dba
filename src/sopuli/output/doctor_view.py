@@ -97,9 +97,8 @@ def _privileges(audit: PrivilegeAudit) -> dict[str, Any]:
     """The schema's ``privilege_report``, which is the audit minus one field.
 
     ``over_granted`` is deliberately not repeated here: it lives on ``scope``,
-    where the schema has had it since 1.10, and two copies of one finding are two
-    things that can disagree. A consumer reads the findings from ``scope`` and
-    the coverage from here.
+    and two copies of one finding are two things that can disagree. A consumer
+    reads the findings from ``scope`` and the coverage from here.
     """
     return {
         "held": list(audit.held),

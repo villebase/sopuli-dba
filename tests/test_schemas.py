@@ -27,7 +27,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from repo_files import requires_repo
+from sopuli.config.schema import SCHEMA_VERSION as CONFIG_SCHEMA_VERSION
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "docs" / "schemas"
 SRC_DIR = Path(__file__).resolve().parents[1] / "src" / "sopuli"
@@ -91,19 +93,27 @@ def test_every_committed_sample_is_covered() -> None:
     assert samples == set(SAMPLES), "add new samples to SAMPLES with the schema they describe"
 
 
-def test_src_names_no_superseded_run_schema() -> None:
-    """A comment in ``src/`` that names a run-schema file names the current one.
+@pytest.mark.parametrize(
+    ("schema", "current"),
+    [
+        ("sopuli-run", SCHEMA_VERSION),
+        ("sopuli-config", CONFIG_SCHEMA_VERSION),
+        ("sopuli-event", EVENT_SCHEMA_VERSION),
+    ],
+)
+def test_src_names_no_superseded_schema(schema: str, current: str) -> None:
+    """A comment in ``src/`` that names a schema file names the current one.
 
-    The run schema gains a minor version with every new field (invariant 12), so
-    a versioned file name in a docstring goes stale quickly. Write "the run
-    schema" instead. This catches a versioned name that falls behind
-    ``SCHEMA_VERSION``.
+    A schema gains a minor version with every new field (invariant 12), so a
+    versioned file name in a docstring goes stale quickly. Write "the run
+    schema" instead. This catches a versioned name that falls behind the
+    version the build emits.
     """
     stale = [
-        f"{path.relative_to(SRC_DIR.parent).as_posix()}:{number}: sopuli-run-{version}"
+        f"{path.relative_to(SRC_DIR.parent).as_posix()}:{number}: {schema}-{version}"
         for path in sorted(SRC_DIR.rglob("*.py"))
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        for version in re.findall(r"sopuli-run-(\d+\.\d+)", line)
-        if version != SCHEMA_VERSION
+        for version in re.findall(rf"{schema}-(\d+\.\d+)", line)
+        if version != current
     ]
-    assert stale == [], "name the run schema without a version"
+    assert stale == [], "name the schema without a version, or name the current one"

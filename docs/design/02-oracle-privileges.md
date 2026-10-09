@@ -579,10 +579,12 @@ GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO TO sopuli_svc;   -- or c##sopuli_svc
 
 `00_install.sql` takes it as parameter 7, `grant_connect_info`, off by default.
 Without the view, a plain TCP connection's encryption is `unknown`, never
-`none`: the driver reads `ORA-00942` or `ORA-41900` as "could not look", and
-`doctor` names this grant. Any other failure reading either value is `unknown`
-too, with the server's code and message in the hint. Nothing branches on this
-answer, so it never stops a run, unlike a failed capability probe. A connection over any transport other than TCP or
+`none`: the driver reads `ORA-00942`, `ORA-41900` or `ORA-01031` as "could not
+look", and `doctor` names this grant. Any other failure reading either value is
+`unknown` too, with the server's code and message in the hint. That includes
+`ORA-00904`, which no grant fixes. So is a session that finds no row of its own
+in the view, since every connection measured has at least one. Nothing branches
+on this answer, so it never stops a run, unlike a failed capability probe. A connection over any transport other than TCP or
 TCPS is also `unknown`, because none has been measured.
 
 ---

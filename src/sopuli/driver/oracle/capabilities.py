@@ -228,33 +228,17 @@ def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
         cursor.execute(statement, binds or None)
         return cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- classified on the next line
-        _raise_unless_absent(error, statement)
-        return None
-
-
-def read_all(cursor: Cursor, statement: str, **binds: Any) -> list[Any] | None:
-    """Every row of one question, under :func:`read`'s rule for a negative."""
-    try:
-        cursor.execute(statement, binds or None)
-        return list(cursor.fetchall())
-    except Exception as error:  # noqa: BLE001 -- classified on the next line
-        _raise_unless_absent(error, statement)
-        return None
-
-
-def _raise_unless_absent(error: Exception, statement: str) -> None:
-    """Return for a code in :data:`ABSENT_CODES`; raise :class:`ProbeError` otherwise."""
-    diagnosis = from_error(error)
-    if diagnosis.code in ABSENT_CODES:
-        return
-    raise ProbeError(
-        f"a capability probe failed with {diagnosis.code or 'no code'}: {diagnosis.message}",
-        code=diagnosis.code or None,
-        hint=(
-            "this is not the same as the capability being absent -- the probe itself "
-            "could not be answered. The statement was: " + statement
-        ),
-    ) from error
+        diagnosis = from_error(error)
+        if diagnosis.code in ABSENT_CODES:
+            return None
+        raise ProbeError(
+            f"a capability probe failed with {diagnosis.code or 'no code'}: {diagnosis.message}",
+            code=diagnosis.code or None,
+            hint=(
+                "this is not the same as the capability being absent -- the probe itself "
+                "could not be answered. The statement was: " + statement
+            ),
+        ) from error
 
 
 def probe(cursor: Cursor) -> frozenset[str]:
@@ -402,7 +386,15 @@ UNREADABLE_HINT = (
     "V$SESSION_CONNECT_INFO is not readable; GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO "
     "to the service account (PUBLIC holds it unless the site revoked it)"
 )
-PROTOCOL_UNREADABLE_HINT = "the session's network protocol could not be read"
+NO_ROWS_HINT = (
+    "V$SESSION_CONNECT_INFO returned no row for this session; every connection "
+    "measured has at least one, so the answer is not known"
+)
+
+#: The codes that mean the view cannot be read by this account. Narrower than
+#: :data:`ABSENT_CODES`: ``ORA-00904`` would mean the column is missing, which
+#: no grant fixes, so it is reported with the server's message instead.
+UNREADABLE_CODES = frozenset({"ORA-00942", "ORA-41900", "ORA-01031"})
 
 
 def classify_encryption(
@@ -429,6 +421,8 @@ def classify_encryption(
     rows = banners()
     if rows is None:
         return Encryption(method=UNKNOWN, protocol=protocol, hint=UNREADABLE_HINT)
+    if not rows:
+        return Encryption(method=UNKNOWN, protocol=protocol, hint=NO_ROWS_HINT)
     for banner in rows:
         match = NNE_ADAPTER.search(banner)
         if match:
@@ -441,25 +435,42 @@ def encryption_of(cursor: Cursor) -> Encryption:
 
     **A failed read is ``unknown``, never a failed run.** This is asked on every
     connection, and a rotation must not stop over a fact it only reports. Unlike
-    the capability probes, nothing branches on the answer, so a
-    :class:`ProbeError` here becomes ``unknown`` with the server's code and
-    message in the hint, rather than being raised.
+    the capability probes, nothing branches on the answer, so a failure here is
+    mapped to ``unknown`` with the server's code and message in the hint, rather
+    than raised.
     """
     protocol: str | None = None
+    reading = "the network protocol"
     try:
-        row = read(cursor, NETWORK_PROTOCOL)
-        if row is None:
-            return Encryption(method=UNKNOWN, hint=PROTOCOL_UNREADABLE_HINT)
-        protocol = str(row[0]) if row[0] else None
+        cursor.execute(NETWORK_PROTOCOL)
+        row = cursor.fetchone()
+        protocol = str(row[0]) if row and row[0] else None
+        reading = "V$SESSION_CONNECT_INFO"
         return classify_encryption(protocol, lambda: _banners(cursor))
-    except ProbeError as error:
-        return Encryption(method=UNKNOWN, protocol=protocol, hint=error.message)
+    except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
+        diagnosis = from_error(error)
+        return Encryption(
+            method=UNKNOWN,
+            protocol=protocol,
+            hint=f"reading {reading} failed with {diagnosis.code or 'no code'}: "
+            f"{diagnosis.message}",
+        )
 
 
 def _banners(cursor: Cursor) -> list[str] | None:
-    """This session's banner rows, or ``None`` where the view is not readable."""
-    rows = read_all(cursor, CONNECT_INFO)
-    return None if rows is None else [str(each[0]) for each in rows if each and each[0]]
+    """This session's banner rows, or ``None`` where the account cannot read the view.
+
+    Any failure other than :data:`UNREADABLE_CODES` is raised, for
+    :func:`encryption_of` to report with its code.
+    """
+    try:
+        cursor.execute(CONNECT_INFO)
+        rows = cursor.fetchall()
+    except Exception as error:
+        if from_error(error).code in UNREADABLE_CODES:
+            return None
+        raise
+    return [str(each[0]) for each in rows if each and each[0]]
 
 
 def observe(cursor: Cursor) -> Scope:
@@ -660,7 +671,6 @@ __all__ = [
     "observe",
     "probe",
     "read",
-    "read_all",
     "require_read_write",
     "scope_type",
 ]

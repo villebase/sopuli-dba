@@ -15,6 +15,7 @@ import pytest
 from sopuli.driver.oracle.capabilities import (
     CONNECT_INFO,
     NETWORK_PROTOCOL,
+    UNREADABLE_HINT,
     classify_encryption,
     encryption_of,
 )
@@ -24,6 +25,7 @@ from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     UNKNOWN,
     Encryption,
+    Scope,
 )
 
 PLAIN_23 = [
@@ -139,10 +141,37 @@ def test_a_tls_session_does_not_read_the_view() -> None:
     assert cursor.asked == [NETWORK_PROTOCOL]
 
 
-@pytest.mark.parametrize("code", ["ORA-00942", "ORA-41900"])
-def test_a_revoked_view_reads_as_unknown(code: str) -> None:
+@pytest.mark.parametrize("code", ["ORA-00942", "ORA-41900", "ORA-01031"])
+def test_a_revoked_view_reads_as_unknown_and_names_the_grant(code: str) -> None:
     cursor = _Cursor({NETWORK_PROTOCOL: [("tcp",)], CONNECT_INFO: _ora(code)})
-    assert encryption_of(cursor).method == UNKNOWN
+    found = encryption_of(cursor)
+    assert found.method == UNKNOWN
+    assert found.hint == UNREADABLE_HINT
+
+
+def test_a_missing_column_is_not_blamed_on_a_grant() -> None:
+    """``ORA-00904`` is in ``ABSENT_CODES`` for the probes, but no grant fixes a
+    missing column, so the server's own message is reported instead."""
+    cursor = _Cursor({NETWORK_PROTOCOL: [("tcp",)], CONNECT_INFO: _ora("ORA-00904")})
+    found = encryption_of(cursor)
+    assert found.method == UNKNOWN
+    assert found.hint is not None
+    assert "ORA-00904" in found.hint
+    assert found.hint != UNREADABLE_HINT
+
+
+def test_no_rows_for_the_session_is_unknown_not_unencrypted() -> None:
+    """Every connection measured has at least one row. None at all means the
+    session could not see its own, and "in clear" would be a false finding."""
+    found = classify_encryption("tcp", lambda: [])
+    assert found.method == UNKNOWN
+    assert found.hint is not None
+
+
+def test_a_scope_without_an_answer_says_why() -> None:
+    """A driver that does not read encryption still gives ``unknown`` a hint."""
+    assert Scope().encryption.method == UNKNOWN
+    assert Scope().encryption.hint is not None
 
 
 def test_an_unexpected_failure_is_unknown_and_keeps_the_code() -> None:

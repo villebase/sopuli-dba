@@ -569,7 +569,9 @@ class Scope:
     #: Whether this connection is encrypted. The tool sends a new password in
     #: ``ALTER USER`` over it, so an unencrypted connection carries the password
     #: in clear.
-    encryption: Encryption = Encryption()
+    encryption: Encryption = Encryption(
+        hint="the driver did not report whether the connection is encrypted"
+    )
 
     def supports(self, capability: str) -> bool:
         """Whether this connection reported ``capability``."""

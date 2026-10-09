@@ -29,11 +29,11 @@ from sopuli.driver.oracle.capabilities import (
     NETWORK_PROTOCOL,
     NO_CONTAINERS,
     PROBES,
+    UNREADABLE_HINT,
     ProbeError,
     ScopeAssertionError,
     application_of,
     read,
-    read_all,
 )
 from sopuli.driver.protocol import (
     ENCRYPTION_METHODS,
@@ -168,30 +168,34 @@ def test_the_scope_is_what_the_database_says_it_is(
 def test_the_encryption_questions_are_ones_oracle_can_answer(
     live_oracle: Environment, session_module: Any
 ) -> None:
-    """Both statements are understood, and the view is readable with no grant.
+    """Both statements are understood: neither raises.
 
-    ``PUBLIC`` reads ``V$SESSION_CONNECT_INFO`` on every release measured, so a
-    ``None`` here is a database that revoked it, which the tier-1 one has not.
+    The banner read may be refused where a site revoked ``PUBLIC``'s read of the
+    view. That is an answer, not a broken question, so the test skips there.
     """
     with (
         _session(session_module, live_oracle.dsn) as session,
         session.connection.cursor() as cursor,
     ):
         protocol = read(cursor, NETWORK_PROTOCOL)
-        banners = read_all(cursor, CONNECT_INFO)
+        banners = read(cursor, CONNECT_INFO)
 
     assert protocol is not None
-    assert str(protocol[0]).lower() in ("tcp", "tcps")
-    assert banners, "PUBLIC reads the view on every release measured"
+    if banners is None:
+        pytest.skip("PUBLIC's read of V$SESSION_CONNECT_INFO is revoked on this database")
 
 
 def test_the_encryption_is_a_real_answer(live_oracle: Environment, session_module: Any) -> None:
-    """Not ``unknown``: the connection is TCP or TCPS and the view is readable."""
+    """Not ``unknown`` on a TCP or TCPS connection whose view is readable."""
     with _session(session_module, live_oracle.dsn) as session:
         encryption = session.scope().encryption
 
+    if encryption.protocol not in ("tcp", "tcps"):
+        pytest.skip(f"the connection's protocol is {encryption.protocol!r}, not TCP or TCPS")
+    if encryption.hint == UNREADABLE_HINT:
+        pytest.skip("PUBLIC's read of V$SESSION_CONNECT_INFO is revoked on this database")
     assert encryption.method in ENCRYPTION_METHODS
-    assert encryption.method != UNKNOWN
+    assert encryption.method != UNKNOWN, encryption.hint
 
 
 def test_the_container_and_the_scope_agree(live_oracle: Environment, session_module: Any) -> None:

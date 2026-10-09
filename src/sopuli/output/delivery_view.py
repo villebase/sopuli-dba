@@ -64,8 +64,8 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
     reason (:mod:`sopuli.delivery.vault_wrapped`), and naming it here helps the
     DBA holding both tokens as well as the person unwrapping.
 
-    The seen path needs no such help, which is why the gap was easy to miss: its
-    per-target prompt names the target before each password is shown. An unseen
+    The seen path needs no such help: its per-target prompt names the target
+    before each password is shown. An unseen
     delivery has no prompt by design.
 
     **The instruction is part of the output rather than left to a runbook.** The

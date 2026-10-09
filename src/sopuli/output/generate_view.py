@@ -49,10 +49,10 @@ __all__ = [
 #: saying the vocabulary was wrong, which this one is not.
 STAGED = "PENDING_APPLY"
 
-#: Declared in :mod:`sopuli.generate` and re-exported here: every other state
-#: in the schema's enum is declared in a domain module, and the palette cannot
-#: import a view. Kept in this module's namespace because `cli` and the tests
-#: import it from here.
+#: ``VAULT_ONLY`` is declared in :mod:`sopuli.generate` and re-exported here,
+#: imported above: every other state in the schema's enum is declared in a
+#: domain module, and the palette cannot import a view. Kept in this module's
+#: namespace because `cli` and the tests import it from here.
 
 #: A write that did not happen. `results[].error` carries the reason.
 FAILED = "ERROR"

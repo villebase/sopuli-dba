@@ -1,5 +1,4 @@
-"""`sopuli account expire-password` as a document and as a table (UC-2,
-decision #525).
+"""`sopuli account expire-password` as a document and a table (decision #525).
 
 Same arrangement as `account suspend`: the shape here, the decision in
 :mod:`sopuli.expire`, the statements in the driver.

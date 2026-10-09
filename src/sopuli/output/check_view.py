@@ -245,11 +245,12 @@ def render_check(rows: Sequence[tuple[Binding, Outcome]], *, notices: Sequence[s
 def _state(state: str) -> Cell | str:
     """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    ``DRIFT`` takes the ``attention`` role. The inconclusive states are
-    **dim**, not coloured, so a row nothing could be concluded about recedes
-    instead of competing (decision #395). ``IN_SYNC`` -- which is most rows on
-    a healthy estate -- takes the ``good`` role, so it is visibly not one of the
-    dim ones.
+    ``DRIFT`` takes the ``attention`` role. ``UNVERIFIABLE`` is **dim**, not
+    coloured, so a row nothing could be concluded about recedes instead of
+    competing (decision #395). ``ACCOUNT_MISSING``, ``LOCKED`` and ``EXPIRED``
+    count as inconclusive for the exit code but are coloured ``bad``:
+    :func:`~sopuli.output.palette.role_for_state` says why. ``IN_SYNC`` -- most
+    rows on a healthy estate -- takes the ``good`` role.
 
     The word is always on the line, so `NO_COLOR` loses nothing.
     """

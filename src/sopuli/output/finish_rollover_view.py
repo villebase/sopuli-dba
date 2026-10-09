@@ -230,9 +230,9 @@ def render_finish(
 def _state(state: str) -> Cell | str:
     """The state cell, coloured by :func:`~sopuli.output.palette.role_for_state`.
 
-    One function decides (decision #395), so a rule copied per command cannot
-    become four rules, and this command's ``SKIPPED`` rows -- windows that were
-    already closed -- recede instead of reading like the rest.
+    One function decides the role for every verb (decision #395), and this
+    command's ``SKIPPED`` rows -- windows that were already closed -- recede
+    instead of reading like the rest.
     """
     return state_cell(state)
 

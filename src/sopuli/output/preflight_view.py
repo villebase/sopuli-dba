@@ -103,7 +103,7 @@ def _verdict(findings: Sequence[Finding]) -> str:
 
 
 def caveat_notes(findings: Sequence[Finding]) -> list[str]:
-    """The checks a passing survey could not make, as notes (decision #606).
+    """A passing survey's missing checks, as run-level notes (decision #606).
 
     For the run the survey **let through**. A refusal already prints every
     finding in :func:`render_preflight`'s table, caveats included, so a caller

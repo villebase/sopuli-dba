@@ -50,8 +50,8 @@ SCRIPT = Path(__file__).resolve().parents[1] / "sql" / "oracle" / "00_install.sq
 #: therefore **not** part of §2's default set and must not be required.
 #:
 #: `SYS.USER$` is optional (decision P2): capability-probed, and its absence is the
-#: ordinary configuration rather than a fault. `SET CONTAINER` is §2's other
-#: optional row, for a site whose tool switches containers on an open session rather
+#: ordinary configuration rather than a fault. `SET CONTAINER` is another optional
+#: row in §2, for a site whose tool switches containers on an open session rather
 #: than connecting to each PDB service. `V_$PWFILE_USERS` is optional too (§2): it
 #: is guardrail 3's only input (§4 check 3), and the default set stays narrow for it
 #: -- so the ordinary install cannot run that check and says so on every run rather

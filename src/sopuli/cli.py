@@ -614,7 +614,7 @@ def config_show(
     -- and answers it the same way in both views, because provenance does not
     depend on target expansion. That is why it does not require ``--resolved``
     the way ``--select`` does: a selector has nothing to filter until the estate
-    exists, and a setting has a source either way (decision P3).
+    exists, and a setting has a source either way (P3).
 
     Offline in the strongest sense: it opens no socket to a vault or a database,
     so it is safe to run against a production config from a laptop. A secret ref
@@ -622,11 +622,11 @@ def config_show(
 
     The file is read before this runs, by the boundary, and a bad one never
     reaches here at all: the exit handler in :mod:`sopuli.invocation` catches it,
-    emits the run document and lets it out to exit 9. J7 makes that the code
-    that *does* carry a document, because the invocation resolved before the file
-    turned out to be unusable. That is one place it
-    happens rather than one per verb, and it is why this command asks ``run`` for
-    a configuration instead of loading one.
+    emits the run document and lets it out to exit 9. J7 makes that the code that
+    *does* carry a document, because the invocation resolved before the file
+    turned out to be unusable. That is one place it happens rather than one per
+    verb, and it is why this command asks ``run`` for a configuration instead of
+    loading one.
     """
     document = run.document
 
@@ -781,8 +781,8 @@ def doctor(
     target's own reachability a moment later.
 
     Nothing here is a substitute for the guardrails. Reporting what a service
-    account holds is not enforcing it; :mod:`sopuli.driver.guardrails` is the
-    refusal.
+    account holds is not enforcing it; the account guardrails that every mutating
+    verb applies are what refuse.
 
     **``--check-privileges`` warns and never fails** (decision P5). An
     over-granted account is somebody else's decision to fix, and a ``doctor``
@@ -909,9 +909,10 @@ def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0
     answered in both cases, and the run is not over: a sealed store is somebody
     to page, and a clock outside tolerance is a hazard this run did not create
     and cannot fix. Both are `SOPULI-W010` and `SOPULI-W009` in the diagnostics
-    array, which is decision P5's answer for over-granted accounts applied to the same
-    shape of question -- a `doctor` that exited non-zero over them would block
-    the person who ran it, mid-incident, over a condition they did not cause.
+    array, which is decision P5's answer for over-granted accounts applied to
+    the same shape of question -- a `doctor` that exited non-zero over them
+    would block the person who ran it, mid-incident, over a condition they did
+    not cause.
 
     **Exit 9 and not 1**, which is E5's number rather than a new one: a missing
     backend is already ``config`` / exit 9 when a command resolves one, and P5's
@@ -1037,14 +1038,14 @@ def _timeouts(run: Invocation) -> Timeouts:
     matters. `db.query_timeout_s` becomes `Timeouts.query_s`, and from there
     `Connection.call_timeout`.
 
-    **Passing it does not change what the tool imposes**, and that is why
-    passing it is safe. The built-in stays `NO_QUERY_TIMEOUT`, for the
+    **Passing it does not change what the tool imposes**, and that is why passing
+    it is safe (decision #360). The built-in stays `NO_QUERY_TIMEOUT`, for the
     reason stated where that constant lives: a call timeout cancels the round
     trip without undoing what the server did with it, `ALTER USER` is not
     transactional, and a rotation cut off at the wrong moment leaves a run that
     cannot say whether the password changed -- the one state invariant 7 has no
-    answer for. What the key changes is that an operator can *reach* that state on
-    purpose, which `01-configuration.md` §5 has always said is theirs to choose.
+    answer for. What the key changes is that an operator can *reach* that state
+    on purpose, which `01-configuration.md` §5 says is theirs to choose.
 
     Absent means the built-in, for both, and `Timeouts` already holds those two
     numbers -- so an :class:`Invocation` built without resolution (a test, the
@@ -1198,7 +1199,8 @@ def _policy_to_sample(config: Config, name: str | None) -> tuple[str, PasswordPo
 
     `defaults.policy` is read directly, as `bindings.py` already reads it: it is
     the chain the file itself describes (§3), and the `SOPULI_*` and command-line
-    layers above it belong to the precedence resolver (decision #10) rather than here.
+    layers above it belong to the precedence resolver (decision #10) rather than
+    here.
 
     **Both refusals below stay `ConfigError`, on exit 9, even though the name was
     typed on the command line.** This is the boundary J7 predicted would
@@ -1979,9 +1981,9 @@ def account_reset_password(
     # before any database is reached -- so it is exit 5 here, naming the store,
     # rather than a per-target error row after a password has been drawn.
     #
-    # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read for a
-    # capability rather than for a guard: a preview delivers nothing, so it needs
-    # nothing to deliver with, and opening the store would make `--dry-run`
+    # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read
+    # for a capability rather than for a guard: a preview delivers nothing, so it
+    # needs nothing to deliver with, and opening the store would make `--dry-run`
     # require vault credentials that the run it previews would use and the
     # preview would not.
     backends = _delivery_backends(run, config, delivery, reached)
@@ -2017,10 +2019,10 @@ def account_reset_password(
 
     if not run.dry_run:
         # **The plan goes out before the first statement** (invariant 8). The
-        # verb returns its whole output as a
-        # string, so without this nothing reaches the operator until the run is
-        # over. On stderr, which is where `_confirm_environments` puts the same
-        # thing for the same reason: stdout carries the result.
+        # verb returns its whole output as a string, so without this nothing
+        # reaches the operator until the run is over. On stderr, which is where
+        # `_confirm_environments` puts the same thing for the same reason: stdout
+        # carries the result.
         #
         # **On the seen path the argument is the prompt**: without this the
         # operator would be asked to expose a password before seeing what the run
@@ -2119,9 +2121,9 @@ def account_reset_password(
             failed = reset_record_unwritten(one.record_error.path, one.record_error.reason)
             document.diagnostics.append(failed)
             notices.append(failed)
-        # The notification's warning, appended after the record's so the two read in the order they
-        # happened: the notification goes out first, and the journal is written
-        # last because it holds what happened (§6.4).
+        # The notification's warning, appended after the record's so the two
+        # read in the order they happened: the notification goes out first, and
+        # the journal is written last because it holds what happened (§6.4).
         if one.notify_error is not None:
             unsent = notification_unsent(one.account, one.target, one.notify_error)
             document.diagnostics.append(unsent)
@@ -2365,14 +2367,13 @@ def _write_reset_record(
     has already succeeded.
     """
     try:
-        # **Opening is inside the guard, not beside it.** `_stores_for`
-        # resolves a credential and builds a client, and
-        # every one of those steps can fail -- an unreachable Vault, a token
-        # that has expired since the run began, a backend whose extra is not
-        # installed. Outside the guard that exception would escape a reset that
-        # had already succeeded and turn it into a failed run, which is exactly
-        # the false negative 3.4 rules out: the password has changed and the
-        # person still needs it.
+        # **Opening is inside the guard, not beside it.** `_stores_for` resolves
+        # a credential and builds a client, and every one of those steps can
+        # fail -- an unreachable Vault, a token that has expired since the run
+        # began, a backend whose extra is not installed. Outside the guard that
+        # exception would escape a reset that had already succeeded and turn it
+        # into a failed run, which is exactly the false negative 3.4 rules out:
+        # the password has changed and the person still needs it.
         journal = _reset_journal(run, config)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
         return _RecordFailure(path=path, reason=_as_error(error).message)
@@ -2536,8 +2537,8 @@ def _reset_actions(
     `_expire_one`'s shape for the same error.
 
     **Named from the last completed row, not from how many there are.** The
-    Oracle driver reports the unlock row even where it issued
-    nothing, so a count would work against it today -- but the error does not
+    Oracle driver reports the unlock row even where it issued nothing, so a
+    count would work against it today -- but the error does not
     promise a full prefix, and a driver that left the no-op row out would have its
     failed close reported as a second `password_set`.
     """
@@ -2733,9 +2734,9 @@ def _reset_one(
         # `_hand_over` prompts, and declining raises `click.Abort`. Raised before
         # `document.results` is assigned, it would leave a run that had changed
         # and expired a password reporting only "aborted before completion". The
-        # boundary's own docstring names that case as the one a
-        # document exists for: *a confirmation declined halfway through is
-        # exactly when a scheduler wants to know which targets were touched.*
+        # boundary's own docstring names that case as the one a document exists
+        # for: *a confirmation declined halfway through is exactly when a
+        # scheduler wants to know which targets were touched.*
         #
         # **A password that is set is handed over, even where closing the window
         # then failed.** The new password is live and the
@@ -2813,11 +2814,10 @@ def _reset_one(
 
         # **After the hand-over, and before the record.** Notifying before
         # `_hand_over` would be wrong on the seen path for a reason the unseen
-        # path does not have: there, `_hand_over` is
-        # the delivery. It prompts, declining aborts, and the password is then
-        # sitting on an account that nobody has read -- so a notification sent
-        # beforehand says a password is waiting when the only channel that could
-        # have carried it was refused.
+        # path does not have: there, `_hand_over` is the delivery. It prompts,
+        # declining aborts, and the password is then sitting on an account that
+        # nobody has read -- so a notification sent beforehand says a password is
+        # waiting when the only channel that could have carried it was refused.
         #
         # Notifying after covers both paths with one ordering rather than a branch:
         # on the unseen path `_hand_over` only renders a token it was already

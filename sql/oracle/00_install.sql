@@ -59,9 +59,9 @@
 --
 --         grant_connect_info (position 7) added and run on 26ai Free
 --         23.26.2.0.0 2026-10-09 (#697), through
---         tests/driver/test_oracle_install_script.py: the default path does not
---         grant SYS.V_$SESSION_CONNECT_INFO, and all seven positions passed
---         with Y does. Untried on every other release.
+--         tests/driver/test_oracle_install_script.py. With the default, the
+--         account is not granted SYS.V_$SESSION_CONNECT_INFO; with position 7
+--         set to Y, it is. Untried on every other release.
 --
 --         Confirmed on an Autonomous Database (serverless, 26ai 23.26.3.3.0,
 --         2026-09-28, #479): PDB mode, run as ADMIN rather than SYSDBA, with

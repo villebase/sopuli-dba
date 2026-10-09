@@ -15,7 +15,6 @@ import pytest
 from sopuli.driver.oracle.capabilities import (
     CONNECT_INFO,
     NETWORK_PROTOCOL,
-    ProbeError,
     classify_encryption,
     encryption_of,
 )
@@ -62,7 +61,7 @@ def test_a_plain_tcp_connection_is_not_encrypted(banners: list[str]) -> None:
     NNE. Matching on "encryption service" alone would call every connection
     encrypted.
     """
-    found = classify_encryption("tcp", banners)
+    found = classify_encryption("tcp", lambda: banners)
     assert found.method == ENCRYPTION_NONE
     assert found.algorithm is None
     assert found.hint is not None
@@ -71,18 +70,22 @@ def test_a_plain_tcp_connection_is_not_encrypted(banners: list[str]) -> None:
 @pytest.mark.parametrize("banners", [NNE_23, NNE_11], ids=["23.26", "11.2"])
 def test_the_adapter_row_means_nne_and_names_the_algorithm(banners: list[str]) -> None:
     """11.2 writes the row in lower case after a prefix; later releases do not."""
-    found = classify_encryption("tcp", banners)
+    found = classify_encryption("tcp", lambda: banners)
     assert found == Encryption(method=ENCRYPTION_NATIVE, algorithm="AES256", protocol="tcp")
 
 
-def test_tcps_is_tls_whatever_the_banners_say() -> None:
-    assert classify_encryption("tcps", None).method == ENCRYPTION_TLS
-    assert classify_encryption("TCPS", PLAIN_23).method == ENCRYPTION_TLS
+def _never() -> list[str]:
+    raise AssertionError("the banners were read where they decide nothing")
+
+
+def test_tcps_is_tls_without_reading_the_banners() -> None:
+    assert classify_encryption("tcps", _never).method == ENCRYPTION_TLS
+    assert classify_encryption("TCPS", _never).method == ENCRYPTION_TLS
 
 
 def test_an_unreadable_view_is_unknown_not_unencrypted() -> None:
     """Could not look is not the same answer as looked and found nothing."""
-    found = classify_encryption("tcp", None)
+    found = classify_encryption("tcp", lambda: None)
     assert found.method == UNKNOWN
     assert found.hint is not None
     assert "V_$SESSION_CONNECT_INFO" in found.hint
@@ -91,7 +94,7 @@ def test_an_unreadable_view_is_unknown_not_unencrypted() -> None:
 @pytest.mark.parametrize("protocol", ["ipc", "beq", None])
 def test_an_unmeasured_transport_is_unknown(protocol: str | None) -> None:
     """Only TCP and TCPS were measured. Anything else is not guessed at."""
-    found = classify_encryption(protocol, PLAIN_23)
+    found = classify_encryption(protocol, _never)
     assert found.method == UNKNOWN
     assert found.protocol == protocol
 
@@ -142,14 +145,31 @@ def test_a_revoked_view_reads_as_unknown(code: str) -> None:
     assert encryption_of(cursor).method == UNKNOWN
 
 
-def test_an_unexpected_failure_reading_the_view_is_not_an_answer() -> None:
-    """The rule every probe follows: a code not in ``ABSENT_CODES`` raises."""
+def test_an_unexpected_failure_is_unknown_and_keeps_the_code() -> None:
+    """A rotation must not stop over a fact it only reports.
+
+    The capability probes raise on a code outside ``ABSENT_CODES``, because a
+    command branches on their answer. Nothing branches on this one, so the
+    failure becomes ``unknown`` and the server's code stays in the hint.
+    """
     cursor = _Cursor({NETWORK_PROTOCOL: [("tcp",)], CONNECT_INFO: _ora("ORA-03113")})
-    with pytest.raises(ProbeError):
-        encryption_of(cursor)
+    found = encryption_of(cursor)
+    assert found.method == UNKNOWN
+    assert found.protocol == "tcp"
+    assert found.hint is not None
+    assert "ORA-03113" in found.hint
+
+
+@pytest.mark.parametrize("code", ["ORA-01031", "ORA-03113"])
+def test_an_unreadable_protocol_is_named_as_such(code: str) -> None:
+    """Not blamed on the transport: the read failed, so say that."""
+    found = encryption_of(_Cursor({NETWORK_PROTOCOL: _ora(code)}))
+    assert found.method == UNKNOWN
+    assert found.hint is not None
+    assert "TCP and TCPS" not in found.hint
 
 
 def test_the_statement_filters_on_the_session_s_own_sid() -> None:
-    """On 21c, 19c and 12.2 the view shows other sessions, so a read without
-    the filter would report somebody else's connection."""
+    """On every release measured but 26ai the view showed other sessions, so a
+    read without the filter would report somebody else's connection."""
     assert "sys_context('userenv','sid')" in CONNECT_INFO

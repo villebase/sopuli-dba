@@ -51,9 +51,9 @@
 --        The "Encryption service for Linux" row is there on every connection,
 --        encrypted or not. Only the "<algorithm> encryption service adapter"
 --        row says NNE is in use, and its case differs on 11.2.0.2.0.
---        The view shows the account 1 SID on 23.26.2.0.0, and 2 on 21.3, 19.3
---        and 12.2 (at most 3 on 11.2 and 18.4), so a reader must filter on its
---        own SID
+--        The view showed the account 1 SID on 23.26.2.0.0, 2 on 21.3, 19.3 and
+--        12.2, 1 or 2 on 18.4, and 3 on 11.2.0.2.0, so a reader must filter on
+--        its own SID
 --   EN3  after the grant, the same rows. The grant changes nothing where PUBLIC
 --        holds it
 --

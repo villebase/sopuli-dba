@@ -401,3 +401,15 @@ def test_an_encrypted_connection_adds_no_note() -> None:
 
     assert "native AES256" in text
     assert "encrypted" not in text
+
+
+def test_none_and_unknown_are_coloured_differently_and_encryption_is_not() -> None:
+    """`unknown` is a finding of its own, so it must not look like `tls`."""
+    from sopuli.output.doctor_view import _encryption_cell
+    from sopuli.output.palette import Role
+    from sopuli.output.table import Cell
+
+    assert _encryption_cell({"method": "none"}) == Cell("none", Role.BAD)
+    assert _encryption_cell({"method": "unknown"}) == Cell("unknown", Role.INCONCLUSIVE)
+    assert _encryption_cell({"method": "tls"}) == "tls"
+    assert _encryption_cell({"method": "native", "algorithm": "AES256"}) == "native AES256"

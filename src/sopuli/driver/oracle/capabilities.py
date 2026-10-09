@@ -36,7 +36,7 @@ harness and the driver are asking the same questions.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from sopuli.config.model import TargetOracle
@@ -372,8 +372,9 @@ NETWORK_PROTOCOL = "select sys_context('userenv','network_protocol') from dual"
 
 #: The network services of this session, one banner row each. ``PUBLIC`` holds
 #: ``READ`` (``SELECT`` on 11.2) on the view on every release measured, so no
-#: grant is needed unless a site has revoked it. On 21c, 19c and 12.2 the view
-#: shows other sessions too, so the statement filters on this session's SID.
+#: grant is needed unless a site has revoked it. On every release measured but
+#: 26ai the view showed other sessions too, so the statement filters on this
+#: session's SID.
 CONNECT_INFO = (
     "select network_service_banner from v$session_connect_info "
     "where sid = sys_context('userenv','sid')"
@@ -401,13 +402,17 @@ UNREADABLE_HINT = (
     "V$SESSION_CONNECT_INFO is not readable; GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO "
     "to the service account (PUBLIC holds it unless the site revoked it)"
 )
+PROTOCOL_UNREADABLE_HINT = "the session's network protocol could not be read"
 
 
-def classify_encryption(protocol: str | None, banners: Sequence[str] | None) -> Encryption:
+def classify_encryption(
+    protocol: str | None, banners: Callable[[], Sequence[str] | None]
+) -> Encryption:
     """What a session's transport and banner rows say about its encryption.
 
-    ``banners`` is ``None`` when ``V$SESSION_CONNECT_INFO`` could not be read.
-    Pure, so the measured banner text is tested in tier 0.
+    ``banners`` is called only for a TCP session, which is the one case the rows
+    decide, and returns ``None`` when ``V$SESSION_CONNECT_INFO`` could not be
+    read. Pure, so the measured banner text is tested in tier 0.
     """
     transport = (protocol or "").lower()
     if transport == TCPS:
@@ -421,9 +426,10 @@ def classify_encryption(protocol: str | None, banners: Sequence[str] | None) -> 
                 f"not on {protocol or 'one that reports no protocol'}"
             ),
         )
-    if banners is None:
+    rows = banners()
+    if rows is None:
         return Encryption(method=UNKNOWN, protocol=protocol, hint=UNREADABLE_HINT)
-    for banner in banners:
+    for banner in rows:
         match = NNE_ADAPTER.search(banner)
         if match:
             return Encryption(method=ENCRYPTION_NATIVE, algorithm=match.group(1), protocol=protocol)
@@ -433,15 +439,27 @@ def classify_encryption(protocol: str | None, banners: Sequence[str] | None) -> 
 def encryption_of(cursor: Cursor) -> Encryption:
     """Whether this session's connection is encrypted, and by what.
 
-    A TLS session is answered from its transport alone, without reading the view.
+    **A failed read is ``unknown``, never a failed run.** This is asked on every
+    connection, and a rotation must not stop over a fact it only reports. Unlike
+    the capability probes, nothing branches on the answer, so a
+    :class:`ProbeError` here becomes ``unknown`` with the server's code and
+    message in the hint, rather than being raised.
     """
-    row = read(cursor, NETWORK_PROTOCOL)
-    protocol = str(row[0]) if row and row[0] else None
-    if protocol is not None and protocol.lower() == TCPS:
-        return classify_encryption(protocol, None)
+    protocol: str | None = None
+    try:
+        row = read(cursor, NETWORK_PROTOCOL)
+        if row is None:
+            return Encryption(method=UNKNOWN, hint=PROTOCOL_UNREADABLE_HINT)
+        protocol = str(row[0]) if row[0] else None
+        return classify_encryption(protocol, lambda: _banners(cursor))
+    except ProbeError as error:
+        return Encryption(method=UNKNOWN, protocol=protocol, hint=error.message)
+
+
+def _banners(cursor: Cursor) -> list[str] | None:
+    """This session's banner rows, or ``None`` where the view is not readable."""
     rows = read_all(cursor, CONNECT_INFO)
-    banners = None if rows is None else [str(each[0]) for each in rows if each and each[0]]
-    return classify_encryption(protocol, banners)
+    return None if rows is None else [str(each[0]) for each in rows if each and each[0]]
 
 
 def observe(cursor: Cursor) -> Scope:

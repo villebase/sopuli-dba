@@ -567,8 +567,8 @@ and neither needs a grant on any release measured
   names the algorithm: `AES256 Encryption service adapter for Linux`, or on
   11.2.0.2.0 `Oracle Advanced Security: AES256 encryption service adapter`. A
   row `Encryption service for Linux` is there on every connection, encrypted or
-  not, so it says nothing. On 21c, 19c and 12.2 the view also shows other
-  sessions, which is why the read filters on the SID.
+  not, so it says nothing. On every release measured except 26ai the view also
+  shows other sessions, which is why the read filters on the SID.
 
 `PUBLIC` holds `READ` on the view (`SELECT` on 11.2.0.2.0) on every release
 measured. The grant matters only where a site has revoked that:
@@ -580,7 +580,9 @@ GRANT SELECT ON SYS.V_$SESSION_CONNECT_INFO TO sopuli_svc;   -- or c##sopuli_svc
 `00_install.sql` takes it as parameter 7, `grant_connect_info`, off by default.
 Without the view, a plain TCP connection's encryption is `unknown`, never
 `none`: the driver reads `ORA-00942` or `ORA-41900` as "could not look", and
-`doctor` names this grant. A connection over any transport other than TCP or
+`doctor` names this grant. Any other failure reading either value is `unknown`
+too, with the server's code and message in the hint. Nothing branches on this
+answer, so it never stops a run, unlike a failed capability probe. A connection over any transport other than TCP or
 TCPS is also `unknown`, because none has been measured.
 
 ---

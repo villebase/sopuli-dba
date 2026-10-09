@@ -161,12 +161,15 @@ def _encryption(found: Encryption) -> dict[str, Any]:
 
 
 def _encryption_cell(encryption: dict[str, Any] | None) -> Cell | str:
-    """``none`` is coloured, like ``no`` in the reachable column, and the rest are not."""
+    """``none`` is coloured as bad and ``unknown`` as inconclusive; an encrypted
+    connection is not coloured, like ``yes`` in the reachable column."""
     if not encryption:
         return absent_cell("")
     method = str(encryption["method"])
     if method == ENCRYPTION_NONE:
         return Cell(method, Role.BAD)
+    if method == UNKNOWN:
+        return Cell(method, Role.INCONCLUSIVE)
     if method == ENCRYPTION_NATIVE and encryption.get("algorithm"):
         return f"{method} {encryption['algorithm']}"
     return method

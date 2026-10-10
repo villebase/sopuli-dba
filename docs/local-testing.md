@@ -798,8 +798,8 @@ delivery:
 
 It asks for confirmation every time, and `--confirm` does not answer the prompt.
 It refuses when stdout is not a terminal, or when the output is JSON. UC-2 §6.5
-lists its guards. This run used a config with no `reset_records:` block, so it
-ends with a note:
+lists its guards. This run used a config with no `reset_records:` block, and
+the tier-1 container does not encrypt connections, so it ends with two notes:
 
 ```
 $ sopuli account reset-password --account acme_dev_alice
@@ -814,13 +814,14 @@ ACCOUNT         TARGET    INTENT        SECRET
 acme_dev_alice  free-pdb  password_set  -
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
-acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
 
 reset acme_dev_alice on 1 of 1 targets
 
 
-1 note:
+2 notes:
   no `reset_records:` block is declared, so no record of this reset will be written and no advisory lock is taken on the account: the run document and the database are the whole record of it
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 
 password for acme_dev_alice, shown once:
 

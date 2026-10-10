@@ -1732,3 +1732,20 @@ the register.
   - Require the grant: measurement found it unnecessary.
   - One code for both: a consumer could not tell "in clear" from "did not
     look" without reading the message.
+
+## #742
+
+- **Decided:** 2026-10-10, #742
+- **Question:** `$` is one of the specials in `alnum_safe`, the default
+  charset. A POSIX shell expands it, unquoted or in double quotes. Docker
+  Compose expands it in a `.env` file. Keep it and tell the operator to quote
+  every password, or drop it?
+- **Decision:** Drop it. The specials are `_ # - . + = ~ ^`.
+- **Why:** `01-configuration.md` §8 says `alnum_safe` avoids shell and `.env`
+  hazards, and with `$` that was false: `aB3$xy_9` arrives as `aB3` in both.
+  A rule that every password must be quoted is one an operator forgets, and the
+  failure is a password that silently loses its tail. The cost is one symbol, 71 to 70, and
+  a supplied password with `$` is no longer compliant under `alnum_safe`. A
+  policy that wants `$` can name it in `charset: custom`.
+- **Rejected:** Keep `$` and require quoting. Only `alnum` would then be safe
+  unquoted, and the default charset would need a quoting rule for each path.

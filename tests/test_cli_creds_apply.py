@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -31,7 +32,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli import apply, check
 from sopuli.admin import Resolved
-from sopuli.cli import _left_out, cli
+from sopuli.cli import _Applied, _left_out, _splice, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.errors import ArgumentError
 from sopuli.config.loading import build_config
@@ -837,6 +838,33 @@ def test_a_refusal_before_the_statement_does_not_warn(
     result = run(runner, write_config(CONFIG), "--output", "json")
 
     assert "SOPULI-W031" not in _codes(result)
+
+
+def test_a_redraw_keeps_what_the_first_pass_sent_in_clear() -> None:
+    """Pass one sent the password in clear; pass two failed before sending.
+
+    The row is the second pass's, but the first password still crossed the
+    network, so the encryption it went over stays on the row.
+    """
+    binding = SimpleNamespace(account="acme_web_user", target="appdb-alpha")
+    first = _Applied(
+        binding,  # type: ignore[arg-type]
+        None,
+        check.Outcome(check.ERROR, "refused"),
+        changed=True,
+        encryption=CLEAR,
+    )
+    second = _Applied(
+        binding,  # type: ignore[arg-type]
+        None,
+        check.Outcome(check.ERROR, "could not connect"),
+        changed=False,
+    )
+
+    (spliced,) = _splice([first], [second])
+
+    assert spliced.encryption == CLEAR
+    assert spliced.outcome.detail == "could not connect", "the row is still the second pass's"
 
 
 def test_the_warning_is_printed_as_well(

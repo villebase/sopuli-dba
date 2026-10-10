@@ -7,6 +7,7 @@ from sopuli.diagnostics import (
     CONNECTION_UNENCRYPTED,
     WARNINGS,
     encryption_diagnostics,
+    worse_encryption,
 )
 from sopuli.driver.protocol import Encryption
 
@@ -58,3 +59,17 @@ def test_the_worst_answer_for_a_target_is_kept() -> None:
         ("appdb-alpha", CONNECTION_UNENCRYPTED),
         ("appdb-beta", CONNECTION_ENCRYPTION_UNKNOWN),
     ]
+
+
+def test_the_worse_answer_is_none_then_unknown() -> None:
+    assert worse_encryption(TLS, CLEAR) is CLEAR
+    assert worse_encryption(CLEAR, UNKNOWN) is CLEAR
+    assert worse_encryption(TLS, UNKNOWN) is UNKNOWN
+    assert worse_encryption(NNE, TLS) is NNE, "two encrypted answers keep the first"
+
+
+def test_a_pass_that_sent_nothing_loses_to_any_answer() -> None:
+    """A redraw pass that sent nothing does not erase what an earlier one sent."""
+    assert worse_encryption(CLEAR, None) is CLEAR
+    assert worse_encryption(None, CLEAR) is CLEAR
+    assert worse_encryption(None, None) is None

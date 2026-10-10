@@ -140,6 +140,7 @@ from sopuli.diagnostics import (
     unlistable_stores,
     vault_diagnostics,
     wallet_diagnostics,
+    worse_encryption,
 )
 from sopuli.driver import guardrails
 from sopuli.driver.oracle.client import (
@@ -7804,13 +7805,23 @@ def _splice(applied: Sequence[_Applied], again: Sequence[_Applied]) -> list[_App
 
     ``redraws`` accumulates across rounds, because :func:`_apply_estate` builds
     fresh records that have never heard of it. That is what stops the budget
-    resetting every time round the loop.
+    resetting every time round the loop. ``encryption`` accumulates for the same
+    reason: a password the first pass sent in clear crossed the network even
+    where the second pass sent nothing (#697).
     """
     replacements = {(record.binding.account, record.binding.target): record for record in again}
     spliced: list[_Applied] = []
     for record in applied:
         fresh = replacements.pop((record.binding.account, record.binding.target), None)
-        spliced.append(record if fresh is None else replace(fresh, redraws=record.redraws + 1))
+        spliced.append(
+            record
+            if fresh is None
+            else replace(
+                fresh,
+                redraws=record.redraws + 1,
+                encryption=worse_encryption(record.encryption, fresh.encryption),
+            )
+        )
     # Anything left is an account that was not in the original pass, which cannot
     # happen -- a redraw narrows the estate rather than widening it -- and is
     # appended rather than dropped, because losing a row this run applied would

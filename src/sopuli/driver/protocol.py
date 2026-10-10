@@ -341,12 +341,13 @@ class DriverError(Exception):
     #: Whether the statement carrying the password had been sent when this was
     #: raised.
     #:
-    #: ``True`` only where the server refused the statement itself: it crossed
-    #: the network, so the password did too. A refusal the driver makes before
-    #: building or sending it -- read-only, a missing account, a ``"`` in the
-    #: password -- leaves it ``False``. The caller asks this to decide whether
-    #: SOPULI-W031/W032 applies (#697), because only the driver knows which
-    #: statement failed.
+    #: ``True`` once the statement was handed to the client library: the server
+    #: refused it, so it crossed the network, or the connection failed during
+    #: the call, where the driver cannot tell whether it did and says it did. A
+    #: refusal the driver makes before building or sending it -- read-only, a
+    #: missing account, a ``"`` in the password -- leaves it ``False``. The
+    #: caller asks this to decide whether SOPULI-W031/W032 applies (#697),
+    #: because only the driver knows which statement failed.
     password_sent = False
 
     def __init__(self, message: str, *, hint: str | None = None, code: str | None = None) -> None:

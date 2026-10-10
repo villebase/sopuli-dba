@@ -445,12 +445,15 @@ def _fail_statement(session: Any, monkeypatch: pytest.MonkeyPatch, number: int) 
     issued = session._issue
     count = 0
 
-    def issue(statement: Any) -> None:
+    def issue(statement: Any, *, password: bool = False) -> None:
         nonlocal count
         count += 1
         if count == number:
-            raise DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
-        issued(statement)
+            # As the real `_issue` marks it: the server refused the statement.
+            failure = DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+            failure.password_sent = password
+            raise failure
+        issued(statement, password=password)
 
     monkeypatch.setattr(session, "_issue", issue)
 

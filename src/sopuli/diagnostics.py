@@ -917,6 +917,21 @@ def guardrail_diagnostics(caveats: Sequence[tuple[str, Caveat]]) -> list[Diagnos
     return notices
 
 
+def worse_encryption(kept: Encryption | None, found: Encryption | None) -> Encryption | None:
+    """The less safe of two answers about the connections one password went over.
+
+    ``none``, then ``unknown``, then anything encrypted. A password known to have
+    crossed in clear is the finding, whatever another session could not tell.
+    ``None`` means no password was sent, and loses to any answer.
+    """
+    rank = {ENCRYPTION_NONE: 2, ENCRYPTION_UNKNOWN_METHOD: 1}
+    if kept is None:
+        return found
+    if found is None:
+        return kept
+    return found if rank.get(found.method, 0) > rank.get(kept.method, 0) else kept
+
+
 def encryption_diagnostics(sent: Sequence[tuple[str, Encryption]]) -> list[Diagnostic]:
     """A password sent over an unencrypted or unknown connection, once per target.
 
@@ -926,18 +941,16 @@ def encryption_diagnostics(sent: Sequence[tuple[str, Encryption]]) -> list[Diagn
     reasoning). The driver's ``hint`` says what to do.
 
     A target can appear with more than one answer, because each pass of
-    `creds rotate`'s redraw opens its own connection, which reads its own. The
-    worst answer is kept: ``none``, then ``unknown``. A password known to have
-    crossed in clear is the finding, whatever another session could not tell.
+    `creds apply`'s redraw opens its own connection, which reads its own. The
+    worst answer is kept (:func:`worse_encryption`).
     """
-    rank = {ENCRYPTION_NONE: 2, ENCRYPTION_UNKNOWN_METHOD: 1}
-    worst: dict[str, Encryption] = {}
-    for target, found in sent:
-        kept = worst.get(target)
-        if kept is None or rank.get(found.method, 0) > rank.get(kept.method, 0):
-            worst[target] = found
+    worst: dict[str, Encryption | None] = {}
+    for target, answer in sent:
+        worst[target] = worse_encryption(worst.get(target), answer)
     notices: list[Diagnostic] = []
     for target, found in worst.items():
+        if found is None:
+            continue
         if found.method == ENCRYPTION_NONE:
             code = CONNECTION_UNENCRYPTED
             headline = "a password was sent over a connection that is not encrypted"

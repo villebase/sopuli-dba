@@ -2050,6 +2050,7 @@ def account_reset_password(
     manager = _reset_lock_manager(run, config, selection)
     found: list[_Reset] = []
     stolen: LockStolenError | None = None
+    declined = False
     try:
         keys = _reset_lock_keys(config, account, reached)
         with manager.holding(keys) if manager is not None else nullcontext():
@@ -2065,21 +2066,29 @@ def account_reset_password(
                         stolen = lost
                         break
                 emitter.event(document, "target.started", target=target.name)
-                one = _reset_one(
-                    target,
-                    account,
-                    run,
-                    config,
-                    delivery=delivery,
-                    force=force,
-                    keep_rollover=keep_rollover,
-                    preview=run.dry_run,
-                    record_at=paths.get(target.name),
-                    backend=backends.get(target.name),
-                    channel=channel,
-                )
+                try:
+                    one = _reset_one(
+                        target,
+                        account,
+                        run,
+                        config,
+                        delivery=delivery,
+                        force=force,
+                        keep_rollover=keep_rollover,
+                        preview=run.dry_run,
+                        record_at=paths.get(target.name),
+                        backend=backends.get(target.name),
+                        channel=channel,
+                    )
+                except _Declined as stop:
+                    # The seen path's prompt, declined. The password was set
+                    # before the prompt, so the run reports what it did like a
+                    # finished one and only then aborts (#738).
+                    one, declined = stop.row, True
                 found.append(one)
                 _reset_events(one, run)
+                if declined:
+                    break
     except LockDeniedError as denied:
         # Exit 7, and nothing was issued: acquisition is all-or-nothing and
         # happens before the first connection, so a reset refused here is a
@@ -2089,27 +2098,13 @@ def account_reset_password(
             _record_locks(document, manager, denied=denied)
         emitter.event(document, "lock.denied", data=denied_entry(denied))
         raise
-    except click.Abort as stop:
-        # The seen path's prompt, declined. `holding()` has already let the lock
+    except click.Abort:
+        # Anything else that stops the run. `holding()` has already let the lock
         # go in its `finally`, so this records a lock that is released rather
-        # than one that looks stuck -- and it records it at all for the reason
-        # `_reset_one` journals the row: a run abandoned half way is exactly when
-        # somebody needs to know what it held and what it touched.
+        # than one that looks stuck -- and it records it at all because a run
+        # abandoned half way is exactly when somebody needs to know what it held.
         if manager is not None:
             _record_locks(document, manager)
-        if isinstance(stop, _Declined):
-            found.append(stop.row)
-        document.results = [one.as_json() for one in found]
-        # **The notes too, on stderr, before the boundary says "aborted".** The
-        # password was set before the prompt, so every note still applies: no
-        # journal, a password sent in clear. The document cannot carry them to
-        # anyone, because the seen path refuses JSON (§6.5 guard 2), so this
-        # print is the only way the operator learns them.
-        later = _reset_notices(found)
-        document.diagnostics.extend(later)
-        lines = render_notices([one.message for one in [*notices, *later]])
-        if lines:
-            click.echo("\n".join(lines), err=True)
         raise
 
     if manager is not None:
@@ -2167,6 +2162,18 @@ def account_reset_password(
     # itself -- which is what a terminal operator needs, and what
     # `diagnostics[]` alone tells only a JSON consumer.
     told = "\n".join(render_notices([one.message for one in notices]))
+    if declined:
+        # **The table and the notes, then the abort (#738).** The passwords set
+        # before the prompt make every row and every note true, and the seen
+        # path refuses JSON (§6.5 guard 2), so no document carries them: this
+        # print is the only way the operator learns them. The boundary then
+        # exits 8.
+        #
+        # Without `shown`, so a decline prints no password. Whether the abort
+        # path may print one the operator accepted on an earlier target is a
+        # decision for the seen path's guards, and it is not made here.
+        click.echo("\n\n".join(part for part in (header, body, told) if part))
+        raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
 
 

@@ -696,5 +696,9 @@ def test_a_declined_prompt_prints_the_notes_for_every_target_reset(
         *(one.message for one in encryption_diagnostics([(TARGET, CLEAR), (SECOND, CLEAR)])),
     ]
     for message in expected:
-        assert message.splitlines()[0] in result.stderr, message
-    assert result.stderr.index("3 notes:") < result.stderr.index("sopuli: aborted")
+        assert message.splitlines()[0] in result.stdout, message
+    assert "3 notes:" in result.stdout
+    rows = [line for line in result.stdout.splitlines() if line.startswith(ACCOUNT)]
+    assert [line.split()[1] for line in rows if "RESET" in line] == [TARGET, SECOND]
+    assert "shown once" not in result.output, "a decline printed a password"
+    assert "sopuli: aborted" in result.stderr

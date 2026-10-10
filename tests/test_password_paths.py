@@ -53,7 +53,10 @@ SAFE = ("alnum", "alnum_safe")
 
 #: The `printable_ascii` characters each path changes or refuses, in any of the
 #: three positions. `01-configuration.md` §8 names the same sets. Measured with
-#: bash 5.2 as `sh`, Docker Compose v2 and SQL*Plus 23.26 against 26ai Free.
+#: bash 5.2.37 as `sh`, Docker Compose v5.5.1 and SQL*Plus 23.26.3.0.0 against
+#: Oracle 26ai Free 23.26.2.0.0, and in the tier-1 lane on Ubuntu, where `sh`
+#: is dash and SQL*Plus is the latest Linux download. An upstream change that
+#: moves a set fails here, and §8 is then wrong too.
 BREAKS = {
     "shell": set("$&'();<>\\`|"),
     "env": set("$'"),
@@ -62,6 +65,10 @@ BREAKS = {
 
 #: How many generated passwords each safe charset sends through each path.
 DRAWS = {"shell": 200, "env": 200, "connect": 10}
+
+#: Seconds any one consumer may take. A stalled listener or a prompt SQL*Plus
+#: waits at then fails the test with a reason, instead of hanging the lane.
+TIMEOUT = 60
 
 
 def _specials(charset: str) -> str:
@@ -105,20 +112,27 @@ def _shell() -> str:
     return found
 
 
-def _through_shell(sh: str, directory: Path, candidates: list[str]) -> list[str]:
-    """One `sh` for the lot. Each value comes back on its own NUL-ended record.
+def _through_shell(sh: str, directory: Path, candidates: list[str]) -> tuple[list[str], str]:
+    """What `sh` read for each candidate, and its stderr.
 
-    The script goes on stdin: as an argument it is cut short on Windows. It runs
-    in ``directory`` because a `>` in a broken password redirects to a file.
+    One `sh` for the lot. Each value comes back on its own NUL-ended record. The
+    script goes on stdin: as an argument it is cut short on Windows. It runs in
+    ``directory`` because a `>` in a broken password redirects to a file.
     """
     script = "".join(
         f"P{index}={candidate}\nprintf '%s\\0' \"$P{index}\"\n"
         for index, candidate in enumerate(candidates)
     )
     result = subprocess.run(
-        [sh, "-s"], input=script, cwd=directory, capture_output=True, text=True, check=False
+        [sh, "-s"],
+        input=script,
+        cwd=directory,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=TIMEOUT,
     )
-    return result.stdout.split("\0")[: len(candidates)]
+    return result.stdout.split("\0")[: len(candidates)], result.stderr
 
 
 @pytest.mark.parametrize("charset", SAFE)
@@ -128,7 +142,9 @@ def test_a_safe_password_survives_an_unquoted_shell_assignment(
     sh = _shell()
     candidates = _samples(charset, "shell")
 
-    assert _through_shell(sh, tmp_path, candidates) == candidates
+    read, errors = _through_shell(sh, tmp_path, candidates)
+
+    assert read == candidates, errors
 
 
 def test_printable_ascii_breaks_a_shell_on_the_characters_section_8_names(
@@ -137,7 +153,7 @@ def test_printable_ascii_breaks_a_shell_on_the_characters_section_8_names(
     sh = _shell()
 
     def survives(candidate: str) -> bool:
-        return _through_shell(sh, tmp_path, [candidate]) == [candidate]
+        return _through_shell(sh, tmp_path, [candidate])[0] == [candidate]
 
     assert _broken(survives, _swept(_specials("printable_ascii"))) == BREAKS["shell"]
 
@@ -149,14 +165,21 @@ def _compose() -> list[str]:
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("no `docker` on PATH")
-    probe = subprocess.run([docker, "compose", "version"], capture_output=True, check=False)
+    probe = subprocess.run(
+        [docker, "compose", "version"], capture_output=True, check=False, timeout=TIMEOUT
+    )
     if probe.returncode != 0:
         pytest.skip("`docker compose` is not available")
     return [docker, "compose"]
 
 
-def _through_env(compose: list[str], directory: Path, candidates: list[str]) -> list[str | None]:
-    """What Compose reads for each line of a `.env` file.
+def _through_env(
+    compose: list[str], directory: Path, candidates: list[str]
+) -> tuple[list[str | None], str]:
+    """What Compose reads for each line of a `.env` file, and its stderr.
+
+    A file Compose refuses reads as nothing for every line, and the stderr says
+    why.
 
     `config` writes a literal `$` as `$$`, its own escape, so the output is
     unescaped once to get the value a container would see.
@@ -171,12 +194,14 @@ def _through_env(compose: list[str], directory: Path, candidates: list[str]) -> 
         capture_output=True,
         text=True,
         check=False,
+        timeout=TIMEOUT,
     )
     if result.returncode != 0:
-        return [None] * len(candidates)
+        return [None] * len(candidates), result.stderr
     environment = json.loads(result.stdout)["services"]["probe"].get("environment", {})
     read = [environment.get(f"P{index}") for index in range(len(candidates))]
-    return [None if value is None else value.replace("$$", "$") for value in read]
+    unescaped = [None if value is None else value.replace("$$", "$") for value in read]
+    return unescaped, result.stderr
 
 
 @pytest.mark.parametrize("charset", SAFE)
@@ -184,7 +209,9 @@ def test_a_safe_password_survives_a_compose_env_file(charset: str, tmp_path: Pat
     compose = _compose()
     candidates = _samples(charset, "env")
 
-    assert _through_env(compose, tmp_path, candidates) == candidates
+    read, errors = _through_env(compose, tmp_path, candidates)
+
+    assert read == candidates, errors
 
 
 def test_printable_ascii_breaks_an_env_file_on_the_characters_section_8_names(
@@ -194,7 +221,7 @@ def test_printable_ascii_breaks_an_env_file_on_the_characters_section_8_names(
     compose = _compose()
 
     def survives(candidate: str) -> bool:
-        return _through_env(compose, tmp_path, [candidate]) == [candidate]
+        return _through_env(compose, tmp_path, [candidate])[0] == [candidate]
 
     assert _broken(survives, _swept(_specials("printable_ascii"))) == BREAKS["env"]
 
@@ -202,7 +229,10 @@ def test_printable_ascii_breaks_an_env_file_on_the_characters_section_8_names(
 # --------------------------------------------------------- connect string ---
 
 
-def _sqlplus() -> str:
+@pytest.fixture
+def sqlplus() -> str:
+    """SQL*Plus, or a skip. Requested before ``account``, so a machine without it
+    skips before the fixture touches the database."""
     lib_dir = os.environ.get("SOPULI_ORACLE_CLIENT_LIB_DIR")
     found = shutil.which("sqlplus") or (lib_dir and shutil.which("sqlplus", path=lib_dir))
     if not found:
@@ -229,14 +259,14 @@ def account(live_oracle: Environment) -> Iterator[Any]:
     )
 
     with contextlib.suppress(Exception):
-        _run(session, f"drop user {ACCOUNT}")
+        _run(session, f"drop user {ACCOUNT} cascade")
     _run(session, f'create user {ACCOUNT} identified by "Init1aaaaaaa"')
     _run(session, f"grant create session to {ACCOUNT}")
     try:
         yield session
     finally:
         with contextlib.suppress(Exception):
-            _run(session, f"drop user {ACCOUNT}")
+            _run(session, f"drop user {ACCOUNT} cascade")
         session.close()
 
 
@@ -261,17 +291,20 @@ def _logs_in(sqlplus: str, session: Any, dsn: str, candidate: str) -> bool:
         "exit\n"
     )
     result = subprocess.run(
-        [sqlplus, "-S", "-L", "/nolog"], input=script, capture_output=True, text=True, check=False
+        [sqlplus, "-S", "-L", "/nolog"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=TIMEOUT,
     )
     return "LOGGEDIN" in result.stdout
 
 
 @pytest.mark.parametrize("charset", SAFE)
 def test_a_safe_password_logs_in_through_a_connect_string(
-    charset: str, account: Any, live_oracle: Environment
+    charset: str, sqlplus: str, account: Any, live_oracle: Environment
 ) -> None:
-    sqlplus = _sqlplus()
-
     failed = [
         candidate
         for candidate in _samples(charset, "connect")
@@ -282,10 +315,8 @@ def test_a_safe_password_logs_in_through_a_connect_string(
 
 
 def test_printable_ascii_breaks_a_connect_string_on_the_characters_section_8_names(
-    account: Any, live_oracle: Environment
+    sqlplus: str, account: Any, live_oracle: Environment
 ) -> None:
-    sqlplus = _sqlplus()
-
     def survives(candidate: str) -> bool:
         return _logs_in(sqlplus, account, live_oracle.dsn, candidate)
 

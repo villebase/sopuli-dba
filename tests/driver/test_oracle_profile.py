@@ -36,21 +36,15 @@ from typing import Any
 
 import pytest
 
-from oracle_harness import Environment
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.protocol import (
     ATTRIBUTE_SET,
     PASSWORD_ROLLOVER,
     AccountAttributes,
-    Credential,
     DriverError,
 )
-from sopuli.secrets import Secret
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 
-CORRELATION_ID = "4e8d2b19-6f3a-4c07-b5e1-9a2d7c4f0836"
 
 ACCOUNT = "acme_profiled_user"
 
@@ -67,32 +61,6 @@ REUSE_PROFILE = "sopuli_reuse"
 LOCKOUT_PROFILE = "sopuli_lockout"
 
 LIVE = "Pr0filed-Pa55-word1"
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:

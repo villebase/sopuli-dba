@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from oracle_harness import Environment
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.protocol import (
     FAIL,
     OFFLINE_VERIFY,
@@ -32,7 +32,6 @@ from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     SKIPPED,
     UNAVAILABLE,
-    Credential,
     DriverError,
     Session,
     UnsupportedCapabilityError,
@@ -40,7 +39,6 @@ from sopuli.driver.protocol import (
 from sopuli.secrets import Secret
 
 USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 
 CORRELATION_ID = "2f6c8a90-1b47-4e35-8d92-6a0f3c5b7e21"
 
@@ -50,32 +48,6 @@ ROLLOVER_PROFILE = "sopuli_rollover"
 
 CORRECT = "Corr3ct-Pa55-word"
 WRONG = "Wr0ng-Pa55-word"
-
-
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
 
 
 def _run(session: Any, *statements: str) -> None:

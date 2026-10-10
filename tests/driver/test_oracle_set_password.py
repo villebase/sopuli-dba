@@ -55,32 +55,6 @@ ROTATED = "N3wer-Pa66-zoRba"
 WEAK = "short"
 
 
-@pytest.fixture
-def session_module() -> Any:
-    return pytest.importorskip("sopuli.driver.oracle.session")
-
-
-@pytest.fixture
-def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=CORRELATION_ID)
-    opened = driver.connect(
-        ExpandedTarget(
-            target=Target(
-                name="tier1-oracle",
-                type="oracle",
-                dsn=live_oracle.dsn,
-                admin=AdminCredential(username=USER, auth=AdminAuth(method="env")),
-            ),
-            index=0,
-        ),
-        Credential(username=USER, secret=Secret(PASSWORD)),
-    )
-    try:
-        yield opened
-    finally:
-        opened.close()
-
-
 def _run(session: Any, *statements: str) -> None:
     with session.connection.cursor() as cursor:
         for statement in statements:

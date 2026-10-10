@@ -622,11 +622,17 @@ def test_a_reset_over_a_connection_in_clear_warns(
     assert [one["target"] for one in found] == [TARGET]
 
 
+def _refused_by_the_server() -> DriverError:
+    refused = DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+    refused.password_sent = True
+    return refused
+
+
 def test_a_refused_reset_still_carried_the_password(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:
     """The statement was sent and refused, so the password crossed the network anyway."""
-    session = FakeSession("OPEN", DENIED)
+    session = FakeSession("OPEN", _refused_by_the_server())
     session.encryption = CLEAR
     _open(monkeypatch, session, unseen=True)
 
@@ -634,3 +640,17 @@ def test_a_refused_reset_still_carried_the_password(
 
     codes = [one.get("code") for one in json.loads(result.stdout).get("diagnostics", [])]
     assert "SOPULI-W031" in codes
+
+
+def test_a_reset_the_driver_refused_first_does_not_warn(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """A deliberate lock, a missing account: refused before any statement went out."""
+    session = FakeSession("OPEN", DriverError('account "ACME_DEV_ALICE" is locked'))
+    session.encryption = CLEAR
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+
+    codes = [one.get("code") for one in json.loads(result.stdout).get("diagnostics", [])]
+    assert "SOPULI-W031" not in codes

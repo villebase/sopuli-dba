@@ -53,6 +53,7 @@ from sopuli.driver.protocol import (
     AttributeChange,
     ChangeResult,
     Credential,
+    DriverError,
     Encryption,
     PrivilegeAudit,
     Scope,
@@ -812,6 +813,28 @@ def test_no_warning_where_no_password_was_sent(
         encryption=CLEAR,
     )
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert "SOPULI-W031" not in _codes(result)
+
+
+def test_a_password_the_server_refused_still_warns(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The statement went out and was refused, so the password crossed anyway."""
+    refused = DriverError("ORA-01031: insufficient privileges", code="ORA-01031")
+    refused.password_sent = True
+    estate(set_error=refused, encryption=CLEAR)
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert _codes(result).count("SOPULI-W031") == 2
+
+
+def test_a_refusal_before_the_statement_does_not_warn(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Read-only, a missing account, a `"`: the driver refused, nothing was sent."""
+    estate(set_error=DriverError("target is read-only"), encryption=CLEAR)
+    result = run(runner, write_config(CONFIG), "--output", "json")
 
     assert "SOPULI-W031" not in _codes(result)
 

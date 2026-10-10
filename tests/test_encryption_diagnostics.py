@@ -41,3 +41,20 @@ def test_the_message_carries_the_driver_s_hint() -> None:
     assert found.level == "warning"
     assert found.message.startswith("appdb-alpha: ")
     assert found.message.endswith(": require NNE or TLS")
+
+
+def test_the_worst_answer_for_a_target_is_kept() -> None:
+    """A redraw reconnects, so one target can bring two answers."""
+    found = encryption_diagnostics(
+        [
+            ("appdb-alpha", UNKNOWN),
+            ("appdb-alpha", CLEAR),
+            ("appdb-beta", TLS),
+            ("appdb-beta", UNKNOWN),
+        ]
+    )
+
+    assert [(one.target, one.code) for one in found] == [
+        ("appdb-alpha", CONNECTION_UNENCRYPTED),
+        ("appdb-beta", CONNECTION_ENCRYPTION_UNKNOWN),
+    ]

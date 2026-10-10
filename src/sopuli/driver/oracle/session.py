@@ -395,7 +395,9 @@ class OracleSession:
                 # accidental interpolation elsewhere cannot leak it.
                 cursor.execute(statement.reveal())
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-                raise from_error(error).as_error() from error
+                refused = from_error(error).as_error()
+                refused.password_sent = True
+                raise refused from error
 
         return ChangeResult(changed=True, detail="password set")
 
@@ -721,7 +723,11 @@ class OracleSession:
         at all -- a fresh draw has no fixed point -- and a row claiming
         ``changed: false`` here could only be a guess.
         """
-        self._issue(statement)
+        try:
+            self._issue(statement)
+        except DriverError as error:
+            error.password_sent = True
+            raise
         return AccountChange(
             PASSWORD_SET,
             changed=True,

@@ -924,12 +924,20 @@ def encryption_diagnostics(sent: Sequence[tuple[str, Encryption]]) -> list[Diagn
     actually sent over. A target the run read and changed nothing on is not
     passed: a warning about a statement nobody sent is noise (decision #568's
     reasoning). The driver's ``hint`` says what to do.
+
+    A target can appear with more than one answer, because each pass of
+    `creds rotate`'s redraw opens its own connection, which reads its own. The
+    worst answer is kept: ``none``, then ``unknown``. A password known to have
+    crossed in clear is the finding, whatever another session could not tell.
     """
-    notices: list[Diagnostic] = []
-    seen: set[str] = set()
+    rank = {ENCRYPTION_NONE: 2, ENCRYPTION_UNKNOWN_METHOD: 1}
+    worst: dict[str, Encryption] = {}
     for target, found in sent:
-        if target in seen:
-            continue
+        kept = worst.get(target)
+        if kept is None or rank.get(found.method, 0) > rank.get(kept.method, 0):
+            worst[target] = found
+    notices: list[Diagnostic] = []
+    for target, found in worst.items():
         if found.method == ENCRYPTION_NONE:
             code = CONNECTION_UNENCRYPTED
             headline = "a password was sent over a connection that is not encrypted"
@@ -938,7 +946,6 @@ def encryption_diagnostics(sent: Sequence[tuple[str, Encryption]]) -> list[Diagn
             headline = "a password was sent over a connection whose encryption is not known"
         else:
             continue
-        seen.add(target)
         notices.append(
             Diagnostic(
                 level="warning",

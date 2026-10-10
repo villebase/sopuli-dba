@@ -2712,8 +2712,10 @@ def _reset_one(
                 if backend is None
                 else backend.deliver(secret, account=account, target=target.name)
             )
-            # Before the call: a statement the server refuses has still carried
-            # the password across the network.
+            # Read before the call, and kept on a failure only where the driver
+            # says the password's statement went out (`_carried`): a statement
+            # the server refuses has still carried the password across the
+            # network, and one the driver refused first has not.
             sent = session.scope().encryption
             try:
                 changes = session.reset_password(
@@ -2738,7 +2740,7 @@ def _reset_one(
                             status=status,
                             started=started,
                         ),
-                        encryption=sent,
+                        encryption=sent if _carried(error) else None,
                     )
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -2752,7 +2754,7 @@ def _reset_one(
                 status=status,
                 duration_ms=_elapsed(started),
                 error=reported,
-                encryption=sent,
+                encryption=sent if _carried(error) else None,
             )
 
         # The row is built **before** the hand-over, and that is not style.
@@ -6697,8 +6699,10 @@ def _apply_one(
             # reuse history, and a warning about a statement nobody sent is noise.
             reuse = user
         manager.check(_lock_key(binding))
-        # Before the call: a statement the server refuses has still carried the
-        # password across the network.
+        # Read before the call, and kept on a failure only where the statement
+        # went out (`_carried`): a statement the server refuses has still
+        # carried the password across the network, and one the driver refused
+        # first has not.
         sent = session.scope().encryption
         session.set_password(user.name, source.value)
         # From here on the database holds the new password whatever else fails, and
@@ -6768,7 +6772,7 @@ def _apply_one(
             # contract emits, and this is a question the tool asks itself.
             refused=refused,
             reuse=reuse,
-            encryption=sent,
+            encryption=sent if issued or _carried(error) else None,
         )
 
     return _Applied(
@@ -8145,6 +8149,15 @@ def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     return guardrail_diagnostics(
         [(record.binding.target, caveat) for record in applied for caveat in record.caveats]
     )
+
+
+def _carried(error: BaseException) -> bool:
+    """Whether the password's statement had gone out when ``error`` was raised.
+
+    The driver's answer (:attr:`DriverError.password_sent`). Any other exception
+    came from the tool's own side of the wire, so it carried nothing.
+    """
+    return isinstance(error, DriverError) and error.password_sent
 
 
 def _encryption_notices(applied: Sequence[_Applied]) -> list[Diagnostic]:

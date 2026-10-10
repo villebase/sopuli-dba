@@ -26,7 +26,6 @@ on a rollover profile is refused before any DDL, because
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -43,9 +42,6 @@ from sopuli.driver.protocol import (
     PartialAccountChangeError,
 )
 from sopuli.secrets import Secret
-
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
 
 ACCOUNT = "acme_reset_user"
 

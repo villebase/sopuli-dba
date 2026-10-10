@@ -30,7 +30,6 @@ needs that profile to grant a rollover window, and it declares the capability.
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -42,9 +41,6 @@ from sopuli.driver.protocol import (
     AccountAttributes,
     DriverError,
 )
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-
 
 ACCOUNT = "acme_profiled_user"
 

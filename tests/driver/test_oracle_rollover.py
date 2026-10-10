@@ -13,7 +13,6 @@ answered `ORA-01017` and the new one still worked.
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -27,10 +26,6 @@ from sopuli.driver.protocol import (
     UnsupportedCapabilityError,
 )
 from sopuli.secrets import Secret
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
 
 ACCOUNT = "acme_rollover_user"
 ROLLOVER_PROFILE = "sopuli_rollover"

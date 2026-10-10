@@ -30,7 +30,6 @@ from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER
 from sopuli.secrets import Secret
 
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 
 

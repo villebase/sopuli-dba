@@ -40,9 +40,6 @@ from sopuli.driver.oracle.limits import (
 from sopuli.driver.protocol import Credential, DriverError
 from sopuli.secrets import Secret
 
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
 CORRELATION_ID = "7d41f8b2-3a6e-4c19-95d0-8b2e1f7a6c04"
 
 ACCOUNT = "acme_billing_user"

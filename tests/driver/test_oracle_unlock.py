@@ -43,8 +43,6 @@ from sopuli.driver.protocol import (
 )
 from sopuli.secrets import Secret
 
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-
 CORRELATION_ID = "1c9b4e73-52a8-4d16-8f0b-7e3a95d2c684"
 
 ACCOUNT = "acme_locked_user"

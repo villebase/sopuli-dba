@@ -17,7 +17,6 @@ so does the `SELECT ON SYS.USER$` grant the guard needs.
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -37,8 +36,6 @@ from sopuli.driver.protocol import (
     UnsupportedCapabilityError,
 )
 from sopuli.secrets import Secret
-
-USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 
 CORRELATION_ID = "2f6c8a90-1b47-4e35-8d92-6a0f3c5b7e21"
 

@@ -20,7 +20,6 @@ password authenticated and is merely expired; ``ORA-01017`` means it is dead.
 from __future__ import annotations
 
 import contextlib
-import os
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -34,9 +33,6 @@ from sopuli.driver.protocol import (
     ROLLOVER_FINISH,
     DriverError,
 )
-
-PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-
 
 ACCOUNT = "acme_expire_user"
 

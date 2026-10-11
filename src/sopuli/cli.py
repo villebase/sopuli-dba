@@ -6489,22 +6489,29 @@ def _apply_target(
         # check failing on the third account leaves the first two in the run's
         # results. `_apply_one` lets a lock error through on purpose.
         for binding, source in work:
-            record = _apply_one(
-                binding,
-                session,
-                manager=manager,
-                source=source,
-                margin=margin,
-                strategy=strategy,
-                declared=declared,
-                selection=selection,
-                force=force,
-                requested=requested,
-                # Resolved per binding rather than per run: two accounts on one
-                # target can sit on different policies, and only one of them may
-                # have opted into an attribute.
-                attributes=apply_states.attributes_for(config, binding),
-            )
+            try:
+                record = _apply_one(
+                    binding,
+                    session,
+                    manager=manager,
+                    source=source,
+                    margin=margin,
+                    strategy=strategy,
+                    declared=declared,
+                    selection=selection,
+                    force=force,
+                    requested=requested,
+                    # Resolved per binding rather than per run: two accounts on one
+                    # target can sit on different policies, and only one of them may
+                    # have opted into an attribute.
+                    attributes=apply_states.attributes_for(config, binding),
+                )
+            except _StoppedAfterChangeError as stopped:
+                # The account the run was working on when it lost the lock had
+                # already been changed, so its row goes in with the others.
+                out.append(stopped.record)
+                _account_events(stopped.record, run)
+                raise stopped.lost from None
             out.append(record)
             _account_events(record, run)
     finally:
@@ -6564,6 +6571,33 @@ ROLLBACK_REFUSED_HINT = (
 )
 
 
+class _StoppedAfterChangeError(Exception):
+    """A lock lost after the run had changed the account it was working on.
+
+    It carries that account's row with the lock error. The lock error alone would
+    lose the row, and the database change would then be in no run document.
+    """
+
+    def __init__(self, record: _Applied, lost: LockError) -> None:
+        super().__init__(str(lost))
+        self.record = record
+        self.lost = lost
+
+
+#: The row's detail when the run lost its lock before `--strategy direct` could
+#: close the rollover window it had opened.
+WINDOW_LEFT_OPEN = (
+    "the run lost its lock before it closed the rollover window, "
+    "so the previous password still works"
+)
+
+#: The row's detail when the run lost its lock after the attribute pass changed
+#: the account and before the password was set.
+STOPPED_BEFORE_PASSWORD = (
+    "the run lost its lock after changing this account's attributes and before setting its password"
+)
+
+
 def _apply_one(
     binding: Binding,
     session: Any,
@@ -6610,7 +6644,9 @@ def _apply_one(
     wrong with one account is a row in the table and the run carries on, which is
     exactly the wrong answer to a takeover: it would turn "somebody else owns this
     estate now" into a footnote and apply to the next account anyway. So it is
-    re-raised ahead of the catch-all, and the run ends.
+    re-raised ahead of the catch-all, and the run ends. Where this account had
+    already been changed, the error goes out inside :class:`_StoppedAfterChangeError`
+    with the account's row, so the run document still records the change.
 
     **UC-1 §5's attributes are enforced before the first login**, and only where the
     policy declared one. Before, because an unlock is what makes the login worth
@@ -6634,6 +6670,8 @@ def _apply_one(
     issued = False
     reuse: UserState | None = None
     sent: Encryption | None = None
+    outcome: check_states.Outcome | None = None
+    after_user: UserState | None = None
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(
@@ -6779,11 +6817,50 @@ def _apply_one(
             session.finish_rollover(after_user.name)
             after_user = session.describe_user(binding.account) or after_user
             outcome = apply_states.after_change(after_user, after)
-    except LockError:
+    except LockError as lost:
         # See the docstring: the run is over, and turning that into one account's
         # ERROR row would let the loop apply the next account under a lock this
         # run no longer holds -- the outcome the fence exists to prevent, reached
         # through the error handler instead of past the check.
+        if issued and outcome is not None and after_user is not None:
+            # The only check after `set_password` is the one before
+            # `finish_rollover`, so the password is set and the window is open.
+            stopped = check_states.Outcome(
+                outcome.state, f"{outcome.detail}; {WINDOW_LEFT_OPEN}", outcome.verification
+            )
+            raise _StoppedAfterChangeError(
+                _Applied(
+                    binding,
+                    source,
+                    stopped,
+                    changed=True,
+                    verified_before=before,
+                    rollover=_rollover_json(after_user),
+                    overridden=overridden,
+                    caveats=caveats,
+                    attributes=enforced,
+                    duration_ms=_elapsed(started),
+                    reuse=reuse,
+                    encryption=sent,
+                ),
+                lost,
+            ) from lost
+        if any(change.changed for change in enforced):
+            # Unlocked or moved to another profile, and the password not set.
+            raise _StoppedAfterChangeError(
+                _Applied(
+                    binding,
+                    source,
+                    check_states.Outcome(check_states.ERROR, STOPPED_BEFORE_PASSWORD),
+                    changed=False,
+                    verified_before=before,
+                    overridden=overridden,
+                    caveats=caveats,
+                    attributes=enforced,
+                    duration_ms=_elapsed(started),
+                ),
+                lost,
+            ) from lost
         raise
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _as_error(error)

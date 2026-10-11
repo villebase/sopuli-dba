@@ -447,6 +447,7 @@ class FakeSession:
             changes.append(self._unlock(account))
         if attributes.profile is not None:
             changes.append(self._assign(account, attributes.profile))
+        self._called("apply_attributes")
         return tuple(changes)
 
     def _unlock(self, account: str) -> AttributeChange:
@@ -1548,6 +1549,73 @@ def test_closing_the_rollover_window_is_behind_the_fence(
 
     assert applying(harness).changed == [("ACME_WEB_USER", STAGED)]
     assert applying(harness).finished == []
+
+
+def test_a_takeover_before_the_window_closes_keeps_the_row(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """#739: the password was set, so the account has a row, though the run
+    stopped before `--strategy direct` closed the window. Without the row, the
+    change and its encryption warning would be in no document."""
+    harness = estate(
+        users={"ACME_WEB_USER": rollover_user()},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=steal("apps/acme/appdb-alpha", at="set_password"),
+        encryption=CLEAR,
+    )
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--strategy",
+        "direct",
+        "--output",
+        "json",
+    )
+    found = document(result)
+
+    validator.validate(found)
+    assert found["exit_code"] == ExitCode.PARTIAL
+    assert applying(harness).finished == []
+    [row] = found["results"]
+    assert row["account"] == "acme_web_user"
+    assert row["changed"] is True
+    assert row["state"] == check.ROLLOVER_ACTIVE
+    assert row["rollover"]["active"] is True
+    setting = next(one for one in row["actions"] if one["kind"] == "password_set")
+    assert "lost its lock before it closed the rollover window" in setting["detail"]
+    assert "SOPULI-W031" in _codes(result)
+
+
+def test_a_takeover_after_the_attribute_pass_keeps_the_row(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, validator: Any
+) -> None:
+    """The same gap one check earlier: the account was unlocked, and the check
+    before `set_password` found the lock gone. The unlock is a change, so it has
+    a row, and the row says the password was not set."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(status="LOCKED", locked=True)},
+        on_call=steal("apps/acme/appdb-alpha", at="apply_attributes"),
+    )
+
+    result = run(
+        runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha", "--output", "json"
+    )
+    found = document(result)
+
+    validator.validate(found)
+    assert found["exit_code"] == ExitCode.PARTIAL
+    assert harness["sessions"][0].unlocked == ["ACME_WEB_USER"]
+    assert harness["sessions"][0].changed == []
+    [row] = found["results"]
+    # True for the unlock: the row's `changed` counts every change to the account.
+    assert row["changed"] is True
+    assert row["state"] == check.ERROR
+    kinds = {one["kind"]: one for one in row["actions"]}
+    assert kinds[ACCOUNT_UNLOCK]["applied"] is True
+    assert "before setting its password" in kinds["password_set"]["detail"]
 
 
 def test_a_takeover_during_the_renewal_keeps_what_the_run_applied(

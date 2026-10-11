@@ -1123,6 +1123,13 @@ true of the machine. A wallet matters only for a configuration option that most
 files never use, and a missing-wallet warning in every document that never needed
 one would be noise.
 
+A target that logs in by password over mutual TLS needs a wallet too, and gets
+no `wallet` section. `doctor` cannot tell from the config that such a target
+needs one: the alias names it, and `protocol=tcps` is inside `tnsnames.ora`.
+The connection error reports it instead. A wallet that is missing, misplaced or
+unreadable fails with `ORA-28759`, and a damaged one with `ORA-28768`. Both have
+`category: connectivity` and a hint that names where to look (UC-1 §6.4).
+
 **`directory` is not always `tns_admin`, and `from_sqlnet` says when it is not.**
 `WALLET_LOCATION` in `sqlnet.ora` moves the wallet, and the client follows it. A
 check that did not follow it would report "no wallet" for a correctly configured

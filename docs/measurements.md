@@ -122,5 +122,6 @@ not from a script in `sql/oracle/`.
 | Grace-period login warning | `19.3.0.0.0` | 2026-09-28 | #479 | `ORA-28002` |
 | Thin mode | `19.32.0.0.0` | 2026-10-01 | #575 | Refused with `DPY-3001`: the shipped `sqlnet.ora` requires NNE |
 | Thin mode | `23.26.3.3.0` | 2026-10-01 | #575 | Connects over TCPS; no NNE is negotiated |
+| Wallet failures over mutual TLS | `23.26.3.3.0` | 2026-09-28 | #472 | Missing, misplaced or unreadable: `ORA-28759`. Damaged: `ORA-28768`. Each took 64 s, because the alias sets `retry_count=20`. Measured on Windows only |
 | The tool end to end | `23.26.3.3.0` | 2026-09-28 | #479 | Install, a rotation, a rollback and a rollover window, with a vault-held password. `docs/maintainer-environments.md` §6 has the setup |
 | The tool end to end | `19.32.0.0.0` | 2026-10-01 | #581 | As the least-privilege service account, including a rollover window. `docs/maintainer-environments.md` §5 has the setup and the run |

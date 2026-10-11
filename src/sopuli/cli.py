@@ -6487,7 +6487,8 @@ def _apply_target(
 
         # Appended one at a time rather than built as a list, so that a fence
         # check failing on the third account leaves the first two in the run's
-        # results. `_apply_one` lets a lock error through on purpose.
+        # results. `_apply_one` lets a lock error through on purpose, wrapped
+        # with the account's row when it had already changed the account.
         for binding, source in work:
             try:
                 record = _apply_one(
@@ -6508,10 +6509,11 @@ def _apply_target(
                 )
             except _StoppedAfterChangeError as stopped:
                 # The account the run was working on when it lost the lock had
-                # already been changed, so its row goes in with the others.
+                # already been changed, so its row goes in with the others. The
+                # lock error goes on with its own cause, as if never wrapped.
                 out.append(stopped.record)
                 _account_events(stopped.record, run)
-                raise stopped.lost from None
+                raise stopped.lost from stopped.lost.__cause__
             out.append(record)
             _account_events(record, run)
     finally:
@@ -6586,10 +6588,12 @@ class _StoppedAfterChangeError(Exception):
 
 #: The row's detail when the run lost its lock before `--strategy direct` could
 #: close the rollover window it had opened.
-WINDOW_LEFT_OPEN = (
-    "the run lost its lock before it closed the rollover window, "
-    "so the previous password still works"
-)
+WINDOW_LEFT_OPEN = "the run lost its lock before it closed the rollover window"
+
+#: The row's detail when the run lost its lock after setting the password and
+#: before verifying it. No check sits there today; this is so that a row is
+#: still kept if one is added.
+STOPPED_BEFORE_VERIFY = "the password was set, and the run lost its lock before it verified it"
 
 #: The row's detail when the run lost its lock after the attribute pass changed
 #: the account and before the password was set.
@@ -6672,6 +6676,31 @@ def _apply_one(
     sent: Encryption | None = None
     outcome: check_states.Outcome | None = None
     after_user: UserState | None = None
+
+    def changed_row(
+        final: check_states.Outcome, now: UserState, *, error: Error | None = None
+    ) -> _Applied:
+        """The row of an account whose password this run set.
+
+        One construction for the normal end and for a lock lost after the
+        change, so a field added to one cannot be missing from the other.
+        """
+        return _Applied(
+            binding,
+            source,
+            final,
+            changed=True,
+            verified_before=before,
+            rollover=_rollover_json(now),
+            overridden=overridden,
+            caveats=caveats,
+            attributes=enforced,
+            duration_ms=_elapsed(started),
+            error=error,
+            reuse=reuse,
+            encryption=sent,
+        )
+
     try:
         user = session.describe_user(binding.account)
         settled = apply_states.settled_before_acting(
@@ -6822,26 +6851,21 @@ def _apply_one(
         # ERROR row would let the loop apply the next account under a lock this
         # run no longer holds -- the outcome the fence exists to prevent, reached
         # through the error handler instead of past the check.
-        if issued and outcome is not None and after_user is not None:
-            # The only check after `set_password` is the one before
-            # `finish_rollover`, so the password is set and the window is open.
-            stopped = check_states.Outcome(
-                outcome.state, f"{outcome.detail}; {WINDOW_LEFT_OPEN}", outcome.verification
-            )
+        if issued:
+            # The password is set, so the row says so whatever else the run had
+            # reached. Today the only check after `set_password` is the one before
+            # `finish_rollover`, so the outcome is known and the window is open.
+            if outcome is None:
+                stopped = check_states.Outcome(check_states.ERROR, STOPPED_BEFORE_VERIFY)
+            else:
+                stopped = check_states.Outcome(
+                    outcome.state, f"{outcome.detail}; {WINDOW_LEFT_OPEN}", outcome.verification
+                )
             raise _StoppedAfterChangeError(
-                _Applied(
-                    binding,
-                    source,
+                changed_row(
                     stopped,
-                    changed=True,
-                    verified_before=before,
-                    rollover=_rollover_json(after_user),
-                    overridden=overridden,
-                    caveats=caveats,
-                    attributes=enforced,
-                    duration_ms=_elapsed(started),
-                    reuse=reuse,
-                    encryption=sent,
+                    after_user or user,
+                    error=_as_error(lost) if outcome is None else None,
                 ),
                 lost,
             ) from lost
@@ -6858,6 +6882,7 @@ def _apply_one(
                     caveats=caveats,
                     attributes=enforced,
                     duration_ms=_elapsed(started),
+                    error=_as_error(lost),
                 ),
                 lost,
             ) from lost
@@ -6893,20 +6918,7 @@ def _apply_one(
             encryption=sent if issued or _carried(error) else None,
         )
 
-    return _Applied(
-        binding,
-        source,
-        _with_regime(outcome, regime, after_user),
-        changed=True,
-        verified_before=before,
-        rollover=_rollover_json(after_user),
-        overridden=overridden,
-        caveats=caveats,
-        attributes=enforced,
-        duration_ms=_elapsed(started),
-        reuse=reuse,
-        encryption=sent,
-    )
+    return changed_row(_with_regime(outcome, regime, after_user), after_user)
 
 
 def _attribute_intent(config: Config) -> list[str]:

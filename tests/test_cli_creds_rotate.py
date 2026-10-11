@@ -653,6 +653,17 @@ def test_the_plan_says_a_rotation_needs_a_yes(
     assert document(result)["plan"]["confirmation_required"] is True
 
 
+def test_a_rotation_with_nothing_to_rotate_needs_no_yes(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The run returns before `_confirm_rotation`, so nobody is asked (#663)."""
+    estate()
+    result = run(runner, write_config(CONFIG), "--select", "tenant=omega", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert document(result)["plan"]["confirmation_required"] is False
+
+
 @pytest.mark.parametrize(
     ("radius", "expected"),
     [

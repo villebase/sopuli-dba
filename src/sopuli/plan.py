@@ -163,7 +163,8 @@ class Plan:
         ``confirmation_required`` is whether a real run of this plan needs an
         explicit yes before it changes anything: a prompt, or `--confirm` given in
         advance. The verb answers it, because the gates are per verb: `creds
-        rotate` asks every time, and `creds check` never does. The plan cannot see
+        rotate` asks whenever it has something to rotate, and `creds check` never
+        asks. The plan cannot see
         them, so the keyword has no default, and no call site can emit a guess. It
         does not say how the gate was answered: a `--dry-run` and a run given
         `--confirm` report the same value as the run that prompts, because `plan`

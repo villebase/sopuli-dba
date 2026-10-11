@@ -7,7 +7,7 @@ for text output that keep it consistent with both.
 published schemas.
 
 Schemas: [`../schemas/sopuli-run-1.34.schema.json`](../schemas/sopuli-run-1.34.schema.json),
-[`../schemas/sopuli-event-1.7.schema.json`](../schemas/sopuli-event-1.7.schema.json)
+[`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
 ---
@@ -651,7 +651,9 @@ a scheduler whether the real run will need `--confirm`.
 
 **The seen reset's prompt is not counted.** It asks whether to show the
 password, after the password has changed, and `--confirm` cannot answer it
-(UC-2 §6.5). Reasons: [#663](../decisions/log.md#663).
+(UC-2 §6.5). On that path `--confirm` is refused altogether, so a `true` there
+can be answered only at the prompt. Reasons:
+[#663](../decisions/log.md#663).
 
 **A unit omits `secret` when nothing has named its store yet.** `secret_ref`
 requires `vault` as a string, so there is no shape for half an address, and

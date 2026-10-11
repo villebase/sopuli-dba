@@ -1752,3 +1752,22 @@ the register.
   wants either can name it in `charset: custom`.
 - **Rejected:** Keep them and require quoting. Only `alnum` would then be safe
   unquoted, and the default charset would need a quoting rule for each path.
+
+## #743
+
+- **Decided:** 2026-10-11, #743
+- **Question:** In a JDBC thin URL, `jdbc:oracle:thin:user/password@//host:port/service`,
+  the driver refuses a password that contains `-` or `.`. Both are specials in
+  `alnum_safe`, the default charset. Drop them, or tell the operator to put the
+  password in double quotes in the URL?
+- **Decision:** Keep them. `01-configuration.md` §8 says to quote the password
+  in a JDBC URL: `user/"password"@…`.
+- **Why:** The failure is loud. The driver fails the connection with ORA-17067,
+  "Invalid Oracle URL specified", so no password is changed without an error.
+  This is not the case #742 decided, where `$` changed the password with no
+  error. Quoting is one rule for one path, and with it every `printable_ascii`
+  character logs in, `@` included. Dropping `-` and `.` would leave five
+  specials, and a tight policy would give up generating more often.
+- **Rejected:** Drop `-` and `.` from `alnum_safe`, so that it needs no quoting
+  in a JDBC URL either. That is a second breaking change to the alphabet after
+  #742, for a failure the operator sees at once.

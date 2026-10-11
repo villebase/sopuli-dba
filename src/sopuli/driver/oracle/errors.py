@@ -83,8 +83,7 @@ EXPIRED = "EXPIRED"
 
 #: The end of both wallet hints. A wallet failure is a local file problem, but a
 #: descriptor with `retry_count` makes Oracle Net retry it first, so it can take
-#: a minute to appear. Measured: 64 s with the `retry_count=20` and
-#: `retry_delay=3` that an Autonomous Database wallet's `tnsnames.ora` carries.
+#: a minute to appear. `docs/measurements.md` has the measured time.
 _WALLET_RETRIES = (
     "Where the connect descriptor sets retry_count, Oracle Net retries this before "
     "it reports it, so a slow failure is not a network problem"
@@ -209,10 +208,11 @@ RULES: dict[str, _Rule] = {
         retryable=True,
         hint="no listener at that address; it may be down rather than wrong",
     ),
-    # The client's wallet, for a TLS connection or for `auth: external`. Measured
-    # against an Autonomous Database with mutual TLS (#472): a missing wallet, a
-    # WALLET_LOCATION that points elsewhere, and an unreadable `cwallet.sso` all
-    # raise ORA-28759, so its hint lists every cause rather than naming one.
+    # The client's wallet. Measured only over mutual TLS, against an Autonomous
+    # Database (#472): a missing wallet, a WALLET_LOCATION that points elsewhere,
+    # and an unreadable `cwallet.sso` all raise ORA-28759, so its hint lists every
+    # cause rather than naming one. Both hints name the auto-login wallet,
+    # `cwallet.sso`, because an unattended run cannot open any other kind.
     "ORA-28759": _Rule(
         WALLET,
         "connectivity",

@@ -4,7 +4,9 @@ Two rows of §5's table, asserted against UC-1 §8's *Failure at each step*:
 
 * the vault becomes unreachable mid-run. At step 4, the staging write, nothing
   is applied. At step 7, the promotion, the password is applied and not
-  promoted, and ``creds apply`` completes it. Neither is promoted silently;
+  promoted, and ``creds apply`` completes it. Where Vault commits the
+  promotion and its reply is lost, the run does not report success. None is
+  promoted silently;
 * the vault serves a stale read after the promotion. Step 8's read-back
   catches it, and the run exits 4 with ``SOPULI-W012``.
 
@@ -20,17 +22,21 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from fault_harness import ACCOUNT, DOWN_AT_WRITE, SECRET, STALE_AFTER_WRITES, Estate, VaultGate
+from fault_harness import ACCOUNT, SECRET, Estate, Fault, HarnessError, VaultGate
 from sopuli.exit_codes import ExitCode
 
 #: ``rotate``'s writes to the secret's path, counted from 1.
 STAGING, PROMOTION = 1, 2
+
+#: What a run that failed at the promotion may exit with: 1 today (#760), and 4
+#: once that is fixed. Anything else, such as 7 or 5, is a different failure.
+NOT_PROMOTED = (ExitCode.FAILURE, ExitCode.PARTIAL)
 
 
 @dataclass
@@ -56,8 +62,12 @@ class Faulted:
         return {row["account"]: row["state"] for row in self.rows}
 
 
+#: Rotate through a gate with this fault at this write.
+Rotate = Callable[[Fault, int], Faulted]
+
+
 @pytest.fixture
-def rotate(fault_estate: Estate, vault_stack: Any) -> Iterator[Any]:
+def rotate(fault_estate: Estate, vault_stack: Any) -> Iterator[Rotate]:
     """Rotate once to the end, then return a function that rotates through a gate.
 
     The first rotation gives the vault a ``current`` the database accepts, which
@@ -69,14 +79,15 @@ def rotate(fault_estate: Estate, vault_stack: Any) -> Iterator[Any]:
     assert first.returncode == ExitCode.SUCCESS, first.stderr
     gates: list[VaultGate] = []
 
-    def through(fault: str, writes: int) -> Faulted:
+    def through(fault: Fault, writes: int) -> Faulted:
         before, version = fault_estate.read(SECRET)
         gate = VaultGate(
             vault_stack.addr, f"/v1/{fault_estate.mount}/data/{SECRET}", fault, writes=writes
         )
         gates.append(gate)
         result = fault_estate.sopuli(fault_estate.config(gate.addr), "creds", "rotate", "--confirm")
-        assert gate.tripped.is_set(), f"the fault never fired; the gate saw {gate.seen}"
+        if not gate.tripped.is_set():
+            raise HarnessError(f"the fault never fired; the gate saw {gate.seen}")
         return Faulted(
             result=result,
             document=json.loads(result.stdout),
@@ -89,14 +100,14 @@ def rotate(fault_estate: Estate, vault_stack: Any) -> Iterator[Any]:
         gate.close()
 
 
-def test_the_vault_lost_at_staging_changes_nothing(fault_estate: Estate, rotate: Any) -> None:
+def test_the_vault_lost_at_staging_changes_nothing(fault_estate: Estate, rotate: Rotate) -> None:
     """Step 4: nothing changed in the database, and the vault has no new version.
 
     The dropped write never reached Vault, so ``pending`` was never staged. Exit
     1, not 4, because no target was attempted (``rotate.exit_code_for``), and
     the account's row says why.
     """
-    faulted = rotate(DOWN_AT_WRITE, STAGING)
+    faulted = rotate(Fault.DOWN_AT_WRITE, STAGING)
 
     assert faulted.result.returncode == ExitCode.FAILURE, faulted.result.stderr
     assert faulted.states == {ACCOUNT: "ERROR"}
@@ -107,16 +118,16 @@ def test_the_vault_lost_at_staging_changes_nothing(fault_estate: Estate, rotate:
 
 
 def test_the_vault_lost_at_promotion_leaves_the_password_applied_and_unpromoted(
-    fault_estate: Estate, rotate: Any
+    fault_estate: Estate, rotate: Rotate
 ) -> None:
     """Step 7: the database has the new password, and ``current`` is still old.
 
     ``pending`` still holds the right value, so ``creds apply`` can finish the
     job (the next test).
     """
-    faulted = rotate(DOWN_AT_WRITE, PROMOTION)
+    faulted = rotate(Fault.DOWN_AT_WRITE, PROMOTION)
 
-    assert faulted.result.returncode != ExitCode.SUCCESS
+    assert faulted.result.returncode in NOT_PROMOTED, faulted.result.stderr
     document, _ = fault_estate.read(SECRET)
     assert document["DB_CREDENTIALS"][ACCOUNT] == faulted.current
     new = document["pending"][ACCOUNT]
@@ -126,16 +137,17 @@ def test_the_vault_lost_at_promotion_leaves_the_password_applied_and_unpromoted(
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="#760: step 8 reads back an unpromoted document, and the error drops the rows",
 )
-def test_the_vault_lost_at_promotion_is_reported_as_partial(rotate: Any) -> None:
+def test_the_vault_lost_at_promotion_is_reported_as_partial(rotate: Rotate) -> None:
     """Step 7 is not silent: exit 4, and the row says the database changed.
 
     ``apply_states.exit_code_for`` makes a run that confirmed every target and
     could not promote exit 4. A document that reports ``changed: 0`` would hide
     UC-1 §8's most severe case from whoever reads it.
     """
-    faulted = rotate(DOWN_AT_WRITE, PROMOTION)
+    faulted = rotate(Fault.DOWN_AT_WRITE, PROMOTION)
 
     assert faulted.result.returncode == ExitCode.PARTIAL, faulted.result.stderr
     assert faulted.document["summary"]["changed"] == 1
@@ -143,14 +155,14 @@ def test_the_vault_lost_at_promotion_is_reported_as_partial(rotate: Any) -> None
 
 
 def test_apply_completes_a_promotion_the_vault_lost(
-    fault_estate: Estate, vault_stack: Any, rotate: Any
+    fault_estate: Estate, vault_stack: Any, rotate: Rotate
 ) -> None:
     """UC-1 §8's recovery for step 7: ``creds apply`` verifies and promotes.
 
     The run could not release its lock either, because the vault was gone. So
     the lock is broken first, as for a run that died.
     """
-    rotate(DOWN_AT_WRITE, PROMOTION)
+    rotate(Fault.DOWN_AT_WRITE, PROMOTION)
     staged, _ = fault_estate.read(SECRET)
     config = fault_estate.config(vault_stack.addr)
     fault_estate.break_lock(config)
@@ -163,8 +175,25 @@ def test_apply_completes_a_promotion_the_vault_lost(
     assert ACCOUNT not in document.get("pending", {})
 
 
+def test_a_promotion_vault_kept_but_never_answered_is_not_success(
+    fault_estate: Estate, rotate: Rotate
+) -> None:
+    """Vault commits the promotion, and the reply is lost on the way back.
+
+    The vault is right, and the run cannot know it. Reporting success would
+    claim a promotion the run never saw confirmed, so it must not.
+    """
+    faulted = rotate(Fault.DOWN_AFTER_WRITE, PROMOTION)
+
+    assert faulted.result.returncode in NOT_PROMOTED, faulted.result.stderr
+    document, _ = fault_estate.read(SECRET)
+    new = document["DB_CREDENTIALS"][ACCOUNT]
+    assert new != faulted.current, "Vault did not keep the promotion"
+    assert fault_estate.login(new)
+
+
 def test_a_stale_read_after_promotion_is_exit_four_with_its_own_code(
-    fault_estate: Estate, rotate: Any
+    fault_estate: Estate, rotate: Rotate
 ) -> None:
     """Step 8: the read-back disagrees with what was promoted.
 
@@ -172,7 +201,7 @@ def test_a_stale_read_after_promotion_is_exit_four_with_its_own_code(
     nothing needs undoing. The run says so with ``SOPULI-W012`` rather than
     reporting success.
     """
-    faulted = rotate(STALE_AFTER_WRITES, PROMOTION)
+    faulted = rotate(Fault.STALE_AFTER_WRITES, PROMOTION)
 
     assert faulted.result.returncode == ExitCode.PARTIAL, faulted.result.stderr
     assert "SOPULI-W012" in faulted.diagnostics

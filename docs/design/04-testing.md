@@ -416,7 +416,8 @@ recovery, not only that the tool did not crash:
 The mechanics are in `tests/fault_harness.py`. Each test runs `sopuli` as
 its own process, with an HTTP proxy between it and the vault. The proxy acts on
 one request to the secret's path: it holds a write, drops it and stops
-listening, or answers a read with an older reply.
+listening, or forwards a write and stops listening before the reply, or
+answers a read with an older reply.
 
 The fault is placed on a request, not on an event, because an event is a race.
 The run goes on to verify and promote while the test reads `password.applied`,
@@ -429,9 +430,11 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 | Rows | Tests |
 |---|---|
 | the two kill rows | `tests/test_fault_kill.py` |
-| vault unreachable, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
+| vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
 
-The other rows are open in #660.
+The other rows are open in #660. The database rows need a database fault,
+which the gate cannot inject. The test makes that change itself, as `SYSTEM`,
+while the gate holds the run at a vault request.
 
 ---
 

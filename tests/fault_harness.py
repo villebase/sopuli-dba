@@ -40,6 +40,7 @@ import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -53,21 +54,34 @@ TIMEOUT = 60.0
 WRITES = ("POST", "PUT", "PATCH")
 
 
-#: The faults :class:`VaultGate` injects at its path. ``writes`` counts the
-#: writes to that path, from 1.
-#:
-#: * ``HOLD_WRITE``: hold write ``writes`` and never forward it. The run waits
-#:   there until the test kills it.
-#: * ``DOWN_AT_WRITE``: drop write ``writes`` unanswered, and go down.
-#: * ``STALE_AFTER_WRITES``: forward write ``writes``. After it, answer every
-#:   read with the reply to the last read before it, as a replica behind its
-#:   primary would.
-#:
-#: Down means the listening socket is closed, so the run's next connection is
-#: refused. A request that was dropped gets no reply, and Vault never sees it.
-HOLD_WRITE = "hold write"
-DOWN_AT_WRITE = "down at write"
-STALE_AFTER_WRITES = "stale after writes"
+class Fault(Enum):
+    """The faults :class:`VaultGate` injects at its path.
+
+    ``writes`` counts the writes to that path, from 1. Down means the listening
+    socket is closed, so the run's next connection is refused.
+    """
+
+    #: Hold write ``writes`` and never forward it. The run waits there until the
+    #: test kills it.
+    HOLD_WRITE = "hold write"
+    #: Drop write ``writes`` unanswered, and go down. Vault never sees it.
+    DOWN_AT_WRITE = "down at write"
+    #: Forward write ``writes``, then go down without answering it. Vault commits
+    #: the write, and the run cannot know that it did.
+    DOWN_AFTER_WRITE = "down after write"
+    #: Forward write ``writes``. After it, answer every read with the reply to
+    #: the last read before it, as a replica behind its primary would.
+    STALE_AFTER_WRITES = "stale after writes"
+
+
+class HarnessError(RuntimeError):
+    """The harness failed, not the run under test.
+
+    Not an ``AssertionError``, so a test marked ``xfail(raises=AssertionError)``
+    fails when its harness breaks instead of counting it as the expected
+    failure.
+    """
+
 
 #: One upstream reply, kept so that it can be sent again: status, headers, body.
 Answer = tuple[int, list[tuple[str, str]], bytes]
@@ -79,9 +93,13 @@ class VaultGate:
     ``tripped`` is set when the fault takes effect. ``seen`` lists every request
     that reached the gate, as ``"METHOD path"``, so a test can show what Vault
     was and was not asked.
+
+    The handlers run on threads of their own, so the counters change under
+    ``_lock``. A run sends one request at a time, but the fault must land on the
+    write it names even if that ever changes.
     """
 
-    def __init__(self, upstream: str, path: str, fault: str, *, writes: int = 1) -> None:
+    def __init__(self, upstream: str, path: str, fault: Fault, *, writes: int = 1) -> None:
         import httpx
 
         self.upstream = httpx.Client(base_url=upstream, timeout=TIMEOUT)
@@ -91,6 +109,7 @@ class VaultGate:
         self.tripped = threading.Event()
         self.seen: list[str] = []
         self._release = threading.Event()
+        self._lock = threading.Lock()
         self._written = 0
         self._last_read: Answer | None = None
         self._stale: Answer | None = None
@@ -120,31 +139,38 @@ class VaultGate:
             def _forward(self) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(length) if length else b""
-                gate.seen.append(f"{self.command} {self.path}")
                 ours = self.path.split("?")[0] == gate.path
                 read, write = self.command == "GET", self.command in WRITES
+                with gate._lock:
+                    gate.seen.append(f"{self.command} {self.path}")
+                    faulted = ours and write and gate._written == gate.writes - 1
+                    stale = gate._stale if ours and read else None
 
-                faulted = ours and write and gate._written == gate.writes - 1
-                if faulted and gate.fault == HOLD_WRITE:
+                if faulted and gate.fault is Fault.HOLD_WRITE:
                     gate.tripped.set()
                     gate._release.wait(TIMEOUT)
                     return
-                if faulted and gate.fault == DOWN_AT_WRITE:
+                if faulted and gate.fault is Fault.DOWN_AT_WRITE:
                     gate.tripped.set()
                     gate._go_down()
                     return
-                if ours and read and gate._stale is not None:
+                if stale is not None:
                     gate.tripped.set()
-                    self._reply(gate._stale)
+                    self._reply(stale)
                     return
 
                 answer = self._upstream(body)
-                if ours and read:
-                    gate._last_read = answer
-                if ours and write and answer[0] < 300:
-                    gate._written += 1
-                    if gate.fault == STALE_AFTER_WRITES and gate._written == gate.writes:
-                        gate._stale = gate._last_read
+                with gate._lock:
+                    if ours and read:
+                        gate._last_read = answer
+                    if ours and write and answer[0] < 300:
+                        gate._written += 1
+                        if gate.fault is Fault.STALE_AFTER_WRITES and gate._written == gate.writes:
+                            gate._stale = gate._last_read
+                if faulted and gate.fault is Fault.DOWN_AFTER_WRITE:
+                    gate.tripped.set()
+                    gate._go_down()
+                    return
                 self._reply(answer)
 
             def _upstream(self, body: bytes) -> Answer:
@@ -298,7 +324,8 @@ class Estate:
     def read(self, path: str) -> tuple[dict[str, Any], int]:
         """The data at ``path`` on the private mount, and its version."""
         reply = self.vault.get(f"/v1/{self.mount}/data/{path}")
-        assert reply.status_code == 200, reply.text
+        if reply.status_code != 200:
+            raise HarnessError(f"could not read {path}: HTTP {reply.status_code} {reply.text}")
         body = reply.json()["data"]
         return body["data"], body["metadata"]["version"]
 

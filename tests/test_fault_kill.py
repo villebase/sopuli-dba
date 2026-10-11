@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from fault_harness import ACCOUNT, HOLD_WRITE, LOCK, SECRET, TIMEOUT, CliRun, Estate, VaultGate
+from fault_harness import ACCOUNT, LOCK, SECRET, TIMEOUT, CliRun, Estate, Fault, VaultGate
 from sopuli.exit_codes import ExitCode
 
 
@@ -57,7 +57,7 @@ def killed(fault_estate: Estate, vault_stack: Any) -> Killed:
     staged, _ = fault_estate.read(SECRET)
     current, new = staged["DB_CREDENTIALS"][ACCOUNT], staged["pending"][ACCOUNT]
 
-    gate = VaultGate(vault_stack.addr, f"/v1/{fault_estate.mount}/data/{SECRET}", HOLD_WRITE)
+    gate = VaultGate(vault_stack.addr, f"/v1/{fault_estate.mount}/data/{SECRET}", Fault.HOLD_WRITE)
     run = CliRun(fault_estate.config(gate.addr), ["creds", "apply", "--confirm"], fault_estate.env)
     try:
         run.wait_for("password.applied")

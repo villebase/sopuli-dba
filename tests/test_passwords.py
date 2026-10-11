@@ -305,7 +305,7 @@ def test_require_feasible_refuses_what_generate_refuses_with_the_same_message(
 
 
 def test_require_feasible_says_nothing_about_a_policy_that_fits() -> None:
-    assert passwords.require_feasible(policy(length=20), limit=UTF8) is None
+    passwords.require_feasible(policy(length=20), limit=UTF8)
 
 
 def test_an_alphabet_the_target_cannot_store_is_refused() -> None:

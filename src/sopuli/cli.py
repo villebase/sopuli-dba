@@ -2168,10 +2168,9 @@ def account_reset_password(
         # path refuses JSON (§6.5 guard 2), so no document carries them: this
         # print is the only way the operator learns them. The boundary then
         # exits 8.
-        #
-        # `shown` is empty here: only the seen path prompts, and it printed each
-        # accepted password on its own target (#741).
-        click.echo("\n\n".join(part for part in (header, body, told) if part))
+        # Through the emitter, which strips the table's colour when colour is
+        # off.
+        emitter.emit_text("\n\n".join(part for part in (header, body, told, shown) if part))
         raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
 
@@ -2384,11 +2383,12 @@ def _write_reset_record(
     *successful* run rather than a rollback: the password has already changed
     and the person still needs it.
 
-    **On the seen path "after delivery" is as late as a function can be.** The
-    password is displayed by this command returning a string, so the write
-    happens once the value is composed and every guard has passed, a moment
-    before Click echoes it. Restructuring the verb to echo first would put a
-    store write after the one emission in this tool that must never be retried.
+    **On the seen path "after delivery" is as late as a function can be.**
+    `_reset_one` prints the password on its own target, right after this write
+    returns (#741), so the write happens once the value is composed and every
+    guard has passed, a moment before it reaches the screen. Printing first
+    would put a store write after the one emission in this tool that must never
+    be retried.
 
     **`seen` records the path rather than the operator's eyes.** It is `true` for
     a `manual` delivery even where the prompt was declined and nothing was
@@ -2933,8 +2933,12 @@ def _reset_one(
             #
             # After the record, so UC-2 §3.1's order holds: the record is
             # written a moment before the password reaches the screen. To
-            # stdout, the stream the terminal check was made about (§6.5).
-            click.echo(f"{shown}\n")
+            # stdout, the stream the terminal check was made about (§6.5), and
+            # through the emitter, which strips the heading's colour when
+            # colour is off.
+            emitter = run.emitter()
+            emitter.emit_text(shown)
+            emitter.emit_text("")
             return done
         return replace(done, shown=shown)
     finally:

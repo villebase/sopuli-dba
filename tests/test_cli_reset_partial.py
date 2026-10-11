@@ -746,9 +746,39 @@ def test_a_password_is_shown_on_its_own_target_before_the_table(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     first, second = session.passwords
+    # `output` interleaves the prompt on stderr with the password on stdout.
+    prompt = result.output.index(f"on {SECOND} on this terminal?")
+    assert result.output.index(first) < prompt < result.output.index(second)
     table = result.stdout.index("ACCOUNT ")
     table = result.stdout.index("STATE", table)
-    assert result.stdout.index(first) < result.stdout.index(second) < table
+    assert result.stdout.index(second) < table
+
+
+@pytest.mark.parametrize(("choice", "painted"), [("never", False), ("always", True)])
+def test_the_password_block_follows_the_colour_setting(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    choice: str,
+    painted: bool,
+) -> None:
+    """The heading is painted, and only the emitter strips colour, so a password
+    printed past it would carry escapes under `--color never`. `color=True`
+    stops `CliRunner` from stripping them itself."""
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=False)
+    config = write_config(MANUAL)
+
+    result = runner.invoke(
+        cli,
+        ["--color", choice, "--config", str(config), "account", "reset-password"]
+        + ["--account", ACCOUNT],
+        input="y\n",
+        color=True,
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "shown once" in result.stdout
+    assert ("\x1b[" in result.stdout) is painted
 
 
 # ------------------------------------------ a preview asks a reset's refusals ---

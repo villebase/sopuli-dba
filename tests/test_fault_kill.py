@@ -4,7 +4,7 @@ Two rows of §5's table, each asserting the documented recovery and not only
 that nothing crashed:
 
 * a run killed between ``password_set`` and ``vault_promote``. ``pending``
-  still holds the new password, ``check`` reports ``PENDING_APPLY``, and a
+  still holds the new password, ``status`` reports ``PENDING_APPLY``, and a
   second ``creds apply`` completes the promotion;
 * a run killed while it holds a lock. Once the lock has expired, the next run
   refuses with exit 7 and names the holder. Under ``locking.break_expired`` it
@@ -21,19 +21,20 @@ them.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from fault_harness import TIMEOUT, CliRun, VaultGate
+from fault_harness import TIMEOUT, CliRun, VaultGate, sopuli_command
 from oracle_harness import Environment
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.exit_codes import ExitCode
@@ -96,10 +97,11 @@ class Estate:
     dsn: str
     env: dict[str, str]
     login: Callable[[str], bool]
+    _configs: itertools.count[int] = field(default_factory=itertools.count)
 
     def config(self, addr: str, *, break_expired: bool = False) -> Path:
         """A config whose vault is at ``addr``: Vault itself, or a gate in front of it."""
-        path = self.tmp_path / f"sopuli-{len(list(self.tmp_path.glob('sopuli-*.yaml')))}.yaml"
+        path = self.tmp_path / f"sopuli-{next(self._configs)}.yaml"
         path.write_text(
             CONFIG.format(
                 locking=BREAK_EXPIRED if break_expired else "",
@@ -118,16 +120,7 @@ class Estate:
     def sopuli(self, config: Path, *args: str) -> subprocess.CompletedProcess[str]:
         """Run sopuli to the end. ``--output json``, so stdout is one document."""
         return subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "from sopuli.cli import main; main()",
-                "--config",
-                str(config),
-                "--output",
-                "json",
-                *args,
-            ],
+            sopuli_command(config, "json", list(args)),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -213,16 +206,20 @@ def killed(estate: Estate, vault_stack: Any) -> Killed:
     current, new = staged["DB_CREDENTIALS"][ACCOUNT], staged["pending"][ACCOUNT]
 
     gate = VaultGate(vault_stack.addr, hold_path=f"/v1/{estate.mount}/data/{SECRET}")
+    run = CliRun(estate.config(gate.addr), ["creds", "apply", "--confirm"], estate.env)
     try:
-        run = CliRun(estate.config(gate.addr), ["creds", "apply", "--confirm"], estate.env)
         run.wait_for("password.applied")
         assert gate.held.wait(TIMEOUT), "the run never reached its promotion write"
-        run.kill()
     finally:
+        run.kill()
         gate.close()
 
     assert "vault.promote" not in [event["event"] for event in run.events]
-    return Killed(current=current, new=new, pid=run.process.pid)
+    # Still held, so the run never reached its release. The pid is the run's
+    # own, which Popen's is not always (see fault_harness).
+    record, _ = estate.read(LOCK)
+    assert record["state"] == "held", "the run outlived the kill"
+    return Killed(current=current, new=new, pid=record["holder"]["pid"])
 
 
 def test_a_run_killed_before_promotion_leaves_the_password_pending(

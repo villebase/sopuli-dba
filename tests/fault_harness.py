@@ -18,6 +18,12 @@ stops at the promotion write and waits there, so the kill always comes first.
 The gate holds only the secret's own path. Lock writes go to ``locks/``, so
 they pass.
 
+**Popen's pid is not always the run's.** On Windows in a virtual environment,
+``sys.executable`` is a launcher that starts the real interpreter as a child, so
+``Popen.pid`` names the launcher. The launcher's job object takes the child
+down when it is killed. A test that needs the run's own pid reads it from what
+the run wrote, such as its lock record.
+
 Nothing here imports ``httpx`` at module scope. It is an extra (ADR-006), and a
 base install must reach the fixture's skip, not an ImportError.
 """
@@ -83,19 +89,27 @@ class VaultGate:
                 body = self.rfile.read(length) if length else b""
                 if self.command in WRITES and self.path.split("?")[0] == gate.hold_path:
                     gate.held.set()
-                    gate._release.wait()
+                    gate._release.wait(TIMEOUT)
                     return
+                # No Accept-Encoding: ``reply.content`` is decoded, so the reply
+                # goes back uncompressed whatever Vault would have sent.
                 headers = {
                     name: value
                     for name, value in self.headers.items()
-                    if name.lower() not in ("host", "content-length", "connection")
+                    if name.lower()
+                    not in ("host", "content-length", "connection", "accept-encoding")
                 }
                 reply = gate.upstream.request(
                     self.command, self.path, content=body, headers=headers
                 )
                 self.send_response(reply.status_code)
                 for name, value in reply.headers.items():
-                    if name.lower() not in ("content-length", "transfer-encoding", "connection"):
+                    if name.lower() not in (
+                        "content-length",
+                        "content-encoding",
+                        "transfer-encoding",
+                        "connection",
+                    ):
                         self.send_header(name, value)
                 self.send_header("Content-Length", str(len(reply.content)))
                 self.end_headers()
@@ -110,22 +124,26 @@ class VaultGate:
         return Handler
 
 
+def sopuli_command(config: Path, output: str, args: list[str]) -> list[str]:
+    """The command line that runs ``sopuli`` with this interpreter."""
+    return [
+        sys.executable,
+        "-c",
+        "from sopuli.cli import main; main()",
+        "--config",
+        str(config),
+        "--output",
+        output,
+        *args,
+    ]
+
+
 class CliRun:
     """One ``sopuli`` process, with its ``jsonl`` events read as they arrive."""
 
     def __init__(self, config: Path, args: list[str], env: Mapping[str, str]) -> None:
-        command = [
-            sys.executable,
-            "-c",
-            "from sopuli.cli import main; main()",
-            "--config",
-            str(config),
-            "--output",
-            "jsonl",
-            *args,
-        ]
         self.process = subprocess.Popen(
-            command,
+            sopuli_command(config, "jsonl", args),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -161,7 +179,9 @@ class CliRun:
                 return event
 
     def kill(self) -> None:
-        self.process.kill()
+        """Kill the run, if it is still running, and wait for it."""
+        if self.process.poll() is None:
+            self.process.kill()
         self.process.wait(timeout=TIMEOUT)
         for reader in self._readers:
             reader.join(timeout=TIMEOUT)

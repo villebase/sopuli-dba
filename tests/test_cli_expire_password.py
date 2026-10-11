@@ -146,6 +146,28 @@ def test_a_preview_reads_and_issues_nothing(
     assert "would be expired" in row["actions"][0]["detail"]
 
 
+@pytest.mark.parametrize(("listed", "expected"), [("dev", True), ("prod", False)])
+def test_the_plan_says_whether_the_environment_needs_a_yes(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    fake: list[FakeSession],
+    listed: str,
+    expected: bool,
+) -> None:
+    """The `account` verbs ask `safety.confirm_environments`, and a preview
+    reports what the real run would ask (#663)."""
+    guarded = OFFLINE.replace(
+        "version: 1\n",
+        f"version: 1\ndefaults:\n  safety:\n    confirm_environments: [{listed}]\n",
+    )
+    result = run(
+        runner, write_config(guarded), "--account", ACCOUNT, "--dry-run", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert document(result)["plan"]["confirmation_required"] is expected
+
+
 def test_an_undeclared_account_never_reaches_the_driver(
     runner: CliRunner, write_config: WriteConfig, fake: list[FakeSession]
 ) -> None:

@@ -323,6 +323,24 @@ def generate(
     )
 
 
+def require_feasible(
+    policy: PasswordPolicy,
+    *,
+    limit: ByteLimit | None,
+    target: str | None = None,
+) -> None:
+    """Refuse a policy that :func:`generate` could never satisfy, and draw nothing.
+
+    These are the refusals :func:`generate` makes before its first draw, through
+    the same helpers, so a caller that asks first gets the same message the draw
+    would give. ``account reset-password --dry-run`` asks this so that its
+    preview names the refusal the real run would hit (#671), without drawing a
+    password that nothing will use.
+    """
+    length = _required_length(policy)
+    _reject_impossible(policy, _usable_alphabet(policy, limit, target), length, limit, target)
+
+
 def _required_length(policy: PasswordPolicy) -> int:
     """``length`` is not defaulted, and that is a decision rather than an omission.
 

@@ -42,7 +42,7 @@ public class JdbcLogin {
             result.next();
             return result.getString(1);
         } catch (SQLException e) {
-            return "FAILED ORA-" + e.getErrorCode() + " " + firstLine(e.getMessage());
+            return String.format("FAILED ORA-%05d %s", e.getErrorCode(), firstLine(e.getMessage()));
         } catch (RuntimeException e) {
             return "FAILED " + e.getClass().getName() + " " + firstLine(e.getMessage());
         }

@@ -2475,9 +2475,12 @@ password, in at least one position:
 | JDBC URL, quoted | the same driver, `jdbc:oracle:thin:user/"…"@//host:port/service` | none |
 
 The unquoted JDBC URL refuses `-` and `.`, which are in `alnum_safe`. The driver
-fails the connection with ORA-17067, "Invalid Oracle URL specified", so the
-password is never changed without an error. In double quotes, every
-`printable_ascii` character logs in. Reasons:
+fails the connection with ORA-17067, "Invalid Oracle URL specified". **An
+application that puts an `alnum_safe` password in an unquoted JDBC URL can work
+for several rotations and then fail.** The failure comes after the rotation
+has set and promoted a password that contains `-` or `.`, at the application's
+next connect. About half of all 24-character `alnum_safe` passwords contain one. In
+double quotes, every `printable_ascii` character logs in. Reasons:
 [#743](../decisions/log.md#743).
 
 A **class** is `upper`, `lower`, `digit`, or `special` — where `special` is

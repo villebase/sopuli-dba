@@ -1762,12 +1762,17 @@ the register.
   password in double quotes in the URL?
 - **Decision:** Keep them. `01-configuration.md` §8 says to quote the password
   in a JDBC URL: `user/"password"@…`.
-- **Why:** The failure is loud. The driver fails the connection with ORA-17067,
-  "Invalid Oracle URL specified", so no password is changed without an error.
-  This is not the case #742 decided, where `$` changed the password with no
-  error. Quoting is one rule for one path, and with it every `printable_ascii`
-  character logs in, `@` included. Dropping `-` and `.` would leave five
-  specials, and a tight policy would give up generating more often.
+- **Why:** Quoting is one rule for one path, and with it every
+  `printable_ascii` character logs in, `@` included. The failure names its
+  cause: the driver fails the connection with ORA-17067, "Invalid Oracle URL
+  specified", and not with a wrong-password error. Dropping `-` and `.` would
+  leave five specials, and a tight policy would give up generating more often.
+- **Cost accepted:** An application that puts an `alnum_safe` password in an
+  unquoted JDBC URL can work for several rotations and then fail. The failure
+  comes after the rotation has set and promoted a password with `-` or `.`, at
+  the application's next connect. About half of 24-character `alnum_safe`
+  passwords contain one. #742 accepted no such cost for `$`, which a shell and
+  a `.env` file change without an error.
 - **Rejected:** Drop `-` and `.` from `alnum_safe`, so that it needs no quoting
   in a JDBC URL either. That is a second breaking change to the alphabet after
-  #742, for a failure the operator sees at once.
+  #742.

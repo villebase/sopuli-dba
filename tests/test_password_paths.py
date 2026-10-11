@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import http.client
 import json
 import os
 import queue
@@ -42,7 +43,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from oracle_harness import Environment, dsn_host
+from oracle_harness import Environment, dsn_host, dsn_is_loopback
 from sopuli.config import charsets
 from sopuli.config.model import PasswordPolicy
 from sopuli.passwords import generate
@@ -339,7 +340,12 @@ JDBC_SOURCE = Path(__file__).resolve().parents[1] / "test" / "jdbc" / "JdbcLogin
 
 #: How a container reaches a database that the DSN names on the host's loopback.
 HOST_ALIAS = "host.docker.internal"
-LOOPBACK = {"localhost", "127.0.0.1", "[::1]"}
+
+#: The answers that mean the password broke the login: the driver refused the
+#: URL (ORA-17067), read part of the password as the address (ORA-12261), or the
+#: server refused the password it was sent (ORA-01017). Any other failure is a
+#: fault in the test environment, not a finding about the password.
+PASSWORD_FAILURES = ("FAILED ORA-17067 ", "FAILED ORA-12261 ", "FAILED ORA-01017 ")
 
 
 @pytest.fixture(scope="session")
@@ -378,7 +384,7 @@ def ojdbc(pytestconfig: pytest.Config, tmp_path_factory: pytest.TempPathFactory)
     try:
         with urllib.request.urlopen(OJDBC_URL, timeout=TIMEOUT) as response:
             jar.write_bytes(response.read())
-    except OSError as error:
+    except (OSError, http.client.HTTPException) as error:
         pytest.skip(f"cannot download {OJDBC_URL}: {error}")
     digest = _sha256(jar)
     if digest != OJDBC_SHA256:
@@ -397,7 +403,7 @@ def _jdbc_address(dsn: str) -> str:
         pytest.skip(f"the JDBC check needs an Easy Connect DSN, host:port/service, not {dsn}")
     remainder = dsn.lstrip("/")
     host = dsn_host(dsn)
-    if host in LOOPBACK:
+    if dsn_is_loopback(dsn):
         remainder = HOST_ALIAS + remainder[len(host) :]
     return "//" + remainder
 
@@ -444,8 +450,12 @@ class _Jdbc:
         )
         self._lines: queue.Queue[str] = queue.Queue()
         threading.Thread(target=self._read, daemon=True).start()
-        self._send(ACCOUNT)
-        self._send(address)
+        try:
+            self._send(ACCOUNT)
+            self._send(address)
+        except OSError as error:
+            # `docker run` exited before it read stdin: a bad mount, or no daemon.
+            self._fail(f"JdbcLogin did not start: {error}")
         ready = self._answer()
         if ready != "READY":
             self._fail(f"JdbcLogin did not start: {ready}")
@@ -523,7 +533,15 @@ def _through_jdbc(jdbc: _Jdbc, session: Any, candidate: str, *, quoted: bool) ->
 
 
 def _logs_in_through_jdbc(jdbc: _Jdbc, session: Any, candidate: str, *, quoted: bool) -> bool:
-    return _through_jdbc(jdbc, session, candidate, quoted=quoted) == "LOGGEDIN"
+    """Whether the login worked. A failure that is not in
+    :data:`PASSWORD_FAILURES` fails the test instead of counting against the
+    password."""
+    answer = _through_jdbc(jdbc, session, candidate, quoted=quoted)
+    if answer == "LOGGEDIN":
+        return True
+    if answer.startswith(PASSWORD_FAILURES):
+        return False
+    pytest.fail(f"the JDBC login failed for a reason other than the password: {answer}")
 
 
 @pytest.mark.parametrize("charset", SAFE)
@@ -569,8 +587,8 @@ def test_an_unquoted_jdbc_url_breaks_on_the_characters_section_8_names(
 
 
 def test_an_unquoted_jdbc_url_refuses_alnum_safe_with_ora_17067(jdbc: _Jdbc, account: Any) -> None:
-    """The #743 decision rests on this: the driver refuses the URL, so it never
-    logs in with a password it changed."""
+    """The #743 record says the failure names its cause: the driver refuses the
+    URL, and does not report a wrong password."""
     answers = {
         candidate: _through_jdbc(jdbc, account, candidate, quoted=False)
         for candidate in _swept("-.")

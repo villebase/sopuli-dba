@@ -2811,6 +2811,7 @@ def _reset_one(
                 changed=False,
                 detail=reported.message,
                 status=status,
+                overridden=overridden,
                 duration_ms=_elapsed(started),
                 error=reported,
                 encryption=sent if _carried(error) else None,

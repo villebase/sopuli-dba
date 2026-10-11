@@ -653,9 +653,7 @@ def fault_estate(
 ) -> Iterator[Estate]:
     """A real account with a known password, and a vault mount of its own."""
     oracledb = pytest.importorskip("oracledb")
-    user = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
-    password = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
-    connection = oracledb.connect(user=user, password=password, dsn=live_oracle.dsn)
+    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=live_oracle.dsn)
 
     def sql(statement: str) -> None:
         with connection.cursor() as cursor:
@@ -668,21 +666,23 @@ def fault_estate(
             return False
         return True
 
-    with contextlib.suppress(Exception):  # absent is the ordinary case
-        sql(f"drop user {ACCOUNT} cascade")
-    sql(f'create user {ACCOUNT} identified by "{OLD}"')
-    sql(f"grant create session to {ACCOUNT}")
     try:
+        with contextlib.suppress(Exception):  # absent is the ordinary case
+            sql(f"drop user {ACCOUNT} cascade")
+        sql(f'create user {ACCOUNT} identified by "{OLD}"')
+        sql(f"grant create session to {ACCOUNT}")
         yield Estate(
             tmp_path=tmp_path,
             vault=vault_stack.client,
             mount=private_mount,
             dsn=live_oracle.dsn,
-            env={"VAULT_TOKEN": vault_stack.token, ADMIN_PASSWORD_ENV: password},
+            env={"VAULT_TOKEN": vault_stack.token, ADMIN_PASSWORD_ENV: PASSWORD},
             login=login,
+            user=USER,
         )
     finally:
         try:
-            sql(f"drop user {ACCOUNT} cascade")
+            with contextlib.suppress(Exception):  # absent if create user failed
+                sql(f"drop user {ACCOUNT} cascade")
         finally:
             connection.close()

@@ -57,7 +57,8 @@ WRITES = ("POST", "PUT", "PATCH")
 class Fault(Enum):
     """The faults :class:`VaultGate` injects at its path.
 
-    ``writes`` counts the writes to that path, from 1. Down means the listening
+    ``writes`` counts the writes to that path as they arrive, from 1, whatever
+    Vault answers them. Down means the listening
     socket is closed, so the run's next connection is refused.
     """
 
@@ -110,7 +111,7 @@ class VaultGate:
         self.seen: list[str] = []
         self._release = threading.Event()
         self._lock = threading.Lock()
-        self._written = 0
+        self._arrived = 0
         self._last_read: Answer | None = None
         self._stale: Answer | None = None
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
@@ -143,7 +144,9 @@ class VaultGate:
                 read, write = self.command == "GET", self.command in WRITES
                 with gate._lock:
                     gate.seen.append(f"{self.command} {self.path}")
-                    faulted = ours and write and gate._written == gate.writes - 1
+                    if ours and write:
+                        gate._arrived += 1
+                    faulted = ours and write and gate._arrived == gate.writes
                     stale = gate._stale if ours and read else None
 
                 if faulted and gate.fault is Fault.HOLD_WRITE:
@@ -163,10 +166,8 @@ class VaultGate:
                 with gate._lock:
                     if ours and read:
                         gate._last_read = answer
-                    if ours and write and answer[0] < 300:
-                        gate._written += 1
-                        if gate.fault is Fault.STALE_AFTER_WRITES and gate._written == gate.writes:
-                            gate._stale = gate._last_read
+                    if faulted and gate.fault is Fault.STALE_AFTER_WRITES:
+                        gate._stale = gate._last_read
                 if faulted and gate.fault is Fault.DOWN_AFTER_WRITE:
                     gate.tripped.set()
                     gate._go_down()
@@ -283,6 +284,8 @@ class Estate:
     dsn: str
     env: dict[str, str]
     login: Callable[[str], bool]
+    #: The admin user the config names. Its password is in ``env``.
+    user: str
     _configs: itertools.count[int] = field(default_factory=itertools.count)
 
     def config(self, addr: str, *, break_expired: bool = False) -> Path:
@@ -294,7 +297,7 @@ class Estate:
                 addr=addr,
                 mount=self.mount,
                 dsn=self.dsn,
-                user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+                user=self.user,
                 account=ACCOUNT,
             ),
             encoding="utf-8",

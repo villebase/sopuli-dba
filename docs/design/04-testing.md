@@ -433,8 +433,8 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 | vault unreachable at a write or after it, stale read | `tests/test_fault_vault.py`. The vault lost at the promotion exits 1 and drops the run's rows, which is #760; its test is marked `xfail` until that is fixed |
 
 The other rows are open in #660. The database rows need a database fault,
-which the gate cannot inject. The test makes that change itself, as `SYSTEM`,
-while the gate holds the run at a vault request.
+which the gate cannot inject. The plan is for the test to make that change
+itself, as `SYSTEM`, while the gate holds the run at a vault request.
 
 ---
 

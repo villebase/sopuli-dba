@@ -2169,9 +2169,8 @@ def account_reset_password(
         # print is the only way the operator learns them. The boundary then
         # exits 8.
         #
-        # Without `shown`, so a decline prints no password. Whether the abort
-        # path may print one the operator accepted on an earlier target is a
-        # decision for the seen path's guards, and it is not made here.
+        # `shown` is empty here: only the seen path prompts, and it printed each
+        # accepted password on its own target (#741).
         click.echo("\n\n".join(part for part in (header, body, told) if part))
         raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
@@ -2533,18 +2532,18 @@ class _Reset:
     #: caller turns it into SOPULI-W031/W032 in ``diagnostics[]``, once per
     #: target.
     encryption: Encryption | None = None
-    #: **What the operator is shown, and it is secret-bearing on both paths**: the
-    #: password block on the seen path, and the wrapping token on an unseen one
-    #: (UC-2 §6.6). This comment is the field's one statement about what it
-    #: holds, and :class:`_Reset` is a plain frozen dataclass, so the generated
-    #: ``__repr__`` renders this unredacted. Nothing calls it; the comment is what
-    #: tells the next reader not to.
+    #: **The wrapping token an unseen delivery returns, rendered, and it is
+    #: secret-bearing** (UC-2 §6.6). This comment is the field's one statement
+    #: about what it holds, and :class:`_Reset` is a plain frozen dataclass, so
+    #: the generated ``__repr__`` renders this unredacted. Nothing calls it; the
+    #: comment is what tells the next reader not to.
+    #:
+    #: **Never the seen path's password.** `_reset_one` prints that on the target
+    #: that accepted it (#741), so it never travels in a row.
     #:
     #: **Never serialised**: `as_json` cannot reach it, and there is no field in
     #: the schema it could go in. It travels here because the caller prints it
-    #: after the table, and the ordering of those two is a display decision rather
-    #: than a safety one -- the safety is that the run never got this far unless
-    #: every guard passed.
+    #: after the table, and in JSON mode sends it to stderr instead.
     shown: str | None = None
     #: What an auditor can act on about the hand-over, and **nothing that could
     #: perform it.** ``None`` where nothing was delivered anywhere --
@@ -2918,13 +2917,26 @@ def _reset_one(
         # can fetch it, so ending the run would report a false negative about the
         # part that mattered. What is lost is that somebody must be told another
         # way, which is what the warning says.
-        return journalled(
+        done = journalled(
             replace(
                 row,
-                shown=shown,
                 notify_error=_notify(channel, account=account, target=target, receipt=receipt),
             )
         )
+        if delivery.is_seen and shown is not None:
+            # **Printed now, on the target that accepted it (#741)**, and not at
+            # the end of the run. A prompt declined on a later target aborts the
+            # run, and a password held back for the end was then never shown:
+            # its account was left expired with a password nobody held. Every
+            # guard has passed by this line, so printing here adds no emission;
+            # it only moves the one there was.
+            #
+            # After the record, so UC-2 §3.1's order holds: the record is
+            # written a moment before the password reaches the screen. To
+            # stdout, the stream the terminal check was made about (§6.5).
+            click.echo(f"{shown}\n")
+            return done
+        return replace(done, shown=shown)
     finally:
         if session is not None:
             with suppress(Exception):

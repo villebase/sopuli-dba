@@ -30,6 +30,7 @@ from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER
 from sopuli.secrets import Secret
 
+USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
 PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 
 
@@ -509,9 +510,13 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
 # --------------------------------------------------------- the grace period ---
 
 
-GRACE_ACCOUNT = "acme_grace_user"
 GRACE_PROFILE = "acme_grace_prof"
 GRACE_PASSWORD = "Grace-Pass-3x"
+#: One account per test that takes :func:`grace_account`. Two of the tests change
+#: their account, one by locking it and one by setting a password, so a shared
+#: account would make each result depend on the order the tests ran in. A new
+#: test of the grace period needs a new name here.
+GRACE_ACCOUNTS = tuple(f"acme_grace{n}_user" for n in range(1, 7))
 
 #: One minute, as a fraction of a day. Short enough that a test can outlive it,
 #: long enough that the account is not already expired when it is created --
@@ -520,82 +525,105 @@ GRACE_PASSWORD = "Grace-Pass-3x"
 ONE_MINUTE = "1/1440"
 
 
-@pytest.fixture
-def grace_account(session: Any) -> Iterator[Any]:
-    """An account whose password is past its life time and inside its grace window.
+@pytest.fixture(scope="module")
+def _grace_pool(oracle_target: Environment) -> Iterator[list[str]]:
+    """Accounts whose passwords are past their life time and inside the grace window.
 
     **The wait is real and there is no way around it.** `PASSWORD_LIFE_TIME` is
     the only thing that puts an account into `EXPIRED(GRACE)`, its resolution is
     the minute, and no `ALTER` reaches the state directly -- `PASSWORD EXPIRE`
     produces a *hard* `EXPIRED`, which is the state this one has to be
-    distinguished from. So the test costs a minute, which is why there is one
-    fixture and several assertions over it rather than one each.
+    distinguished from. So the module waits once, for every account at the same
+    time, and each test takes an account of its own from the pool.
 
     The move into grace happens **at a login**, not at the deadline: the status
     stays `OPEN` until something authenticates and Oracle notices. That login is
     part of the setup rather than the subject.
+
+    Module-scoped, so it is set up before the per-test `live_oracle` fixture that
+    reports a missing database. Without a database it yields an empty pool and
+    connects to nothing, and :func:`grace_account` then skips, or fails under
+    `SOPULI_TEST_TIER1=required`, through `live_oracle`. The connection is raw
+    `oracledb` because the driver's `session` fixture is per test.
     """
-    _drop_grace(session)
-    _run(
-        session,
-        f"create profile {GRACE_PROFILE} limit "
-        f"password_life_time {ONE_MINUTE} password_grace_time 1 "
-        f"failed_login_attempts unlimited password_reuse_max unlimited "
-        f"password_reuse_time unlimited password_verify_function null",
-        f'create user {GRACE_ACCOUNT} identified by "{GRACE_PASSWORD}" profile {GRACE_PROFILE}',
-        f"grant create session to {GRACE_ACCOUNT}",
-    )
+    if not oracle_target.available:
+        yield []
+        return
+    oracledb = pytest.importorskip("oracledb")
+    pytest.importorskip("sopuli.driver.oracle.session").initialise(env=os.environ)
+    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=oracle_target.dsn)
     try:
-        _wait_past_expiry(session)
-        _touch(session)
-        yield session
+        _drop_grace(connection)
+        _run_raw(
+            connection,
+            f"create profile {GRACE_PROFILE} limit "
+            f"password_life_time {ONE_MINUTE} password_grace_time 1 "
+            f"failed_login_attempts unlimited password_reuse_max unlimited "
+            f"password_reuse_time unlimited password_verify_function null",
+        )
+        for name in GRACE_ACCOUNTS:
+            _run_raw(
+                connection,
+                f'create user {name} identified by "{GRACE_PASSWORD}" profile {GRACE_PROFILE}',
+                f"grant create session to {name}",
+            )
+        _wait_past_expiry(connection)
+        for name in GRACE_ACCOUNTS:
+            oracledb.connect(user=name, password=GRACE_PASSWORD, dsn=oracle_target.dsn).close()
+        yield list(GRACE_ACCOUNTS)
     finally:
-        _drop_grace(session)
+        _drop_grace(connection)
+        connection.close()
 
 
-def _drop_grace(session: Any) -> None:
+@pytest.fixture
+def grace_account(live_oracle: Environment, _grace_pool: list[str]) -> str:
+    """The name of an account in its grace period that no other test uses."""
+    if not _grace_pool:
+        pytest.fail("every grace-period account is taken; add a name to GRACE_ACCOUNTS")
+    return _grace_pool.pop(0)
+
+
+def _run_raw(connection: Any, *statements: str) -> None:
+    with connection.cursor() as cursor:
+        for statement in statements:
+            cursor.execute(statement)
+
+
+def _drop_grace(connection: Any) -> None:
     for statement in (
-        f"drop user {GRACE_ACCOUNT} cascade",
+        *(f"drop user {name} cascade" for name in GRACE_ACCOUNTS),
         f"drop profile {GRACE_PROFILE} cascade",
     ):
         with contextlib.suppress(Exception):
-            _run(session, statement)
+            _run_raw(connection, statement)
 
 
-def _wait_past_expiry(session: Any, *, limit: float = 180.0) -> None:
-    """Until the database says the life time has elapsed, asked of the database.
+def _wait_past_expiry(connection: Any, *, limit: float = 180.0) -> None:
+    """Until the database says every account's life time has elapsed.
 
     `sysdate > expiry_date` rather than a client-side sleep of the same length:
     the container's clock is the one the profile is measured against, and a test
     that slept locally would be asserting on this machine's.
     """
+    names = ", ".join(f"'{name.upper()}'" for name in GRACE_ACCOUNTS)
     deadline = time.monotonic() + limit
     while time.monotonic() < deadline:
-        state = session.describe_user(GRACE_ACCOUNT)
-        assert state is not None
-        if state.password_expires_at is not None and _elapsed(session):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select count(*) from dba_users "
+                f"where username in ({names}) and sysdate > expiry_date"
+            )
+            (elapsed,) = cursor.fetchone()
+        if elapsed == len(GRACE_ACCOUNTS):
             return
         time.sleep(5)
-    pytest.fail(f"{GRACE_ACCOUNT} did not pass its password life time within {limit}s")
+    pytest.fail(f"the grace-period accounts did not pass their life time within {limit}s")
 
 
-def _elapsed(session: Any) -> bool:
-    with session.connection.cursor() as cursor:
-        cursor.execute(
-            "select case when sysdate > expiry_date then 1 else 0 end "
-            "from dba_users where username = :name",
-            {"name": GRACE_ACCOUNT.upper()},
-        )
-        row = cursor.fetchone()
-    return bool(row and row[0])
-
-
-def _touch(session: Any) -> None:
-    """One login as the account, which is what moves the status into grace."""
-    session.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
-
-
-def test_a_password_in_its_grace_period_is_not_read_as_expired(grace_account: Any) -> None:
+def test_a_password_in_its_grace_period_is_not_read_as_expired(
+    session: Any, grace_account: str
+) -> None:
     """`EXPIRED(GRACE)`, read from the database rather than from a string a test
     wrote.
 
@@ -603,7 +631,7 @@ def test_a_password_in_its_grace_period_is_not_read_as_expired(grace_account: An
     made `check` report a working account as expired and skip the login that
     would have proved otherwise.
     """
-    state = grace_account.describe_user(GRACE_ACCOUNT)
+    state = session.describe_user(grace_account)
 
     assert state is not None
     assert state.status == "EXPIRED(GRACE)", "the spelling this whole fix turns on"
@@ -612,32 +640,38 @@ def test_a_password_in_its_grace_period_is_not_read_as_expired(grace_account: An
     assert state.locked is False
 
 
-def test_the_grace_window_has_an_end_the_dictionary_reports(grace_account: Any) -> None:
+def test_the_grace_window_has_an_end_the_dictionary_reports(
+    session: Any, grace_account: str
+) -> None:
     """`EXPIRY_DATE` during a grace period is the end of the *window*, which is
     the deadline the warning quotes. Without it the warning can say that a
     password is expiring but not when, which is most of its value gone."""
-    state = grace_account.describe_user(GRACE_ACCOUNT)
+    state = session.describe_user(grace_account)
 
     assert state is not None
     assert state.password_expires_at is not None
     assert grace_warning(state) is not None
 
 
-def test_the_password_still_authenticates_during_the_grace_period(grace_account: Any) -> None:
+def test_the_password_still_authenticates_during_the_grace_period(
+    session: Any, grace_account: str
+) -> None:
     """The fact the whole decision rests on, and the one a status column cannot
     prove on its own. If this ever came back `fail`, reporting `IN_SYNC` for an
     account in grace would be wrong, and so would the grace reading."""
-    result = grace_account.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
+    result = session.verify_password(grace_account.upper(), Secret(GRACE_PASSWORD))
 
     assert result.result == PASS
 
 
-def test_a_locked_account_in_its_grace_period_is_still_locked(grace_account: Any) -> None:
+def test_a_locked_account_in_its_grace_period_is_still_locked(
+    session: Any, grace_account: str
+) -> None:
     """The compound form, and the reason the fix is safe: every locked spelling
     carries `LOCKED`, and every caller tests `locked` before `expired`."""
-    _run(grace_account, f"alter user {GRACE_ACCOUNT} account lock")
+    _run(session, f"alter user {grace_account} account lock")
 
-    state = grace_account.describe_user(GRACE_ACCOUNT)
+    state = session.describe_user(grace_account)
 
     assert state is not None
     assert state.status == "EXPIRED(GRACE) & LOCKED"
@@ -646,13 +680,13 @@ def test_a_locked_account_in_its_grace_period_is_still_locked(grace_account: Any
     assert state.expired is False
 
 
-def test_setting_a_password_clears_the_grace_period(grace_account: Any) -> None:
+def test_setting_a_password_clears_the_grace_period(session: Any, grace_account: str) -> None:
     """Why `apply` is the remedy the warning implies. Oracle clears the expiry
     when a password is set -- that is its behaviour and not a choice this tool
     makes (UC-1 §5) -- so the window closes without any statement aimed at it."""
-    grace_account.set_password(GRACE_ACCOUNT.upper(), Secret(SECOND))
+    session.set_password(grace_account.upper(), Secret(SECOND))
 
-    state = grace_account.describe_user(GRACE_ACCOUNT)
+    state = session.describe_user(grace_account)
 
     assert state is not None
     assert state.in_grace is False
@@ -660,7 +694,9 @@ def test_setting_a_password_clears_the_grace_period(grace_account: Any) -> None:
     assert "EXPIRED" not in state.status
 
 
-def test_a_grace_period_login_carries_the_servers_own_warning(grace_account: Any) -> None:
+def test_a_grace_period_login_carries_the_servers_own_warning(
+    session: Any, grace_account: str
+) -> None:
     """The grace-period warning, against the thing that could not be reasoned about.
 
     A grace-period login **succeeds**, so nothing is raised and the diagnostic
@@ -672,7 +708,7 @@ def test_a_grace_period_login_carries_the_servers_own_warning(grace_account: Any
     where it does not, both on this release, and a test pinning one of them would
     fail on a profile rather than on a regression.
     """
-    result = grace_account.verify_password(GRACE_ACCOUNT.upper(), Secret(GRACE_PASSWORD))
+    result = session.verify_password(grace_account.upper(), Secret(GRACE_PASSWORD))
 
     assert result.result == PASS, "the password is right; the warning is not a verdict"
     assert result.warning is not None

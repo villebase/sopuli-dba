@@ -968,6 +968,12 @@ database was changed. The tool refuses it, because a repair set of nothing would
 report `nothing to apply` and read as "already repaired". §8 row 4's recovery is
 to run `rotate` again.
 
+**A document from a run that lost its lock is refused**, whichever verb wrote
+it. It carries `SOPULI-W011`, and §8 says the run that holds the lock is the one
+that may fix it. The document also leaves out the pairs that run never reached,
+so a repair set built from it would leave them out too. `check` establishes what
+is true.
+
 **The filter is each row's state, never the document's exit code.** Refusing by
 exit code would refuse an `apply` that exited 1, where every target failed and
 nothing changed. That is the document *most* worth repairing from. It would also

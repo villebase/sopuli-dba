@@ -177,6 +177,38 @@ class TestRotateDocument:
 
         assert read(path, sources=[Path(ESTATE)]).pairs == ()
 
+    def test_a_rotation_that_lost_its_lock_is_refused(self, tmp_path: Path) -> None:
+        """UC-1 §8: the run holding the lock fixes it, not a re-run of this one.
+        The pairs this run never reached have no apply row, so its set would
+        leave them out."""
+        body = document(
+            command="creds.rotate",
+            results=[
+                staged("a", "alpha"),
+                staged("a", "beta"),
+                row("a", "alpha", "IN_SYNC"),
+            ],
+        )
+        body["diagnostics"] = [{"level": "warning", "code": "SOPULI-W011", "message": "x"}]
+
+        with pytest.raises(ArgumentError) as caught:
+            read(written(tmp_path, body), sources=[Path(ESTATE)])
+
+        assert "lost its lock" in str(caught.value)
+
+    def test_an_apply_that_lost_its_lock_is_refused(self, tmp_path: Path) -> None:
+        body = document(results=[row("a", "t", "ERROR")])
+        body["diagnostics"] = [{"level": "warning", "code": "SOPULI-W011", "message": "x"}]
+
+        with pytest.raises(ArgumentError):
+            read(written(tmp_path, body), sources=[Path(ESTATE)])
+
+    def test_diagnostics_that_are_not_a_list_are_ignored(self, tmp_path: Path) -> None:
+        body = document(results=[row("a", "t", "DRIFT")])
+        body["diagnostics"] = 7
+
+        assert read(written(tmp_path, body), sources=[Path(ESTATE)]).pairs == (("a", "t"),)
+
     def test_pending_apply_without_the_staging_action_is_a_pair(self, tmp_path: Path) -> None:
         """`apply` reports `PENDING_APPLY` for a rollback it refused, and that row
         is a pair to repair. The staging row is told apart by its action."""

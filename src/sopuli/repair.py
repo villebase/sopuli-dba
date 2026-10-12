@@ -50,7 +50,7 @@ from typing import Any
 from sopuli.clock import utc_now
 from sopuli.config.errors import ROOT, ArgumentError
 from sopuli.config.selection import AccountTarget
-from sopuli.diagnostics import REPAIR_DOCUMENT_STALE
+from sopuli.diagnostics import LOCK_LOST, REPAIR_DOCUMENT_STALE
 from sopuli.output.document import Diagnostic
 
 #: Where a ``--repair`` refusal points. Renders as the option the operator typed,
@@ -135,6 +135,7 @@ def read(path: Path, *, sources: Sequence[Path]) -> RepairSet:
     """
     document = _load(path)
     _refuse_foreign(document, path=path, sources=sources)
+    _refuse_fenced(document, path=path)
     _refuse_unapplied(document, path=path)
     return RepairSet(
         pairs=_unconfirmed(document),
@@ -205,14 +206,12 @@ def _load(path: Path) -> dict[str, Any]:
 
     command = document["command"]
     if command not in PRODUCERS:
-        *first, last = (f"`{one}`" for one in PRODUCERS)
-        named = f"{', '.join(first)} or {last}"
         raise ArgumentError(
             f"{path}: was produced by `{command}`, which reports no repair set",
             at=AT_REPAIR,
             hint=(
-                f"pass a document from {named} -- an apply or a rotate that exited 4, "
-                f"or a check that exited 3"
+                "pass a document from `creds.apply`, `creds.check` or `creds.rotate` -- "
+                "an apply or a rotate that exited 4, or a check that exited 3"
             ),
         )
     return document
@@ -261,11 +260,36 @@ def _refuse_foreign(document: dict[str, Any], *, path: Path, sources: Sequence[P
         )
 
 
+def _refuse_fenced(document: dict[str, Any], *, path: Path) -> None:
+    """Refuse a document from a run that lost its lock to another run.
+
+    UC-1 §8: such a run carries ``SOPULI-W011``, and the tool must not advise a
+    re-run while somebody else holds the estate's lock. Its document also
+    understates the work: the pairs the run never reached have no apply row, so
+    a repair set built from it would leave them out.
+    """
+    diagnostics = document.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return
+    for one in diagnostics:
+        if isinstance(one, dict) and one.get("code") == LOCK_LOST:
+            raise ArgumentError(
+                f"{path}: the run lost its lock to another run ({LOCK_LOST}), "
+                f"so its document does not say what is left to repair",
+                at=AT_REPAIR,
+                hint=(
+                    "the run that holds the lock is the one that may fix it; "
+                    "`creds check` establishes what is true"
+                ),
+            )
+
+
 def _refuse_unapplied(document: dict[str, Any], *, path: Path) -> None:
     """Refuse a document whose every row is a staging write.
 
-    That is a ``rotate`` that stopped at UC-1 §8 step 4: the staging write
-    failed, or the run lost its lock, before any database was touched. Every
+    That is a ``rotate`` whose staging write failed at UC-1 §8 step 4, before
+    any database was touched. (One that lost its lock there carries
+    ``SOPULI-W011`` and :func:`_refuse_fenced` refuses it first.) Every
     row is skipped, so the repair set would be empty, and a run that reported
     ``nothing to apply`` would read as "already repaired". The recovery is §8
     row 4's, a new rotation.

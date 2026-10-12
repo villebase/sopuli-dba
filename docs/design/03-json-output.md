@@ -2323,9 +2323,11 @@ These `jq` commands answer common questions from a run document:
 # which accounts drifted, and where
 jq -r '.results[] | select(.state=="DRIFT") | "\(.account)@\(.target)"' result.json
 
-# what a partial apply left unconfirmed: the set `--repair` reads
-# (the same filter the flag applies; src/sopuli/repair.py keeps them in step)
+# what a partial apply or rotate left unconfirmed: the set `--repair` reads
+# (the same filter the flag applies; src/sopuli/repair.py keeps them in step).
+# A rotate's staging rows carry `vault_write_pending` and are not a target's state.
 jq -r '.results[] | select(.state != "IN_SYNC" and .state != "ROLLOVER_ACTIVE")
+       | select([.actions[]?.kind] | index("vault_write_pending") | not)
        | "\(.account)@\(.target)"' result.json
 
 # and the flag itself, which needs the document in a file, not on a pipe

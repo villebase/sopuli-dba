@@ -122,6 +122,69 @@ def test_a_row_missing_a_name_is_skipped_not_refused(tmp_path: Path) -> None:
     assert read(path, sources=[Path(ESTATE)]).pairs == (("a", "t"),)
 
 
+def staged(account: str, target: str, state: str = "PENDING_APPLY") -> dict[str, Any]:
+    """A `rotate` document's staging row: `generate`'s entry, with its action."""
+    entry = row(account, target, state)
+    entry["changed"] = state == "PENDING_APPLY"
+    entry["actions"] = [{"kind": "vault_write_pending", "applied": entry["changed"]}]
+    return entry
+
+
+class TestRotateDocument:
+    """UC-1 §8 row 5: `apply --repair` finishes a rotation some targets missed."""
+
+    def test_the_staging_rows_are_skipped(self, tmp_path: Path) -> None:
+        """Each staging row is `PENDING_APPLY`, which is not confirmed. Counted, it
+        would put the target that took the password in the set as well."""
+        path = written(
+            tmp_path,
+            document(
+                command="creds.rotate",
+                results=[
+                    staged("acme_web_user", "appdb-dev-alpha"),
+                    staged("acme_web_user", "appdb-dev-beta"),
+                    row("acme_web_user", "appdb-dev-alpha", "IN_SYNC"),
+                    row("acme_web_user", "appdb-dev-beta", "ERROR"),
+                ],
+            ),
+        )
+
+        found = read(path, sources=[Path(ESTATE)])
+
+        assert found.pairs == (("acme_web_user", "appdb-dev-beta"),)
+        assert found.command == "creds.rotate"
+
+    def test_a_rotation_that_stopped_at_staging_is_refused(self, tmp_path: Path) -> None:
+        """No database was changed, so the set would be empty and the run would
+        report `nothing to apply`. §8 row 4's recovery is another rotation."""
+        path = written(
+            tmp_path,
+            document(
+                command="creds.rotate",
+                results=[staged("a", "t"), staged("b", "t", state="ERROR")],
+            ),
+        )
+
+        with pytest.raises(ArgumentError) as caught:
+            read(path, sources=[Path(ESTATE)])
+
+        assert "stopped at staging" in str(caught.value)
+        assert "creds rotate" in (caught.value.hint or "")
+
+    def test_a_rotation_with_nothing_due_yields_an_empty_set(self, tmp_path: Path) -> None:
+        """No rows at all is not a run that stopped at staging."""
+        path = written(tmp_path, document(command="creds.rotate", results=[]))
+
+        assert read(path, sources=[Path(ESTATE)]).pairs == ()
+
+    def test_pending_apply_without_the_staging_action_is_a_pair(self, tmp_path: Path) -> None:
+        """`apply` reports `PENDING_APPLY` for a rollback it refused, and that row
+        is a pair to repair. The staging row is told apart by its action."""
+        path = written(tmp_path, document(results=[row("a", "t", "PENDING_APPLY")]))
+
+        assert read(path, sources=[Path(ESTATE)]).pairs == (("a", "t"),)
+
+
 def test_a_document_from_an_older_minor_version_is_still_readable(tmp_path: Path) -> None:
     """`03-json-output.md` §8's compatibility rule, which cuts both ways.
 

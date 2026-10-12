@@ -335,7 +335,9 @@ class Diagnosis:
         :class:`MappedError` carrying this row's own category and exit code.
         """
         if self.category == AuthenticationError.category:
-            return AuthenticationError(self.message, hint=self.hint, code=self.code)
+            refused = AuthenticationError(self.message, hint=self.hint, code=self.code)
+            refused.retryable = self.retryable
+            return refused
         return MappedError(self)
 
 
@@ -358,6 +360,7 @@ class MappedError(DriverError):
         # this module. Carried onto the instance, where `DriverError`
         # declares it, so the boundary reads one attribute whoever raised it.
         self.regenerate = diagnosis.regenerate
+        self.retryable = diagnosis.retryable
         self.diagnosis = diagnosis
 
 

@@ -2533,6 +2533,51 @@ def test_a_refused_statement_is_reported_per_account(
     assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"]["acme_web_user"] == STAGED
 
 
+@pytest.mark.parametrize(
+    ("code", "retryable"),
+    [
+        # A closed PDB may be opened again (#766); a refused login will not
+        # change by itself. The second is an AuthenticationError, not a
+        # MappedError, so both of `as_error`'s branches are covered.
+        ("ORA-01109", True),
+        ("ORA-01017", False),
+    ],
+)
+def test_a_row_error_reports_whether_the_driver_found_it_retryable(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    code: str,
+    retryable: bool,
+) -> None:
+    """#774: the driver's classification reaches `results[].error.retryable`."""
+    estate(connect_error=classify(code, f"{code}: refused").as_error())
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+    found = document(result)
+
+    assert list(validator.iter_errors(found)) == []
+    (row,) = found["results"]
+    assert row["error"]["code"] == code
+    assert row["error"]["retryable"] is retryable
+
+
+def test_an_unclassified_row_error_has_no_retryable_field(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A refusal with no vendor code was never classified, so the row says
+    nothing rather than `false`, which would claim that something decided."""
+    estate(set_error=DriverError("target is read-only"))
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+    found = document(result)
+
+    (row,) = found["results"]
+    assert row["error"]["message"] == "target is read-only"
+    assert "retryable" not in row["error"]
+
+
 def test_readonly_refuses_before_anything_connects(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

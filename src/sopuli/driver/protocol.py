@@ -338,6 +338,16 @@ class DriverError(Exception):
     #: import an Oracle module to find out that Oracle refused a password.
     regenerate = False
 
+    #: Whether the same call could plausibly succeed later, as the driver
+    #: classified it: the run document's ``error.retryable``.
+    #:
+    #: ``None`` on the class, not ``False`` as ``regenerate`` is, because this one
+    #: is only reported and never acted on. ``None`` means nobody classified the
+    #: failure, and the document then omits the field: ``false`` would claim that
+    #: a driver looked and decided. A driver that classifies sets it on the
+    #: instance. Nothing in sopuli retries on it.
+    retryable: bool | None = None
+
     #: Whether the statement carrying the password had been sent when this was
     #: raised.
     #:
@@ -859,14 +869,15 @@ class PartialAccountChangeError(DriverError):
 
     ``completed`` is the :class:`AccountChange` rows for the statements that
     ran, in order. ``cause`` is the failure itself, whose category, exit code,
-    vendor code and hint this error carries unchanged, so a caller that reports
-    it as an ordinary failure still reports the server's own words.
+    vendor code, hint and ``retryable`` this error carries unchanged, so a caller
+    that reports it as an ordinary failure still reports the server's own words.
     """
 
     def __init__(self, cause: DriverError, *, completed: tuple[AccountChange, ...]) -> None:
         super().__init__(cause.message, hint=cause.hint, code=cause.code)
         self.category = cause.category
         self.exit_code = cause.exit_code
+        self.retryable = cause.retryable
         # Sent if the failing statement carried it, or if one that completed
         # did: a window that failed to close comes after the password went out.
         self.password_sent = cause.password_sent or any(

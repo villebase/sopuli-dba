@@ -438,6 +438,16 @@ someone adds a subclass.
 `target_capability`. That is invariant 4's distinct exit code, and the field a
 consumer branches on, so it does not have to parse the name out of the message.
 
+**`retryable` reports that the same call may succeed later.** It is not an
+instruction to retry, and sopuli itself never retries on it. The driver sets it
+when it classifies the vendor code: `true` for a listener that is down
+(`ORA-12541`) or a PDB that is closed (`ORA-01109`), `false` for a refused
+login (`ORA-01017`) and every other vendor code, including one the driver has no
+row for. An error with no vendor code to classify, such as a vault failure or a
+refusal the tool made itself, has no `retryable` field at all. `false` would
+claim that something looked at the error and decided. The field means the same
+in `results[].error`, `targets[].error` and the run-level `error`.
+
 **`target_capability` holds a name, never a sentence.** Most names are about a
 target. `creds check --method hash|both` adds names about an account:
 
@@ -971,7 +981,12 @@ unconditionally breaks. A new section is a minor one.
   {
     "target": "billing-pdb",
     "reachable": false,
-    "error": { "category": "connectivity", "code": "ORA-12541", "message": "TNS:no listener" }
+    "error": {
+      "category": "connectivity",
+      "code": "ORA-12541",
+      "message": "TNS:no listener",
+      "retryable": true
+    }
   }
 ]
 ```

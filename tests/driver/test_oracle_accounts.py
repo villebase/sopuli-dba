@@ -8,9 +8,11 @@ does carry `IN ROLLOVER` after a rotation, that `DBA_PROFILES` really does answe
 Every one of those was measured before the code was written, and they are pinned
 here so a future release changing one of them fails rather than drifts.
 
-State is created and dropped per test rather than by recreating the container
-(`04-testing.md` §4). Names come from the fictional vocabulary in
-`01-configuration.md`, so nothing here resembles a real estate.
+State is created and dropped by the tests rather than by recreating the
+container (`04-testing.md` §4): per test, except the grace-period accounts,
+which live for the module because reaching their state costs a minute. Names
+come from the fictional vocabulary in `01-configuration.md`, so nothing here
+resembles a real estate.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from oracle_harness import Environment
+from oracle_harness import Environment, decide_skip
 from sopuli.check import grace_warning
 from sopuli.driver.guardrails import ADMIN_ROLES
 from sopuli.driver.oracle.accounts import deliberately_locked
@@ -77,7 +79,8 @@ def sysdba(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
         connection.close()
 
 
-def _as_sysdba(connection: Any, *statements: str) -> None:
+def _execute(connection: Any, *statements: str) -> None:
+    """Statements on a raw `oracledb` connection, not a driver session."""
     with connection.cursor() as cursor:
         for statement in statements:
             cursor.execute(statement)
@@ -489,7 +492,7 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
     that holds `SYSDBA` takes its row out of `V$PWFILE_USERS` as well, which was
     measured rather than assumed.
     """
-    _as_sysdba(sysdba, f"grant sysdba to {PWFILE_ACCOUNT}")
+    _execute(sysdba, f"grant sysdba to {PWFILE_ACCOUNT}")
     try:
         state = password_file_account.describe_user(PWFILE_ACCOUNT)
 
@@ -500,7 +503,7 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
         assert state.vendor_maintained is False
         assert not ADMIN_ROLES & state.roles
     finally:
-        _as_sysdba(sysdba, f"revoke sysdba from {PWFILE_ACCOUNT}")
+        _execute(sysdba, f"revoke sysdba from {PWFILE_ACCOUNT}")
 
     after = password_file_account.describe_user(PWFILE_ACCOUNT)
     assert after is not None
@@ -546,7 +549,7 @@ def _grace_pool(oracle_target: Environment) -> Iterator[list[str]]:
     `SOPULI_TEST_TIER1=required`, through `live_oracle`. The connection is raw
     `oracledb` because the driver's `session` fixture is per test.
     """
-    if not oracle_target.available:
+    if decide_skip(oracle_target) is not None:
         yield []
         return
     oracledb = pytest.importorskip("oracledb")
@@ -554,7 +557,7 @@ def _grace_pool(oracle_target: Environment) -> Iterator[list[str]]:
     connection = oracledb.connect(user=USER, password=PASSWORD, dsn=oracle_target.dsn)
     try:
         _drop_grace(connection)
-        _run_raw(
+        _execute(
             connection,
             f"create profile {GRACE_PROFILE} limit "
             f"password_life_time {ONE_MINUTE} password_grace_time 1 "
@@ -562,7 +565,7 @@ def _grace_pool(oracle_target: Environment) -> Iterator[list[str]]:
             f"password_reuse_time unlimited password_verify_function null",
         )
         for name in GRACE_ACCOUNTS:
-            _run_raw(
+            _execute(
                 connection,
                 f'create user {name} identified by "{GRACE_PASSWORD}" profile {GRACE_PROFILE}',
                 f"grant create session to {name}",
@@ -584,19 +587,13 @@ def grace_account(live_oracle: Environment, _grace_pool: list[str]) -> str:
     return _grace_pool.pop(0)
 
 
-def _run_raw(connection: Any, *statements: str) -> None:
-    with connection.cursor() as cursor:
-        for statement in statements:
-            cursor.execute(statement)
-
-
 def _drop_grace(connection: Any) -> None:
     for statement in (
         *(f"drop user {name} cascade" for name in GRACE_ACCOUNTS),
         f"drop profile {GRACE_PROFILE} cascade",
     ):
         with contextlib.suppress(Exception):
-            _run_raw(connection, statement)
+            _execute(connection, statement)
 
 
 def _wait_past_expiry(connection: Any, *, limit: float = 180.0) -> None:

@@ -409,7 +409,7 @@ recovery, not only that the tool did not crash:
 | close a PDB mid-run (several targets) | partial success, exit 4: the other targets take the new password, the closed one keeps the old one, and `current` is not promoted; `creds apply --repair` with the run document fixes it |
 | revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
 | two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
-| steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`. Nothing from a stale plan is half-applied |
+| steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`: no database gets its password, and `current` is not promoted. A write that passed its fence check before the takeover still lands, so `pending` can hold the stale run's password. The run exits 4 with `SOPULI-W011`, and the next run to hold the lock applies that `pending` |
 | kill a run that holds a lock, then start another | by default the second run refuses with exit 7, and reports the holder and that the lock has expired. Breaking a lock is not self-service. Under `locking.break_expired`, the second run takes the lock with a compare-and-set write that increases the version, which fences the killed run if it ever resumes |
 | the vault returns a stale read after the promotion | the post-verify step catches it: exit 4 with `SOPULI-W012`, not success |
 

@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -40,17 +39,16 @@ from fault_harness import (
     LOCK,
     OLD,
     SECRET,
+    STAGING,
     TIMEOUT,
     Estate,
     Fault,
     HarnessError,
     VaultGate,
+    start_paused,
 )
 from sopuli.diagnostics import LOCK_LOST
 from sopuli.exit_codes import ExitCode
-
-#: ``rotate``'s first write to the secret's path stages ``pending``.
-STAGING = 1
 
 
 @dataclass
@@ -81,7 +79,8 @@ def pause(fault_estate: Estate, vault_stack: Any) -> Iterator[Pause]:
     says so in its own body. Fixture order would otherwise decide it.
     """
     gates: list[VaultGate] = []
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # A worker per paused run, so a second `pause()` does not queue behind the first.
+    with ThreadPoolExecutor() as pool:
 
         def start() -> Paused:
             gate = VaultGate(
@@ -91,21 +90,7 @@ def pause(fault_estate: Estate, vault_stack: Any) -> Iterator[Pause]:
                 writes=STAGING,
             )
             gates.append(gate)
-            run = pool.submit(
-                fault_estate.sopuli, fault_estate.config(gate.addr), "creds", "rotate", "--confirm"
-            )
-            deadline = time.monotonic() + TIMEOUT
-            while not gate.tripped.wait(0.5):
-                if run.done() or time.monotonic() > deadline:
-                    ended = run.result(timeout=TIMEOUT) if run.done() else None
-                    raise HarnessError(
-                        f"the run never staged; the gate saw {gate.seen}"
-                        + (
-                            f"; exit {ended.returncode}, stderr: {ended.stderr}"
-                            if ended is not None
-                            else ""
-                        )
-                    )
+            run = start_paused(pool, fault_estate, gate, "creds", "rotate", "--confirm")
             record, _ = fault_estate.read(LOCK)
             if record["state"] != "held":
                 raise HarnessError(f"the paused run does not hold its lock: {record}")
@@ -120,9 +105,12 @@ def pause(fault_estate: Estate, vault_stack: Any) -> Iterator[Pause]:
                 gate.close()
 
 
-def _names(text: str, pid: int) -> bool:
-    """Whether a lock message names the holder with this pid, and no longer one."""
-    return f"pid {pid} running " in text
+def _names(text: str, pid: int, command: str) -> bool:
+    """Whether a lock message names this holder: its pid and its command.
+
+    The space after the pid stops pid 605 from matching pid 6052.
+    """
+    return f"pid {pid} running {command}" in text
 
 
 def test_two_rotations_at_once_one_exits_7_and_the_other_finishes(
@@ -140,7 +128,7 @@ def test_two_rotations_at_once_one_exits_7_and_the_other_finishes(
     )
 
     assert second.returncode == ExitCode.LOCK_HELD, second.stderr
-    assert _names(second.stderr, paused.pid), second.stderr
+    assert _names(second.stderr, paused.pid, "creds rotate"), second.stderr
     secret = fault_estate.vault.get(f"/v1/{fault_estate.mount}/data/{SECRET}")
     assert secret.status_code == 404, "the refused run wrote the secret document"
     assert fault_estate.login(OLD), "the refused run changed the password"
@@ -205,7 +193,9 @@ def test_a_run_whose_lock_is_taken_over_stops_before_its_alter_user(
     lost = [one for one in document["diagnostics"] if one.get("code") == LOCK_LOST]
     assert len(lost) == 1, first.stdout
     assert f"found {version} held by" in lost[0]["message"]
-    assert _names(lost[0]["message"], taker), "the message does not name the run that took over"
+    assert _names(lost[0]["message"], taker, "creds apply"), (
+        "the message does not name the run that took over"
+    )
     assert [held["released"] for held in document["lock"]["held"]] == [False]
     staged, _ = fault_estate.read(SECRET)
     assert staged["DB_CREDENTIALS"][ACCOUNT] == current, "promoted after a takeover"
@@ -215,3 +205,12 @@ def test_a_run_whose_lock_is_taken_over_stops_before_its_alter_user(
     )
     # The fenced-out run wrote nothing to a lock it no longer held.
     assert fault_estate.read(LOCK) == (taken, version)
+
+    # The recovery UC-1 §8 gives for step 4: ``pending`` is a password nobody
+    # has yet, and the next run to hold the lock applies and promotes it.
+    recovered = fault_estate.sopuli(direct, "creds", "apply", "--confirm")
+    assert recovered.returncode == ExitCode.SUCCESS, recovered.stderr
+    promoted, _ = fault_estate.read(SECRET)
+    assert promoted["DB_CREDENTIALS"][ACCOUNT] == staged["pending"][ACCOUNT]
+    assert ACCOUNT not in promoted.get("pending", {})
+    assert fault_estate.login(staged["pending"][ACCOUNT])

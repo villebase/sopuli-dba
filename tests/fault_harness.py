@@ -39,7 +39,9 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -441,3 +443,35 @@ class CliRun:
     def _read_stderr(self) -> None:
         assert self.process.stderr is not None
         self.stderr = self.process.stderr.read()
+
+
+#: ``rotate``'s first write to the secret's path stages ``pending``.
+STAGING = 1
+
+
+def start_paused(
+    pool: Executor, estate: Estate, gate: VaultGate, *args: str
+) -> Future[subprocess.CompletedProcess[str]]:
+    """Run sopuli through ``gate``, and return once the gate holds its write.
+
+    The run can end before the write, such as on a pre-flight refusal. Then its
+    own output says why, so the error reports it.
+    """
+    run = pool.submit(estate.sopuli, estate.config(gate.addr), *args)
+    deadline = time.monotonic() + TIMEOUT
+    while not gate.tripped.wait(0.5):
+        if run.done() or time.monotonic() > deadline:
+            raise HarnessError(
+                f"the run never reached the gate; the gate saw {gate.seen}{_ended(run)}"
+            )
+    return run
+
+
+def _ended(run: Future[subprocess.CompletedProcess[str]]) -> str:
+    if not run.done():
+        return ""
+    error = run.exception()
+    if error is not None:
+        return f"; the run raised {error!r}"
+    ended = run.result()
+    return f"; exit {ended.returncode}, stderr: {ended.stderr}"

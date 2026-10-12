@@ -26,6 +26,7 @@ import dataclasses
 import json
 import os
 import re
+import secrets
 import subprocess
 import time
 from collections.abc import Callable, Iterator
@@ -187,7 +188,12 @@ def _file_names(sysdba: Any) -> str:
 
     With ``db_create_file_dest`` set, Oracle names the files itself and a
     ``FILE_NAME_CONVERT`` clause is not needed. Without it, the clause maps the
-    seed's directory to a sibling named after the PDB.
+    seed's directory to a sibling named after the PDB, with a suffix new to each
+    run. A run that dies during the create leaves its datafiles behind with no
+    PDB to own them, and the drop cannot remove them. In a fixed directory the
+    next create would fail with ``ORA-27038``, file already exists (#770). The
+    drop removes the datafiles but not their directory, so each run leaves an
+    empty directory behind on a long-lived stack.
     """
     with sysdba.cursor() as cursor:
         cursor.execute("select value from v$parameter where name = 'db_create_file_dest'")
@@ -200,7 +206,7 @@ def _file_names(sysdba: Any) -> str:
     parent = directory.rpartition(separator)[0]
     return (
         f" file_name_convert = ('{directory}{separator}', "
-        f"'{parent}{separator}{PDB.upper()}{separator}')"
+        f"'{parent}{separator}{PDB.upper()}_{secrets.token_hex(4).upper()}{separator}')"
     )
 
 
@@ -208,8 +214,9 @@ def _file_names(sysdba: Any) -> str:
 def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     """A PDB of its own with the fault account in it, and its DSN.
 
-    The datafiles go beside the seed's. Dropped at the end, and before the
-    start in case an earlier run died with one in place.
+    The datafiles go beside the seed's, in a directory of this run's own. Dropped
+    at the end, and before the start in case an earlier run died with one in
+    place.
     """
     if _current_container(sysdba) == "NON-CDB":
         pytest.skip("this database has no containers, so no second PDB")

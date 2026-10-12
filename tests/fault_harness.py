@@ -41,6 +41,7 @@ import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -350,6 +351,26 @@ class Estate:
         """Break the secret's lock with ``--force``, as an operator would for a dead run."""
         broken = self.sopuli(config, "lock", "break", f"vault-dev:{SECRET}", "--force", "--confirm")
         assert broken.returncode == 0, broken.stderr
+
+    def expire_lock(self) -> int:
+        """Move the held lock past its expiry, as fifteen minutes would.
+
+        The lease is a fixed fifteen minutes (``DEFAULT_TTL``), too long to wait
+        in a test. The record is rewritten with ``expires_at`` beyond the
+        clock-skew margin, and everything else as its holder left it. Returns
+        the version the rewrite produced.
+        """
+        record, version = self.read(LOCK)
+        if record["state"] != "held":
+            raise HarnessError(f"no held lock to expire: the record is {record['state']!r}")
+        past = datetime.now(UTC) - timedelta(minutes=5)
+        record["expires_at"] = past.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        reply = self.vault.post(
+            f"/v1/{self.mount}/data/{LOCK}", json={"options": {"cas": version}, "data": record}
+        )
+        if reply.status_code != 200:
+            raise HarnessError(f"could not rewrite {LOCK}: HTTP {reply.status_code} {reply.text}")
+        return int(reply.json()["data"]["version"])
 
     def read(self, path: str) -> tuple[dict[str, Any], int]:
         """The data at ``path`` on the private mount, and its version."""

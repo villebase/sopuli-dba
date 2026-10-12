@@ -210,21 +210,21 @@ RULES: dict[str, _Rule] = {
     ),
     # A closed PDB, from the client's side (#766). The listener still routes to
     # the PDB's service for a while after a close, and the logon then fails with
-    # ORA-01109. Once the service has left the listener it is ORA-12514. Both are
-    # retryable: the PDB may be opened again.
+    # ORA-01109. Once the service has left the listener it is ORA-12514.
+    # ORA-01109 is retryable: the PDB may be opened again. ORA-12514 is not,
+    # because its usual cause is a wrong service name, as with ORA-12154.
     "ORA-01109": _Rule(
         UNREACHABLE,
         "connectivity",
         retryable=True,
         hint=(
-            "the database is not open. For a PDB, V$PDBS.OPEN_MODE says whether it is "
-            "closed or only mounted"
+            "the PDB or database is closed or only mounted; open it. "
+            "V$PDBS.OPEN_MODE shows a PDB's state"
         ),
     ),
     "ORA-12514": _Rule(
         UNREACHABLE,
         "connectivity",
-        retryable=True,
         hint=(
             "the listener does not know the service. Its PDB or instance may be closed, "
             "or the service name in the dsn may be wrong; `lsnrctl services` lists the "

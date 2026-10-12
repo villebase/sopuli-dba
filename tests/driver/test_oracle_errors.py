@@ -245,7 +245,7 @@ def test_only_a_plainly_transient_failure_is_marked_retryable() -> None:
     a listener that is down may come up, and nothing in sopuli loops on it."""
     assert classify("ORA-12541", "no listener").retryable
     assert classify("ORA-01109", "database not open").retryable
-    assert classify("ORA-12514", "listener does not currently know of service").retryable
+    assert not classify("ORA-12514", "listener does not know of service").retryable
     assert not classify("ORA-12154", "could not resolve").retryable
     assert not classify("ORA-01017", SERVER).retryable
 

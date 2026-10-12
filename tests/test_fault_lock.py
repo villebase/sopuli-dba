@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -69,22 +69,31 @@ class Paused:
         return self.run.result(timeout=TIMEOUT)
 
 
+#: Start a rotation through a gate, and return once it holds the lock.
+Pause = Callable[[], Paused]
+
+
 @pytest.fixture
-def paused(fault_estate: Estate, vault_stack: Any) -> Iterator[Paused]:
-    """Start ``creds rotate`` through a gate, and return once it holds the lock."""
-    gate = VaultGate(
-        vault_stack.addr,
-        f"/v1/{fault_estate.mount}/data/{SECRET}",
-        Fault.PAUSE_WRITE,
-        writes=STAGING,
-    )
+def pause(fault_estate: Estate, vault_stack: Any) -> Iterator[Pause]:
+    """Start ``creds rotate`` through a gate, when the test is ready for it.
+
+    A factory and not a plain fixture, so that a test that must rotate first
+    says so in its own body. Fixture order would otherwise decide it.
+    """
+    gates: list[VaultGate] = []
     with ThreadPoolExecutor(max_workers=1) as pool:
-        run = pool.submit(
-            fault_estate.sopuli, fault_estate.config(gate.addr), "creds", "rotate", "--confirm"
-        )
-        # Closed inside the pool, so a run still paused at the gate is let go
-        # before the pool waits for it.
-        try:
+
+        def start() -> Paused:
+            gate = VaultGate(
+                vault_stack.addr,
+                f"/v1/{fault_estate.mount}/data/{SECRET}",
+                Fault.PAUSE_WRITE,
+                writes=STAGING,
+            )
+            gates.append(gate)
+            run = pool.submit(
+                fault_estate.sopuli, fault_estate.config(gate.addr), "creds", "rotate", "--confirm"
+            )
             deadline = time.monotonic() + TIMEOUT
             while not gate.tripped.wait(0.5):
                 if run.done() or time.monotonic() > deadline:
@@ -100,30 +109,40 @@ def paused(fault_estate: Estate, vault_stack: Any) -> Iterator[Paused]:
             record, _ = fault_estate.read(LOCK)
             if record["state"] != "held":
                 raise HarnessError(f"the paused run does not hold its lock: {record}")
-            yield Paused(gate=gate, run=run, pid=record["holder"]["pid"])
+            return Paused(gate=gate, run=run, pid=record["holder"]["pid"])
+
+        # Closed inside the pool, so a run still paused at a gate is let go
+        # before the pool waits for it.
+        try:
+            yield start
         finally:
-            gate.close()
+            for gate in gates:
+                gate.close()
 
 
-def _codes(result: subprocess.CompletedProcess[str]) -> list[str]:
-    document = json.loads(result.stdout)
-    return [diagnostic.get("code") for diagnostic in document.get("diagnostics", [])]
+def _names(text: str, pid: int) -> bool:
+    """Whether a lock message names the holder with this pid, and no longer one."""
+    return f"pid {pid} running " in text
 
 
 def test_two_rotations_at_once_one_exits_7_and_the_other_finishes(
-    fault_estate: Estate, vault_stack: Any, paused: Paused
+    fault_estate: Estate, vault_stack: Any, pause: Pause
 ) -> None:
-    """The second run is refused at its acquire, before it reads or writes anything.
+    """The second run is refused at its acquire, before it writes anything.
 
     The first run then rotates as if the second had never started: the vault
     promotes the password the database has, and stages nothing more.
     """
+    paused = pause()
+
     second = fault_estate.sopuli(
         fault_estate.config(vault_stack.addr), "creds", "rotate", "--confirm"
     )
 
     assert second.returncode == ExitCode.LOCK_HELD, second.stderr
-    assert f"pid {paused.pid}" in second.stderr
+    assert _names(second.stderr, paused.pid), second.stderr
+    secret = fault_estate.vault.get(f"/v1/{fault_estate.mount}/data/{SECRET}")
+    assert secret.status_code == 404, "the refused run wrote the secret document"
     assert fault_estate.login(OLD), "the refused run changed the password"
 
     first = paused.finish()
@@ -139,55 +158,60 @@ def test_two_rotations_at_once_one_exits_7_and_the_other_finishes(
     assert record["holder"]["pid"] == paused.pid
 
 
-@pytest.fixture
-def rotated(fault_estate: Estate, vault_stack: Any) -> str:
-    """Rotate once to the end, so the vault has a ``current`` the database accepts.
-
-    Returns that password. Runs before :func:`paused`, because the test asks
-    for it first.
-    """
-    result = fault_estate.sopuli(
-        fault_estate.config(vault_stack.addr), "creds", "rotate", "--confirm"
-    )
-    assert result.returncode == ExitCode.SUCCESS, result.stderr
-    document, _ = fault_estate.read(SECRET)
-    return str(document["DB_CREDENTIALS"][ACCOUNT])
-
-
 def test_a_run_whose_lock_is_taken_over_stops_before_its_alter_user(
-    fault_estate: Estate, vault_stack: Any, rotated: str, paused: Paused
+    fault_estate: Estate, vault_stack: Any, pause: Pause
 ) -> None:
     """The fence: a stalled run's plan is no longer true, so it applies none of it.
 
-    The first run stalls inside its lock until the lock expires. A second run
-    under ``locking.break_expired`` takes the lock over and finishes. It writes
-    no secret document: the estate is converged, so ``apply`` has nothing to do.
-    The first run then stages its ``pending``, and its fence check before
-    ``ALTER USER`` finds the takeover. It stops there.
+    A first rotation runs to the end, so the vault has a ``current`` the
+    database accepts. Then a second rotation stalls inside its lock until the
+    lock expires. Another run under ``locking.break_expired`` takes the lock
+    over and finishes. It writes no secret document: the estate is converged,
+    so ``apply`` has nothing to do. The stalled run then stages its
+    ``pending``, and its fence check before ``ALTER USER`` finds the takeover.
+    It stops there.
+
+    The harness's own expiry rewrite bumps the version too, so a bumped version
+    alone does not show the takeover. The fenced run's message must name the
+    version and the holder the takeover left.
 
     A staged document is a change, so the run exits 4 and not 7. ``SOPULI-W011``
     says why, which the exit code cannot: a run whose targets failed also exits
     4, and that one is repaired by running ``apply`` again.
     """
-    fault_estate.expire_lock()
+    direct = fault_estate.config(vault_stack.addr)
+    rotated = fault_estate.sopuli(direct, "creds", "rotate", "--confirm")
+    assert rotated.returncode == ExitCode.SUCCESS, rotated.stderr
+    before, _ = fault_estate.read(SECRET)
+    current = before["DB_CREDENTIALS"][ACCOUNT]
+    paused = pause()
+
+    expired = fault_estate.expire_lock()
     takeover = fault_estate.sopuli(
         fault_estate.config(vault_stack.addr, break_expired=True), "creds", "apply", "--confirm"
     )
     assert takeover.returncode == ExitCode.SUCCESS, takeover.stderr
-    record, _ = fault_estate.read(LOCK)
-    taker = record["holder"]["pid"]
+    taken, version = fault_estate.read(LOCK)
+    assert version > expired
+    assert taken["state"] == "released"
+    assert taken["command"] == "creds apply"
+    taker = taken["holder"]["pid"]
     assert taker != paused.pid, "the second run did not take the lock over"
 
     first = paused.finish()
 
     assert first.returncode == ExitCode.PARTIAL, first.stderr
-    assert LOCK_LOST in _codes(first), first.stdout
-    assert f"pid {taker}" in first.stdout, "the message does not name the run that took over"
-    document, _ = fault_estate.read(SECRET)
-    staged = document["pending"][ACCOUNT]
-    assert document["DB_CREDENTIALS"][ACCOUNT] == rotated, "promoted after a takeover"
-    assert fault_estate.login(rotated)
-    assert not fault_estate.login(staged), "the run reached ALTER USER after its lock was taken"
-    # The fenced-out run gave back nothing it no longer held.
-    record, _ = fault_estate.read(LOCK)
-    assert record["holder"]["pid"] == taker
+    document = json.loads(first.stdout)
+    lost = [one for one in document["diagnostics"] if one.get("code") == LOCK_LOST]
+    assert len(lost) == 1, first.stdout
+    assert f"found {version} held by" in lost[0]["message"]
+    assert _names(lost[0]["message"], taker), "the message does not name the run that took over"
+    assert [held["released"] for held in document["lock"]["held"]] == [False]
+    staged, _ = fault_estate.read(SECRET)
+    assert staged["DB_CREDENTIALS"][ACCOUNT] == current, "promoted after a takeover"
+    assert fault_estate.login(current)
+    assert not fault_estate.login(staged["pending"][ACCOUNT]), (
+        "the run reached ALTER USER after its lock was taken"
+    )
+    # The fenced-out run wrote nothing to a lock it no longer held.
+    assert fault_estate.read(LOCK) == (taken, version)

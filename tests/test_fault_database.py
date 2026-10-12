@@ -75,6 +75,12 @@ PDB_ADMIN_PASSWORD = "Fault-Pdb-Admin-4w"
 #: closed. Measured on 26ai Free 23.26.2.0.0.
 ABSENT_OR_CLOSED = ("ORA-65011", "ORA-65020")
 
+#: What step 5 can meet at a closed PDB. ``ORA-01109``, database not open, on
+#: every run measured: the run opens a new session at step 5, and the closed
+#: PDB's service is still registered. ``ORA-12514`` if the service has gone
+#: from the listener by then.
+CLOSED_PDB = ("ORA-01109", "ORA-12514")
+
 #: A plain easy-connect DSN, ``host:port/service``, with nothing after the
 #: service. The second PDB's DSN is this one with the service replaced.
 EASY_CONNECT = re.compile(r"(?P<address>[^/?\s]+)/(?P<service>[\w.$#]+)")
@@ -176,6 +182,28 @@ def _drop_pdb(sysdba: Any) -> None:
                 raise
 
 
+def _file_names(sysdba: Any) -> str:
+    """Where the new PDB's datafiles go: beside the seed's, or where OMF puts them.
+
+    With ``db_create_file_dest`` set, Oracle names the files itself and a
+    ``FILE_NAME_CONVERT`` clause is not needed. Without it, the clause maps the
+    seed's directory to a sibling named after the PDB.
+    """
+    with sysdba.cursor() as cursor:
+        cursor.execute("select value from v$parameter where name = 'db_create_file_dest'")
+        if cursor.fetchone()[0]:
+            return ""
+        cursor.execute("select name from v$datafile where con_id = 2 and rownum = 1")
+        seed = cursor.fetchone()[0]
+    separator = "\\" if "\\" in seed else "/"
+    directory = seed.rpartition(separator)[0]
+    parent = directory.rpartition(separator)[0]
+    return (
+        f" file_name_convert = ('{directory}{separator}', "
+        f"'{parent}{separator}{PDB.upper()}{separator}')"
+    )
+
+
 @pytest.fixture
 def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     """A PDB of its own with the fault account in it, and its DSN.
@@ -194,14 +222,10 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     dsn = f"{easy['address']}/{PDB}"
     _drop_pdb(sysdba)
     try:
-        with sysdba.cursor() as cursor:
-            cursor.execute("select name from v$datafile where con_id = 2 and rownum = 1")
-            seed = cursor.fetchone()[0].rpartition("/")[0]
         _execute(
             sysdba,
             f"create pluggable database {PDB} admin user acme_pdb_admin "
-            f'identified by "{PDB_ADMIN_PASSWORD}" '
-            f"file_name_convert = ('{seed}/', '{seed.rpartition('/')[0]}/{PDB.upper()}/')",
+            f'identified by "{PDB_ADMIN_PASSWORD}"{_file_names(sysdba)}',
             f"alter pluggable database {PDB} open",
         )
         _wait_for_service(dsn)
@@ -223,8 +247,11 @@ def service_account(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
         pytest.skip("this DSN answers as CDB$ROOT; a local service account needs a PDB")
 
     def drop() -> None:
-        with contextlib.suppress(Exception):  # absent is the ordinary case
+        try:
             _execute(sysdba, f"drop user {SERVICE} cascade")
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            if "ORA-01918" not in str(error):  # absent is the ordinary case
+                raise
 
     drop()
     try:
@@ -280,9 +307,13 @@ def rotate(vault_stack: Any) -> Iterator[Rotate]:
                 gate.release()
             return run.result(timeout=TIMEOUT)
 
-        yield through
-    for gate in gates:
-        gate.close()
+        # Closed inside the pool, so a run still paused at a gate is let go
+        # before the pool waits for it.
+        try:
+            yield through
+        finally:
+            for gate in gates:
+                gate.close()
 
 
 def _rows(result: subprocess.CompletedProcess[str]) -> dict[str, dict[str, Any]]:
@@ -349,11 +380,8 @@ def test_a_pdb_closed_mid_run_is_partial_and_promotes_nothing(closed_mid_run: Cl
     rows = _rows(closed.result)
     assert rows["free-pdb"]["changed"] is True
     assert rows[PDB_TARGET]["state"] == "ERROR"
-    # ORA-01109 on every run measured: the run opens a new session at step 5,
-    # and the closed PDB's service is still registered. A run that reused its
-    # pre-flight session, or met a deregistered service, would see another
-    # code, and the row would be just as right.
-    assert rows[PDB_TARGET]["error"]["code"].startswith("ORA-")
+    assert rows[PDB_TARGET]["changed"] is False
+    assert rows[PDB_TARGET]["error"]["code"] in CLOSED_PDB
     staged, _ = closed.estate.read(SECRET)
     assert staged["DB_CREDENTIALS"][ACCOUNT] == closed.old, "promoted with a target unconfirmed"
     assert closed.estate.login(staged["pending"][ACCOUNT])

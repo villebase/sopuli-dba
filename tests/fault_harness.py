@@ -114,6 +114,7 @@ class VaultGate:
         self.tripped = threading.Event()
         self.seen: list[str] = []
         self._release = threading.Event()
+        self._closing = False
         self._lock = threading.Lock()
         self._arrived = 0
         self._last_read: Answer | None = None
@@ -132,6 +133,9 @@ class VaultGate:
         self._release.set()
 
     def close(self) -> None:
+        # Wakes a held or paused write without forwarding it. A paused write
+        # released here belongs to a test that has already ended.
+        self._closing = True
         self._release.set()
         self._go_down()
         self.upstream.close()
@@ -163,7 +167,7 @@ class VaultGate:
                     return
                 if faulted and gate.fault is Fault.PAUSE_WRITE:
                     gate.tripped.set()
-                    if not gate._release.wait(TIMEOUT):
+                    if not gate._release.wait(TIMEOUT) or gate._closing:
                         return
                 if faulted and gate.fault is Fault.DOWN_AT_WRITE:
                     gate.tripped.set()

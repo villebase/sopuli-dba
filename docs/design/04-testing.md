@@ -406,7 +406,7 @@ recovery, not only that the tool did not crash:
 |---|---|
 | kill the process between `password_set` and `vault_promote` | `pending` still holds the new value; `status` reports `PENDING_APPLY`; a second `creds apply` completes the promotion |
 | vault unreachable mid-run | lost at the staging write: nothing applied, exit 1. Lost at the promotion: applied and not promoted, and `creds apply` completes it. Never promoted silently |
-| close a PDB mid-run (several targets) | partial success, exit 4, other targets untouched; `creds apply --repair` with the run document fixes it |
+| close a PDB mid-run (several targets) | partial success, exit 4: the other targets take the new password, the closed one keeps the old one, and `current` is not promoted; `creds apply --repair` with the run document fixes it |
 | revoke `ALTER USER` mid-run | a clean authorization error, and no half-written state |
 | two `rotate` runs on one account at once | one loses the lock and exits 7; the final state is consistent |
 | steal a held lock mid-run: let it expire, and let a second run take it over | the first run's next fence check fails, and it stops before its next `ALTER USER`. Nothing from a stale plan is half-applied |

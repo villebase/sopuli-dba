@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.34.schema.json`](../schemas/sopuli-run-1.34.schema.json),
+Schemas: [`../schemas/sopuli-run-1.35.schema.json`](../schemas/sopuli-run-1.35.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -440,13 +440,15 @@ consumer branches on, so it does not have to parse the name out of the message.
 
 **`retryable` reports that the same call may succeed later.** It is not an
 instruction to retry, and sopuli itself never retries on it. The driver sets it
-when it classifies the vendor code: `true` for a listener that is down
-(`ORA-12541`) or a PDB that is closed (`ORA-01109`), `false` for a refused
-login (`ORA-01017`) and every other vendor code, including one the driver has no
-row for. An error with no vendor code to classify, such as a vault failure or a
-refusal the tool made itself, has no `retryable` field at all. `false` would
-claim that something looked at the error and decided. The field means the same
-in `results[].error`, `targets[].error` and the run-level `error`.
+only for a vendor code it has a row for: `true` for a listener that is down
+(`ORA-12541`) or a PDB that is closed (`ORA-01109`), and `false` for the other
+rows, such as a refused login (`ORA-01017`). Otherwise the field is absent: for a
+code the driver places only by its family, such as an unnamed Oracle Net code,
+and for an error with no vendor code, such as a vault failure or a refusal the
+tool made itself. Absent does not mean `false`. `false` would claim that
+something looked at the error and decided. The field means the same in
+`results[].error`, `targets[].error` and the run-level `error`. Run schema 1.35
+is the first that emits it.
 
 **`target_capability` holds a name, never a sentence.** Most names are about a
 target. `creds check --method hash|both` adds names about an account:

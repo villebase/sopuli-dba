@@ -2563,18 +2563,28 @@ def test_a_row_error_reports_whether_the_driver_found_it_retryable(
     assert row["error"]["retryable"] is retryable
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        # No vendor code: the tool refused it itself.
+        DriverError("target is read-only"),
+        # An Oracle Net code with no row: its family places it, nothing more.
+        classify("ORA-12170", "ORA-12170: TNS:Connect timeout occurred").as_error(),
+    ],
+    ids=["no-code", "family-only"],
+)
 def test_an_unclassified_row_error_has_no_retryable_field(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, failure: Exception
 ) -> None:
-    """A refusal with no vendor code was never classified, so the row says
-    nothing rather than `false`, which would claim that something decided."""
-    estate(set_error=DriverError("target is read-only"))
+    """Nothing decided whether these clear, so the row says nothing rather than
+    `false`, which would claim that something did."""
+    estate(set_error=failure)
 
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
     found = document(result)
 
     (row,) = found["results"]
-    assert row["error"]["message"] == "target is read-only"
+    assert row["state"] == "ERROR"
     assert "retryable" not in row["error"]
 
 

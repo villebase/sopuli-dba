@@ -231,16 +231,15 @@ def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
         diagnosis = from_error(error)
         if diagnosis.code in ABSENT_CODES:
             return None
-        failed = ProbeError(
+        raise ProbeError(
             f"a capability probe failed with {diagnosis.code or 'no code'}: {diagnosis.message}",
             code=diagnosis.code or None,
+            retryable=diagnosis.retryable,
             hint=(
                 "this is not the same as the capability being absent -- the probe itself "
                 "could not be answered. The statement was: " + statement
             ),
-        )
-        failed.retryable = diagnosis.retryable
-        raise failed from error
+        ) from error
 
 
 def probe(cursor: Cursor) -> frozenset[str]:

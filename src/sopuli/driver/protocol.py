@@ -338,16 +338,6 @@ class DriverError(Exception):
     #: import an Oracle module to find out that Oracle refused a password.
     regenerate = False
 
-    #: Whether the same call could plausibly succeed later, as the driver
-    #: classified it: the run document's ``error.retryable``.
-    #:
-    #: ``None`` on the class, not ``False`` as ``regenerate`` is, because this one
-    #: is only reported and never acted on. ``None`` means nobody classified the
-    #: failure, and the document then omits the field: ``false`` would claim that
-    #: a driver looked and decided. A driver that classifies sets it on the
-    #: instance. Nothing in sopuli retries on it.
-    retryable: bool | None = None
-
     #: Whether the statement carrying the password had been sent when this was
     #: raised.
     #:
@@ -360,11 +350,24 @@ class DriverError(Exception):
     #: because only the driver knows which statement failed.
     password_sent = False
 
-    def __init__(self, message: str, *, hint: str | None = None, code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        hint: str | None = None,
+        code: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.hint = hint
         self.code = code
+        #: Whether the same call could plausibly succeed later: the run
+        #: document's ``error.retryable``. A report, never acted on: nothing in
+        #: sopuli retries on it. ``None`` unless a driver decided it from a code
+        #: it has a row for, and the document then omits the field, because
+        #: ``false`` would claim that a driver looked and decided.
+        self.retryable = retryable
 
     def __str__(self) -> str:
         if self.hint:
@@ -874,10 +877,9 @@ class PartialAccountChangeError(DriverError):
     """
 
     def __init__(self, cause: DriverError, *, completed: tuple[AccountChange, ...]) -> None:
-        super().__init__(cause.message, hint=cause.hint, code=cause.code)
+        super().__init__(cause.message, hint=cause.hint, code=cause.code, retryable=cause.retryable)
         self.category = cause.category
         self.exit_code = cause.exit_code
-        self.retryable = cause.retryable
         # Sent if the failing statement carried it, or if one that completed
         # did: a window that failed to close comes after the password went out.
         self.password_sent = cause.password_sent or any(

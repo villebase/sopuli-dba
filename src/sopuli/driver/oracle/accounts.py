@@ -461,16 +461,15 @@ def _unreadable(error: Exception, view: str) -> DriverError:
     """
     diagnosis = from_error(error)
     if diagnosis.code in _GRANT_CODES:
-        refused = DictionaryUnreadableError(
+        return DictionaryUnreadableError(
             f"could not read {view}: {diagnosis.message}",
             code=diagnosis.code,
+            retryable=diagnosis.retryable,
             hint=(
                 f"GRANT SELECT ON SYS.{view} to the service account -- "
                 f"02-oracle-privileges.md section 2, or {INSTALL_SCRIPT}"
             ),
         )
-        refused.retryable = diagnosis.retryable
-        return refused
     return diagnosis.as_error()
 
 
@@ -823,17 +822,16 @@ def _roles(cursor: Cursor, name: str) -> frozenset[str]:
         diagnosis = from_error(error)
         if diagnosis.code not in _GRANT_CODES:
             raise diagnosis.as_error() from error
-        refused = RolesUnreadableError(
+        raise RolesUnreadableError(
             f'could not read the roles held by "{name}": {diagnosis.message}',
             code=diagnosis.code,
+            retryable=diagnosis.retryable,
             hint=(
                 "guardrail 4 refuses an account holding DBA, PDB_DBA, CDB_DBA or "
                 "AUDIT_ADMIN, and cannot tell an account with none from a view it "
                 "cannot read: GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account"
             ),
-        )
-        refused.retryable = diagnosis.retryable
-        raise refused from error
+        ) from error
 
 
 def _versions(value: Any) -> tuple[str, ...]:

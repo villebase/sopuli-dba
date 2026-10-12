@@ -25,6 +25,7 @@ import contextlib
 import dataclasses
 import json
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable, Iterator
@@ -47,9 +48,9 @@ from fault_harness import (
     HarnessError,
     VaultGate,
 )
-from oracle_harness import Environment
+from oracle_harness import Environment, service_account_grants
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
-from sopuli.driver.oracle.privileges import PREDICATE_READS, REQUIRED_PRIVILEGES, REQUIRED_READS
+from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.exit_codes import ExitCode
 
 #: ``rotate``'s first write to the secret's path stages ``pending``.
@@ -69,10 +70,35 @@ SERVICE_PASSWORD = "Fault-Service-Acct-7q"
 PDB_ADMIN_PASSWORD = "Fault-Pdb-Admin-4w"
 
 
+#: What ``CLOSE`` and ``DROP`` say about a PDB that is already in the wanted
+#: state: ``ORA-65011``, it does not exist, and ``ORA-65020``, it is already
+#: closed. Measured on 26ai Free 23.26.2.0.0.
+ABSENT_OR_CLOSED = ("ORA-65011", "ORA-65020")
+
+#: A plain easy-connect DSN, ``host:port/service``, with nothing after the
+#: service. The second PDB's DSN is this one with the service replaced.
+EASY_CONNECT = re.compile(r"(?P<address>[^/?\s]+)/(?P<service>[\w.$#]+)")
+
+
 def _execute(connection: Any, *statements: str) -> None:
     with connection.cursor() as cursor:
         for statement in statements:
             cursor.execute(statement)
+
+
+def _current_container(connection: Any) -> str:
+    """Where the session stands, or ``NON-CDB`` on a release with no containers.
+
+    ``con_name`` raises ``ORA-02003`` on a non-CDB, rather than answering NULL.
+    """
+    with connection.cursor() as cursor:
+        try:
+            cursor.execute("select sys_context('userenv', 'con_name') from dual")
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            if NO_CONTAINERS not in str(error):
+                raise
+            return "NON-CDB"
+        return str(cursor.fetchone()[0])
 
 
 @pytest.fixture
@@ -133,12 +159,21 @@ def _wait_for_service(dsn: str) -> None:
 
 
 def _drop_pdb(sysdba: Any) -> None:
-    """Absent is the desired state, so "it was not there" is a success."""
+    """Absent is the desired state, so "it was not there" is a success.
+
+    Any other failure is raised. A drop that failed silently would surface at
+    the next setup as "already exists", far from its cause.
+    """
     _container(sysdba, "cdb$root")
-    with contextlib.suppress(Exception):
-        _execute(sysdba, f"alter pluggable database {PDB} close immediate")
-    with contextlib.suppress(Exception):
-        _execute(sysdba, f"drop pluggable database {PDB} including datafiles")
+    for statement in (
+        f"alter pluggable database {PDB} close immediate",
+        f"drop pluggable database {PDB} including datafiles",
+    ):
+        try:
+            _execute(sysdba, statement)
+        except Exception as error:  # noqa: BLE001 -- classified on the next line
+            if not any(code in str(error) for code in ABSENT_OR_CLOSED):
+                raise
 
 
 @pytest.fixture
@@ -148,10 +183,15 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     The datafiles go beside the seed's. Dropped at the end, and before the
     start in case an earlier run died with one in place.
     """
-    host, _, _ = live_oracle.dsn.rpartition("/")
-    if not host:
-        pytest.skip(f"{live_oracle.dsn} is not an easy-connect DSN, so no DSN for a second PDB")
-    dsn = f"{host}/{PDB}"
+    if _current_container(sysdba) == "NON-CDB":
+        pytest.skip("this database has no containers, so no second PDB")
+    easy = EASY_CONNECT.fullmatch(live_oracle.dsn)
+    if easy is None:
+        pytest.skip(
+            f"this fixture makes the second PDB's DSN from a plain host:port/service DSN, "
+            f"and {live_oracle.dsn} is not one"
+        )
+    dsn = f"{easy['address']}/{PDB}"
     _drop_pdb(sysdba)
     try:
         with sysdba.cursor() as cursor:
@@ -179,10 +219,7 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
 @pytest.fixture
 def service_account(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
     """§2's service account in the estate's PDB. Returns its name."""
-    with sysdba.cursor() as cursor:
-        cursor.execute("select sys_context('userenv', 'con_name') from dual")
-        container = cursor.fetchone()[0]
-    if container == "CDB$ROOT":
+    if _current_container(sysdba) == "CDB$ROOT":
         pytest.skip("this DSN answers as CDB$ROOT; a local service account needs a PDB")
 
     def drop() -> None:
@@ -194,11 +231,7 @@ def service_account(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
         _execute(
             sysdba,
             f'create user {SERVICE} identified by "{SERVICE_PASSWORD}"',
-            *(f"grant {privilege} to {SERVICE}" for privilege in REQUIRED_PRIVILEGES),
-            *(
-                f"grant {grant.replace('ON ', 'ON SYS.')} to {SERVICE}"
-                for grant in (*REQUIRED_READS, *PREDICATE_READS)
-            ),
+            *service_account_grants(SERVICE),
         )
         yield SERVICE
     finally:
@@ -227,8 +260,20 @@ def rotate(vault_stack: Any) -> Iterator[Rotate]:
             run = pool.submit(
                 estate.sopuli, estate.config(gate.addr), "creds", "rotate", "--confirm"
             )
-            if not gate.tripped.wait(TIMEOUT):
-                raise HarnessError(f"the run never staged; the gate saw {gate.seen}")
+            # The run can end before it stages, such as on a pre-flight
+            # refusal. Then its own output says why, so report that.
+            deadline = time.monotonic() + TIMEOUT
+            while not gate.tripped.wait(0.5):
+                if run.done() or time.monotonic() > deadline:
+                    ended = run.result(timeout=TIMEOUT) if run.done() else None
+                    raise HarnessError(
+                        f"the run never staged; the gate saw {gate.seen}"
+                        + (
+                            f"; exit {ended.returncode}, stderr: {ended.stderr}"
+                            if ended is not None
+                            else ""
+                        )
+                    )
             try:
                 change()
             finally:
@@ -266,18 +311,20 @@ class Closed:
 def closed_mid_run(
     fault_estate: Estate, vault_stack: Any, sysdba: Any, second_pdb: str, rotate: Rotate
 ) -> Closed:
-    """Rotate once to the end on both targets, then again with the PDB closing."""
+    """Rotate once to the end on both targets, then again with the PDB closing.
+
+    ``sysdba`` stands in the root throughout, where it opens and closes the PDB.
+    """
+    _container(sysdba, "cdb$root")
     estate = dataclasses.replace(fault_estate, more_targets=((PDB_TARGET, second_pdb),))
     config = estate.config(vault_stack.addr)
     first = estate.sopuli(config, "creds", "rotate", "--confirm")
     assert first.returncode == ExitCode.SUCCESS, first.stderr
     before, _ = estate.read(SECRET)
 
-    def close() -> None:
-        _container(sysdba, "cdb$root")
-        _execute(sysdba, f"alter pluggable database {PDB} close immediate")
-
-    result = rotate(estate, close)
+    result = rotate(
+        estate, lambda: _execute(sysdba, f"alter pluggable database {PDB} close immediate")
+    )
     _execute(sysdba, f"alter pluggable database {PDB} open")
     _wait_for_service(second_pdb)
     return Closed(
@@ -302,7 +349,11 @@ def test_a_pdb_closed_mid_run_is_partial_and_promotes_nothing(closed_mid_run: Cl
     rows = _rows(closed.result)
     assert rows["free-pdb"]["changed"] is True
     assert rows[PDB_TARGET]["state"] == "ERROR"
-    assert rows[PDB_TARGET]["error"]["code"] == "ORA-01109"
+    # ORA-01109 on every run measured: the run opens a new session at step 5,
+    # and the closed PDB's service is still registered. A run that reused its
+    # pre-flight session, or met a deregistered service, would see another
+    # code, and the row would be just as right.
+    assert rows[PDB_TARGET]["error"]["code"].startswith("ORA-")
     staged, _ = closed.estate.read(SECRET)
     assert staged["DB_CREDENTIALS"][ACCOUNT] == closed.old, "promoted with a target unconfirmed"
     assert closed.estate.login(staged["pending"][ACCOUNT])

@@ -1867,7 +1867,7 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 | 5 (some targets) | those targets have the new password, vault `current` is still old | `apply --repair` with the run's document, then `apply` to promote (§5, *A repair of a rotation*); with the rollover strategy there is no outage meanwhile |
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **the most severe case**: `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
-| 8 | promoted, and the read-back disagreed or failed | the databases are converged and the vault is not serving what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts. Nothing needs undoing; the place to look is the vault (a replica behind its primary), not any database |
+| 8 | promoted, and the read-back disagreed or failed | the databases are converged, and the run cannot confirm that the vault serves what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts, and the store's message for a document it could not read. Nothing needs undoing; the place to look is the vault, not any database: a replica behind its primary, or a store that stopped answering |
 | any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it |
 
 ### How `rotate` is built
@@ -1925,6 +1925,8 @@ withheld or failed (row 7), or where step 8 could not confirm the promotion
 (row 8). In each case `current` may still hold the old password, and
 applications that fetch it would be locked out. A document that owed no
 promotion, because the vault already held what was applied, is closed as usual.
+The run names the accounts it left open in a note, and `creds finish-rollover`
+closes them once the vault serves the new password.
 
 **The fence also covers `--finish-rollover`.** Closing windows is the run's last
 change and the furthest from the acquisition at step 2, so it is the most likely

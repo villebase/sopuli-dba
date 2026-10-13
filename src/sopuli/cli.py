@@ -9006,6 +9006,10 @@ def creds_rotate(
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
+    if sequence.disagreed:
+        # Before the takeover split: a takeover at `--finish-rollover` comes after
+        # step 8, and what step 8 found is still true.
+        document.diagnostics.append(_unconfirmed(sequence.disagreed, sequence.unread))
     if sequence.stolen is not None:
         # The split `sopuli.lock.errors` leaves to the command, and `rotate` has
         # one more way to have changed something than `apply` does: a staged
@@ -9018,8 +9022,6 @@ def creds_rotate(
         )
         code = int(ExitCode.PARTIAL if changed or sequence.documents else ExitCode.LOCK_HELD)
     else:
-        if sequence.disagreed:
-            document.diagnostics.append(_unconfirmed(sequence.disagreed, sequence.unread))
         code = rotation.exit_code_for(
             staged_failures=sequence.failures,
             applied=states,
@@ -9256,13 +9258,22 @@ def _rotate_estate(
     into.disagreed = _read_back(into.applied, into.promotions, promoted)
 
     if finish_windows:
+        settled = _settled(into.applied, into.promotions, promoted)
+        left = _left_open(into.applied, settled)
+        if left:
+            into.caveats.append(
+                "--finish-rollover did not close the windows of "
+                + ", ".join(left)
+                + ", because the vault may not serve the new password: run "
+                "`sopuli creds finish-rollover` once it does"
+            )
         try:
             into.closed = _close_windows(
-                _settled(into.applied, into.promotions, into.disagreed),
+                settled,
                 run,
                 config,
-                # A document this run did not promote was not written after
-                # step 6's read, so that copy is still what the vault holds.
+                # A document this run did not promote was not written after the
+                # read that follows step 4, so that copy is what the vault holds.
                 documents={**documents, **promoted},
                 margin=margin,
                 manager=manager,
@@ -9346,7 +9357,7 @@ def _read_promoted(
 def _settled(
     applied: Sequence[_Applied],
     promotions: Mapping[LockKey, _Promotion],
-    disagreed: Sequence[str],
+    served: Mapping[LockKey, Any],
 ) -> list[_Applied]:
     """The records whose document the vault serves with what was applied.
 
@@ -9356,18 +9367,42 @@ def _settled(
     could not confirm it, the old password is the one applications fetch. A
     document that owed no promotion is settled: the vault already held what was
     applied.
+
+    ``served`` is step 8's read-back. It is judged per document, not per account
+    name: one account on two targets has two documents, and a stale read of one
+    says nothing about the other.
     """
     settled = []
     for record in applied:
-        if record.binding.secret is None or record.binding.account in disagreed:
+        binding = record.binding
+        if binding.secret is None or binding.vault is None:
             continue
-        promotion = promotions.get(_lock_key(record.binding))
+        key = _lock_key(binding)
+        promotion = promotions.get(key)
         if promotion is None:
             continue
-        if promotion.promotable and promotion.version is None:
-            continue
+        if promotion.promotable:
+            if promotion.version is None or key not in served or record.source is None:
+                continue
+            entry = (binding, record.source.value, _data_at(key, served))
+            if rotation.disagreements([entry]):
+                continue
         settled.append(record)
     return settled
+
+
+def _left_open(applied: Sequence[_Applied], settled: Sequence[_Applied]) -> list[str]:
+    """The confirmed accounts whose windows `--finish-rollover` leaves alone."""
+    kept = {id(record) for record in settled}
+    return sorted(
+        {
+            record.binding.account
+            for record in applied
+            if id(record) not in kept
+            and record.binding.secret is not None
+            and apply_states.is_confirmed(record.outcome.state)
+        }
+    )
 
 
 def _data_at(key: LockKey, documents: Mapping[LockKey, Any]) -> Any:
@@ -9436,7 +9471,7 @@ def _unconfirmed(accounts: Sequence[str], unread: Mapping[LockKey, Error]) -> Di
     message = "the vault did not read back the password this run applied, for: " + ", ".join(
         sorted(accounts)
     )
-    for key, error in unread.items():
+    for key, error in sorted(unread.items(), key=lambda item: (item[0].store, item[0].path)):
         message += f"; could not read `{key.store}:{key.path}`: {error.message}"
     return Diagnostic(level="error", message=message, code=ROTATION_UNCONFIRMED)
 

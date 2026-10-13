@@ -957,6 +957,18 @@ class LostAtPromotion(MemoryStore):
         return super().write(path, data, cas=cas)
 
 
+class StaleAfterPromotion(MemoryStore):
+    """Accepts the promotion, and serves the old ``current`` when read back."""
+
+    def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        found = super().read(path, version=version)
+        if found is None or "previous" not in found.data:
+            return found
+        stale = dict(found.data)
+        stale["DB_CREDENTIALS"] = {"acme_web_user": LIVE}
+        return replace(found, data=stale)
+
+
 class UnreadableAfterPromotion(MemoryStore):
     """Accepts the promotion, and then cannot read the document back."""
 
@@ -1229,8 +1241,8 @@ def test_a_failed_target_keeps_its_window(
 
 @pytest.mark.parametrize(
     "store",
-    [LostAtPromotion, UnreadableAfterPromotion],
-    ids=["promotion-failed", "read-back-failed"],
+    [LostAtPromotion, StaleAfterPromotion, UnreadableAfterPromotion],
+    ids=["promotion-failed", "read-back-stale", "read-back-failed"],
 )
 def test_a_window_stays_open_where_the_vault_may_serve_the_old_password(
     runner: CliRunner,
@@ -1252,6 +1264,42 @@ def test_a_window_stays_open_where_the_vault_may_serve_the_old_password(
     assert result.exit_code == ExitCode.PARTIAL, result.output
     assert finished(harness) == []
     assert "closed 0 rollover windows" in result.output
+    assert "did not close the windows of acme_web_user" in result.output
+
+
+def test_a_read_back_failure_is_still_reported_after_a_takeover(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A takeover at `--finish-rollover` comes after step 8, and does not hide it.
+
+    Alpha's read-back fails, and somebody takes beta's lock at that moment. Beta's
+    read-back worked, so the run goes on to close its window, and the fence
+    check before that close finds the takeover.
+    """
+    take = steal("apps/acme/appdb-beta", at="read-back")
+    harness: dict[str, Any] = {}
+
+    class AlphaUnreadable(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
+            if path.endswith("appdb-alpha") and found is not None and "previous" in found.data:
+                take(harness, "read-back")
+                raise StoreError("could not reach the store: connection refused")
+            return found
+
+    harness.update(
+        estate(
+            users={"ACME_WEB_USER": user(rollover_enabled=True)},
+            capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+            store=AlphaUnreadable(),
+        )
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert "SOPULI-W011" in codes
+    assert "SOPULI-W012" in codes
 
 
 # -------------------------------------------------------------- the report ---

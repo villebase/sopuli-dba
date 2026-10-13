@@ -34,10 +34,6 @@ from sopuli.exit_codes import ExitCode
 #: ``rotate``'s writes to the secret's path, counted from 1.
 STAGING, PROMOTION = 1, 2
 
-#: What a run that failed at the promotion exits with. Anything else, such as 1
-#: or 7, is a different failure.
-NOT_PROMOTED = (ExitCode.PARTIAL,)
-
 
 @dataclass
 class Faulted:
@@ -127,7 +123,7 @@ def test_the_vault_lost_at_promotion_leaves_the_password_applied_and_unpromoted(
     """
     faulted = rotate(Fault.DOWN_AT_WRITE, PROMOTION)
 
-    assert faulted.result.returncode in NOT_PROMOTED, faulted.result.stderr
+    assert faulted.result.returncode == ExitCode.PARTIAL, faulted.result.stderr
     document, _ = fault_estate.read(SECRET)
     assert document["DB_CREDENTIALS"][ACCOUNT] == faulted.current
     new = document["pending"][ACCOUNT]
@@ -180,7 +176,7 @@ def test_a_promotion_vault_kept_but_never_answered_is_not_success(
     """
     faulted = rotate(Fault.DOWN_AFTER_WRITE, PROMOTION)
 
-    assert faulted.result.returncode in NOT_PROMOTED, faulted.result.stderr
+    assert faulted.result.returncode == ExitCode.PARTIAL, faulted.result.stderr
     document, _ = fault_estate.read(SECRET)
     new = document["DB_CREDENTIALS"][ACCOUNT]
     assert new != faulted.current, "Vault did not keep the promotion"

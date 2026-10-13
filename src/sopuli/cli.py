@@ -9019,7 +9019,7 @@ def creds_rotate(
         code = int(ExitCode.PARTIAL if changed or sequence.documents else ExitCode.LOCK_HELD)
     else:
         if sequence.disagreed:
-            document.diagnostics.append(_unconfirmed(sequence.disagreed))
+            document.diagnostics.append(_unconfirmed(sequence.disagreed, sequence.unread))
         code = rotation.exit_code_for(
             staged_failures=sequence.failures,
             applied=states,
@@ -9126,6 +9126,9 @@ class _Rotation:
     applied: list[_Applied] = field(default_factory=list)
     promotions: dict[LockKey, _Promotion] = field(default_factory=dict)
     disagreed: tuple[str, ...] = ()
+    #: Step 8's documents that could not be read back. Their accounts are in
+    #: ``disagreed`` as well.
+    unread: dict[LockKey, Error] = field(default_factory=dict)
     #: Windows closed by ``--finish-rollover``. ``None`` where it was not asked
     #: for, which is not the same fact as zero.
     closed: int | None = None
@@ -9249,13 +9252,20 @@ def _rotate_estate(
         return None
 
     # Step 8, on the documents this run actually promoted.
-    promoted = _read_documents(keys, stores, run=run)
+    promoted, into.unread = _read_promoted(into.promotions, stores, run=run)
     into.disagreed = _read_back(into.applied, into.promotions, promoted)
 
     if finish_windows:
         try:
             into.closed = _close_windows(
-                into.applied, run, config, documents=promoted, margin=margin, manager=manager
+                _settled(into.applied, into.promotions, into.disagreed),
+                run,
+                config,
+                # A document this run did not promote was not written after
+                # step 6's read, so that copy is still what the vault holds.
+                documents={**documents, **promoted},
+                margin=margin,
+                manager=manager,
             )
         except LockStolenError as lost:
             # Every window this run had already closed stays closed, which is why
@@ -9303,6 +9313,63 @@ def _read_back(
     return rotation.disagreements(entries)
 
 
+def _read_promoted(
+    promotions: Mapping[LockKey, _Promotion],
+    stores: Mapping[str, SecretStore],
+    *,
+    run: Invocation,
+) -> tuple[dict[LockKey, Any], dict[LockKey, Error]]:
+    """Section 8 step 8's read: each document this run promoted, and no other.
+
+    A document whose promotion failed is not read. The run already knows that
+    the vault does not serve its password, and that store may be the one that
+    has just stopped answering (UC-1 section 8, row 7).
+
+    **A read that fails is a finding, not the end of the run.** Every database
+    already has the new password, so the run's rows must still be reported.
+    The document is left out of what is returned, and
+    :func:`sopuli.rotate.disagreements` counts a missing document as a
+    disagreement: the run cannot say what the vault serves. The error is
+    returned with the store's own message, for the diagnostic.
+    """
+    keys = [key for key, promotion in promotions.items() if promotion.version is not None]
+    documents: dict[LockKey, Any] = {}
+    unread: dict[LockKey, Error] = {}
+    for key in keys:
+        try:
+            documents.update(_read_documents([key], stores, run=run))
+        except StoreError as error:
+            unread[key] = _as_error(error)
+    return documents, unread
+
+
+def _settled(
+    applied: Sequence[_Applied],
+    promotions: Mapping[LockKey, _Promotion],
+    disagreed: Sequence[str],
+) -> list[_Applied]:
+    """The records whose document the vault serves with what was applied.
+
+    `--finish-rollover` closes windows only for these. Closing a window removes
+    the old password from the database. Where `current` still holds the old
+    password, because the promotion was withheld or failed, or because step 8
+    could not confirm it, the old password is the one applications fetch. A
+    document that owed no promotion is settled: the vault already held what was
+    applied.
+    """
+    settled = []
+    for record in applied:
+        if record.binding.secret is None or record.binding.account in disagreed:
+            continue
+        promotion = promotions.get(_lock_key(record.binding))
+        if promotion is None:
+            continue
+        if promotion.promotable and promotion.version is None:
+            continue
+        settled.append(record)
+    return settled
+
+
 def _data_at(key: LockKey, documents: Mapping[LockKey, Any]) -> Any:
     stored = documents.get(key)
     return None if stored is None else stored.data
@@ -9329,7 +9396,8 @@ def _close_windows(
     sequencing is safe: an account whose apply failed still has applications
     authenticating with a password that only its open window is keeping alive,
     and closing it because its neighbours succeeded would turn a partial
-    rotation into an outage.
+    rotation into an outage. The caller passes only the records whose vault
+    document serves the new password (:func:`_settled`), for the same reason.
 
     **The fence still applies here**, which is why the manager is handed down.
     This is the last mutation of the run and the furthest from step 2, so it is
@@ -9355,21 +9423,22 @@ def _close_windows(
     return sum(1 for record in finished if record.changed)
 
 
-def _unconfirmed(accounts: Sequence[str]) -> Diagnostic:
+def _unconfirmed(accounts: Sequence[str], unread: Mapping[LockKey, Error]) -> Diagnostic:
     """Section 8 step 8's finding, as the diagnostic a scheduler reads.
 
     Named accounts rather than a count, for the reason the closing line gives:
     the exit code says 4 and so does a run with half its targets failed, and what
     separates them is which accounts and what to go and look at.
+
+    A document that could not be read back is named with the store's message,
+    so that the reader can tell an unreachable vault from a stale one.
     """
-    return Diagnostic(
-        level="error",
-        message=(
-            "the vault read back a different password than this run applied, for: "
-            + ", ".join(sorted(accounts))
-        ),
-        code=ROTATION_UNCONFIRMED,
+    message = "the vault did not read back the password this run applied, for: " + ", ".join(
+        sorted(accounts)
     )
+    for key, error in unread.items():
+        message += f"; could not read `{key.store}:{key.path}`: {error.message}"
+    return Diagnostic(level="error", message=message, code=ROTATION_UNCONFIRMED)
 
 
 def _reach(radius: Any) -> str:

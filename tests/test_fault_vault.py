@@ -34,10 +34,9 @@ from sopuli.exit_codes import ExitCode
 #: ``rotate``'s writes to the secret's path, counted from 1.
 STAGING, PROMOTION = 1, 2
 
-#: What a run that failed at the promotion may exit with: 1 today (#760), and 4
-#: once that is fixed. Anything else, such as 7 or 5, is a different failure.
-#: #760's fix narrows this to 4.
-NOT_PROMOTED = (ExitCode.FAILURE, ExitCode.PARTIAL)
+#: What a run that failed at the promotion exits with. Anything else, such as 1
+#: or 7, is a different failure.
+NOT_PROMOTED = (ExitCode.PARTIAL,)
 
 
 @dataclass
@@ -136,11 +135,6 @@ def test_the_vault_lost_at_promotion_leaves_the_password_applied_and_unpromoted(
     assert not fault_estate.login(faulted.current)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#760: step 8 reads back an unpromoted document, and the error drops the rows",
-)
 def test_the_vault_lost_at_promotion_is_reported_as_partial(rotate: Rotate) -> None:
     """Step 7 is not silent: exit 4, and the row says the database changed.
 
@@ -150,10 +144,6 @@ def test_the_vault_lost_at_promotion_is_reported_as_partial(rotate: Rotate) -> N
     """
     faulted = rotate(Fault.DOWN_AT_WRITE, PROMOTION)
 
-    # Not an assert: any exit but #760's 1 is a different failure, and must not
-    # count as the expected one.
-    if faulted.result.returncode not in NOT_PROMOTED:
-        pytest.fail(f"exit {faulted.result.returncode}, not 1 or 4: {faulted.result.stderr}")
     assert faulted.result.returncode == ExitCode.PARTIAL, faulted.result.stderr
     assert faulted.document["summary"]["changed"] == 1
     assert [row["changed"] for row in faulted.rows] == [True]

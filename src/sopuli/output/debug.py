@@ -32,9 +32,13 @@ from __future__ import annotations
 import logging
 import sys
 import time
+import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
+from types import TracebackType
 from typing import TextIO
+
+import click
 
 #: The logger every part of the tool logs under.
 ROOT = "sopuli"
@@ -75,12 +79,39 @@ class DebugFormatter(logging.Formatter):
         message = record.getMessage()
         if record.exc_info:
             message = f"{message}\n{self.formatException(record.exc_info)}"
+        # No colour, whatever `--color` says: a vendor message or a traceback
+        # can arrive with escape sequences in it (`03-json-output.md` §*Colour*).
+        message = click.unstyle(message)
         area = record.name.removeprefix(f"{ROOT}.")
         elapsed = record.created - self._started
         first, *rest = message.splitlines() or [""]
         lines = [f"{PREFIX} {elapsed:7.3f}s {area}: {first}"]
         lines.extend(f"{INDENT}{line}" for line in rest)
         return "\n".join(lines)
+
+    def formatException(  # noqa: N802 - overrides `logging.Formatter`
+        self,
+        ei: tuple[type[BaseException], BaseException, TracebackType | None]
+        | tuple[None, None, None],
+    ) -> str:
+        """The traceback of the exception itself, and its causes by type only.
+
+        An exception the tool raises carries no secret in its message (P5). The
+        exception it was raised *from* may: `sopuli.notify.webhook` leaves an
+        httpx error's message out of its own, because that message holds the
+        URL, and chains the error with ``from``. Python's default would print
+        that message. So a cause is named by its type, and nothing more.
+        """
+        _, exc, tb = ei
+        if exc is None:
+            return ""
+        lines = traceback.format_exception(type(exc), exc, tb, chain=False)
+        cause = exc.__cause__ or exc.__context__
+        while cause is not None:
+            kind = type(cause)
+            lines.append(f"caused by {kind.__module__}.{kind.__qualname__}\n")
+            cause = cause.__cause__ or cause.__context__
+        return "".join(lines).rstrip("\n")
 
 
 @contextmanager

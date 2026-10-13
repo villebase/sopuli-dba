@@ -177,3 +177,84 @@ def test_debug_is_not_a_setting() -> None:
     from sopuli.settings.registry import SETTINGS
 
     assert not [name for name in SETTINGS if "debug" in name or "log" in name]
+
+
+def test_a_cause_is_named_by_its_type_and_never_by_its_message() -> None:
+    """A cause's message may hold a secret: an httpx error's holds the webhook
+    URL, which `sopuli.notify.webhook` leaves out of its own message."""
+    stream = io.StringIO()
+    url = "https://hooks.example.com/services/T0KEN"
+
+    with debugging(True, stream=stream):
+        try:
+            try:
+                raise ValueError(f"cannot reach {url}")
+            except ValueError as error:
+                raise RuntimeError("the webhook failed") from error
+        except RuntimeError:
+            logger("test").debug("raised", exc_info=True)
+
+    written = stream.getvalue()
+    assert "T0KEN" not in written
+    assert "RuntimeError: the webhook failed" in written
+    assert "caused by builtins.ValueError" in written
+
+
+def test_escape_sequences_are_removed() -> None:
+    stream = io.StringIO()
+
+    with debugging(True, stream=stream):
+        logger("test").debug("\x1b[31mORA-01017\x1b[0m")
+
+    assert "\x1b" not in stream.getvalue()
+    assert stream.getvalue().rstrip().endswith("test: ORA-01017")
+
+
+def test_without_debug_the_platform_is_not_asked(
+    runner: CliRunner, show: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`platform.platform()` takes about 100 ms on Windows, so a run without
+    `--debug` must not pay for a line it does not print."""
+
+    def refuse() -> str:
+        raise AssertionError("platform.platform() called without --debug")
+
+    monkeypatch.setattr("platform.platform", refuse)
+
+    result = runner.invoke(cli, show)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+def test_a_refusal_before_the_config_is_read_carries_its_traceback(
+    runner: CliRunner, show: list[str]
+) -> None:
+    """`config show` does not stream, so `--output jsonl` is refused while the
+    command line resolves, before the config file is read."""
+    result = runner.invoke(cli, [*show, "--debug", "--output", "jsonl"])
+
+    # `main` maps the error to exit 2; `CliRunner` stops before it.
+    assert type(result.exception).__name__ == "ArgumentError"
+    assert "run: the run raised ArgumentError" in result.stderr
+
+
+def test_the_settings_printed_hold_no_secret() -> None:
+    """Debug output prints each setting a layer supplied, with `%r`. That is
+    safe for these settings, and this list is where a new one is reviewed: a
+    setting that can hold a secret must not be printed as it is."""
+    from sopuli.invocation import RESOLVED_SETTINGS
+
+    assert set(RESOLVED_SETTINGS) == {
+        "confirm",
+        "db.connect_timeout_s",
+        "db.query_timeout_s",
+        "locking.break_expired",
+        "output",
+        "profile",
+        "safety.confirm_environments",
+        "safety.delivery.allowed_methods",
+        "safety.dry_run",
+        "safety.max_targets",
+        "safety.readonly",
+        "vault",
+    }

@@ -152,7 +152,9 @@ sopuli: debug:   0.088s run: setting profile = 'scheduled' from --profile (verb)
 ```
 
 A run that fails also writes the traceback, indented under the line that names
-the exception. The message on stderr has no traceback.
+the exception. The message on stderr has no traceback. The exception's causes
+are named by type only, because a cause's message may hold a secret: an httpx
+error's message holds the request URL, and a webhook URL can hold a token.
 
 - **Debug output is not part of the contract.** Invariant 12 covers stdout. A
   debug line may change in any release, and a script must not parse one, so a

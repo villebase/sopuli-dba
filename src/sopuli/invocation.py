@@ -616,6 +616,16 @@ def check_vault_token(group: GlobalOptions, verb: GlobalOptions) -> None:
     )
 
 
+def wants_debug(group: GlobalOptions, verb: GlobalOptions) -> bool:
+    """Whether ``--debug`` was written in either position.
+
+    One function, because two places ask: the wrapper that attaches the debug
+    handler, and :func:`resolve_invocation`, whose answer turns the spinner off.
+    If they disagreed, a spinner could overwrite debug lines.
+    """
+    return group.debug or verb.debug
+
+
 def resolve_invocation(
     group: GlobalOptions,
     verb: GlobalOptions,
@@ -666,7 +676,7 @@ def resolve_invocation(
         color_choice=ColorChoice(_first_given(verb.color_choice, group.color_choice)),
         vault_token_file=_first_path(verb.vault_token_file, group.vault_token_file),
         vault_addr=_first_written(verb.vault_addr, group.vault_addr),
-        debug=group.debug or verb.debug,
+        debug=wants_debug(group, verb),
         resolved=resolve_all(contributions),
         loaded=loaded,
     )
@@ -904,8 +914,7 @@ def _options(func: F, *, hidden: bool) -> F:
         is_flag=True,
         default=False,
         hidden=hidden,
-        help="Write debug output to stderr: settings, statements, vault calls."
-        " Not a stable format.",
+        help="Write debug output to stderr. Not a stable format.",
     )
     dry_run = (
         click.option(
@@ -944,13 +953,16 @@ def _pass_invocation(func: F) -> F:
             kwargs.pop(name, None)
         group = ctx.find_root().obj or GlobalOptions()
         command = command_path(ctx)
-        LOG.debug(
-            "sopuli %s, Python %s, %s",
-            get_version(),
-            platform.python_version(),
-            platform.platform(),
-        )
-        LOG.debug("command %s", command)
+        # Guarded, because the arguments are computed before `debug` checks the
+        # level, and `platform.platform()` takes about 100 ms on Windows.
+        if LOG.isEnabledFor(logging.DEBUG):
+            LOG.debug(
+                "sopuli %s, Python %s, %s",
+                get_version(),
+                platform.python_version(),
+                platform.platform(),
+            )
+            LOG.debug("command %s", command)
         invocation = resolve_invocation(group, verb, env=os.environ, command=command)
         check_output_mode(invocation)
 
@@ -998,10 +1010,6 @@ def _pass_invocation(func: F) -> F:
             click.echo("sopuli: aborted", err=True)
             raise SystemExit(ExitCode.ABORTED) from exc
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
-            # The traceback, which the message on stderr leaves out. An
-            # exception carries no secret (P5), and a traceback shows source
-            # lines, not values.
-            LOG.debug("the run raised %s", type(exc).__name__, exc_info=True)
             _fail(invocation, exc)
             raise
         invocation.emitter().emit(invocation.document, text)
@@ -1023,8 +1031,16 @@ def _pass_invocation(func: F) -> F:
         # resolves is in the debug output too. `debug` is read here and popped
         # with the other global options inside `wrapper`.
         group = ctx.find_root().obj or GlobalOptions()
-        with debugging(group.debug or bool(kwargs.get("debug"))):
-            return wrapper(ctx, **kwargs)
+        with debugging(wants_debug(group, GlobalOptions.from_params(kwargs))):
+            try:
+                return wrapper(ctx, **kwargs)
+            except Exception as exc:
+                # The traceback, which the message on stderr leaves out.
+                # `debug.DebugFormatter` prints the chained causes by type
+                # only: an exception's own message carries no secret (P5),
+                # and a cause's may.
+                LOG.debug("the run raised %s", type(exc).__name__, exc_info=True)
+                raise
 
     # `update_wrapper` rather than the `@functools.wraps` decorator, so that mypy
     # still sees `debugged` as the plain function `click.pass_context` wants. The

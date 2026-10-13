@@ -112,6 +112,20 @@ def test_a_query_is_logged_on_one_line_with_its_bind_names_and_not_their_values(
     assert "ACME_APP_USER" not in line
 
 
+def test_a_string_with_a_password_clause_is_cut_off_after_it(debug: io.StringIO) -> None:
+    """The backstop: only a `Statement` should carry a password, and a string
+    that carries one by mistake still writes none here."""
+    cursor = FakeCursor()
+    sql = f'ALTER USER "ACME_APP_USER" IDENTIFIED BY "{PASSWORD}" ACCOUNT UNLOCK'
+
+    TracedCursor(cursor).execute(sql)
+
+    assert cursor.calls == [(sql,)]
+    written = debug.getvalue()
+    assert PASSWORD not in written
+    assert 'oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in ' in written
+
+
 def test_parameters_reach_the_client_as_the_caller_passed_them() -> None:
     """``execute(sql)`` and ``execute(sql, None)`` are two calls, and a fake
     that told them apart would break if the cursor merged them."""
@@ -123,14 +137,15 @@ def test_parameters_reach_the_client_as_the_caller_passed_them() -> None:
     assert cursor.calls == [("SELECT 1 FROM dual",), ("SELECT 1 FROM dual", None)]
 
 
-def test_a_failure_is_logged_by_its_code_and_raised(debug: io.StringIO) -> None:
+def test_an_error_is_logged_as_the_server_s_answer_and_raised(debug: io.StringIO) -> None:
+    """Not "failed": a probe reads ORA-00942 as an absent capability."""
     cursor = FakeCursor(error=OracleError("ORA-01031", "insufficient privileges"))
 
     with pytest.raises(OracleError):
         TracedCursor(cursor).execute("SELECT 1 FROM dual")
 
     written = debug.getvalue()
-    assert "failed with ORA-01031: SELECT 1 FROM dual" in written
+    assert "oracle: SELECT 1 FROM dual answered ORA-01031 in " in written
     assert "insufficient privileges" not in written
 
 
@@ -185,6 +200,20 @@ def test_a_vault_request_that_fails_is_logged_by_its_error_type(debug: io.String
     assert "vault: GET /v1/sys/health: ConnectError in " in debug.getvalue()
 
 
+def test_any_other_vault_request_error_is_logged(debug: io.StringIO) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.TooManyRedirects("loop", request=request)
+
+    client = httpx.Client(
+        base_url="https://vault.example.com", transport=httpx.MockTransport(handle)
+    )
+
+    with pytest.raises(httpx.TooManyRedirects):
+        Transport(client).request("GET", "sys/health")
+
+    assert "vault: GET /v1/sys/health: TooManyRedirects in " in debug.getvalue()
+
+
 # ----------------------------------------------------------------- webhook ---
 
 
@@ -201,6 +230,22 @@ def test_a_webhook_is_logged_by_its_host_only(
     assert "webhook: POST to chat.example.com: 204 in " in written
     assert "EXAMPLEEXAMPLEEXAMPLE" not in written
     assert "/hooks/" not in written
+
+
+def test_a_webhook_with_no_host_says_so(
+    debug: io.StringIO, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(address: str, **_: Any) -> httpx.Response:
+        raise httpx.UnsupportedProtocol("no scheme")
+
+    monkeypatch.setattr("sopuli.notify.webhook.httpx.post", refuse)
+
+    with pytest.raises(Exception, match="could not be reached"):
+        webhook.send(Secret("hooks.example.com/services/T/B/X"), "a password is waiting")
+
+    written = debug.getvalue()
+    assert "webhook: POST to an address with no host: UnsupportedProtocol in " in written
+    assert "/services/" not in written
 
 
 # ---------------------------------------------------------------- findings ---

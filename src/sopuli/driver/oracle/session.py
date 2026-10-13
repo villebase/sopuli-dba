@@ -30,6 +30,7 @@ than poisoning a session shared with others.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Mapping
@@ -277,13 +278,14 @@ class OracleSession:
             with traced_cursor(self.connection) as cursor:
                 self._scope = observe(cursor)
             scope = self._scope
-            found = (scope.type, scope.container, scope.db_version, scope.open_mode)
-            LOG.debug(
-                "%s is %s; capabilities %s",
-                self.target.name,
-                ", ".join(str(part) for part in found if part is not None),
-                ", ".join(sorted(scope.capabilities)) or "none",
-            )
+            if LOG.isEnabledFor(logging.DEBUG):
+                found = (scope.type, scope.container, scope.db_version, scope.open_mode)
+                LOG.debug(
+                    "%s is %s; capabilities %s",
+                    self.target.name,
+                    ", ".join(str(part) for part in found if part is not None),
+                    ", ".join(sorted(scope.capabilities)) or "none",
+                )
         return self._scope
 
     def privileges(self) -> PrivilegeAudit:

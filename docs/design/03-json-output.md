@@ -165,8 +165,11 @@ Each part of the tool writes these lines:
   the driver sends, on one line, with the time it took. The capabilities the
   probe found. Each verification login and its result. A statement that carries
   a password is written in its redacted form, `IDENTIFIED BY ***`. A bind is
-  written by its name, never its value. A statement that fails is written with
-  its error code; the server's message reaches the operator in the error.
+  written by its name, never its value. A statement the server refuses is
+  written with the code it answered, such as `answered ORA-00942`. That is not
+  always a failure: a capability probe reads `ORA-00942` as an absent
+  capability, and the scope line after the probes says what it concluded. The
+  server's message reaches the operator in the error.
 - **`vault`**: each request, with its method, path, status and time. Never a
   body, a header or the query string: a body can hold a password, and a header
   holds the token. A path names where a secret is kept, as the config does.

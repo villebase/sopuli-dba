@@ -75,7 +75,7 @@ def send(url: Secret, message: str) -> None:
     """
     address = url.reveal()
     # The host only: the path and the query of a chat webhook URL are its token.
-    host = httpx.URL(address).host
+    host = httpx.URL(address).host or "an address with no host"
     started = time.monotonic()
     try:
         response = httpx.post(address, json={BODY_KEY: message}, timeout=TIMEOUT_S)

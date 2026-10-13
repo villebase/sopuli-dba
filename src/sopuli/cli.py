@@ -970,6 +970,7 @@ def _client_report(config: Config) -> dict[str, Any]:
         module.initialise(env=os.environ, lib_dir=lib_dir)
         version = module.client_version()
     except Exception as error:  # noqa: BLE001 -- a broken client is the finding
+        FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
         report["instant_client"] = "not loaded"
         report["detail"] = str(error).splitlines()[0]
         return report
@@ -1098,13 +1099,14 @@ def _as_error(error: Exception) -> Error:
 
 
 def _finding(error: Exception) -> Error:
-    """:func:`_as_error` for an error a verb reports as a finding, with its traceback.
+    """:func:`_as_error` for an error a verb reports and does not raise, with its traceback.
 
-    A finding does not end the run, so the traceback the wrapper in
-    :mod:`sopuli.invocation` writes for an exception that does never covers it.
-    Only the handlers that make a finding call this. An error converted only for
-    its message, or converted and then raised, goes through :func:`_as_error`,
-    so ``--debug`` neither labels it a finding nor writes its traceback twice.
+    A finding, a pre-flight warning, a reset record that could not be written:
+    each is reported, and the run goes on. So the traceback the wrapper in
+    :mod:`sopuli.invocation` writes for an exception that ends the run never
+    covers it, and this writes one where the error is reported. An error
+    converted and then raised goes through :func:`_as_error`, so ``--debug``
+    does not write its traceback twice.
     """
     FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
     return _as_error(error)
@@ -2433,7 +2435,7 @@ def _write_reset_record(
         # the password has changed and the person still needs it.
         journal = _reset_journal(run, config)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
-        return _RecordFailure(path=path, reason=_as_error(error).message)
+        return _RecordFailure(path=path, reason=_finding(error).message)
     if journal is None:
         # Unreachable while `path` comes from `_record_paths`, which derives
         # nothing without a block -- and cheaper to answer than to prove at every
@@ -2464,7 +2466,7 @@ def _write_reset_record(
         # version was deleted, which reads as `None` and is not version 0.
         journal.write(path, document, cas=None)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
-        return _RecordFailure(path=path, reason=_as_error(error).message)
+        return _RecordFailure(path=path, reason=_finding(error).message)
     return None
 
 
@@ -2854,7 +2856,7 @@ def _reset_one(
         # is now the account's, and on the unseen one the token already made would
         # be thrown away. The row is still `ERROR` at exit 4, and the record and
         # the notification follow, because both hold what happened.
-        unclosed = _as_error(partial) if partial is not None else None
+        unclosed = _finding(partial) if partial is not None else None
         row = _Reset(
             account=account,
             target=target.name,
@@ -3093,7 +3095,7 @@ def _notify(
         )
         channel.sender.send(channel.url, message)
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
-        return _as_error(error).message
+        return _finding(error).message
     return None
 
 
@@ -7415,7 +7417,7 @@ def _preflight_target(
             Finding(
                 target=target.name,
                 check=preflight.SCOPE,
-                message=_as_error(error).message,
+                message=_finding(error).message,
                 hint="the connection worked; this is what it could not read",
             ),
         )
@@ -7433,7 +7435,7 @@ def _preflight_target(
             Finding(
                 target=target.name,
                 check=preflight.PRIVILEGES,
-                message=f"the privilege audit could not be read: {_as_error(error).message}",
+                message=f"the privilege audit could not be read: {_finding(error).message}",
                 hint="nothing about this target's grants was established, either way",
                 category="authorization",
                 blocking=False,

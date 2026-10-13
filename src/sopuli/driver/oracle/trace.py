@@ -18,13 +18,22 @@ log it.
 debug output needs to know which binds a query had, not what an account name
 was.
 
-**A failure is logged by its code.** The server's message reaches the operator
-through the error the session raises, so it is not repeated here.
+**A string that holds a password is redacted anyway.** Only a ``Statement``
+should carry one, and :mod:`sopuli.driver.oracle.statements` builds every
+statement that does. A string with ``IDENTIFIED BY`` in it is logged cut off
+after those words, so a later caller that passed revealed text by mistake
+still writes no password here.
+
+**An error is logged by its code, as the server's answer.** Not every error is
+a failure: a capability probe reads ``ORA-00942`` as "absent", and the scope
+line that follows says what the probe concluded. The server's message reaches
+the operator through the error the session raises, so it is not repeated here.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -35,6 +44,9 @@ from sopuli.driver.oracle.statements import Statement
 from sopuli.output.debug import logger
 
 LOG = logger("oracle")
+
+#: Where a password starts in an ``ALTER USER`` or ``CREATE USER`` written as a string.
+_PASSWORD_CLAUSE = re.compile(r"(identified\s+by)\s.*", re.IGNORECASE | re.DOTALL)
 
 
 class TracedCursor:
@@ -58,14 +70,14 @@ class TracedCursor:
         if isinstance(statement, Statement):
             shown, sql = statement.redacted, statement.reveal()
         else:
-            shown, sql = statement, statement
+            shown, sql = _PASSWORD_CLAUSE.sub(r"\1 ***", statement), statement
         started = time.monotonic()
         try:
             result = self._cursor.execute(sql, *parameters)
         except Exception as error:
-            _log(started, f"failed with {_code(error)}: {_one_line(shown)}", parameters)
+            _log(started, shown, parameters, error=error)
             raise
-        _log(started, _one_line(shown), parameters)
+        _log(started, shown, parameters)
         return result
 
     def callproc(self, name: str, parameters: Any = None) -> Any:
@@ -74,7 +86,7 @@ class TracedCursor:
         try:
             result = self._cursor.callproc(name, parameters)
         except Exception as error:
-            _log(started, f"failed with {_code(error)}: call {name}", ())
+            _log(started, f"call {name}", (), error=error)
             raise
         _log(started, f"call {name}", ())
         return result
@@ -93,12 +105,15 @@ def traced_cursor(connection: Any) -> Iterator[TracedCursor]:
         yield TracedCursor(cursor)
 
 
-def _log(started: float, text: str, parameters: tuple[Any, ...]) -> None:
+def _log(
+    started: float, text: str, parameters: tuple[Any, ...], *, error: Exception | None = None
+) -> None:
     if not LOG.isEnabledFor(logging.DEBUG):
         return
     names = _bind_names(parameters)
     binds = f" (binds {names})" if names else ""
-    LOG.debug("%s%s in %.3fs", text, binds, time.monotonic() - started)
+    answer = f" answered {_code(error)}" if error is not None else ""
+    LOG.debug("%s%s%s in %.3fs", _one_line(text), binds, answer, time.monotonic() - started)
 
 
 def _bind_names(parameters: tuple[Any, ...]) -> str:

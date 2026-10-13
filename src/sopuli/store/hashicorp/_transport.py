@@ -127,6 +127,12 @@ class Transport:
                 f"could not reach the store: {error}",
                 hint="check `addr`, and `tls.ca_file` if the certificate is your own CA",
             ) from error
+        except Exception as error:
+            # Anything else httpx raises, such as too many redirects or an
+            # address it cannot parse: logged so the failed request has a line,
+            # and raised as it was, as before.
+            _log(started, method, path, type(error).__name__)
+            raise
 
         _log(started, method, path, str(response.status_code))
         return Response(status=response.status_code, body=_decode(response))

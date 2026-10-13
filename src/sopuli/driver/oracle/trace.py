@@ -38,7 +38,13 @@ LOG = logger("oracle")
 
 
 class TracedCursor:
-    """A database cursor that writes a debug line for each call."""
+    """A database cursor that writes a debug line for each call.
+
+    It has the four methods the driver calls, and no others. It does not forward
+    other attributes to the cursor it wraps: ``oracledb``'s ``Cursor.statement``
+    holds the text last executed, which after a password change is the revealed
+    ``ALTER USER``.
+    """
 
     def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
@@ -78,9 +84,6 @@ class TracedCursor:
 
     def fetchall(self) -> Any:
         return self._cursor.fetchall()
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._cursor, name)
 
 
 @contextmanager

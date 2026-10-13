@@ -277,13 +277,11 @@ class OracleSession:
             with traced_cursor(self.connection) as cursor:
                 self._scope = observe(cursor)
             scope = self._scope
+            found = (scope.type, scope.container, scope.db_version, scope.open_mode)
             LOG.debug(
-                "%s is %s %s, version %s, %s; capabilities %s",
+                "%s is %s; capabilities %s",
                 self.target.name,
-                scope.type,
-                scope.container,
-                scope.db_version,
-                scope.open_mode,
+                ", ".join(str(part) for part in found if part is not None),
                 ", ".join(sorted(scope.capabilities)) or "none",
             )
         return self._scope
@@ -1089,7 +1087,16 @@ class OracleSession:
             )
 
         started = time.monotonic()
-        outcome, detail, warning = self._attempt(state.name, secret)
+        try:
+            outcome, detail, warning = self._attempt(state.name, secret)
+        except Exception as error:
+            LOG.debug(
+                "login as %s failed with %s in %.3fs",
+                state.name,
+                getattr(error, "code", None) or type(error).__name__,
+                time.monotonic() - started,
+            )
+            raise
         LOG.debug("login as %s: %s in %.3fs", state.name, outcome, time.monotonic() - started)
         if not guarded:
             detail = "; ".join(
@@ -1558,7 +1565,7 @@ class OracleDriver:
             LOG.debug(
                 "connect to %s as %s failed with %s in %.3fs",
                 target.name,
-                credential.username,
+                _who(credential),
                 failure.code or "no code",
                 time.monotonic() - started,
             )
@@ -1566,7 +1573,7 @@ class OracleDriver:
         LOG.debug(
             "connect to %s as %s in %.3fs",
             target.name,
-            credential.username,
+            _who(credential),
             time.monotonic() - started,
         )
 
@@ -1590,6 +1597,12 @@ class OracleDriver:
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )
+
+
+def _who(credential: Credential) -> str:
+    """The user a debug line names. ``auth: external`` has none: the wallet or
+    the Kerberos ticket supplies it."""
+    return credential.username or "the external credential"
 
 
 def set_identifier(connection: Any, correlation_id: str) -> None:

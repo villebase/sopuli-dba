@@ -12,15 +12,17 @@ from __future__ import annotations
 import io
 import json
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
 from fault_harness import ACCOUNT, OLD, SECRET, Estate
-from sopuli.cli import _as_error
+from sopuli.cli import _as_error, _finding
 from sopuli.driver.oracle.statements import Statement
 from sopuli.driver.oracle.trace import TracedCursor, traced_cursor
+from sopuli.driver.protocol import Credential
 from sopuli.exit_codes import ExitCode
 from sopuli.notify import webhook
 from sopuli.output.debug import PREFIX, debugging
@@ -214,12 +216,83 @@ def test_a_finding_carries_its_traceback(debug: io.StringIO) -> None:
     try:
         connect()
     except ConnectionError as error:
-        _as_error(error)
+        _finding(error)
 
     written = debug.getvalue()
     assert "finding: finding from ConnectionError" in written
     assert "Traceback (most recent call last):" in written
     assert "in connect" in written
+
+
+def test_an_error_converted_for_its_message_writes_no_traceback(debug: io.StringIO) -> None:
+    """`_as_error` alone is not a finding. Some callers read only its message,
+    and some raise the error afterwards, when the run's own traceback covers it."""
+    try:
+        raise ConnectionError("target down")
+    except ConnectionError as error:
+        _as_error(error)
+
+    assert debug.getvalue() == ""
+
+
+# ---------------------------------------------------------- failure paths ---
+
+
+def test_a_webhook_that_cannot_be_reached_is_logged_by_its_host_and_error_type(
+    debug: io.StringIO, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """httpx puts the URL in its error messages, and the URL is the credential."""
+    url = "https://chat.example.com/hooks/T00000/B00000/EXAMPLEEXAMPLEEXAMPLE"
+
+    def refuse(address: str, **_: Any) -> httpx.Response:
+        raise httpx.ConnectError(f"cannot reach {address}")
+
+    monkeypatch.setattr("sopuli.notify.webhook.httpx.post", refuse)
+
+    with pytest.raises(Exception, match="could not be reached"):
+        webhook.send(Secret(url), "a password is waiting")
+
+    written = debug.getvalue()
+    assert "webhook: POST to chat.example.com: ConnectError in " in written
+    assert "EXAMPLEEXAMPLEEXAMPLE" not in written
+
+
+def test_a_vault_request_that_times_out_is_logged(debug: io.StringIO) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    client = httpx.Client(
+        base_url="https://vault.example.com", transport=httpx.MockTransport(handle)
+    )
+
+    with pytest.raises(Exception, match="did not answer within the timeout"):
+        Transport(client).request("GET", "kv/data/acme/dev/acme")
+
+    assert "vault: GET /v1/kv/data/acme/dev/acme: timed out in " in debug.getvalue()
+
+
+def test_a_connect_that_fails_is_logged_by_its_code(
+    debug: io.StringIO, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """And an `auth: external` credential, which has no username, is named as such."""
+    oracledb = pytest.importorskip("oracledb")
+    from sopuli.driver.oracle import session as session_module
+
+    def refuse(**_: Any) -> Any:
+        raise oracledb.DatabaseError("ORA-12541: Cannot connect. No listener at host 192.0.2.10")
+
+    monkeypatch.setattr(session_module, "initialise", lambda **_: None)
+    monkeypatch.setattr(session_module, "connect_arguments", lambda *_, **__: {})
+    monkeypatch.setattr(oracledb, "connect", refuse)
+    driver = session_module.OracleDriver(env={}, correlation_id="run-id")
+
+    with pytest.raises(Exception, match="ORA-12541"):
+        driver.connect(SimpleNamespace(name="alpha-pdb"), Credential())  # type: ignore[arg-type]
+
+    written = debug.getvalue()
+    assert (
+        "oracle: connect to alpha-pdb as the external credential failed with ORA-12541" in written
+    )
 
 
 # ---------------------------------------------------------- tier 1: rotate ---

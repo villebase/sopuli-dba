@@ -1,0 +1,179 @@
+"""Debug output: ``--debug``, the ``sopuli`` logger, and what it must not print.
+
+Tier 0 (``04-testing.md`` §4): in-process, no containers, no sockets.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import logging
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from sopuli.cli import cli
+from sopuli.exit_codes import ExitCode
+from sopuli.output.debug import PREFIX, debugging, logger
+from sopuli.secrets import Secret
+
+PASSWORD = "Tr0ub4dor_3"
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
+
+
+@pytest.fixture
+def show(config_file: Path) -> list[str]:
+    return ["config", "show", "--config", str(config_file)]
+
+
+def debug_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith(PREFIX)]
+
+
+# ------------------------------------------------------------ the logger ---
+
+
+def test_a_secret_renders_as_stars_however_it_is_passed() -> None:
+    """Invariant 2: the formatter is a serialiser, and a `Secret` redacts itself."""
+    stream = io.StringIO()
+    secret = Secret(PASSWORD)
+
+    with debugging(True, stream=stream):
+        logger("test").debug("as %s", secret)
+        logger("test").debug("as %r", secret)
+        logger("test").debug(f"as {secret}")
+
+    written = stream.getvalue()
+    assert PASSWORD not in written
+    assert written.count("as ***") == 3
+
+
+def test_a_line_names_its_area_and_indents_what_follows() -> None:
+    stream = io.StringIO()
+
+    with debugging(True, stream=stream):
+        logger("oracle").debug("first\nsecond")
+
+    first, second = stream.getvalue().splitlines()
+    assert first.startswith(PREFIX)
+    assert first.endswith(" oracle: first")
+    assert second == "    second"
+
+
+def test_without_debug_nothing_is_written(capsys: pytest.CaptureFixture[str]) -> None:
+    """Not even a warning, which `logging.lastResort` would print to stderr."""
+    logger("test").debug("quiet")
+    logger("test").warning("still quiet")
+
+    assert capsys.readouterr() == ("", "")
+
+
+def test_the_handler_is_removed_when_the_block_ends() -> None:
+    stream = io.StringIO()
+
+    with debugging(True, stream=stream):
+        pass
+    logger("test").debug("after")
+
+    assert stream.getvalue() == ""
+    assert logging.getLogger("sopuli").level == logging.NOTSET
+
+
+def test_another_library_s_records_are_not_printed() -> None:
+    """httpx logs the full request URL at INFO, and a webhook URL can hold a token.
+
+    The handler is on the `sopuli` logger only, so a record from any other
+    logger is not printed, whatever its level.
+    """
+    stream = io.StringIO()
+
+    with debugging(True, stream=stream):
+        logging.getLogger("httpx").warning("HTTP Request: POST https://hooks.example.com/T0KEN")
+        logging.getLogger("httpcore").warning("send_request_headers.started")
+
+    assert stream.getvalue() == ""
+
+
+# --------------------------------------------------------------- the flag ---
+
+
+@pytest.mark.parametrize("position", ["verb", "group"])
+def test_debug_writes_to_stderr_in_either_position(
+    runner: CliRunner, show: list[str], position: str
+) -> None:
+    argv = [*show, "--debug"] if position == "verb" else ["--debug", *show]
+
+    result = runner.invoke(cli, argv)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    lines = debug_lines(result.stderr)
+    assert any(" run: command config.show" in line for line in lines)
+    assert any(" run: config " in line for line in lines)
+    assert not debug_lines(result.stdout)
+
+
+def test_without_debug_stderr_has_no_debug_line(runner: CliRunner, show: list[str]) -> None:
+    result = runner.invoke(cli, show)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert not debug_lines(result.stderr)
+
+
+def test_the_json_document_is_unchanged_on_stdout(runner: CliRunner, show: list[str]) -> None:
+    """Debug output is stderr's. stdout is still one document (invariant 12)."""
+    result = runner.invoke(cli, [*show, "--debug", "--output", "json"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert json.loads(result.stdout)["command"] == "config.show"
+    assert any(
+        " run: setting output = 'json' from --output" in line for line in debug_lines(result.stderr)
+    )
+
+
+def test_a_failure_carries_its_traceback(runner: CliRunner, tmp_path: Path) -> None:
+    """The message on stderr has no traceback. The debug output has one."""
+    result = runner.invoke(
+        cli, ["config", "show", "--debug", "--config", str(tmp_path / "nope.yaml")]
+    )
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "run: the run raised ConfigError" in result.stderr
+    assert "    Traceback (most recent call last):" in result.stderr
+
+
+def test_a_record_does_not_reach_the_root_logger() -> None:
+    """`propagate` is off, so a handler that something else put on the root
+    logger never sees a debug line.
+
+    A handler of its own rather than `caplog`: pytest also attaches its capture
+    handler to a logger that does not propagate, so `caplog` sees the record
+    whatever this module does.
+    """
+    seen: list[logging.LogRecord] = []
+
+    class Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(record)
+
+    handler = Keep()
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        with debugging(True, stream=io.StringIO()):
+            logger("test").debug("only here")
+    finally:
+        root.removeHandler(handler)
+
+    assert not seen
+
+
+def test_debug_is_not_a_setting() -> None:
+    """A plain flag, like `--color`: no variable, no config key (#629)."""
+    from sopuli.settings.registry import SETTINGS
+
+    assert not [name for name in SETTINGS if "debug" in name or "log" in name]

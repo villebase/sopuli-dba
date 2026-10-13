@@ -53,6 +53,9 @@ INDENT = "    "
 _root = logging.getLogger(ROOT)
 _root.addHandler(logging.NullHandler())
 _root.propagate = False
+# Off unless `debugging` turns it on. A level of its own, so that a root logger
+# set to DEBUG by an embedding process or a test runner does not turn it on.
+_root.setLevel(logging.WARNING)
 
 
 def logger(area: str) -> logging.Logger:
@@ -67,8 +70,9 @@ class DebugFormatter(logging.Formatter):
     ``sopuli: debug:   0.012s run: command creds.check``
 
     The time is relative, because what a reader compares is how long one step
-    took against another, and a run never crosses midnight in a way that
-    matters.
+    took against another. It is read from the monotonic clock when the record
+    is formatted, which is when it is written: the handler writes at once, and
+    the wall clock can step during a run.
     """
 
     def __init__(self, started: float) -> None:
@@ -79,11 +83,13 @@ class DebugFormatter(logging.Formatter):
         message = record.getMessage()
         if record.exc_info:
             message = f"{message}\n{self.formatException(record.exc_info)}"
+        if record.stack_info:
+            message = f"{message}\n{self.formatStack(record.stack_info)}"
         # No colour, whatever `--color` says: a vendor message or a traceback
         # can arrive with escape sequences in it (`03-json-output.md` §*Colour*).
         message = click.unstyle(message)
         area = record.name.removeprefix(f"{ROOT}.")
-        elapsed = record.created - self._started
+        elapsed = time.monotonic() - self._started
         first, *rest = message.splitlines() or [""]
         lines = [f"{PREFIX} {elapsed:7.3f}s {area}: {first}"]
         lines.extend(f"{INDENT}{line}" for line in rest)
@@ -94,24 +100,42 @@ class DebugFormatter(logging.Formatter):
         ei: tuple[type[BaseException], BaseException, TracebackType | None]
         | tuple[None, None, None],
     ) -> str:
-        """The traceback of the exception itself, and its causes by type only.
+        """The traceback of the exception, and of each cause without its message.
 
         An exception the tool raises carries no secret in its message (P5). The
         exception it was raised *from* may: `sopuli.notify.webhook` leaves an
         httpx error's message out of its own, because that message holds the
         URL, and chains the error with ``from``. Python's default would print
-        that message. So a cause is named by its type, and nothing more.
+        that message. So a cause is shown by its type and its frames, which are
+        source lines and not values.
+
+        The chain is followed as Python follows it: ``__cause__`` first, and
+        ``__context__`` unless ``raise ... from None`` suppressed it. An
+        exception already seen ends the walk, so a cycle cannot hang a run on
+        its way out.
         """
         _, exc, tb = ei
         if exc is None:
             return ""
         lines = traceback.format_exception(type(exc), exc, tb, chain=False)
-        cause = exc.__cause__ or exc.__context__
-        while cause is not None:
+        seen = {id(exc)}
+        cause = _cause_of(exc)
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
             kind = type(cause)
-            lines.append(f"caused by {kind.__module__}.{kind.__qualname__}\n")
-            cause = cause.__cause__ or cause.__context__
+            lines.append(f"caused by {kind.__module__}.{kind.__qualname__}, raised at:\n")
+            lines.extend(traceback.format_tb(cause.__traceback__))
+            cause = _cause_of(cause)
         return "".join(lines).rstrip("\n")
+
+
+def _cause_of(exc: BaseException) -> BaseException | None:
+    """The exception ``exc`` was raised from, by the rule Python prints it by."""
+    if exc.__cause__ is not None:
+        return exc.__cause__
+    if exc.__suppress_context__:
+        return None
+    return exc.__context__
 
 
 @contextmanager
@@ -129,7 +153,7 @@ def debugging(enabled: bool, stream: TextIO | None = None) -> Iterator[None]:
         yield
         return
     handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
-    handler.setFormatter(DebugFormatter(time.time()))
+    handler.setFormatter(DebugFormatter(time.monotonic()))
     level = _root.level
     _root.addHandler(handler)
     _root.setLevel(logging.DEBUG)

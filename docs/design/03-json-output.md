@@ -151,10 +151,12 @@ sopuli: debug:   0.088s run: setting output = 'json' from profiles.scheduled.out
 sopuli: debug:   0.088s run: setting profile = 'scheduled' from --profile (verb)
 ```
 
-A run that fails also writes the traceback, indented under the line that names
-the exception. The message on stderr has no traceback. The exception's causes
-are named by type only, because a cause's message may hold a secret: an httpx
-error's message holds the request URL, and a webhook URL can hold a token.
+When an exception ends the run, debug output also writes its traceback, indented
+under the line that names it. The message on stderr has no traceback. Each
+cause in the chain is shown by its type and its frames, never its message,
+because a cause's message may hold a secret: an httpx error's message holds the
+request URL, and a webhook URL can hold a token. An error that a verb reports
+as a finding for one target does not end the run, so it has no traceback here.
 
 - **Debug output is not part of the contract.** Invariant 12 covers stdout. A
   debug line may change in any release, and a script must not parse one, so a

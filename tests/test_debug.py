@@ -81,7 +81,7 @@ def test_the_handler_is_removed_when_the_block_ends() -> None:
     logger("test").debug("after")
 
     assert stream.getvalue() == ""
-    assert logging.getLogger("sopuli").level == logging.NOTSET
+    assert logging.getLogger("sopuli").level == logging.WARNING
 
 
 def test_another_library_s_records_are_not_printed() -> None:
@@ -258,3 +258,71 @@ def test_the_settings_printed_hold_no_secret() -> None:
         "safety.readonly",
         "vault",
     }
+
+
+def test_a_cause_keeps_its_frames() -> None:
+    """The frames show where the failure happened. They are source lines, not
+    values, so they are printed even where the message is not."""
+    stream = io.StringIO()
+
+    # A variable, because a frame prints its source line, and a literal there
+    # would be the source line and not the message.
+    message = "-".join(["secret", "bearing"])
+
+    def deep() -> None:
+        raise ValueError(message)
+
+    with debugging(True, stream=stream):
+        try:
+            try:
+                deep()
+            except ValueError as error:
+                raise RuntimeError("wrapped") from error
+        except RuntimeError:
+            logger("test").debug("raised", exc_info=True)
+
+    written = stream.getvalue()
+    assert "in deep" in written
+    assert "secret-bearing" not in written
+
+
+def test_a_suppressed_context_is_not_a_cause() -> None:
+    """`raise ... from None` says the context is not the cause, as Python
+    prints it."""
+    stream = io.StringIO()
+
+    with debugging(True, stream=stream):
+        try:
+            try:
+                raise ValueError("first")
+            except ValueError:
+                raise RuntimeError("second") from None
+        except RuntimeError:
+            logger("test").debug("raised", exc_info=True)
+
+    assert "caused by" not in stream.getvalue()
+
+
+def test_a_cycle_in_the_chain_ends_the_walk() -> None:
+    stream = io.StringIO()
+    first = ValueError("first")
+    second = RuntimeError("second")
+    second.__cause__ = first
+    first.__cause__ = second
+
+    with debugging(True, stream=stream):
+        logger("test").debug("raised", exc_info=(RuntimeError, second, None))
+
+    assert stream.getvalue().count("caused by builtins.ValueError") == 1
+
+
+def test_a_root_logger_at_debug_does_not_turn_it_on() -> None:
+    """An embedding process or a test runner may set the root logger to DEBUG.
+    The `sopuli` logger has a level of its own, so debug stays off."""
+    root = logging.getLogger()
+    level = root.level
+    root.setLevel(logging.DEBUG)
+    try:
+        assert not logger("run").isEnabledFor(logging.DEBUG)
+    finally:
+        root.setLevel(level)

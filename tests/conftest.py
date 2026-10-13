@@ -606,8 +606,14 @@ def sysdba(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
 
     Raw `oracledb` rather than the tool's driver. The driver's `connect` has no
     `SYSDBA` mode and must not grow one: the tool has no operation that needs
-    `SYSDBA`, and §3 puts it on the must-not-grant list. These statements are an
+    `SYSDBA`, and `02-oracle-privileges.md` §3 puts it on the must-not-grant
+    list. These statements are an
     operator's, so the fixture issues them the way an operator does.
+
+    The connection stands in the DSN's container, and fixtures read
+    :func:`oracle_harness.current_container` to learn the target's shape. So a
+    fixture that moves it with `ALTER SESSION SET CONTAINER` moves it back
+    before it returns.
     """
     oracledb = pytest.importorskip("oracledb")
     session_module.initialise(env=os.environ)

@@ -16,10 +16,10 @@ is where the fixtures reach for them. P1's vocabulary is asserted against them i
 `tests/driver/test_capabilities.py`. What remains the harness's own work is which
 environment, what to skip, and how to report it.
 
-**Nothing here imports ``oracledb``.** The pure parts — what to ask, how to read
-an answer, what to skip, how to report — are testable in tier 0, and only the
-fixture in `conftest.py` opens a socket. :func:`execute` and
-:func:`current_container` take a connection that a fixture opened.
+**Nothing here imports ``oracledb``.** What to ask, how to read an answer, what
+to skip and how to report are testable in tier 0. Only the fixtures in
+`conftest.py` open a socket. :func:`execute` and :func:`current_container` use a
+connection a fixture opened, so a tier-0 test can hand them a fake one.
 """
 
 from __future__ import annotations

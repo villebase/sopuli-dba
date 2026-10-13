@@ -49,9 +49,7 @@ SECOND = "Second-Pass-2x"
 
 
 def _run(session: Any, *statements: str) -> None:
-    with session.connection.cursor() as cursor:
-        for statement in statements:
-            cursor.execute(statement)
+    execute(session.connection, *statements)
 
 
 @pytest.fixture

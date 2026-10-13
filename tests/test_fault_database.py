@@ -128,8 +128,20 @@ def _drop_pdb(sysdba: Any) -> None:
 
     Any other failure is raised. A drop that failed silently would surface at
     the next setup as "already exists", far from its cause.
+
+    The drop runs in the root, and the session goes back to the container it
+    started in. :func:`service_account` reads that container to decide whether
+    it can run.
     """
+    before = current_container(sysdba)
     _container(sysdba, "cdb$root")
+    try:
+        _close_and_drop(sysdba)
+    finally:
+        _container(sysdba, before)
+
+
+def _close_and_drop(sysdba: Any) -> None:
     for statement in (
         f"alter pluggable database {PDB} close immediate",
         f"drop pluggable database {PDB} including datafiles",
@@ -221,14 +233,19 @@ def second_pdb(sysdba: Any, live_oracle: Environment) -> Iterator[str]:
             f"and {live_oracle.dsn} is not one"
         )
     dsn = f"{easy['address']}/{PDB}"
+    home = current_container(sysdba)
     _drop_pdb(sysdba)
     try:
-        execute(
-            sysdba,
-            f"create pluggable database {PDB} admin user acme_pdb_admin "
-            f'identified by "{PDB_ADMIN_PASSWORD}"{_file_names(sysdba)}',
-            f"alter pluggable database {PDB} open",
-        )
+        _container(sysdba, "cdb$root")
+        try:
+            execute(
+                sysdba,
+                f"create pluggable database {PDB} admin user acme_pdb_admin "
+                f'identified by "{PDB_ADMIN_PASSWORD}"{_file_names(sysdba)}',
+                f"alter pluggable database {PDB} open",
+            )
+        finally:
+            _container(sysdba, home)
         _wait_for_service(dsn)
         with contextlib.closing(_connect(dsn, USER, PASSWORD)) as system:
             execute(

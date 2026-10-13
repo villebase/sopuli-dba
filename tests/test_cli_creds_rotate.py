@@ -1264,7 +1264,59 @@ def test_a_window_stays_open_where_the_vault_may_serve_the_old_password(
     assert result.exit_code == ExitCode.PARTIAL, result.output
     assert finished(harness) == []
     assert "closed 0 rollover windows" in result.output
-    assert "did not close the windows of acme_web_user" in result.output
+    assert "left the rollover window open for acme_web_user on appdb-alpha" in result.output
+
+
+def test_a_window_left_open_is_a_warning_in_the_document(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A scheduler reads `--output json`, and the note is all it would have."""
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        store=LostAtPromotion(),
+    )
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--finish-rollover",
+        "--output",
+        "json",
+    )
+
+    messages = [one["message"] for one in document(result)["diagnostics"]]
+    assert any("left the rollover window open" in one for one in messages)
+
+
+def test_one_documents_read_back_does_not_withhold_anothers_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Alpha promotes and cannot be read back; beta's promotion fails (row 7).
+
+    W012 is about alpha. `creds apply` is still the remedy for beta, so the
+    repair line stays.
+    """
+
+    class Split(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
+            if path.endswith("appdb-alpha") and found is not None and "previous" in found.data:
+                raise StoreError("could not reach the store: connection refused")
+            return found
+
+        def write(self, path: str, data: Any, *, cas: int | None) -> int:
+            if path.endswith("appdb-beta") and "previous" in data:
+                raise StoreError("could not reach the store: connection refused")
+            return super().write(path, data, cas=cas)
+
+    estate(store=Split())
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "did not read back the new password for: acme_web_user" in result.output
+    assert "repair with:" in result.output
 
 
 def test_a_read_back_failure_is_still_reported_after_a_takeover(

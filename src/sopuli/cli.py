@@ -9045,7 +9045,7 @@ def creds_rotate(
             profile=run.profile,
             strategy=strategy,
         )
-        if code == ExitCode.PARTIAL and sequence.stolen is None and not sequence.disagreed
+        if code == ExitCode.PARTIAL and sequence.stolen is None and _apply_owed(sequence, states)
         else None
     )
     table = render_rotate(
@@ -9067,6 +9067,22 @@ def creds_rotate(
         + _lock_notices(manager)
     )
     return "\n".join([f"{header}\n\n{table}", *notes])
+
+
+def _apply_owed(sequence: _Rotation, states: Sequence[str]) -> bool:
+    """Whether `creds apply` has work left after this rotation.
+
+    A read-back disagreement alone owes it nothing: the databases are converged
+    and the place to look is the vault. But one document's disagreement does not
+    cancel another document's failed target or failed promotion (rows 5 and 7),
+    and `apply` is the remedy for those.
+    """
+    promotions = sequence.promotions.values()
+    return apply_states.exit_code_for(
+        states,
+        promoted=all(one.version is not None for one in promotions if one.promotable),
+        promotable=any(one.promotable for one in promotions),
+    ) == int(ExitCode.PARTIAL)
 
 
 def _refuse_narrow_rotation(
@@ -9255,18 +9271,21 @@ def _rotate_estate(
 
     # Step 8, on the documents this run actually promoted.
     promoted, into.unread = _read_promoted(into.promotions, stores, run=run)
-    into.disagreed = _read_back(into.applied, into.promotions, promoted)
+    into.disagreed, unconfirmed = _read_back(into.applied, into.promotions, promoted)
 
     if finish_windows:
-        settled = _settled(into.applied, into.promotions, promoted)
+        settled = _settled(into.applied, into.promotions, unconfirmed)
         left = _left_open(into.applied, settled)
         if left:
-            into.caveats.append(
-                "--finish-rollover did not close the windows of "
+            note = (
+                "--finish-rollover left the rollover window open for "
                 + ", ".join(left)
-                + ", because the vault may not serve the new password: run "
-                "`sopuli creds finish-rollover` once it does"
+                + ", because the vault may not serve the new password. Run "
+                "`sopuli creds finish-rollover` once `current` holds it; where the "
+                "promotion did not happen, `sopuli creds apply` promotes it first"
             )
+            into.caveats.append(note)
+            document.diagnostics.append(Diagnostic(level="warning", message=note))
         try:
             into.closed = _close_windows(
                 settled,
@@ -9301,7 +9320,7 @@ def _read_back(
     applied: Sequence[_Applied],
     promotions: Mapping[LockKey, _Promotion],
     documents: Mapping[LockKey, Any],
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], set[LockKey]]:
     """Section 8 step 8: does the vault serve what this run just promoted?
 
     **Only the documents this run promoted are read back.** A document nobody
@@ -9309,10 +9328,15 @@ def _read_back(
     deliberately left alone -- checking either would report a disagreement
     against a value the run never claimed to have put there.
 
+    Returns the accounts that disagreed, for the report, and the documents they
+    are in, for `--finish-rollover`. A document missing from ``documents``,
+    because its read failed, disagrees. One account on two targets has two
+    documents, and a stale read of one says nothing about the other.
+
     The comparison itself is in :func:`sopuli.rotate.disagreements`, which does
     it without revealing either value.
     """
-    entries: list[tuple[Binding, Secret, Any]] = []
+    by_key: dict[LockKey, list[tuple[Binding, Secret, Any]]] = {}
     for record in applied:
         if record.binding.secret is None or record.binding.vault is None:
             continue
@@ -9320,8 +9344,11 @@ def _read_back(
         promotion = promotions.get(key)
         if promotion is None or promotion.version is None or record.source is None:
             continue
-        entries.append((record.binding, record.source.value, _data_at(key, documents)))
-    return rotation.disagreements(entries)
+        entry = (record.binding, record.source.value, _data_at(key, documents))
+        by_key.setdefault(key, []).append(entry)
+    entries = [entry for one in by_key.values() for entry in one]
+    unconfirmed = {key for key, one in by_key.items() if rotation.disagreements(one)}
+    return rotation.disagreements(entries), unconfirmed
 
 
 def _read_promoted(
@@ -9336,7 +9363,7 @@ def _read_promoted(
     the vault does not serve its password, and that store may be the one that
     has just stopped answering (UC-1 section 8, row 7).
 
-    **A read that fails is a finding, not the end of the run.** Every database
+    **A read that fails, in any way, is a finding, not the end of the run.** Every database
     already has the new password, so the run's rows must still be reported.
     The document is left out of what is returned, and
     :func:`sopuli.rotate.disagreements` counts a missing document as a
@@ -9349,7 +9376,7 @@ def _read_promoted(
     for key in keys:
         try:
             documents.update(_read_documents([key], stores, run=run))
-        except StoreError as error:
+        except Exception as error:  # noqa: BLE001 -- a per-document finding, as at step 7
             unread[key] = _as_error(error)
     return documents, unread
 
@@ -9357,20 +9384,16 @@ def _read_promoted(
 def _settled(
     applied: Sequence[_Applied],
     promotions: Mapping[LockKey, _Promotion],
-    served: Mapping[LockKey, Any],
+    unconfirmed: set[LockKey],
 ) -> list[_Applied]:
     """The records whose document the vault serves with what was applied.
 
     `--finish-rollover` closes windows only for these. Closing a window removes
     the old password from the database. Where `current` still holds the old
     password, because the promotion was withheld or failed, or because step 8
-    could not confirm it, the old password is the one applications fetch. A
-    document that owed no promotion is settled: the vault already held what was
-    applied.
-
-    ``served`` is step 8's read-back. It is judged per document, not per account
-    name: one account on two targets has two documents, and a stale read of one
-    says nothing about the other.
+    could not confirm it (``unconfirmed``, from :func:`_read_back`), the old
+    password is the one applications fetch. A document that owed no promotion
+    is settled: the vault already held what was applied.
     """
     settled = []
     for record in applied:
@@ -9379,24 +9402,24 @@ def _settled(
             continue
         key = _lock_key(binding)
         promotion = promotions.get(key)
-        if promotion is None:
+        if promotion is None or key in unconfirmed:
             continue
-        if promotion.promotable:
-            if promotion.version is None or key not in served or record.source is None:
-                continue
-            entry = (binding, record.source.value, _data_at(key, served))
-            if rotation.disagreements([entry]):
-                continue
+        if promotion.promotable and promotion.version is None:
+            continue
         settled.append(record)
     return settled
 
 
 def _left_open(applied: Sequence[_Applied], settled: Sequence[_Applied]) -> list[str]:
-    """The confirmed accounts whose windows `--finish-rollover` leaves alone."""
+    """The confirmed pairs whose windows `--finish-rollover` leaves alone.
+
+    Account and target, because :func:`_settled` decides per document, and one
+    account on two targets may be closed on one and left open on the other.
+    """
     kept = {id(record) for record in settled}
     return sorted(
         {
-            record.binding.account
+            f"{record.binding.account} on {record.binding.target}"
             for record in applied
             if id(record) not in kept
             and record.binding.secret is not None

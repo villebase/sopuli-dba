@@ -1925,8 +1925,9 @@ withheld or failed (row 7), or where step 8 could not confirm the promotion
 (row 8). In each case `current` may still hold the old password, and
 applications that fetch it would be locked out. A document that owed no
 promotion, because the vault already held what was applied, is closed as usual.
-The run names the accounts it left open in a note, and `creds finish-rollover`
-closes them once the vault serves the new password.
+The run names each account and target it left open, in a note and as a warning
+diagnostic. `creds finish-rollover` closes them once `current` holds the new
+password. Where the promotion did not happen, `creds apply` promotes it first.
 
 **The fence also covers `--finish-rollover`.** Closing windows is the run's last
 change and the furthest from the acquisition at step 2, so it is the most likely

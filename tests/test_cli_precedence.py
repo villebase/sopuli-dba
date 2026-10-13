@@ -524,6 +524,10 @@ def test_a_profile_block_no_command_consults_still_loads(
         "      query_timeout_s: 600\n"
     )
 
+    # The test is about an unread key, so it fails if `verify.method` gains a
+    # reader instead of passing without covering that case.
+    assert "verify.method" not in invocation.RESOLVED_SETTINGS
+
     result = runner.invoke(cli, ["--profile", "ci", "config", "validate", "--config", str(config)])
 
     assert result.exit_code == ExitCode.SUCCESS, result.output

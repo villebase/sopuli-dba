@@ -1884,4 +1884,8 @@ the register.
   - Keep `log_level` and `log_file` as profile defaults for the flag: a config
     would then turn debug output on for every run of a profile, including
     scheduled runs nobody watches. Keeping them unread leaves keys that look as
-    if they work.
+    if they work. A profile's `verify.*` and `rotation.strategy` are also read
+    by nothing today, and they stay: each names a choice that a flag already
+    makes, so a profile default for it can have a reader later. The log keys
+    can never have one, because this decision says no config turns debug
+    output on.

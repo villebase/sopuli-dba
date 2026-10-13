@@ -2818,6 +2818,12 @@ new optional key is a minor bump and changes nothing about a file that says
 `version: 1`. Removing a key, or a value of a closed set, is a major bump,
 because a file that used it no longer validates.
 
+**A removed key does not change `version:`.** The file's `version:` marks a
+format that needs migrating, and a file without the key needs no migration.
+The tool refuses a removed key by name and says why it was removed, so the
+refusal does not read as a typo. The changelog lists the removal as a breaking
+change.
+
 **What it says.** Key names, JSON types, the closed sets, which keys are
 required, and `additionalProperties: false` — P3's "exits non-zero on unknown
 keys", in the form an editor can use. The shape rules of §4 are here too, since

@@ -128,12 +128,14 @@ def test_an_unknown_output_format_is_refused() -> None:
 
 
 @pytest.mark.parametrize("key", ["log_level", "log_file"])
-def test_a_log_key_is_refused(key: str) -> None:
-    """Debug output is the `--debug` flag, and a profile cannot set it (#629)."""
+def test_a_removed_log_key_is_refused_as_removed(key: str) -> None:
+    """A config cannot turn on debug output (#629), and the refusal says the key
+    was removed, so it does not read as a typo."""
     with pytest.raises(ConfigError) as caught:
         build_profiles(document(scheduled={key: "debug"}))
 
-    assert key in str(caught.value)
+    assert f"`{key}:` was removed from profiles" in str(caught.value)
+    assert "a config cannot turn on debug output" in str(caught.value)
 
 
 def test_a_profile_may_only_set_the_rotation_strategy() -> None:

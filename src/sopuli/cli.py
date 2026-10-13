@@ -227,6 +227,7 @@ from sopuli.output.config_view import (
     render_validation,
 )
 from sopuli.output.constraints_view import build_constraints, render_constraints
+from sopuli.output.debug import logger
 from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
@@ -317,6 +318,9 @@ if TYPE_CHECKING:  # pragma: no cover -- annotations only
 F = TypeVar("F", bound=Callable[..., Any])
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+#: Where a per-target finding's traceback goes under `--debug`.
+FINDINGS = logger("finding")
 
 
 def help_with(**facts: str) -> Callable[[F], F]:
@@ -1084,6 +1088,10 @@ def _as_error(error: Exception) -> Error:
     # is the only information left, and it beats an empty string: that reads as
     # the tool having lost the reason rather than there never having been one.
     lines = message.splitlines()
+    # The traceback, for `--debug`. A finding does not end the run, so the one
+    # the wrapper in `invocation` writes for an exception that does never
+    # covers it.
+    FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
     return Error(
         category=getattr(error, "category", "database"),
         message=lines[0] if lines else type(error).__name__,

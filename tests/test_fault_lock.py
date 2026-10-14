@@ -341,6 +341,7 @@ def test_a_held_staging_write_that_lands_after_a_takeover_fails_the_new_holders_
                 raise HarnessError(f"the takeover never reached its staging write; {gate.seen}")
 
             first = stalled.finish()
+            _, landed = fault_estate.read(SECRET)
             gate.release()
             takeover = run.result(timeout=TIMEOUT)
         finally:
@@ -349,16 +350,21 @@ def test_a_held_staging_write_that_lands_after_a_takeover_fails_the_new_holders_
     assert first.returncode == ExitCode.PARTIAL, first.stderr
     lost = [one for one in json.loads(first.stdout)["diagnostics"] if one.get("code") == LOCK_LOST]
     assert len(lost) == 1, first.stdout
+    record, _ = fault_estate.read(LOCK)
+    assert record["state"] == "released"
+    assert record["command"] == "creds rotate"
+    taker = record["holder"]["pid"]
+    assert taker != stalled.pid, "the third run did not take the lock over"
+    assert _names(lost[0]["message"], taker, "creds rotate"), lost[0]["message"]
     assert takeover.returncode == ExitCode.FAILURE, takeover.stderr
     (row,) = json.loads(takeover.stdout)["results"]
     assert row["state"] == "ERROR"
     assert row["changed"] is False
     assert row["error"]["category"] == "vault"
     assert "compare-and-set failed" in row["error"]["message"]
-    # The stalled run's write is the one that landed.
-    staged, _ = fault_estate.read(SECRET)
+    # The stalled run's write is the one that landed: the takeover wrote nothing after it.
+    staged, version = fault_estate.read(SECRET)
+    assert version == landed, "the takeover's staging write landed"
     assert staged["DB_CREDENTIALS"][ACCOUNT] == current, "promoted after a takeover"
     assert staged["pending"][ACCOUNT] != current
     assert fault_estate.login(current), "a run changed the password"
-    record, _ = fault_estate.read(LOCK)
-    assert record["state"] == "released"

@@ -1743,10 +1743,13 @@ other write. So the boundary catches a takeover *before* the next target's first
 statement, not after it.
 
 **The check and the write are two requests**, and the tool accepts the window
-between them (decided in #769). Vault has no compare-and-set across two paths,
-so a fence check on the lock and a write to the secret cannot be one operation.
-A takeover can land after the check and before the write. The same is true of a
-renewal, which checks the fence and then rewrites each lock.
+between them (decided in [#769](../decisions/log.md#769)). Vault has no
+compare-and-set across two paths, so a fence check on the lock and a write to the
+secret cannot be one operation. A takeover can land after the check and before
+the write. A renewal writes the lock itself, with a compare-and-set on its fence,
+so a takeover makes that write fail. Its one window is between locks: with
+several locks held, lock 1 can be rewritten before the renewal finds lock *n*
+taken.
 
 For a staging write, this is what follows. The stale run's write lands, so
 `pending` holds a new random password that nobody has. The stale run's next

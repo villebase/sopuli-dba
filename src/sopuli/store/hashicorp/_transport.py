@@ -128,11 +128,16 @@ class Transport:
                 hint="check `addr`, and `tls.ca_file` if the certificate is your own CA",
             ) from error
         except Exception as error:
-            # Anything else httpx raises, such as too many redirects or an
-            # address it cannot parse: logged so the failed request has a line,
-            # and raised as it was, as before.
+            # Anything else httpx raises, such as an address it cannot parse, or
+            # a body it cannot encode. Named by its type only: the body of a
+            # write or a login holds a secret, and an encoding error quotes a
+            # character of it and its position (#785).
             _log(started, method, path, type(error).__name__)
-            raise
+            raise StoreError(
+                f"the request to the store failed: {type(error).__name__}",
+                hint="the error is named by its type only, because its message can quote "
+                "what the request carried; run with --debug to see where it was raised",
+            ) from error
 
         _log(started, method, path, str(response.status_code))
         return Response(status=response.status_code, body=_decode(response))
@@ -187,17 +192,26 @@ def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
             hint="add `addr: https://…` to the entry under `vaults:`",
         )
 
-    client = httpx.Client(
-        base_url=vault.addr,
-        headers=headers,
-        timeout=vault.timeout_s if vault.timeout_s is not None else DEFAULT_TIMEOUT_S,
-        verify=build_ssl_context(vault.tls),
-        # Vault answers a moved mount with a redirect to the active node, and
-        # following it silently would send this token somewhere the config never
-        # named. Failing instead makes the operator point `addr` at the right
-        # place, which is the one that ends up in the audit trail.
-        follow_redirects=False,
-    )
+    verify = build_ssl_context(vault.tls)
+    try:
+        client = httpx.Client(
+            base_url=vault.addr,
+            headers=headers,
+            timeout=vault.timeout_s if vault.timeout_s is not None else DEFAULT_TIMEOUT_S,
+            verify=verify,
+            # Vault answers a moved mount with a redirect to the active node, and
+            # following it silently would send this token somewhere the config never
+            # named. Failing instead makes the operator point `addr` at the right
+            # place, which is the one that ends up in the audit trail.
+            follow_redirects=False,
+        )
+    except Exception as error:
+        # httpx encodes a header value as ASCII, and the error for a token it
+        # cannot encode quotes a character of the token and its position (#785).
+        raise StoreError(
+            f"vault {vault.name!r}: the client could not be built: {type(error).__name__}",
+            hint="a token holds ASCII characters only; check the file or variable it came from",
+        ) from error
     return Transport(client, sni_hostname=vault.tls.server_name if vault.tls else None)
 
 

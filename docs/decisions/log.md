@@ -1936,17 +1936,26 @@ the register.
   bytes read as one, to a library converts every error that library raises into
   a tool error. The tool error names the library's error by its type and leaves
   out its message.
-- **Why:** The audit found two places where a library's message could quote a
-  secret. The webhook parsed its URL before its `try`, and `httpx.InvalidURL` is
-  not an `httpx.HTTPError`. Its message quotes part of the URL, such as
-  `Invalid port: 'abc'`, and the URL is the credential. `--from-stdin` let
-  Python's `UnicodeDecodeError` through, and that message names one byte of the
-  password and its position. Both now convert the error. The other places a
-  library error passes through carry no secret. An Oracle error from a query
-  comes from a statement that holds no password (invariants 13 and 14). An
-  httpx error from the vault transport quotes `addr`, which comes from the
-  config, and the token travels in a header. This follows #786: the code that
-  holds the value is the code that knows to keep it out.
+- **Why:** The audit found these places where a library's message could quote
+  a secret:
+  - The webhook parsed its URL before its `try`, and `httpx.InvalidURL` is not
+    an `httpx.HTTPError`. Its message quotes part of the URL, such as
+    `Invalid port: 'abc'`, and the URL is the credential. A URL with a
+    character httpx cannot encode raises `UnicodeEncodeError`, which quotes it.
+  - httpx encodes a header as ASCII. A token with any other character raised
+    `UnicodeEncodeError` with that character and its position.
+  - The vault transport raised every httpx error other than a timeout or a
+    connection failure as it was. One is an encoding error for a body, and the
+    body of a write or a login holds a secret.
+  - `--from-stdin` read stdin as text with `surrogateescape`. A byte that is not
+    UTF-8 became a surrogate character inside the password, and the vault
+    write's encoding error then quoted it with its position.
+
+  Each now converts the error, and `--from-stdin` reads bytes and refuses a
+  byte that is not UTF-8. An Oracle error from a query passes through
+  unconverted and carries no secret: its statement holds no password
+  (invariants 13 and 14). This follows #786: the code that holds the value is
+  the code that knows to keep it out.
 - **Rejected:**
   - Print only the type of any exception the tool did not raise: the rule would
     hold by structure, not by each call site. But an Oracle error from a query,

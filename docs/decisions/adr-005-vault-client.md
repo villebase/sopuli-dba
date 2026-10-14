@@ -120,8 +120,10 @@ dependency is declared, not which dependency it is. See
 **Error mapping lives at the transport boundary** —
 `sopuli/store/hashicorp/_errors.py`, one module, never at call sites and never
 in `protocol.py`. Vault's `errors[]` string is kept as it is in
-`StoreError.message`. The token travels in a header, so a message about the
-request does not hold it. The mapper assigns the category. Two rules the probe
+`StoreError.message`: it is Vault's answer, and the request's token and body
+are not in it. An error that httpx raises while it builds or sends the request
+is named by its type only, because it can quote the token or the body. The
+mapper assigns the category. Two rules the probe
 made concrete:
 
 - **Fail closed.** An unrecognised 400 is not a lost race. Misclassifying a

@@ -81,11 +81,13 @@ def send(url: Secret, message: str) -> None:
         # Parsed inside the `try`, because a URL httpx cannot parse raises here.
         host = httpx.URL(address).host or "an address with no host"
         response = httpx.post(address, json={BODY_KEY: message}, timeout=TIMEOUT_S)
-    except (httpx.HTTPError, httpx.InvalidURL) as error:
+    except Exception as error:  # noqa: BLE001 -- converted, never swallowed
         LOG.debug("POST to %s: %s in %.3fs", host, type(error).__name__, time.monotonic() - started)
         # `type(error).__name__` rather than `str(error)`: httpx puts the URL, or
         # a part of it, in the message of several of its errors, and the URL is
-        # the credential. `InvalidURL` is not an `HTTPError`, so it is named too.
+        # the credential. Every exception, because `InvalidURL` is not an
+        # `HTTPError`, and a URL holding a character httpx cannot encode raises
+        # `UnicodeEncodeError` (#785).
         raise StoreError(
             # Phrased as a *cause* rather than as a sentence, because
             # `SOPULI-W026` already says what happened and appends this: running it

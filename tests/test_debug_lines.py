@@ -209,7 +209,7 @@ def test_any_other_vault_request_error_is_logged(debug: io.StringIO) -> None:
         base_url="https://vault.example.com", transport=httpx.MockTransport(handle)
     )
 
-    with pytest.raises(httpx.TooManyRedirects):
+    with pytest.raises(StoreError, match="the request to the store failed: TooManyRedirects"):
         Transport(client).request("GET", "sys/health")
 
     assert "vault: GET /v1/sys/health: TooManyRedirects in " in debug.getvalue()

@@ -379,6 +379,7 @@ def test_the_password_is_scrubbed_from_the_server_s_refusal(session_module: Any)
     """A verify function may quote the password it refused (#786). The error the
     driver raises keeps the rest of the server's message and loses the value,
     whichever form of the error a caller reads."""
+    from sopuli.driver.oracle.errors import MappedError
     from sopuli.driver.oracle.statements import Identifier, alter_user_password
     from sopuli.driver.protocol import Scope
     from sopuli.passwords import ByteLimit
@@ -403,7 +404,7 @@ def test_the_password_is_scrubbed_from_the_server_s_refusal(session_module: Any)
         limit=ByteLimit(max_bytes=128, encoding="utf-8"),
     )
 
-    with pytest.raises(DriverError) as raised:
+    with pytest.raises(MappedError) as raised:
         session._issue(statement, password=True)
 
     assert raised.value.code == "ORA-28003"

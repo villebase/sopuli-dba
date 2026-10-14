@@ -433,6 +433,14 @@ These entries share a setup. The probe is
   measurements are in [ADR-005](decisions/adr-005-vault-client.md). `httpx` is in
   the `sopuli-dba[hashicorp]` extra, not in base (ADR-006, E2). The probe is
   `test/vault_auth_probe.py`.
+- `unverified` `oci-vault-cost-limits` (#643) — **Do the OCI Vault tests in
+  tier 3 still cost nothing, and do they stay inside the service limits?**
+  Known: on 2026-10-14 Oracle's pages listed Secret Management as free, a
+  software-protected key as free, and API calls to Key Management as not billed
+  (T4). Open: the prices in a tenancy's cost analysis, and the limits that a
+  fixed set of secrets can reach under repeated rotation, such as the versions
+  a secret keeps. The pull request that builds an OCI store answers both. No OCI
+  store exists yet, so nothing depends on this.
 
 ## Next use cases
 

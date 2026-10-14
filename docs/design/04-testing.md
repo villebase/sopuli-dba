@@ -70,25 +70,22 @@ Reasons: [T1](../decisions/log.md#t1).
 | Oracle 19c EE 19.19.0.0.0 | `enterprise:19.19.0.0`, the `oracle-19c-ru` service. It is above 19.12, so it can open a rollover window, but the image is linux/arm64 only, and under emulation on an x86 host the instance does not start. It has never run. [`../maintainer-environments.md`](../maintainer-environments.md) §4 | the same registry terms, and an arm64 host |
 | Oracle 19c release update | an OCI Base Database Service DB system, created by `test/oci-dbcs/new-db-system.ps1` and reached through an OCI Bastion session. [`../maintainer-environments.md`](../maintainer-environments.md) §5 | the DB system is billed by the hour |
 | Autonomous Database | a personal OCI tenancy. [`../maintainer-environments.md`](../maintainer-environments.md) §6 | needs an OCI tenancy |
-| OCI Vault | a personal OCI tenancy | no faithful local emulator |
+| OCI Vault | a personal OCI tenancy | needs an OCI tenancy and its credentials, and no local emulator is faithful |
 
 What each of these has run, and on which release, is in
 [`../measurements.md`](../measurements.md).
 
-**Cost does not limit the OCI Vault tests.** Oracle lists OCI Secret Management
-as free, and API calls to Vault and keys are not billed. These tests run only in
-tier 3 because they need a tenancy and its credentials, not because of cost. They
-use one vault and a fixed set of secrets, and they keep the cost at zero:
+**Cost does not limit the OCI Vault tests.** They run only in tier 3, for the
+reasons in the table, and not because of cost. They use one vault and a fixed set
+of secrets, and they stay free:
 
-- the vault is a default vault, not a private vault. A private vault is billed
-  by the hour;
-- its key is software-protected. An HSM-protected key is billed per key version
-  after the first 20;
-- no secret is replicated to another region. Replication can bring charges for
-  the target vault and its keys.
+- the vault is a default vault, not a private vault;
+- its key is software-protected, not HSM-protected;
+- no secret is replicated to another region.
 
-The pull request that builds an OCI store checks these prices again in the
-tenancy's cost analysis, and records the date it checked.
+The pull request that builds an OCI store checks the prices again. It also checks
+the service limits that a fixed set of secrets can reach
+(unverified: oci-vault-cost-limits). Reasons: [T4](../decisions/log.md#t4).
 
 ### Emulators: smoke tests only
 

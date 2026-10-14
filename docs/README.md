@@ -203,7 +203,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | T1 | 04 | Does an 11g XE image exist? | decided | yes | #1 |
 | T2 | 04 | testcontainers or compose? | decided | compose | #174 |
 | T3 | 04 | Is LocalStack Secrets Manager in the community tier? | open | | #642 |
-| T4 | 04 | Does OCI Vault cost matter in a test loop? | open | | #643 |
+| T4 | 04 | Does OCI Vault cost matter in a test loop? | decided | no; tier 3 only, for the tenancy, not the cost | #643 |
 | T5 | 04 | Public CI provider | decided | GitHub Actions | |
 | T6 | 04 | A real Data Guard standby for the read-only test? | deferred | until a driver bug needs it | |
 | T7 | 04 | Snapshot and restore for Oracle resets | deferred | drop and recreate until tier 2 is too slow | |

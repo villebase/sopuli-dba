@@ -75,6 +75,21 @@ Reasons: [T1](../decisions/log.md#t1).
 What each of these has run, and on which release, is in
 [`../measurements.md`](../measurements.md).
 
+**Cost does not limit the OCI Vault tests.** Oracle lists OCI Secret Management
+as free, and API calls to Vault and keys are not billed. These tests run only in
+tier 3 because they need a tenancy and its credentials, not because of cost. They
+use one vault and a fixed set of secrets, and they keep the cost at zero:
+
+- the vault is a default vault, not a private vault. A private vault is billed
+  by the hour;
+- its key is software-protected. An HSM-protected key is billed per key version
+  after the first 20;
+- no secret is replicated to another region. Replication can bring charges for
+  the target vault and its keys.
+
+The pull request that builds an OCI store checks these prices again in the
+tenancy's cost analysis, and records the date it checked.
+
 ### Emulators: smoke tests only
 
 The emulators are `localstack` (Secrets Manager; whether the free tier includes
@@ -591,7 +606,7 @@ them is red.
 | ~~T1~~ | ~~Does `gvenzl/oracle-xe:11` exist?~~ | **decided: yes** (#1), `11.2.0.2-slim`, amd64 only. See §2. Reasons: [T1](../decisions/log.md#t1) |
 | ~~T2~~ | ~~`testcontainers-python` or `compose.yaml` + fixtures?~~ | **decided: compose** (#174). The harness starts nothing; `SOPULI_TEST_ORACLE_DSN` points it elsewhere. Reasons: [T2](../decisions/log.md#t2) |
 | T3 | Is LocalStack Secrets Manager in the community tier? | verify before committing to it as the AWS path |
-| T4 | Does OCI Vault cost enough to matter in a test loop? | check pricing; if so, tier 3 only and reuse one secret |
+| ~~T4~~ | ~~Does OCI Vault cost enough to matter in a test loop?~~ | **decided: no** (#643). Tier 3 only, because it needs a tenancy. See §2. Reasons: [T4](../decisions/log.md#t4) |
 | ~~T5~~ | ~~Public CI provider~~ | **decided: GitHub Actions.** See `../workflow.md`. Reasons: [T5](../decisions/log.md#t5) |
 | T6 | Do we need a real Data Guard standby to test the read-only refusal? | probably: a closed PDB is not the same failure. Defer until a driver bug argues for it |
 | T7 | Snapshot/restore for faster Oracle resets | **deferred**: start with drop-and-recreate; revisit if tier 2 exceeds its budget |

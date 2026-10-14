@@ -101,35 +101,39 @@ project name of its own, its `up` works on the first clone's containers. It
 recreates them, because the `./oracle-init` mount points at another directory,
 and the database is lost. Its `--profile '*' down` would remove them.
 
-Give the second clone a `.env` file in this directory. Compose reads it, and git
-ignores it:
+Set four variables in the environment of everything that works in the second
+clone: its shells, its editor and any agent working in it.
 
 ```bash
-COMPOSE_PROJECT_NAME=sopuli-test-w2
-SOPULI_TEST_VAULT_PORT=8300
-SOPULI_TEST_POSTGRES_PORT=5532
-SOPULI_TEST_ORACLE_PORT=1621
+export COMPOSE_PROJECT_NAME=sopuli-test-w2
+export SOPULI_TEST_VAULT_PORT=8300
+export SOPULI_TEST_POSTGRES_PORT=5532
+export SOPULI_TEST_ORACLE_PORT=1621
 ```
 
-Point the suite at that stack with the variables it already reads:
+Compose takes the project name and the ports from them. The suite takes its
+defaults from them too: Vault at `http://127.0.0.1:8300`, Oracle at
+`localhost:1621/FREEPDB1`, and the container `sopuli-test-w2-oracle-free-1`.
+So the four variables are the one place that names the stack.
+`VAULT_ADDR`, `SOPULI_TEST_ORACLE_DSN` and `SOPULI_TEST_ORACLE_CONTAINER`
+still override the defaults when they are set. A shell that lacks the four
+variables works on the first clone's stack, without a warning, because both
+stacks are on loopback.
 
-```bash
-VAULT_ADDR=http://127.0.0.1:8300
-SOPULI_TEST_ORACLE_DSN=localhost:1621/FREEPDB1
-SOPULI_TEST_ORACLE_CONTAINER=sopuli-test-w2-oracle-free-1
-```
-
-The containers are named after the project, such as
-`sopuli-test-w2-oracle-free-1`. The `docker exec` commands in this guide and in
-`docs/local-testing.md` use the default names, so change the name in them. The
+Everything else in the documentation uses the default names and ports: the
+`docker exec` commands, the Vault UI link below, the configuration samples in
+`docs/local-testing.md` and the run instructions in the headers of the scripts in
+`sql/oracle/`. In the second clone, change the name and the port in them. The
 tier2 and maintainer-only services keep fixed ports, so only one clone can run
 each of them.
 
-A tier1 stack uses about 2.5 GB in its containers, most of it Oracle Free's.
+Measured on 2026-10-14: a healthy tier1 stack uses about 2.5 GB of memory in
+its containers, and about 2.9 GB while the suite runs against it. Oracle Free is
+most of it, 2.25 GB idle and 2.8 GB under the suite.
 
 | Service | Port | Notes |
 |---|---|---|
-| vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
+| vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test` |
 | oracle-free | 1521, or `SOPULI_TEST_ORACLE_PORT` | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |

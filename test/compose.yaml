@@ -28,10 +28,10 @@
 # one-time init lives in them; `down -v` is the one form that discards them.
 #
 # A SECOND CLONE can run its own tier0/tier1 stack beside this one. Set
-# COMPOSE_PROJECT_NAME and the three SOPULI_TEST_*_PORT variables in a .env file
-# beside this one, in that clone. The project name overrides `name:` below. Without a project name of
-# its own, a second clone's `up` recreates the first clone's containers. See
-# README.md.
+# COMPOSE_PROJECT_NAME and the three SOPULI_TEST_*_PORT variables in that clone's
+# environment; the suite reads the same four. The project name overrides `name:`
+# below. Without a project name of its own, a second clone's `up` recreates the
+# first clone's containers. See README.md.
 
 name: sopuli-test
 

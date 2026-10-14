@@ -135,10 +135,9 @@ class BackendNotImplementedError(ConfigError):
     -- and it is reachable, because `01-configuration.md` §3a accepts backend
     types that :data:`BACKENDS` maps to a module this build does not have.
 
-    No ``error.code``: the numbers in ``03-json-output.md`` §3 are allocated by
-    hand, and none of them means this. Allocating another here would be
-    answering J3 (how codes are allocated) as a side effect of an import
-    failure.
+    No ``error.code``. An error gets one only where its category and exit code do
+    not tell it apart (J3). Here the message says that this build has no module
+    for the type, and carries no install line.
     """
 
 

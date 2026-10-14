@@ -45,8 +45,8 @@ class ClientError(ConfigError):
     who fixes it. Not ``capability``, which names something the database at the
     far end cannot do and no local action changes.
 
-    No ``error.code``. J3 is open, three numbers have been allocated by hand,
-    and a fourth allocated the same way would still not answer it.
+    No ``error.code``. An error gets one only where its category and exit code do
+    not tell it apart (J3), and ``config`` with this message does.
     """
 
 

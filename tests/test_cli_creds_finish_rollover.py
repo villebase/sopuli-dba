@@ -373,7 +373,7 @@ def test_debug_says_why_an_account_with_nothing_open_was_left_alone(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "plan: acme_web_user on appdb-alpha left alone: IN_SYNC, " in result.stderr
-    assert "plan: acme_web_user on appdb-beta left out by --select" in result.stderr
+    assert "plan: target appdb-beta left out by --select" in result.stderr
     assert LIVE not in result.stderr
     assert STAGED not in result.stderr
 

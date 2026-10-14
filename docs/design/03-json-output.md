@@ -170,12 +170,14 @@ Each part of the tool writes these lines:
   always a failure: a capability probe reads `ORA-00942` as an absent
   capability, and the scope line after the probes says what it concluded. The
   server's message reaches the operator in the error.
-- **`plan`**: why a unit is in the run or not. Each declared account on a
-  target that a selector left out, with the flag that left it out, such as
-  `--select` or `--repair`. Each account that `--max-age-days` did not select,
-  with the reason. Each unit a verb decided to leave alone, with its state and
-  the reason, for example that the database already accepts the vault's
-  `current`.
+- **`plan`**: why a unit is in the run or not. Each declared target that a
+  selector left out, and each account left out on a target that stays, with the
+  flag that left it out, such as `--select`, `--account` or `--repair`. Each
+  account that `--max-age-days` did not select, with the reason. Each unit a
+  verb did not act on, with its state and the reason. A unit that needed nothing
+  is "left alone", for example because the database already accepts the vault's
+  `current`. A unit in the `ERROR` state, such as an account the operator named
+  and the guardrails refused, is "not acted on".
 - **`vault`**: each request, with its method, path, status and time. Never a
   body, a header or the query string: a body can hold a password, and a header
   holds the token. A path names where a secret is kept, as the config does.

@@ -261,17 +261,15 @@ def filter_estate(config: Config, selection: Selection) -> Config:
     if selection.is_everything:
         return config
 
-    groups = _groups(config, selection)
+    tests = _Tests.of(config, selection)
     targets = tuple(
-        expanded
-        for expanded in config.expanded_targets
-        if _target_left_out_by(expanded, selection, groups) is None
+        expanded for expanded in config.expanded_targets if tests.target(expanded) is None
     )
     selected = {expanded.name for expanded in targets}
     bindings = tuple(
         binding
         for binding in config.bindings
-        if binding.target in selected and _binding_left_out_by(binding, selection) is None
+        if binding.target in selected and tests.binding(binding) is None
     )
 
     if selection.accounts or selection.applications:
@@ -288,68 +286,118 @@ def filter_estate(config: Config, selection: Selection) -> Config:
 
 @dataclass(frozen=True)
 class LeftOut:
-    """One declared binding a selector left out of the run, and the flag that did.
+    """One declared target, or one binding on a selected target, that a selector
+    left out of the run, and the flag that did.
 
     What ``--debug`` reports about selection. :func:`filter_estate` returns only
     what is left, so an operator whose run planned fewer units than expected
     cannot see from the plan which flag removed the others.
     """
 
-    account: str
     target: str
     #: The flag as the operator types it, such as ``--select``.
     flag: str
+    #: ``None`` where the whole target was left out. Its bindings are not
+    #: listed one by one: the target's line already says why they are gone.
+    account: str | None = None
 
 
 def left_out(config: Config, selection: Selection) -> tuple[LeftOut, ...]:
-    """Each binding of ``config`` that :func:`filter_estate` leaves out, and why.
+    """Each target and binding of ``config`` that :func:`filter_estate` leaves
+    out, and why.
 
-    The same tests in the same order, through the same two helpers, so this
-    cannot disagree with :func:`filter_estate` about what was removed. A binding
-    that more than one flag excludes is reported with the first that does: a
-    target flag before an account flag, because :func:`filter_estate` narrows
-    targets first.
+    The same tests in the same order, through :class:`_Tests`, so this cannot
+    disagree with :func:`filter_estate` about what was removed. Targets come
+    first, in estate order, then the bindings left out on the targets that stay.
+    A target dropped because ``--account`` or ``--application`` left it with no
+    bindings is reported with that flag.
     """
     if selection.is_everything:
         return ()
-    groups = _groups(config, selection)
-    by_target = {
-        expanded.name: _target_left_out_by(expanded, selection, groups)
-        for expanded in config.expanded_targets
-    }
-    found: list[LeftOut] = []
+    tests = _Tests.of(config, selection)
+    targets: list[LeftOut] = []
+    selected: set[str] = set()
+    for expanded in config.expanded_targets:
+        flag = tests.target(expanded)
+        if flag is None:
+            selected.add(expanded.name)
+        else:
+            targets.append(LeftOut(expanded.name, flag))
+
+    bindings: list[LeftOut] = []
+    kept: set[str] = set()
     for binding in config.bindings:
-        flag = by_target.get(binding.target) or _binding_left_out_by(binding, selection)
-        if flag is not None:
-            found.append(LeftOut(binding.account, binding.target, flag))
-    return tuple(found)
+        if binding.target not in selected:
+            continue
+        flag = tests.binding(binding)
+        if flag is None:
+            kept.add(binding.target)
+        else:
+            bindings.append(LeftOut(binding.target, flag, binding.account))
+
+    if selection.accounts or selection.applications:
+        emptied = "--account" if selection.accounts else "--application"
+        for expanded in config.expanded_targets:
+            if expanded.name in selected and expanded.name not in kept:
+                targets.append(LeftOut(expanded.name, emptied))
+    return (*targets, *bindings)
 
 
-def _groups(config: Config, selection: Selection) -> tuple[Pairs, ...]:
-    """The label match of each ``--group``."""
-    return tuple(_group_match(config, name) for name in selection.groups)
+def pairs_left_out(config: Config, pairs: Iterable[AccountTarget]) -> tuple[LeftOut, ...]:
+    """Each binding of ``config`` that :func:`filter_to_pairs` leaves out.
+
+    Reported with the flag ``--repair``, the one that hands in a pair set. The
+    pairs are compared as :func:`filter_to_pairs` compares them.
+    """
+    wanted = {(account.casefold(), target) for account, target in pairs}
+    return tuple(
+        LeftOut(binding.target, "--repair", binding.account)
+        for binding in config.bindings
+        if (binding.account.casefold(), binding.target) not in wanted
+    )
 
 
-def _target_left_out_by(
-    expanded: ExpandedTarget, selection: Selection, groups: tuple[Pairs, ...]
-) -> str | None:
-    """The first flag that excludes this target, or ``None`` if none does."""
-    if selection.targets and expanded.name not in selection.targets:
-        return "--target"
-    if not matches(expanded.target, selection.select):
-        return "--select"
-    if groups and not any(matches(expanded.target, match) for match in groups):
-        return "--group"
-    return None
+@dataclass(frozen=True)
+class _Tests:
+    """Each selector flag as a test, built once per selection.
 
+    :func:`filter_estate` and :func:`left_out` both use it, so the two cannot
+    disagree about what a flag excludes.
+    """
 
-def _binding_left_out_by(binding: Binding, selection: Selection) -> str | None:
-    """The first binding-level flag that excludes this binding, or ``None``."""
-    if selection.accounts and not selection.names(binding.account):
-        return "--account"
-    if selection.applications and binding.application not in selection.applications:
-        return "--application"
-    return None
+    selection: Selection
+    groups: tuple[Pairs, ...]
+    targets: frozenset[str]
+    #: ``--account``, case-folded for the reason :attr:`Selection.accounts` gives.
+    accounts: frozenset[str]
+
+    @classmethod
+    def of(cls, config: Config, selection: Selection) -> _Tests:
+        return cls(
+            selection,
+            tuple(_group_match(config, name) for name in selection.groups),
+            frozenset(selection.targets),
+            frozenset(name.casefold() for name in selection.accounts),
+        )
+
+    def target(self, expanded: ExpandedTarget) -> str | None:
+        """The first flag that excludes this target, or ``None`` if none does."""
+        if self.targets and expanded.name not in self.targets:
+            return "--target"
+        if not matches(expanded.target, self.selection.select):
+            return "--select"
+        if self.groups and not any(matches(expanded.target, match) for match in self.groups):
+            return "--group"
+        return None
+
+    def binding(self, binding: Binding) -> str | None:
+        """The first binding-level flag that excludes this binding, or ``None``."""
+        if self.accounts and binding.account.casefold() not in self.accounts:
+            return "--account"
+        applications = self.selection.applications
+        if applications and binding.application not in applications:
+            return "--application"
+        return None
 
 
 def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:

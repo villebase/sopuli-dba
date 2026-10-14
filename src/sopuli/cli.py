@@ -111,7 +111,7 @@ from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
-from sopuli.config.selection import left_out
+from sopuli.config.selection import LeftOut, left_out, pairs_left_out
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
@@ -330,24 +330,44 @@ PLANNING = logger("plan")
 
 def _narrow(config: Config, selection: Selection) -> Config:
     """:func:`~sopuli.config.selection.filter_estate`, saying under `--debug`
-    which declared bindings the selectors left out, and by which flag.
+    which declared targets and bindings the selectors left out, and by which
+    flag.
 
     The reasons are computed only under `--debug`: the selection layer is pure,
     so it returns them and this writes them.
     """
     if PLANNING.isEnabledFor(logging.DEBUG):
-        for one in left_out(config, selection):
-            PLANNING.debug("%s on %s left out by %s", one.account, one.target, one.flag)
+        _log_left_out(left_out(config, selection))
     return filter_estate(config, selection)
 
 
-def _left_alone(account: str, target: str, state: str, detail: str | None) -> None:
-    """Say under `--debug` why a verb left a unit alone: its state and reason.
+def _narrow_to_pairs(config: Config, pairs: Collection[tuple[str, str]]) -> Config:
+    """:func:`~sopuli.config.selection.filter_to_pairs`, saying under `--debug`
+    which bindings the repair set left out."""
+    if PLANNING.isEnabledFor(logging.DEBUG):
+        _log_left_out(pairs_left_out(config, pairs))
+    return filter_to_pairs(config, pairs)
+
+
+def _log_left_out(found: Sequence[LeftOut]) -> None:
+    for one in found:
+        if one.account is None:
+            PLANNING.debug("target %s left out by %s", one.target, one.flag)
+        else:
+            PLANNING.debug("%s on %s left out by %s", one.account, one.target, one.flag)
+
+
+def _left_alone(account: str, target: str, state: str, detail: str) -> None:
+    """Say under `--debug` why a verb did not act on a unit: its state and reason.
 
     Called where the verb decides, not where it reports, so the line sits
-    beside the statements that led to the decision.
+    beside the statements that led to the decision. An `ERROR` state, such as
+    a guardrail refusing an account the operator named, reads "not acted on"
+    rather than "left alone": the run reports it as a failure, not as a unit
+    that needed nothing.
     """
-    PLANNING.debug("%s on %s left alone: %s, %s", account, target, state, detail)
+    said = "not acted on" if state == check_states.ERROR else "left alone"
+    PLANNING.debug("%s on %s %s: %s, %s", account, target, said, state, detail)
 
 
 def help_with(**facts: str) -> Callable[[F], F]:
@@ -2745,6 +2765,7 @@ def _reset_one(
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()
         if not decision.proceed:
+            _left_alone(account, target.name, decision.state, decision.detail)
             return _Reset(
                 account=account,
                 target=target.name,
@@ -5807,12 +5828,7 @@ def creds_apply(
     repair_notes: list[str] = []
     if repair_document is not None:
         repair_set = repair_module.read(repair_document, sources=run.sources)
-        repaired = filter_to_pairs(config, repair_set.pairs)
-        kept = {(binding.account, binding.target) for binding in repaired.bindings}
-        for binding in config.bindings:
-            if (binding.account, binding.target) not in kept:
-                PLANNING.debug("%s on %s left out by --repair", binding.account, binding.target)
-        config = repaired
+        config = _narrow_to_pairs(config, repair_set.pairs)
         stale = repair_module.staleness(repair_set)
         if stale is not None:
             document.diagnostics.append(stale)

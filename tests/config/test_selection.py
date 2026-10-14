@@ -16,11 +16,13 @@ from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetSelector
 from sopuli.config.selection import (
+    LeftOut,
     Selection,
     filter_estate,
     filter_to_pairs,
     left_out,
     matches,
+    pairs_left_out,
     parse_selector,
     refuse_unknown,
     select,
@@ -542,12 +544,13 @@ GROUPED: dict[str, Any] = {
             "name": "acme-reports",
             "accounts": ["acme_report_user"],
             "secret_template": "acme-reports/{env}/{account}#password",
+            "targets": ["appdb-dev-alpha"],
         },
     ],
 }
 
 
-def flags(selection: Selection) -> dict[tuple[str, str], str]:
+def flags(selection: Selection) -> dict[tuple[str | None, str], str]:
     found = left_out(build_config(GROUPED), selection)
     return {(one.account, one.target): one.flag for one in found}
 
@@ -558,16 +561,27 @@ def flags(selection: Selection) -> dict[tuple[str, str], str]:
         (Selection(targets=("appdb-dev-alpha",)), "--target"),
         (Selection(select=(("tenant", "alpha"),)), "--select"),
         (Selection(groups=("alpha-pdbs",)), "--group"),
+    ],
+)
+def test_a_target_left_out_is_named_once_with_the_flag_that_did_it(
+    selection: Selection, flag: str
+) -> None:
+    """#788: one line for the target, not one per binding on it."""
+    assert flags(selection) == {(None, "appdb-dev-beta"): flag}
+
+
+@pytest.mark.parametrize(
+    ("selection", "flag"),
+    [
         (Selection(accounts=("ACME_WEB_USER",)), "--account"),
         (Selection(applications=("acme",)), "--application"),
     ],
 )
-def test_each_binding_left_out_is_named_with_the_flag_that_did_it(
+def test_a_binding_left_out_is_named_with_the_flag_that_did_it(
     selection: Selection, flag: str
 ) -> None:
-    """#788: `--debug` says which flag removed a binding. Each flag on its own
-    names itself, and the account named in another case is still matched
-    case-folded."""
+    """Checked against what `filter_estate` removes, so the two agree. The
+    account in the first case is matched case-folded."""
     config = build_config(GROUPED)
     kept = pairs_of(filter_estate(config, selection))
 
@@ -578,15 +592,34 @@ def test_each_binding_left_out_is_named_with_the_flag_that_did_it(
     assert set(found.values()) == {flag}
 
 
-def test_a_target_flag_is_named_before_an_account_flag() -> None:
-    """A binding both flags exclude is reported once, by the target flag,
-    because targets are narrowed first."""
-    found = flags(Selection(select=(("tenant", "alpha"),), accounts=("acme_web_user",)))
+def test_a_target_left_with_no_bindings_is_named_with_the_binding_flag() -> None:
+    """`filter_estate` drops a target that `--application` emptied, so
+    `left_out` says so. `acme-reports` is declared on one target only."""
+    selection = Selection(applications=("acme-reports",))
 
-    assert found[("acme_web_user", "appdb-dev-beta")] == "--select"
-    assert found[("acme_batch_user", "appdb-dev-alpha")] == "--account"
-    assert found[("acme_batch_user", "appdb-dev-beta")] == "--select"
+    found = left_out(build_config(GROUPED), selection)
+
+    assert LeftOut("appdb-dev-beta", "--application") in found
+    narrowed = filter_estate(build_config(GROUPED), selection)
+    assert [t.name for t in narrowed.expanded_targets] == ["appdb-dev-alpha"]
+
+
+def test_a_target_with_no_bindings_is_reported() -> None:
+    """`target list` and `doctor` select targets nothing is declared against."""
+    found = left_out(estate(), Selection(select=(("env", "qa"),)))
+
+    assert LeftOut("legacy-box", "--select") in found
+    assert all(one.account is None for one in found)
 
 
 def test_saying_nothing_leaves_nothing_out() -> None:
     assert left_out(build_config(GROUPED), Selection()) == ()
+
+
+def test_the_pairs_a_repair_set_leaves_out_are_named() -> None:
+    found = pairs_left_out(bound(), [("ACME_WEB_USER", "appdb-dev-alpha")])
+
+    assert {(one.account, one.target) for one in found} == pairs_of(bound()) - {
+        ("acme_web_user", "appdb-dev-alpha")
+    }
+    assert {one.flag for one in found} == {"--repair"}

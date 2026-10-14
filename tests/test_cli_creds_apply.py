@@ -779,7 +779,7 @@ def debug_lines(result: Result) -> list[str]:
     return [line for line in result.stderr.splitlines() if " plan: " in line]
 
 
-def test_debug_names_a_binding_a_selector_left_out(
+def test_debug_names_a_target_a_selector_left_out(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     estate()
@@ -788,7 +788,7 @@ def test_debug_names_a_binding_a_selector_left_out(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     left = [line for line in debug_lines(result) if "left out" in line]
     assert len(left) == 1
-    assert left[0].endswith("plan: acme_web_user on appdb-beta left out by --select")
+    assert left[0].endswith("plan: target appdb-beta left out by --select")
     assert STAGED not in result.stderr
     assert LIVE not in result.stderr
 

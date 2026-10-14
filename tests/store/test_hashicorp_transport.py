@@ -10,6 +10,7 @@ wall.
 
 from __future__ import annotations
 
+import socket
 import ssl
 from pathlib import Path
 
@@ -292,3 +293,35 @@ def test_a_client_certificate_that_does_not_exist_is_a_store_error(tmp_path: Pat
 
     assert "client_cert" in str(caught.value)
     assert "ca_file" not in str(caught.value)
+
+
+def test_a_token_with_a_line_break_is_refused_without_quoting_it() -> None:
+    """h11 refuses the header before anything is sent, and its message quotes
+    the whole value, which is the token (#785). It checks the header after it
+    connects, so a socket listens here and is never answered."""
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+        transport = build_transport(
+            vault(addr=f"http://127.0.0.1:{port}"), token=Secret("hvs.EXAMPLETOKEN\r")
+        )
+
+        with pytest.raises(StoreError) as caught:
+            transport.request("GET", "sys/health")
+
+    assert caught.value.message == (
+        "the request to the store could not be sent: LocalProtocolError"
+    )
+    assert "EXAMPLETOKEN" not in str(caught.value)
+
+
+def test_a_fault_in_the_tool_is_not_reported_as_the_store() -> None:
+    """A value JSON cannot encode is a bug, not a store that is down."""
+    transport = Transport(
+        httpx.Client(
+            base_url="https://vault.example.com",
+            transport=httpx.MockTransport(lambda _: httpx.Response(204)),
+        )
+    )
+
+    with pytest.raises(TypeError):
+        transport.request("POST", "kv/data/acme", json={"value": object()})

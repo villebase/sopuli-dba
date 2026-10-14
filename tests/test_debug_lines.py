@@ -312,7 +312,7 @@ def test_a_webhook_url_httpx_cannot_parse_is_reported_by_error_type(
     with pytest.raises(StoreError) as raised:
         webhook.send(Secret(url), "a password is waiting")
 
-    assert raised.value.message == "the webhook could not be reached: InvalidURL"
+    assert raised.value.message == "the webhook URL could not be used: InvalidURL"
     written = debug.getvalue()
     assert "webhook: POST to an address httpx could not parse: InvalidURL in " in written
     assert "EXAMPLEPORT" not in written

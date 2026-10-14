@@ -1944,6 +1944,8 @@ the register.
     character httpx cannot encode raises `UnicodeEncodeError`, which quotes it.
   - httpx encodes a header as ASCII. A token with any other character raised
     `UnicodeEncodeError` with that character and its position.
+  - A token with a line break, such as a `` left by a file saved on Windows,
+    raised `httpx.LocalProtocolError`, and its message quoted the whole token.
   - The vault transport raised every httpx error other than a timeout or a
     connection failure as it was. One is an encoding error for a body, and the
     body of a write or a login holds a secret.

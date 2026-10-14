@@ -118,6 +118,17 @@ class Transport:
                 f"the store did not answer within the timeout: {error}",
                 hint="raise `timeout_s` on the store, or check that `addr` reaches it",
             ) from error
+        except httpx.LocalProtocolError as error:
+            # Raised before anything is sent, for a request httpx will not put on
+            # the wire. Its message quotes what it refused, and for a header that
+            # is the whole token: a token read with a trailing `\r` is the usual
+            # case. Named by its type only (#785).
+            _log(started, method, path, type(error).__name__)
+            raise StoreError(
+                f"the request to the store could not be sent: {type(error).__name__}",
+                hint="check the token for whitespace or a line break, such as a `\\r` "
+                "left by a file saved on Windows",
+            ) from error
         except httpx.TransportError as error:
             # Includes the TLS failures, which is the one class of connectivity
             # error worth a hint of its own: it is what `tls:` exists to fix and
@@ -127,7 +138,7 @@ class Transport:
                 f"could not reach the store: {error}",
                 hint="check `addr`, and `tls.ca_file` if the certificate is your own CA",
             ) from error
-        except Exception as error:
+        except (httpx.HTTPError, httpx.InvalidURL, UnicodeError) as error:
             # Anything else httpx raises, such as an address it cannot parse, or
             # a body it cannot encode. Named by its type only: the body of a
             # write or a login holds a secret, and an encoding error quotes a
@@ -138,6 +149,11 @@ class Transport:
                 hint="the error is named by its type only, because its message can quote "
                 "what the request carried; run with --debug to see where it was raised",
             ) from error
+        except Exception as error:
+            # A fault in the tool, such as a value JSON cannot encode. Raised as
+            # it is, so that it does not read as a store that is down.
+            _log(started, method, path, type(error).__name__)
+            raise
 
         _log(started, method, path, str(response.status_code))
         return Response(status=response.status_code, body=_decode(response))
@@ -205,12 +221,14 @@ def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
             # place, which is the one that ends up in the audit trail.
             follow_redirects=False,
         )
-    except Exception as error:
-        # httpx encodes a header value as ASCII, and the error for a token it
-        # cannot encode quotes a character of the token and its position (#785).
+    except (httpx.InvalidURL, UnicodeError) as error:
+        # httpx parses `addr` and encodes each header value as ASCII here. The
+        # error for a token it cannot encode quotes a character of the token and
+        # its position, so it is named by its type only (#785).
         raise StoreError(
             f"vault {vault.name!r}: the client could not be built: {type(error).__name__}",
-            hint="a token holds ASCII characters only; check the file or variable it came from",
+            hint="check `addr` and `namespace` on the store, and that the token holds "
+            "ASCII characters only",
         ) from error
     return Transport(client, sni_hostname=vault.tls.server_name if vault.tls else None)
 

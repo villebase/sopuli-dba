@@ -81,13 +81,23 @@ def send(url: Secret, message: str) -> None:
         # Parsed inside the `try`, because a URL httpx cannot parse raises here.
         host = httpx.URL(address).host or "an address with no host"
         response = httpx.post(address, json={BODY_KEY: message}, timeout=TIMEOUT_S)
-    except Exception as error:  # noqa: BLE001 -- converted, never swallowed
+    except (httpx.InvalidURL, UnicodeError) as error:
+        LOG.debug("POST to %s: %s in %.3fs", host, type(error).__name__, time.monotonic() - started)
+        # `InvalidURL` is not an `HTTPError`, and a URL holding a character httpx
+        # cannot encode raises `UnicodeEncodeError`. Both quote a part of the URL
+        # (#785).
+        raise StoreError(
+            f"the webhook URL could not be used: {type(error).__name__}",
+            hint=(
+                "the webhook URL is not repeated here, because it carries its own "
+                "credential. Check the value behind `delivery.notify.webhook.url`"
+            ),
+        ) from error
+    except httpx.HTTPError as error:
         LOG.debug("POST to %s: %s in %.3fs", host, type(error).__name__, time.monotonic() - started)
         # `type(error).__name__` rather than `str(error)`: httpx puts the URL, or
         # a part of it, in the message of several of its errors, and the URL is
-        # the credential. Every exception, because `InvalidURL` is not an
-        # `HTTPError`, and a URL holding a character httpx cannot encode raises
-        # `UnicodeEncodeError` (#785).
+        # the credential.
         raise StoreError(
             # Phrased as a *cause* rather than as a sentence, because
             # `SOPULI-W026` already says what happened and appends this: running it

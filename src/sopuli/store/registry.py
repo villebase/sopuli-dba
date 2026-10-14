@@ -135,9 +135,9 @@ class BackendNotImplementedError(ConfigError):
     -- and it is reachable, because `01-configuration.md` §3a accepts backend
     types that :data:`BACKENDS` maps to a module this build does not have.
 
-    No ``error.code``. An error gets one only where its category and exit code do
-    not tell it apart (J3). Here the message says that this build has no module
-    for the type, and carries no install line.
+    No ``error.code`` yet. J3 gives it one: neither editing the file nor
+    installing anything fixes it, where one of the two fixes every other
+    ``config`` error. #801 adds it.
     """
 
 

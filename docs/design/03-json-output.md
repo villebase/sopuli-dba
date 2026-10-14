@@ -1794,13 +1794,18 @@ no code.
 **Codes are one flat series**, `SOPULI-W001` upwards, with no ranges by
 category. The next code is the next free number. A number is never reused: when
 a warning stops being emitted, its row stays in this table, marked retired, and
-its constant stays in the registry.
+its constant stays in the registry. `tests/test_warning_codes.py` records the
+highest number given so far, so a pull request that adds a code raises it there,
+and one that deletes the highest row fails.
 
 **A number is fixed when it reaches `main`.** Two pull requests written at the
 same time often take the same next number. `tests/test_warning_codes.py` fails
 when two codes share a number, when the numbers have a gap, or when this table
-and the registry disagree. So the pull request that merges second fails on its
-rebase, and takes the next free number before it merges.
+and the registry disagree. Nothing enforces that a branch is current with `main`
+when it merges (`docs/workflow.md`), so bring it up to date first. The second
+of two such pull requests then fails, and takes the next free number. Both also
+add a different row at the end of this table, so git usually reports a conflict
+before any test runs.
 
 **For `doctor`, a finding gets a diagnostic only for what the exit code cannot say.**
 An unreachable store fails the run, so anything watching the exit code already
@@ -1825,14 +1830,16 @@ own, it may have a `SOPULI-` code from this table.
 
 **An error gets a code where a consumer must tell it from the other errors in its
 category.** Every error already has `error.category` and an exit code, and a
-consumer branches on those first. A missing client for a configured backend
-gets a code, because inside `config` it is the one error that an install command
-fixes. A warning has no category, so every warning has a code. An error does
-not need one. ([J3](../decisions/log.md#j3))
+consumer branches on those first. Most `config` errors are fixed by editing the
+file. A missing client for a configured backend, driver or channel is fixed by
+installing something, so each has a code. A warning has no category, so every
+warning has a code. An error needs one only to be told apart. Three errors this
+rule gives a code do not have it yet: #801. ([J3](../decisions/log.md#j3))
 
 **The numbers follow the warning codes' rule:** one flat series from
 `SOPULI-20001`, never reused, and fixed when it reaches `main`.
-`tests/test_warning_codes.py` checks this table as it checks the warnings'.
+`tests/test_warning_codes.py` checks this table as it checks the warnings', and
+records its highest number too.
 
 | Code | Category | Exit | Meaning |
 |---|---|---|---|

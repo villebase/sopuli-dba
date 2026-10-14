@@ -38,11 +38,28 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "sopuli"
 DOC = ROOT / "docs" / "design" / "03-json-output.md"
 
-#: Each series: its pattern, its first number, and the heading of its table.
+#: Each series: its pattern, the shorthand that continues it (`SOPULI-W031/W032`),
+#: its first number, and the heading of its table. `(?!\d)` keeps a code from
+#: matching inside a longer number.
 SERIES = {
-    "warning": (re.compile(r"SOPULI-W(\d{3})"), 1, "### Diagnostic codes"),
-    "error": (re.compile(r"SOPULI-(2\d{4})"), 20001, "### Error codes"),
+    "warning": (
+        re.compile(r"SOPULI-W(\d{3})(?!\d)"),
+        re.compile(r"/W(\d{3})(?!\d)"),
+        1,
+        "### Diagnostic codes",
+    ),
+    "error": (
+        re.compile(r"SOPULI-(2\d{4})(?!\d)"),
+        re.compile(r"/(2\d{4})(?!\d)"),
+        20001,
+        "### Error codes",
+    ),
 }
+
+#: The highest number given so far in each series. A pull request that adds a
+#: code raises it here. A number is never reused, so deleting the highest row and
+#: its constant must fail, and without this the other checks would still pass.
+HIGHEST = {"warning": 32, "error": 20003}
 
 
 def _constants(pattern: re.Pattern[str]) -> dict[str, list[str]]:
@@ -72,13 +89,23 @@ def _constants(pattern: re.Pattern[str]) -> dict[str, list[str]]:
     return found
 
 
-def _written(pattern: re.Pattern[str]) -> dict[str, str]:
-    """Every code written anywhere in `src/`, with the first place it appears."""
+def _written(pattern: re.Pattern[str], shorthand: re.Pattern[str]) -> dict[str, str]:
+    """Every code written anywhere in `src/`, with the first place it appears.
+
+    Shorthand counts: `SOPULI-W031/W032` writes two codes, and the second is as
+    visible to a reader as the first.
+    """
+    prefix = pattern.pattern.split("(")[0]
     found: dict[str, str] = {}
     for path in sorted(SRC.rglob("*.py")):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            where = f"{path.relative_to(ROOT).as_posix()}:{number}"
             for match in pattern.finditer(line):
-                found.setdefault(match.group(0), f"{path.relative_to(ROOT).as_posix()}:{number}")
+                found.setdefault(match.group(0), where)
+                end = match.end()
+                while (more := shorthand.match(line, end)) is not None:
+                    found.setdefault(prefix + more.group(1), where)
+                    end = more.end()
     return found
 
 
@@ -86,6 +113,10 @@ def _table(heading: str, pattern: re.Pattern[str]) -> list[str]:
     """The codes in the first column of the table under ``heading``, in order."""
     requires_repo(DOC)
     lines = DOC.read_text(encoding="utf-8").splitlines()
+    assert heading in lines, (
+        f"no {heading!r} heading in {DOC.relative_to(ROOT).as_posix()}; if it was "
+        "renamed, rename it in SERIES here too"
+    )
     start = lines.index(heading)
     codes = []
     for line in lines[start + 1 :]:
@@ -106,7 +137,7 @@ def _number(code: str, pattern: re.Pattern[str]) -> int:
 
 @pytest.mark.parametrize("series", sorted(SERIES))
 def test_no_two_constants_hold_one_code(series: str) -> None:
-    pattern, _, _ = SERIES[series]
+    pattern, _, _, _ = SERIES[series]
     shared = {code: names for code, names in _constants(pattern).items() if len(names) > 1}
     assert not shared, (
         "two constants hold one code; the pull request that merged second takes the "
@@ -116,14 +147,29 @@ def test_no_two_constants_hold_one_code(series: str) -> None:
 
 @pytest.mark.parametrize("series", sorted(SERIES))
 def test_the_numbers_have_no_gap(series: str) -> None:
-    pattern, first, heading = SERIES[series]
+    pattern, _, first, heading = SERIES[series]
     numbers = sorted(_number(code, pattern) for code in _table(heading, pattern))
     assert numbers == list(range(first, first + len(numbers))), numbers
 
 
 @pytest.mark.parametrize("series", sorted(SERIES))
+def test_the_highest_number_is_the_one_recorded(series: str) -> None:
+    """A code is never deleted, only retired, so the highest number never falls.
+
+    A pull request that adds a code raises :data:`HIGHEST`. One that deletes the
+    highest row and its constant, instead of marking it retired, fails here.
+    """
+    pattern, _, _, heading = SERIES[series]
+    highest = max(_number(code, pattern) for code in _table(heading, pattern))
+    assert highest == HIGHEST[series], (
+        f"the highest {series} code is {highest}, and HIGHEST records {HIGHEST[series]}. "
+        "Raise HIGHEST when you add a code; a code is retired, never deleted"
+    )
+
+
+@pytest.mark.parametrize("series", sorted(SERIES))
 def test_the_table_lists_each_code_once(series: str) -> None:
-    pattern, _, heading = SERIES[series]
+    pattern, _, _, heading = SERIES[series]
     codes = _table(heading, pattern)
     repeated = sorted({code for code in codes if codes.count(code) > 1})
     assert not repeated, f"rows repeated under {heading!r}: {repeated}"
@@ -131,7 +177,7 @@ def test_the_table_lists_each_code_once(series: str) -> None:
 
 @pytest.mark.parametrize("series", sorted(SERIES))
 def test_the_table_and_the_source_hold_the_same_codes(series: str) -> None:
-    pattern, _, heading = SERIES[series]
+    pattern, _, _, heading = SERIES[series]
     table = set(_table(heading, pattern))
     defined = set(_constants(pattern))
     assert table - defined == set(), f"in the table, with no constant in src/: {table - defined}"
@@ -141,13 +187,25 @@ def test_the_table_and_the_source_hold_the_same_codes(series: str) -> None:
 @pytest.mark.parametrize("series", sorted(SERIES))
 def test_every_code_in_the_source_is_in_the_table(series: str) -> None:
     """A code in a message or a comment is as visible to a reader as a constant."""
-    pattern, _, heading = SERIES[series]
+    pattern, shorthand, _, heading = SERIES[series]
     table = set(_table(heading, pattern))
-    unknown = {code: where for code, where in _written(pattern).items() if code not in table}
+    written = _written(pattern, shorthand)
+    unknown = {code: where for code, where in written.items() if code not in table}
     assert not unknown, f"codes in src/ that the table does not have: {unknown}"
+
+
+def test_shorthand_is_read_as_two_codes() -> None:
+    """`SOPULI-W031/W032` names W032 too, so a renumbering that misses it fails."""
+    pattern, shorthand, _, _ = SERIES["warning"]
+    assert {"SOPULI-W031", "SOPULI-W032"} <= set(_written(pattern, shorthand))
+
+
+def test_a_code_does_not_match_inside_a_longer_number() -> None:
+    pattern, _, _, _ = SERIES["warning"]
+    assert pattern.search("SOPULI-W1000") is None
 
 
 def test_the_registry_describes_every_warning_in_the_table() -> None:
     """`WARNINGS` is what a run uses to describe a code; the table is what a reader sees."""
-    pattern, _, heading = SERIES["warning"]
+    pattern, _, _, heading = SERIES["warning"]
     assert set(WARNINGS) == set(_table(heading, pattern))

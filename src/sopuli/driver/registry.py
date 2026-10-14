@@ -138,9 +138,9 @@ class DriverNotImplementedError(ConfigError):
     ``TARGET_TYPES`` -- and discovering then that the failure path is a
     ``KeyError`` is discovering it in the worst way.
 
-    No ``error.code``. An error gets one only where its category and exit code do
-    not tell it apart (J3). This one is unreachable today, and the message names
-    the driver.
+    No ``error.code`` yet. J3 gives it one: neither editing the file nor
+    installing anything fixes it, where one of the two fixes every other
+    ``config`` error. #801 adds it.
     """
 
 

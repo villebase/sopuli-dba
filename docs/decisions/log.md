@@ -2097,3 +2097,34 @@ the register.
     `reset_records.vault`.
   - A command-line flag to go ahead without the lock. It adds one more flag in
     front of a guardrail, and removing `reset_records:` already does this.
+
+## #769
+
+- **Decided:** 2026-10-14, #769
+- **Question:** `creds rotate` checks its fence and then writes the secret
+  document, in two requests. A takeover can land between them, and the write
+  still goes through. Should the tool close that window, report it, or accept
+  it?
+- **Decision:** Accept it, and document it. UC-1 §8 states the window and what
+  follows, in the failure table and in *How the fence is checked*.
+- **Why:** Vault has no compare-and-set across two paths, so the fence check
+  on the lock and the write to the secret cannot be one operation. What lands
+  in the window is a `pending` that holds a random password nobody has. The
+  stale run's next fence check stops it before its `ALTER USER`, so it changes
+  no database, and `current` is not promoted. The next `apply` applies the
+  `pending` and promotes it, which is safe under invariant 7. The accepted
+  cost: if the run that took over is a `rotate`, the stale write can make its
+  staging compare-and-set fail. It exits 1 and applies nothing, and it can be
+  run again, but its error names a conflict and not the takeover.
+  `tests/test_fault_lock.py` produces both cases.
+- **Rejected:**
+  - Write the lock's version into the secret document, and have `apply`
+    refuse or ignore a `pending` written under an older fence. It is the only
+    option that closes the window. But it changes the secret document's format,
+    and it needs a rule for documents written before the change. The harm it
+    prevents is that a password nobody holds gets applied, which is not worth
+    that cost.
+  - Check the fence again after the write, and report a `pending` that landed
+    after a takeover. It costs one more read per document, and it closes
+    nothing: removing the `pending` would be another write with the same
+    window.

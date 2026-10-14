@@ -93,11 +93,45 @@ only the 19.19 volume and leaves 19.3's (checked 2026-09-28 with a scratch
 two-profile project). Every other service loses its state on any `down`, with or
 without `-v`.
 
+## A second clone with its own stack
+
+Two clones of the repository can each run a tier0 or tier1 stack at the same
+time. The second clone needs its own project name and its own ports. Without a
+project name of its own, its `up` works on the first clone's containers. It
+recreates them, because the `./oracle-init` mount points at another directory,
+and the database is lost. Its `--profile '*' down` would remove them.
+
+Give the second clone a `.env` file in this directory. Compose reads it, and git
+ignores it:
+
+```bash
+COMPOSE_PROJECT_NAME=sopuli-test-w2
+SOPULI_TEST_VAULT_PORT=8300
+SOPULI_TEST_POSTGRES_PORT=5532
+SOPULI_TEST_ORACLE_PORT=1621
+```
+
+Point the suite at that stack with the variables it already reads:
+
+```bash
+VAULT_ADDR=http://127.0.0.1:8300
+SOPULI_TEST_ORACLE_DSN=localhost:1621/FREEPDB1
+SOPULI_TEST_ORACLE_CONTAINER=sopuli-test-w2-oracle-free-1
+```
+
+The containers are named after the project, such as
+`sopuli-test-w2-oracle-free-1`. The `docker exec` commands in this guide and in
+`docs/local-testing.md` use the default names, so change the name in them. The
+tier2 and maintainer-only services keep fixed ports, so only one clone can run
+each of them.
+
+A tier1 stack uses about 2.5 GB in its containers, most of it Oracle Free's.
+
 | Service | Port | Notes |
 |---|---|---|
-| vault | 8200 | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
-| postgres | 5432 | `postgres` / `sopuli-test` |
-| oracle-free | 1521 | 23ai/26ai Free — CDB + PDB, rollover |
+| vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>** — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
+| postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test` |
+| oracle-free | 1521, or `SOPULI_TEST_ORACLE_PORT` | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
 | oracle-xe18 | 1523 | 18c XE — no rollover, a deliberate negative case |
 | oracle-xe11 | 1524 | 11g XE — non-CDB, SID `XE` not a PDB service; 30-byte passwords; amd64 only |

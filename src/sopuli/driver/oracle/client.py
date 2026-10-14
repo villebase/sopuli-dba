@@ -46,7 +46,8 @@ class ClientError(ConfigError):
     far end cannot do and no local action changes.
 
     No ``error.code`` yet. J3 gives it one: installing something fixes it, where
-    editing the file fixes most ``config`` errors. #801 adds it.
+    a change to the configuration, or to what it points at, fixes most ``config``
+    errors. #801 adds it.
     """
 
 

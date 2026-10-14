@@ -12,7 +12,11 @@ key keeps the last value without a word. So this checks, for each series:
 * no two constants in `src/` hold one code;
 * the numbers run from the first with no gap;
 * the document's table has each code once, and the same codes as `src/`;
-* every code written anywhere in `src/` is in the table.
+* every code written anywhere in `src/` is in the table;
+* the highest number is the one recorded, so a code is retired and never deleted.
+
+It also checks J3's rule itself: every warning built in `src/` has a code, apart
+from the ones `UNCODED` lists with the issue that codes them.
 
 The pull request that merges second then fails on its rebase, and takes the next
 free number before it merges.
@@ -56,6 +60,9 @@ SERIES = {
     ),
 }
 
+#: What each series' shorthand leaves out: `SOPULI-W031/W032` is `SOPULI-W` + `032`.
+PREFIX = {"warning": "SOPULI-W", "error": "SOPULI-"}
+
 #: The highest number given so far in each series. A pull request that adds a
 #: code raises it here. A number is never reused, so deleting the highest row and
 #: its constant must fail, and without this the other checks would still pass.
@@ -89,13 +96,13 @@ def _constants(pattern: re.Pattern[str]) -> dict[str, list[str]]:
     return found
 
 
-def _written(pattern: re.Pattern[str], shorthand: re.Pattern[str]) -> dict[str, str]:
+def _written(pattern: re.Pattern[str], shorthand: re.Pattern[str], prefix: str) -> dict[str, str]:
     """Every code written anywhere in `src/`, with the first place it appears.
 
     Shorthand counts: `SOPULI-W031/W032` writes two codes, and the second is as
-    visible to a reader as the first.
+    visible to a reader as the first. ``prefix`` is what the shorthand leaves out,
+    such as ``SOPULI-W``.
     """
-    prefix = pattern.pattern.split("(")[0]
     found: dict[str, str] = {}
     for path in sorted(SRC.rglob("*.py")):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -189,7 +196,7 @@ def test_every_code_in_the_source_is_in_the_table(series: str) -> None:
     """A code in a message or a comment is as visible to a reader as a constant."""
     pattern, shorthand, _, heading = SERIES[series]
     table = set(_table(heading, pattern))
-    written = _written(pattern, shorthand)
+    written = _written(pattern, shorthand, PREFIX[series])
     unknown = {code: where for code, where in written.items() if code not in table}
     assert not unknown, f"codes in src/ that the table does not have: {unknown}"
 
@@ -197,7 +204,7 @@ def test_every_code_in_the_source_is_in_the_table(series: str) -> None:
 def test_shorthand_is_read_as_two_codes() -> None:
     """`SOPULI-W031/W032` names W032 too, so a renumbering that misses it fails."""
     pattern, shorthand, _, _ = SERIES["warning"]
-    assert {"SOPULI-W031", "SOPULI-W032"} <= set(_written(pattern, shorthand))
+    assert {"SOPULI-W031", "SOPULI-W032"} <= set(_written(pattern, shorthand, PREFIX["warning"]))
 
 
 def test_a_code_does_not_match_inside_a_longer_number() -> None:
@@ -209,3 +216,102 @@ def test_the_registry_describes_every_warning_in_the_table() -> None:
     """`WARNINGS` is what a run uses to describe a code; the table is what a reader sees."""
     pattern, _, _, heading = SERIES["warning"]
     assert set(WARNINGS) == set(_table(heading, pattern))
+
+
+#: The warnings built with no code today, by module and function, with how many
+#: each builds and the issue that gives them codes. **This list only shrinks.** A
+#: new warning without a code fails :func:`test_every_warning_has_a_code`, and a
+#: site that gains its codes fails :func:`test_the_uncoded_list_is_current` until
+#: its line is removed here.
+UNCODED = {
+    "sopuli/config/loading.py::_delivery_warnings": (2, 797),
+    "sopuli/config/loading.py::_policy_warnings": (1, 797),
+    "sopuli/config/references.py::_warn_about_profile_names": (1, 797),
+    "sopuli/config/vault_env.py::_unplaceable_warning": (2, 797),
+    "sopuli/config/vault_layers.py::_merge_tls": (1, 797),
+    "sopuli/cli.py::_preflight_diagnostics": (1, 798),
+    "sopuli/cli.py::_rotate_estate": (1, 798),
+    "sopuli/output/account_list_view.py::_warnings": (1, 798),
+    "sopuli/output/apply_view.py::_warnings": (1, 798),
+    "sopuli/output/explain_view.py::ratchet_notes": (1, 798),
+    "sopuli/output/generate_view.py::_warnings": (3, 798),
+    "sopuli/output/status_view.py::_warnings": (1, 798),
+}
+
+
+def _is_warning_level(level: ast.expr | None) -> bool:
+    """A level that is, or may be, ``warning``. A computed level counts."""
+    return level is not None and not (isinstance(level, ast.Constant) and level.value != "warning")
+
+
+def _uncoded_warnings() -> dict[str, int]:
+    """Each place in `src/` that builds a warning with no code, and how many.
+
+    Three shapes reach a run document as a warning: a ``ConfigWarning``, a
+    ``Diagnostic`` whose level is ``warning`` or is computed, and a dict literal
+    whose ``"level"`` is the literal ``"warning"``. A dict whose level is computed
+    is the serialiser, not a warning, so it is not counted.
+    """
+    found: dict[str, int] = defaultdict(int)
+
+    def visit(node: ast.AST, where: str, function: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = function
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = child.name
+            uncoded = False
+            if isinstance(child, ast.Call):
+                name = getattr(child.func, "id", getattr(child.func, "attr", None))
+                keywords = {keyword.arg: keyword.value for keyword in child.keywords}
+                if name == "ConfigWarning" and "code" not in keywords:
+                    uncoded = True
+                if (
+                    name == "Diagnostic"
+                    and "code" not in keywords
+                    and _is_warning_level(keywords.get("level"))
+                ):
+                    uncoded = True
+            if isinstance(child, ast.Dict):
+                keys = {
+                    key.value: value
+                    for key, value in zip(child.keys, child.values, strict=True)
+                    if isinstance(key, ast.Constant)
+                }
+                level = keys.get("level")
+                if (
+                    isinstance(level, ast.Constant)
+                    and level.value == "warning"
+                    and "code" not in keys
+                ):
+                    uncoded = True
+            if uncoded:
+                found[f"{where}::{inner}"] += 1
+            visit(child, where, inner)
+
+    for path in sorted(SRC.rglob("*.py")):
+        visit(
+            ast.parse(path.read_text(encoding="utf-8")),
+            path.relative_to(SRC.parent).as_posix(),
+            "<module>",
+        )
+    return dict(found)
+
+
+def test_every_warning_has_a_code() -> None:
+    """J3's rule: a warning that reaches a run document has a code."""
+    found = _uncoded_warnings()
+    new = {site: count for site, count in found.items() if count > UNCODED.get(site, (0, 0))[0]}
+    assert not new, (
+        f"warnings built with no code; give each a SOPULI-Wnnn code (03-json-output.md §3): {new}"
+    )
+
+
+def test_the_uncoded_list_is_current() -> None:
+    """A site that gained its codes leaves :data:`UNCODED`, so the list only shrinks."""
+    found = _uncoded_warnings()
+    stale = {
+        site: (count, found.get(site, 0))
+        for site, (count, _) in UNCODED.items()
+        if found.get(site, 0) != count
+    }
+    assert not stale, f"UNCODED lists more than src/ builds; lower or remove these: {stale}"

@@ -567,9 +567,10 @@ the register.
 - **Decision:** Every warning that reaches a run document has a code, including
   the config layer's findings. The codes are one flat series. A number is never
   reused, and it is fixed when it reaches `main`. A test fails when two codes
-  share a number or the numbers have a gap. Error codes (`SOPULI-2nnnn`) follow
-  the same numbering, but an error gets a code only where a consumer must tell
-  it from the other errors in its category.
+  share a number or the numbers have a gap. Error codes (`SOPULI-2nnnn`) are a
+  series of their own from `SOPULI-20001`, numbered by the same rules. An error
+  gets a code only where a consumer must tell it from the other errors in its
+  category.
 - **Why:** A consumer branches on the code, because the message may change. A
   warning with no code can only be matched on its text. An error already has a
   category and an exit code to branch on, so it needs a code only where those do
@@ -1971,7 +1972,8 @@ the register.
     character httpx cannot encode raises `UnicodeEncodeError`, which quotes it.
   - httpx encodes a header as ASCII. A token with any other character raised
     `UnicodeEncodeError` with that character and its position.
-  - A token with a line break, such as a `` left by a file saved on Windows,
+  - A token with a line break, such as a `
+` left by a file saved on Windows,
     raised `httpx.LocalProtocolError`, and its message quoted the whole token.
   - The vault transport raised every httpx error other than a timeout or a
     connection failure as it was. One is an encoding error for a body, and the

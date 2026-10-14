@@ -78,8 +78,8 @@ class MaterialError(ConfigError):
     means "there was nothing to send".
 
     No ``error.code``. An error gets one only where its category and exit code do
-    not tell it apart (J3). The message names the variable or the path, which is
-    what an operator acts on.
+    not tell it apart (J3). Like most ``config`` errors, this is fixed in what the
+    configuration points at: the variable or the path, which the message names.
     """
 
 

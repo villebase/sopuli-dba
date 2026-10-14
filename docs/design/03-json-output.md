@@ -1740,8 +1740,9 @@ failed verification, and must not be reported as drift.
 
 ### Diagnostic codes
 
-`diagnostic.code` is optional. Where it is present, it comes from this registry.
-A code is part of the contract, like an enum value: adding one is a minor bump,
+Every warning has a `diagnostic.code` from this registry (the rule is below the
+table). The schema keeps the field optional, because an `info` diagnostic has no
+code. A code is part of the contract, like an enum value: adding one is a minor bump,
 and changing what one means is not allowed at all. The *message* around it is
 not contract and may improve.
 
@@ -1788,13 +1789,16 @@ That covers `diagnostics[]`, `results[].warnings[]` and the config layer's
 findings (`01-configuration.md` §10). A consumer branches on the code, because
 the message is not contract. A warning with no code could only be matched on its
 text. Some warnings do not have their code yet: the config layer's are #797,
-and the others are #798. Diagnostics at `info` level are not warnings, and have
-no code.
+and the others are #798. `tests/test_warning_codes.py` lists them, fails on a
+new warning built without a code, and fails when a listed one gains its code
+until the list is shortened. Diagnostics at `info` level are not warnings, and
+have no code.
 
 **Codes are one flat series**, `SOPULI-W001` upwards, with no ranges by
 category. The next code is the next free number. A number is never reused: when
-a warning stops being emitted, its row stays in this table, marked retired, and
-its constant stays in the registry. `tests/test_warning_codes.py` records the
+a warning stops being emitted, its row stays in this table and its constant
+stays in the registry. The code cell is unchanged, and the meaning starts with
+**Retired.** and the release that stopped emitting it. `tests/test_warning_codes.py` records the
 highest number given so far, so a pull request that adds a code raises it there,
 and one that deletes the highest row fails.
 
@@ -1830,9 +1834,10 @@ own, it may have a `SOPULI-` code from this table.
 
 **An error gets a code where a consumer must tell it from the other errors in its
 category.** Every error already has `error.category` and an exit code, and a
-consumer branches on those first. Most `config` errors are fixed by editing the
-file. A missing client for a configured backend, driver or channel is fixed by
-installing something, so each has a code. A warning has no category, so every
+consumer branches on those first. Most `config` errors are fixed in the
+configuration or in what it points at, such as a variable or a file. A missing
+client for a configured backend, driver or channel is fixed by installing
+something, so each has a code. A warning has no category, so every
 warning has a code. An error needs one only to be told apart. Three errors this
 rule gives a code do not have it yet: #801. ([J3](../decisions/log.md#j3))
 

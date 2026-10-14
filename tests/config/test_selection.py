@@ -20,9 +20,9 @@ from sopuli.config.selection import (
     Selection,
     filter_estate,
     filter_to_pairs,
-    left_out,
     matches,
-    pairs_left_out,
+    narrow,
+    narrow_to_pairs,
     parse_selector,
     refuse_unknown,
     select,
@@ -550,6 +550,10 @@ GROUPED: dict[str, Any] = {
 }
 
 
+def left_out(config: Config, selection: Selection) -> tuple[LeftOut, ...]:
+    return narrow(config, selection)[1]
+
+
 def flags(selection: Selection) -> dict[tuple[str | None, str], str]:
     found = left_out(build_config(GROUPED), selection)
     return {(one.account, one.target): one.flag for one in found}
@@ -617,9 +621,30 @@ def test_saying_nothing_leaves_nothing_out() -> None:
 
 
 def test_the_pairs_a_repair_set_leaves_out_are_named() -> None:
-    found = pairs_left_out(bound(), [("ACME_WEB_USER", "appdb-dev-alpha")])
+    _, found = narrow_to_pairs(bound(), [("ACME_WEB_USER", "appdb-dev-alpha")])
 
-    assert {(one.account, one.target) for one in found} == pairs_of(bound()) - {
-        ("acme_web_user", "appdb-dev-alpha")
-    }
+    accounts = {(one.account, one.target) for one in found if one.account is not None}
+    assert accounts == pairs_of(bound()) - {("acme_web_user", "appdb-dev-alpha")}
+    assert LeftOut("appdb-dev-beta", "--repair") in found
     assert {one.flag for one in found} == {"--repair"}
+
+
+def test_an_emptied_target_is_named_with_the_flag_that_removed_its_bindings() -> None:
+    """Both binding flags given: the one that removed the target's first
+    binding is named, not the first flag the selection has. On beta,
+    `acme_web_user` passes `--account` and `--application` removes it."""
+    selection = Selection(
+        accounts=("acme_report_user", "acme_web_user"), applications=("acme-reports",)
+    )
+
+    found = left_out(build_config(GROUPED), selection)
+
+    assert LeftOut("appdb-dev-beta", "--application") in found
+    assert all(one.target != "appdb-dev-alpha" or one.account for one in found)
+
+
+def test_narrow_returns_what_filter_estate_returns() -> None:
+    config = build_config(GROUPED)
+    selection = Selection(select=(("tenant", "alpha"),), accounts=("acme_web_user",))
+
+    assert narrow(config, selection)[0] == filter_estate(config, selection)

@@ -174,10 +174,12 @@ Each part of the tool writes these lines:
   selector left out, and each account left out on a target that stays, with the
   flag that left it out, such as `--select`, `--account` or `--repair`. Each
   account that `--max-age-days` did not select, with the reason. Each unit a
-  verb did not act on, with its state and the reason. A unit that needed nothing
-  is "left alone", for example because the database already accepts the vault's
-  `current`. A unit in the `ERROR` state, such as an account the operator named
-  and the guardrails refused, is "not acted on".
+  verb did not change, with its state and the reason. Such a unit is "left
+  alone", for example because the database already accepts the vault's
+  `current`, or because the guardrails skipped it. A unit in the `ERROR` state
+  is "not acted on" instead, because the run reports it as a failure. One case
+  is an account that `creds apply` was given by `--account` and the guardrails
+  refused.
 - **`vault`**: each request, with its method, path, status and time. Never a
   body, a header or the query string: a body can hold a password, and a header
   holds the token. A path names where a secret is kept, as the config does.

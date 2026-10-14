@@ -61,7 +61,6 @@ gates, the confirmation, and the document.
 from __future__ import annotations
 
 import importlib
-import logging
 import os
 import sys
 import time
@@ -103,7 +102,6 @@ from sopuli.config import (
     binding_stores,
     dangling,
     filter_estate,
-    filter_to_pairs,
     parse_selector,
     refuse_unknown,
 )
@@ -111,7 +109,7 @@ from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
-from sopuli.config.selection import LeftOut, left_out, pairs_left_out
+from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
@@ -333,20 +331,19 @@ def _narrow(config: Config, selection: Selection) -> Config:
     which declared targets and bindings the selectors left out, and by which
     flag.
 
-    The reasons are computed only under `--debug`: the selection layer is pure,
-    so it returns them and this writes them.
+    The selection layer is pure, so it returns the reasons and this writes them.
     """
-    if PLANNING.isEnabledFor(logging.DEBUG):
-        _log_left_out(left_out(config, selection))
-    return filter_estate(config, selection)
+    narrowed, gone = narrow(config, selection)
+    _log_left_out(gone)
+    return narrowed
 
 
 def _narrow_to_pairs(config: Config, pairs: Collection[tuple[str, str]]) -> Config:
     """:func:`~sopuli.config.selection.filter_to_pairs`, saying under `--debug`
-    which bindings the repair set left out."""
-    if PLANNING.isEnabledFor(logging.DEBUG):
-        _log_left_out(pairs_left_out(config, pairs))
-    return filter_to_pairs(config, pairs)
+    which bindings and targets the repair set left out."""
+    narrowed, gone = narrow_to_pairs(config, pairs)
+    _log_left_out(gone)
+    return narrowed
 
 
 def _log_left_out(found: Sequence[LeftOut]) -> None:
@@ -1578,6 +1575,8 @@ def _suspend_one(
                 error=reported,
             )
 
+        if not change.changed:
+            _left_alone(account, target.name, suspend.LOCKED, change.detail)
         return _Suspended(
             account=account,
             target=target.name,
@@ -1873,6 +1872,9 @@ def _expire_one(
                 error=reported,
             )
 
+        if not any(change.changed for change in changes):
+            said = _expire_detail(changes) or "nothing to change"
+            _left_alone(account, target.name, expire.EXPIRED, said)
         return _Expired(
             account=account,
             target=target.name,

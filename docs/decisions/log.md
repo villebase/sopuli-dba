@@ -1965,3 +1965,25 @@ the register.
     unless `traced_cursor` converted every error. A bug would show only
     `KeyError`. And `--debug` prints the message of the exception at the top of
     its traceback, so it would need the same change.
+
+## #240
+
+- **Decided:** 2026-10-14, #240
+- **Question:** Should `doctor` check that the TNS alias in an `external`
+  target's `dsn` resolves?
+- **Decision:** No. `doctor` does not look up the alias.
+- **Why:** The connection already reports this case well. An alias that does
+  not resolve fails with `ORA-12154`. The driver maps it to `UNREACHABLE`,
+  with a hint that names the dsn and `TNS_ADMIN`, in the target's own
+  `targets[]` entry. The error is about name resolution, and the cause is name
+  resolution. So it does not mislead, which is the reason #215 added the
+  wallet report. A check would report the problem only a few seconds earlier.
+  It would also be wrong in real estates. An alias can come from a file that
+  `IFILE` names, from LDAP through `names.directory_path` and `ldap.ora`, or
+  from no `tnsnames.ora` at all in an estate that uses only EZCONNECT. A
+  parser of `tnsnames.ora` cannot see these, and a false "alias not found"
+  sends someone to fix a file that is correct.
+- **Rejected:** A parser that reports a missing alias only when it can see
+  every source: a readable `tnsnames.ora` with no `IFILE`, and no directory
+  path other than `TNSNAMES`. In every other case its only honest output is
+  "not in the file I could read", and that is not worth the code.

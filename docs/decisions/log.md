@@ -1889,3 +1889,33 @@ the register.
     makes, so a profile default for it can have a reader later. The log keys
     can never have one, because this decision says no config turns debug
     output on.
+
+## #786
+
+- **Decided:** 2026-10-14, #786
+- **Question:** `03-json-output.md` §4 said driver errors pass through a
+  scrubber, and none existed. Can a server message hold the password, and if it
+  can, what does the tool do about it?
+- **Decision:** It can. The Oracle driver replaces the exact password with
+  `***` in the message of any error from a statement that carried one. The
+  statement does the replacing, so the value never leaves the type that already
+  holds it.
+- **Why:** A password verify function is site-written PL/SQL, and it receives
+  the password. The text it raises comes back as an `ORA-20000` inside the
+  `ORA-28003`. Measured on 26ai 23.26.2.0.0 with a function that quotes the
+  value: the client's message held it, and `creds apply --debug` wrote every
+  refused draw to stderr, the last of them the value staged as `pending`. Text
+  and JSON output were clean only because `_as_error` keeps the first line. The
+  `ORA-20000` text is also why the message is worth keeping: it says which rule
+  was broken, and the `ORA-28003` hint tells the operator to read it. The cost
+  accepted: a function that quotes part of the value, or the value changed, is
+  not caught.
+- **Rejected:**
+  - Fix the doc only, on the grounds that an ORA- message does not echo the
+    statement: the verify function's text is not the statement, and it is not
+    Oracle's.
+  - Drop the text after the codes in a reply to a password-bearing statement:
+    nothing could leak, but the operator loses which rule was broken.
+  - Replace the exact value, and also drop an `ORA-20xxx` line that still holds
+    a long run of the value's characters: safer against a partial quote, but it
+    is a heuristic in a credential path.

@@ -119,9 +119,10 @@ dependency is declared, not which dependency it is. See
 
 **Error mapping lives at the transport boundary** —
 `sopuli/store/hashicorp/_errors.py`, one module, never at call sites and never
-in `protocol.py`. Vault's `errors[]` string is preserved verbatim into
-`StoreError.message` after the scrubber; the category is assigned by the
-mapper. Two rules the probe made concrete:
+in `protocol.py`. Vault's `errors[]` string is kept as it is in
+`StoreError.message`. The token travels in a header, so a message about the
+request does not hold it. The mapper assigns the category. Two rules the probe
+made concrete:
 
 - **Fail closed.** An unrecognised 400 is not a lost race. Misclassifying a
   real conflict costs one retry; misclassifying a hard error as a lost race

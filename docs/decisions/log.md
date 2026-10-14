@@ -1925,3 +1925,32 @@ the register.
   - Replace the exact value, and also drop an `ORA-20xxx` line that still holds
     a long run of the value's characters: safer against a partial quote, but it
     is a heuristic in a credential path.
+
+## #785
+
+- **Decided:** 2026-10-14, #785
+- **Question:** The catch-all in `main()`, `_classify` and `_as_error` print the
+  message of an exception that a library raised and the tool did not convert.
+  Can that message hold a secret, and should these places print only its type?
+- **Decision:** They keep printing the message. Code that passes a `Secret`, or
+  bytes read as one, to a library converts every error that library raises into
+  a tool error. The tool error names the library's error by its type and leaves
+  out its message.
+- **Why:** The audit found two places where a library's message could quote a
+  secret. The webhook parsed its URL before its `try`, and `httpx.InvalidURL` is
+  not an `httpx.HTTPError`. Its message quotes part of the URL, such as
+  `Invalid port: 'abc'`, and the URL is the credential. `--from-stdin` let
+  Python's `UnicodeDecodeError` through, and that message names one byte of the
+  password and its position. Both now convert the error. The other places a
+  library error passes through carry no secret. An Oracle error from a query
+  comes from a statement that holds no password (invariants 13 and 14). An
+  httpx error from the vault transport quotes `addr`, which comes from the
+  config, and the token travels in a header. This follows #786: the code that
+  holds the value is the code that knows to keep it out.
+- **Rejected:**
+  - Print only the type of any exception the tool did not raise: the rule would
+    hold by structure, not by each call site. But an Oracle error from a query,
+    such as an `ORA-01031` for a missing grant, would show only its class name
+    unless `traced_cursor` converted every error. A bug would show only
+    `KeyError`. And `--debug` prints the message of the exception at the top of
+    its traceback, so it would need the same change.

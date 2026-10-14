@@ -5260,7 +5260,15 @@ def _password_from_stdin() -> Secret:
     local copy of the rule did not, and Windows is precisely where P4 asks for
     identical behaviour.
     """
-    text = strip_one_newline(sys.stdin.read())
+    try:
+        text = strip_one_newline(sys.stdin.read())
+    except UnicodeDecodeError as error:
+        # Python's message names the byte it could not decode, and that byte is
+        # part of the password (#785).
+        raise ArgumentError(
+            f"--from-stdin was given and stdin is not valid {error.encoding} text",
+            hint="pipe the password in as text in that encoding",
+        ) from error
     if not text:
         raise ArgumentError(
             "--from-stdin was given and stdin was empty",

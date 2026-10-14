@@ -411,6 +411,10 @@ def test_the_password_is_scrubbed_from_the_server_s_refusal(session_module: Any)
     assert ROTATED not in raised.value.message
     assert ROTATED not in str(raised.value)
     assert ROTATED not in raised.value.diagnosis.message
+    # The client's exception holds the message unscrubbed, so it is not chained:
+    # a handler that prints a cause's message would print the password.
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__ is True
 
 
 def test_finishing_a_rollover_on_a_read_only_target_is_refused_before_any_statement(

@@ -211,6 +211,21 @@ def test_an_undeclared_account_never_reaches_the_driver(
     assert document(result)["results"][0]["state"] == "SKIPPED"
 
 
+@pytest.mark.parametrize("verb", ["expire-password", "suspend"])
+def test_debug_says_why_an_undeclared_account_was_left_alone(
+    runner: CliRunner, write_config: WriteConfig, fake: list[FakeSession], verb: str
+) -> None:
+    """#788: the guardrails' answer, with the account and the target."""
+    result = runner.invoke(
+        cli,
+        ["--config", str(write_config(OFFLINE)), "account", verb]
+        + ["--account", "acme_dev_bob", "--confirm", "--debug"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "plan: acme_dev_bob on tier1-oracle left alone: SKIPPED, " in result.stderr
+
+
 def test_a_run_reports_both_statements(
     runner: CliRunner, write_config: WriteConfig, fake: list[FakeSession]
 ) -> None:

@@ -19,6 +19,7 @@ from sopuli.config.selection import (
     Selection,
     filter_estate,
     filter_to_pairs,
+    left_out,
     matches,
     parse_selector,
     refuse_unknown,
@@ -527,3 +528,65 @@ class TestRefuseUnknown:
 
         assert "nope-one" in str(raised.value)
         assert "nope-two" in str(raised.value)
+
+
+# ------------------------------------------------------------------ left_out ---
+
+
+GROUPED: dict[str, Any] = {
+    **BOUND,
+    "groups": {"alpha-pdbs": {"match": {"tenant": "alpha"}}},
+    "applications": [
+        *BOUND["applications"],
+        {
+            "name": "acme-reports",
+            "accounts": ["acme_report_user"],
+            "secret_template": "acme-reports/{env}/{account}#password",
+        },
+    ],
+}
+
+
+def flags(selection: Selection) -> dict[tuple[str, str], str]:
+    found = left_out(build_config(GROUPED), selection)
+    return {(one.account, one.target): one.flag for one in found}
+
+
+@pytest.mark.parametrize(
+    ("selection", "flag"),
+    [
+        (Selection(targets=("appdb-dev-alpha",)), "--target"),
+        (Selection(select=(("tenant", "alpha"),)), "--select"),
+        (Selection(groups=("alpha-pdbs",)), "--group"),
+        (Selection(accounts=("ACME_WEB_USER",)), "--account"),
+        (Selection(applications=("acme",)), "--application"),
+    ],
+)
+def test_each_binding_left_out_is_named_with_the_flag_that_did_it(
+    selection: Selection, flag: str
+) -> None:
+    """#788: `--debug` says which flag removed a binding. Each flag on its own
+    names itself, and the account named in another case is still matched
+    case-folded."""
+    config = build_config(GROUPED)
+    kept = pairs_of(filter_estate(config, selection))
+
+    found = flags(selection)
+
+    assert set(found) == pairs_of(config) - kept
+    assert found
+    assert set(found.values()) == {flag}
+
+
+def test_a_target_flag_is_named_before_an_account_flag() -> None:
+    """A binding both flags exclude is reported once, by the target flag,
+    because targets are narrowed first."""
+    found = flags(Selection(select=(("tenant", "alpha"),), accounts=("acme_web_user",)))
+
+    assert found[("acme_web_user", "appdb-dev-beta")] == "--select"
+    assert found[("acme_batch_user", "appdb-dev-alpha")] == "--account"
+    assert found[("acme_batch_user", "appdb-dev-beta")] == "--select"
+
+
+def test_saying_nothing_leaves_nothing_out() -> None:
+    assert left_out(build_config(GROUPED), Selection()) == ()

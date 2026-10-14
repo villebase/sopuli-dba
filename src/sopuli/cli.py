@@ -61,6 +61,7 @@ gates, the confirmation, and the document.
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import sys
 import time
@@ -110,6 +111,7 @@ from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.secret_refs import SecretRef
+from sopuli.config.selection import left_out
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
@@ -321,6 +323,31 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 #: Where a per-target finding's traceback goes under `--debug`.
 FINDINGS = logger("finding")
+
+#: Where `--debug` says why a unit was planned or left alone.
+PLANNING = logger("plan")
+
+
+def _narrow(config: Config, selection: Selection) -> Config:
+    """:func:`~sopuli.config.selection.filter_estate`, saying under `--debug`
+    which declared bindings the selectors left out, and by which flag.
+
+    The reasons are computed only under `--debug`: the selection layer is pure,
+    so it returns them and this writes them.
+    """
+    if PLANNING.isEnabledFor(logging.DEBUG):
+        for one in left_out(config, selection):
+            PLANNING.debug("%s on %s left out by %s", one.account, one.target, one.flag)
+    return filter_estate(config, selection)
+
+
+def _left_alone(account: str, target: str, state: str, detail: str | None) -> None:
+    """Say under `--debug` why a verb left a unit alone: its state and reason.
+
+    Called where the verb decides, not where it reports, so the line sits
+    beside the statements that led to the decision.
+    """
+    PLANNING.debug("%s on %s left alone: %s, %s", account, target, state, detail)
 
 
 def help_with(**facts: str) -> Callable[[F], F]:
@@ -661,7 +688,7 @@ def config_show(
         )
 
     paths = run.sources
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
 
     reached = len(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
@@ -726,7 +753,7 @@ def target_list(
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
     paths = run.sources
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
 
     reached = len(config.expanded_targets)
     document.diagnostics.extend(config_diagnostics(config))
@@ -820,7 +847,7 @@ def doctor(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -1344,7 +1371,7 @@ def account_suspend(
 
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -1491,6 +1518,7 @@ def _suspend_one(
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()
         if not decision.proceed:
+            _left_alone(account, target.name, decision.state, decision.detail)
             return _Suspended(
                 account=account,
                 target=target.name,
@@ -1622,7 +1650,7 @@ def account_expire_password(
 
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -1768,6 +1796,7 @@ def _expire_one(
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()
         if not decision.proceed:
+            _left_alone(account, target.name, decision.state, decision.detail)
             return _Expired(
                 account=account,
                 target=target.name,
@@ -1968,7 +1997,7 @@ def account_reset_password(
 
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -3294,7 +3323,7 @@ def account_list_command(
     # UC-2 2's rule for the flag: it narrows, it never widens.
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -4290,7 +4319,7 @@ def creds_check(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -4906,7 +4935,7 @@ def creds_generate(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -5768,7 +5797,7 @@ def creds_apply(
     # asked about pairs this run was told to leave out (decision #406), and the
     # filtered config has forgotten them.
     estate = _declared_estate(run.config)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     # After the selectors, so the two compose as *and* the way every pair of
     # selectors does, and so `refuse_unknown` still judges names against the
     # unfiltered estate. Before the plan, because `max_targets` and
@@ -5778,7 +5807,12 @@ def creds_apply(
     repair_notes: list[str] = []
     if repair_document is not None:
         repair_set = repair_module.read(repair_document, sources=run.sources)
-        config = filter_to_pairs(config, repair_set.pairs)
+        repaired = filter_to_pairs(config, repair_set.pairs)
+        kept = {(binding.account, binding.target) for binding in repaired.bindings}
+        for binding in config.bindings:
+            if (binding.account, binding.target) not in kept:
+                PLANNING.debug("%s on %s left out by --repair", binding.account, binding.target)
+        config = repaired
         stale = repair_module.staleness(repair_set)
         if stale is not None:
             document.diagnostics.append(stale)
@@ -6779,6 +6813,7 @@ def _apply_one(
             user, source, requested=requested, unlock=attributes.unlock
         )
         if settled is not None:
+            _left_alone(binding.account, binding.target, settled.state, settled.detail)
             return _Applied(binding, source, settled, changed=False, duration_ms=_elapsed(started))
         if user is None or source is None:
             # Unreachable: `settled_before_acting` returns an outcome for both.
@@ -6799,15 +6834,13 @@ def _apply_one(
             # work nobody did. Fell inside a broader selection: skipped, and the run
             # does the rest of its job.
             named = selection.names(binding.account)
+            turned_away = check_states.Outcome(
+                apply_states.REFUSED if named else apply_states.SKIPPED,
+                guardrails_reason(review, named=named),
+            )
+            _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
             return _Applied(
-                binding,
-                source,
-                check_states.Outcome(
-                    apply_states.REFUSED if named else apply_states.SKIPPED,
-                    guardrails_reason(review, named=named),
-                ),
-                changed=False,
-                duration_ms=_elapsed(started),
+                binding, source, turned_away, changed=False, duration_ms=_elapsed(started)
             )
         overridden = review.overridden
         # §4's third answer, carried on the accounts this run went on to act on. Not
@@ -6835,6 +6868,7 @@ def _apply_one(
             # whose password must not be changed after all.
             blocked = apply_states.settled_before_acting(user, source, requested=requested)
             if blocked is not None:
+                _left_alone(binding.account, binding.target, blocked.state, blocked.detail)
                 return _Applied(
                     binding,
                     source,
@@ -6852,6 +6886,7 @@ def _apply_one(
         )
         done = apply_states.already_applied(user, before, source=source)
         if done is not None:
+            _left_alone(binding.account, binding.target, done.state, done.detail)
             return _Applied(
                 binding,
                 source,
@@ -8483,7 +8518,7 @@ def creds_finish_rollover(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -8699,6 +8734,7 @@ def _finish_one(
         user = session.describe_user(binding.account)
         settled = windows.settled_before_closing(user, source, session.scope())
         if settled is not None:
+            _left_alone(binding.account, binding.target, settled.state, settled.detail)
             return _Finished(
                 binding, settled, changed=False, user=user, duration_ms=_elapsed(started)
             )
@@ -8725,6 +8761,7 @@ def _finish_one(
         )
         refused = windows.decide(verified)
         if refused is not None:
+            _left_alone(binding.account, binding.target, refused.state, refused.detail)
             return _Finished(
                 binding, refused, changed=False, user=user, duration_ms=_elapsed(started)
             )
@@ -8898,7 +8935,7 @@ def creds_rotate(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 
@@ -9209,10 +9246,7 @@ def _rotate_estate(
     """
     document = run.document
     documents = _read_documents(keys, stores, run=run)
-    into.selections = rotation.select(
-        [(binding, _document_data(binding, documents)) for binding in bindings],
-        max_age_days=max_age_days,
-    )
+    into.selections = _due_for_rotation(bindings, documents, max_age_days)
     rotating = rotation.due(into.selections)
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
@@ -9612,10 +9646,7 @@ def _preview_rotation(
     the same one.
     """
     document = run.document
-    selections = rotation.select(
-        [(binding, _document_data(binding, documents)) for binding in bindings],
-        max_age_days=max_age_days,
-    )
+    selections = _due_for_rotation(bindings, documents, max_age_days)
     header = _rotation_header(plan, selections, max_age_days)
     rotating = rotation.due(selections)
     if not rotating:
@@ -9650,6 +9681,24 @@ def _rotation_header(
     if max_age_days is None or not selections:
         return render_plan(plan, noun="rotation")
     return "\n".join([render_plan(plan, noun="rotation"), "", *render_selection_table(selections)])
+
+
+def _due_for_rotation(
+    bindings: Sequence[Binding], documents: Mapping[LockKey, Any], max_age_days: int | None
+) -> tuple[rotation.Selection, ...]:
+    """:func:`sopuli.rotate.select` over each binding's document, saying under
+    `--debug` why `--max-age-days` left an account out.
+    """
+    selections = rotation.select(
+        [(binding, _document_data(binding, documents)) for binding in bindings],
+        max_age_days=max_age_days,
+    )
+    for one in selections:
+        if not one.due:
+            PLANNING.debug(
+                "%s on %s not due: %s", one.binding.account, one.binding.target, one.reason
+            )
+    return selections
 
 
 def _nothing_due(
@@ -9716,7 +9765,7 @@ def creds_status(
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
-    config = filter_estate(run.config, selection)
+    config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     document.diagnostics.extend(config_diagnostics(config))
 

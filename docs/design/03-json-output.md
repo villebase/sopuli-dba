@@ -170,6 +170,12 @@ Each part of the tool writes these lines:
   always a failure: a capability probe reads `ORA-00942` as an absent
   capability, and the scope line after the probes says what it concluded. The
   server's message reaches the operator in the error.
+- **`plan`**: why a unit is in the run or not. Each declared account on a
+  target that a selector left out, with the flag that left it out, such as
+  `--select` or `--repair`. Each account that `--max-age-days` did not select,
+  with the reason. Each unit a verb decided to leave alone, with its state and
+  the reason, for example that the database already accepts the vault's
+  `current`.
 - **`vault`**: each request, with its method, path, status and time. Never a
   body, a header or the query string: a body can hold a password, and a header
   holds the token. A path names where a secret is kept, as the config does.
@@ -187,6 +193,14 @@ sopuli: debug:   2.373s oracle: login as ACME_APP_USER: fail in 1.056s
 sopuli: debug:   2.378s oracle: select username from dba_users where username = :name (binds :name) in 0.003s
 sopuli: debug:   2.399s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.019s
 sopuli: debug:   2.489s oracle: login as ACME_APP_USER: pass in 0.067s
+```
+
+These lines are from a second `sopuli creds apply --confirm --debug`, after the
+first one set both passwords:
+
+```
+sopuli: debug:   0.917s plan: acme_app_user on free-pdb left alone: IN_SYNC, the vault's password is already accepted; nothing to change
+sopuli: debug:   1.029s plan: acme_batch_user on free-pdb left alone: ROLLOVER_ACTIVE, the vault's password is already accepted, and a rollover window is open: the previous password still works too
 ```
 
 The Oracle client has tracing of its own, which the tool does not control and

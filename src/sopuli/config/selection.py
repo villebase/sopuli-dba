@@ -26,7 +26,15 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from sopuli.config.errors import ROOT, ArgumentError
-from sopuli.config.model import Config, ExpandedTarget, Pairs, Target, TargetSelector, as_dict
+from sopuli.config.model import (
+    Binding,
+    Config,
+    ExpandedTarget,
+    Pairs,
+    Target,
+    TargetSelector,
+    as_dict,
+)
 
 #: One (account, target) pair, which is the row :class:`Config.bindings` is keyed
 #: by and the unit a repair set is written in.
@@ -253,28 +261,20 @@ def filter_estate(config: Config, selection: Selection) -> Config:
     if selection.is_everything:
         return config
 
-    wanted = set(selection.targets)
-    accounts = {name.casefold() for name in selection.accounts}
-    applications = set(selection.applications)
-    groups = tuple(_group_match(config, name) for name in selection.groups)
-
+    groups = _groups(config, selection)
     targets = tuple(
         expanded
         for expanded in config.expanded_targets
-        if matches(expanded.target, selection.select)
-        and (not wanted or expanded.name in wanted)
-        and (not groups or any(matches(expanded.target, match) for match in groups))
+        if _target_left_out_by(expanded, selection, groups) is None
     )
     selected = {expanded.name for expanded in targets}
     bindings = tuple(
         binding
         for binding in config.bindings
-        if binding.target in selected
-        and (not accounts or binding.account.casefold() in accounts)
-        and (not applications or binding.application in applications)
+        if binding.target in selected and _binding_left_out_by(binding, selection) is None
     )
 
-    if accounts or applications:
+    if selection.accounts or selection.applications:
         # Only where a binding-level selector was given. Without one, a target
         # with no bindings is an ordinary part of the estate -- a database
         # nothing is declared against yet -- and dropping it would make
@@ -284,6 +284,72 @@ def filter_estate(config: Config, selection: Selection) -> Config:
         targets = tuple(expanded for expanded in targets if expanded.name in kept)
 
     return replace(config, expanded_targets=targets, bindings=bindings)
+
+
+@dataclass(frozen=True)
+class LeftOut:
+    """One declared binding a selector left out of the run, and the flag that did.
+
+    What ``--debug`` reports about selection. :func:`filter_estate` returns only
+    what is left, so an operator whose run planned fewer units than expected
+    cannot see from the plan which flag removed the others.
+    """
+
+    account: str
+    target: str
+    #: The flag as the operator types it, such as ``--select``.
+    flag: str
+
+
+def left_out(config: Config, selection: Selection) -> tuple[LeftOut, ...]:
+    """Each binding of ``config`` that :func:`filter_estate` leaves out, and why.
+
+    The same tests in the same order, through the same two helpers, so this
+    cannot disagree with :func:`filter_estate` about what was removed. A binding
+    that more than one flag excludes is reported with the first that does: a
+    target flag before an account flag, because :func:`filter_estate` narrows
+    targets first.
+    """
+    if selection.is_everything:
+        return ()
+    groups = _groups(config, selection)
+    by_target = {
+        expanded.name: _target_left_out_by(expanded, selection, groups)
+        for expanded in config.expanded_targets
+    }
+    found: list[LeftOut] = []
+    for binding in config.bindings:
+        flag = by_target.get(binding.target) or _binding_left_out_by(binding, selection)
+        if flag is not None:
+            found.append(LeftOut(binding.account, binding.target, flag))
+    return tuple(found)
+
+
+def _groups(config: Config, selection: Selection) -> tuple[Pairs, ...]:
+    """The label match of each ``--group``."""
+    return tuple(_group_match(config, name) for name in selection.groups)
+
+
+def _target_left_out_by(
+    expanded: ExpandedTarget, selection: Selection, groups: tuple[Pairs, ...]
+) -> str | None:
+    """The first flag that excludes this target, or ``None`` if none does."""
+    if selection.targets and expanded.name not in selection.targets:
+        return "--target"
+    if not matches(expanded.target, selection.select):
+        return "--select"
+    if groups and not any(matches(expanded.target, match) for match in groups):
+        return "--group"
+    return None
+
+
+def _binding_left_out_by(binding: Binding, selection: Selection) -> str | None:
+    """The first binding-level flag that excludes this binding, or ``None``."""
+    if selection.accounts and not selection.names(binding.account):
+        return "--account"
+    if selection.applications and binding.application not in selection.applications:
+        return "--application"
+    return None
 
 
 def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:

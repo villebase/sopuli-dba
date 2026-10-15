@@ -345,7 +345,7 @@ services:
   # ------------------------------------------------- emulators (smoke only) --
   # Never authoritative. A green run here is "the code path executes", nothing
   # more; the real services are the release evidence. There is no AWS emulator
-  # here: LocalStack needs an account token since 2026-03 (T3).
+  # here: LocalStack's image needs an account token (T3).
   lowkey-vault:
     image: nagyesta/lowkey-vault:latest
     profiles: [emulators]

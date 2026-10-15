@@ -923,6 +923,21 @@ def test_an_unseen_reset_records_what_the_database_audits(
     assert sent.records[0]["audited"] == session.audited
 
 
+def test_the_schema_holds_the_two_fields_together(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """`audited_detail` is present exactly when `audited` is, and the schema, not
+    only the emitter, says so: a document with one and not the other is invalid."""
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=True)
+    result = _run(runner, write_config(WRAPPED), "--output", "json")
+    validator = Draft202012Validator(json.loads(RUN_SCHEMA.read_text(encoding="utf-8")))
+
+    for dropped in ("audited", "audited_detail"):
+        document = json.loads(result.stdout)
+        del document["results"][0][dropped]
+        assert list(validator.iter_errors(document)), f"a row without {dropped} passed"
+
+
 def test_the_record_writes_the_answer_as_the_document_does(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

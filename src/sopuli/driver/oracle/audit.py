@@ -38,6 +38,9 @@ ALTER_USER = "ALTER USER"
 LOGON = "LOGON"
 ACTIONS = (LOGON, ALTER_USER)
 
+#: The system privilege a logon uses.
+CREATE_SESSION = "CREATE SESSION"
+
 #: ``AUDIT_OPTION_TYPE`` values the probe has seen. A row of another type might
 #: record one of the two actions, and nobody has measured it.
 STANDARD_ACTION = "STANDARD ACTION"
@@ -81,6 +84,14 @@ UNREADABLE = (
     "service account (02-oracle-privileges.md section 2)"
 )
 NO_UNIFIED = "this database has no unified auditing, and traditional auditing is not read"
+
+#: ``ORA-00904``, invalid identifier: the policy views here lack a column the
+#: check reads. Checked before :data:`UNREADABLE_CODES`, because no grant fixes it.
+NO_COLUMN = "ORA-00904"
+OTHER_COLUMNS = (
+    "the audit policy views on this database do not have the columns the check "
+    "reads, and only 26ai 23.26.2.0.0 has been measured"
+)
 MIXED = (
     "the database is in mixed audit mode, and traditional auditing, which is "
     "not read, might record it"
@@ -123,7 +134,7 @@ def verdict(
     Returns the group and, for :data:`MIGHT`, the reason.
     """
     names = [one for one in options if _names(one, action)]
-    unmeasured = [one for one in options if _unmeasured(one)]
+    unmeasured = [one for one in options if _unmeasured(one, action)]
     if not names and not unmeasured:
         return DOES_NOT, None
     recorded = [one for one in enablements if one.success]
@@ -194,16 +205,28 @@ def classify(
             detail="; ".join(f"{action} by {', '.join(covered[action])}" for action in ACTIONS),
         )
 
-    missing = [action for action in ACTIONS if not covered[action]]
-    unsure = [reason for action in missing for reason in doubts[action]]
-    if unsure:
-        return AuditCoverage(audited=None, detail="; ".join(unsure))
-    nothing = f"no enabled policy records {' or '.join(missing)} for {account}"
-    if mode is None:
-        return AuditCoverage(audited=None, detail=f"{nothing}, and {NO_UNIFIED}")
-    if mode.upper() != "TRUE":
-        return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}")
-    return AuditCoverage(audited=False, detail=nothing)
+    # **An action that nothing covers or might cover decides the answer**, whatever
+    # the other action's doubts: the route through it is certainly unrecorded,
+    # which is `false` on a database that uses unified auditing only (§5).
+    certain = [action for action in ACTIONS if not covered[action] and not doubts[action]]
+    if certain:
+        nothing = f"no enabled policy records {' or '.join(certain)} for {account}"
+        if mode is None:
+            return AuditCoverage(audited=None, detail=f"{nothing}, and {NO_UNIFIED}")
+        if mode.upper() != "TRUE":
+            return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}")
+        return AuditCoverage(audited=False, detail=nothing)
+
+    # Unknown: every uncovered action has a doubt. The detail keeps what is known,
+    # the actions that are covered, beside the doubts, each said once.
+    parts = []
+    for action in ACTIONS:
+        if covered[action]:
+            parts.append(f"{action} by {', '.join(covered[action])}")
+        else:
+            reasons = "; ".join(dict.fromkeys(doubts[action]))
+            parts.append(f"{action} might be recorded: {reasons}")
+    return AuditCoverage(audited=None, detail="; ".join(parts))
 
 
 def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
@@ -245,6 +268,8 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         return classify(mode, enabled, options, account)
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
+        if reading != "V$OPTION" and diagnosis.code == NO_COLUMN:
+            return AuditCoverage(audited=None, detail=f"{OTHER_COLUMNS}: {diagnosis.message}")
         if reading != "V$OPTION" and diagnosis.code in UNREADABLE_CODES:
             return AuditCoverage(audited=None, detail=UNREADABLE)
         return AuditCoverage(
@@ -261,8 +286,15 @@ def _names(option: Option, action: str) -> bool:
     return action == ALTER_USER and option.type == SYSTEM_PRIVILEGE and option.option == ALTER_USER
 
 
-def _unmeasured(option: Option) -> bool:
-    """Whether a row is of a kind that might record either action, unmeasured."""
+def _unmeasured(option: Option, action: str) -> bool:
+    """Whether a row might record ``action``, by a kind nobody has measured.
+
+    A ``SYSTEM PRIVILEGE`` row records the statements that use the privilege. A
+    logon uses ``CREATE SESSION``, so that row might record ``LOGON``. The
+    ``ALTER USER`` privilege is measured and is in :func:`_names`, and no other
+    privilege is used by either route. A ``ROLE PRIVILEGE`` row, and a type the
+    probe has not seen, might record either.
+    """
     if option.type == SYSTEM_PRIVILEGE:
-        return option.option != ALTER_USER
+        return action == LOGON and option.option == CREATE_SESSION
     return option.type not in KNOWN_TYPES

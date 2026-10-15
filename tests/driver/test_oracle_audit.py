@@ -135,7 +135,37 @@ def test_a_list_applies_to_whoever_issues_the_statement() -> None:
     found = answer([enabled("P", BY_USER, PERSON)], both("P"))
 
     assert found.audited is None
-    assert found.detail == "P records ALTER USER only for a list of users"
+    assert found.detail == (
+        "LOGON by P; ALTER USER might be recorded: P records ALTER USER only for a list of users"
+    )
+
+
+def test_a_certain_gap_wins_over_a_doubt_about_the_other_action() -> None:
+    """Nothing records `LOGON`, so the logon route is certainly unrecorded, and
+    that is `false` whatever might record `ALTER USER`."""
+    found = answer([enabled("ALT", BY_ROLE, "ACME_DBA_ROLE")], [action("ALT", "ALTER USER")])
+
+    assert found.audited is False
+    assert found.detail == f"no enabled policy records LOGON for {PERSON}"
+
+
+def test_a_privilege_neither_route_uses_does_not_count() -> None:
+    """`SELECT ANY TABLE` is used by neither a logon nor an `ALTER USER`, so a
+    default policy that audits it does not make `false` unreachable."""
+    found = answer(
+        [enabled("SEL"), enabled("ALT")],
+        [action("SEL", "SELECT ANY TABLE", kind=SYSTEM_PRIVILEGE), action("ALT", "ALTER USER")],
+    )
+
+    assert found.audited is False
+
+
+def test_a_reason_for_both_actions_is_said_once_per_action() -> None:
+    found = answer([enabled("C##P")], [action("C##P", "ALL", common=True)])
+
+    assert found.audited is None
+    assert found.detail.count("C##P is a common policy") == 2, "one per action, not repeated"
+    assert found.detail.startswith("LOGON might be recorded: C##P is a common policy")
 
 
 def test_a_logon_policy_by_somebody_else_does_not_cover_the_person() -> None:
@@ -329,6 +359,21 @@ def test_an_unreadable_policy_view_names_the_grant() -> None:
 
     assert found.audited is None
     assert found.detail == UNREADABLE
+
+
+def test_a_view_without_the_columns_read_says_so() -> None:
+    """A release whose view has other columns answers `ORA-00904`. No grant fixes
+    that, so the detail does not name one."""
+    cursor = Cursor(
+        {MODE_QUERY: ("TRUE",)},
+        fail={ENABLED_QUERY: RuntimeError('ORA-00904: "ENABLED_OPTION": invalid identifier')},
+    )
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is None
+    assert found.detail.startswith("the audit policy views on this database do not have")
+    assert "GRANT" not in found.detail
 
 
 def test_any_other_failure_is_unknown_with_the_servers_code() -> None:

@@ -1328,6 +1328,14 @@
         "state",
         "changed"
       ],
+      "dependentRequired": {
+        "audited": [
+          "audited_detail"
+        ],
+        "audited_detail": [
+          "audited"
+        ]
+      },
       "properties": {
         "account": {
           "type": "string"

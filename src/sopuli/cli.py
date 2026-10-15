@@ -2794,7 +2794,8 @@ def _reset_one(
         # the preview returns, and it cannot fail the row: the driver answers
         # "unknown" for a read it could not make. `decision.proceed` means the
         # account was found, so `state` is not None here.
-        audited = None if delivery.is_seen or state is None else session.audit_coverage(state.name)
+        assert state is not None
+        audited = None if delivery.is_seen else session.audit_coverage(state.name)
 
         # **Both of a reset's own refusals are asked before the preview returns**
         # (#671), so a dry run that says "would be reset" means the real run

@@ -1672,9 +1672,12 @@ and with no policy enabled:
   `"unknown"` and never `false`.
 - **The tool records it and acts on nothing.** No warning and no refusal follow
   from any of the three values.
-- **Both fields are present on an unseen reset, preview included**, from the
-  point where the guardrails let the row through. They are absent on the seen
-  path, whose exposure does not depend on audit, and on a row the run refused.
+- **Both fields are present on an unseen reset, preview included**, on every row
+  the guardrails let through. That includes an `ERROR` row from a later step,
+  such as the reset's own rollover-window or byte-limit refusal. They are absent
+  on the seen path, whose exposure does not depend on audit, and on a row that
+  stopped before the check: an account that is missing, or one the guardrails
+  refused.
 
 **`account expire-password` rows** carry `password_expire`, the bare
 `ALTER USER … PASSWORD EXPIRE`. That statement sets no password, so it cannot

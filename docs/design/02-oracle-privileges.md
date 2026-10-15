@@ -1206,7 +1206,11 @@ so it does not guess:
   any type other than `STANDARD ACTION`, `SYSTEM PRIVILEGE`, `OBJECT ACTION` and
   `XS ACTION`. For example, `PRIVILEGES CREATE SESSION` may record logons, and
   `ROLES DBA` may record an `ALTER USER` made through the role. Nobody has
-  measured either.
+  measured either. For `LOGON`, such a row counts only where the policy is
+  enabled for the person: a policy that records nothing the person issues cannot
+  record their logon.
+- **It is enabled in a way the probe has not seen.** That is an
+  `ENABLED_OPTION` other than the three in the table above.
 
 A policy **does not cover** an action in every other case. These are the
 common ones:

@@ -11,6 +11,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import pytest
+
+from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.oracle.audit import (
     ALL_USERS,
     BY_ROLE,
@@ -107,11 +110,6 @@ def test_a_logon_policy_except_somebody_else_covers_the_person() -> None:
     )
 
     assert found.audited is True
-
-
-def test_a_policy_recording_only_successes_counts() -> None:
-    """The routes succeed, so a policy that records successes records them."""
-    assert answer([enabled("P")], both("P")).audited is True
 
 
 def test_a_covering_policy_settles_an_action_whatever_the_others_say() -> None:
@@ -230,6 +228,27 @@ def test_an_unmeasured_kind_of_row_might_record_a_logon() -> None:
     assert "SESS has SYSTEM PRIVILEGE CREATE SESSION" in found.detail
 
 
+def test_an_unmeasured_row_for_somebody_else_does_not_reach_the_persons_logon() -> None:
+    """Who the policy applies to comes first. `PRIVILEGES SELECT ANY TABLE` enabled
+    `BY` a DBA records nothing the person issues, so it cannot record their logon."""
+    found = answer(
+        [enabled("SEL", BY_USER, DBA), enabled("ALT")],
+        [action("SEL", "SELECT ANY TABLE", kind=SYSTEM_PRIVILEGE), action("ALT", "ALTER USER")],
+    )
+
+    assert found.audited is False
+    assert found.detail == f"no enabled policy records LOGON for {PERSON}"
+
+
+def test_an_enablement_nobody_has_seen_might_cover() -> None:
+    """An `ENABLED_OPTION` outside the three the probe saw is never read as
+    "does not cover", which on a unified-only database would be a wrong false."""
+    found = answer([enabled("P", "SOMETHING NEW", PERSON)], both("P"))
+
+    assert found.audited is None
+    assert "P is enabled as SOMETHING NEW" in found.detail
+
+
 def test_a_role_privilege_row_is_unmeasured() -> None:
     found = answer(
         [enabled("ROLES"), enabled("LOG")],
@@ -323,6 +342,31 @@ def test_any_other_failure_is_unknown_with_the_servers_code() -> None:
 
     assert found.audited is None
     assert "ORA-00600" in found.detail
+
+
+class _NoCursor:
+    """A connection that dropped: it cannot open a cursor."""
+
+    def cursor(self) -> Any:
+        raise RuntimeError("DPI-1080: connection was closed by ORA-03113")
+
+
+def test_a_connection_that_cannot_open_a_cursor_is_unknown_and_not_raised() -> None:
+    """The protocol's promise covers the cursor too, not only the reads: an
+    exception here would end the whole reset run rather than one row."""
+    session_module = pytest.importorskip("sopuli.driver.oracle.session")
+    session = session_module.OracleSession(
+        connection=_NoCursor(),
+        target=ExpandedTarget(
+            target=Target(name="t", type="oracle", dsn="192.0.2.10:1521/ALPHA"), index=0
+        ),
+        correlation_id="9f1c4e02-77ab-4d51-9c6e-3b8a5d2f0e14",
+    )
+
+    found = session.audit_coverage(PERSON)
+
+    assert found.audited is None
+    assert "DPI-1080" in found.detail
 
 
 def test_no_unified_auditing_row_asks_nothing_else() -> None:

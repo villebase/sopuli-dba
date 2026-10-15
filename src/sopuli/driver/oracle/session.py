@@ -359,10 +359,19 @@ class OracleSession:
 
         Not cached: it is asked once per reset, and an estate may enable a policy
         between two runs. Never raises -- :func:`coverage_of` turns a failed read
-        into an answer that says so.
+        into an answer that says so, and this turns a cursor that cannot be opened
+        or closed, such as on a connection that dropped, into the same.
         """
-        with traced_cursor(self.connection) as cursor:
-            return coverage_of(cursor, account)
+        try:
+            with traced_cursor(self.connection) as cursor:
+                return coverage_of(cursor, account)
+        except Exception as error:  # noqa: BLE001 -- the protocol promises an answer
+            diagnosis = from_error(error)
+            return AuditCoverage(
+                audited=None,
+                detail=f"the audit check could not use the connection: "
+                f"{diagnosis.code or 'no code'}: {diagnosis.message}",
+            )
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         """Issue the ``ALTER USER``, and let a rejection be a rejection.

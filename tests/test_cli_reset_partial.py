@@ -923,6 +923,27 @@ def test_an_unseen_reset_records_what_the_database_audits(
     assert sent.records[0]["audited"] == session.audited
 
 
+def test_the_record_writes_the_answer_as_the_document_does(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real writer, into a journal, read back: `"unknown"` is the string, not
+    `null`, and `audited_detail` travels with it. No `sent` fixture here, because
+    it replaces the writer this test is about."""
+    journal = MemoryStore()
+    monkeypatch.setattr("sopuli.cli._reset_journal", lambda run, config: journal)
+    session = Succeeding("OPEN", DENIED)
+    session.audited = AuditCoverage(audited=None, detail="the audit policy views are not readable")
+    _open(monkeypatch, session, unseen=True)
+
+    result = _run(runner, write_config(JOURNALLED), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    stored = journal.read(f"sopuli/personal-resets/{TARGET}/{ACCOUNT}")
+    assert stored is not None, "nothing was journalled"
+    assert stored.data["audited"] == "unknown"
+    assert stored.data["audited_detail"] == "the audit policy views are not readable"
+
+
 def test_an_answer_the_driver_could_not_give_is_unknown_and_the_reset_goes_ahead(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:

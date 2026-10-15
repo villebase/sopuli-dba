@@ -524,21 +524,14 @@ def test_nothing_recording_logons_is_false_on_a_unified_only_database(
     audit_reader: Any, sysdba: Any
 ) -> None:
     """`false` needs both facts §5 names: unified auditing only, and no enabled
-    policy that covers or might cover `LOGON`. This database's own state decides
-    the first, so the test asks it rather than assuming it."""
-    with sysdba.cursor() as cursor:
-        cursor.execute("select value from v$option where parameter = 'Unified Auditing'")
-        mode = cursor.fetchone()
-        cursor.execute(
-            "select count(*) from audit_unified_policies p "
-            "where p.policy_name in (select policy_name from audit_unified_enabled_policies) "
-            "and p.audit_option in ('LOGON', 'ALL')"
-        )
-        (logon_policies,) = cursor.fetchone()
-    if not mode or mode[0] != "TRUE":
-        pytest.skip("this database is not in unified-only audit mode, so false is unreachable")
-    if logon_policies:
-        pytest.skip("this database already enables a policy that may record logons")
+    policy that covers or might cover `LOGON`. This database's own policies and
+    mode decide both, so the test asks the check first, before adding its own
+    policy, and skips with the check's own reason where the answer is not
+    `false` already. A precondition written as a separate query would have to
+    repeat §5's rules, and would drift from them."""
+    before = audit_reader.audit_coverage(PERSON)
+    if before.audited is not False:
+        pytest.skip(f"this database's own audit state is not false: {before.detail}")
 
     with _policy(sysdba, "alter user"):
         found = audit_reader.audit_coverage(PERSON)

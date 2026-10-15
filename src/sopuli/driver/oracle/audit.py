@@ -53,6 +53,10 @@ EXCEPT_USER = "EXCEPT USER"
 BY_ROLE = "BY GRANTED ROLE"
 ALL_USERS = "ALL USERS"
 
+#: The ``ENABLED_OPTION`` values the probe has seen. A policy enabled another way
+#: might cover either action, and nobody has measured how.
+ENABLED_OPTIONS = frozenset({BY_USER, EXCEPT_USER, BY_ROLE})
+
 #: The audit mode. ``TRUE`` is unified auditing only, ``FALSE`` is mixed mode, and
 #: no row at all is a release with no unified auditing (11.2).
 MODE_QUERY = "select value from v$option where parameter = 'Unified Auditing'"
@@ -127,6 +131,20 @@ def verdict(
         return DOES_NOT, None
 
     policy = recorded[0].policy
+    strange = sorted({one.option for one in recorded if one.option not in ENABLED_OPTIONS})
+    if strange:
+        return MIGHT, f"{policy} is enabled as {', '.join(strange)}, which nobody has measured"
+
+    every = any(one.option == BY_USER and one.entity == ALL_USERS for one in recorded)
+    listed = {one.entity for one in recorded if one.option == BY_USER and one.entity != ALL_USERS}
+    excepted = {one.entity for one in recorded if one.option == EXCEPT_USER}
+    roles = {one.entity for one in recorded if one.option == BY_ROLE}
+    # Who the policy applies to comes first: a policy that records nothing of the
+    # person's own statements cannot record their logon, whatever its rows say.
+    reaches = every or account in listed or bool(excepted and account not in excepted)
+    if action == LOGON and not reaches and not roles:
+        return DOES_NOT, None
+
     if not names:
         kinds = sorted({f"{one.type} {one.option}" for one in unmeasured})
         return MIGHT, f"{policy} has {', '.join(kinds)}, which nobody has measured"
@@ -135,13 +153,8 @@ def verdict(
     if any(one.condition for one in names):
         return MIGHT, f"{policy} has a condition, which is not evaluated"
 
-    every = any(one.option == BY_USER and one.entity == ALL_USERS for one in recorded)
-    listed = {one.entity for one in recorded if one.option == BY_USER and one.entity != ALL_USERS}
-    excepted = {one.entity for one in recorded if one.option == EXCEPT_USER}
-    roles = {one.entity for one in recorded if one.option == BY_ROLE}
-
     if action == LOGON:
-        if every or account in listed or (excepted and account not in excepted):
+        if reaches:
             return COVERS, None
     elif every:
         return COVERS, None
@@ -208,35 +221,32 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         if mode is None:
             return AuditCoverage(audited=None, detail=NO_UNIFIED)
         reading = "the audit policy views"
-        try:
-            cursor.execute(ENABLED_QUERY)
-            enabled = [
-                Enablement(
-                    policy=str(policy),
-                    option=str(option),
-                    entity=str(entity),
-                    success=str(success).upper() == "YES",
-                )
-                for policy, option, entity, success in cursor.fetchall()
-            ]
-            cursor.execute(OPTIONS_QUERY)
-            options = [
-                Option(
-                    policy=str(policy),
-                    option=str(option),
-                    type=str(kind),
-                    condition=None if not condition or condition == "NONE" else str(condition),
-                    common=str(common).upper() == "YES",
-                )
-                for policy, option, kind, condition, common in cursor.fetchall()
-            ]
-        except Exception as error:
-            if from_error(error).code in UNREADABLE_CODES:
-                return AuditCoverage(audited=None, detail=UNREADABLE)
-            raise
+        cursor.execute(ENABLED_QUERY)
+        enabled = [
+            Enablement(
+                policy=str(policy),
+                option=str(option),
+                entity=str(entity),
+                success=str(success).upper() == "YES",
+            )
+            for policy, option, entity, success in cursor.fetchall()
+        ]
+        cursor.execute(OPTIONS_QUERY)
+        options = [
+            Option(
+                policy=str(policy),
+                option=str(option),
+                type=str(kind),
+                condition=None if not condition or condition == "NONE" else str(condition),
+                common=str(common).upper() == "YES",
+            )
+            for policy, option, kind, condition, common in cursor.fetchall()
+        ]
         return classify(mode, enabled, options, account)
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
+        if reading != "V$OPTION" and diagnosis.code in UNREADABLE_CODES:
+            return AuditCoverage(audited=None, detail=UNREADABLE)
         return AuditCoverage(
             audited=None,
             detail=f"reading {reading} failed with {diagnosis.code or 'no code'}: "

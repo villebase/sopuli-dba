@@ -312,7 +312,8 @@ def test_a_held_staging_write_that_lands_after_a_takeover_fails_the_new_holders_
     holder's staging write then fails its compare-and-set on the version it read.
 
     Neither run changes the database, and ``current`` is not promoted. The new
-    holder can be run again, but its error names a conflict, not the takeover.
+    holder's error names a conflict, not the takeover. The stalled run's
+    ``pending`` is left for ``apply``: a new rotation refuses over it (#804).
     """
     direct = fault_estate.config(vault_stack.addr)
     rotated = fault_estate.sopuli(direct, "creds", "rotate", "--confirm")

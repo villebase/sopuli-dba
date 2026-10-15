@@ -1756,16 +1756,18 @@ For a staging write, this is what follows. The stale run's write lands, so
 fence check fails before its `ALTER USER`, so it changes no database, and it
 promotes nothing. The next `apply` applies that `pending` and promotes it.
 
-If the run that took over is a `rotate`, the stale write can land between that
-run's read and its own staging write. Its staging write then fails its
+If the run that took over is a `rotate` and the stale write lands before that
+run reads the document, the new run refuses over the `pending` (§8). If it lands
+between that run's read and its own staging write, the staging write fails its
 compare-and-set: exit 1, and the row is `ERROR` with `category: vault`.
 
 ```
 compare-and-set failed at 'acme/dev/acme': check-and-set parameter did not match the current version
 ```
 
-It applied nothing, and running it again is safe. But the message names a
-conflict, not the takeover. `tests/test_fault_lock.py` produces both cases.
+It applied nothing. The message names a conflict, not the takeover. Running it
+again refuses over the stale run's `pending`, and `apply` applies and promotes
+that `pending`. `tests/test_fault_lock.py` produces these cases.
 
 **A lock error is never a finding for one target.** Anything else that goes wrong
 with one account becomes a row in the table, and the run carries on. Here that

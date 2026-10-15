@@ -2092,7 +2092,8 @@ the register.
     taken, and answered later. So this needs a third code, and it makes two
     resets at once possible without anyone choosing that.
   - Require the journal and the delivery to use the same store, at load time.
-    It forbids the split that UC-2 §3.5 describes and `01-configuration.md`
-    §3a documents.
+    It forbids the split that UC-2 §3.5 describes. `01-configuration.md` §1
+    documents it under `delivery:`: `vault_wrapped.vault` does not fall back to
+    `reset_records.vault`.
   - A command-line flag to go ahead without the lock. It adds one more flag in
     front of a guardrail, and removing `reset_records:` already does this.

@@ -1255,6 +1255,7 @@ def test_a_journal_store_that_is_down_refuses_even_when_the_delivery_store_is_up
     account: Callable[..., Any],
     journal: Any,
     private_mount: str,
+    free_tcp_port: int,
 ) -> None:
     """UC-2 3.3, decided in #516: the journal's store holds the lock.
 
@@ -1263,6 +1264,10 @@ def test_a_journal_store_that_is_down_refuses_even_when_the_delivery_store_is_up
     run still refuses before any DDL: a reset without its lock would print like
     a locked one. An estate that must reset during a journal outage removes
     `reset_records:`, and `SOPULI-W024` says at plan time that no lock is taken.
+
+    The old password still logging in is what shows that no DDL ran. An unseen
+    reset does not expire the account, so `OPEN` afterwards would prove nothing.
+    The address is a free port on the loopback interface, which refuses at once.
     """
     written = (
         _wrapped_config(live_oracle, journal, private_mount)
@@ -1272,9 +1277,9 @@ def test_a_journal_store_that_is_down_refuses_even_when_the_delivery_store_is_up
         )
         .replace(
             "\nreset_records:\n  vault: vault-dev\n",
-            """  vault-journal:
+            f"""  vault-journal:
     type: hashicorp
-    addr: http://127.0.0.1:1
+    addr: http://127.0.0.1:{free_tcp_port}
     mount: kv
     kv_version: 2
     auth:
@@ -1293,8 +1298,19 @@ reset_records:
 
     assert isinstance(result.exception, StoreError), result.exception
     assert "could not reach the store" in str(result.exception)
-    assert account() == before == "OPEN", "the reset ran without the lock it was told to take"
+    assert account() == before == "OPEN"
+    assert _logs_in(live_oracle, OLD), "the reset ran without the lock it was told to take"
     assert "hvs." not in result.output, "a password was handed over without the lock"
+
+
+def _logs_in(live_oracle: Environment, password: str) -> bool:
+    """Whether the account accepts ``password``, by a real logon."""
+    oracledb = pytest.importorskip("oracledb")
+    try:
+        oracledb.connect(user=ACCOUNT, password=password, dsn=live_oracle.dsn).close()
+    except oracledb.DatabaseError:
+        return False
+    return True
 
 
 # -------------------------------------------------------- the notify channel ---

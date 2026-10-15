@@ -4873,6 +4873,13 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
     help="Authorise replacing a `current` that already exists. Required wherever one does.",
 )
 @click.option(
+    "--overwrite-pending",
+    "discard",
+    is_flag=True,
+    default=False,
+    help="Authorise discarding a `pending` that is already staged. Required wherever one is.",
+)
+@click.option(
     "--confirm",
     is_flag=True,
     default=False,
@@ -4891,6 +4898,7 @@ def creds_generate(
     offline: bool,
     promote: bool,
     overwrite: bool,
+    discard: bool,
     confirm: bool,
     run: Invocation,
 ) -> str:
@@ -4925,11 +4933,20 @@ def creds_generate(
     in the same write, and any `pending` is cleared -- a staged password left
     behind is one the next `apply` would prefer to what was just promoted.
 
-    **A second run replaces what was staged, and reports a change.** That is outside
-    the idempotency invariant rather than excused from it: the invariant governs
-    commands that converge on a state, and drawing a fresh random secret has no
-    state to converge on. The run warns that it replaced a staged password, because
-    anything already holding the old one is now stale.
+    **A staged `pending` is never discarded unasked.** Where a selected account
+    already has one, the run refuses at plan time naming the accounts, and
+    `creds apply` is what finishes it. `--overwrite-pending` authorises drawing
+    over it, for a staged password nobody should use. `--promote` clears a
+    `pending` too, so it needs the flag as well. An `apply` may be putting that
+    password on a database right now, and a vault that no longer held it would
+    leave the database with a password nobody has.
+
+    **A second run with the flag replaces what was staged, and reports a
+    change.** That is outside the idempotency invariant rather than excused from
+    it: the invariant governs commands that converge on a state, and drawing a
+    fresh random secret has no state to converge on. The run warns that it
+    replaced a staged password, because anything already holding the old one is
+    now stale.
 
     **One document is one write.** Where several accounts share a secret -- the
     documented default -- their passwords go in a single compare-and-set write under
@@ -4949,8 +4966,9 @@ def creds_generate(
     Help text stays ASCII throughout, which is P4's rule.
     """
     # Why a second run is outside invariant 9 rather than an exception to it:
-    # decision #254 and H7. They are cited here and not in the docstring, because
-    # the docstring is `creds generate --help`.
+    # decision #254 and H7. Why it needs `--overwrite-pending`: #769. They are
+    # cited here and not in the docstring, because the docstring is
+    # `creds generate --help`.
     document = run.document
     refuse_if_readonly(
         run.resolved, action="promoting a password" if promote else "staging a password"
@@ -5011,22 +5029,22 @@ def creds_generate(
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
 
-    # **A promote reads before it plans**, which is why the stores open here
-    # rather than after the `--dry-run` return. The refusal is a plan-time one
-    # (invariant 4) and the plan itself has to say which accounts would be
-    # seeded and which replaced, so both need the documents -- and a preview
-    # that could not tell those apart would be a preview of the wrong question.
-    # An ordinary `--dry-run` still opens nothing.
-    stores = (
-        _stores_for(names, config, token_file=run.vault_token_file, cache=run.stores)
-        if promote or not run.dry_run
-        else {}
-    )
-    held = _current_holders(writes, stores) if promote else {}
+    # **The run reads before it plans**, which is why the stores open here
+    # rather than after the `--dry-run` return. The refusals are plan-time ones
+    # (invariant 4), and the plan itself has to say which accounts already have
+    # a `pending`, and under `--promote` which would be seeded and which
+    # replaced. A preview that could not tell those apart would be a preview of
+    # the wrong question.
+    stores = _stores_for(names, config, token_file=run.vault_token_file, cache=run.stores)
+    found = _plan_documents(writes, stores)
+    held = _holders(writes, found, _holds_current) if promote else {}
+    staged_over = _holders(writes, found, _holds_pending)
+    # Never under `--dry-run`: a preview is how somebody finds out they need a
+    # flag, and refusing to show it would leave them guessing which accounts it
+    # was about.
+    if staged_over and not discard and not run.dry_run:
+        _refuse_discard(staged_over)
     if held and not overwrite and not run.dry_run:
-        # Never under `--dry-run`: a preview is how somebody finds out they need
-        # the flag, and refusing to show it would leave them guessing which
-        # accounts it was about.
         _refuse_overwrite(held)
 
     # Between the plan and the write table, which is where they answer the
@@ -5056,6 +5074,8 @@ def creds_generate(
         if promote
         else render_write_table(writes, stage=PENDING)
     )
+    if staged_over:
+        table.extend(["", _staged_note(staged_over, authorised=discard)])
     header = "\n".join([*lines, *table])
     if run.dry_run:
         # Invariant 8: print the plan, write nothing, take no lock. No `results`
@@ -5091,10 +5111,17 @@ def creds_generate(
                     break
                 rows.extend(
                     _promote_document(
-                        write, stores[write.key.store], authorised=overwrite, out=results, run=run
+                        write,
+                        stores[write.key.store],
+                        authorised=overwrite,
+                        discard=discard,
+                        out=results,
+                        run=run,
                     )
                     if promote
-                    else _stage(write, stores[write.key.store], out=results, run=run)
+                    else _stage(
+                        write, stores[write.key.store], discard=discard, out=results, run=run
+                    )
                 )
     except LockDeniedError as denied:
         _record_locks(document, manager, denied=denied)
@@ -5280,41 +5307,53 @@ def _password_from_stdin() -> Secret:
     return Secret(text)
 
 
-def _current_holders(
+def _plan_documents(
     writes: Sequence[DocumentWrite], stores: Mapping[str, SecretStore]
-) -> dict[LockKey, tuple[str, ...]]:
-    """Which selected accounts already have a `current`, per document (decision #257).
+) -> dict[LockKey, Any]:
+    """Each document as the plan-time read found it (decision #257, #769).
 
-    The input to both halves of `--promote`'s gate: the plan-time refusal, and
-    the plan's own split between accounts that would be **seeded** and accounts
-    whose `current` would be **replaced**. Those are different risks and an
-    operator should not have to count them.
+    The input to the plan's two gates: `--promote` over a `current`, and any
+    write over a staged `pending`. Each gate also shapes the plan's own output,
+    so an operator sees which accounts a flag is about without counting them.
 
-    **Read before the lock, and used for neither of the values written.** What
-    comes back here is a classification and nothing else -- the password that
-    becomes ``previous`` is read again inside the lock, by
-    :func:`_promote_document`, because a value read before acquiring is a value
-    another run may have replaced in between. Carrying it forward would write a
-    `previous` that never was `current`.
+    **Read before the lock, and used for none of the values written.** What
+    comes back here classifies accounts and nothing else. The document is read
+    again inside the lock, by :func:`_stage` and :func:`_promote_document`,
+    because a value read before acquiring is a value another run may have
+    replaced in between. Carrying it forward would write a `previous` that never
+    was `current`.
 
-    A document that cannot be read contributes nothing rather than raising. The
-    write is about to fail on the same store and will say so per document with
-    the store's own message; refusing here would report a vault outage as a
-    refusal to overwrite, which is a different thing to go and fix.
+    A document that cannot be read is left out rather than raising. The write is
+    about to fail on the same store and will say so per document with the
+    store's own message; refusing here would report a vault outage as a refusal
+    to overwrite, which is a different thing to go and fix.
     """
-    found: dict[LockKey, tuple[str, ...]] = {}
+    found: dict[LockKey, Any] = {}
     for write in writes:
         store = stores.get(write.key.store)
         if store is None:  # pragma: no cover - `names` is built from these keys
             continue
         try:
-            document = store.read(write.key.path)
+            found[write.key] = store.read(write.key.path)
         except Exception:  # noqa: BLE001 -- see the docstring: the write reports it
+            continue
+    return found
+
+
+def _holders(
+    writes: Sequence[DocumentWrite],
+    documents: Mapping[LockKey, Any],
+    holds: Callable[[Any, Candidate], bool],
+) -> dict[LockKey, tuple[str, ...]]:
+    """Which selected accounts ``holds`` is true of, per document that was read."""
+    found: dict[LockKey, tuple[str, ...]] = {}
+    for write in writes:
+        if write.key not in documents:
             continue
         holders = tuple(
             candidate.binding.account
             for candidate in write.candidates
-            if _holds_current(document, candidate)
+            if holds(documents[write.key], candidate)
         )
         if holders:
             found[write.key] = holders
@@ -5336,6 +5375,51 @@ def _holds_current(document: Any, candidate: Candidate) -> bool:
         return resolve(document.data if document is not None else None, ref) is not None
     except Exception:  # noqa: BLE001 -- see the docstring
         return False
+
+
+def _holds_pending(document: Any, candidate: Candidate) -> bool:
+    """Whether this account already has a `pending` staged (#769).
+
+    A stage that will not read is not a holder, for the reason
+    :func:`_holds_current` gives.
+    """
+    ref = candidate.binding.secret
+    if ref is None or document is None:
+        return False
+    try:
+        return stage_layout(ref).read(document.data, PENDING) is not None
+    except Exception:  # noqa: BLE001 -- see `_holds_current`
+        return False
+
+
+def _staged_note(held: Mapping[LockKey, Sequence[str]], *, authorised: bool) -> str:
+    """The plan's line for the accounts that already have a `pending`."""
+    listed = ", ".join(sorted(account for accounts in held.values() for account in accounts))
+    if authorised:
+        return f"discards the staged `pending` of {listed} (--overwrite-pending)"
+    return (
+        f"a `pending` is already staged for {listed}; the run refuses without --overwrite-pending"
+    )
+
+
+def _refuse_discard(held: Mapping[LockKey, Sequence[str]]) -> None:
+    """Stop a write over a staged `pending` that nobody authorised (#769).
+
+    **Exit 8**, as :func:`_refuse_overwrite` is, for its reason: an
+    authorisation is missing, and nothing is broken. The usual next step is
+    `creds apply`, which applies and promotes what is staged, so the hint names
+    it first.
+    """
+    named = sorted(account for accounts in held.values() for account in accounts)
+    have = "has" if len(named) == 1 else "have"
+    raise RefusedError(
+        f"{len(named)} of the selected accounts already {have} a `pending` staged "
+        f"({', '.join(named)}), and this run would discard it",
+        hint=(
+            "run `sopuli creds apply` to apply and promote what is staged, or pass "
+            "--overwrite-pending to discard it"
+        ),
+    )
 
 
 def _refuse_overwrite(held: Mapping[LockKey, Sequence[str]]) -> None:
@@ -5369,6 +5453,7 @@ def _promote_document(
     store: SecretStore,
     *,
     authorised: bool,
+    discard: bool,
     out: list[dict[str, Any]],
     run: Invocation,
 ) -> list[tuple[Candidate, str, str]]:
@@ -5378,11 +5463,11 @@ def _promote_document(
     outcome shared by every account in the document -- and the same reason for
     sharing it: one write either landed or it did not.
 
-    **The authorisation is checked again here**, against the document this run
-    actually holds the lock on. The plan-time refusal reads before acquiring, so
-    a `current` written in between would otherwise be replaced by a run that was
-    told there was none. Where the flag was passed there is nothing left to
-    check: the overwrite is authorised wherever it is found.
+    **Both authorisations are checked again here**, against the document this
+    run actually holds the lock on. The plan-time refusals read before
+    acquiring, so a `current` or a `pending` written in between would otherwise
+    be replaced by a run that was told there was none. Where a flag was passed
+    there is nothing left to check for it: it applies wherever it is needed.
 
     **`previous` comes from this read**, not from the plan-time one. It is the
     value `current` held a moment ago under this lock, which is the only reading
@@ -5445,6 +5530,15 @@ def _promote_document(
             )
         )
 
+    staged = _already_pending(existing, write)
+    if staged and not discard:
+        return _reported(
+            write,
+            FAILED,
+            _appeared(staged),
+            out=out,
+            stage=CURRENT,
+        )
     if replaced and not authorised:
         return _reported(
             write,
@@ -5512,8 +5606,21 @@ def _announce_draws(write: DocumentWrite, run: Invocation, *, stage: str = PENDI
             )
 
 
+def _appeared(staged: Mapping[str, int]) -> str:
+    """The finding for a `pending` the plan-time read did not see (#769)."""
+    return (
+        f"a `pending` appeared for {', '.join(sorted(staged))} after the plan was made, "
+        "and discarding it was not authorised (--overwrite-pending)"
+    )
+
+
 def _stage(
-    write: DocumentWrite, store: SecretStore, *, out: list[dict[str, Any]], run: Invocation
+    write: DocumentWrite,
+    store: SecretStore,
+    *,
+    discard: bool,
+    out: list[dict[str, Any]],
+    run: Invocation,
 ) -> list[tuple[Candidate, str, str]]:
     """Perform one document's write, and report it per account.
 
@@ -5524,12 +5631,19 @@ def _stage(
     ``cas`` is the version that was there, or ``0`` for a document that does not
     exist yet -- which is not a version but an assertion that there is nothing at
     the path, and the one case a merge patch cannot serve.
+
+    **A `pending` found here is discarded only where ``discard`` says so**
+    (#769). The plan-time refusal read before the lock, and this is the read
+    under it. `rotate` never discards: its plan refused over any `pending` it
+    found, so one found now was written after that.
     """
     emitter = run.emitter()
     existing = store.read(write.key.path)
     emitter.event(run.document, "vault.read", data=_vault_event(write.key, existing))
     cas = 0 if existing is None else existing.version
     replaced = _already_pending(existing, write)
+    if replaced and not discard:
+        return _reported(write, FAILED, _appeared(replaced), out=out)
 
     _announce_draws(write, run)
     try:
@@ -8950,6 +9064,12 @@ def creds_rotate(
     naming them. To roll out part of an estate at a time, use `creds generate`
     and then `creds apply` per target.
 
+    **A rotation over a staged `pending` is refused** too, before the
+    pre-flight, naming the accounts. Some run may be putting that password on a
+    database now, and drawing over it would leave the database with a password
+    the vault has nowhere. `creds apply` applies and promotes what is staged;
+    `creds generate --overwrite-pending` discards it.
+
     **`--finish-rollover` runs at the end of the run, not per target.** That is
     what makes it different from `--strategy direct`, which closes each window as
     it opens it. Here every window stays open until every target has been applied
@@ -9174,6 +9294,34 @@ def _apply_owed(sequence: _Rotation, states: Sequence[str]) -> bool:
     ) == int(ExitCode.PARTIAL)
 
 
+def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[LockKey, Any]) -> None:
+    """Refuse a rotation that would stage over a `pending` already there (#769).
+
+    A staged `pending` is a password some run may be putting on a database at
+    this moment: an `apply` that took over an expired lock, say. Drawing over it
+    would leave that database holding a password the vault has nowhere, so the
+    run stops before step 3 and names the accounts.
+
+    **The documents are the ones read under the lock**, so only a run that took
+    the lock over can stage between this read and step 4's write. The fence
+    check before the write stops this run if that happened first, and the
+    write's compare-and-set fails if it happened after. `rotate` has no flag to
+    go ahead: `creds apply` finishes what is staged, and `creds generate
+    --overwrite-pending` discards it for somebody who means to.
+    """
+    named = sorted({binding.account for binding in rotating if _has_pending(binding, documents)})
+    if not named:
+        return
+    raise RefusedError(
+        f"{', '.join(named)} already {'has' if len(named) == 1 else 'have'} a "
+        "`pending` staged, and this rotation would draw over it",
+        hint=(
+            "run `sopuli creds apply` to apply and promote what is staged, or "
+            "`sopuli creds generate --overwrite-pending` to discard it first"
+        ),
+    )
+
+
 def _refuse_narrow_rotation(
     rotating: Sequence[Binding],
     documents: Mapping[LockKey, Any],
@@ -9280,6 +9428,7 @@ def _rotate_estate(
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
+    _refuse_staged_rotation(rotating, documents)
     _refuse_narrow_rotation(rotating, documents, run)
 
     # Step 3, and unconditional. Every account about to be rotated, rather than
@@ -9308,7 +9457,7 @@ def _rotate_estate(
         except LockStolenError as lost:
             into.stolen = lost
             return None
-        rows = _stage(write, stores[write.key.store], out=into.staged_json, run=run)
+        rows = _stage(write, stores[write.key.store], discard=False, out=into.staged_json, run=run)
         into.staged_rows.extend(rows)
         if any(state == FAILED for _, state, _ in rows):
             into.failures += 1
@@ -9682,6 +9831,7 @@ def _preview_rotation(
         document.finish(ExitCode.SUCCESS, Summary(total=len(selections)))
         return _nothing_due(plan, selections, max_age_days)
     # A refusal under `--dry-run` is still a refusal, as the pre-flight's is.
+    _refuse_staged_rotation(rotating, documents)
     _refuse_narrow_rotation(rotating, documents, run)
 
     findings = _preflight(rotating, run, config, strategy=strategy, full=True)

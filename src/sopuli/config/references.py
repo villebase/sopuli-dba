@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from sopuli.config.applications import SPLIT_HINT
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
@@ -97,6 +98,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_policies(config)
     _check_groups(config)
     _check_targets(config)
+    _check_account_matches(config)
     _check_profiles(config)
     _check_non_production_vaults(config)
     _check_breaking_locks_without_a_fence(config)
@@ -267,6 +269,32 @@ def _check_targets(config: Config) -> None:
             found.append(_Reference(name, at.index(position)))
 
     _resolve(found, declared, noun="target", section="targets")
+
+
+#: The `where:` keys that are someone matching an account, not a label (C4).
+_ACCOUNT_KEYS = ("account", "accounts")
+
+
+def _check_account_matches(config: Config) -> None:
+    """Refuse an override that matches an account by name (C4).
+
+    `where:` matches target labels. An `account` key there, where no target
+    carries an `account` label, is someone writing a per-account exception: it
+    would match no target, and the exception would silently not apply. Checked
+    against the expanded estate because a label may come from a target set.
+    Where some target does carry the label, the match is a real one and stands.
+    """
+    carried = {key for expanded in config.expanded_targets for key, _ in expanded.target.labels}
+    for index, application in enumerate(config.applications):
+        where = ROOT if application.is_inline else ROOT.key("applications").index(index)
+        for position, override in enumerate(application.overrides):
+            for key, _ in override.where:
+                if key in _ACCOUNT_KEYS and key not in carried:
+                    raise ConfigError(
+                        f"`where:` matches target labels, and no target has an `{key}` label",
+                        at=where.key("overrides").index(position).key("where").key(key),
+                        hint=SPLIT_HINT,
+                    )
 
 
 def _check_profiles(config: Config) -> None:

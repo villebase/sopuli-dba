@@ -173,16 +173,10 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
             hint="invariant 5: the config is the whitelist, so nothing is managed by default",
         )
 
-    # A mapping item is someone writing a per-account setting (C4). It would fail
-    # `string_list` anyway, and this says what to do instead.
-    for index, item in enumerate(sequence(entry["accounts"], at=at.key("accounts"))):
-        if isinstance(item, dict):
-            raise ConfigError(
-                "an account is a name, not a mapping",
-                at=at.key("accounts").index(index),
-                hint=SPLIT_HINT,
-            )
-    accounts = string_list(entry["accounts"], at=at.key("accounts"))
+    accounts = tuple(
+        _account(item, at=at.key("accounts").index(index))
+        for index, item in enumerate(sequence(entry["accounts"], at=at.key("accounts")))
+    )
     if not accounts:
         raise ConfigError("must declare at least one account", at=at.key("accounts"))
 
@@ -199,6 +193,17 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
             )
         seen[account] = index
     return accounts
+
+
+def _account(item: Any, *, at: KeyPath) -> str:
+    """One `accounts:` item, which is a name.
+
+    A mapping is someone writing a per-account setting (C4), so its refusal
+    says what to write instead rather than only that the type is wrong.
+    """
+    if isinstance(item, dict):
+        raise ConfigError("an account is a name, not a mapping", at=at, hint=SPLIT_HINT)
+    return string(item, at=at)
 
 
 def _build_secret(entry: dict[str, Any], *, at: KeyPath) -> tuple[str | None, str | None]:
@@ -314,10 +319,9 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
     somewhere in the middle of a long file. Whatever the tool manages has to be
     readable from ``accounts:`` alone.
 
-    **``where:`` matches target labels, and ``account`` is refused there** (C4).
-    The loader would otherwise read it as a label nobody set, so the override
-    would match no target and the exception someone meant would silently not
-    apply. One account's exception is an application entry of its own.
+    An ``account`` key in ``where:`` is checked later, against the expanded
+    estate (:mod:`sopuli.config.references`): it is a mistake only where no
+    target carries that label (C4).
     """
     patch = mapping(raw, at=at)
     reject_unknown_keys(patch, allowed=OVERRIDE_KEYS, at=at)
@@ -327,12 +331,6 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
             "an override must say which targets it applies to",
             at=at.key("where"),
             hint="`where: { env: dev }` -- an override matching everything is not an exception",
-        )
-    if isinstance(patch["where"], dict) and "account" in patch["where"]:
-        raise ConfigError(
-            "`where:` matches target labels, not accounts",
-            at=at.key("where").key("account"),
-            hint=SPLIT_HINT,
         )
 
     secret = optional_string(patch, "secret", at=at)

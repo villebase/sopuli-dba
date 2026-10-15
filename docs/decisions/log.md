@@ -217,16 +217,18 @@ the register.
   exceptions. An account that needs a different `policy`, `oracle` block or
   anything else goes in an application entry of its own. The loader refuses
   the two shapes someone would try, with a hint that says to write a second
-  entry: an `accounts:` item that is a mapping, and an `account` key under
-  `overrides[].where`.
+  entry: an `accounts:` item that is a mapping, and an `account` or `accounts`
+  key under `overrides[].where` that no target carries as a label.
 - **Why:** A second entry costs nothing to write. With a secret path of its own,
   it also gives the account its own document, and so its own promotion
   (UC-1 §5), which is usually what an account with different rules wants. A
   per-account form would add a second resolution axis to `bindings.py` and the
   §2 resolution table, beside `overrides:`, for a case the existing grammar
-  already covers. Before this, `where: { account: … }` was accepted and read as
-  a target label nobody had set, so the override matched no target and its
-  exception silently did not apply.
+  already covers. Before this, `where: { account: … }` was accepted as a label
+  match. On an estate where no target has that label, the override matched no
+  target and its exception silently did not apply. The check runs against the
+  expanded estate, because labels are the estate's own and a real `account`
+  label is a real match.
 - **Rejected:**
   - A map form in `accounts:` (`[{name: x, policy: y}]`): it changes the config
     schema and the resolution chain.

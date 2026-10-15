@@ -646,8 +646,10 @@ hint says to write a second entry:
 
 - an `accounts:` item that is a mapping, such as
   `{ name: acme_batch_user, policy: app-strict }`;
-- an `account` key in `overrides[].where`, which matches target labels. Read as a
-  label, it would match no target, and the override would never apply.
+- an `account` or `accounts` key in `overrides[].where` that no target carries as
+  a label. `where` matches target labels, so the override would match no target
+  and never apply. Labels are the estate's own vocabulary: where a target does
+  carry an `account` label, the override matches it and stands.
 
 Reasons: [C4](../decisions/log.md#c4).
 

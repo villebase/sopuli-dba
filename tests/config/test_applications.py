@@ -104,24 +104,6 @@ def test_an_account_with_settings_of_its_own_is_refused(form: Any) -> None:
     assert "application entry of its own" in (caught.value.hint or "")
 
 
-def test_an_override_may_not_match_an_account() -> None:
-    """C4: `where:` matches target labels. Read as a label, `account` would match
-    no target, and the exception would silently not apply."""
-    with pytest.raises(ConfigError) as caught:
-        build_applications(
-            named(
-                accounts=["acme_web_user", "acme_batch_user"],
-                secret_template=TEMPLATE,
-                overrides=[{"where": {"account": "acme_batch_user"}, "policy": "strict"}],
-            )
-        )
-
-    rendered = str(caught.value)
-    assert "`where:` matches target labels, not accounts" in rendered
-    assert "applications[0].overrides[0].where.account" in rendered
-    assert "application entry of its own" in (caught.value.hint or "")
-
-
 def test_an_account_with_its_own_settings_is_a_second_entry() -> None:
     """The way C4 is written: the account gets an entry of its own, here with a
     secret path of its own too."""

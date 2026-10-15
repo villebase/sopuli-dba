@@ -197,6 +197,47 @@ def test_an_application_naming_an_undeclared_policy_is_refused() -> None:
     assert "applications[0].policy" in rendered
 
 
+# ---------------------------------------- an account in `where:` (C4) ---
+
+
+def batch_override(key: str = "account") -> list[dict[str, Any]]:
+    """An application whose override tries to single out one account."""
+    return [
+        {
+            "name": "acme",
+            "accounts": ["acme_web_user", "acme_batch_user"],
+            "overrides": [{"where": {key: "acme_batch_user"}, "policy": "app-standard"}],
+        }
+    ]
+
+
+@pytest.mark.parametrize("key", ["account", "accounts"])
+def test_an_override_matching_an_account_by_name_is_refused(key: str) -> None:
+    """`where:` matches target labels. With no target carrying the label, the
+    override would match nothing and its exception would silently not apply."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(targets=[TARGET], policies=POLICIES, applications=batch_override(key))
+        )
+
+    rendered = str(caught.value)
+    assert f"no target has an `{key}` label" in rendered
+    assert f"applications[0].overrides[0].where.{key}" in rendered
+    assert "application entry of its own" in (caught.value.hint or "")
+
+
+def test_an_account_label_that_a_target_carries_is_a_real_match() -> None:
+    """Labels are the estate's own vocabulary, so `account` may be one. Where a
+    target carries it, the override matches that target and stands."""
+    labelled = {**TARGET, "labels": {"account": "acme_batch_user"}}
+
+    config = build_config(
+        document(targets=[labelled], policies=POLICIES, applications=batch_override())
+    )
+
+    assert config.applications[0].overrides[0].where == (("account", "acme_batch_user"),)
+
+
 def test_an_application_naming_an_undeclared_group_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(

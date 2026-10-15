@@ -704,7 +704,7 @@ def test_the_command_enum_names_nothing_that_is_not_coming() -> None:
 def test_nothing_reserved_has_quietly_been_built() -> None:
     """The list above stops being documentation the moment a verb arrives.
 
-    Without this, `admin install` could ship and leave a comment claiming it is
+    Without this, a reserved verb could ship and leave a comment claiming it is
     still planned.
     """
     built = {".".join(path.split()[1:]) for path, _ in commands()}

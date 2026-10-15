@@ -2048,11 +2048,13 @@ the register.
 - **Question:** What does `sopuli admin install` do, if anything? The run
   schema's `command` enum held `admin.install` from the first commit, but no
   document said what the command does.
-- **Decision:** No command. A DBA installs the service account by running
-  `sql/oracle/00_install.sql` as SYSDBA or an equivalent account.
-  `admin.install` is removed from the enum in run schema 1.37. No build ever
-  emitted it, so the removal is minor (`03-json-output.md` §8). UC-4 takes up
-  the question again.
+- **Decision:** No `admin install` command. A DBA installs the service account
+  by running `sql/oracle/00_install.sql` as SYSDBA or an equivalent account.
+  `admin.install` is removed from the enum in run schema 1.37. The verb is
+  declined and no build ever emitted it, so the removal is minor
+  (`03-json-output.md` §8). UC-4 decides whether provisioning covers installing
+  the service account. If it does, that is a UC-4 verb with its own name, and
+  adding it to the enum is a minor bump.
 - **Why:** The command would add the most by generating the service account's
   password and writing it to the vault first. That is also the expensive part.
   It needs a credential the tool otherwise never holds, SYSDBA or an
@@ -2064,7 +2066,7 @@ the register.
   - Print the script with its values filled in, for a DBA to review and run.
     A DBA already passes the script's few values directly, so this saves
     little.
-  - A full install: a credential to run it, config for the script's mode,
+  - A full install now: a credential to run it, config for the script's mode,
     tablespace and grants, and a plan, `--dry-run` and `changed: false` on a
     second run. It is the largest new privilege surface since UC-1, for a step
     done once per database.

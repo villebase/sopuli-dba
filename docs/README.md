@@ -487,13 +487,17 @@ defines, not to UC-1's service account.
 
 *Deferred to it:* Q8 (`apply` does not create a missing account), the creating
 and altering of profiles, UC-1 §5's default and temporary tablespace
-attribute (#303), and installing the tool's own service account
-([#655](decisions/log.md#655)). Installing it is provisioning too, and it needs
-SYSDBA or an equivalent account, which the tool otherwise never holds. Until
-then a DBA runs `sql/oracle/00_install.sql`. `ALTER USER … DEFAULT TABLESPACE` moves no existing segment,
-so during a rotation it is a half-change that looks complete. During
-provisioning the account has no objects yet, so it is simply part of creating
-the account.
+attribute (#303), and how the tool's own service account is installed (#655).
+
+`ALTER USER … DEFAULT TABLESPACE` moves no existing segment, so during a
+rotation it is a half-change that looks complete. During provisioning the
+account has no objects yet, so it is simply part of creating the account.
+
+Installing the service account is provisioning too, and it needs SYSDBA or an
+equivalent account, which the tool otherwise never holds. A DBA runs
+`sql/oracle/00_install.sql` for it. [#655](decisions/log.md#655) declined an
+`admin install` command. This use case decides whether provisioning covers the
+install, and in what form.
 
 ### UC-5 — drift and compliance reporting across a fleet
 

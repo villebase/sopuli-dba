@@ -2602,7 +2602,8 @@ three:
   **declined**: `creds.promote` was removed under this rule, because UC-1 §4 says
   there is no `creds promote` and there will not be one. `admin.install` was
   removed in 1.37, because [#655](../decisions/log.md#655) declined
-  `admin install`. A slot for something that might arrive is honest. A branch
+  `admin install`. UC-4 may install the service account, but with a verb of its
+  own, not this one. A slot for something that might arrive is honest. A branch
   nothing can ever reach is not.
 
 **Renaming a property that a released build emits is major**, with no

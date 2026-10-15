@@ -208,6 +208,31 @@ the register.
   - Arbitrary expressions: a reviewer would have to evaluate code to know where
     a password goes.
 
+## C4
+
+- **Decided:** 2026-10-14, #640
+- **Question:** How does a configuration give one account in an application
+  entry a different setting from the other accounts in that entry?
+- **Decision:** It does not. An application entry has no per-account
+  exceptions. An account that needs a different `policy`, `oracle` block or
+  anything else goes in an application entry of its own. The loader refuses
+  the two shapes someone would try, with a hint that says to write a second
+  entry: an `accounts:` item that is a mapping, and an `account` key under
+  `overrides[].where`.
+- **Why:** A second entry costs nothing to write. With a secret path of its own,
+  it also gives the account its own document, and so its own promotion
+  (UC-1 §5), which is usually what an account with different rules wants. A
+  per-account form would add a second resolution axis to `bindings.py` and the
+  §2 resolution table, beside `overrides:`, for a case the existing grammar
+  already covers. Before this, `where: { account: … }` was accepted and read as
+  a target label nobody had set, so the override matched no target and its
+  exception silently did not apply.
+- **Rejected:**
+  - A map form in `accounts:` (`[{name: x, policy: y}]`): it changes the config
+    schema and the resolution chain.
+  - An account matcher in `where:`: `where` matches labels, and this would mix
+    two kinds of key in one matcher.
+
 ## C5
 
 - **Decided:** 2026-10-03, #615

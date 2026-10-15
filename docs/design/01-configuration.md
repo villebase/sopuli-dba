@@ -614,6 +614,43 @@ where Oracle stores `ACME_WEB_USER`, and an operator copying a name out of a
 database is doing the obvious thing. Target, group and application names are the
 tool's own vocabulary and are compared as written.
 
+### One account with different settings
+
+An application entry has no per-account exceptions (C4). `overrides:` patches
+settings by target label, never by account. An account that needs its own
+`policy`, `oracle` block or anything else goes in an application entry of its
+own. Here `acme_batch_user` gets a stricter policy:
+
+```yaml
+applications:
+  - name: acme
+    targets: { group: app-pdbs }
+    accounts: [acme_web_user, acme_api_user]
+    secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+    policy: app-standard
+
+  - name: acme-batch
+    targets: { group: app-pdbs }
+    accounts: [acme_batch_user]
+    secret_template: "tenants/{tenant}-batch#DB_CREDENTIALS/{account}"
+    policy: app-strict
+```
+
+Here the second entry has a path of its own, so the account also gets its own
+secret document, and so its own promotion (UC-1 §5). It could write to `acme`'s
+document instead: two entries may share one, because each account has its own
+field in it.
+
+The loader refuses the two shapes that look like a per-account setting, and its
+hint says to write a second entry:
+
+- an `accounts:` item that is a mapping, such as
+  `{ name: acme_batch_user, policy: app-strict }`;
+- an `account` key in `overrides[].where`, which matches target labels. Read as a
+  label, it would match no target, and the override would never apply.
+
+Reasons: [C4](../decisions/log.md#c4).
+
 ---
 
 ## 3. Worked example: two applications
@@ -3160,7 +3197,7 @@ notices until a rotation.
 | C1 | ~~Name of the binding section~~ | **decided: `applications`**, with the inline single-application form as the default shape. Reasons: [C1](../decisions/log.md#c1) |
 | C2 | ~~Selector syntax~~ | **decided** (#615): `--select k=v` over labels, plus `match:` in groups. Reasons: [C2](../decisions/log.md#c2) |
 | C3 | ~~Should secret templates support arbitrary expressions?~~ | **decided** (#615): no — fixed token list plus labels. Reasons: [C3](../decisions/log.md#c3) |
-| C4 | Per-account overrides inside an application entry | the `overrides: [{where: …}]` mechanism covers per-label cases; per-*account* exceptions are still unsolved |
+| C4 | ~~Per-account overrides inside an application entry~~ | **decided** (#640): none. An account with different settings gets an application entry of its own, and the loader refuses the per-account shapes (§2). Reasons: [C4](../decisions/log.md#c4) |
 | C5 | ~~Config encryption at rest~~ | **decided** (#615): out of scope; config holds no secrets by construction. Reasons: [C5](../decisions/log.md#c5) |
 | C6 | Multiple vaults for one application (mirror writes) | defer to a later use case |
 | C7 | ~~Should `target_sets` allow more than two nesting levels?~~ | **decided: no** — write a second set (§4 rules 2, 6 and 7). Reasons: [C7](../decisions/log.md#c7) |

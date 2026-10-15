@@ -83,6 +83,67 @@ def test_a_duplicate_account_is_refused_and_points_at_both() -> None:
     assert "already declared at index 0" in rendered
 
 
+# ------------------------------------------------- per-account settings (C4) ---
+
+
+@pytest.mark.parametrize("form", [inline, named], ids=["inline", "named"])
+def test_an_account_with_settings_of_its_own_is_refused(form: Any) -> None:
+    """C4: an application entry has no per-account exceptions. The refusal names
+    the item and says what to write instead, a second application entry."""
+    with pytest.raises(ConfigError) as caught:
+        build_applications(
+            form(
+                accounts=["acme_web_user", {"name": "acme_batch_user", "policy": "strict"}],
+                secret_template=TEMPLATE,
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "an account is a name, not a mapping" in rendered
+    assert "accounts[1]" in rendered
+    assert "application entry of its own" in (caught.value.hint or "")
+
+
+def test_an_override_may_not_match_an_account() -> None:
+    """C4: `where:` matches target labels. Read as a label, `account` would match
+    no target, and the exception would silently not apply."""
+    with pytest.raises(ConfigError) as caught:
+        build_applications(
+            named(
+                accounts=["acme_web_user", "acme_batch_user"],
+                secret_template=TEMPLATE,
+                overrides=[{"where": {"account": "acme_batch_user"}, "policy": "strict"}],
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "`where:` matches target labels, not accounts" in rendered
+    assert "applications[0].overrides[0].where.account" in rendered
+    assert "application entry of its own" in (caught.value.hint or "")
+
+
+def test_an_account_with_its_own_settings_is_a_second_entry() -> None:
+    """The way C4 is written: the account gets an entry of its own, here with a
+    secret path of its own too."""
+    applications = build_applications(
+        {
+            "version": 1,
+            "applications": [
+                {"name": "acme", "accounts": ["acme_web_user"], "secret_template": TEMPLATE},
+                {
+                    "name": "acme-batch",
+                    "accounts": ["acme_batch_user"],
+                    "secret_template": "tenants/{tenant}-batch#DB_CREDENTIALS/{account}",
+                    "policy": "strict",
+                },
+            ],
+        }
+    )
+
+    assert [one.name for one in applications] == ["acme", "acme-batch"]
+    assert applications[1].policy == "strict"
+
+
 # ------------------------------------------------------------------ secret ---
 
 

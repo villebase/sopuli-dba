@@ -599,9 +599,13 @@ This grants `READ` on the two views. Connect as `SYS` to run it: `SYSTEM` gets
 `ORA-01031`.
 
 ```sql
-GRANT READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES TO sopuli_svc;
-GRANT READ ON SYS.AUDIT_UNIFIED_POLICIES TO sopuli_svc;
+GRANT READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+GRANT READ ON SYS.AUDIT_UNIFIED_POLICIES TO sopuli_svc;           -- or c##sopuli_svc CONTAINER=ALL
 ```
+
+For a common service account, run the grants as `SYS` in `CDB$ROOT` with
+`CONTAINER=ALL`. The probe measured that a common account granted this way reads
+both views in a PDB.
 
 **Do not grant the `AUDIT_VIEWER` role instead.** It holds the same two grants,
 and much more: on 26ai 23.26.2.0.0 it holds 34 object grants, including `READ` on
@@ -630,7 +634,7 @@ comes from `V$OPTION`, which `PUBLIC` can read. These results are from
 | `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |
 | `CREATE USER` / `DROP USER` | creating and dropping accounts is outside UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
-| `AUDIT_VIEWER` | it reads every account's audit records, including what the trail holds about the DBAs. A reset's `audited` check needs only `READ` on two policy views (§2) |
+| `AUDIT_VIEWER`, `AUDIT_ADMIN` | both read every account's audit records, including what the trail holds about the DBAs. `AUDIT_ADMIN` can also disable the audit policies that a reset's `audited` value reports on. The check needs only `READ` on two policy views (§2) |
 | `EXECUTE ON DBMS_LOCK` | `00-principles.md` P5's advisory lock is in the vault, not the database (UC-1 Q2). A session-scoped database lock does not solve the problem: a stalled run's session is still alive, so its lock blocks others while its plan goes stale. A fencing token, checked again before every change, does solve it, and it needs nothing from the database |
 
 **The service account needs no grant to detect an application container.** `V$PDBS` is
@@ -1165,7 +1169,10 @@ A policy **covers** an action when all of these hold:
   `SUCCESS` and `FAILURE` columns. A policy with `SUCCESS = 'NO'` records only
   failures and does not count. One that records only successes counts, because
   the routes succeed;
-- it is enabled for the right accounts, as the two rules above say.
+- it is enabled for the right accounts, as the two rules above say. A policy
+  enabled for a list of users has one row per user, and the check reads all of
+  a policy's rows together. `EXCEPT ac_dba, ac_person` is one list, and it names
+  the person.
 
 `AUDIT_UNIFIED_ENABLED_POLICIES` has one row for each way a policy is enabled:
 
@@ -1191,8 +1198,9 @@ so it does not guess:
   From the PDB, a common policy enabled in `CDB$ROOT` looks like a policy
   enabled for every user. The probe measured that such a policy recorded
   nothing of the route by local accounts: no `ALTER USER` and no logon, in any
-  container's trail. Whether it records a common account's actions is not
-  measured, and a common DBA account could take the route.
+  container's trail. It did record a common account's logon to the PDB. So a
+  common DBA account taking the route might be recorded, and a local one is
+  not.
 - **It has a row of a kind the probe has not measured.** That is any
   `SYSTEM PRIVILEGE` row other than `ALTER USER`, any `ROLE PRIVILEGE` row, and
   any type other than `STANDARD ACTION`, `SYSTEM PRIVILEGE`, `OBJECT ACTION` and
@@ -1200,10 +1208,17 @@ so it does not guess:
   `ROLES DBA` may record an `ALTER USER` made through the role. Nobody has
   measured either.
 
-A policy **does not cover** an action when it has no row of any of these kinds:
-its rows are other standard actions, object actions, or `XS ACTION` rows. An
-`ACTIONS ALTER USER` policy also has an `XS ACTION` row, `UPDATE USER`, which
-changes nothing.
+A policy **does not cover** an action in every other case. These are the
+common ones:
+
+- it has no row for the action of any kind above. Its rows are other standard
+  actions, object actions, or `XS ACTION` rows. An
+  `ACTIONS ALTER USER` policy also has an `XS ACTION` row, `UPDATE USER`, which
+  changes nothing;
+- it records only failures (`SUCCESS = 'NO'`);
+- for `LOGON`, it is enabled `BY` a list that does not name the person, or
+  `EXCEPT` a list that names them. The table above measured both: neither
+  records the person's logon.
 
 `false` also needs the database to use unified auditing only: `V$OPTION` reports
 `Unified Auditing` as `TRUE`. 26ai Free 23.26.2.0.0 does. In mixed mode (`FALSE`
@@ -1212,9 +1227,13 @@ is `unknown`. 11.2 has no unified auditing, so the value is `unknown` there too.
 Neither case has been measured. [measurements](../measurements.md) lists the
 releases the probe has run on.
 
-`sopuli_pol` above covers `ALTER USER` for every user and does not cover
-`LOGON`. On its own it gives `false`. An estate that wants `true` also enables a
-policy with `ACTIONS LOGON` for its personal accounts.
+On a PDB install, the two policies that `01_audit_policy.sql` creates give
+`false`. `sopuli_pol` covers `ALTER USER` for every user. `sopuli_logon_pol`
+does not cover `LOGON`: it records only failed logons, and only the service
+account's. An estate that wants `true` also enables a policy with
+`ACTIONS LOGON` for its personal accounts. On a `COMMON` install the script runs
+in `CDB$ROOT`, and the value a PDB's reset gets from those policies is not
+measured.
 
 ---
 

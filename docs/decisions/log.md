@@ -1083,8 +1083,8 @@ the register.
   document's result. It does not warn and does not refuse. The check reads the
   enabled unified audit policies. `true` means that enabled policies cover
   `LOGON` for the person and `ALTER USER` for every user. `false` means the
-  database is in pure unified mode and no enabled policy covers one of the two.
-  Everything else is `unknown`, with the reason. The check needs an optional
+  database is in pure unified mode, and for one of the two, no enabled policy
+  covers it or might cover it. Everything else is `unknown`, with the reason. The check needs an optional
   grant, `READ` on two audit views. The Vault half of the condition stays
   stated, not checked.
 - **Why:** Without a record, an estate with no audit policy runs unseen resets

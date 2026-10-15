@@ -27,21 +27,24 @@
 --        each enabled for every user
 --   AC6  a common ACTIONS ALTER USER, LOGON policy, enabled in CDB$ROOT for
 --        every user: what the account sees of it in the PDB, and what it
---        records of the route, in the PDB's trail and in every container's
+--        records of the route, in the PDB's trail and in every container's.
+--        As a control, a common account logs on to the PDB under it
+--   AC7  READ on the two views, granted CONTAINER = ALL to a common account
+--        by SYS in CDB$ROOT: does the common account read them in the PDB
 --
 -- This MEASURES and decides nothing. What a reset records is #591.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM with AC2's grants as SYS, 2026-10-15 -- twelve times, the last two
--- this file exactly as it stands (exit 0 both times, identical output). Run 9
--- started from the state a run stopped in AC4a leaves behind: AC_ALL enabled
--- BY the person. AC3 to AC5 were identical in the ten runs that reached
--- them. Run 1 stopped at AC2, where SYSTEM cannot grant; run 4 stopped at AC3
+-- as SYSTEM with AC2's grants as SYS, 2026-10-15 -- fourteen times, the last
+-- two this file exactly as it stands (exit 0 both times, identical output).
+-- Run 9 started from the state a run stopped in AC4a leaves behind: AC_ALL
+-- enabled BY the person. AC3 to AC5 were identical in the twelve runs that
+-- reached them. Run 1 stopped at AC2, where SYSTEM cannot grant; run 4 stopped at AC3
 -- on a typing error. In runs 1 to 3 AC3 did not yet read the enabled rows as
 -- the account, in runs 1 to 6 AC0 did not yet count AUDIT_VIEWER's grants, and
--- AC6 was added for run 9 and read the root's trail from run 11. Untried on
--- every other release. 11.2 has no unified audit, so AC1 to AC6 do not apply
--- there as written.
+-- AC6 was added for run 9, read the root's trail from run 11, and had its
+-- control from run 13, when AC7 was added. Untried on every other release.
+-- 11.2 has no unified audit, so AC1 to AC7 do not apply there as written.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, 2026-10-15
@@ -92,15 +95,20 @@
 --        It records NONE of the route by the local accounts: no ALTER USER and
 --        no logon, in the PDB's trail or in CDB_UNIFIED_AUDIT_TRAIL from the
 --        root. The only row is PROXY AUTHENTICATION under the DBA, and that
---        row also appears in AC4 and AC5 under whatever policy is enabled
+--        row also appears in AC4 and AC5 under whatever policy is enabled. The
+--        control's logon IS recorded: LOGON under C##AC_CSVC, in the PDB. So
+--        the policy works, and does not apply to the local accounts
+--   AC7  both grants succeed, and the common account reads both views in the
+--        PDB: 0 enabled rows (none enabled then), 3291 policy rows
 --
 --   So a BY or EXCEPT list applies to the account that ISSUES the statement.
 --   The person issues the logon and the DBA issues the ALTER USER, so a list
 --   naming the person says nothing about the DBA's ALTER USER. A service
 --   account needs READ on both views. SYS can grant it and SYSTEM cannot.
 --   AUDIT_VIEWER holds both grants (AC0). A common policy looks like an
---   every-user policy from the PDB, and records nothing of local accounts
---   (AC6).
+--   every-user policy from the PDB, records nothing of local accounts, and
+--   records a common account's logon (AC6). A common service account takes
+--   the grant with CONTAINER = ALL (AC7).
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), and
@@ -122,8 +130,8 @@
 -- The drop-if-exists and clean-up blocks in the setup and the teardown swallow
 -- their own errors and carry no secret.
 --
--- THROWAWAY DATABASES ONLY. Creates and drops three accounts, a role, nine
--- local audit policies and one common one, plants known passwords, and leaves rows in
+-- THROWAWAY DATABASES ONLY. Creates and drops three local accounts, a common
+-- one, a role, nine local audit policies and one common one, plants known passwords, and leaves rows in
 -- UNIFIED_AUDIT_TRAIL. While AC5 runs, ACTIONS ALL audits every user.
 --------------------------------------------------------------------------------
 define svc      = FREEPDB1
@@ -160,6 +168,10 @@ begin execute immediate 'noaudit policy c##ac_common'; exception when others the
 /
 begin execute immediate 'drop audit policy c##ac_common'; exception when others then null; end;
 /
+begin execute immediate 'drop user c##ac_csvc cascade'; exception when others then null; end;
+/
+create user c##ac_csvc identified by "AcCsvcPw_2209" container = all;
+grant create session to c##ac_csvc container = all;
 connect &sys_conn@&svc
 -- Every enablement is undone with the clause it was made with: a plain NOAUDIT
 -- does not undo a BY list or a role, and DROP AUDIT POLICY then fails. Each
@@ -405,24 +417,41 @@ alter user ac_person grant connect through ac_dba;
 connect ac_dba[ac_person]/"AcDbaPw_3318"@&svc
 connect ac_dba/"AcDbaPw_3318"@&svc
 alter user ac_person revoke connect through ac_dba;
+-- The control: a common account logs on to the PDB under the same policy. A
+-- policy that records this and not the local accounts above is working, and
+-- is not applied to local accounts.
+connect c##ac_csvc/"AcCsvcPw_2209"@&svc
 connect &sys_conn@&svc
 select dbusername, dbproxy_username, action_name, substr(sql_text, 1, 52) as sql_text
   from unified_audit_trail
  where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
-   and dbusername like 'AC\_%' escape '\'
+   and (dbusername like 'AC\_%' escape '\' or dbusername like 'C##AC\_%' escape '\')
  order by event_timestamp_utc;
 -- Every container's trail, from the root, in case the records went there.
 connect &sysdba@&cdb as sysdba
 select con_id, dbusername, dbproxy_username, action_name
   from cdb_unified_audit_trail
  where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
-   and dbusername like 'AC\_%' escape '\'
+   and (dbusername like 'AC\_%' escape '\' or dbusername like 'C##AC\_%' escape '\')
  order by event_timestamp_utc;
 noaudit policy c##ac_common;
 drop audit policy c##ac_common;
 
+prompt === AC7: READ on the two views for a common account, granted CONTAINER = ALL
+-- As SYS in the root. Whether the grant reaches the PDB is the question, so a
+-- failure here is a result and does not stop the run.
+whenever sqlerror continue none
+grant read on sys.audit_unified_enabled_policies to c##ac_csvc container = all;
+grant read on sys.audit_unified_policies to c##ac_csvc container = all;
+connect c##ac_csvc/"AcCsvcPw_2209"@&svc
+select count(*) as enabled_rows from audit_unified_enabled_policies;
+select count(*) as policy_rows from audit_unified_policies;
+whenever sqlerror exit failure
+
 prompt === teardown
 connect &sys_conn@&svc
+-- The same block as the setup's. The file is piped to SQL*Plus on stdin, so
+-- it cannot load a shared file with @@; change both copies together.
 -- Every enablement is undone with the clause it was made with: a plain NOAUDIT
 -- does not undo a BY list or a role, and DROP AUDIT POLICY then fails. Each
 -- statement swallows its own error, so a run stopped half way does not stop
@@ -455,6 +484,9 @@ drop user ac_svc cascade;
 drop user ac_dba cascade;
 drop user ac_person cascade;
 drop role ac_role;
+connect &sysdba@&cdb as sysdba
+drop user c##ac_csvc cascade;
+connect &sys_conn@&svc
 select count(*) as leftover_users from dba_users where username like 'AC\_%' escape '\';
 select count(*) as leftover_policies from audit_unified_policies
  where policy_name like 'AC\_%' escape '\';

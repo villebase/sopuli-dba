@@ -603,9 +603,12 @@ GRANT READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES TO sopuli_svc;
 GRANT READ ON SYS.AUDIT_UNIFIED_POLICIES TO sopuli_svc;
 ```
 
-The `AUDIT_VIEWER` role holds the same two grants, so granting the role also
-works. The two `READ` grants are narrower: on 26ai the role holds 34 object
-grants, including `READ` on `UNIFIED_AUDIT_TRAIL`.
+**Do not grant the `AUDIT_VIEWER` role instead.** It holds the same two grants,
+and much more: on 26ai 23.26.2.0.0 it holds 34 object grants, including `READ` on
+`UNIFIED_AUDIT_TRAIL`. A service account with the role can read every account's
+audit records. Whoever steals its credential can then see what the audit trail
+holds about the DBAs, which is the evidence UC-2 §1's guarantee rests on. §3
+lists the role.
 
 Without the grants, a service account with the base grants gets
 `ORA-00942: table or view "SYS"."AUDIT_UNIFIED_ENABLED_POLICIES" does not
@@ -627,6 +630,7 @@ comes from `V$OPTION`, which `PUBLIC` can read. These results are from
 | `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |
 | `CREATE USER` / `DROP USER` | creating and dropping accounts is outside UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
+| `AUDIT_VIEWER` | it reads every account's audit records, including what the trail holds about the DBAs. A reset's `audited` check needs only `READ` on two policy views (§2) |
 | `EXECUTE ON DBMS_LOCK` | `00-principles.md` P5's advisory lock is in the vault, not the database (UC-1 Q2). A session-scoped database lock does not solve the problem: a stalled run's session is still alive, so its lock blocks others while its plan goes stale. A fencing token, checked again before every change, does solve it, and it needs nothing from the database |
 
 **The service account needs no grant to detect an application container.** `V$PDBS` is
@@ -1136,15 +1140,32 @@ So the two actions are checked against different accounts:
   `BY` and no `EXCEPT` list. The tool cannot know which DBA might use the route,
   so a list never proves it.
 
-A policy covers an action when `AUDIT_UNIFIED_POLICIES` has a row for it:
+The check sorts each enabled policy, for each of the two actions, into one of
+three groups: it **covers** the action, it **might cover** it, or it **does not
+cover** it. Then:
 
-- `AUDIT_OPTION` is the action (`ALTER USER` or `LOGON`) with
-  `AUDIT_OPTION_TYPE` `STANDARD ACTION`;
-- or `AUDIT_OPTION` is `ALL` with type `STANDARD ACTION`. The probe measured that
-  `ACTIONS ALL` records both actions;
-- or, for `ALTER USER` only, `AUDIT_OPTION` `ALTER USER` with type
-  `SYSTEM PRIVILEGE`. The probe measured that `PRIVILEGES ALTER USER` records the
-  DBA's `ALTER USER`, with any password masked.
+- `true`: a policy covers `LOGON`, and a policy covers `ALTER USER`. One policy
+  that covers an action settles it, whatever the other policies say.
+- `unknown`: an action that no policy covers has a policy that might cover it.
+  The result names that policy and why.
+- `false`: no policy covers or might cover one of the actions, and the database
+  uses unified auditing only (see below).
+
+A policy **covers** an action when all of these hold:
+
+- `AUDIT_UNIFIED_POLICIES` has a row for the action. That is `AUDIT_OPTION` set
+  to the action (`ALTER USER` or `LOGON`) with `AUDIT_OPTION_TYPE`
+  `STANDARD ACTION`, or `ALL` with type `STANDARD ACTION`, or, for
+  `ALTER USER` only, `ALTER USER` with type `SYSTEM PRIVILEGE`. The probe
+  measured that `ACTIONS ALL` records both actions, and that
+  `PRIVILEGES ALTER USER` records the DBA's `ALTER USER`, with any password
+  masked;
+- its `AUDIT_CONDITION` is `NONE`;
+- it records successful statements. `AUDIT_UNIFIED_ENABLED_POLICIES` has
+  `SUCCESS` and `FAILURE` columns. A policy with `SUCCESS = 'NO'` records only
+  failures and does not count. One that records only successes counts, because
+  the routes succeed;
+- it is enabled for the right accounts, as the two rules above say.
 
 `AUDIT_UNIFIED_ENABLED_POLICIES` has one row for each way a policy is enabled:
 
@@ -1155,27 +1176,41 @@ A policy covers an action when `AUDIT_UNIFIED_POLICIES` has a row for it:
 | `EXCEPT` a user | `EXCEPT USER` | the user |
 | `BY USERS WITH GRANTED ROLES` | `BY GRANTED ROLE` | the role |
 
-Its `SUCCESS` and `FAILURE` columns say which outcomes the policy records. A
-policy that records only failures (`SUCCESS = 'NO'`) does not count. A policy
-that records only successes does count, because the routes succeed.
+A policy **might cover** an action in these cases. The tool cannot decide them,
+so it does not guess:
 
-Three cases give `unknown` rather than a guess:
+- **It has a row for the action, and a condition.** The tool does not evaluate
+  the condition, so it cannot know whether the condition holds for the DBA's
+  session.
+- **It has a row for the action, and is enabled for a role.** The tool does not
+  check which accounts hold the role.
+- **It has a row for `ALTER USER`, and is enabled through a `BY` or `EXCEPT`
+  list.** Some users are covered, and the tool cannot tell whether the DBA is
+  one of them.
+- **It is a common policy**, with `COMMON = 'YES'` in `AUDIT_UNIFIED_POLICIES`.
+  From the PDB, a common policy enabled in `CDB$ROOT` looks like a policy
+  enabled for every user. The probe measured that such a policy recorded
+  nothing of the route by local accounts: no `ALTER USER` and no logon, in any
+  container's trail. Whether it records a common account's actions is not
+  measured, and a common DBA account could take the route.
+- **It has a row of a kind the probe has not measured.** That is any
+  `SYSTEM PRIVILEGE` row other than `ALTER USER`, any `ROLE PRIVILEGE` row, and
+  any type other than `STANDARD ACTION`, `SYSTEM PRIVILEGE`, `OBJECT ACTION` and
+  `XS ACTION`. For example, `PRIVILEGES CREATE SESSION` may record logons, and
+  `ROLES DBA` may record an `ALTER USER` made through the role. Nobody has
+  measured either.
 
-- **A policy with a condition.** `AUDIT_CONDITION` is not `NONE`. The tool does
-  not evaluate the condition, so it cannot know whether the condition holds for
-  the DBA's session.
-- **A policy enabled for a role.** The tool does not check which accounts hold
-  the role.
-- **`ALTER USER` covered only through a `BY` or `EXCEPT` list.** Some users are
-  covered, and the tool cannot tell whether the DBA is one of them.
+A policy **does not cover** an action when it has no row of any of these kinds:
+its rows are other standard actions, object actions, or `XS ACTION` rows. An
+`ACTIONS ALTER USER` policy also has an `XS ACTION` row, `UPDATE USER`, which
+changes nothing.
 
-`false` needs two facts. First, the database uses unified auditing only:
-`V$OPTION` reports `Unified Auditing` as `TRUE`. 26ai Free does. Second, no
-enabled policy covers one of the two actions, and none of the three cases above
-applies to it. In mixed mode (`FALSE` on 12.1 and later), traditional auditing
-might record the action, so the value is `unknown`. 11.2 has no unified auditing,
-so the value is `unknown` there too. Neither case has been measured.
-[measurements](../measurements.md) lists the releases the probe has run on.
+`false` also needs the database to use unified auditing only: `V$OPTION` reports
+`Unified Auditing` as `TRUE`. 26ai Free 23.26.2.0.0 does. In mixed mode (`FALSE`
+on 12.1 and later), traditional auditing might record the action, so the value
+is `unknown`. 11.2 has no unified auditing, so the value is `unknown` there too.
+Neither case has been measured. [measurements](../measurements.md) lists the
+releases the probe has run on.
 
 `sopuli_pol` above covers `ALTER USER` for every user and does not cover
 `LOGON`. On its own it gives `false`. An estate that wants `true` also enables a

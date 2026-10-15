@@ -25,18 +25,23 @@
 --        revokes; then the person logs on. What the trail holds for each
 --   AC5  the same route under PRIVILEGES ALTER USER, and under ACTIONS ALL,
 --        each enabled for every user
+--   AC6  a common ACTIONS ALTER USER, LOGON policy, enabled in CDB$ROOT for
+--        every user: what the account sees of it in the PDB, and what it
+--        records of the route, in the PDB's trail and in every container's
 --
 -- This MEASURES and decides nothing. What a reset records is #591.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM with AC2's grants as SYS, 2026-10-15 -- eight times, the last two
--- this file exactly as it stands (exit 0 both times, identical output). AC3 to
--- AC5 were identical in the six runs that reached them. Run 1 stopped at AC2,
--- where SYSTEM cannot grant; run 4 stopped at AC3 on a typing error. In runs 1
--- to 3 AC3 did not yet read the enabled rows as the account, and in runs 1 to
--- 6 AC0 did not yet count AUDIT_VIEWER's grants. Untried on every
--- other release. 11.2 has no unified audit, so AC1 to AC5 do not apply there
--- as written.
+-- as SYSTEM with AC2's grants as SYS, 2026-10-15 -- twelve times, the last two
+-- this file exactly as it stands (exit 0 both times, identical output). Run 9
+-- started from the state a run stopped in AC4a leaves behind: AC_ALL enabled
+-- BY the person. AC3 to AC5 were identical in the ten runs that reached
+-- them. Run 1 stopped at AC2, where SYSTEM cannot grant; run 4 stopped at AC3
+-- on a typing error. In runs 1 to 3 AC3 did not yet read the enabled rows as
+-- the account, in runs 1 to 6 AC0 did not yet count AUDIT_VIEWER's grants, and
+-- AC6 was added for run 9 and read the root's trail from run 11. Untried on
+-- every other release. 11.2 has no unified audit, so AC1 to AC6 do not apply
+-- there as written.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, 2026-10-15
@@ -82,39 +87,49 @@
 --   AC5  PRIVILEGES ALTER USER records the DBA's three ALTER USERs, the
 --        IDENTIFIED BY one masked. ACTIONS ALL records both ALTER USERs, the
 --        proxy logon and the person's logon, among everything else
+--   AC6  the account sees the common policy in the PDB: BY USER, ALL USERS,
+--        SUCCESS and FAILURE YES, and its rows with COMMON and INHERITED YES.
+--        It records NONE of the route by the local accounts: no ALTER USER and
+--        no logon, in the PDB's trail or in CDB_UNIFIED_AUDIT_TRAIL from the
+--        root. The only row is PROXY AUTHENTICATION under the DBA, and that
+--        row also appears in AC4 and AC5 under whatever policy is enabled
 --
 --   So a BY or EXCEPT list applies to the account that ISSUES the statement.
 --   The person issues the logon and the DBA issues the ALTER USER, so a list
 --   naming the person says nothing about the DBA's ALTER USER. A service
 --   account needs READ on both views. SYS can grant it and SYSTEM cannot.
---   AUDIT_VIEWER holds both grants (AC0).
+--   AUDIT_VIEWER holds both grants (AC0). A common policy looks like an
+--   every-user policy from the PDB, and records nothing of local accounts
+--   (AC6).
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), and
---   as SYS for AC2's grants, in the PDB. Against the tier-1 stack, whose SYS
+--   as SYS for AC2's grants, in the PDB; as SYS in CDB$ROOT for AC6's common
+--   policy. Against the tier-1 stack, whose SYS
 --   and SYSTEM password is the public one in test/compose.yaml, as it stands:
 --
 --     MSYS_NO_PATHCONV=1 docker exec -i sopuli-test-oracle-free-1 \
 --       sqlplus -S /nolog < 13_audit_coverage_probe.sql
 --
 --   /nolog, and every CONNECT made from the script, so no password is ever in
---   argv (invariant 1). Against any other database, copy the file, edit the three
+--   argv (invariant 1). Against any other database, copy the file, edit the four
 --   DEFINEs in the copy, run the copy and delete it, as 07 prescribes -- never
 --   substitute them with sed, which puts the password in argv instead.
 --   MSYS_NO_PATHCONV is for Git Bash, which otherwise rewrites /nolog.
 --
 -- WHENEVER SQLERROR is EXIT FAILURE throughout, and is relaxed to CONTINUE NONE
 -- only around AC1's reads and SYSTEM's grant in AC2, which are meant to fail.
--- The setup's drop-if-exists blocks swallow their own errors and carry no
--- secret.
+-- The drop-if-exists and clean-up blocks in the setup and the teardown swallow
+-- their own errors and carry no secret.
 --
--- THROWAWAY DATABASES ONLY. Creates and drops three accounts, a role and nine
--- audit policies, plants known passwords, and leaves rows in
+-- THROWAWAY DATABASES ONLY. Creates and drops three accounts, a role, nine
+-- local audit policies and one common one, plants known passwords, and leaves rows in
 -- UNIFIED_AUDIT_TRAIL. While AC5 runs, ACTIONS ALL audits every user.
 --------------------------------------------------------------------------------
 define svc      = FREEPDB1
 define sys_conn = system/sopuli-test
 define sysdba   = sys/sopuli-test
+define cdb      = FREE
 
 set lines 220 pages 200 feedback off verify off
 whenever sqlerror exit failure
@@ -140,6 +155,40 @@ col action_name for a22
 col sql_text for a52
 
 prompt === setup
+connect &sysdba@&cdb as sysdba
+begin execute immediate 'noaudit policy c##ac_common'; exception when others then null; end;
+/
+begin execute immediate 'drop audit policy c##ac_common'; exception when others then null; end;
+/
+connect &sys_conn@&svc
+-- Every enablement is undone with the clause it was made with: a plain NOAUDIT
+-- does not undo a BY list or a role, and DROP AUDIT POLICY then fails. Each
+-- statement swallows its own error, so a run stopped half way does not stop
+-- the next one here.
+begin
+  for p in (select policy_name, enabled_option, entity_name
+              from audit_unified_enabled_policies
+             where policy_name like 'AC\_%' escape '\') loop
+    begin
+      execute immediate 'noaudit policy ' || p.policy_name ||
+        case
+          when p.enabled_option = 'BY USER' and p.entity_name <> 'ALL USERS'
+            then ' by ' || p.entity_name
+          when p.enabled_option = 'BY GRANTED ROLE'
+            then ' by users with granted roles ' || p.entity_name
+        end;
+    exception when others then null;
+    end;
+  end loop;
+  for p in (select distinct policy_name from audit_unified_policies
+             where policy_name like 'AC\_%' escape '\') loop
+    begin
+      execute immediate 'drop audit policy ' || p.policy_name;
+    exception when others then null;
+    end;
+  end loop;
+end;
+/
 begin execute immediate 'drop user ac_svc cascade'; exception when others then null; end;
 /
 begin execute immediate 'drop user ac_dba cascade'; exception when others then null; end;
@@ -147,17 +196,6 @@ begin execute immediate 'drop user ac_dba cascade'; exception when others then n
 begin execute immediate 'drop user ac_person cascade'; exception when others then null; end;
 /
 begin execute immediate 'drop role ac_role'; exception when others then null; end;
-/
-begin
-  for p in (select distinct policy_name from audit_unified_enabled_policies
-             where policy_name like 'AC\_%' escape '\') loop
-    execute immediate 'noaudit policy ' || p.policy_name;
-  end loop;
-  for p in (select distinct policy_name from audit_unified_policies
-             where policy_name like 'AC\_%' escape '\') loop
-    execute immediate 'drop audit policy ' || p.policy_name;
-  end loop;
-end;
 /
 create user ac_svc    identified by "AcSvcPw_6620";
 create user ac_dba    identified by "AcDbaPw_3318";
@@ -350,15 +388,66 @@ select dbusername, dbproxy_username, action_name, substr(sql_text, 1, 52) as sql
    and dbusername like 'AC\_%' escape '\'
  order by event_timestamp_utc;
 
+prompt === AC6: a common policy, enabled in CDB$ROOT
+connect &sysdba@&cdb as sysdba
+create audit policy c##ac_common actions alter user, logon container = all;
+audit policy c##ac_common;
+connect ac_svc/"AcSvcPw_6620"@&svc
+select policy_name, enabled_option, entity_name, success, failure
+  from audit_unified_enabled_policies where policy_name like 'C##AC\_%' escape '\';
+select policy_name, audit_option, audit_option_type, common, inherited
+  from audit_unified_policies where policy_name like 'C##AC\_%' escape '\'
+ order by audit_option;
+connect &sys_conn@&svc
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person grant connect through ac_dba;
+connect ac_dba[ac_person]/"AcDbaPw_3318"@&svc
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person revoke connect through ac_dba;
+connect &sys_conn@&svc
+select dbusername, dbproxy_username, action_name, substr(sql_text, 1, 52) as sql_text
+  from unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and dbusername like 'AC\_%' escape '\'
+ order by event_timestamp_utc;
+-- Every container's trail, from the root, in case the records went there.
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and dbusername like 'AC\_%' escape '\'
+ order by event_timestamp_utc;
+noaudit policy c##ac_common;
+drop audit policy c##ac_common;
+
 prompt === teardown
+connect &sys_conn@&svc
+-- Every enablement is undone with the clause it was made with: a plain NOAUDIT
+-- does not undo a BY list or a role, and DROP AUDIT POLICY then fails. Each
+-- statement swallows its own error, so a run stopped half way does not stop
+-- the next one here.
 begin
-  for p in (select distinct policy_name from audit_unified_enabled_policies
+  for p in (select policy_name, enabled_option, entity_name
+              from audit_unified_enabled_policies
              where policy_name like 'AC\_%' escape '\') loop
-    execute immediate 'noaudit policy ' || p.policy_name;
+    begin
+      execute immediate 'noaudit policy ' || p.policy_name ||
+        case
+          when p.enabled_option = 'BY USER' and p.entity_name <> 'ALL USERS'
+            then ' by ' || p.entity_name
+          when p.enabled_option = 'BY GRANTED ROLE'
+            then ' by users with granted roles ' || p.entity_name
+        end;
+    exception when others then null;
+    end;
   end loop;
   for p in (select distinct policy_name from audit_unified_policies
              where policy_name like 'AC\_%' escape '\') loop
-    execute immediate 'drop audit policy ' || p.policy_name;
+    begin
+      execute immediate 'drop audit policy ' || p.policy_name;
+    exception when others then null;
+    end;
   end loop;
 end;
 /

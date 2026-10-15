@@ -73,11 +73,12 @@ policy. This is not built yet (open: #591). There are three values:
 
 - `true`: enabled audit policies record the person's logons, and every user's
   `ALTER USER`.
-- `false`: the database uses unified auditing only, and no enabled policy
-  records one of the two.
-- `unknown`: the tool could not tell. The result says why, for example that the
-  service account cannot read the audit policies, or that traditional auditing
-  might also be in use. The tool never gives `false` for a fact it could not
+- `false`: the database uses unified auditing only, and for one of the two, no
+  enabled policy records it or might record it.
+- `unknown`: the tool could not tell. The result says why. For example, the
+  service account cannot read the audit policies, traditional auditing might
+  also be in use, or a policy might record the action but has a condition the
+  tool does not evaluate. The tool never gives `false` for a fact it could not
   read.
 
 `ALTER USER` must be recorded for every user, not only for the person, because

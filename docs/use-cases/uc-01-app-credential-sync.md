@@ -359,7 +359,10 @@ read does not change the argument.
   `--overwrite-pending` authorises the discard, for a staged password that
   nobody should use. Like `--overwrite-current`, it is a flag you type, not a
   prompt, and `--confirm` does not satisfy it. `--dry-run` is never refused,
-  and it names the accounts that have a `pending`. The run checks again under
+  and it names the accounts that have a `pending`. To do that it reads the
+  vault, so a preview needs the vault token, as `--promote --dry-run` does. A
+  document the plan cannot read is named, with the note that whether it has a
+  `pending` is not known. The run checks again under
   the lock, and a `pending` that appeared after the plan is not discarded: that
   document's write fails and names the accounts.
 - Generating twice with `--overwrite-pending` replaces `pending`, and the run

@@ -299,6 +299,41 @@ def test_a_pending_that_appears_after_the_plan_is_not_discarded(
     assert staged(store) == {"acme_web_user": "an-earlier-staged-one"}, "nothing was written"
 
 
+def test_a_dry_run_names_a_document_it_could_not_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preview that could not read a document cannot say there is no
+    `pending` in it, and silence would say exactly that."""
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: {})
+
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "whether a `pending` is staged there is not known" in result.output
+
+
+def test_a_pending_found_under_the_lock_still_announces_the_draws(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    events: Draft202012Validator,
+) -> None:
+    """The same stream as `--promote`'s refusal under the lock: the passwords
+    were drawn, so they are announced, and no write is sent."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda writes, stores: {})
+
+    lines = stream(run(runner, write_config(CONFIG), "--output", "jsonl").stdout, events)
+
+    drawn = [line["account"] for line in lines if line["event"] == "password.generated"]
+    assert drawn == ["acme_web_user", "acme_batch_user"]
+    assert "vault.write" not in names(lines)
+
+
 def test_a_promote_over_a_pending_needs_the_flag_too(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

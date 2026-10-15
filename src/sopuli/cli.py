@@ -5076,6 +5076,9 @@ def creds_generate(
     )
     if staged_over:
         table.extend(["", _staged_note(staged_over, authorised=discard)])
+    unread = [write.key for write in writes if write.key not in found]
+    if unread:
+        table.extend(["", _unread_note(unread)])
     header = "\n".join([*lines, *table])
     if run.dry_run:
         # Invariant 8: print the plan, write nothing, take no lock. No `results`
@@ -5377,24 +5380,38 @@ def _holds_current(document: Any, candidate: Candidate) -> bool:
         return False
 
 
-def _holds_pending(document: Any, candidate: Candidate) -> bool:
-    """Whether this account already has a `pending` staged (#769).
+def _is_staged(document: Any, ref: SecretRef | None) -> bool:
+    """Whether ``ref`` has a `pending` in ``document`` (#769).
 
-    A stage that will not read is not a holder, for the reason
-    :func:`_holds_current` gives.
+    The one test for it, used by every gate that refuses over a `pending` and
+    by the warning that one was replaced. **Any value counts**, not only text: a
+    gate that let a value through because it was the wrong shape would discard
+    it, and refusing is the safe way to be wrong.
     """
-    ref = candidate.binding.secret
-    if ref is None or document is None:
+    if document is None or ref is None:
         return False
-    try:
-        return stage_layout(ref).read(document.data, PENDING) is not None
-    except Exception:  # noqa: BLE001 -- see `_holds_current`
-        return False
+    return stage_layout(ref).read(document.data, PENDING) is not None
+
+
+def _holds_pending(document: Any, candidate: Candidate) -> bool:
+    """:func:`_is_staged` for one candidate, in the shape :func:`_holders` takes."""
+    return _is_staged(document, candidate.binding.secret)
+
+
+def _named(held: Mapping[LockKey, Sequence[str]]) -> list[str]:
+    """Every account in ``held``, sorted, for a message that names them."""
+    return sorted(account for accounts in held.values() for account in accounts)
+
+
+def _unread_note(unread: Sequence[LockKey]) -> str:
+    """The plan's line for documents the plan-time read could not reach."""
+    listed = ", ".join(str(key) for key in unread)
+    return f"could not read {listed}, so whether a `pending` is staged there is not known"
 
 
 def _staged_note(held: Mapping[LockKey, Sequence[str]], *, authorised: bool) -> str:
     """The plan's line for the accounts that already have a `pending`."""
-    listed = ", ".join(sorted(account for accounts in held.values() for account in accounts))
+    listed = ", ".join(_named(held))
     if authorised:
         return f"discards the staged `pending` of {listed} (--overwrite-pending)"
     return (
@@ -5410,7 +5427,7 @@ def _refuse_discard(held: Mapping[LockKey, Sequence[str]]) -> None:
     `creds apply`, which applies and promotes what is staged, so the hint names
     it first.
     """
-    named = sorted(account for accounts in held.values() for account in accounts)
+    named = _named(held)
     have = "has" if len(named) == 1 else "have"
     raise RefusedError(
         f"{len(named)} of the selected accounts already {have} a `pending` staged "
@@ -5642,10 +5659,12 @@ def _stage(
     emitter.event(run.document, "vault.read", data=_vault_event(write.key, existing))
     cas = 0 if existing is None else existing.version
     replaced = _already_pending(existing, write)
+
+    # Before the refusal, as `_promote_document` announces: the passwords were
+    # drawn whatever becomes of this document, and the row says what did.
+    _announce_draws(write, run)
     if replaced and not discard:
         return _reported(write, FAILED, _appeared(replaced), out=out)
-
-    _announce_draws(write, run)
     try:
         written = write_credential(store, write.key.path, write.patch(stage=PENDING), cas=cas)
     except Exception as error:  # noqa: BLE001 -- a per-document finding
@@ -5745,14 +5764,11 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     The version is the document's own -- there is one per document, and it is
     what an operator would go and read the old value back from.
     """
-    if existing is None:
-        return {}
-    found: dict[str, int] = {}
-    for candidate in write.candidates:
-        ref = candidate.binding.secret
-        if ref is not None and stage_layout(ref).read(existing.data, PENDING) is not None:
-            found[candidate.binding.account] = int(existing.version)
-    return found
+    return {
+        candidate.binding.account: int(existing.version)
+        for candidate in write.candidates
+        if _is_staged(existing, candidate.binding.secret)
+    }
 
 
 @creds_group.command("apply")
@@ -9309,7 +9325,13 @@ def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[Lock
     go ahead: `creds apply` finishes what is staged, and `creds generate
     --overwrite-pending` discards it for somebody who means to.
     """
-    named = sorted({binding.account for binding in rotating if _has_pending(binding, documents)})
+    named = sorted(
+        {
+            binding.account
+            for binding in rotating
+            if _is_staged(_stored_document(binding, documents), binding.secret)
+        }
+    )
     if not named:
         return
     raise RefusedError(

@@ -524,6 +524,24 @@ def test_a_rotation_over_a_staged_pending_is_refused(
     assert harness["sessions"] == [], "refused before the pre-flight connected"
 
 
+def test_a_pending_that_is_not_text_is_refused_as_well(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """One test for a staged `pending`, used at the plan and at the write. A
+    value of the wrong shape is still something step 4 would discard, so the
+    plan refuses over it rather than leaving the write to fail as a race."""
+    documents = _two_targets()
+    documents["apps/acme/appdb-alpha"] = {
+        **documents["apps/acme/appdb-alpha"],
+        "pending": {"acme_web_user": {"not": "text"}},
+    }
+    estate(documents=documents)
+
+    result = run(runner, write_config(CONFIG))
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.ABORTED
+
+
 def test_the_refusal_releases_the_lock(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

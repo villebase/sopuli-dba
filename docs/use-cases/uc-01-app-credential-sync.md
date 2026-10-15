@@ -984,7 +984,8 @@ reports `PENDING_APPLY`, for a rollback it refused, and that row is a pair to
 repair. A `rotate` document with only staging rows stopped at step 4, before any
 database was changed. The tool refuses it, because a repair set of nothing would
 report `nothing to apply` and read as "already repaired". §8 row 4's recovery is
-to run `rotate` again.
+`apply` where the run staged a `pending`, and otherwise `rotate` again. A new
+rotation refuses over a staged `pending` (§8).
 
 **A document from a run that lost its lock is refused**, whichever verb wrote
 it. It carries `SOPULI-W011`, and §8 says the run that holds the lock is the one
@@ -1679,8 +1680,11 @@ draw over it. `rotate` has no flag to go ahead; `creds generate
 --overwrite-pending` discards the `pending` for an operator who means to. The
 check reads the documents under the lock. Only a run that took the lock over can
 stage between that read and step 4's write. The fence check before the write
-stops this run if the takeover came first. If it came after, the write's
-compare-and-set fails, and nothing is applied to any database.
+stops this run if the takeover came first. If it came between the fence check
+and the write, the write reads the document first, finds the `pending`, and
+fails that document with a message that points to `apply`. If it came after
+that read, the write's compare-and-set fails. In the last two cases the run
+exits 1, and nothing is applied to any database.
 
 **Sequence**
 

@@ -573,6 +573,8 @@ def test_a_pending_staged_after_the_read_is_not_drawn_over(
     assert body["exit_code"] == ExitCode.FAILURE
     alpha = [one for one in body["results"] if one["target"] == "appdb-alpha"]
     assert "after the plan" in alpha[0]["actions"][0]["detail"]
+    assert "creds apply" in alpha[0]["actions"][0]["detail"]
+    assert "--overwrite-pending" not in alpha[0]["actions"][0]["detail"], "rotate has no such flag"
     assert stored(harness["store"], "apps/acme/appdb-alpha")["pending"] == {"acme_web_user": STAGED}
     assert changed(harness) == []
 

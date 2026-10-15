@@ -1121,8 +1121,8 @@ probing looks like.
 An unseen reset records `audited: true | false | unknown` (UC-2 §1). The value
 says whether enabled unified audit policies record the two routes by which a DBA
 can act as the person: an `ALTER USER`, and a logon as the person. The check
-reads the policies once per target, before the password is drawn. This is not
-built yet (open: #591).
+reads the policies once per target, before the password is drawn.
+`sopuli/driver/oracle/audit.py` implements the rules below.
 
 **A list of users applies to the account that issues the statement.**
 `sql/oracle/13_audit_coverage_probe.sql` measured this on 26ai 23.26.2.0.0. One

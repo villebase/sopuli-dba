@@ -212,30 +212,33 @@ def batch_override(key: str = "account") -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize("key", ["account", "accounts"])
-def test_an_override_matching_an_account_by_name_is_refused(key: str) -> None:
-    """`where:` matches target labels. With no target carrying the label, the
-    override would match nothing and its exception would silently not apply."""
+@pytest.mark.parametrize(
+    "labels",
+    [{}, {"account": "acme_batch_user"}, {"accounts": "acme_batch_user"}],
+    ids=["unlabelled", "account-label", "accounts-label"],
+)
+def test_an_override_matching_an_account_by_name_is_refused(
+    key: str, labels: dict[str, str]
+) -> None:
+    """`where:` matches a whole target, so it cannot single out an account.
+    Without the label the override matches nothing; with it, the patch reaches
+    every account on the target. Both are refused, so a label of that name has
+    to be renamed to be matched here."""
     with pytest.raises(ConfigError) as caught:
         build_config(
-            document(targets=[TARGET], policies=POLICIES, applications=batch_override(key))
+            document(
+                targets=[{**TARGET, "labels": labels}],
+                policies=POLICIES,
+                applications=batch_override(key),
+            )
         )
 
     rendered = str(caught.value)
-    assert f"no target has an `{key}` label" in rendered
+    assert "cannot single out an account" in rendered
     assert f"applications[0].overrides[0].where.{key}" in rendered
-    assert "application entry of its own" in (caught.value.hint or "")
-
-
-def test_an_account_label_that_a_target_carries_is_a_real_match() -> None:
-    """Labels are the estate's own vocabulary, so `account` may be one. Where a
-    target carries it, the override matches that target and stands."""
-    labelled = {**TARGET, "labels": {"account": "acme_batch_user"}}
-
-    config = build_config(
-        document(targets=[labelled], policies=POLICIES, applications=batch_override())
-    )
-
-    assert config.applications[0].overrides[0].where == (("account", "acme_batch_user"),)
+    hint = caught.value.hint or ""
+    assert "application entry of its own" in hint
+    assert f"If `{key}` is a label on your targets, rename the label" in hint
 
 
 def test_an_application_naming_an_undeclared_group_is_refused() -> None:

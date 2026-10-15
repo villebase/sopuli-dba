@@ -646,10 +646,11 @@ hint says to write a second entry:
 
 - an `accounts:` item that is a mapping, such as
   `{ name: acme_batch_user, policy: app-strict }`;
-- an `account` or `accounts` key in `overrides[].where` that no target carries as
-  a label. `where` matches target labels, so the override would match no target
-  and never apply. Labels are the estate's own vocabulary: where a target does
-  carry an `account` label, the override matches it and stands.
+- an `account` or `accounts` key in `overrides[].where`. `where` matches a whole
+  target by its labels, so it cannot single out an account. Where no target has
+  that label, the override matches nothing and never applies. Where one does, it
+  patches every account on that target. A target label with either name has to
+  be renamed to be matched in `where:`.
 
 Reasons: [C4](../decisions/log.md#c4).
 
@@ -3048,6 +3049,12 @@ notices until a rotation.
   filter the declared set and cannot extend it, not even under `--force`. A
   patchable `accounts` would be a label match buried in a long file that adds to
   the whitelist; what the tool manages has to be readable from `accounts:` alone
+- an `accounts:` item that is a mapping, such as `{ name: x, policy: y }` →
+  error. An application entry has no per-account settings; an account that needs
+  them goes in an entry of its own (§2, C4)
+- an `account` or `accounts` key in `overrides[].where` → error, whatever the
+  targets' labels are. `where:` matches a whole target, so it cannot single out
+  an account (§2, C4)
 - two `targets:` entries with the same `name` → error. `--target` becomes
   ambiguous, and the second would shadow the first everywhere a name is looked up
 - a `for_each` with more or fewer than one outer dimension, or with two list

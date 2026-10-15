@@ -218,22 +218,26 @@ the register.
   anything else goes in an application entry of its own. The loader refuses
   the two shapes someone would try, with a hint that says to write a second
   entry: an `accounts:` item that is a mapping, and an `account` or `accounts`
-  key under `overrides[].where` that no target carries as a label.
+  key under `overrides[].where`, whatever the targets' labels are.
 - **Why:** A second entry costs nothing to write. With a secret path of its own,
   it also gives the account its own document, and so its own promotion
   (UC-1 §5), which is usually what an account with different rules wants. A
   per-account form would add a second resolution axis to `bindings.py` and the
   §2 resolution table, beside `overrides:`, for a case the existing grammar
   already covers. Before this, `where: { account: … }` was accepted as a label
-  match. On an estate where no target has that label, the override matched no
-  target and its exception silently did not apply. The check runs against the
-  expanded estate, because labels are the estate's own and a real `account`
-  label is a real match.
+  match. `where:` matches a whole target, so it cannot single out an account.
+  Where no target had the label, the override matched nothing and its exception
+  silently did not apply. Where one did, it patched every account on that
+  target. So the key is refused whatever the labels say, and a target label
+  with that name has to be renamed to be matched in `where:`.
 - **Rejected:**
   - A map form in `accounts:` (`[{name: x, policy: y}]`): it changes the config
     schema and the resolution chain.
   - An account matcher in `where:`: `where` matches labels, and this would mix
     two kinds of key in one matcher.
+  - Allowing `account` in `where:` where some target carries that label: a test
+    of the key alone ignores the label's value and the application's own
+    targets, and a real match patches every account on the target.
 
 ## C5
 

@@ -72,6 +72,10 @@ SPLIT_HINT = (
     "application entry of its own, with the settings it needs"
 )
 
+#: Keys `where:` may not carry, because they name accounts and `where:` matches
+#: targets (C4).
+ACCOUNT_KEYS = ("account", "accounts")
+
 TARGET_SELECTOR_KEYS = ("group", "match")
 
 #: `{account}`, `{account_lower}`, `{account_upper}` -- the tokens that make a
@@ -319,9 +323,12 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
     somewhere in the middle of a long file. Whatever the tool manages has to be
     readable from ``accounts:`` alone.
 
-    An ``account`` key in ``where:`` is checked later, against the expanded
-    estate (:mod:`sopuli.config.references`): it is a mistake only where no
-    target carries that label (C4).
+    **``account`` and ``accounts`` are refused in ``where:``** (C4), whatever
+    the targets' labels say. ``where:`` matches a whole target, so it cannot
+    single out an account. Without a target that carries the label, the
+    override matches nothing and silently does not apply. With one, it patches
+    every account on that target, which is worse. A target label of that name
+    therefore has to be renamed to be matched here.
     """
     patch = mapping(raw, at=at)
     reject_unknown_keys(patch, allowed=OVERRIDE_KEYS, at=at)
@@ -332,6 +339,17 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
             at=at.key("where"),
             hint="`where: { env: dev }` -- an override matching everything is not an exception",
         )
+    if isinstance(patch["where"], dict):
+        for key in ACCOUNT_KEYS:
+            if key in patch["where"]:
+                raise ConfigError(
+                    "`where:` matches targets by label, so it cannot single out an account",
+                    at=at.key("where").key(key),
+                    hint=(
+                        f"{SPLIT_HINT}. If `{key}` is a label on your targets, rename the "
+                        "label: here it would patch every account on them"
+                    ),
+                )
 
     secret = optional_string(patch, "secret", at=at)
     secret_template = optional_string(patch, "secret_template", at=at)

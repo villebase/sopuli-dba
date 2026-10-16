@@ -24,6 +24,7 @@ import pytest
 from sopuli.account_list import (
     ABSENT,
     DECLARED,
+    Notice,
     Row,
     cross_declared,
     enumerated_names,
@@ -32,6 +33,7 @@ from sopuli.account_list import (
 )
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
+from sopuli.diagnostics import ADMITTED_CROSS_DECLARED, ADMITTED_VENDOR_ACCOUNT
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
     build_result,
@@ -182,6 +184,25 @@ def test_the_database_date_absence_carries_its_reason_per_result() -> None:
     entry = build_result(Row(account="JDOE", target=TARGET, rule=rule, state=unknown))
 
     assert [warning["code"] for warning in entry["warnings"]] == ["SOPULI-W021"]
+
+
+def test_a_rows_notices_carry_their_codes() -> None:
+    """Each notice is its own condition with its own code (J3), so a consumer
+    can tell "the database owns this account" from "the whitelist is ambiguous"
+    without reading the message."""
+    rule = config().personal_accounts[0]
+    notices = (
+        Notice(ADMITTED_VENDOR_ACCOUNT, "the database reports this account as its own"),
+        Notice(ADMITTED_CROSS_DECLARED, "also declared by acme"),
+    )
+    entry = build_result(
+        Row(account="JDOE", target=TARGET, rule=rule, state=user("JDOE"), notices=notices)
+    )
+
+    assert [warning["code"] for warning in entry["warnings"]] == [
+        ADMITTED_VENDOR_ACCOUNT,
+        ADMITTED_CROSS_DECLARED,
+    ]
 
 
 def test_a_reset_at_is_emitted_only_when_there_is_one() -> None:

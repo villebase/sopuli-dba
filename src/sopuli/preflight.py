@@ -78,6 +78,11 @@ class Finding:
     still reported, loudly, for the reason UC-1 §7 gives about the `LCOUNT`
     guard: a check that is not running has to say so rather than be silently
     skipped.
+
+    ``code`` is set on a finding that does not block, which reaches the run
+    document as a warning and so needs a ``SOPULI-Wnnn`` code (J3). Each check
+    that can warn has its own code. A blocking finding has none: it is an error,
+    and ``category`` already tells it apart.
     """
 
     target: str
@@ -87,6 +92,7 @@ class Finding:
     account: str | None = None
     category: str = "database"
     blocking: bool = True
+    code: str | None = None
 
 
 def assertion_holds(

@@ -95,8 +95,9 @@ def build_result(
     not by this field.
 
     ``promotion_error`` is the store's error where the promotion write was made
-    and failed (UC-1 §8 row 7, #805). It is used only on a confirmed row, because
-    that is the row the promotion was made for. The row then gets a
+    and failed (UC-1 §8 row 7, #805). The caller passes it only for a row the
+    write was made for (`cli._failed_promotion`): a sibling applied from
+    `current` owed nothing, and its `current` is right. The row then gets a
     ``vault_promote`` action with ``applied: true``, since the write ran, this
     error as its ``error``, and the warning that ``current`` was not promoted.
     Without them a row that is ``IN_SYNC`` would read as a finished rotation.
@@ -118,8 +119,6 @@ def build_result(
     empty array on every forced run would make the ones that mattered harder to
     find.
     """
-    if outcome.state not in CONFIRMED:
-        promotion_error = None
     entry: dict[str, Any] = {
         "account": binding.account,
         "target": binding.target,
@@ -175,6 +174,7 @@ def build_result(
         changed=changed,
         mechanism=mechanism,
         promotion_failed=promotion_error is not None,
+        rollback=source is not None and source.stage == PREVIOUS,
     )
     if warnings:
         entry["warnings"] = warnings
@@ -323,6 +323,7 @@ def _warnings(
     changed: bool,
     mechanism: str | None,
     promotion_failed: bool = False,
+    rollback: bool = False,
 ) -> list[dict[str, Any]]:
     """What this run did that somebody should know about.
 
@@ -337,17 +338,26 @@ def _warnings(
     left this process.
     """
     found: list[dict[str, Any]] = []
-    if changed and (outcome.state not in CONFIRMED or promotion_failed):
-        # The remedy differs: an unconfirmed target needs fixing first, and a
-        # failed promotion write (#805) needs only the re-run.
-        remedy = "now" if promotion_failed else "once this target is well"
+    if (changed and outcome.state not in CONFIRMED) or promotion_failed:
+        # A failed promotion write (#805) is reported whether or not this run
+        # changed the database: an earlier run may have put the password there.
+        # It needs only the re-run, and an unconfirmed target needs fixing first.
+        # A rollback is re-run as a rollback, because a plain apply would undo it.
+        what = (
+            "the promotion to `current` failed"
+            if promotion_failed
+            else "the database was changed and the vault was not promoted"
+        )
+        rerun = (
+            "sopuli creds apply --source previous --confirm" if rollback else "sopuli creds apply"
+        )
+        when = "now" if promotion_failed else "once this target is well"
         found.append(
             {
                 "level": "warning",
                 "message": (
-                    "the database was changed and the vault was not promoted, so "
-                    "`current` still holds the old password -- re-run `sopuli creds apply` "
-                    f"{remedy}"
+                    f"{what}, so `current` still holds the password the database had "
+                    f"before -- re-run `{rerun}` {when}"
                 ),
                 "account": binding.account,
                 "target": binding.target,

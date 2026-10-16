@@ -242,18 +242,31 @@ def test_a_failed_promotion_is_on_the_confirmed_row() -> None:
     assert any("re-run `sopuli creds apply` now" in one["message"] for one in entry["warnings"])
 
 
-def test_a_failed_promotion_is_not_put_on_a_row_it_was_not_made_for() -> None:
-    """A row that did not confirm, such as a skipped one, was not in the write."""
+def test_a_failed_promotion_warns_on_a_row_this_run_did_not_change() -> None:
+    """An earlier run may have put `pending` on the database, and `current` is
+    just as stale."""
     failure = Error(category="vault", message="compare-and-set failed")
     entry = apply_view.build_result(
         binding(),
-        check.Outcome(apply.SKIPPED, "guardrail", None),
+        outcome(detail="already accepted"),
+        source=source(),
         changed=False,
+        verified_before=attempt(),
         promotion_error=failure,
     )
 
-    assert "error" not in entry
-    assert "vault_promote" not in [action["kind"] for action in entry["actions"]]
+    assert any("promotion to `current` failed" in one["message"] for one in entry["warnings"])
+
+
+def test_a_failed_rollback_promotion_is_repaired_by_the_rollback() -> None:
+    """A plain `creds apply` would apply `pending` or `current` and undo it."""
+    failure = Error(category="vault", message="compare-and-set failed")
+    entry = apply_view.build_result(
+        binding(), outcome(), source=source(PREVIOUS), changed=True, promotion_error=failure
+    )
+
+    (warning,) = entry["warnings"]
+    assert "re-run `sopuli creds apply --source previous --confirm` now" in warning["message"]
 
 
 def test_the_summary_counts_an_unpromoted_row_as_failed() -> None:

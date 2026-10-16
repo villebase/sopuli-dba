@@ -1388,7 +1388,7 @@ def test_a_changed_database_with_no_promotion_carries_a_warning(
     assert any("was not promoted" in one["message"] for one in warnings)
 
 
-def outside_writer(store: MemoryStore, path: str) -> list[str]:
+def outside_writer(store: Any, path: str) -> list[str]:
     """Another writer changes ``path`` just before this run's promotion of it (#805).
 
     The promotion is the run's only write to a secret path, so the first write
@@ -1406,7 +1406,7 @@ def outside_writer(store: MemoryStore, path: str) -> list[str]:
             write(target, {**held.data, "note": "somebody else"}, cas=cas)
         return int(write(target, data, cas=cas))
 
-    store.write = racing_write  # type: ignore[method-assign]
+    store.write = racing_write
     return raced
 
 
@@ -1466,6 +1466,65 @@ def test_a_failed_promotion_is_printed_with_its_remedy(
     assert result.exit_code == ExitCode.PARTIAL
     assert "apps/acme/appdb-alpha was not promoted" in result.output
     assert "repair with: sopuli creds apply" in result.output
+
+
+def test_a_failed_promotion_leaves_a_sibling_from_current_alone(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A sibling applied from `current` owed the write nothing, so its `current`
+    is right: it is ok, carries no error, and is not named in `SOPULI-W033`."""
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={
+            "ACME_WEB_USER": drifted(),
+            "ACME_BATCH_USER": [VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9)],
+        },
+    )
+    outside_writer(harness["store"], "apps/acme/db")
+
+    found = document(run(runner, write_config(SHARED_CONFIG), "--output", "json"))
+
+    rows = {row["account"]: row for row in found["results"]}
+    assert "error" in rows["acme_web_user"]
+    assert "error" not in rows["acme_batch_user"]
+    assert "vault_promote" not in [one["kind"] for one in rows["acme_batch_user"]["actions"]]
+    assert (found["summary"]["ok"], found["summary"]["failed"]) == (1, 1)
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert "for acme_web_user and" in failed["message"]
+
+
+def test_a_failed_rollback_promotion_names_the_rollback_as_its_remedy(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A plain `creds apply` would apply `current` back and undo the rollback."""
+    harness = estate(documents=_rolled(), answers={"ACME_WEB_USER": drifted()})
+    outside_writer(harness["store"], "apps/acme/appdb-alpha")
+
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+        "--output",
+        "json",
+    )
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.PARTIAL
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert "The databases have `previous`" in failed["message"]
+    assert "run `sopuli creds apply --source previous --confirm`" in failed["message"]
+    (warning,) = found["results"][0]["warnings"]
+    assert "--source previous --confirm" in warning["message"]
 
 
 # ------------------------------------------------------------------ the fence ---

@@ -8488,51 +8488,69 @@ def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]
     ]
 
 
+def _failed_promotion(
+    record: _Applied, promotions: Mapping[LockKey, _Promotion]
+) -> _Promotion | None:
+    """The failed promotion write this record's password was part of, or ``None``.
+
+    The one definition of a row the failure is about (#805). A row is part of
+    the write when it confirmed and its stage owed one (`apply.promotes`). A
+    sibling applied from `current` owed nothing, so its `current` is right, and a
+    skipped row was left out of the write (:func:`_by_document`).
+    """
+    binding, source = record.binding, record.source
+    if binding.secret is None or binding.vault is None or source is None:
+        return None
+    if not apply_states.promotes(source.stage):
+        return None
+    if not apply_states.is_confirmed(record.outcome.state):
+        return None
+    promotion = promotions.get(_lock_key(binding))
+    if promotion is None or promotion.error is None:
+        return None
+    return promotion
+
+
 def _failed_promotions(
     applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]
 ) -> list[Diagnostic]:
     """``SOPULI-W033`` for each document whose promotion write failed (#805).
 
     Every row in such a document is confirmed, so without this the run exits 4
-    and nothing in the document says why.
+    and nothing in the document says why. The accounts named are the ones the
+    write was for, from :func:`_failed_promotion`.
     """
+    failed: dict[LockKey, tuple[_Promotion, list[_Applied]]] = {}
+    for record in applied:
+        promotion = _failed_promotion(record, promotions)
+        if promotion is not None:
+            failed.setdefault(_lock_key(record.binding), (promotion, []))[1].append(record)
     found = []
-    for key, promotion in promotions.items():
-        if promotion.error is None:
+    for key, (promotion, records) in failed.items():
+        if promotion.error is None:  # pragma: no cover - `_failed_promotion` checked it
             continue
-        accounts = sorted(
-            {
-                record.binding.account
-                for record in applied
-                if record.binding.secret is not None
-                and record.binding.vault is not None
-                and _lock_key(record.binding) == key
-            }
-        )
         found.append(
             promotion_failed(
-                str(key), accounts, promotion.error.message, conflict=promotion.conflict
+                str(key),
+                sorted({record.binding.account for record in records}),
+                promotion.error.message,
+                conflict=promotion.conflict,
+                rollback=any(
+                    record.source is not None and record.source.stage == PREVIOUS
+                    for record in records
+                ),
             )
         )
     return found
 
 
 def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
-    """The confirmed rows whose document's promotion write failed.
+    """The rows whose promotion write failed, from :func:`_failed_promotion`.
 
     The summary counts them as failed, not ok: the database took the password
     and applications still fetch the old one from `current`.
     """
-    count = 0
-    for record in applied:
-        if record.binding.secret is None or record.binding.vault is None:
-            continue
-        if not apply_states.is_confirmed(record.outcome.state):
-            continue
-        promotion = promotions.get(_lock_key(record.binding))
-        if promotion is not None and promotion.error is not None:
-            count += 1
-    return count
+    return sum(1 for record in applied if _failed_promotion(record, promotions) is not None)
 
 
 def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
@@ -8719,6 +8737,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         promotion = promotions.get(
             LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
         )
+    failed = _failed_promotion(record, promotions)
     return build_apply_result(
         binding,
         record.outcome,
@@ -8728,7 +8747,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         verified_before=record.verified_before,
         rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
-        promotion_error=None if promotion is None else promotion.error,
+        promotion_error=None if failed is None else failed.error,
         mechanism=None if promotion is None else promotion.mechanism,
         overridden=record.overridden,
         attributes=record.attributes,

@@ -702,8 +702,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "entry per document, naming its path, its accounts and the store's message. A "
             "refused compare-and-set means another writer changed the document after this "
             "run read it, so the stage this run applied may have changed too. The remedy is "
-            "the same run again: `creds apply` applies `pending` to every target and "
-            "promotes it, and a failed rollback is repeated with `--source previous`."
+            "the same run again, narrowed the same way: `creds apply` applies `pending` to "
+            "every target and promotes it, and a failed rollback is repeated with "
+            "`--source previous --confirm`. Where the run then lost its lock, the message "
+            "names no re-run: the run holding the lock finishes it."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1203,7 +1205,13 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
 
 
 def promotion_failed(
-    document: str, accounts: Sequence[str], reason: str, *, conflict: bool, rollback: bool
+    document: str,
+    accounts: Sequence[str],
+    reason: str,
+    *,
+    conflict: bool,
+    rollback: bool,
+    rerun: str | None,
 ) -> Diagnostic:
     """One document whose promotion write failed after every target confirmed.
 
@@ -1213,8 +1221,14 @@ def promotion_failed(
     document before running `apply` again.
 
     ``rollback`` is whether the write promoted `previous` (`--source previous`).
-    Its remedy is the rollback again: a plain `creds apply` would apply `pending`
-    or `current` and undo it.
+    It changes which stage the message names.
+
+    ``rerun`` is the invocation that finishes the job, from
+    :func:`sopuli.output.apply_view.repair_invocation`, so it is narrowed and
+    resolved the way this run was, and a rollback is repeated as a rollback.
+    ``None`` where the run lost its lock afterwards (``SOPULI-W011``): running
+    again is then the one thing not to do, and the run holding the lock is the
+    one to finish it.
 
     The store's message comes last, for :func:`reset_record_unwritten`'s reason.
     """
@@ -1225,16 +1239,20 @@ def promotion_failed(
         if conflict
         else "the vault refused the write"
     )
-    check = f"find out who wrote to it and what `{stage}` now holds, then " if conflict else ""
-    rerun = "sopuli creds apply --source previous --confirm" if rollback else "sopuli creds apply"
+    if rerun is None:
+        remedy = "another run then took over this run's lock, and that run is the one to finish it"
+    else:
+        check = f"find out who wrote to it and what `{stage}` now holds, then " if conflict else ""
+        remedy = (
+            f"{check}run `{rerun}`, which applies `{stage}` to every target again and promotes it"
+        )
     return Diagnostic(
         level="error",
         code=PROMOTION_FAILED,
         message=(
             f"{document} was not promoted: {cause}. The databases have `{stage}` for "
             f"{', '.join(accounts)} and `current` still holds the password they had before "
-            f"-- {check}run `{rerun}`, which applies `{stage}` to every target again and "
-            f"promotes it. The store said: {reason}"
+            f"-- {remedy}. The store said: {reason}"
         ),
     )
 

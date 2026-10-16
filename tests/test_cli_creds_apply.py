@@ -1439,7 +1439,7 @@ def test_a_promotion_that_loses_its_compare_and_set_says_so(
     assert promote["applied"] is True
     assert "failed" in promote["detail"]
     assert "compare-and-set" in alpha["error"]["message"]
-    assert any("re-run `sopuli creds apply` now" in one["message"] for one in alpha["warnings"])
+    assert any("SOPULI-W033" in one["message"] for one in alpha["warnings"])
     assert beta["actions"][-1]["detail"].startswith("promoted `pending` to `current`")
     assert "error" not in beta
     assert found["summary"]["ok"] == 1
@@ -1522,9 +1522,51 @@ def test_a_failed_rollback_promotion_names_the_rollback_as_its_remedy(
     assert found["exit_code"] == ExitCode.PARTIAL
     (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
     assert "The databases have `previous`" in failed["message"]
-    assert "run `sopuli creds apply --source previous --confirm`" in failed["message"]
-    (warning,) = found["results"][0]["warnings"]
-    assert "--source previous --confirm" in warning["message"]
+    assert "--select tenant=alpha --source previous --confirm`" in failed["message"]
+
+
+def test_a_failed_promotion_names_the_runs_own_repair(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The remedy keeps `--config` and the selectors, as the repair line does: a
+    bare re-run would spend a login on every target of the estate."""
+    harness = estate()
+    outside_writer(harness["store"], "apps/acme/appdb-alpha")
+    config = write_config(CONFIG)
+
+    found = document(run(runner, config, "--select", "env=prod", "--output", "json"))
+
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert f"run `sopuli creds apply --config {config} --select env=prod`" in failed["message"]
+
+
+def test_a_failed_promotion_names_no_rerun_after_a_takeover(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Alpha's promotion fails, then the run finds beta's lock taken. Running
+    again is the one thing not to do (SOPULI-W011), so W033 does not say to."""
+    harness = estate()
+    store = harness["store"]
+    write = store.write
+    beta = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
+
+    def racing_write(path: str, data: Mapping[str, Any], *, cas: int | None = None) -> int:
+        if path == "apps/acme/appdb-alpha":
+            held = store.read(path)
+            write(path, {**held.data, "note": "somebody else"}, cas=cas)
+            record = store.read(lock_path(beta))
+            write(lock_path(beta), fresh(), cas=record.version)
+        return int(write(path, data, cas=cas))
+
+    store.write = racing_write
+
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    codes = [one.get("code") for one in found["diagnostics"]]
+    assert "SOPULI-W011" in codes
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert "run `sopuli creds apply" not in failed["message"]
+    assert "another run then took over this run's lock" in failed["message"]
 
 
 # ------------------------------------------------------------------ the fence ---

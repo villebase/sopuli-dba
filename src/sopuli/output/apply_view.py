@@ -174,7 +174,6 @@ def build_result(
         changed=changed,
         mechanism=mechanism,
         promotion_failed=promotion_error is not None,
-        rollback=source is not None and source.stage == PREVIOUS,
     )
     if warnings:
         entry["warnings"] = warnings
@@ -323,7 +322,6 @@ def _warnings(
     changed: bool,
     mechanism: str | None,
     promotion_failed: bool = False,
-    rollback: bool = False,
 ) -> list[dict[str, Any]]:
     """What this run did that somebody should know about.
 
@@ -341,24 +339,23 @@ def _warnings(
     if (changed and outcome.state not in CONFIRMED) or promotion_failed:
         # A failed promotion write (#805) is reported whether or not this run
         # changed the database: an earlier run may have put the password there.
-        # It needs only the re-run, and an unconfirmed target needs fixing first.
-        # A rollback is re-run as a rollback, because a plain apply would undo it.
-        what = (
-            "the promotion to `current` failed"
+        # Its remedy depends on the run (a conflict, a lost lock, a rollback, the
+        # selectors), which one account's row cannot see, so it points at the
+        # run-level diagnostic that names it.
+        message = (
+            "the promotion to `current` failed, so `current` still holds the password the "
+            "database had before -- SOPULI-W033 says what to do next"
             if promotion_failed
-            else "the database was changed and the vault was not promoted"
+            else (
+                "the database was changed and the vault was not promoted, so "
+                "`current` still holds the old password -- re-run `sopuli creds apply` "
+                "once this target is well"
+            )
         )
-        rerun = (
-            "sopuli creds apply --source previous --confirm" if rollback else "sopuli creds apply"
-        )
-        when = "now" if promotion_failed else "once this target is well"
         found.append(
             {
                 "level": "warning",
-                "message": (
-                    f"{what}, so `current` still holds the password the database had "
-                    f"before -- re-run `{rerun}` {when}"
-                ),
+                "message": message,
                 "account": binding.account,
                 "target": binding.target,
             }

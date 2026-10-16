@@ -239,7 +239,7 @@ def test_a_failed_promotion_is_on_the_confirmed_row() -> None:
     }
     assert entry["error"]["message"] == failure.message
     assert entry["secret"]["stage"] == PENDING
-    assert any("re-run `sopuli creds apply` now" in one["message"] for one in entry["warnings"])
+    assert any("SOPULI-W033 says what to do next" in one["message"] for one in entry["warnings"])
 
 
 def test_a_failed_promotion_warns_on_a_row_this_run_did_not_change() -> None:
@@ -258,15 +258,16 @@ def test_a_failed_promotion_warns_on_a_row_this_run_did_not_change() -> None:
     assert any("promotion to `current` failed" in one["message"] for one in entry["warnings"])
 
 
-def test_a_failed_rollback_promotion_is_repaired_by_the_rollback() -> None:
-    """A plain `creds apply` would apply `pending` or `current` and undo it."""
+def test_a_failed_promotion_names_no_command_on_the_row() -> None:
+    """The remedy depends on the run (a conflict, a lost lock, a rollback, the
+    selectors), so the row points at the diagnostic that names it."""
     failure = Error(category="vault", message="compare-and-set failed")
     entry = apply_view.build_result(
         binding(), outcome(), source=source(PREVIOUS), changed=True, promotion_error=failure
     )
 
     (warning,) = entry["warnings"]
-    assert "re-run `sopuli creds apply --source previous --confirm` now" in warning["message"]
+    assert "re-run" not in warning["message"]
 
 
 def test_the_summary_counts_an_unpromoted_row_as_failed() -> None:

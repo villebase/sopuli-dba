@@ -6256,7 +6256,23 @@ def creds_apply(
         ]
     )
     document.diagnostics.extend(reuse_notices)
-    failed_promotions = _failed_promotions(applied, promotions)
+    # The invocation that repairs this run, for SOPULI-W033 and the repair line
+    # below, so the two name one command.
+    #
+    # One exception to "narrowed the way this run was narrowed": a promotion
+    # withheld because the run was too narrow (decision #406) is finished only by a
+    # wider one, so echoing the selectors back would name the invocation that
+    # withholds it again.
+    rerun = repair_invocation(
+        selectors=() if left_out else selectors,
+        config_paths=[str(path) for path in run.config_paths],
+        profile=run.profile,
+        source=source_stage,
+        strategy=strategy,
+    )
+    failed_promotions = _failed_promotions(
+        applied, promotions, rerun=rerun if stolen is None else None
+    )
     document.diagnostics.extend(failed_promotions)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
@@ -6302,22 +6318,7 @@ def creds_apply(
     # remedy line says "run this again", which is the one thing not to do while
     # somebody else holds this estate's lock. `stopped` says what happened instead,
     # and `render_apply` refuses to print both.
-    #
-    # One exception to "narrowed the way this run was narrowed": a promotion
-    # withheld because the run was too narrow (decision #406) is finished only by a
-    # wider one, so echoing the selectors back would name the invocation that
-    # withholds it again.
-    repair = (
-        repair_invocation(
-            selectors=() if left_out else selectors,
-            config_paths=[str(path) for path in run.config_paths],
-            profile=run.profile,
-            source=source_stage,
-            strategy=strategy,
-        )
-        if code == ExitCode.PARTIAL and stolen is None
-        else None
-    )
+    repair = rerun if code == ExitCode.PARTIAL and stolen is None else None
     table = render_apply(
         rows,
         promoted=promoted,
@@ -8490,8 +8491,8 @@ def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]
 
 def _failed_promotion(
     record: _Applied, promotions: Mapping[LockKey, _Promotion]
-) -> _Promotion | None:
-    """The failed promotion write this record's password was part of, or ``None``.
+) -> tuple[_Promotion, Error] | None:
+    """The failed promotion write this record's password was part of, and its error.
 
     The one definition of a row the failure is about (#805). A row is part of
     the write when it confirmed and its stage owed one (`apply.promotes`). A
@@ -8508,40 +8509,37 @@ def _failed_promotion(
     promotion = promotions.get(_lock_key(binding))
     if promotion is None or promotion.error is None:
         return None
-    return promotion
+    return promotion, promotion.error
 
 
 def _failed_promotions(
-    applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]
+    applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion], *, rerun: str | None
 ) -> list[Diagnostic]:
     """``SOPULI-W033`` for each document whose promotion write failed (#805).
 
     Every row in such a document is confirmed, so without this the run exits 4
     and nothing in the document says why. The accounts named are the ones the
-    write was for, from :func:`_failed_promotion`.
+    write was for, from :func:`_failed_promotion`. ``rerun`` is the command's
+    repair invocation, or ``None`` after a takeover (:func:`promotion_failed`).
     """
-    failed: dict[LockKey, tuple[_Promotion, list[_Applied]]] = {}
+    failed: dict[LockKey, tuple[_Promotion, Error, list[_Applied]]] = {}
     for record in applied:
-        promotion = _failed_promotion(record, promotions)
-        if promotion is not None:
-            failed.setdefault(_lock_key(record.binding), (promotion, []))[1].append(record)
-    found = []
-    for key, (promotion, records) in failed.items():
-        if promotion.error is None:  # pragma: no cover - `_failed_promotion` checked it
-            continue
-        found.append(
-            promotion_failed(
-                str(key),
-                sorted({record.binding.account for record in records}),
-                promotion.error.message,
-                conflict=promotion.conflict,
-                rollback=any(
-                    record.source is not None and record.source.stage == PREVIOUS
-                    for record in records
-                ),
-            )
+        found = _failed_promotion(record, promotions)
+        if found is not None:
+            failed.setdefault(_lock_key(record.binding), (*found, []))[2].append(record)
+    return [
+        promotion_failed(
+            str(key),
+            sorted({record.binding.account for record in records}),
+            error.message,
+            conflict=promotion.conflict,
+            rollback=any(
+                record.source is not None and record.source.stage == PREVIOUS for record in records
+            ),
+            rerun=rerun,
         )
-    return found
+        for key, (promotion, error, records) in failed.items()
+    ]
 
 
 def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
@@ -8747,7 +8745,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         verified_before=record.verified_before,
         rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
-        promotion_error=None if failed is None else failed.error,
+        promotion_error=None if failed is None else failed[1],
         mechanism=None if promotion is None else promotion.mechanism,
         overridden=record.overridden,
         attributes=record.attributes,
@@ -9377,7 +9375,19 @@ def creds_rotate(
     document.diagnostics.extend(unchecked)
     clear = _encryption_notices(sequence.applied)
     document.diagnostics.extend(clear)
-    failed_promotions = _failed_promotions(sequence.applied, sequence.promotions)
+    # The invocation that repairs this run, for SOPULI-W033 and the repair line
+    # below, so the two name one command.
+    rerun = repair_invocation(
+        selectors=selectors,
+        config_paths=[str(path) for path in run.config_paths],
+        profile=run.profile,
+        strategy=strategy,
+    )
+    failed_promotions = _failed_promotions(
+        sequence.applied,
+        sequence.promotions,
+        rerun=rerun if sequence.stolen is None else None,
+    )
     document.diagnostics.extend(failed_promotions)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
@@ -9422,12 +9432,7 @@ def creds_rotate(
     # `apply` there would converge a database estate that is already converged, and
     # the thing to go and look at is the vault.
     repair = (
-        repair_invocation(
-            selectors=selectors,
-            config_paths=[str(path) for path in run.config_paths],
-            profile=run.profile,
-            strategy=strategy,
-        )
+        rerun
         if code == ExitCode.PARTIAL and sequence.stolen is None and _apply_owed(sequence, states)
         else None
     )

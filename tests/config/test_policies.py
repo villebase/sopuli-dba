@@ -263,7 +263,7 @@ def test_an_unknown_charset_is_refused() -> None:
 @pytest.mark.parametrize(
     ("block", "flags"),
     [
-        ("rotation", ("--strategy", "--max-age-days")),
+        ("rotation", ("--strategy", "--max-age-days", "rollover_hours", "keep_previous")),
         ("verify", ("--method", "--lockout-margin")),
     ],
 )

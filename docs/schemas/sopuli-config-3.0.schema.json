@@ -55,7 +55,7 @@
       "additionalProperties": {
         "$ref": "#/$defs/policy"
       },
-      "description": "Password and rotation rules (§8)."
+      "description": "Password and account rules (§8)."
     },
     "profiles": {
       "type": "object",

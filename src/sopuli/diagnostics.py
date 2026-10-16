@@ -764,8 +764,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "names no re-run: the run holding the lock finishes it."
         ),
         UNREAD_POLICY_KEYS: (
-            "Retired. No release emitted it: it was added after 0.73.0, and removed with "
-            "a policy's `rotation:` and `verify:` blocks before the next release (#787). "
+            "Retired. Not emitted from 0.74.0, and no release emitted it: it was added "
+            "after 0.73.0, and removed with a policy's `rotation:` and `verify:` blocks (#787). "
             "It said that a policy's `rotation:` or `verify:` block set keys that no run "
             "read."
         ),

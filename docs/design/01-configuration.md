@@ -1898,11 +1898,13 @@ Rejected at validation, with a message naming the key:
    in `defaults.profile` is reported against that key; one typed on the command
    line has no line to point at, so it is reported against the file.
 
-**Every key a profile may write is read.** Layer 3 supplies `output`, `confirm`,
-`safety.*`, `locking.break_expired`, `vaults.<name>.*`, `db.connect_timeout_s`
-and `db.query_timeout_s`. A profile's `vault` is read too, outside the resolver:
-it is the store a binding or an admin credential falls back to when nothing more
-specific names one (§3a). A key joins the profile with its consumer, which is the
+**Every key a profile may write is read.** Through the resolver, layer 3
+supplies `output`, `confirm`, `safety.*`, `locking.break_expired`,
+`db.connect_timeout_s` and `db.query_timeout_s`. Two keys are read outside it. A
+profile's `vaults.<name>.*` is merged into the store's declaration while the
+file is built (`sopuli/config/vault_layers.py`). Its `vault` is the store a
+binding or an admin credential falls back to when nothing more specific names
+one (§3a). A key joins the profile with its consumer, which is the
 rule `sopuli/settings/registry.py` states. A profile's `verify:` and `rotation:`
 had none, and were removed (§10).
 

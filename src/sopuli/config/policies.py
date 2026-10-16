@@ -46,7 +46,10 @@ REMOVED_VERIFY = "no run read it; --method and --lockout-margin set these on the
 #: Keys a policy could once write, each with why it is gone (#787). Refused by
 #: name, so that a file written for an older build is not told it has a typo.
 REMOVED_KEYS = {
-    "rotation": "no run read it; the command line has --strategy and --max-age-days",
+    "rotation": (
+        "no run read it; --strategy and --max-age-days are on the command line, "
+        "and nothing sets rollover_hours or keep_previous"
+    ),
     "verify": REMOVED_VERIFY,
 }
 

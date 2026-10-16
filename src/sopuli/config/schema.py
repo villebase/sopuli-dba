@@ -1193,7 +1193,7 @@ def _root() -> Schema:
         "targets": _array(_ref("target"), description="Explicitly listed endpoints (§2)."),
         "target_sets": _map_of(_ref("target_set"), description="Generated endpoints (§4)."),
         "groups": _map_of(_ref("group"), description="Named label selections (§4)."),
-        "policies": _map_of(_ref("policy"), description="Password and rotation rules (§8)."),
+        "policies": _map_of(_ref("policy"), description="Password and account rules (§8)."),
         "profiles": _map_of(_ref("profile"), description="Run contexts (§5)."),
         "applications": _array(
             _ref("application"),

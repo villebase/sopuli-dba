@@ -399,7 +399,7 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
     as a file that would hand somebody a password, and a file naming a method
     this build does not implement would not.
 
-    Two codes, `SOPULI-W034` for the method and `SOPULI-W035` for the notify
+    Two codes, `SOPULI-W035` for the method and `SOPULI-W036` for the notify
     channel, because an estate can have one working and the other not.
     """
     found = []

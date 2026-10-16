@@ -452,48 +452,57 @@ CONNECTION_UNENCRYPTED = "SOPULI-W031"
 #: without parsing a message. One per target.
 CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
 
+#: Every target confirmed and the promotion write failed (UC-1 §8 row 7, #805).
+#: The run exits 4, and without this nothing else in the document says why: every
+#: row is confirmed. Its own code for `SOPULI-W011`'s reason. A failed target is
+#: repaired by the same run again, and so is this, but the reader looks first at
+#: the vault, because a refused compare-and-set means another writer.
+PROMOTION_FAILED = "SOPULI-W033"
+
 #: `creds status --max-age-days`: the vault last rotated this credential longer
 #: ago than the threshold. The vault's age, not the database's, which is why it
 #: is a warning and not ``password_age_days`` (Q9).
-ROTATION_OVERDUE = "SOPULI-W039"
+ROTATION_OVERDUE = "SOPULI-W040"
 
 #: `account list` admitted an account the database reports as its own, so a
 #: mutating verb refuses it at plan time (guardrail 2).
-ADMITTED_VENDOR_ACCOUNT = "SOPULI-W040"
+ADMITTED_VENDOR_ACCOUNT = "SOPULI-W041"
 
 #: `account list` admitted an account that an application also declares, which
 #: only a predicate can reach (H1).
-ADMITTED_CROSS_DECLARED = "SOPULI-W041"
+ADMITTED_CROSS_DECLARED = "SOPULI-W042"
 
 #: `creds rotate --finish-rollover` left a rollover window open, because the
 #: vault may not serve the new password.
-ROLLOVER_LEFT_OPEN = "SOPULI-W042"
+ROLLOVER_LEFT_OPEN = "SOPULI-W043"
 
 #: The pre-flight could not read the privilege audit, so it established nothing
 #: about the target's grants. A finding of the ``privileges`` check that does
 #: not block. Each pre-flight check that can warn has its own code.
-PRIVILEGE_AUDIT_UNREAD = "SOPULI-W043"
+PRIVILEGE_AUDIT_UNREAD = "SOPULI-W044"
 
 #: The pre-flight could not establish whether the profile an account would move
 #: to exists. A finding of the ``profile`` check that does not block.
-PROFILE_UNREAD = "SOPULI-W044"
+PROFILE_UNREAD = "SOPULI-W045"
 
 #: `creds generate --overwrite-pending` replaced a ``pending`` that was already
 #: staged.
-PENDING_REPLACED = "SOPULI-W045"
+PENDING_REPLACED = "SOPULI-W046"
 
 #: `creds generate --promote --overwrite-current` replaced ``current``.
-CURRENT_REPLACED = "SOPULI-W046"
+CURRENT_REPLACED = "SOPULI-W047"
 
 #: `creds generate --no-policy-check` accepted a password that violates the
 #: policy. One per rule the password violates.
-POLICY_VIOLATION_ACCEPTED = "SOPULI-W047"
+POLICY_VIOLATION_ACCEPTED = "SOPULI-W048"
 
-#: `creds apply` changed a database and did not promote the vault, so
-#: ``current`` holds a password the database no longer has.
-CHANGED_NOT_PROMOTED = "SOPULI-W048"
+#: On one `creds apply` result: ``current`` may not hold the password this
+#: database has, because the database changed and did not confirm, or because
+#: the promotion write failed (:data:`PROMOTION_FAILED` says why, once per
+#: document).
+CHANGED_NOT_PROMOTED = "SOPULI-W049"
 
-#: ``SOPULI-W004`` and ``SOPULI-W033`` to ``SOPULI-W038`` -- imported above
+#: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
 #: the registry below stays the one place that says what each means.
@@ -736,6 +745,20 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "`V$SESSION_CONNECT_INFO` is not readable, and the message names the grant. "
             "It is not the same finding as `SOPULI-W031`."
         ),
+        PROMOTION_FAILED: (
+            "Every target of a secret document confirmed a password, and the write that "
+            "promotes it to `current` failed. The databases have that password and "
+            "`current` may still hold the one before it, which is UC-1 §8's most severe case. "
+            "Only a refused compare-and-set says it does; a write that failed any other way "
+            "may have landed. One "
+            "entry per document, naming its path, its accounts and the store's message. A "
+            "refused compare-and-set means another writer changed the document after this "
+            "run read it, so the stage this run applied may have changed too. The remedy is "
+            "the same run again, narrowed the same way: `creds apply` applies `pending` to "
+            "every target and promotes it, and a failed rollback is repeated with "
+            "`--source previous --confirm`. Where the run then lost its lock, the message "
+            "names no re-run: the run holding the lock finishes it."
+        ),
         UNREAD_POLICY_KEYS: (
             "A policy's `rotation:` or `verify:` block sets keys that no run reads. "
             "They are parsed and validated, and every verb takes them from the command "
@@ -816,9 +839,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "characters."
         ),
         CHANGED_NOT_PROMOTED: (
-            "`creds apply` changed a database and did not promote the vault, so `current` "
-            "holds a password the database no longer has, and applications that fetch it "
-            "fail to log in. Run `creds apply` again once the target is well."
+            "On one `creds apply` result: `current` may not hold the password this database "
+            "has, so an application that fetches it may fail to log in. Either the database "
+            "changed and did not confirm, and `creds apply` again once the target is well "
+            "fixes it, or the promotion write failed, and SOPULI-W033 on the run says what "
+            "to do. The message says which."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1313,6 +1338,64 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
             "which this run's selection left out -- run `creds apply` without the narrowing "
             "to finish"
+        ),
+    )
+
+
+def promotion_failed(
+    document: str,
+    accounts: Sequence[str],
+    reason: str,
+    *,
+    conflict: bool,
+    rollback: bool,
+    rerun: str | None,
+) -> Diagnostic:
+    """One document whose promotion write failed after every target confirmed.
+
+    ``conflict`` is whether the store refused the compare-and-set. That case
+    says another writer changed the document, and the stage this run applied
+    may no longer hold what it applied. So the message says to look at the
+    document before running `apply` again.
+
+    ``rollback`` is whether the write promoted `previous` (`--source previous`).
+    It changes which stage the message names.
+
+    ``rerun`` is the invocation that finishes the job, from
+    :func:`sopuli.output.apply_view.repair_invocation`, so it is narrowed and
+    resolved the way this run was, and a rollback is repeated as a rollback.
+    ``None`` where the run lost its lock afterwards (``SOPULI-W011``): running
+    again is then the one thing not to do, and the run holding the lock is the
+    one to finish it.
+
+    The store's message comes last, for :func:`reset_record_unwritten`'s reason.
+    """
+    stage = "previous" if rollback else "pending"
+    # Only a refused compare-and-set says what the vault holds. Any other failure,
+    # such as a timeout or a lost reply, may follow a write the vault committed.
+    if conflict:
+        cause = (
+            "another writer changed the document after this run read it, so the vault "
+            "refused the compare-and-set"
+        )
+        state = "still holds the password they had before"
+    else:
+        cause = "the write failed, so this run cannot say whether the vault kept it"
+        state = "may still hold the password they had before"
+    if rerun is None:
+        remedy = "another run then took over this run's lock, and that run is the one to finish it"
+    else:
+        check = f"find out who wrote to it and what `{stage}` now holds, then " if conflict else ""
+        remedy = (
+            f"{check}run `{rerun}`, which applies `{stage}` to every target again and promotes it"
+        )
+    return Diagnostic(
+        level="error",
+        code=PROMOTION_FAILED,
+        message=(
+            f"{document} was not promoted: {cause}. The databases have `{stage}` for "
+            f"{', '.join(accounts)} and `current` {state} -- {remedy}. "
+            f"The store said: {reason}"
         ),
     )
 

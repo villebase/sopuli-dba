@@ -29,6 +29,7 @@ from sopuli.config.model import Config, Vault
 from sopuli.config.vault_env import (
     ACTIVE_VARIABLES,
     NAMED_KEYS,
+    THIRD_PARTY_VARIABLE_UNAPPLIED,
     THIRDPARTY_VARIABLES,
     named_variable,
     variable_segment,
@@ -301,7 +302,21 @@ def test_a_third_party_variable_with_no_default_store_warns_instead() -> None:
 
     [warning] = [one for one in config.warnings if "VAULT_ADDR" in one.message]
     assert "was not applied" in warning.message
+    assert warning.code == THIRD_PARTY_VARIABLE_UNAPPLIED
     assert config.vaults[0].addr is None
+
+
+def test_a_third_party_variable_for_an_undeclared_default_store_has_the_same_code() -> None:
+    """One code for both reasons the variable was not applied: either way it was
+    ignored, and the message says which."""
+    config = build_config(
+        {"version": 1, "vaults": {STORE: {"type": "hashicorp"}}},
+        env={"VAULT_ADDR": THIRDPARTY_ADDR, "SOPULI_VAULT": "vault-absent"},
+    )
+
+    [warning] = [one for one in config.warnings if "VAULT_ADDR" in one.message]
+    assert "is not declared" in warning.message
+    assert warning.code == THIRD_PARTY_VARIABLE_UNAPPLIED
 
 
 def test_a_third_party_variable_with_a_default_store_says_nothing() -> None:

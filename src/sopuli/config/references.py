@@ -49,6 +49,11 @@ from sopuli.config.targets import EXTERNAL
 #: architecture does and the code still has exactly one definition.
 UNVERIFIED_TRANSPORT = "SOPULI-W004"
 
+#: A profile is named after an environment that a target declares, so
+#: `--profile <name>` reads as selecting targets and selects none. Declared here
+#: for the reason :data:`UNVERIFIED_TRANSPORT` is.
+PROFILE_NAMED_AFTER_ENVIRONMENT = "SOPULI-W036"
+
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
 PRODUCTION = "prod"
@@ -511,6 +516,7 @@ def _warn_about_profile_names(config: Config) -> tuple[ConfigWarning, ...]:
                     "run behaves, not what it acts on (§5). Name it after where you are "
                     "running from: interactive, ci, scheduled"
                 ),
+                code=PROFILE_NAMED_AFTER_ENVIRONMENT,
             )
         )
     return tuple(warnings)

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.38.schema.json`](../schemas/sopuli-run-1.38.schema.json),
+Schemas: [`../schemas/sopuli-run-1.39.schema.json`](../schemas/sopuli-run-1.39.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
 
@@ -1819,6 +1819,12 @@ not contract and may improve.
 | `SOPULI-W030` | The server refused a password the run applied, and the run was not allowed to draw another (UC-1 §6.4). The reason is one of these: nothing shows this tool drew the password, the redraw limit was reached, the account has no policy to draw from, or the run is a rollback. The message names which. The target that refused keeps the password it had. Another target of the same account may already hold the refused value, and the result rows say which |
 | `SOPULI-W031` | The run sent a new password over a connection that is not encrypted, so the password crossed the network in clear (`scope.encryption.method` is `none`). **A warning, never a refusal**: [decision #697](../decisions/log.md#697). **Only where a password was sent**: `creds apply` and `creds rotate` when they issue the change, and `account reset-password` when it resets. A target where every account was already in sync gets none, because a warning about a statement nobody sent is noise. A statement the server then refused still counts, because it carried the password. A refusal the tool makes before it sends the statement, such as a read-only target or a missing account, does not. **One per target**, because encryption is a property of the connection. Where a target's connections gave different answers, the worst one is kept: `none`, then `unknown`. The message carries the driver's hint, for Oracle to require NNE or TLS on the server. **Printed as well as serialised** |
 | `SOPULI-W032` | As `SOPULI-W031`, but the driver could not tell whether the connection is encrypted (`scope.encryption.method` is `unknown`). It is a separate code for `SOPULI-W018`'s reason: a check that did not run is not a pass, and a consumer must tell "in clear" from "did not look" without reading the message. The message carries the reason. For Oracle it is usually that `V$SESSION_CONNECT_INFO` is not readable, and then it names the grant (`02-oracle-privileges.md` §2) |
+| `SOPULI-W033` | A policy's `rotation:` or `verify:` block sets keys that no run reads (`01-configuration.md` §10). They are parsed and validated, and every verb takes them from the command line instead. One entry per block, naming the keys and the flag that sets each one where there is a flag |
+| `SOPULI-W034` | `delivery.method` names a method this build does not implement, so nothing can hand a password over that way. The file is valid: `config validate` warns and exits 0, and the verb that tries to deliver fails |
+| `SOPULI-W035` | `delivery.notify.method` names a channel this build cannot send through: it has no code for it, or its client is not installed. The message says which. One code for both, as `SOPULI-W003` is one code for a store. `account reset-password` refuses before the password changes, rather than resetting without notifying. A separate code from `SOPULI-W034`, because an estate can have a working delivery method and a channel that cannot send |
+| `SOPULI-W036` | A profile has the name of an environment that a target declares. `--profile <name>` selects no targets, because a profile changes how a run behaves, not what it acts on (`01-configuration.md` §5) |
+| `SOPULI-W037` | A third-party store variable, such as `VAULT_ADDR`, is set and was not applied, because the run has no default store: no layer names one, or the one named is not declared (`01-configuration.md` §6). The message says which. A warning, not a refusal, because the variable may belong to something else on the machine |
+| `SOPULI-W038` | A layer asked to relax a safety setting, and the ratchet held (invariant 10). The message names both ends: the layer that asked, and where the value that held is set. One code for every safety setting, `vaults.*.tls.verify` included. Nothing failed, and the run uses the safer value |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.
@@ -1827,8 +1833,8 @@ nothing emits a code the registry does not describe.
 That covers `diagnostics[]`, `results[].warnings[]` and the config layer's
 findings (`01-configuration.md` §10). A consumer branches on the code, because
 the message is not contract. A warning with no code could only be matched on its
-text. Some warnings do not have their code yet: the config layer's are #797,
-and the others are #798. `tests/test_warning_codes.py` lists them, fails on a
+text. Some run warnings do not have their code yet: #798.
+`tests/test_warning_codes.py` lists them, fails on a
 new warning built without a code, and fails when a listed one gains its code
 until the list is shortened. Diagnostics at `info` level are not warnings, and
 have no code.

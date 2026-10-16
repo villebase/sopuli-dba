@@ -48,7 +48,7 @@ from collections.abc import Mapping
 
 from sopuli.output.document import Diagnostic
 from sopuli.output.palette import Role, paint
-from sopuli.settings import Layer, Resolved, ratchet_note, render_value
+from sopuli.settings import RELAXATION_DEFEATED, Layer, Resolved, ratchet_note, render_value
 
 #: What a built-in default calls itself. P3's own wording, and it reads as an
 #: answer rather than as a missing source -- which is what it is: nothing else
@@ -99,7 +99,7 @@ def ratchet_notes(resolved: Mapping[str, Resolved]) -> list[Diagnostic]:
     for name in sorted(resolved):
         note = ratchet_note(resolved[name])
         if note is not None:
-            notes.append(Diagnostic(level="warning", message=note))
+            notes.append(Diagnostic(level="warning", message=note, code=RELAXATION_DEFEATED))
     return notes
 
 

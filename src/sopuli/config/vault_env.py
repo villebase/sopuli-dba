@@ -100,6 +100,15 @@ DEFAULT_STORE_SETTING = "vault"
 #: See :func:`vault_cli_contributions`.
 ADDR_FLAG = "--vault-addr"
 
+#: A third-party store variable, such as ``VAULT_ADDR``, is set and was not
+#: applied, because the run has no default store to apply it to. One code
+#: whether no layer names a default store or the one named is not declared:
+#: either way the variable was ignored, and the message and hint say which case
+#: it is and what to change. Declared here and not in
+#: :mod:`sopuli.diagnostics`, for the reason
+#: :data:`sopuli.config.references.UNVERIFIED_TRANSPORT` gives.
+THIRD_PARTY_VARIABLE_UNAPPLIED = "SOPULI-W037"
+
 #: What the named form may address, as the variable spells it, mapped to the
 #: setting key :mod:`sopuli.config.vault_layers` merges. One entry, matching §6's
 #: table; a second one is a line here and a row there.
@@ -444,6 +453,7 @@ def _unplaceable_warning(
                 f"{DEFAULT_STORE_VARIABLE} -- write `defaults.vault`, or ignore this if "
                 f"the variable belongs to something else on this machine"
             ),
+            code=THIRD_PARTY_VARIABLE_UNAPPLIED,
         )
     named_by = "the environment" if active is None else active.location
     return ConfigWarning(
@@ -453,4 +463,5 @@ def _unplaceable_warning(
         ),
         at="",
         hint="declare it under `vaults:`, or correct the name",
+        code=THIRD_PARTY_VARIABLE_UNAPPLIED,
     )

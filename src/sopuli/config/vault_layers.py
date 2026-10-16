@@ -73,7 +73,14 @@ from sopuli.config.vault_env import (
     vault_cli_contributions,
     vault_env_contributions,
 )
-from sopuli.settings import Contribution, Layer, Resolved, ratchet_note, resolve
+from sopuli.settings import (
+    RELAXATION_DEFEATED,
+    Contribution,
+    Layer,
+    Resolved,
+    ratchet_note,
+    resolve,
+)
 
 #: One store's environment contributions, keyed by setting key -- what
 #: :func:`~sopuli.config.vault_env.vault_env_contributions` produces for one
@@ -270,6 +277,7 @@ def _merge_tls(
                     # words before the sentence says it again.
                     at="",
                     hint="invariant 10: a safety setting cannot be relaxed by any layer",
+                    code=RELAXATION_DEFEATED,
                 )
             )
     return VaultTls(**values), patched, settings, warnings

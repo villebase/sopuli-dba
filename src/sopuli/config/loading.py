@@ -339,6 +339,23 @@ def build_config(
     )
 
 
+# The codes this module's warnings carry. Declared here and not in
+# `sopuli.diagnostics`, for the reason `sopuli.config.references.UNVERIFIED_TRANSPORT`
+# gives; the registry imports them.
+
+#: A policy's `rotation:` or `verify:` block sets keys that no run reads.
+UNREAD_POLICY_KEYS = "SOPULI-W033"
+
+#: `delivery.method` names a method this build cannot deliver with.
+DELIVERY_UNSERVICEABLE = "SOPULI-W034"
+
+#: `delivery.notify.method` names a channel this build cannot send through: one
+#: with no code in this build, or one whose client is not installed. One code
+#: for both, as `SOPULI-W003` is one code for a store: they are one outage, and
+#: the message carries the remedy.
+NOTIFY_UNSERVICEABLE = "SOPULI-W035"
+
+
 #: The flag that supplies each policy key a run does not read, or ``None`` where
 #: nothing does. A policy's `rotation:` and `verify:` are parsed and validated,
 #: and every run takes these from the command line instead.
@@ -383,6 +400,7 @@ def _policy_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                     ),
                     at=str(ROOT.key("policies").key(policy.name).key(block_name)),
                     hint=f"no run reads these from a policy; {', and '.join(remedies)}",
+                    code=UNREAD_POLICY_KEYS,
                 )
             )
     return tuple(found)
@@ -397,8 +415,8 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
     as a file that would hand somebody a password, and a file naming a method
     this build does not implement would not.
 
-    No code yet. Every warning gets one (J3), and #797 adds the codes for this
-    one and the other §10 warnings.
+    Two codes, `SOPULI-W034` for the method and `SOPULI-W035` for the notify
+    channel, because an estate can have one working and the other not.
     """
     found = []
     notice = unserviceable(config.delivery)
@@ -411,6 +429,7 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                     "the block is valid and this build cannot act on it; nothing is wrong "
                     "with the file"
                 ),
+                code=DELIVERY_UNSERVICEABLE,
             )
         )
     # The notify channel's own. A second warning rather than a widened
@@ -431,6 +450,7 @@ def _delivery_warnings(config: Config) -> tuple[ConfigWarning, ...]:
                     "failing because it is the question *is this file usable here*, and the "
                     "answer is yes everywhere but this block"
                 ),
+                code=NOTIFY_UNSERVICEABLE,
             )
         )
     return tuple(found)

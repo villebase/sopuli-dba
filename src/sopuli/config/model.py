@@ -812,9 +812,9 @@ class ConfigWarning:
     JSON contract has a ``diagnostics`` array these become. Same fields as
     :class:`~sopuli.config.errors.ConfigError` so both render identically.
 
-    ``code`` is a slot that every warning fills (J3). Only ``SOPULI-W004`` fills
-    it today, for a run with certificate verification turned off. #797 adds the
-    codes for the other §10 findings.
+    ``code`` is the warning's ``SOPULI-Wnnn`` code. Every warning built in
+    ``src/`` passes one (J3), and ``tests/test_warning_codes.py`` fails on one
+    that does not.
     """
 
     message: str

@@ -7846,7 +7846,7 @@ def _preflight_diagnostics(findings: Sequence[Finding]) -> list[Diagnostic]:
             message=f"{one.check}: {one.message}",
             target=one.target,
             account=one.account,
-            code=None if one.blocking else one.code,
+            code=one.code,
         )
         for one in findings
     ]

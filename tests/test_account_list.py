@@ -136,6 +136,38 @@ def test_an_account_a_predicate_and_an_application_both_declare_is_named() -> No
     assert cross_declared(both, "jdoe") is None
 
 
+def test_the_row_gives_each_notice_its_own_code() -> None:
+    """`_describe_row` is where each notice gets its code, so a swap of the two
+    codes, or a lost one, fails here rather than passing every view test."""
+    from sopuli.cli import _describe_row
+
+    both = config(
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+        applications=[
+            {
+                "name": "acme",
+                "accounts": ["acme_web_user"],
+                "secret": "vault-dev:acme/db#pw",
+            }
+        ],
+        personal_accounts=[{"profile": "DEV_USERS"}],
+    )
+    target = next(one for one in both.targets if one.name == TARGET)
+
+    class Session:
+        def describe_user(self, name: str) -> UserState:
+            return user(name.upper(), profile="DEV_USERS", vendor_maintained=True)
+
+    row = _describe_row(Session(), "acme_web_user", target, both)
+
+    assert [notice.code for notice in row.notices] == [
+        ADMITTED_VENDOR_ACCOUNT,
+        ADMITTED_CROSS_DECLARED,
+    ]
+    assert "as its own" in row.notices[0].message
+    assert "also declared by acme" in row.notices[1].message
+
+
 # ------------------------------------------------------------------ rows ---
 
 

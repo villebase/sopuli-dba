@@ -82,7 +82,9 @@ class Finding:
     ``code`` is set on a finding that does not block, which reaches the run
     document as a warning and so needs a ``SOPULI-Wnnn`` code (J3). Each check
     that can warn has its own code. A blocking finding has none: it is an error,
-    and ``category`` already tells it apart.
+    and ``category`` already tells it apart. The pairing is checked when the
+    finding is built, because ``tests/test_warning_codes.py`` cannot see a
+    warning that is built from a finding.
     """
 
     target: str
@@ -93,6 +95,12 @@ class Finding:
     category: str = "database"
     blocking: bool = True
     code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.blocking and self.code is not None:
+            raise ValueError(f"a blocking {self.check} finding is an error and has no code")
+        if not self.blocking and self.code is None:
+            raise ValueError(f"a {self.check} finding that does not block needs a warning code")
 
 
 def assertion_holds(

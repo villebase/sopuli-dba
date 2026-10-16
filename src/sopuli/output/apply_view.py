@@ -64,6 +64,7 @@ def build_result(
     verified_before: VerifyResult | None = None,
     rollover: dict[str, Any] | None = None,
     promoted_to: int | None = None,
+    promotion_error: Error | None = None,
     mechanism: str | None = None,
     overridden: Sequence[Refusal] = (),
     attributes: Sequence[AttributeChange] = (),
@@ -93,6 +94,13 @@ def build_result(
     did not all confirm; the two are distinguished by the state and the detail,
     not by this field.
 
+    ``promotion_error`` is the store's error where the promotion write was made
+    and failed (UC-1 §8 row 7, #805). It is used only on a confirmed row, because
+    that is the row the promotion was made for. The row then gets a
+    ``vault_promote`` action with ``applied: true``, since the write ran, this
+    error as its ``error``, and the warning that ``current`` was not promoted.
+    Without them a row that is ``IN_SYNC`` would read as a finished rotation.
+
     ``redraws`` is how many *extra* passwords this account was given because the
     server refused the value itself (§6.4) -- over the one the run arrived
     with, so a row that carries it was applied more than once and reports the last
@@ -110,6 +118,8 @@ def build_result(
     empty array on every forced run would make the ones that mattered harder to
     find.
     """
+    if outcome.state not in CONFIRMED:
+        promotion_error = None
     entry: dict[str, Any] = {
         "account": binding.account,
         "target": binding.target,
@@ -126,6 +136,7 @@ def build_result(
         changed=changed,
         verified_before=verified_before,
         promoted_to=promoted_to,
+        promotion_error=promotion_error,
         attributes=attributes,
     )
     if outcome.verification is not None:
@@ -154,9 +165,17 @@ def build_result(
         ]
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms
+    if error is None:
+        error = promotion_error
     if error is not None:
         entry["error"] = error.to_dict()
-    warnings = _warnings(binding, outcome, changed=changed, mechanism=mechanism)
+    warnings = _warnings(
+        binding,
+        outcome,
+        changed=changed,
+        mechanism=mechanism,
+        promotion_failed=promotion_error is not None,
+    )
     if warnings:
         entry["warnings"] = warnings
     return entry
@@ -168,6 +187,7 @@ def _actions(
     changed: bool,
     verified_before: VerifyResult | None,
     promoted_to: int | None,
+    promotion_error: Error | None = None,
     attributes: Sequence[AttributeChange] = (),
 ) -> list[dict[str, Any]]:
     """UC-1 §5's flow, as the steps that actually ran.
@@ -231,6 +251,14 @@ def _actions(
                 "detail": f"promoted `pending` to `current` in v{promoted_to}",
             }
         )
+    elif promotion_error is not None:
+        actions.append(
+            {
+                "kind": "vault_promote",
+                "applied": True,
+                "detail": f"the promotion to `current` failed: {promotion_error.message}",
+            }
+        )
     return actions
 
 
@@ -289,7 +317,12 @@ def verification_json(result: VerifyResult) -> dict[str, Any]:
 
 
 def _warnings(
-    binding: Binding, outcome: Outcome, *, changed: bool, mechanism: str | None
+    binding: Binding,
+    outcome: Outcome,
+    *,
+    changed: bool,
+    mechanism: str | None,
+    promotion_failed: bool = False,
 ) -> list[dict[str, Any]]:
     """What this run did that somebody should know about.
 
@@ -304,14 +337,17 @@ def _warnings(
     left this process.
     """
     found: list[dict[str, Any]] = []
-    if changed and outcome.state not in CONFIRMED:
+    if changed and (outcome.state not in CONFIRMED or promotion_failed):
+        # The remedy differs: an unconfirmed target needs fixing first, and a
+        # failed promotion write (#805) needs only the re-run.
+        remedy = "now" if promotion_failed else "once this target is well"
         found.append(
             {
                 "level": "warning",
                 "message": (
                     "the database was changed and the vault was not promoted, so "
                     "`current` still holds the old password -- re-run `sopuli creds apply` "
-                    "once this target is well"
+                    f"{remedy}"
                 ),
                 "account": binding.account,
                 "target": binding.target,
@@ -333,7 +369,7 @@ def _warnings(
     return found
 
 
-def summarise(states: Sequence[str], *, changed: int) -> Summary:
+def summarise(states: Sequence[str], *, changed: int, unpromoted: int = 0) -> Summary:
     """The counters an apply run carries.
 
     ``ok`` and ``changed`` come apart here, which is the whole point of having
@@ -346,12 +382,18 @@ def summarise(states: Sequence[str], *, changed: int) -> Summary:
     counted as well. That differs from `check`, deliberately: there, the window
     is a caveat on a survey, and here it is a target that accepted the password
     and can be promoted on.
+
+    ``unpromoted`` is the confirmed rows whose document's promotion write failed
+    (#805). They move from ``ok`` to ``failed``: the database took the password
+    and `current` still holds the old one, so the run did not finish its work on
+    them. ``by_state`` still counts their state, which is what is true of the
+    database.
     """
     return Summary(
         total=len(states),
-        ok=sum(1 for state in states if is_confirmed(state)),
+        ok=sum(1 for state in states if is_confirmed(state)) - unpromoted,
         changed=changed,
-        failed=sum(1 for state in states if is_failure(state)),
+        failed=sum(1 for state in states if is_failure(state)) + unpromoted,
         unchanged=len(states) - changed,
         unverifiable=sum(1 for state in states if is_inconclusive(state)),
         by_state=counts(states),

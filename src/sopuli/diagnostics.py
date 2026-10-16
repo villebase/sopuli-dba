@@ -445,6 +445,13 @@ CONNECTION_UNENCRYPTED = "SOPULI-W031"
 #: without parsing a message. One per target.
 CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
 
+#: Every target confirmed and the promotion write failed (UC-1 §8 row 7, #805).
+#: The run exits 4, and without this nothing else in the document says why: every
+#: row is confirmed. Its own code for `SOPULI-W011`'s reason. A failed target is
+#: repaired by the same run again, and so is this, but the reader looks first at
+#: the vault, because a refused compare-and-set means another writer.
+PROMOTION_FAILED = "SOPULI-W033"
+
 #: ``SOPULI-W004`` -- imported above rather than defined here. It is raised in
 #: the config layer, which cannot import this module (see the constant's own
 #: comment in :mod:`sopuli.config.references`), so the definition lives with the
@@ -687,6 +694,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "entry per target, with the reason: for Oracle, usually that "
             "`V$SESSION_CONNECT_INFO` is not readable, and the message names the grant. "
             "It is not the same finding as `SOPULI-W031`."
+        ),
+        PROMOTION_FAILED: (
+            "Every target of a secret document confirmed the new password, and the write "
+            "that promotes it to `current` failed. The databases have the new password and "
+            "`current` still holds the old one, which is UC-1 §8's most severe case. One "
+            "entry per document, naming its path, its accounts and the store's message. A "
+            "refused compare-and-set means another writer changed the document after this "
+            "run read it. `pending` still holds a password to promote, and `creds apply` "
+            "applies it to every target again and promotes it."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1181,6 +1197,35 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
             "which this run's selection left out -- run `creds apply` without the narrowing "
             "to finish"
+        ),
+    )
+
+
+def promotion_failed(
+    document: str, accounts: Sequence[str], reason: str, *, conflict: bool
+) -> Diagnostic:
+    """One document whose promotion write failed after every target confirmed.
+
+    ``conflict`` is whether the store refused the compare-and-set. That case
+    says another writer changed the document, so the message says to find out
+    who before running `apply` again. The store's message comes last, for
+    :func:`reset_record_unwritten`'s reason.
+    """
+    cause = (
+        "another writer changed the document after this run read it, so the vault refused "
+        "the compare-and-set"
+        if conflict
+        else "the vault refused the write"
+    )
+    check = "find out who wrote to it, then " if conflict else ""
+    return Diagnostic(
+        level="error",
+        code=PROMOTION_FAILED,
+        message=(
+            f"{document} was not promoted: {cause}. The databases have the new password for "
+            f"{', '.join(accounts)} and `current` still holds the old one -- {check}run "
+            f"`sopuli creds apply`, which applies `pending` to every target again and "
+            f"promotes it. The store said: {reason}"
         ),
     )
 

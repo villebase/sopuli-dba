@@ -23,6 +23,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.output import apply_view
+from sopuli.output.document import Error
 from sopuli.payload import CURRENT, PENDING, PREVIOUS
 from sopuli.secrets import Secret
 
@@ -220,6 +221,46 @@ def test_a_changed_database_with_no_promotion_is_a_warning() -> None:
     )
 
     assert any("was not promoted" in one["message"] for one in entry["warnings"])
+
+
+def test_a_failed_promotion_is_on_the_confirmed_row() -> None:
+    """UC-1 §8 row 7 (#805): the state is the database's, and the rest of the row
+    says the vault write ran and failed."""
+    failure = Error(category="vault", message="compare-and-set failed at 'apps/acme/db'")
+    entry = apply_view.build_result(
+        binding(), outcome(), source=source(), changed=True, promotion_error=failure
+    )
+
+    assert entry["state"] == check.IN_SYNC
+    assert entry["actions"][-1] == {
+        "kind": "vault_promote",
+        "applied": True,
+        "detail": "the promotion to `current` failed: compare-and-set failed at 'apps/acme/db'",
+    }
+    assert entry["error"]["message"] == failure.message
+    assert entry["secret"]["stage"] == PENDING
+    assert any("re-run `sopuli creds apply` now" in one["message"] for one in entry["warnings"])
+
+
+def test_a_failed_promotion_is_not_put_on_a_row_it_was_not_made_for() -> None:
+    """A row that did not confirm, such as a skipped one, was not in the write."""
+    failure = Error(category="vault", message="compare-and-set failed")
+    entry = apply_view.build_result(
+        binding(),
+        check.Outcome(apply.SKIPPED, "guardrail", None),
+        changed=False,
+        promotion_error=failure,
+    )
+
+    assert "error" not in entry
+    assert "vault_promote" not in [action["kind"] for action in entry["actions"]]
+
+
+def test_the_summary_counts_an_unpromoted_row_as_failed() -> None:
+    summary = apply_view.summarise([check.IN_SYNC, check.IN_SYNC], changed=2, unpromoted=1)
+
+    assert (summary.ok, summary.failed) == (1, 1)
+    assert summary.by_state == {check.IN_SYNC: 2}
 
 
 def test_a_confirmed_change_carries_no_such_warning() -> None:

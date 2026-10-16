@@ -242,46 +242,54 @@ def _check_label_keys(config: Config) -> None:
     §2 allows a label *value* that matches nothing, because the estate changes
     underneath it: `env: staging` with no staging target today is a true
     answer. A *key* no target has at all is different. No target can match it
-    until somebody adds that label, so a group, an application or an override
-    written with it applies nowhere and says nothing. That is how a typo
-    (`tenent:`) or another word for an account (`user:`) reads.
+    until somebody adds that label, so a group, an application, an override or a
+    personal-account entry written with it applies nowhere and says nothing.
+    That is how a typo (`tenent:`) or another word for an account (`user:`)
+    reads.
 
     Checked against the expanded estate, so a dimension label a target set
     attaches counts as carried.
     """
     carried = {key for expanded in config.expanded_targets for key, _ in expanded.target.labels}
-    found: list[tuple[str, KeyPath]] = []
+    found: list[_Reference] = []
 
     for group in config.groups:
-        found.extend(
-            (key, ROOT.key("groups").key(group.name).key("match").key(key))
-            for key, _ in group.match
-        )
+        match = ROOT.key("groups").key(group.name).key("match")
+        found.extend(_Reference(key, match.key(key)) for key, _ in group.match)
 
     at = ROOT.key("applications")
     for index, application in enumerate(config.applications):
         where = ROOT if application.is_inline else at.index(index)
         match = where.key("targets").key("match")
-        found.extend((key, match.key(key)) for key, _ in application.targets.match)
+        found.extend(_Reference(key, match.key(key)) for key, _ in application.targets.match)
         for number, override in enumerate(application.overrides):
             patch = where.key("overrides").index(number).key("where")
-            found.extend((key, patch.key(key)) for key, _ in override.where)
+            found.extend(_Reference(key, patch.key(key)) for key, _ in override.where)
 
     for index, entry in enumerate(config.personal_accounts):
         match = _personal_at(index).key("targets").key("match")
-        found.extend((key, match.key(key)) for key, _ in entry.targets.match)
+        found.extend(_Reference(key, match.key(key)) for key, _ in entry.targets.match)
 
-    for key, where_written in found:
-        if key not in carried:
+    for reference in found:
+        if reference.name not in carried:
             raise ConfigError(
-                f"no target in this estate carries the label {key!r}",
-                at=where_written,
-                hint=(
-                    f"labels the targets carry: {', '.join(sorted(carried)) or 'none'}. "
-                    "A value that matches no target is allowed, but a key no target has "
-                    "can match nothing (§2)"
-                ),
+                f"no target in this estate carries the label {reference.name!r}",
+                at=reference.at,
+                hint=_label_hint(carried),
             )
+
+
+def _label_hint(carried: set[str]) -> str:
+    """What to do about a label key nobody has, given the keys somebody has."""
+    if not carried:
+        return (
+            "no target has any labels yet; add `labels:` to the targets this should "
+            "match, or remove the match (§2)"
+        )
+    return (
+        f"labels the targets carry: {', '.join(sorted(carried))}. A value that matches "
+        "no target is allowed, but a key no target has can match nothing (§2)"
+    )
 
 
 def _check_targets(config: Config) -> None:

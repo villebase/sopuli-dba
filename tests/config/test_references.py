@@ -290,6 +290,14 @@ LABELLED: dict[str, Any] = {**TARGET, "labels": {"env": "prod", "tenant": "alpha
         ),
         (
             {
+                "policies": POLICIES,
+                "accounts": ["a"],
+                "overrides": [{"where": {"tenent": "alpha"}, "policy": "app-standard"}],
+            },
+            "overrides[0].where.tenent",
+        ),
+        (
+            {
                 "personal_accounts": [
                     {"accounts": ["acme_dev_alice"], "targets": {"match": {"tenent": "alpha"}}}
                 ]
@@ -297,7 +305,7 @@ LABELLED: dict[str, Any] = {**TARGET, "labels": {"env": "prod", "tenant": "alpha
             "personal_accounts[0].targets.match.tenent",
         ),
     ],
-    ids=["group", "application", "override", "personal-account"],
+    ids=["group", "application", "override", "inline-override", "personal-account"],
 )
 def test_a_label_key_no_target_carries_is_refused(sections: dict[str, Any], at: str) -> None:
     """A key no target has can match nothing, so the entry would apply nowhere
@@ -309,6 +317,15 @@ def test_a_label_key_no_target_carries_is_refused(sections: dict[str, Any], at: 
     assert "no target in this estate carries the label 'tenent'" in rendered
     assert at in rendered
     assert "env, tenant" in (caught.value.hint or "")
+
+
+def test_an_estate_with_no_labels_says_to_add_them() -> None:
+    """A fresh config with an unlabelled target and a group: the hint says what
+    to do, rather than listing no keys."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(targets=[TARGET], groups=GROUPS))
+
+    assert "add `labels:` to the targets" in (caught.value.hint or "")
 
 
 def test_a_label_value_that_matches_nothing_is_still_allowed() -> None:

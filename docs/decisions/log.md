@@ -2273,11 +2273,16 @@ the register.
   The estate is checked after expansion. A label value that matches no target
   stays allowed.
 - **Why:** `01-configuration.md` §2 allows a value that matches nothing,
-  because the estate changes underneath a label. A key no target has is a different case: nothing can
-  match it until somebody adds that label, and the usual cause is a typo
-  (`tenent:`) or another word for an account (`user:`). Adding a refusal later
-  would make configs that load today fail, so it is cheap only before anyone
-  outside uses the tool.
+  because the estate changes underneath a label. A key no target has is a
+  different case: nothing can match it until somebody adds that label, and the
+  usual cause is a typo (`tenent:`) or another word for an account (`user:`).
+  Adding a refusal later would make configs that load today fail, so it is
+  cheap only before anyone outside uses the tool. The cost accepted: a group
+  written ahead of the label it matches, such as one that carries only
+  `safety: { readonly: true }` for `tier: critical` before any target has
+  `tier`, is refused too. Its author adds the label to a target first. A
+  `--select` on the command line is not checked: refusing there is a separate
+  question.
 - **Rejected:**
   - Warn. It needs a code, and tightening it to a refusal later is the
     breaking change this decision avoids.

@@ -592,8 +592,9 @@ scheduled `creds rotate --application acme` where somebody renamed the entry to
 success for a credential that stopped being rotated. Every other guardrail here
 is about doing too much; this one is about doing nothing and saying it went fine.
 
-**A label key that no target carries is refused**, in the file
-([#819](../decisions/log.md#819)). The rule above is about a label's *value*: no
+**The tool refuses a label key that no target carries**, in the file
+([#819](../decisions/log.md#819)). A `--select` on the command line is not
+checked this way. The rule above is about a label's *value*: no
 target has `env: staging` today, and one may tomorrow. A *key* that no target in
 the estate has at all can match nothing until somebody adds that label. A group
 `match:`, an application or personal-account `targets: { match: … }`, or an

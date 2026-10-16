@@ -281,8 +281,8 @@ config layer could know it.
 **The tool does not validate the keys inside the other methods' sub-blocks**, so
 a typo inside one is accepted. That is why **`config validate` warns when the
 selected method is not implemented in this build** (`SOPULI-W034`), so that a
-clean parse does not read as a working delivery. `IMPLEMENTED` in `sopuli/config/delivery.py`
-lists the methods this build serves.
+clean parse does not read as a working delivery. `IMPLEMENTED` in
+`sopuli/config/delivery.py` lists the methods this build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an
 *unselected* sub-block unjudged on purpose, so `required: ["ttl"]`, a pattern on
@@ -3181,10 +3181,9 @@ notices until a rotation.
   `vaults.*.tls.verify` and what to write instead
 - a policy's `rotation:` or `verify:` keys → warning (`SOPULI-W033`), one per
   block, naming the keys and the flag that sets each one where there is a flag.
-  They are parsed
-  and validated, and no run reads them: `--strategy`, `--max-age-days`,
-  `--method` and `--lockout-margin` are the only way in, and `check` defaults to
-  `login` whatever a policy says
+  They are parsed and validated, and no run reads them: `--strategy`,
+  `--max-age-days`, `--method` and `--lockout-margin` are the only way in, and
+  `check` defaults to `login` whatever a policy says
 - config file **accessible** to others → refuse to run (P4). Wider than "readable"
   on purpose: the file holds no secrets (C5), so the risk it carries is
   *tampering*, and a group-writable config is the worse version of that — anyone

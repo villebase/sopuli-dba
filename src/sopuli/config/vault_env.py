@@ -72,6 +72,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
+from sopuli.config.codes import THIRD_PARTY_VARIABLE_UNAPPLIED
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import ConfigWarning
 from sopuli.settings import Contribution, Layer, Resolved, resolve
@@ -99,15 +100,6 @@ DEFAULT_STORE_SETTING = "vault"
 #: There is no ``--vault-mount`` beside it and no named ``--vault-addr NAME=URL``.
 #: See :func:`vault_cli_contributions`.
 ADDR_FLAG = "--vault-addr"
-
-#: A third-party store variable, such as ``VAULT_ADDR``, is set and was not
-#: applied, because the run has no default store to apply it to. One code
-#: whether no layer names a default store or the one named is not declared:
-#: either way the variable was ignored, and the message and hint say which case
-#: it is and what to change. Declared here and not in
-#: :mod:`sopuli.diagnostics`, for the reason
-#: :data:`sopuli.config.references.UNVERIFIED_TRANSPORT` gives.
-THIRD_PARTY_VARIABLE_UNAPPLIED = "SOPULI-W037"
 
 #: What the named form may address, as the variable spells it, mapped to the
 #: setting key :mod:`sopuli.config.vault_layers` merges. One entry, matching §6's

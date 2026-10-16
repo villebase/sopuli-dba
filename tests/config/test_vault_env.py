@@ -23,13 +23,13 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import THIRD_PARTY_VARIABLE_UNAPPLIED
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Vault
 from sopuli.config.vault_env import (
     ACTIVE_VARIABLES,
     NAMED_KEYS,
-    THIRD_PARTY_VARIABLE_UNAPPLIED,
     THIRDPARTY_VARIABLES,
     named_variable,
     variable_segment,

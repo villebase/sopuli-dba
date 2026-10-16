@@ -215,16 +215,6 @@ def resolve_all(
     return resolved
 
 
-#: A layer asked to relax a safety setting, and the ratchet held (invariant 10).
-#:
-#: Declared here rather than in :mod:`sopuli.diagnostics`, for the reason
-#: :data:`sopuli.config.references.UNVERIFIED_TRANSPORT` gives: the config layer
-#: raises it while it merges a store's ``tls:`` block, and it may not import that
-#: module. One code for every safety setting, ``tls.verify`` included, because
-#: :func:`ratchet_note` writes every one of them and names the setting.
-RELAXATION_DEFEATED = "SOPULI-W038"
-
-
 def ratchet_note(resolved: Resolved) -> str | None:
     """Why a layer's request did not take effect, or ``None`` if none was defeated.
 

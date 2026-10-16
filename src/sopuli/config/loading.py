@@ -35,6 +35,7 @@ from typing import Any
 
 from sopuli.config.applications import build_applications
 from sopuli.config.bindings import build_bindings
+from sopuli.config.codes import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE, UNREAD_POLICY_KEYS
 from sopuli.config.defaults import build_defaults, build_runtime
 from sopuli.config.delivery import build_delivery, unserviceable
 from sopuli.config.discovery import CONFIG_ENV
@@ -337,23 +338,6 @@ def build_config(
         config,
         warnings=(*layered, *warnings, *_policy_warnings(config), *_delivery_warnings(config)),
     )
-
-
-# The codes this module's warnings carry. Declared here and not in
-# `sopuli.diagnostics`, for the reason `sopuli.config.references.UNVERIFIED_TRANSPORT`
-# gives; the registry imports them.
-
-#: A policy's `rotation:` or `verify:` block sets keys that no run reads.
-UNREAD_POLICY_KEYS = "SOPULI-W033"
-
-#: `delivery.method` names a method this build cannot deliver with.
-DELIVERY_UNSERVICEABLE = "SOPULI-W034"
-
-#: `delivery.notify.method` names a channel this build cannot send through: one
-#: with no code in this build, or one whose client is not installed. One code
-#: for both, as `SOPULI-W003` is one code for a store: they are one outage, and
-#: the message carries the remedy.
-NOTIFY_UNSERVICEABLE = "SOPULI-W035"
 
 
 #: The flag that supplies each policy key a run does not read, or ``None`` where

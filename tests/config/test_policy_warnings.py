@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.config.loading import UNREAD_POLICY_KEYS, build_config
+from sopuli.config.codes import UNREAD_POLICY_KEYS
+from sopuli.config.loading import build_config
 
 
 def _policy(**blocks: Any) -> dict[str, Any]:

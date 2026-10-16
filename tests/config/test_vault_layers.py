@@ -21,10 +21,11 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import RELAXATION_DEFEATED
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Vault
-from sopuli.settings import RELAXATION_DEFEATED, SAFETY_SETTINGS, Layer, setting
+from sopuli.settings import SAFETY_SETTINGS, Layer, setting
 
 STORE = "vault-prod"
 

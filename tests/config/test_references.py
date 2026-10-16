@@ -21,9 +21,9 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import PROFILE_NAMED_AFTER_ENVIRONMENT
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.config.references import PROFILE_NAMED_AFTER_ENVIRONMENT
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}}
 TARGET: dict[str, Any] = {

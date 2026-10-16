@@ -33,7 +33,6 @@ from sopuli.settings.registry import (
     setting,
 )
 from sopuli.settings.resolver import (
-    RELAXATION_DEFEATED,
     Contribution,
     Resolved,
     ratchet_note,
@@ -44,7 +43,6 @@ from sopuli.settings.resolver import (
 
 __all__ = [
     "LAYER_ORDER",
-    "RELAXATION_DEFEATED",
     "SAFETY_SETTINGS",
     "SETTINGS",
     "Contribution",

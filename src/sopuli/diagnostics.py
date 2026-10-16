@@ -33,13 +33,15 @@ from types import MappingProxyType
 
 from sopuli.admin import Resolved
 from sopuli.clock import Skew, to_rfc3339
-from sopuli.config.loading import (
+from sopuli.config.codes import (
     DELIVERY_UNSERVICEABLE,
     NOTIFY_UNSERVICEABLE,
+    PROFILE_NAMED_AFTER_ENVIRONMENT,
+    RELAXATION_DEFEATED,
+    THIRD_PARTY_VARIABLE_UNAPPLIED,
     UNREAD_POLICY_KEYS,
+    UNVERIFIED_TRANSPORT,
 )
-from sopuli.config.references import PROFILE_NAMED_AFTER_ENVIRONMENT, UNVERIFIED_TRANSPORT
-from sopuli.config.vault_env import THIRD_PARTY_VARIABLE_UNAPPLIED
 from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
@@ -50,7 +52,6 @@ from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager, Unguarded
 from sopuli.lock.record import LockRecord
 from sopuli.output.document import Diagnostic, DiagnosticLevel
-from sopuli.settings import RELAXATION_DEFEATED
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
 
@@ -454,9 +455,8 @@ CONNECTION_ENCRYPTION_UNKNOWN = "SOPULI-W032"
 
 #: ``SOPULI-W004`` and ``SOPULI-W033`` to ``SOPULI-W038`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
-#: import this module (see the comment on ``UNVERIFIED_TRANSPORT`` in
-#: :mod:`sopuli.config.references`), so each definition lives with the code that
-#: raises it and the registry below stays the one place that says what it means.
+#: import this module, so they are defined in :mod:`sopuli.config.codes` and
+#: the registry below stays the one place that says what each means.
 #: Importing them here is also what puts them in this module's namespace, so
 #: ``from sopuli.diagnostics import UNVERIFIED_TRANSPORT`` reads the same as
 #: every other code.

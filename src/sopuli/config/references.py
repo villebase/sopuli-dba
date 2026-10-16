@@ -33,26 +33,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from sopuli.config.codes import PROFILE_NAMED_AFTER_ENVIRONMENT, UNVERIFIED_TRANSPORT
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
 from sopuli.config.targets import EXTERNAL
-
-#: A store in this file does not verify the certificate it is offered (§3a).
-#:
-#: Declared here rather than in :mod:`sopuli.diagnostics`, which is where the
-#: registry of what each code *means* lives, because the config layer may not
-#: import it: that module reaches into :mod:`sopuli.output` and
-#: :mod:`sopuli.lock`, and ``04-testing.md`` §4 keeps this layer free of both.
-#: The registry imports this name instead, so the dependency points the way the
-#: architecture does and the code still has exactly one definition.
-UNVERIFIED_TRANSPORT = "SOPULI-W004"
-
-#: A profile is named after an environment that a target declares, so
-#: `--profile <name>` reads as selecting targets and selects none. Declared here
-#: for the reason :data:`UNVERIFIED_TRANSPORT` is.
-PROFILE_NAMED_AFTER_ENVIRONMENT = "SOPULI-W036"
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.

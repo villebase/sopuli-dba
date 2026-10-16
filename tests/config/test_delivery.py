@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE
 from sopuli.config.delivery import (
     DEFAULT_METHOD,
     DELIVERY_METHODS,
@@ -27,7 +28,7 @@ from sopuli.config.delivery import (
     unserviceable,
 )
 from sopuli.config.errors import ConfigError
-from sopuli.config.loading import DELIVERY_UNSERVICEABLE, NOTIFY_UNSERVICEABLE, build_config
+from sopuli.config.loading import build_config
 
 
 def document(**block: Any) -> dict[str, Any]:

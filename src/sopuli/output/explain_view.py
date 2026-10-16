@@ -46,9 +46,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from sopuli.config.codes import RELAXATION_DEFEATED
 from sopuli.output.document import Diagnostic
 from sopuli.output.palette import Role, paint
-from sopuli.settings import RELAXATION_DEFEATED, Layer, Resolved, ratchet_note, render_value
+from sopuli.settings import Layer, Resolved, ratchet_note, render_value
 
 #: What a built-in default calls itself. P3's own wording, and it reads as an
 #: answer rather than as a missing source -- which is what it is: nothing else

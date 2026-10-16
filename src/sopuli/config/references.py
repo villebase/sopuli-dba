@@ -87,6 +87,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_vaults(config)
     _check_policies(config)
     _check_groups(config)
+    _check_label_keys(config)
     _check_targets(config)
     _check_profiles(config)
     _check_non_production_vaults(config)
@@ -233,6 +234,54 @@ def _check_groups(config: Config) -> None:
             )
 
     _resolve(found, declared, noun="group", section="groups")
+
+
+def _check_label_keys(config: Config) -> None:
+    """Refuse a label key that no target in the estate carries (#819).
+
+    §2 allows a label *value* that matches nothing, because the estate changes
+    underneath it: `env: staging` with no staging target today is a true
+    answer. A *key* no target has at all is different. No target can match it
+    until somebody adds that label, so a group, an application or an override
+    written with it applies nowhere and says nothing. That is how a typo
+    (`tenent:`) or another word for an account (`user:`) reads.
+
+    Checked against the expanded estate, so a dimension label a target set
+    attaches counts as carried.
+    """
+    carried = {key for expanded in config.expanded_targets for key, _ in expanded.target.labels}
+    found: list[tuple[str, KeyPath]] = []
+
+    for group in config.groups:
+        found.extend(
+            (key, ROOT.key("groups").key(group.name).key("match").key(key))
+            for key, _ in group.match
+        )
+
+    at = ROOT.key("applications")
+    for index, application in enumerate(config.applications):
+        where = ROOT if application.is_inline else at.index(index)
+        match = where.key("targets").key("match")
+        found.extend((key, match.key(key)) for key, _ in application.targets.match)
+        for number, override in enumerate(application.overrides):
+            patch = where.key("overrides").index(number).key("where")
+            found.extend((key, patch.key(key)) for key, _ in override.where)
+
+    for index, entry in enumerate(config.personal_accounts):
+        match = _personal_at(index).key("targets").key("match")
+        found.extend((key, match.key(key)) for key, _ in entry.targets.match)
+
+    for key, where_written in found:
+        if key not in carried:
+            raise ConfigError(
+                f"no target in this estate carries the label {key!r}",
+                at=where_written,
+                hint=(
+                    f"labels the targets carry: {', '.join(sorted(carried)) or 'none'}. "
+                    "A value that matches no target is allowed, but a key no target has "
+                    "can match nothing (§2)"
+                ),
+            )
 
 
 def _check_targets(config: Config) -> None:

@@ -6,10 +6,10 @@
   },
   "command": "creds.check",
   "invocation": {
-    "correlation_id": "787f1c59-4f5d-487a-a04c-be79c9d0f822",
-    "started_at": "2026-10-16T18:03:28.485919Z",
-    "finished_at": "2026-10-16T18:03:29.940051Z",
-    "duration_ms": 1454,
+    "correlation_id": "2048b6d1-2212-4fd8-aa8c-5ec30bb3c947",
+    "started_at": "2026-10-16T18:09:55.422270Z",
+    "finished_at": "2026-10-16T18:09:56.867506Z",
+    "duration_ms": 1445,
     "actor": {
       "os_user": "svc_sopuli",
       "host": "dba-runner-01.example.com"
@@ -36,7 +36,7 @@
         "source_detail": "--profile (group)"
       },
       "vault": {
-        "value": "vault-dev",
+        "value": "vault-prod",
         "source": "defaults",
         "source_detail": "defaults.vault"
       }
@@ -65,7 +65,7 @@
           "verify"
         ],
         "secret": {
-          "vault": "vault-dev",
+          "vault": "vault-prod",
           "path": "acme/prod/shared",
           "field": "DB_CREDENTIALS",
           "pointer": "/acme_web_user"
@@ -78,7 +78,7 @@
           "verify"
         ],
         "secret": {
-          "vault": "vault-dev",
+          "vault": "vault-prod",
           "path": "acme/prod/shared",
           "field": "DB_CREDENTIALS",
           "pointer": "/acme_web_user"
@@ -96,7 +96,7 @@
     "shared_secrets": [
       {
         "secret": {
-          "vault": "vault-dev",
+          "vault": "vault-prod",
           "path": "acme/prod/shared"
         },
         "targets": [
@@ -113,7 +113,7 @@
       "state": "IN_SYNC",
       "changed": false,
       "secret": {
-        "vault": "vault-dev",
+        "vault": "vault-prod",
         "path": "acme/prod/shared",
         "field": "DB_CREDENTIALS",
         "pointer": "/acme_web_user",
@@ -137,7 +137,7 @@
         "previous_password_accepted": null
       },
       "password_age_days": 0.0,
-      "duration_ms": 52
+      "duration_ms": 83
     },
     {
       "account": "acme_web_user",
@@ -145,7 +145,7 @@
       "state": "DRIFT",
       "changed": false,
       "secret": {
-        "vault": "vault-dev",
+        "vault": "vault-prod",
         "path": "acme/prod/shared",
         "field": "DB_CREDENTIALS",
         "pointer": "/acme_web_user",
@@ -169,7 +169,7 @@
         "previous_password_accepted": null
       },
       "password_age_days": 0.0,
-      "duration_ms": 93
+      "duration_ms": 87
     }
   ]
 }

@@ -37,6 +37,23 @@ NO_CLIENT = "DPI-1047"
 
 
 class ClientError(ConfigError):
+    """The client cannot connect, for a reason found before it tries.
+
+    Two kinds: :class:`ClientNotLoadedError`, and a target whose credential
+    resolved no username or no password. The second kind is an ordinary
+    ``config`` error with no code, because the fix is the file or the variable
+    the message names.
+    """
+
+
+#: ``error.code`` for an Instant Client that could not be loaded
+#: (``03-json-output.md`` §3). Installing something fixes it, where a change to
+#: the configuration, or to what it points at, fixes most ``config`` errors, so
+#: a consumer must be able to tell it apart (J3).
+CLIENT_NOT_LOADED = "SOPULI-20004"
+
+
+class ClientNotLoadedError(ClientError):
     """Instant Client is missing, or too broken to load.
 
     ``config`` and exit 9, the reading ADR-006 E5 already applied to a missing
@@ -44,11 +61,9 @@ class ClientError(ConfigError):
     incomplete is *this machine*, and the person reading the message is the one
     who fixes it. Not ``capability``, which names something the database at the
     far end cannot do and no local action changes.
-
-    No ``error.code`` yet. J3 gives it one: installing something fixes it, where
-    a change to the configuration, or to what it points at, fixes most ``config``
-    errors. #801 adds it.
     """
+
+    code = CLIENT_NOT_LOADED
 
 
 @dataclass(frozen=True)
@@ -106,7 +121,7 @@ def client_hint(platform: str = sys.platform) -> str:
     )
 
 
-def missing_client(detail: str, *, platform: str | None = None) -> ClientError:
+def missing_client(detail: str, *, platform: str | None = None) -> ClientNotLoadedError:
     """The refusal, keeping the driver's own diagnosis and adding ours.
 
     ``detail`` is python-oracledb's message and it goes in verbatim, because it
@@ -117,7 +132,7 @@ def missing_client(detail: str, *, platform: str | None = None) -> ClientError:
     have cost another round trip, which is CLAUDE.md's "never swallow a vendor
     code" arriving from the client side rather than the server's.
     """
-    return ClientError(
+    return ClientNotLoadedError(
         f"Oracle Instant Client could not be loaded, and thick mode is required (D3): {detail}",
         at=ROOT,
         hint=client_hint(platform or sys.platform),

@@ -1877,8 +1877,10 @@ consumer branches on those first. Most `config` errors are fixed in the
 configuration or in what it points at, such as a variable or a file. A missing
 client for a configured backend, driver or channel is fixed by installing
 something, so each has a code. A warning has no category, so every
-warning has a code. An error needs one only to be told apart. Three errors this
-rule gives a code do not have it yet: #801. ([J3](../decisions/log.md#j3))
+warning has a code. An error needs one only to be told apart. An Instant Client
+that cannot load, and a backend or driver this build has no module for, are
+`config` errors that no edit to the file fixes, so each has a code too.
+([J3](../decisions/log.md#j3))
 
 **The numbers follow the warning codes' rule:** one flat series from
 `SOPULI-20001`, never reused, and fixed when it reaches `main`.
@@ -1890,6 +1892,9 @@ records its highest number too.
 | `SOPULI-20001` | `config` | 9 | A `vaults:` entry names a backend whose client is not installed. The message names the store, its `type`, and the extra that supplies it (ADR-006, `01-configuration.md` §3a) |
 | `SOPULI-20002` | `config` | 9 | A `targets:` entry names a driver whose client is not installed. The same shape as `SOPULI-20001`, for the same reason (ADR-006 E1, E5): `python-oracledb` is `sopuli-dba[oracle]`, and a driver that is declared and absent is fixed on this machine by the person reading the message |
 | `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape again (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`. Only a run that has something to send reaches it. `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
+| `SOPULI-20004` | `config` | 9 | Oracle Instant Client could not be loaded, and thick mode needs it (D3). The message keeps the driver's own diagnosis, such as `DPI-1047` and the library that failed, and the hint says how to install the client on this platform. Installing it fixes this, not editing the file. A target whose credential resolved no username or password is also refused before connecting, and has no code, because the file or a variable fixes it |
+| `SOPULI-20005` | `config` | 9 | A `vaults:` entry names a `type` that `01-configuration.md` §3a accepts and this build has no module for. Neither editing the file nor installing anything fixes it, so the message never carries an install line |
+| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. No run reaches it today, because `oracle` is the only target type |
 
 **The category is `config`, not `capability`** (ADR-006, E5). `capability` names
 what a *target* cannot do: a property of the database at the other end, which

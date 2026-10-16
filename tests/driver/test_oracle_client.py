@@ -21,6 +21,7 @@ import pytest
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
+    CLIENT_NOT_LOADED,
     NO_CLIENT,
     ClientError,
     Timeouts,
@@ -107,6 +108,8 @@ def test_a_credential_with_no_username_is_refused_before_the_connection() -> Non
 
     assert "cdb-root-qa" in str(refused.value)
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+    # The file or a variable fixes this, as for any `config` error, so no code (J3).
+    assert refused.value.code is None
     hint = refused.value.hint or ""
     assert "SOPULI_DB_ADMIN_USER" in hint
     assert "external" in hint
@@ -192,3 +195,4 @@ def test_the_drivers_own_diagnosis_survives_into_the_message() -> None:
     assert "thick mode is required" in str(error)
     assert error.exit_code == ExitCode.CONFIG_INVALID
     assert error.category == "config"
+    assert error.code == CLIENT_NOT_LOADED == "SOPULI-20004"

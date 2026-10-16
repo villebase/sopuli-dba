@@ -35,25 +35,22 @@ CLIENT_LIB_DIR_ENV = "SOPULI_ORACLE_CLIENT_LIB_DIR"
 #: prose that differs between releases.
 NO_CLIENT = "DPI-1047"
 
-
-class ClientError(ConfigError):
-    """The client cannot connect, for a reason found before it tries.
-
-    Two kinds: :class:`ClientNotLoadedError`, and a target whose credential
-    resolved no username or no password. The second kind is an ordinary
-    ``config`` error with no code, because the fix is the file or the variable
-    the message names.
-    """
+#: The start-up failures that mean the client on this machine cannot be used:
+#: not found (``DPI-1047``), older than the driver needs (``DPI-1050``), or a
+#: version the driver does not support (``DPI-1072``). Installing a working
+#: client fixes each, so each is a :class:`ClientError`. Any other start-up
+#: failure is classified as usual, because installing a client may not fix it.
+CLIENT_UNUSABLE = (NO_CLIENT, "DPI-1050", "DPI-1072")
 
 
 #: ``error.code`` for an Instant Client that could not be loaded
-#: (``03-json-output.md`` §3). Installing something fixes it, where a change to
-#: the configuration, or to what it points at, fixes most ``config`` errors, so
-#: a consumer must be able to tell it apart (J3).
+#: (``03-json-output.md`` §3). Installing the client, or pointing this tool at
+#: it, fixes it, where a change to the targets, the stores or a credential fixes
+#: most ``config`` errors. So a consumer must be able to tell it apart (J3).
 CLIENT_NOT_LOADED = "SOPULI-20004"
 
 
-class ClientNotLoadedError(ClientError):
+class ClientError(ConfigError):
     """Instant Client is missing, or too broken to load.
 
     ``config`` and exit 9, the reading ADR-006 E5 already applied to a missing
@@ -121,7 +118,7 @@ def client_hint(platform: str = sys.platform) -> str:
     )
 
 
-def missing_client(detail: str, *, platform: str | None = None) -> ClientNotLoadedError:
+def missing_client(detail: str, *, platform: str | None = None) -> ClientError:
     """The refusal, keeping the driver's own diagnosis and adding ours.
 
     ``detail`` is python-oracledb's message and it goes in verbatim, because it
@@ -132,7 +129,7 @@ def missing_client(detail: str, *, platform: str | None = None) -> ClientNotLoad
     have cost another round trip, which is CLAUDE.md's "never swallow a vendor
     code" arriving from the client side rather than the server's.
     """
-    return ClientNotLoadedError(
+    return ClientError(
         f"Oracle Instant Client could not be loaded, and thick mode is required (D3): {detail}",
         at=ROOT,
         hint=client_hint(platform or sys.platform),
@@ -180,8 +177,10 @@ def connect_arguments(
         arguments["externalauth"] = True
         return arguments
 
+    # Plain `ConfigError`s, not `ClientError`: the file or a variable fixes
+    # these, as for any `config` error, so they have no code.
     if credential.username is None:
-        raise ClientError(
+        raise ConfigError(
             f"target {target.name!r} has no username to connect as",
             at=at,
             hint=(
@@ -190,7 +189,7 @@ def connect_arguments(
             ),
         )
     if credential.secret is None:  # pragma: no cover - `admin.resolve` never returns this
-        raise ClientError(
+        raise ConfigError(
             f"target {target.name!r} resolved no password and is not using a wallet",
             at=at,
         )

@@ -1789,7 +1789,7 @@ not contract and may improve.
 |---|---|
 | `SOPULI-W001` | A store in this run is `locking: advisory-only`, so its lock record was written without compare-and-set. The run has no fence: two runs that start in the same second can both believe they hold the lock |
 | `SOPULI-W002` | A lock was taken from its holder: automatically, because it was past its expiry and `locking.break_expired` allows that, or on purpose by `sopuli lock break`. The previous holder is fenced, so its next check fails, but it may have applied changes before then |
-| `SOPULI-W003` | A `vaults:` entry names a backend this machine cannot serve. The config is valid and the install is incomplete (ADR-006, E4). What that means depends on the command: `config validate` warns and exits 0, `doctor` reports an `error` and exits 9 (E6), and any command that resolves the store to a client fails with `SOPULI-20001` |
+| `SOPULI-W003` | A `vaults:` entry names a backend this machine cannot serve. The config is valid and the install is incomplete (ADR-006, E4). What that means depends on the command: `config validate` warns and exits 0, `doctor` reports an `error` and exits 9 (E6), and any command that resolves the store to a client fails: with `SOPULI-20001` where the client is not installed, and with `SOPULI-20005` where this build has no module for the `type` |
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked, and anything on the network path can read every secret that crosses it. The setting is under P3's safety ratchet, so no layer can weaken it further, but nothing in the run undoes it either (ADR-005) |
 | `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record at a path the file no longer names would not appear, in that store. Everything reported is accurate; the survey is narrower than it looks |
 | `SOPULI-W006` | A `targets:` entry names a driver this machine cannot serve. Each command weighs it as it weighs `SOPULI-W003`. They are two codes on purpose: one code for "some backend is missing" would not tell a store the tool cannot reach from a database it cannot reach, and those are different outages. Emitted once per driver *type*, not once per target, because an estate generates targets by the dozen from one `target_sets:` entry |
@@ -1878,9 +1878,9 @@ configuration or in what it points at, such as a variable or a file. A missing
 client for a configured backend, driver or channel is fixed by installing
 something, so each has a code. A warning has no category, so every
 warning has a code. An error needs one only to be told apart. An Instant Client
-that cannot load, and a backend or driver this build has no module for, are
-`config` errors that no edit to the file fixes, so each has a code too.
-([J3](../decisions/log.md#j3))
+that cannot be used is fixed by installing it, or by pointing the tool at it.
+A backend or driver this build has no module for is fixed by neither. Each of
+these has a code too. ([J3](../decisions/log.md#j3))
 
 **The numbers follow the warning codes' rule:** one flat series from
 `SOPULI-20001`, never reused, and fixed when it reaches `main`.
@@ -1892,7 +1892,7 @@ records its highest number too.
 | `SOPULI-20001` | `config` | 9 | A `vaults:` entry names a backend whose client is not installed. The message names the store, its `type`, and the extra that supplies it (ADR-006, `01-configuration.md` §3a) |
 | `SOPULI-20002` | `config` | 9 | A `targets:` entry names a driver whose client is not installed. The same shape as `SOPULI-20001`, for the same reason (ADR-006 E1, E5): `python-oracledb` is `sopuli-dba[oracle]`, and a driver that is declared and absent is fixed on this machine by the person reading the message |
 | `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape again (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`. Only a run that has something to send reaches it. `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
-| `SOPULI-20004` | `config` | 9 | Oracle Instant Client could not be loaded, and thick mode needs it (D3). The message keeps the driver's own diagnosis, such as `DPI-1047` and the library that failed, and the hint says how to install the client on this platform. Installing it fixes this, not editing the file. A target whose credential resolved no username or password is also refused before connecting, and has no code, because the file or a variable fixes it |
+| `SOPULI-20004` | `config` | 9 | Oracle Instant Client cannot be used, and thick mode needs it (D3): it was not found (`DPI-1047`), it is older than the driver needs (`DPI-1050`), or its version is not supported (`DPI-1072`). The message keeps the driver's own diagnosis, and the hint says how to install the client on this platform. Installing a working client fixes it, or pointing `runtime.oracle.client_lib_dir` or `SOPULI_ORACLE_CLIENT_LIB_DIR` at one that is installed. A target whose credential resolved no username or password is also refused before connecting, and has no code, because the file or a variable fixes it |
 | `SOPULI-20005` | `config` | 9 | A `vaults:` entry names a `type` that `01-configuration.md` §3a accepts and this build has no module for. Neither editing the file nor installing anything fixes it, so the message never carries an install line |
 | `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. No run reaches it today, because `oracle` is the only target type |
 

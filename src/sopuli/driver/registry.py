@@ -53,7 +53,9 @@ from sopuli.extras import installed as extras_installed
 DRIVER_NOT_INSTALLED = "SOPULI-20002"
 
 #: ``error.code`` for a driver type this build has no module for: the driver
-#: equivalent of ``SOPULI-20005``, a separate code for the same reason.
+#: equivalent of ``SOPULI-20005``. A separate code because a store and a
+#: database are different outages, which is also why ``SOPULI-20001`` and this
+#: module's ``SOPULI-20002`` are two.
 DRIVER_NOT_IMPLEMENTED = "SOPULI-20006"
 
 

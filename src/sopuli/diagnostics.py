@@ -698,7 +698,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         PROMOTION_FAILED: (
             "Every target of a secret document confirmed a password, and the write that "
             "promotes it to `current` failed. The databases have that password and "
-            "`current` still holds the one before it, which is UC-1 §8's most severe case. One "
+            "`current` may still hold the one before it, which is UC-1 §8's most severe case. "
+            "Only a refused compare-and-set says it does; a write that failed any other way "
+            "may have landed. One "
             "entry per document, naming its path, its accounts and the store's message. A "
             "refused compare-and-set means another writer changed the document after this "
             "run read it, so the stage this run applied may have changed too. The remedy is "
@@ -1233,12 +1235,17 @@ def promotion_failed(
     The store's message comes last, for :func:`reset_record_unwritten`'s reason.
     """
     stage = "previous" if rollback else "pending"
-    cause = (
-        "another writer changed the document after this run read it, so the vault refused "
-        "the compare-and-set"
-        if conflict
-        else "the vault refused the write"
-    )
+    # Only a refused compare-and-set says what the vault holds. Any other failure,
+    # such as a timeout or a lost reply, may follow a write the vault committed.
+    if conflict:
+        cause = (
+            "another writer changed the document after this run read it, so the vault "
+            "refused the compare-and-set"
+        )
+        state = "still holds the password they had before"
+    else:
+        cause = "the write failed, so this run cannot say whether the vault kept it"
+        state = "may still hold the password they had before"
     if rerun is None:
         remedy = "another run then took over this run's lock, and that run is the one to finish it"
     else:
@@ -1251,8 +1258,8 @@ def promotion_failed(
         code=PROMOTION_FAILED,
         message=(
             f"{document} was not promoted: {cause}. The databases have `{stage}` for "
-            f"{', '.join(accounts)} and `current` still holds the password they had before "
-            f"-- {remedy}. The store said: {reason}"
+            f"{', '.join(accounts)} and `current` {state} -- {remedy}. "
+            f"The store said: {reason}"
         ),
     )
 

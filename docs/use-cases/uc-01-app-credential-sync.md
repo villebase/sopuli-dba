@@ -1096,8 +1096,11 @@ consumer needs no line: it has `results[]`, and `03-json-output.md` §7's recipe
 is the same filter the flag applies.
 
 **The line carries no diagnostic code.** `03-json-output.md` §3's rule is that a
-code exists for what the exit code cannot tell you. Here exit 4 says it, and
-`results[]` already carries the states a consumer would filter on.
+code exists for what the exit code cannot tell you. Here exit 4 says that the run
+is partial, and `results[]` carries the states a consumer would filter on. What
+exit 4 cannot say is why an estate that confirmed was not promoted. So a failed
+promotion write has its own code, `SOPULI-W033`, which names the same repair
+command, printed as a note under the line.
 
 ---
 

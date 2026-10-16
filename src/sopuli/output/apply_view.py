@@ -325,10 +325,12 @@ def _warnings(
 ) -> list[dict[str, Any]]:
     """What this run did that somebody should know about.
 
-    The one that matters is a **changed database whose vault was not promoted**:
-    UC-1 §8 calls it the highest-severity row in its table, because applications
-    fetch ``current`` and are now fetching a password the database no longer has.
-    It is a warning on the account rather than a run-level diagnostic so that it
+    The one that matters is a **database whose password the vault did not
+    promote**: UC-1 §8 calls it the highest-severity row in its table, because
+    applications fetch ``current`` and are now fetching a password the database no
+    longer has. It covers a changed row that did not confirm, and any row whose
+    promotion write failed (#805), changed by this run or by an earlier one. It is
+    a warning on the account as well as any run-level diagnostic, so that it
     survives into whatever a consumer filters `results[]` down to.
 
     The write ``mechanism`` rides here too when it was the wider one, which is
@@ -343,8 +345,8 @@ def _warnings(
         # selectors), which one account's row cannot see, so it points at the
         # run-level diagnostic that names it.
         message = (
-            "the promotion to `current` failed, so `current` still holds the password the "
-            "database had before -- SOPULI-W033 says what to do next"
+            "the promotion to `current` failed, so `current` may not hold the password this "
+            "database has -- SOPULI-W033 says what to do next"
             if promotion_failed
             else (
                 "the database was changed and the vault was not promoted, so "
@@ -610,9 +612,11 @@ def _verdict(
     table where knowing what to type next matters most.
 
     **Text only, and no diagnostic code.** A code exists for what the exit code
-    cannot tell you; here exit 4 says it exactly, and `results[]` already
-    carries the states a consumer would filter on (`03-json-output.md` §7). A
-    code would be a second spelling of a fact the document has twice.
+    cannot tell you; here exit 4 says that the run is partial, and `results[]`
+    carries the states a consumer would filter on (`03-json-output.md` §7). What
+    exit 4 cannot say is *why* a confirmed estate was not promoted, so a failed
+    promotion write has its own code, ``SOPULI-W033``, raised by the command and
+    printed as a note under this line, not by it.
 
     ``stopped`` is the exception, and it *does* carry a code (``SOPULI-W011``):
     a run fenced out mid-estate exits 4 exactly like a run whose targets failed,

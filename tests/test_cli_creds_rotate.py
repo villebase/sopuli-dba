@@ -1117,7 +1117,8 @@ def test_a_vault_lost_at_the_promotion_says_why_the_run_is_partial(
     """§8 row 7 is reported on the row, in the summary and as `SOPULI-W033` (#805).
 
     The store failed rather than refusing a compare-and-set, so the message
-    names no other writer.
+    names no other writer. Nor does it say the vault refused the write: a write
+    that failed for any other reason may have landed.
     """
     estate(store=LostAtPromotion())
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
@@ -1131,8 +1132,12 @@ def test_a_vault_lost_at_the_promotion_says_why_the_run_is_partial(
     assert body["summary"]["ok"] == 0
     assert body["summary"]["failed"] == 1
     (failed,) = [one for one in body["diagnostics"] if one.get("code") == "SOPULI-W033"]
-    expected = "apps/acme/appdb-alpha was not promoted: the vault refused the write"
+    expected = (
+        "apps/acme/appdb-alpha was not promoted: the write failed, so this run cannot say "
+        "whether the vault kept it"
+    )
     assert expected in failed["message"]
+    assert "`current` may still hold" in failed["message"]
     assert "another writer" not in failed["message"]
 
 

@@ -8522,24 +8522,31 @@ def _failed_promotions(
     write was for, from :func:`_failed_promotion`. ``rerun`` is the command's
     repair invocation, or ``None`` after a takeover (:func:`promotion_failed`).
     """
-    failed: dict[LockKey, tuple[_Promotion, Error, list[_Applied]]] = {}
+    failures: dict[LockKey, tuple[_Promotion, Error]] = {}
+    accounts: dict[LockKey, set[str]] = {}
+    rollbacks: set[LockKey] = set()
     for record in applied:
         found = _failed_promotion(record, promotions)
-        if found is not None:
-            failed.setdefault(_lock_key(record.binding), (*found, []))[2].append(record)
-    return [
-        promotion_failed(
-            str(key),
-            sorted({record.binding.account for record in records}),
-            error.message,
-            conflict=promotion.conflict,
-            rollback=any(
-                record.source is not None and record.source.stage == PREVIOUS for record in records
-            ),
-            rerun=rerun,
+        if found is None:
+            continue
+        key = _lock_key(record.binding)
+        failures[key] = found
+        accounts.setdefault(key, set()).add(record.binding.account)
+        if record.source is not None and record.source.stage == PREVIOUS:
+            rollbacks.add(key)
+    diagnostics = []
+    for key, (promotion, error) in failures.items():
+        diagnostics.append(
+            promotion_failed(
+                str(key),
+                sorted(accounts[key]),
+                error.message,
+                conflict=promotion.conflict,
+                rollback=key in rollbacks,
+                rerun=rerun,
+            )
         )
-        for key, (promotion, error, records) in failed.items()
-    ]
+    return diagnostics
 
 
 def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
@@ -8732,9 +8739,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
     binding = record.binding
     promotion = None
     if binding.secret is not None and binding.vault is not None:
-        promotion = promotions.get(
-            LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
-        )
+        promotion = promotions.get(_lock_key(binding))
     failed = _failed_promotion(record, promotions)
     return build_apply_result(
         binding,

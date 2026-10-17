@@ -300,6 +300,8 @@ def test_a_lost_session_is_connectivity_and_says_why_it_may_have_gone() -> None:
     assert found.hint is not None
     assert "closed" in found.hint
     assert "shut down" in found.hint
+    assert "network" in found.hint
+    assert "creds apply" not in found.hint, "every verb meets it, not only apply"
     assert found.retryable is False
     assert found.message == SESSION_LOST
 

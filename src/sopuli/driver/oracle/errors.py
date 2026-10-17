@@ -237,30 +237,33 @@ RULES: dict[str, _Rule] = {
     #
     # A held session lost to a PDB closed IMMEDIATE, or to the CDB shutting
     # down, raises DPY-4011. Its message carries DPI-1080 and ORA-03113 below it,
-    # but full_code is DPY-4011, so ORA-03113 is never the code read. Not
-    # retryable as such: the session is gone, and whether a statement in flight
-    # took effect is unknown. `creds apply` converges, so it finishes a password
-    # change that was cut off.
+    # but full_code is DPY-4011, so ORA-03113 is never the code read. The
+    # client raises the same code when the network drops the connection, so the
+    # hint names both. Not retryable as such: the session is gone, and whether a
+    # statement in flight took effect is unknown. The hint names no verb to run
+    # next, because every verb that opens a session can meet this.
     "DPY-4011": _Rule(
         UNREACHABLE,
         "connectivity",
         hint=(
-            "the database ended the session: its PDB may have been closed, the "
-            "instance shut down, or the session killed. Run the command again once it "
-            "is open; if a password change was cut off, `sopuli creds apply` finishes it"
+            "the database or the network closed the connection: the PDB may have been "
+            "closed, the instance shut down, or the network dropped. Whether a statement "
+            "in flight took effect is unknown; run the command again once the database "
+            "answers"
         ),
     ),
     # A logon while the CDB starts. In NOMOUNT the listener refuses with
     # ORA-12528, and in MOUNT the logon gets ORA-01033. Both pass once the
     # database opens, so both are retryable. ORA-01034 and ORA-01089 were not
-    # produced by any step, so they are not mapped.
+    # produced by any step, so they are not mapped. Only the starting case was
+    # measured for ORA-12528, so the hint describes only that one.
     "ORA-12528": _Rule(
         UNREACHABLE,
         "connectivity",
         retryable=True,
         hint=(
-            "the instance is starting, or is open in restricted mode, so the listener "
-            "blocks new connections; wait for it to open, or open it"
+            "the instance is starting (NOMOUNT), so the listener blocks new connections; "
+            "wait for the database to open, or open it"
         ),
     ),
     "ORA-01033": _Rule(

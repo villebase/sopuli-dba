@@ -31,7 +31,10 @@
 --
 -- Run in the same container as the install. For a COMMON install, run in
 -- CDB$ROOT. To drop the policies 01_audit_policy.sql created in a PDB, run it
--- there too, with keep_audit=N.
+-- there too, with keep_audit=N, and run it in the PDBs BEFORE the root. The
+-- PDB's logon policy is enabled BY the common service account, and NOAUDIT
+-- has to name that account. Outside the root the script leaves a common
+-- account alone, because only CDB$ROOT can drop it.
 --------------------------------------------------------------------------------
 
 SET SERVEROUTPUT ON
@@ -67,18 +70,41 @@ COLUMN p_keep NEW_VALUE keep_audit NOPRINT
 SELECT NVL('&1', 'C##SOPULI_SVC') AS p_user,
        NVL('&2', 'Y')             AS p_keep
   FROM dual;
+
+-- Whether this is CDB$ROOT. CON_NAME raises ORA-02003 on 11.2, which has no
+-- containers, so it is read in PL/SQL with a handler, as 00_install.sql does.
+VARIABLE in_root VARCHAR2(1)
+BEGIN
+  :in_root := 'N';
+  IF SYS_CONTEXT('USERENV','CON_NAME') = 'CDB$ROOT' THEN
+    :in_root := 'Y';
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -2003 THEN
+      RAISE;
+    END IF;
+END;
+/
+COLUMN p_root NEW_VALUE in_root NOPRINT
+SELECT :in_root AS p_root FROM dual;
 SET TERMOUT ON
 
 WHENEVER SQLERROR CONTINUE
 
 --------------------------------------------------------------------------------
 -- 1. The account. Dropping it removes every grant with it.
+--
+--    Outside CDB$ROOT a common account (C##) is left alone: a PDB cannot drop
+--    it, and the run in the root does.
 --------------------------------------------------------------------------------
 DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
   SELECT COUNT(*) INTO l_cnt FROM dba_users WHERE username = UPPER('&svc_user');
-  IF l_cnt > 0 THEN
+  IF l_cnt > 0 AND '&in_root' = 'N' AND UPPER('&svc_user') LIKE 'C##%' THEN
+    DBMS_OUTPUT.PUT_LINE('&svc_user is a common account: drop it from CDB$ROOT');
+  ELSIF l_cnt > 0 THEN
     EXECUTE IMMEDIATE 'DROP USER &svc_user CASCADE';
     DBMS_OUTPUT.PUT_LINE('dropped &svc_user (ALTER USER grant gone with it)');
   ELSE
@@ -95,26 +121,13 @@ END;
 --    the kind of thing that looks bad in a review later.
 --
 --    01_audit_policy.sql names its policies SOPULI_CDB_* in CDB$ROOT and
---    SOPULI_* elsewhere, and every policy named SOPULI_ is its work. A PDB also
+--    SOPULI_* elsewhere. keep_audit=N drops every policy named SOPULI_, so do
+--    not give a policy of the estate's own a name with that prefix. A PDB also
 --    sees the root's common policies, and cannot drop them, so outside the root
 --    the SOPULI_CDB_* names are left out. In the root, SOPULI_* names are
 --    dropped too, where an older copy of 01_audit_policy.sql created them.
 --------------------------------------------------------------------------------
-DECLARE
-  l_root VARCHAR2(1) := 'N';
 BEGIN
-  BEGIN
-    IF SYS_CONTEXT('USERENV','CON_NAME') = 'CDB$ROOT' THEN
-      l_root := 'Y';
-    END IF;
-  EXCEPTION
-    WHEN OTHERS THEN
-      -- ORA-02003: 11.2, which has no containers.
-      IF SQLCODE != -2003 THEN
-        RAISE;
-      END IF;
-  END;
-
   IF UPPER('&keep_audit') = 'Y' THEN
     DBMS_OUTPUT.PUT_LINE('leaving the SOPULI_ audit policies in place');
   ELSE
@@ -130,7 +143,7 @@ BEGIN
     FOR p IN (SELECT DISTINCT policy_name, entity_name
                 FROM audit_unified_enabled_policies
                WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
-                 AND (l_root = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
+                 AND ('&in_root' = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
       IF p.entity_name = 'ALL USERS' THEN
         EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
       ELSE
@@ -140,7 +153,7 @@ BEGIN
     END LOOP;
     FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
                WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
-                 AND (l_root = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
+                 AND ('&in_root' = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
       EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
       DBMS_OUTPUT.PUT_LINE('dropped audit policy ' || p.policy_name);
     END LOOP;

@@ -265,7 +265,8 @@ BEGIN
 
   FOR i IN 1 .. l_names.COUNT LOOP
     SELECT COUNT(*) INTO l_cnt FROM audit_unified_enabled_policies
-     WHERE policy_name = '&pfx.PERSON_LOGON_POL' AND entity_name = l_names(i);
+     WHERE policy_name = '&pfx.PERSON_LOGON_POL' AND entity_name = l_names(i)
+       AND success = 'YES';
     IF l_cnt = 0 THEN
       EXECUTE IMMEDIATE 'AUDIT POLICY &pfx.PERSON_LOGON_POL BY '
         || DBMS_ASSERT.ENQUOTE_NAME(l_names(i), FALSE) || ' WHENEVER SUCCESSFUL';
@@ -284,16 +285,16 @@ END;
 --    They record nothing in a PDB (AC8), so they only looked like a control.
 --    This runs after sections 1 to 3, so a failure while creating the common
 --    policies leaves the old ones in place: the root is never left with
---    neither. Every policy named SOPULI_ except SOPULI_CDB_ is this script's
---    older work. NOAUDIT names each account an enablement was made BY, for the
---    reason 99_uninstall.sql section 2 gives.
+--    neither. Only the two names the older script created: a policy an estate
+--    added itself under another SOPULI_ name is left alone. NOAUDIT names each
+--    account an enablement was made BY, for the reason 99_uninstall.sql
+--    section 2 gives.
 --------------------------------------------------------------------------------
 BEGIN
   IF '&con_name' = 'CDB$ROOT' THEN
     FOR p IN (SELECT DISTINCT policy_name, entity_name
                 FROM audit_unified_enabled_policies
-               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
-                 AND policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\') LOOP
+               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL')) LOOP
       IF p.entity_name = 'ALL USERS' THEN
         EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
       ELSE
@@ -302,8 +303,7 @@ BEGIN
       END IF;
     END LOOP;
     FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
-               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
-                 AND policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\') LOOP
+               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL')) LOOP
       EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
       DBMS_OUTPUT.PUT_LINE('dropped ' || p.policy_name || ' from CDB$ROOT: '
         || 'a policy created here without CONTAINER = ALL records nothing in a PDB');

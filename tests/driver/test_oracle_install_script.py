@@ -787,14 +787,14 @@ def _enabled_by(container: str, connect: str, policy: str) -> set[str]:
 
 
 @pytest.fixture
-def no_audit_policies(container: str, scripts: str, is_cdb: bool) -> Iterator[None]:
+def no_audit_policies(container: str, scripts: str, cdb_only: None) -> Iterator[None]:
     """No `SOPULI_` audit policy before or after, in the PDB or the root.
 
-    `99_uninstall.sql` with `keep_audit=N` is the cleanup, in the PDB first:
-    a PDB cannot drop the root's common policies, and leaves them out. The
-    account it names is dropped by `clean` anyway.
+    `99_uninstall.sql` with `keep_audit=N` is the cleanup, in the PDB first,
+    as its header says. The account it names is dropped by `clean` anyway.
+    Every test that uses this needs a CDB, so it skips on a non-CDB.
     """
-    places = ((PDB, LOCAL_SVC), (ROOT, COMMON_SVC)) if is_cdb else ((ROOT, LOCAL_SVC),)
+    places = ((PDB, LOCAL_SVC), (ROOT, COMMON_SVC))
 
     def drop_all() -> None:
         # The uninstall runs under CONTINUE, so its exit code alone says little.

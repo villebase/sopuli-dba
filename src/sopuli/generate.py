@@ -43,12 +43,18 @@ scope rule (H7), not a list of exemptions, and CLAUDE.md carries it.
 document is a storage layout, not a shared credential -- `acme_web_user` and
 `acme_batch_user` authenticate as different principals and must not end up with
 one password because they happened to be written together.
+
+**One password is drawn once, however many targets it serves.** One account on
+eleven PDBs with no target label in its ref is one password (§7). It has one
+binding per target, and :func:`draw_once` gives every one of them the same
+candidate. A draw per binding put eleven values into one merge patch, the last
+one won, and the run announced eleven draws for one stored password.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sopuli.config.errors import ConfigError
@@ -165,8 +171,70 @@ class DocumentWrite:
 
     @property
     def accounts(self) -> tuple[str, ...]:
-        """Who this write touches, in binding order."""
-        return tuple(candidate.binding.account for candidate in self.candidates)
+        """Who this write touches, in binding order, each account once.
+
+        Once, because an account on several targets with one shared password
+        has a candidate per target and one field in the document.
+        """
+        return tuple(dict.fromkeys(candidate.binding.account for candidate in self.candidates))
+
+
+#: What makes two bindings one password: the store, the document and the place
+#: in it. The same normalised path the lock and :func:`group` key on.
+PasswordKey = tuple[str | None, str, str | None, str | None]
+
+#: How a caller draws or validates one binding's password.
+DrawFunction = Callable[[Binding], Candidate]
+
+
+def password_key(binding: Binding) -> PasswordKey | None:
+    """Where ``binding``'s password is stored, or ``None`` where it names no ref."""
+    ref = binding.secret
+    if ref is None:
+        return None
+    return (binding.vault, normalise_path(ref.path), ref.field, ref.pointer)
+
+
+def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate]:
+    """One candidate per binding, drawn once per password.
+
+    The first binding of each password is drawn by ``draw``. Every later
+    binding of the same password gets that candidate with its own binding, so
+    each still has a result of its own and all of them name one value.
+
+    The policy is part of the key. The loader refuses one password under two
+    policies (`01-configuration.md` §7), so this never splits one password. It
+    keeps each policy's own check if that rule is ever relaxed.
+    """
+    drawn: dict[tuple[PasswordKey | None, str | None], Candidate] = {}
+    candidates: list[Candidate] = []
+    for binding in bindings:
+        key = password_key(binding)
+        first = drawn.get((key, binding.policy)) if key is not None else None
+        if first is None:
+            candidate = draw(binding)
+            drawn[(key, binding.policy)] = candidate
+        else:
+            candidate = replace(first, binding=binding)
+        candidates.append(candidate)
+    return candidates
+
+
+def one_per_password(candidates: Iterable[Candidate]) -> list[Candidate]:
+    """The first candidate of each password, for what is reported per draw.
+
+    A ``password.generated`` event says a password was drawn, so a password
+    shared by several targets gets one, not one per target.
+    """
+    seen: set[PasswordKey | None] = set()
+    found: list[Candidate] = []
+    for candidate in candidates:
+        key = password_key(candidate.binding)
+        if key is None or key not in seen:
+            found.append(candidate)
+        if key is not None:
+            seen.add(key)
+    return found
 
 
 def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:

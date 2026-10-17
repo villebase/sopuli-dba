@@ -128,6 +128,73 @@ def test_each_account_is_drawn_separately() -> None:
     assert len({one.value.reveal() for one in drawn}) == 2
 
 
+def two_targets(template: str) -> Config:
+    """`acme_web_user` on two targets in one store, under one policy."""
+    return build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "policies": POLICIES,
+            "defaults": {"policy": "app-standard"},
+            "targets": [
+                {"name": name, "type": "oracle", "dsn": "h:1521/x", "vault": "vault-dev"}
+                for name in ("acme-alpha", "acme-beta")
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["acme-alpha", "acme-beta"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": template,
+                }
+            ],
+        }
+    )
+
+
+def draw(config: Config) -> generate.DrawFunction:
+    def one(binding: Binding) -> generate.Candidate:
+        name, policy = generate.policy_for(config, binding)
+        return generate.candidate_for(binding, policy, name=name)
+
+    return one
+
+
+def test_one_password_on_two_targets_is_drawn_once() -> None:
+    """The ref names no target, so both bindings are one password. Each keeps
+    its own candidate, for its own result, and both hold the one value (#830)."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    calls: list[str] = []
+
+    def counted(binding: Binding) -> generate.Candidate:
+        calls.append(binding.target)
+        return draw(config)(binding)
+
+    drawn = generate.draw_once(config.bindings, counted)
+
+    assert calls == ["acme-alpha"]
+    assert [one.binding.target for one in drawn] == ["acme-alpha", "acme-beta"]
+    assert drawn[0].value is drawn[1].value
+
+
+def test_a_password_per_target_is_drawn_per_target() -> None:
+    config = two_targets("acme/{target}#DB_CREDENTIALS/{account}")
+
+    drawn = generate.draw_once(config.bindings, draw(config))
+
+    assert drawn[0].value.reveal() != drawn[1].value.reveal()
+
+
+def test_a_shared_password_is_one_account_in_its_write_and_one_draw_to_report() -> None:
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    drawn = generate.draw_once(config.bindings, draw(config))
+
+    (write,) = generate.group(drawn)
+
+    assert write.accounts == ("acme_web_user",)
+    assert [one.binding.target for one in generate.one_per_password(drawn)] == ["acme-alpha"]
+
+
 def test_a_supplied_password_goes_through_the_same_predicate() -> None:
     """UC-1 §4, and what stops `--from-stdin` becoming a way to write a password
     the policy would have refused."""

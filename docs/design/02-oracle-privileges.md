@@ -1261,16 +1261,16 @@ The root's names differ from a PDB's because a common policy and a PDB's own
 policy may have one name (AC10). The check reads policies by name, so it would
 merge the two.
 
-For a reset in a PDB, these policies give:
+For a reset in a PDB, the value depends on which run's list names the person:
 
-- `true` where the script ran in the PDB with the person in its list.
+- `true` where the script ran in the PDB with the person in that run's list.
   `sopuli_pol` covers `ALTER USER` for every user, and
   `sopuli_person_logon_pol` covers the person's `LOGON`;
-- `false` where it ran in the PDB without the person in its list.
-  `sopuli_logon_pol` records only the service account's failed logons;
-- `unknown` where only the root's policies apply and the root's list names
-  the person, because the check reads a common policy as *might cover*. Where
-  the root's list does not name the person, `false`.
+- `unknown` where no PDB run names the person and the root's list does,
+  because the check reads a common policy as *might cover*;
+- `false` where neither list names the person. No policy records the person's
+  logon or might record it: `sopuli_logon_pol` and `sopuli_cdb_logon_pol`
+  record only the service account's failed logons.
 
 ---
 

@@ -95,10 +95,10 @@ END;
 --    the kind of thing that looks bad in a review later.
 --
 --    01_audit_policy.sql names its policies SOPULI_CDB_* in CDB$ROOT and
---    SOPULI_* elsewhere. A PDB also sees the root's common policies, and cannot
---    drop them, so outside the root the SOPULI_CDB_* names are left out. The
---    old SOPULI_* names are dropped in the root too, where an older copy of
---    01_audit_policy.sql created them.
+--    SOPULI_* elsewhere, and every policy named SOPULI_ is its work. A PDB also
+--    sees the root's common policies, and cannot drop them, so outside the root
+--    the SOPULI_CDB_* names are left out. In the root, SOPULI_* names are
+--    dropped too, where an older copy of 01_audit_policy.sql created them.
 --------------------------------------------------------------------------------
 DECLARE
   l_root VARCHAR2(1) := 'N';
@@ -129,10 +129,7 @@ BEGIN
     -- because a common account's name starts with C##.
     FOR p IN (SELECT DISTINCT policy_name, entity_name
                 FROM audit_unified_enabled_policies
-               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL',
-                                     'SOPULI_PERSON_LOGON_POL', 'SOPULI_CDB_POL',
-                                     'SOPULI_CDB_LOGON_POL',
-                                     'SOPULI_CDB_PERSON_LOGON_POL')
+               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
                  AND (l_root = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
       IF p.entity_name = 'ALL USERS' THEN
         EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
@@ -142,10 +139,7 @@ BEGIN
       END IF;
     END LOOP;
     FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
-               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL',
-                                     'SOPULI_PERSON_LOGON_POL', 'SOPULI_CDB_POL',
-                                     'SOPULI_CDB_LOGON_POL',
-                                     'SOPULI_CDB_PERSON_LOGON_POL')
+               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
                  AND (l_root = 'Y' OR policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\')) LOOP
       EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
       DBMS_OUTPUT.PUT_LINE('dropped audit policy ' || p.policy_name);
@@ -168,9 +162,7 @@ SELECT grantee, owner, table_name, privilege FROM dba_tab_privs
 PROMPT --- audit policies still present (all if keep_audit=Y; with N, none here,
 PROMPT --- though a PDB still sees the root's SOPULI_CDB_* policies)
 SELECT DISTINCT policy_name FROM audit_unified_policies
- WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL', 'SOPULI_PERSON_LOGON_POL',
-                       'SOPULI_CDB_POL', 'SOPULI_CDB_LOGON_POL',
-                       'SOPULI_CDB_PERSON_LOGON_POL');
+ WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\';
 
 PROMPT --- audit history is retained in UNIFIED_AUDIT_TRAIL regardless
 SELECT COUNT(*) AS retained_alter_user_events

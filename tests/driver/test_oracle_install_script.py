@@ -797,8 +797,13 @@ def no_audit_policies(container: str, scripts: str, is_cdb: bool) -> Iterator[No
     places = ((PDB, LOCAL_SVC), (ROOT, COMMON_SVC)) if is_cdb else ((ROOT, LOCAL_SVC),)
 
     def drop_all() -> None:
+        # The uninstall runs under CONTINUE, so its exit code alone says little.
+        # ORA-46xxx is the audit block failing, which would leak policies into
+        # the next test and fail it far from the cause.
         for connect, account in places:
-            sqlplus(container, connect, f"{scripts}/99_uninstall.sql", account, "N")
+            result = sqlplus(container, connect, f"{scripts}/99_uninstall.sql", account, "N")
+            assert result.returncode == 0, result.stdout[-2000:]
+            assert "ORA-46" not in result.stdout, result.stdout[-2000:]
 
     drop_all()
     yield
@@ -997,15 +1002,21 @@ def test_the_audit_script_refuses_a_personal_account_that_does_not_exist(
     no_audit_policies: None,
     persons: tuple[str, ...],
 ) -> None:
-    """A typing error in the list stops the script, instead of auditing nobody."""
+    """A typing error in the list stops the script before anything in section 3
+    is created, so the names before it are not enabled either."""
     assert sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC).returncode == 0
 
     result = sqlplus(
-        container, PDB, f"{scripts}/01_audit_policy.sql", COMMON_SVC, f"{persons[0]},ACME_NOBODY"
+        container,
+        PDB,
+        f"{scripts}/01_audit_policy.sql",
+        COMMON_SVC,
+        f"{persons[0]},ACME_NOBODY,{persons[1]}",
     )
 
     assert result.returncode != 0
     assert "ORA-44001" in result.stdout
+    assert "SOPULI_PERSON_LOGON_POL NO" not in _policies(container, PDB)
 
 
 def test_uninstall_in_a_pdb_drops_its_policies_and_leaves_the_roots(

@@ -257,6 +257,30 @@ def test_the_install_scripts_root_policies_alone_give_unknown() -> None:
     assert "SOPULI_CDB_PERSON_LOGON_POL is a common policy" in found.detail
 
 
+def test_the_root_listing_the_person_and_the_pdb_not_gives_unknown() -> None:
+    """A COMMON install run in both places, with the person in the root's list
+    only. The PDB's `sopuli_pol` covers `ALTER USER`; the person's `LOGON` has
+    only the common policy's doubt, so the answer is unknown, not false (§5)."""
+    found = answer(
+        [
+            enabled("SOPULI_POL"),
+            enabled("SOPULI_LOGON_POL", BY_USER, "C##SOPULI_SVC", success=False),
+            enabled("SOPULI_CDB_POL"),
+            enabled("SOPULI_CDB_PERSON_LOGON_POL", BY_USER, PERSON),
+        ],
+        [
+            action("SOPULI_POL", "ALTER USER"),
+            action("SOPULI_LOGON_POL", "LOGON"),
+            action("SOPULI_CDB_POL", "ALTER USER", common=True),
+            action("SOPULI_CDB_PERSON_LOGON_POL", "LOGON", common=True),
+        ],
+    )
+
+    assert found.audited is None
+    assert found.detail.startswith("LOGON might be recorded: SOPULI_CDB_PERSON_LOGON_POL")
+    assert found.detail.endswith("ALTER USER by SOPULI_POL")
+
+
 def test_nothing_enabled_names_both_actions() -> None:
     found = answer([], [])
 

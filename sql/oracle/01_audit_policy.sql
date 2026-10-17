@@ -168,36 +168,10 @@ PROMPT audit policies for container &con_name: &pfx.*
 --
 --    Deliberately not restricted to the service account: the point is to see
 --    all password changes, including the manual ones the tool is replacing.
---
---    In CDB$ROOT, first drop the local policies an older copy of this script
---    created there. They record nothing in a PDB (AC8), so they only looked
---    like a control. NOAUDIT names each account an enablement was made BY,
---    for the reason 99_uninstall.sql section 2 gives.
 --------------------------------------------------------------------------------
 DECLARE
   l_cnt PLS_INTEGER;
 BEGIN
-  IF '&con_name' = 'CDB$ROOT' THEN
-    FOR p IN (SELECT DISTINCT policy_name, entity_name
-                FROM audit_unified_enabled_policies
-               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL',
-                                     'SOPULI_PERSON_LOGON_POL')) LOOP
-      IF p.entity_name = 'ALL USERS' THEN
-        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
-      ELSE
-        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name
-                       || ' BY ' || DBMS_ASSERT.ENQUOTE_NAME(p.entity_name, FALSE);
-      END IF;
-    END LOOP;
-    FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
-               WHERE policy_name IN ('SOPULI_POL', 'SOPULI_LOGON_POL',
-                                     'SOPULI_PERSON_LOGON_POL')) LOOP
-      EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
-      DBMS_OUTPUT.PUT_LINE('dropped ' || p.policy_name || ' from CDB$ROOT: '
-        || 'a policy created here without CONTAINER = ALL records nothing in a PDB');
-    END LOOP;
-  END IF;
-
   SELECT COUNT(*) INTO l_cnt FROM audit_unified_policies
    WHERE policy_name = '&pfx.POL';
   IF l_cnt = 0 THEN
@@ -245,25 +219,26 @@ AUDIT POLICY &pfx.LOGON_POL BY &svc_user WHENEVER NOT SUCCESSFUL;
 --    Only the listed accounts. Enabled for every user, it would record every
 --    session, connection pools included.
 --
+--    Every name is checked before anything is created or enabled.
 --    DBMS_ASSERT.SCHEMA_NAME raises ORA-44001 for a name that is not an
---    account, so a typing error stops the script instead of auditing nobody.
+--    account, so a typing error stops the script with nothing changed, instead
+--    of enabling the names before it and not the names after it.
+--
+--    The list is read in upper case, with white space removed, because that
+--    is how Oracle stores an unquoted account name. An account created with a
+--    quoted lower-case name cannot be listed.
 --------------------------------------------------------------------------------
 DECLARE
-  l_list VARCHAR2(4000) := UPPER(REPLACE('&persons', ' '));
-  l_name VARCHAR2(128);
-  l_pos  PLS_INTEGER;
-  l_cnt  PLS_INTEGER;
+  TYPE t_names IS TABLE OF VARCHAR2(128);
+  l_list  VARCHAR2(4000) := REGEXP_REPLACE(UPPER('&persons'), '[[:space:]]');
+  l_names t_names := t_names();
+  l_name  VARCHAR2(128);
+  l_pos   PLS_INTEGER;
+  l_cnt   PLS_INTEGER;
 BEGIN
   IF l_list IS NULL THEN
     DBMS_OUTPUT.PUT_LINE('no personal accounts given: &pfx.PERSON_LOGON_POL left as it is');
     RETURN;
-  END IF;
-
-  SELECT COUNT(*) INTO l_cnt FROM audit_unified_policies
-   WHERE policy_name = '&pfx.PERSON_LOGON_POL';
-  IF l_cnt = 0 THEN
-    EXECUTE IMMEDIATE 'CREATE AUDIT POLICY &pfx.PERSON_LOGON_POL ACTIONS LOGON&cont_all';
-    DBMS_OUTPUT.PUT_LINE('created audit policy &pfx.PERSON_LOGON_POL');
   END IF;
 
   WHILE l_list IS NOT NULL LOOP
@@ -276,18 +251,64 @@ BEGIN
       l_list := SUBSTR(l_list, l_pos + 1);
     END IF;
     IF l_name IS NOT NULL THEN
-      l_name := DBMS_ASSERT.SCHEMA_NAME(l_name);
-      SELECT COUNT(*) INTO l_cnt FROM audit_unified_enabled_policies
-       WHERE policy_name = '&pfx.PERSON_LOGON_POL' AND entity_name = l_name;
-      IF l_cnt = 0 THEN
-        EXECUTE IMMEDIATE 'AUDIT POLICY &pfx.PERSON_LOGON_POL BY '
-          || DBMS_ASSERT.ENQUOTE_NAME(l_name, FALSE) || ' WHENEVER SUCCESSFUL';
-        DBMS_OUTPUT.PUT_LINE('enabled &pfx.PERSON_LOGON_POL BY ' || l_name);
-      ELSE
-        DBMS_OUTPUT.PUT_LINE('&pfx.PERSON_LOGON_POL already enabled BY ' || l_name);
-      END IF;
+      l_names.EXTEND;
+      l_names(l_names.LAST) := DBMS_ASSERT.SCHEMA_NAME(l_name);
     END IF;
   END LOOP;
+
+  SELECT COUNT(*) INTO l_cnt FROM audit_unified_policies
+   WHERE policy_name = '&pfx.PERSON_LOGON_POL';
+  IF l_cnt = 0 THEN
+    EXECUTE IMMEDIATE 'CREATE AUDIT POLICY &pfx.PERSON_LOGON_POL ACTIONS LOGON&cont_all';
+    DBMS_OUTPUT.PUT_LINE('created audit policy &pfx.PERSON_LOGON_POL');
+  END IF;
+
+  FOR i IN 1 .. l_names.COUNT LOOP
+    SELECT COUNT(*) INTO l_cnt FROM audit_unified_enabled_policies
+     WHERE policy_name = '&pfx.PERSON_LOGON_POL' AND entity_name = l_names(i);
+    IF l_cnt = 0 THEN
+      EXECUTE IMMEDIATE 'AUDIT POLICY &pfx.PERSON_LOGON_POL BY '
+        || DBMS_ASSERT.ENQUOTE_NAME(l_names(i), FALSE) || ' WHENEVER SUCCESSFUL';
+      DBMS_OUTPUT.PUT_LINE('enabled &pfx.PERSON_LOGON_POL BY ' || l_names(i));
+    ELSE
+      DBMS_OUTPUT.PUT_LINE('&pfx.PERSON_LOGON_POL already enabled BY ' || l_names(i));
+    END IF;
+  END LOOP;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- In CDB$ROOT only: drop the local policies an older copy of this script
+-- created there
+--
+--    They record nothing in a PDB (AC8), so they only looked like a control.
+--    This runs after sections 1 to 3, so a failure while creating the common
+--    policies leaves the old ones in place: the root is never left with
+--    neither. Every policy named SOPULI_ except SOPULI_CDB_ is this script's
+--    older work. NOAUDIT names each account an enablement was made BY, for the
+--    reason 99_uninstall.sql section 2 gives.
+--------------------------------------------------------------------------------
+BEGIN
+  IF '&con_name' = 'CDB$ROOT' THEN
+    FOR p IN (SELECT DISTINCT policy_name, entity_name
+                FROM audit_unified_enabled_policies
+               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
+                 AND policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\') LOOP
+      IF p.entity_name = 'ALL USERS' THEN
+        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
+      ELSE
+        EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name
+                       || ' BY ' || DBMS_ASSERT.ENQUOTE_NAME(p.entity_name, FALSE);
+      END IF;
+    END LOOP;
+    FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
+               WHERE policy_name LIKE 'SOPULI\_%' ESCAPE '\'
+                 AND policy_name NOT LIKE 'SOPULI\_CDB\_%' ESCAPE '\') LOOP
+      EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
+      DBMS_OUTPUT.PUT_LINE('dropped ' || p.policy_name || ' from CDB$ROOT: '
+        || 'a policy created here without CONTAINER = ALL records nothing in a PDB');
+    END LOOP;
+  END IF;
 END;
 /
 

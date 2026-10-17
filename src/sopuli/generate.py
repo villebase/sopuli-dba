@@ -90,9 +90,14 @@ VAULT_ONLY = "VAULT_ONLY"
 __all__ = [
     "Candidate",
     "DocumentWrite",
+    "DrawFunction",
+    "PasswordKey",
     "VAULT_ONLY",
     "candidate_for",
+    "draw_once",
     "group",
+    "one_per_password",
+    "password_key",
     "policy_for",
 ]
 
@@ -159,6 +164,8 @@ class DocumentWrite:
         holding is not a thing :func:`sopuli.apply.may_redraw` may redraw. Absent then
         reads as unknown, which is the same refusal by the same rule.
         """
+        # Also here, for a write built without `group`, as `apply`'s redraw does.
+        _refuse_two_values_for_one_password(self)
         patches: list[dict[str, Any]] = []
         for candidate in self.candidates:
             ref = _ref(candidate.binding)
@@ -179,20 +186,35 @@ class DocumentWrite:
         return tuple(dict.fromkeys(candidate.binding.account for candidate in self.candidates))
 
 
-#: What makes two bindings one password: the store, the document and the place
-#: in it. The same normalised path the lock and :func:`group` key on.
-PasswordKey = tuple[str | None, str, str | None, str | None]
+@dataclass(frozen=True)
+class PasswordKey:
+    """One password: a place in one document.
+
+    ``document`` is the :class:`~sopuli.lock.keys.LockKey` the write and the
+    lock use, so "shares a password" cannot disagree with "shares a write".
+    Two bindings with one key are one password whatever else differs.
+    """
+
+    document: LockKey
+    field: str | None
+    pointer: str | None
+
 
 #: How a caller draws or validates one binding's password.
 DrawFunction = Callable[[Binding], Candidate]
 
 
 def password_key(binding: Binding) -> PasswordKey | None:
-    """Where ``binding``'s password is stored, or ``None`` where it names no ref."""
+    """Where ``binding``'s password is stored.
+
+    ``None`` where it names no ref or no store yet. :func:`group` refuses such a
+    binding, so it never reaches a write.
+    """
     ref = binding.secret
-    if ref is None:
+    if ref is None or binding.vault is None:
         return None
-    return (binding.vault, normalise_path(ref.path), ref.field, ref.pointer)
+    document = LockKey(store=binding.vault, path=normalise_path(ref.path))
+    return PasswordKey(document=document, field=ref.field, pointer=ref.pointer)
 
 
 def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate]:
@@ -202,18 +224,20 @@ def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate
     binding of the same password gets that candidate with its own binding, so
     each still has a result of its own and all of them name one value.
 
-    The policy is part of the key. The loader refuses one password under two
-    policies (`01-configuration.md` §7), so this never splits one password. It
-    keeps each policy's own check if that rule is ever relaxed.
+    The key is the password alone. Two bindings of one password under two
+    policies are a defect in the file, which the loader refuses (#830). Were
+    one to get here, one value drawn against the first binding's policy is
+    still better than two values for one field, where the last write wins.
     """
-    drawn: dict[tuple[PasswordKey | None, str | None], Candidate] = {}
+    drawn: dict[PasswordKey, Candidate] = {}
     candidates: list[Candidate] = []
     for binding in bindings:
         key = password_key(binding)
-        first = drawn.get((key, binding.policy)) if key is not None else None
+        first = drawn.get(key) if key is not None else None
         if first is None:
             candidate = draw(binding)
-            drawn[(key, binding.policy)] = candidate
+            if key is not None:
+                drawn[key] = candidate
         else:
             candidate = replace(first, binding=binding)
         candidates.append(candidate)
@@ -226,7 +250,7 @@ def one_per_password(candidates: Iterable[Candidate]) -> list[Candidate]:
     A ``password.generated`` event says a password was drawn, so a password
     shared by several targets gets one, not one per target.
     """
-    seen: set[PasswordKey | None] = set()
+    seen: set[PasswordKey] = set()
     found: list[Candidate] = []
     for candidate in candidates:
         key = password_key(candidate.binding)
@@ -235,6 +259,26 @@ def one_per_password(candidates: Iterable[Candidate]) -> list[Candidate]:
         if key is not None:
             seen.add(key)
     return found
+
+
+def _refuse_two_values_for_one_password(write: DocumentWrite) -> None:
+    """Refuse a write that carries two different values for one password.
+
+    :func:`draw_once` prevents it. This catches a draw site that skips it:
+    the merge patch would keep the last value and lose the others without a
+    word, which is the fault #830 found.
+    """
+    values: dict[PasswordKey, Secret] = {}
+    for candidate in write.candidates:
+        key = password_key(candidate.binding)
+        if key is None:
+            continue
+        first = values.setdefault(key, candidate.value)
+        if first is not candidate.value:
+            raise ValueError(
+                f"two different passwords for {candidate.binding.account!r} in "
+                f"{write.key}: draw a shared password once (generate.draw_once)"
+            )
 
 
 def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:
@@ -273,6 +317,7 @@ def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:
     )
     for write in writes:
         _refuse_colliding_stages(write)
+        _refuse_two_values_for_one_password(write)
     return writes
 
 

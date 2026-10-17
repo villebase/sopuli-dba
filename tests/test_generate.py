@@ -11,6 +11,7 @@ one was intended or three accounts sharing one password.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -183,6 +184,33 @@ def test_a_password_per_target_is_drawn_per_target() -> None:
     drawn = generate.draw_once(config.bindings, draw(config))
 
     assert drawn[0].value.reveal() != drawn[1].value.reveal()
+
+
+def test_a_shared_password_is_drawn_once_whatever_its_bindings_policies() -> None:
+    """The key is the password alone. The loader refuses two policies on one
+    password (#830); were they to get here, one value still beats two values
+    for one field."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    alpha, beta = config.bindings
+    calls: list[str] = []
+
+    def counted(binding: Binding) -> generate.Candidate:
+        calls.append(binding.target)
+        return draw(config)(binding)
+
+    generate.draw_once([alpha, replace(beta, policy="app-short")], counted)
+
+    assert calls == ["acme-alpha"]
+
+
+def test_two_values_for_one_password_are_refused_rather_than_merged() -> None:
+    """A draw site that skips `draw_once` would put two values in one field,
+    and the merge would keep the last. `group` refuses it."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
+    separately = [draw(config)(binding) for binding in config.bindings]
+
+    with pytest.raises(ValueError, match="two different passwords for 'acme_web_user'"):
+        generate.group(separately)
 
 
 def test_a_shared_password_is_one_account_in_its_write_and_one_draw_to_report() -> None:

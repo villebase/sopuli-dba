@@ -712,12 +712,67 @@ def test_two_accounts_on_one_literal_field_in_two_entries_are_refused() -> None:
         build_config(two_entries("apps/acme#DB_CREDENTIALS/shared"))
 
     assert str(caught.value).splitlines()[0] == (
-        "applications[1]: 'acme_web_user' (entry 'acme-web') and 'acme_api_user' "
-        "(entry 'acme-api') resolve to one password at "
-        "vault-dev:apps/acme#DB_CREDENTIALS/shared"
+        "applications[1]: 'acme_web_user' and 'acme_api_user' (entries 'acme-web' and "
+        "'acme-api') resolve to one password at vault-dev:apps/acme#DB_CREDENTIALS/shared"
     )
     assert caught.value.hint is not None
-    assert "put {account} in the ref" in caught.value.hint
+    assert "path#FIELD/{account}" in caught.value.hint
+
+
+def test_one_account_s_place_containing_the_other_s_is_refused() -> None:
+    """`#DB` holds `#DB/acme_api_user`: writing acme_web_user's password into
+    DB replaces the object that holds acme_api_user's."""
+    document_ = two_entries("apps/acme#DB")
+    document_["applications"][1]["secret_template"] = "apps/acme#DB/{account}"
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(document_)
+
+    assert (
+        "overlap at vault-dev:apps/acme#DB and vault-dev:apps/acme#DB/acme_api_user: "
+        "writing one password replaces the other"
+    ) in str(caught.value)
+
+
+def test_two_accounts_on_different_targets_are_still_one_password() -> None:
+    """The target is not part of the key: one document is one document."""
+    document_ = two_entries("apps/acme#DB_CREDENTIALS/shared")
+    document_["applications"][1]["targets"] = {"match": {"tenant": "beta", "env": "dev"}}
+
+    with pytest.raises(ConfigError, match="resolve to one password"):
+        build_config(document_)
+
+
+def test_a_store_named_beside_a_store_from_the_run_is_left_to_the_run() -> None:
+    """At load the file cannot say which store a run gives the second entry, so
+    the pair loads here. `generate.draw_once` refuses it once both are known."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": {"type": "oci"}},
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": name,
+                    "targets": ["alpha"],
+                    "accounts": [account],
+                    "secret_template": "apps/acme",
+                    **({"vault": "vault-oci"} if name == "acme-web" else {}),
+                }
+                for name, account in (("acme-web", "acme_web_user"), ("acme-api", "acme_api_user"))
+            ],
+        }
+    )
+
+    assert [b.vault for b in config.bindings] == ["vault-oci", None]
 
 
 def test_a_store_that_stages_natively_is_refused_too() -> None:

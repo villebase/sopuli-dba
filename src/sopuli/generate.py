@@ -228,12 +228,27 @@ def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate
     policies are a defect in the file, which the loader refuses (#830). Were
     one to get here, one value drawn against the first binding's policy is
     still better than two values for one field, where the last write wins.
+
+    **Two different accounts on one password are refused**, not given one
+    value. The loader refuses them where the file states both stores (#841).
+    This catches the pair it cannot see: one binding naming a store, the other
+    getting the same store from a profile or ``SOPULI_VAULT``.
     """
     drawn: dict[PasswordKey, Candidate] = {}
     candidates: list[Candidate] = []
     for binding in bindings:
         key = password_key(binding)
         first = drawn.get(key) if key is not None else None
+        if key is not None and first is not None and first.binding.account != binding.account:
+            raise ConfigError(
+                f"{first.binding.account!r} and {binding.account!r} resolve to one password "
+                f"at {key.document}: each account needs its own place in the document",
+                hint=(
+                    "the store for one of them came from a profile or SOPULI_VAULT, so the "
+                    "file alone could not show this; give the refs distinct fields or "
+                    "pointers, such as path#FIELD/{account}"
+                ),
+            )
         if first is None:
             candidate = draw(binding)
             if key is not None:

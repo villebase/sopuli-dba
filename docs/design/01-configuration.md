@@ -2363,9 +2363,10 @@ only one, and `creds check` would report it against the other on every run. To
 give targets different policies, give each its own secret, with a target label
 such as `{tenant}` in the ref.
 
-**A password belongs to one account.** Two different accounts that resolve to
-the same field and pointer are refused, whichever entries declare them
-([#841](../decisions/log.md#841)). §10 lists the rule.
+**A password belongs to one account.** Two different accounts whose refs land
+on the same place in a document, or on places where one contains the other, are
+refused, whichever entries declare them ([#841](../decisions/log.md#841)). §10
+lists the rule.
 
 **An application's ref must have somewhere to stage into.** Where the
 store emulates the three stages in payload fields — every backend in P2's table
@@ -3040,11 +3041,13 @@ notices until a rotation.
   *accounts*, not scopes — one account sharing a password across eleven PDBs is
   legal and often intended (§7), and is surfaced in plan output rather than
   refused
-- two accounts whose refs resolve to the same field and pointer in the same
-  document, across application entries → error, naming both accounts and both
-  entries. It is the rule above, for refs that two entries write. It applies to
-  every store, a store that stages natively included
-  ([#841](../decisions/log.md#841))
+- two accounts whose refs resolve to the same place in the same document, or to
+  places where one contains the other (`#DB` and `#DB/{account}`, or a ref with
+  no field beside one with a field) → error, naming both accounts and where they
+  are declared. It is the rule above, for refs that two entries write. It
+  applies to every store, a store that stages natively included. Where one
+  store comes only from a profile or `SOPULI_VAULT`, a run refuses the pair once
+  it knows the store ([#841](../decisions/log.md#841))
 - a `personal_accounts:` entry naming none of `accounts:`, `profile:` and `role:`,
   or more than one of them → error. None declares nothing, which invariant 5 says
   is the default anyway and is not worth an entry; two would mean either the union

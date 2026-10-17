@@ -213,6 +213,17 @@ def test_two_values_for_one_password_are_refused_rather_than_merged() -> None:
         generate.group(separately)
 
 
+def test_two_accounts_on_one_password_are_refused_rather_than_given_one_value() -> None:
+    """The pair the loader cannot see: one store named, one from the run. Once
+    both are known, `draw_once` refuses instead of sharing one value (#841)."""
+    config = two_targets("acme/prod/shared#DB_CREDENTIALS/shared")
+    web, other = config.bindings
+    api = replace(other, account="acme_api_user")
+
+    with pytest.raises(ConfigError, match="'acme_web_user' and 'acme_api_user' resolve to one"):
+        generate.draw_once([web, api], draw(config))
+
+
 def test_a_shared_password_is_one_account_in_its_write_and_one_draw_to_report() -> None:
     config = two_targets("acme/prod/shared#DB_CREDENTIALS/{account}")
     drawn = generate.draw_once(config.bindings, draw(config))

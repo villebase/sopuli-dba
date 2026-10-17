@@ -2323,12 +2323,13 @@ the register.
 
 - **Decided:** 2026-10-17, #841
 - **Question:** `01-configuration.md` §10 refuses one entry whose ref gives two
-  accounts one ref. Two
-  entries can still put two accounts on the same field and pointer. Refuse that
-  too?
+  accounts one ref. Two entries can still put two accounts on the same field
+  and pointer, or on places where one contains the other. Refuse that too?
 - **Decision:** Refuse it at load with exit 9, before the repository goes
-  public, on every store. The error names both accounts, both entries and the
-  ref. It runs before the stage-collision rule.
+  public, on every store, for the same place and for nested places. The error
+  names both accounts, where they are declared, and the refs. It runs before
+  the stage-collision rule. Where one store comes only from a profile or
+  `SOPULI_VAULT`, `generate.draw_once` refuses the pair once the run knows it.
 - **Why:** Two accounts on one field are one password for two principals. The
   second write overwrites the first, and the application that reads the first is
   locked out at the next rotation, which is the reason

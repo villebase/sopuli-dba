@@ -71,9 +71,67 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
         at = ROOT if application.is_inline else _APPLICATIONS.index(index)
         where[application.name] = at
         bindings.extend(_bind(config, application, at=at))
+    # Two accounts on one password first: where staging is emulated they would
+    # also collide in `pending`, and this message names the actual fault.
+    _check_one_account_per_password(bindings, where=where)
     _check_stages_do_not_collide(bindings, config, where=where)
     _check_one_policy_per_password(bindings, where=where)
     return tuple(bindings)
+
+
+def _check_one_account_per_password(
+    bindings: Sequence[Binding], *, where: Mapping[str | None, KeyPath]
+) -> None:
+    """No two accounts resolve to one password.
+
+    §10 refuses an entry whose ref cannot give its accounts distinct refs
+    (``applications._require_distinguishable_accounts``). That rule sees one
+    entry. Two entries can still put two accounts on the same field and pointer
+    in the same document, for example by writing one literal ref in both, or a
+    ``{account_lower}`` can fold two names into one. Then `creds generate` writes
+    both passwords into one field, the last one wins, and one account's
+    application reads the other account's password. The second rotation locks
+    the first out.
+
+    It is about the password, not the stage. Where staging is emulated,
+    ``_check_stages_do_not_collide`` would also refuse the file, because both
+    accounts stage into one key in ``pending``, but its hint is about a bare
+    ``#{account}``, which is a different mistake. So this runs first. Where a
+    store stages natively, as OCI does, that rule does not apply and only this
+    one refuses the file (decided in #841).
+
+    Refused at load, as the policy rule below is. The error names both accounts,
+    both entries and the ref. It compares stores as the file states them, for the
+    reason ``_check_one_policy_per_password`` gives.
+    """
+    seen: dict[tuple[str | None, str, str | None, str | None], Binding] = {}
+    for binding in bindings:
+        ref = binding.secret
+        if ref is None:
+            continue
+        key = (binding.vault, normalise_path(ref.path), ref.field, ref.pointer)
+        first = seen.setdefault(key, binding)
+        if first.account == binding.account:
+            continue
+        raise ConfigError(
+            f"{first.account!r} (entry {first.application!r}) and {binding.account!r} "
+            f"(entry {binding.application!r}) resolve to one password at {_address(binding)}",
+            at=where.get(binding.application, ROOT),
+            hint=(
+                "each account needs its own password: put {account} in the ref, or give "
+                "the entries different refs"
+            ),
+        )
+
+
+def _address(binding: Binding) -> str:
+    """The binding's ref, with the store in front where the ref has none."""
+    ref = binding.secret
+    if ref is None:
+        return "-"
+    if ref.vault is not None or binding.vault is None:
+        return str(ref)
+    return f"{binding.vault}:{ref}"
 
 
 def _check_one_policy_per_password(
@@ -105,8 +163,8 @@ def _check_one_policy_per_password(
     another. Checking again at run time would check only what the run's
     selectors kept, so the answer would depend on the selection.
 
-    Two *different* accounts on one field are not this rule's case: that is two
-    accounts on one password, whatever their policies (#841).
+    Two *different* accounts on one field never reach it:
+    ``_check_one_account_per_password`` refuses them first.
     """
     seen: dict[tuple[str, str | None, str, str | None, str | None], Binding] = {}
     for binding in bindings:
@@ -117,11 +175,7 @@ def _check_one_policy_per_password(
         first = seen.setdefault(key, binding)
         if first.policy == binding.policy:
             continue
-        address = (
-            str(ref)
-            if ref.vault is not None or binding.vault is None
-            else (f"{binding.vault}:{ref}")
-        )
+        address = _address(binding)
         if first.target == binding.target:
             # Two entries on one target: the entries tell them apart.
             places = (

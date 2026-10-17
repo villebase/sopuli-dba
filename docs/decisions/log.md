@@ -2318,3 +2318,25 @@ the register.
   - Draw one value that satisfies every policy. It cannot work when the
     policies disagree on an exact length, so that case would still need a
     refusal.
+
+## #841
+
+- **Decided:** 2026-10-17, #841
+- **Question:** §10 refuses one entry whose ref gives two accounts one ref. Two
+  entries can still put two accounts on the same field and pointer. Refuse that
+  too?
+- **Decision:** Refuse it at load with exit 9, before the repository goes
+  public, on every store. The error names both accounts, both entries and the
+  ref. It runs before the stage-collision rule.
+- **Why:** Two accounts on one field are one password for two principals. The
+  second write overwrites the first, and the application that reads the first is
+  locked out at the next rotation, which is §10's reason for the in-entry rule.
+  Where staging is emulated, the stage-collision rule already refused such a
+  file, with a hint about a bare `#{account}` that did not fit. Where a store
+  stages natively, as OCI does, nothing refused it. A config that loads today
+  on such a store stops loading, which is cheap only before anyone outside
+  uses the tool.
+- **Rejected:**
+  - Widen the in-entry rule to look across entries. It reads the ref template,
+    not the rendered refs, so it cannot tell when two templates meet on one
+    field. The bindings can.

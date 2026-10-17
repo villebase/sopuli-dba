@@ -6,7 +6,7 @@ Oracle and it does **not** assume you have installed a Python program before.
 By the end you will have installed the tool, written a config file, checked that
 the file is valid, and previewed a change without making one.
 
-**Do this against a test database.** The tool is pre-alpha, and the last step of
+**Do this against a test database.** The tool is alpha, and the last step of
 this guide is deliberately a preview rather than a change.
 
 What you need before you start:
@@ -110,16 +110,13 @@ You will need to activate it again in every new terminal window.
 
 ### 2b. Install sopuli-dba
 
-`pip` is the program that installs Python packages. Nothing is published to PyPI
-— the public index `pip` normally downloads from — yet, so you install from a
-copy of the repository:
+`pip` is the program that installs Python packages. It downloads them from
+PyPI, the public package index:
 
 ```bash
-git clone https://github.com/villebase/sopuli-dba.git
-cd sopuli-dba
-# Install this checkout, plus the two optional parts named in the brackets:
+# The tool, plus the two optional parts named in the brackets:
 # the Oracle driver and the HashiCorp Vault client.
-pip install ".[oracle,hashicorp]"
+pip install "sopuli-dba[oracle,hashicorp]"
 ```
 
 Those names in square brackets are *extras* — Python packaging's word for an

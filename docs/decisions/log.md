@@ -2348,3 +2348,23 @@ the register.
   - Widen the in-entry rule to look across entries. It reads the ref template,
     not the rendered refs, so it cannot tell when two templates meet on one
     field. The bindings can.
+
+## #547
+
+- **Decided:** 2026-10-17, #547
+- **Question:** `04-testing.md` §6 says gate 2 runs on each supported major
+  release and gate 4 on every Oracle release in the matrix, and that no release
+  happens while a gate is red. Does every release re-run them on each Oracle
+  release?
+- **Decision:** No. A release runs gates 1, 3, 5 and 6, and cites the runs of
+  gates 2 and 4 recorded in `docs/measurements.md`. A recorded run stands for
+  its release until the probe changes, or the code it measures changes. Then
+  that gate runs again.
+- **Why:** gates 2 and 4 run on the maintainer images, which need an Oracle
+  account, and on OCI, which costs money. Their results depend on the Oracle
+  release and on the statements the tool sends, not on the rest of a release.
+  Tier 1 still runs gate 4's regression test on the 26ai image every time.
+- **Rejected:**
+  - Re-run gates 2 and 4 on every Oracle release for every release. The cost is
+    a day's maintainer time and an OCI bill, for runs that would repeat the
+    recorded ones while the probe and the measured code are unchanged.

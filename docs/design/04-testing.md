@@ -464,6 +464,17 @@ The tests need only the tier-1 services, so the tier-1 lane runs them:
 These are not tests that may be skipped. A release does not happen if any of
 them is red.
 
+**What a release runs, and what it cites.** Gates 1, 3, 5 and 6 are run for
+every release: the full suite, tier 1 included, against a real Vault, and gate
+1's artefact search. Gates 2 and 4 run per Oracle release, on images that need
+an Oracle account or cost money, so a release does not run them again on each
+one. It cites the runs recorded in [`../measurements.md`](../measurements.md)
+instead, by release and date. A recorded run stands for its release until the
+probe changes, or until the code it measures changes: the statement text the
+tool sends, for gate 2, and the verification path and its lockout guard, for
+gate 4. Then that gate runs again. Tier 1 runs gate 4's regression test on the
+26ai image for every release anyway. Decided for the first alpha in #547.
+
 1. **Redaction.** Run the full suite, then search every artefact (stdout,
    stderr, log files, JSON output, audit records) for every generated password.
    There must be no hits.

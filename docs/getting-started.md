@@ -26,10 +26,11 @@ Everything below was run on Windows 11 with sopuli 0.58.0 and Instant Client
 those runs printed, except the `sopuli --version` sample in section 2b, which
 comes from installing 0.75.0 from PyPI.
 
-That version is a **record of what the capture printed**, not a claim about what
-this build is at — it is supposed to name an old release, and it moves when the
-samples are re-captured rather than when a version is cut. Do not "correct" it to
-the current number: `pyproject.toml` owns that number.
+Both versions are a **record of what each capture printed**, not a claim about
+what the current build is. Your own `sopuli --version` prints the version you
+installed. A version in a sample changes when that sample is captured again, not
+when a release is cut, so do not "correct" either to the current number:
+`pyproject.toml` owns that number.
 [`local-testing.md`](local-testing.md) §2 keeps the same kind of per-sample note.
 
 ---

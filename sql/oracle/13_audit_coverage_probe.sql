@@ -31,6 +31,16 @@
 --        As a control, a common account logs on to the PDB under it
 --   AC7  READ on the two views, granted CONTAINER = ALL to a common account
 --        by SYS in CDB$ROOT: does the common account read them in the PDB
+--   AC8  01_audit_policy.sql's two policies, created in three places: in
+--        CDB$ROOT with no CONTAINER clause, in CDB$ROOT with CONTAINER = ALL,
+--        and in the PDB. What each records of a local DBA's ALTER USER and
+--        proxy logon in the PDB, and of the common service account's ALTER
+--        USER and failed logons
+--   AC9  a common person. The common service account resets it in the root,
+--        and a common DBA logs on as it in the root and in the PDB. The logon
+--        policy is enabled BY the person, in the root with and without
+--        CONTAINER = ALL, and in the PDB
+--   AC10 whether a common policy and a policy in the PDB may have one name
 --
 -- This MEASURES and decides nothing. What a reset records is #591.
 --
@@ -43,7 +53,9 @@
 -- on a typing error. In runs 1 to 3 AC3 did not yet read the enabled rows as
 -- the account, in runs 1 to 6 AC0 did not yet count AUDIT_VIEWER's grants, and
 -- AC6 was added for run 9, read the root's trail from run 11, and had its
--- control from run 13, when AC7 was added. Untried on every other release.
+-- control from run 13, when AC7 was added. AC8 to AC10 were added on
+-- 2026-10-17 and the file was run three times as it stands, exit 0 and the
+-- same rows each time. Untried on every other release.
 -- 11.2 has no unified audit, so AC1 to AC7 do not apply there as written.
 --
 --
@@ -100,6 +112,36 @@
 --        the policy works, and does not apply to the local accounts
 --   AC7  both grants succeed, and the common account reads both views in the
 --        PDB: 0 enabled rows (none enabled then), 3291 policy rows
+--   AC8  what is recorded, by where the two policies are created:
+--
+--          CDB$ROOT, no clause  the root's failed logon only. NOTHING in the
+--                               PDB, not even the service account's ALTER
+--                               USER. SYSTEM sees neither policy enabled in
+--                               the PDB
+--          CONTAINER = ALL      in the PDB, the service account's ALTER USER
+--                               and failed logon; in the root, its failed
+--                               logon. Not the local DBA's ALTER USERs
+--          the PDB              in the PDB, the local DBA's three ALTER USERs,
+--                               the service account's ALTER USER and its
+--                               failed logon
+--
+--        No round records the proxy logon: the logon policy records only the
+--        service account's failures, as the script enables it
+--   AC9  the root's CONNECT THROUGH grant works in the PDB: the proxy logon
+--        there succeeds with no grant made in the PDB. The service account's
+--        ALTER USER of the common person is recorded in the root in every
+--        round, by a policy common or not. The proxy logon, DBPROXY_USERNAME
+--        C##AC_CDBA, is recorded:
+--
+--          CDB$ROOT, CONTAINER = ALL  in the root and in the PDB
+--          the PDB                    in the PDB only
+--          CDB$ROOT, no clause        in the root only
+--
+--        One event gives one row, which names every policy that matched it,
+--        such as SOPULI_POL, AC_PC_POL. SOPULI_POL is a root policy that an
+--        earlier run of 01_audit_policy.sql left in the container
+--   AC10 both CREATEs succeed, in either order. The PDB's
+--        AUDIT_UNIFIED_POLICIES then has the name twice, COMMON YES and NO
 --
 --   So a BY or EXCEPT list applies to the account that ISSUES the statement.
 --   The person issues the logon and the DBA issues the ALTER USER, so a list
@@ -108,12 +150,17 @@
 --   AUDIT_VIEWER holds both grants (AC0). A common policy looks like an
 --   every-user policy from the PDB, records nothing of local accounts, and
 --   records a common account's logon (AC6). A common service account takes
---   the grant with CONTAINER = ALL (AC7).
+--   the grant with CONTAINER = ALL (AC7). A policy created in CDB$ROOT with no
+--   CONTAINER clause records nothing in a PDB. A common policy records common
+--   accounts in every container, and a PDB's own policy records every account
+--   in that PDB, common ones too (AC8). A common account's password is changed
+--   in the root, so a policy in the root records it (AC9). A name alone does
+--   not tell a common policy from a PDB's own (AC10).
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), and
---   as SYS for AC2's grants, in the PDB; as SYS in CDB$ROOT for AC6's common
---   policy. Against the tier-1 stack, whose SYS
+--   as SYS for AC2's grants, in the PDB; as SYS in CDB$ROOT for the common
+--   accounts and the root's policies. Against the tier-1 stack, whose SYS
 --   and SYSTEM password is the public one in test/compose.yaml, as it stands:
 --
 --     MSYS_NO_PATHCONV=1 docker exec -i sopuli-test-oracle-free-1 \
@@ -125,14 +172,16 @@
 --   substitute them with sed, which puts the password in argv instead.
 --   MSYS_NO_PATHCONV is for Git Bash, which otherwise rewrites /nolog.
 --
--- WHENEVER SQLERROR is EXIT FAILURE throughout, and is relaxed to CONTINUE NONE
--- only around AC1's reads and SYSTEM's grant in AC2, which are meant to fail.
--- The drop-if-exists and clean-up blocks in the setup and the teardown swallow
--- their own errors and carry no secret.
+-- WHENEVER SQLERROR is EXIT FAILURE throughout. It is relaxed to CONTINUE NONE
+-- around AC1's reads, SYSTEM's grant in AC2, AC8's failed logons and AC10's
+-- CREATEs, which are meant to fail or are the question. AC7's grants are a
+-- question too. The drop-if-exists and clean-up blocks in the setup and the
+-- teardown swallow their own errors and carry no secret.
 --
--- THROWAWAY DATABASES ONLY. Creates and drops three local accounts, a common
--- one, a role, nine local audit policies and one common one, plants known passwords, and leaves rows in
--- UNIFIED_AUDIT_TRAIL. While AC5 runs, ACTIONS ALL audits every user.
+-- THROWAWAY DATABASES ONLY. Creates and drops local and common accounts, a
+-- role, and audit policies in the PDB and in the root, plants known passwords,
+-- and leaves rows in UNIFIED_AUDIT_TRAIL. While AC5 runs, ACTIONS ALL audits
+-- every user.
 --------------------------------------------------------------------------------
 define svc      = FREEPDB1
 define sys_conn = system/sopuli-test
@@ -164,14 +213,44 @@ col sql_text for a52
 
 prompt === setup
 connect &sysdba@&cdb as sysdba
-begin execute immediate 'noaudit policy c##ac_common'; exception when others then null; end;
-/
-begin execute immediate 'drop audit policy c##ac_common'; exception when others then null; end;
+-- The root's policies: AC6's, AC8's, AC9's and AC10's. They are named AC_ or
+-- C##AC_. The same loop as the PDB's below, run in the root first, so the
+-- PDB's loop does not meet a common policy it cannot drop.
+begin
+  for p in (select policy_name, enabled_option, entity_name
+              from audit_unified_enabled_policies
+             where policy_name like 'AC\_%' escape '\'
+                or policy_name like 'C##AC\_%' escape '\') loop
+    begin
+      execute immediate 'noaudit policy ' || p.policy_name ||
+        case
+          when p.enabled_option = 'BY USER' and p.entity_name <> 'ALL USERS'
+            then ' by ' || p.entity_name
+        end;
+    exception when others then null;
+    end;
+  end loop;
+  for p in (select distinct policy_name from audit_unified_policies
+             where policy_name like 'AC\_%' escape '\'
+                or policy_name like 'C##AC\_%' escape '\') loop
+    begin
+      execute immediate 'drop audit policy ' || p.policy_name;
+    exception when others then null;
+    end;
+  end loop;
+end;
 /
 begin execute immediate 'drop user c##ac_csvc cascade'; exception when others then null; end;
 /
-create user c##ac_csvc identified by "AcCsvcPw_2209" container = all;
-grant create session to c##ac_csvc container = all;
+begin execute immediate 'drop user c##ac_cperson cascade'; exception when others then null; end;
+/
+begin execute immediate 'drop user c##ac_cdba cascade'; exception when others then null; end;
+/
+create user c##ac_csvc    identified by "AcCsvcPw_2209"    container = all;
+create user c##ac_cperson identified by "AcCpersonPw_5172" container = all;
+create user c##ac_cdba    identified by "AcCdbaPw_8841"    container = all;
+grant create session to c##ac_csvc, c##ac_cperson, c##ac_cdba container = all;
+grant alter user to c##ac_csvc container = all;
 connect &sys_conn@&svc
 -- Every enablement is undone with the clause it was made with: a plain NOAUDIT
 -- does not undo a BY list or a role, and DROP AUDIT POLICY then fails. Each
@@ -448,7 +527,225 @@ select count(*) as enabled_rows from audit_unified_enabled_policies;
 select count(*) as policy_rows from audit_unified_policies;
 whenever sqlerror exit failure
 
+prompt === AC8: 01_audit_policy.sql's two policies, in three places
+-- The script's statements, under other names: ALTER USER, CREATE USER and DROP
+-- USER for every user, and failed logons BY the common service account. Each
+-- round runs the same route. In the PDB: the local DBA resets the person, the
+-- common service account resets the person, the DBA logs on as the person, and
+-- the service account fails a logon. In the root: the service account fails a
+-- logon. Then the root reads every container's trail.
+col unified_audit_policies for a28
+col dbusername for a14
+connect &sysdba@&cdb as sysdba
+create audit policy ac_sr_pol  actions alter user, create user, drop user;
+create audit policy ac_sr_logon actions logon;
+create audit policy ac_sc_pol   actions alter user, create user, drop user container = all;
+create audit policy ac_sc_logon actions logon container = all;
+connect &sys_conn@&svc
+create audit policy ac_sp_pol   actions alter user, create user, drop user;
+create audit policy ac_sp_logon actions logon;
+
+prompt --- AC8a: in CDB$ROOT, no CONTAINER clause, as the script runs on a COMMON install
+connect &sysdba@&cdb as sysdba
+audit policy ac_sr_pol;
+audit policy ac_sr_logon by c##ac_csvc whenever not successful;
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+connect &sys_conn@&svc
+select policy_name, entity_name, success, failure from audit_unified_enabled_policies
+ where policy_name like 'AC\_S%' escape '\' order by policy_name;
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person identified by "AcPersonPw_9047";
+alter user ac_person grant connect through ac_dba;
+connect ac_dba[ac_person]/"AcDbaPw_3318"@&svc
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person revoke connect through ac_dba;
+connect c##ac_csvc/"AcCsvcPw_2209"@&svc
+alter user ac_person identified by "AcPersonPw_9048";
+whenever sqlerror continue none
+connect c##ac_csvc/"NotThePassword_1"@&svc
+connect c##ac_csvc/"NotThePassword_1"@&cdb
+whenever sqlerror exit failure
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name, return_code, unified_audit_policies
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and unified_audit_policies like '%AC\_S%' escape '\'
+ order by event_timestamp_utc;
+noaudit policy ac_sr_pol;
+noaudit policy ac_sr_logon by c##ac_csvc;
+
+prompt --- AC8b: in CDB$ROOT, CONTAINER = ALL
+audit policy ac_sc_pol;
+audit policy ac_sc_logon by c##ac_csvc whenever not successful;
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+connect &sys_conn@&svc
+select policy_name, entity_name, success, failure from audit_unified_enabled_policies
+ where policy_name like 'AC\_S%' escape '\' order by policy_name;
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person identified by "AcPersonPw_9049";
+alter user ac_person grant connect through ac_dba;
+connect ac_dba[ac_person]/"AcDbaPw_3318"@&svc
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person revoke connect through ac_dba;
+connect c##ac_csvc/"AcCsvcPw_2209"@&svc
+alter user ac_person identified by "AcPersonPw_9050";
+whenever sqlerror continue none
+connect c##ac_csvc/"NotThePassword_1"@&svc
+connect c##ac_csvc/"NotThePassword_1"@&cdb
+whenever sqlerror exit failure
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name, return_code, unified_audit_policies
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and unified_audit_policies like '%AC\_S%' escape '\'
+ order by event_timestamp_utc;
+noaudit policy ac_sc_pol;
+noaudit policy ac_sc_logon by c##ac_csvc;
+
+prompt --- AC8c: in the PDB, no CONTAINER clause, as the script runs on a PDB install
+connect &sys_conn@&svc
+audit policy ac_sp_pol;
+audit policy ac_sp_logon by c##ac_csvc whenever not successful;
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+select policy_name, entity_name, success, failure from audit_unified_enabled_policies
+ where policy_name like 'AC\_S%' escape '\' order by policy_name;
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person identified by "AcPersonPw_9051";
+alter user ac_person grant connect through ac_dba;
+connect ac_dba[ac_person]/"AcDbaPw_3318"@&svc
+connect ac_dba/"AcDbaPw_3318"@&svc
+alter user ac_person revoke connect through ac_dba;
+connect c##ac_csvc/"AcCsvcPw_2209"@&svc
+alter user ac_person identified by "AcPersonPw_9052";
+whenever sqlerror continue none
+connect c##ac_csvc/"NotThePassword_1"@&svc
+connect c##ac_csvc/"NotThePassword_1"@&cdb
+whenever sqlerror exit failure
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name, return_code, unified_audit_policies
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and unified_audit_policies like '%AC\_S%' escape '\'
+ order by event_timestamp_utc;
+connect &sys_conn@&svc
+noaudit policy ac_sp_pol;
+noaudit policy ac_sp_logon by c##ac_csvc;
+
+prompt === AC9: a common person
+-- A common account's password is changed in the root, and its proxy logon can
+-- land in any container. The proxy grant is made in the root only. Each round:
+-- in the root, the service account resets the person; the DBA logs on as the
+-- person in the root, then in the PDB.
+connect &sysdba@&cdb as sysdba
+alter user c##ac_cperson grant connect through c##ac_cdba;
+create audit policy ac_pc_pol   actions alter user, create user, drop user container = all;
+create audit policy ac_pc_logon actions logon container = all;
+create audit policy ac_pr_pol   actions alter user, create user, drop user;
+create audit policy ac_pr_logon actions logon;
+connect &sys_conn@&svc
+create audit policy ac_pp_logon actions logon;
+
+prompt --- AC9 proxy: does the root's grant reach the PDB?
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&svc
+select user as dbusername, sys_context('userenv', 'proxy_user') as dbproxy_username from dual;
+
+prompt --- AC9a: both policies in CDB$ROOT, CONTAINER = ALL
+connect &sysdba@&cdb as sysdba
+audit policy ac_pc_pol;
+audit policy ac_pc_logon by c##ac_cperson whenever successful;
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+connect c##ac_csvc/"AcCsvcPw_2209"@&cdb
+alter user c##ac_cperson identified by "AcCpersonPw_5173" container = all;
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&cdb
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&svc
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name, return_code, unified_audit_policies
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and unified_audit_policies like '%AC\_P%' escape '\'
+ order by event_timestamp_utc;
+noaudit policy ac_pc_logon by c##ac_cperson;
+
+prompt --- AC9b: ALTER USER common, LOGON in the PDB
+connect &sys_conn@&svc
+audit policy ac_pp_logon by c##ac_cperson whenever successful;
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+connect c##ac_csvc/"AcCsvcPw_2209"@&cdb
+alter user c##ac_cperson identified by "AcCpersonPw_5174" container = all;
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&cdb
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&svc
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name, return_code, unified_audit_policies
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and unified_audit_policies like '%AC\_P%' escape '\'
+ order by event_timestamp_utc;
+noaudit policy ac_pc_pol;
+connect &sys_conn@&svc
+noaudit policy ac_pp_logon by c##ac_cperson;
+
+prompt --- AC9c: both policies in CDB$ROOT, no CONTAINER clause
+connect &sysdba@&cdb as sysdba
+audit policy ac_pr_pol;
+audit policy ac_pr_logon by c##ac_cperson whenever successful;
+select to_char(sys_extract_utc(systimestamp),'YYYY-MM-DD HH24:MI:SS.FF6') t0 from dual;
+connect c##ac_csvc/"AcCsvcPw_2209"@&cdb
+alter user c##ac_cperson identified by "AcCpersonPw_5175" container = all;
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&cdb
+connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&svc
+connect &sysdba@&cdb as sysdba
+select con_id, dbusername, dbproxy_username, action_name, return_code, unified_audit_policies
+  from cdb_unified_audit_trail
+ where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
+   and unified_audit_policies like '%AC\_P%' escape '\'
+ order by event_timestamp_utc;
+noaudit policy ac_pr_pol;
+noaudit policy ac_pr_logon by c##ac_cperson;
+
+prompt === AC10: may a common policy and a policy in the PDB share a name?
+-- AC10a creates the PDB's first, AC10b the root's first. Each CREATE is the
+-- question, so a failure is a result and does not stop the run.
+whenever sqlerror continue none
+prompt --- AC10a: the PDB's first
+connect &sys_conn@&svc
+create audit policy ac_n1 actions alter user;
+connect &sysdba@&cdb as sysdba
+create audit policy ac_n1 actions alter user container = all;
+prompt --- AC10b: the root's first
+create audit policy ac_n2 actions alter user container = all;
+connect &sys_conn@&svc
+create audit policy ac_n2 actions alter user;
+whenever sqlerror exit failure
+select distinct policy_name, common from audit_unified_policies
+ where policy_name in ('AC_N1', 'AC_N2') order by policy_name, common;
+
 prompt === teardown
+connect &sysdba@&cdb as sysdba
+-- The same block as the setup's, for the root's policies.
+begin
+  for p in (select policy_name, enabled_option, entity_name
+              from audit_unified_enabled_policies
+             where policy_name like 'AC\_%' escape '\'
+                or policy_name like 'C##AC\_%' escape '\') loop
+    begin
+      execute immediate 'noaudit policy ' || p.policy_name ||
+        case
+          when p.enabled_option = 'BY USER' and p.entity_name <> 'ALL USERS'
+            then ' by ' || p.entity_name
+        end;
+    exception when others then null;
+    end;
+  end loop;
+  for p in (select distinct policy_name from audit_unified_policies
+             where policy_name like 'AC\_%' escape '\'
+                or policy_name like 'C##AC\_%' escape '\') loop
+    begin
+      execute immediate 'drop audit policy ' || p.policy_name;
+    exception when others then null;
+    end;
+  end loop;
+end;
+/
 connect &sys_conn@&svc
 -- The same block as the setup's. The file is piped to SQL*Plus on stdin, so
 -- it cannot load a shared file with @@; change both copies together.
@@ -486,8 +783,11 @@ drop user ac_person cascade;
 drop role ac_role;
 connect &sysdba@&cdb as sysdba
 drop user c##ac_csvc cascade;
+drop user c##ac_cperson cascade;
+drop user c##ac_cdba cascade;
 connect &sys_conn@&svc
-select count(*) as leftover_users from dba_users where username like 'AC\_%' escape '\';
+select count(*) as leftover_users from dba_users
+ where username like 'AC\_%' escape '\' or username like 'C##AC\_%' escape '\';
 select count(*) as leftover_policies from audit_unified_policies
  where policy_name like 'AC\_%' escape '\';
 exit

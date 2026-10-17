@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config import binding_stores
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding
@@ -469,10 +470,119 @@ def test_an_override_giving_a_shared_password_a_second_policy_is_refused() -> No
         )
 
     message = str(caught.value)
-    assert "'acme_web_user' has one password at" in message
+    # The store is named although the ref has no `vault:` prefix: it is part of
+    # what makes the two bindings one password.
+    assert "'acme_web_user' has one password at vault-dev:apps/acme#" in message
     assert "'app-standard' on 'appdb-dev-alpha' and 'app-strict' on 'appdb-dev-beta'" in message
     assert caught.value.hint is not None
     assert "one password cannot follow two policies" in caught.value.hint
+    assert str(caught.value.at) == "applications[0]"
+
+
+def test_a_binding_with_no_policy_is_said_to_have_none() -> None:
+    """No `policy:` and no `defaults.policy` on alpha, and an override on beta."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                policies=TWO_POLICIES,
+                applications=[
+                    {
+                        "name": "acme",
+                        "targets": DEV_PDBS,
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                        "overrides": [{"where": {"tenant": "beta"}, "policy": "app-strict"}],
+                    }
+                ],
+            )
+        )
+
+    assert "no policy on 'appdb-dev-alpha' and 'app-strict' on 'appdb-dev-beta'" in str(
+        caught.value
+    )
+
+
+def test_two_spellings_of_one_path_are_one_password() -> None:
+    """`apps//acme` and `apps/acme` are one document (`normalise_path`)."""
+    with pytest.raises(ConfigError, match="under two policies"):
+        build_config(
+            document(
+                policies=TWO_POLICIES,
+                applications=[
+                    {
+                        "name": "acme",
+                        "targets": {"match": {"tenant": "alpha", "env": "dev"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                        "policy": "app-standard",
+                    },
+                    {
+                        "name": "acme-beta",
+                        "targets": {"match": {"tenant": "beta", "env": "dev"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps//acme#DB_CREDENTIALS/{account}",
+                        "policy": "app-strict",
+                    },
+                ],
+            )
+        )
+
+
+def test_two_entries_sharing_a_password_under_one_policy_load() -> None:
+    config = build_config(
+        document(
+            policies=TWO_POLICIES,
+            applications=[
+                {
+                    "name": name,
+                    "targets": {"match": {"tenant": tenant, "env": "dev"}},
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                    "policy": "app-standard",
+                }
+                for name, tenant in (("acme", "alpha"), ("acme-beta", "beta"))
+            ],
+        )
+    )
+
+    assert len(config.bindings) == 2
+
+
+def test_a_store_known_only_at_run_time_is_checked_when_it_is_completed() -> None:
+    """Alpha names vault-dev; beta names none until `SOPULI_VAULT` does. At load
+    the two look like different stores. Once completed they are one password."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "policies": TWO_POLICIES,
+            "targets": [
+                {
+                    "name": name,
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "labels": {"tenant": name},
+                    "oracle": {"scope": "pdb", "container": "P"},
+                    **({"vault": "vault-dev"} if name == "alpha" else {}),
+                }
+                for name in ("alpha", "beta")
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["alpha", "beta"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                    "policy": "app-standard",
+                    "overrides": [{"where": {"tenant": "beta"}, "policy": "app-strict"}],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ConfigError, match="under two policies"):
+        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-dev"})
 
 
 def test_the_same_override_with_a_secret_per_tenant_loads() -> None:

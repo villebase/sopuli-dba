@@ -46,6 +46,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
+from sopuli.config.bindings import check_one_policy_per_password
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Binding, Config
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
@@ -95,13 +96,14 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
         return config
 
     _refuse_dangling(candidate, config)
-    return replace(
-        config,
-        bindings=tuple(
-            replace(binding, vault=candidate.name) if _needs_store(binding) else binding
-            for binding in config.bindings
-        ),
+    bindings = tuple(
+        replace(binding, vault=candidate.name) if _needs_store(binding) else binding
+        for binding in config.bindings
     )
+    # Again, now that the store is known: a binding that had none at load may
+    # share a password with one that named this store (decided in #830).
+    check_one_policy_per_password(bindings)
+    return replace(config, bindings=bindings)
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

@@ -121,10 +121,10 @@ unfinished part. It promises three things:
 |---|---|
 | **Install** | `pip install "sopuli-dba[oracle,hashicorp]"`. `sopuli --version` and `sopuli about` report the installed version |
 | **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI |
-| **Not tested** | Oracle 12.1, and every 19c release update other than 19.3.0.0.0 and 19.32.0.0.0. One release update is not every release update. If you run another one, please report what you find |
+| **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
-| **Experimental** | The personal-account commands (UC-2), `sopuli account …`, including `account reset-password`. One of their design decisions is still open ([#541](https://github.com/villebase/sopuli-dba/issues/541)), so they may change more than the rest |
+| **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, and one of their decisions, about the seen reset, is still open ([#541](https://github.com/villebase/sopuli-dba/issues/541)), so they may change more than the rest |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).

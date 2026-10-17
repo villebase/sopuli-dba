@@ -46,8 +46,9 @@ arrive. Send it again.
 ## Which versions are supported
 
 **None, formally.** This project is alpha. There are no maintained release
-branches, so a fix lands on `main` and in the next release. Report anything you find against `main` or against the most recent
-release, and it will be looked at.
+branches, so a fix lands on `main` and in the next release. Report anything you
+find against `main` or against the most recent release, and it will be looked
+at.
 
 That will change when there is a stable release; this section is where it will
 say so.

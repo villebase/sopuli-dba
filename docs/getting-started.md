@@ -28,10 +28,8 @@ those runs printed.
 That version is a **record of what the capture printed**, not a claim about what
 this build is at — it is supposed to name an old release, and it moves when the
 samples are re-captured rather than when a version is cut. Do not "correct" it to
-the current number: `pyproject.toml` owns that number, and `sopuli --version`
-reports the *installed distribution's* version, which under an editable install
-can itself lag the tree — see [`local-testing.md`](local-testing.md) §2, which
-keeps the same kind of per-sample note.
+the current number: `pyproject.toml` owns that number.
+[`local-testing.md`](local-testing.md) §2 keeps the same kind of per-sample note.
 
 ---
 
@@ -90,9 +88,11 @@ are in [`../test/README.md`](../test/README.md).
 
 A *virtual environment* is a private folder holding one project's Python
 packages, so installing something for this tool cannot disturb anything else on
-the machine. Making one is two commands, and you make it wherever you like:
+the machine. Make it outside the repository you cloned in section 1, for example
+in your home folder:
 
 ```bash
+cd ~
 python -m venv .venv
 ```
 
@@ -125,13 +125,10 @@ nothing that talks to a vendor unless you ask for it, so a site with no OCI neve
 inherits the OCI SDK's version constraints. The reasoning is in
 [ADR-006](decisions/adr-006-optional-dependencies.md).
 
-Check it arrived:
+Check it arrived. It prints the version you installed:
 
 ```bash
 sopuli --version
-```
-```
-sopuli, version 0.58.0
 ```
 
 ### 2c. Install Oracle Instant Client

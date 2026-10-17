@@ -213,6 +213,50 @@ def test_the_install_scripts_policies_give_false() -> None:
     assert found.detail == f"no enabled policy records LOGON for {PERSON}"
 
 
+def test_the_install_scripts_policies_with_the_person_listed_give_true() -> None:
+    """`01_audit_policy.sql` run in the PDB with a list of personal accounts adds
+    `sopuli_person_logon_pol` `BY` each of them `WHENEVER SUCCESSFUL` (§5)."""
+    found = answer(
+        [
+            enabled("SOPULI_POL"),
+            enabled("SOPULI_LOGON_POL", BY_USER, "SOPULI_SVC", success=False),
+            enabled("SOPULI_PERSON_LOGON_POL", BY_USER, PERSON),
+            enabled("SOPULI_PERSON_LOGON_POL", BY_USER, "ACME_DEV_BOB"),
+        ],
+        [
+            action("SOPULI_POL", "ALTER USER"),
+            action("SOPULI_POL", "CREATE USER"),
+            action("SOPULI_POL", "DROP USER"),
+            action("SOPULI_LOGON_POL", "LOGON"),
+            action("SOPULI_PERSON_LOGON_POL", "LOGON"),
+        ],
+    )
+
+    assert found.audited is True
+    assert found.detail == "LOGON by SOPULI_PERSON_LOGON_POL; ALTER USER by SOPULI_POL"
+
+
+def test_the_install_scripts_root_policies_alone_give_unknown() -> None:
+    """Run in `CDB$ROOT`, the script creates common policies. From the PDB they
+    might cover, because a common policy records nothing of local accounts."""
+    found = answer(
+        [
+            enabled("SOPULI_CDB_POL"),
+            enabled("SOPULI_CDB_LOGON_POL", BY_USER, "C##SOPULI_SVC", success=False),
+            enabled("SOPULI_CDB_PERSON_LOGON_POL", BY_USER, PERSON),
+        ],
+        [
+            action("SOPULI_CDB_POL", "ALTER USER", common=True),
+            action("SOPULI_CDB_LOGON_POL", "LOGON", common=True),
+            action("SOPULI_CDB_PERSON_LOGON_POL", "LOGON", common=True),
+        ],
+    )
+
+    assert found.audited is None
+    assert "SOPULI_CDB_POL is a common policy" in found.detail
+    assert "SOPULI_CDB_PERSON_LOGON_POL is a common policy" in found.detail
+
+
 def test_nothing_enabled_names_both_actions() -> None:
     found = answer([], [])
 

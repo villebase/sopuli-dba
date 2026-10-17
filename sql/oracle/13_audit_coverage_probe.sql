@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- sopuli-dba : what can a service account read about unified audit policies,
---              and what does each way of enabling one record?   (v1)
+--              and what does each way of enabling one record?   (v2)
 --
 -- #591 (H10). An unseen reset records whether the database would audit the
 -- DBA's route to acting as the person: ALTER USER (a reset to a known value,
@@ -44,19 +44,16 @@
 --
 -- This MEASURES and decides nothing. What a reset records is #591.
 --
--- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM with AC2's grants as SYS, 2026-10-15 -- fourteen times, the last
--- two this file exactly as it stands (exit 0 both times, identical output).
--- Run 9 started from the state a run stopped in AC4a leaves behind: AC_ALL
--- enabled BY the person. AC3 to AC5 were identical in the twelve runs that
--- reached them. Run 1 stopped at AC2, where SYSTEM cannot grant; run 4 stopped at AC3
--- on a typing error. In runs 1 to 3 AC3 did not yet read the enabled rows as
--- the account, in runs 1 to 6 AC0 did not yet count AUDIT_VIEWER's grants, and
--- AC6 was added for run 9, read the root's trail from run 11, and had its
--- control from run 13, when AC7 was added. AC8 to AC10 were added on
--- 2026-10-17 and the file was run three times as it stands, exit 0 and the
--- same rows each time. Untried on every other release.
--- 11.2 has no unified audit, so AC1 to AC7 do not apply there as written.
+-- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1
+-- and CDB$ROOT, as SYSTEM, and as SYS for the grants and the root. AC0 to AC7
+-- were run fourteen times on 2026-10-15 while the file grew, and AC3 to AC5
+-- were identical in the twelve runs that reached them. One of those runs
+-- started from the state a run stopped in AC4a leaves behind, AC_ALL enabled
+-- BY the person, with the same result. The file as it stands was run three
+-- times on 2026-10-17, from a container with no other policy enabled: exit 0
+-- and the same rows each time, and AC0 to AC7 as on 2026-10-15. Untried on
+-- every other release. 11.2 has neither unified auditing nor containers, so
+-- no section applies there as written.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, 2026-10-15
@@ -64,7 +61,8 @@
 --   AC0  Unified Auditing = TRUE: pure unified mode. READ on both policy views
 --        is held by AUDIT_ADMIN and AUDIT_VIEWER only. PUBLIC holds READ on
 --        V_$OPTION. AUDIT_VIEWER holds 34 object grants, UNIFIED_AUDIT_TRAIL
---        among them
+--        among them. No policy is enabled at the start, in the PDB or in the
+--        root: both reads return no rows, which prints nothing
 --   AC1  V$OPTION is readable. Both views give ORA-00942
 --   AC2  SYSTEM's GRANT READ gives ORA-01031. After SYS grants READ on each
 --        view, both are readable: 0 enabled rows (FREEPDB1 enables no policy),
@@ -137,9 +135,9 @@
 --          the PDB                    in the PDB only
 --          CDB$ROOT, no clause        in the root only
 --
---        One event gives one row, which names every policy that matched it,
---        such as SOPULI_POL, AC_PC_POL. SOPULI_POL is a root policy that an
---        earlier run of 01_audit_policy.sql left in the container
+--        In AC9c, AC_PC_POL is still enabled beside AC_PR_POL. The ALTER USER
+--        gives one row, which names both policies: one event is one row,
+--        whatever number of policies match it
 --   AC10 both CREATEs succeed, in either order. The PDB's
 --        AUDIT_UNIFIED_POLICIES then has the name twice, COMMON YES and NO
 --
@@ -153,9 +151,10 @@
 --   the grant with CONTAINER = ALL (AC7). A policy created in CDB$ROOT with no
 --   CONTAINER clause records nothing in a PDB. A common policy records common
 --   accounts in every container, and a PDB's own policy records every account
---   in that PDB, common ones too (AC8). A common account's password is changed
---   in the root, so a policy in the root records it (AC9). A name alone does
---   not tell a common policy from a PDB's own (AC10).
+--   in that PDB, common ones too (AC8). AC9 resets a common account in the
+--   root, and a policy in the root records that, common or not. A reset of a
+--   common account made from a PDB is not tried. A name alone does not tell a
+--   common policy from a PDB's own (AC10).
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), and
@@ -214,8 +213,13 @@ col sql_text for a52
 prompt === setup
 connect &sysdba@&cdb as sysdba
 -- The root's policies: AC6's, AC8's, AC9's and AC10's. They are named AC_ or
--- C##AC_. The same loop as the PDB's below, run in the root first, so the
--- PDB's loop does not meet a common policy it cannot drop.
+-- C##AC_. The PDB's loop below, without its role branch, because no root
+-- policy is enabled for a role. It runs in the root first, so the PDB's loop
+-- does not meet a common policy it cannot drop. A plain NOAUDIT undoes an
+-- EXCEPT list, as AC4c and AC4d do, so neither loop needs a branch for it.
+-- The setup and the teardown each run this loop and the PDB's. The file is
+-- piped to SQL*Plus on stdin, so it cannot load a shared file with @@; change
+-- all four copies together.
 begin
   for p in (select policy_name, enabled_option, entity_name
               from audit_unified_enabled_policies
@@ -297,6 +301,18 @@ grant alter user to ac_svc, ac_dba;
 
 prompt === AC0: the audit mode, and who can read the policy views
 select parameter, value from v$option where parameter = 'Unified Auditing';
+-- What is enabled before the run, in the PDB and in the root. Another policy
+-- adds its records to every round, so the results hold for this start only.
+-- The probe does not disable another policy: that would change the estate
+-- it runs on.
+col enabled_at_start for a28
+col enabled_in_root for a28
+select policy_name as enabled_at_start, entity_name from audit_unified_enabled_policies
+ order by policy_name, entity_name;
+connect &sysdba@&cdb as sysdba
+select policy_name as enabled_in_root, entity_name from audit_unified_enabled_policies
+ order by policy_name, entity_name;
+connect &sys_conn@&svc
 select grantee, privilege, table_name from dba_tab_privs
  where owner = 'SYS'
    and table_name in ('AUDIT_UNIFIED_ENABLED_POLICIES', 'AUDIT_UNIFIED_POLICIES', 'V_$OPTION')
@@ -646,8 +662,12 @@ connect &sys_conn@&svc
 create audit policy ac_pp_logon actions logon;
 
 prompt --- AC9 proxy: does the root's grant reach the PDB?
+-- A question, so a failure is a result. The rounds below log on through this
+-- grant in the PDB, so on a release where it fails they stop the run there.
+whenever sqlerror continue none
 connect c##ac_cdba[c##ac_cperson]/"AcCdbaPw_8841"@&svc
 select user as dbusername, sys_context('userenv', 'proxy_user') as dbproxy_username from dual;
+whenever sqlerror exit failure
 
 prompt --- AC9a: both policies in CDB$ROOT, CONTAINER = ALL
 connect &sysdba@&cdb as sysdba
@@ -680,11 +700,11 @@ select con_id, dbusername, dbproxy_username, action_name, return_code, unified_a
  where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
    and unified_audit_policies like '%AC\_P%' escape '\'
  order by event_timestamp_utc;
-noaudit policy ac_pc_pol;
 connect &sys_conn@&svc
 noaudit policy ac_pp_logon by c##ac_cperson;
 
 prompt --- AC9c: both policies in CDB$ROOT, no CONTAINER clause
+-- AC_PC_POL stays enabled, so the ALTER USER matches two policies.
 connect &sysdba@&cdb as sysdba
 audit policy ac_pr_pol;
 audit policy ac_pr_logon by c##ac_cperson whenever successful;
@@ -699,6 +719,7 @@ select con_id, dbusername, dbproxy_username, action_name, return_code, unified_a
  where event_timestamp_utc > to_timestamp('&t0','YYYY-MM-DD HH24:MI:SS.FF6')
    and unified_audit_policies like '%AC\_P%' escape '\'
  order by event_timestamp_utc;
+noaudit policy ac_pc_pol;
 noaudit policy ac_pr_pol;
 noaudit policy ac_pr_logon by c##ac_cperson;
 
@@ -747,8 +768,8 @@ begin
 end;
 /
 connect &sys_conn@&svc
--- The same block as the setup's. The file is piped to SQL*Plus on stdin, so
--- it cannot load a shared file with @@; change both copies together.
+-- The same block as the setup's. There are four copies; the setup's root loop
+-- says why, and they change together.
 -- Every enablement is undone with the clause it was made with: a plain NOAUDIT
 -- does not undo a BY list or a role, and DROP AUDIT POLICY then fails. Each
 -- statement swallows its own error, so a run stopped half way does not stop
@@ -790,4 +811,9 @@ select count(*) as leftover_users from dba_users
  where username like 'AC\_%' escape '\' or username like 'C##AC\_%' escape '\';
 select count(*) as leftover_policies from audit_unified_policies
  where policy_name like 'AC\_%' escape '\';
+-- The root's own policies: the PDB does not see one created there without
+-- CONTAINER = ALL (AC8).
+connect &sysdba@&cdb as sysdba
+select count(*) as leftover_root_policies from audit_unified_policies
+ where policy_name like 'AC\_%' escape '\' or policy_name like 'C##AC\_%' escape '\';
 exit

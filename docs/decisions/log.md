@@ -2305,8 +2305,14 @@ the register.
   would then report it against the other policy on every run. The contradiction
   is in the file, so the file is what is refused, and every verb and
   `config validate` see it. A config that loads today stops loading, which is
-  cheap only before anyone outside uses the tool.
+  cheap only before anyone outside uses the tool. The check uses the stores the
+  file states. A binding whose store comes only from a profile or
+  `SOPULI_VAULT` is not compared with one that names a store, as the
+  stage-collision rule is not.
 - **Rejected:**
+  - Check again once a run has filled in the stores. The run's selectors have
+    already narrowed the bindings by then, so whether it refused would depend
+    on the selection.
   - Refuse in `creds generate` and `creds rotate` only. The config would still
     load, and `creds check` would still judge one password by two policies.
   - Draw one value that satisfies every policy. It cannot work when the

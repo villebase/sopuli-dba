@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 
-from sopuli.config import binding_stores
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding
@@ -548,9 +547,36 @@ def test_two_entries_sharing_a_password_under_one_policy_load() -> None:
     assert len(config.bindings) == 2
 
 
-def test_a_store_known_only_at_run_time_is_checked_when_it_is_completed() -> None:
-    """Alpha names vault-dev; beta names none until `SOPULI_VAULT` does. At load
-    the two look like different stores. Once completed they are one password."""
+def test_two_entries_on_one_target_are_told_apart_by_entry() -> None:
+    """Both bindings on appdb-dev-alpha: naming the target twice would say
+    nothing, so the message names the two entries."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                policies=TWO_POLICIES,
+                applications=[
+                    {
+                        "name": name,
+                        "targets": {"match": {"tenant": "alpha", "env": "dev"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                        "policy": policy,
+                    }
+                    for name, policy in (("acme", "app-standard"), ("acme-strict", "app-strict"))
+                ],
+            )
+        )
+
+    assert (
+        "on target 'appdb-dev-alpha', under two policies: 'app-standard' from entry 'acme' "
+        "and 'app-strict' from entry 'acme-strict'"
+    ) in str(caught.value)
+
+
+def test_a_store_known_only_at_run_time_is_not_compared() -> None:
+    """Alpha names vault-dev; beta names none. The file cannot say which store a
+    run will give beta, so the two are not compared, as the stage-collision rule
+    is not. The docstring of `_check_one_policy_per_password` states the limit."""
     config = build_config(
         {
             "version": 1,
@@ -581,8 +607,7 @@ def test_a_store_known_only_at_run_time_is_checked_when_it_is_completed() -> Non
         }
     )
 
-    with pytest.raises(ConfigError, match="under two policies"):
-        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-dev"})
+    assert [b.vault for b in config.bindings] == ["vault-dev", None]
 
 
 def test_the_same_override_with_a_secret_per_tenant_loads() -> None:

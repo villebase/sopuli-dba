@@ -436,6 +436,120 @@ def test_an_entry_policy_beats_defaults() -> None:
     assert {binding.policy for binding in config.bindings} == {"strict"}
 
 
+# ------------------------------------------------- one password, one policy ---
+
+TWO_POLICIES: dict[str, Any] = {
+    "app-standard": {"password": {"length": 24}},
+    "app-strict": {"password": {"length": 32}},
+}
+
+#: The two dev PDBs, appdb-dev-alpha and appdb-dev-beta, which share a store.
+DEV_PDBS: dict[str, Any] = {"match": {"target_set": "appdb", "env": "dev"}}
+
+
+def test_an_override_giving_a_shared_password_a_second_policy_is_refused() -> None:
+    """The ref names no tenant, so both dev PDBs share one password, and the
+    override gives beta's binding another policy. One stored password cannot
+    follow both (#830)."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                policies=TWO_POLICIES,
+                applications=[
+                    {
+                        "name": "acme",
+                        "targets": DEV_PDBS,
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                        "policy": "app-standard",
+                        "overrides": [{"where": {"tenant": "beta"}, "policy": "app-strict"}],
+                    }
+                ],
+            )
+        )
+
+    message = str(caught.value)
+    assert "'acme_web_user' has one password at" in message
+    assert "'app-standard' on 'appdb-dev-alpha' and 'app-strict' on 'appdb-dev-beta'" in message
+    assert caught.value.hint is not None
+    assert "one password cannot follow two policies" in caught.value.hint
+
+
+def test_the_same_override_with_a_secret_per_tenant_loads() -> None:
+    """With `{tenant}` in the ref each PDB has its own password, so each may
+    have its own policy."""
+    config = build_config(
+        document(
+            policies=TWO_POLICIES,
+            applications=[
+                {
+                    "name": "acme",
+                    "targets": DEV_PDBS,
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/{tenant}#DB_CREDENTIALS/{account}",
+                    "policy": "app-standard",
+                    "overrides": [{"where": {"tenant": "beta"}, "policy": "app-strict"}],
+                }
+            ],
+        )
+    )
+
+    assert {(b.target, b.policy) for b in config.bindings} == {
+        ("appdb-dev-alpha", "app-standard"),
+        ("appdb-dev-beta", "app-strict"),
+    }
+
+
+def test_two_entries_giving_one_password_two_policies_are_refused() -> None:
+    """The second way to reach it: the account declared twice, with one ref
+    and two policies. The error points at the second entry."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                policies=TWO_POLICIES,
+                applications=[
+                    {
+                        "name": "acme",
+                        "targets": {"match": {"tenant": "alpha", "env": "dev"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                        "policy": "app-standard",
+                    },
+                    {
+                        "name": "acme-beta",
+                        "targets": {"match": {"tenant": "beta", "env": "dev"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                        "policy": "app-strict",
+                    },
+                ],
+            )
+        )
+
+    assert "under two policies" in str(caught.value)
+    assert str(caught.value.at) == "applications[1]"
+
+
+def test_a_shared_password_under_one_policy_loads() -> None:
+    """Sharing itself stays legal (§7): one policy, two PDBs, one password."""
+    config = build_config(
+        document(
+            policies=TWO_POLICIES,
+            applications=[
+                {
+                    "name": "acme",
+                    "targets": DEV_PDBS,
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                    "policy": "app-standard",
+                }
+            ],
+        )
+    )
+
+    assert len(config.bindings) == 2
+
+
 # ------------------------------------------------------------ several apps ---
 
 

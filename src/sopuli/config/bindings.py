@@ -72,7 +72,52 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
         where[application.name] = at
         bindings.extend(_bind(config, application, at=at))
     _check_stages_do_not_collide(bindings, config, where=where)
+    _check_one_policy_per_password(bindings, where=where)
     return tuple(bindings)
+
+
+def _check_one_policy_per_password(
+    bindings: Sequence[Binding], *, where: Mapping[str | None, KeyPath]
+) -> None:
+    """Every binding that resolves to one password resolves to one policy.
+
+    Two bindings resolve to one password when their refs address the same field
+    and pointer in the same document of the same store. That is one account on
+    several targets with no target label in its ref, which §7 allows and often
+    intends. An override can still give one of those targets its own
+    ``policy:``, or a second application entry can declare the account with
+    another policy and the same ref. Then one stored password would have to
+    follow two policies. ``creds generate`` would draw it against one of them,
+    and ``creds check`` would report it against the other on every run.
+
+    Refused at load, as a defect in the file, so every verb and
+    ``config validate`` say so before anything is drawn (decided in #830). The
+    error names the account, the ref, and each policy with a target it governs.
+
+    A binding whose ``vault`` is still ``None`` is compared as it is: two such
+    bindings with one ref are completed from the same profile or variable, so
+    they land on one password too.
+    """
+    seen: dict[tuple[str | None, str, str | None, str | None], Binding] = {}
+    for binding in bindings:
+        ref = binding.secret
+        if ref is None:
+            continue
+        key = (binding.vault, normalise_path(ref.path), ref.field, ref.pointer)
+        first = seen.setdefault(key, binding)
+        if first.policy == binding.policy:
+            continue
+        raise ConfigError(
+            f"{binding.account!r} has one password at {ref} on targets {first.target!r} "
+            f"and {binding.target!r}, under two policies: {first.policy!r} on "
+            f"{first.target!r} and {binding.policy!r} on {binding.target!r}",
+            at=where.get(binding.application, ROOT),
+            hint=(
+                "one password cannot follow two policies: give these targets one policy, "
+                "or give each target its own secret by putting a target label, such as "
+                "{tenant}, in the ref"
+            ),
+        )
 
 
 def _check_stages_do_not_collide(

@@ -379,10 +379,16 @@ may fill it without a major version. `doctor` reports what a target's session
 described in `targets[].scope`, and that is the only scope a run document
 carries. Neither example therefore has `results[].scope`.
 
-The two examples cover different parts of the document. `creds check` shows
-drift, verification and `plan`. `creds status` shows `results[].rollover`, a
-per-row warning (`SOPULI-W013`, a password in its grace period) and an entry in
-`diagnostics[]`.
+The two examples cover different parts of the document. Both have `plan`.
+`creds check` shows drift and verification. `creds status` shows
+`results[].rollover`, a per-row warning (`SOPULI-W013`, a password in its grace
+period) and an entry in `diagnostics[]`.
+
+**The two `summary` blocks count `ok` differently.** In `check`, `ok` counts
+the rows it confirmed. `status` never logs in, so none of its states means
+healthy, and `ok` counts the rows with nothing to report. In the `status`
+example the row with an open rollover window is `ok`, and the row in its grace
+period is counted in `unverifiable`, because a grace period is a finding.
 
 The sections below explain the parts that encode a decision.
 

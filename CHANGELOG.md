@@ -2,6 +2,10 @@
 
 ## [0.75.0](https://github.com/villebase/sopuli-dba/compare/v0.74.0...v0.75.0) (2026-10-17)
 
+The first published alpha, and the first release on PyPI. The README's
+[Status](https://github.com/villebase/sopuli-dba#status) says what alpha promises,
+what is not tested, and which commands are experimental.
+
 
 ### Features
 

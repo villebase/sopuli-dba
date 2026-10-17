@@ -8,7 +8,9 @@ published schemas.
 
 Schemas: [`../schemas/sopuli-run-1.41.schema.json`](../schemas/sopuli-run-1.41.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
-Example: [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json)
+Examples, each from a real run:
+[`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
+[`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
 
 ---
 
@@ -371,6 +373,16 @@ This sketch shows the run document's shape:
 
 `tests/test_doc_lists.py` checks the top-level keys and the `results[]` keys of
 this sketch against the schema. The other objects are abridged.
+
+**No verb emits `results[].scope` today.** The schema has it, so a later verb
+may fill it without a major version. `doctor` reports what a target's session
+described in `targets[].scope`, and that is the only scope a run document
+carries. Neither example therefore has `results[].scope`.
+
+The two examples cover different parts of the document. `creds check` shows
+drift, verification and `plan`. `creds status` shows `results[].rollover`, a
+per-row warning (`SOPULI-W013`, a password in its grace period) and an entry in
+`diagnostics[]`.
 
 The sections below explain the parts that encode a decision.
 

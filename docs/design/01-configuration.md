@@ -3046,8 +3046,9 @@ notices until a rotation.
   no field beside one with a field) → error, naming both accounts and where they
   are declared. It is the rule above, for refs that two entries write. It
   applies to every store, a store that stages natively included. Where one
-  store comes only from a profile or `SOPULI_VAULT`, a run refuses the pair once
-  it knows the store ([#841](../decisions/log.md#841))
+  store comes only from a profile or `SOPULI_VAULT`, the file cannot show the
+  pair: a run that draws both accounts refuses the write, and a run whose
+  selectors leave one out does not see it ([#841](../decisions/log.md#841))
 - a `personal_accounts:` entry naming none of `accounts:`, `profile:` and `role:`,
   or more than one of them → error. None declares nothing, which invariant 5 says
   is the default anyway and is not worth an entry; two would mean either the union

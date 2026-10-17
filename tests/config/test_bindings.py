@@ -734,6 +734,32 @@ def test_one_account_s_place_containing_the_other_s_is_refused() -> None:
     ) in str(caught.value)
 
 
+def test_one_account_in_two_nested_places_is_refused() -> None:
+    """An override gives beta `#DB` where alpha has `#DB/acme_web_user`: two
+    values for one account, and writing beta's replaces alpha's."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                applications=[
+                    {
+                        "name": "acme",
+                        "targets": DEV_PDBS,
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/acme#DB/{account}",
+                        "overrides": [
+                            {"where": {"tenant": "beta"}, "secret_template": "apps/acme#DB"}
+                        ],
+                    }
+                ],
+            )
+        )
+
+    assert (
+        "'acme_web_user' (both in entry 'acme') has two places that overlap at "
+        "vault-dev:apps/acme#DB/acme_web_user and vault-dev:apps/acme#DB"
+    ) in str(caught.value)
+
+
 def test_two_accounts_on_different_targets_are_still_one_password() -> None:
     """The target is not part of the key: one document is one document."""
     document_ = two_entries("apps/acme#DB_CREDENTIALS/shared")

@@ -2329,7 +2329,9 @@ the register.
   public, on every store, for the same place and for nested places. The error
   names both accounts, where they are declared, and the refs. It runs before
   the stage-collision rule. Where one store comes only from a profile or
-  `SOPULI_VAULT`, `generate.draw_once` refuses the pair once the run knows it.
+  `SOPULI_VAULT`, the file cannot show the pair. `generate.draw_once` then
+  draws each account its own value, and `generate.group` refuses a write
+  that carries two values for one password, before anything is written.
 - **Why:** Two accounts on one field are one password for two principals. The
   second write overwrites the first, and the application that reads the first is
   locked out at the next rotation, which is the reason
@@ -2340,6 +2342,9 @@ the register.
   on such a store stops loading, which is cheap only before anyone outside
   uses the tool.
 - **Rejected:**
+  - Refuse the pair in `generate.draw_once`, once the run knows every store.
+    It saw only the bindings the run's selectors kept, so a selector could
+    remove the pair it was there to catch, as #830 found for the policy rule.
   - Widen the in-entry rule to look across entries. It reads the ref template,
     not the rendered refs, so it cannot tell when two templates meet on one
     field. The bindings can.

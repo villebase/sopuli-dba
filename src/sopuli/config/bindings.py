@@ -105,44 +105,60 @@ def _check_one_account_per_password(
     store stages natively, as OCI does, that rule does not apply and only this
     one refuses the file (decided in #841).
 
-    Refused at load, as the policy rule below is. The error names both accounts,
+    **One account in two nested places is the same fault too.** An override or
+    a second entry can give one account ``#DB`` on one target and
+    ``#DB/acme_web_user`` on another. Those are two values, and writing one
+    replaces the other. One account in one place is a shared password, which §7
+    allows.
+
+    Refused at load, as the policy rule below is. The error names the accounts,
     where they are declared, and the refs. It compares stores as the file states
-    them, for the reason ``_check_one_policy_per_password`` gives.
-    ``sopuli.generate.draw_once`` refuses the same thing at run time, for a
-    store the file did not state.
+    them, for the reason ``_check_one_policy_per_password`` gives. Where one
+    store comes only from a profile or ``SOPULI_VAULT``, the file cannot show the
+    pair. ``sopuli.generate.draw_once`` then draws each account its own value,
+    and ``generate.group`` refuses a write that carries two values for one
+    password, before anything is written.
 
     Accounts are compared as the file spells them. Whether two spellings are
     one Oracle user is the duplicate-name rule's question, not this one's.
     """
-    documents: dict[tuple[str | None, str], list[tuple[tuple[str, ...], Binding]]] = {}
+    documents: dict[tuple[str | None, str], dict[tuple[tuple[str, ...], str], Binding]] = {}
     for binding in bindings:
         ref = binding.secret
         if ref is None:
             continue
         place = () if ref.field is None else (ref.field, *ref.pointer_segments)
-        others = documents.setdefault((binding.vault, normalise_path(ref.path)), [])
-        for other_place, other in others:
-            if other.account == binding.account or not _overlaps(place, other_place):
+        seen = documents.setdefault((binding.vault, normalise_path(ref.path)), {})
+        if (place, binding.account) in seen:
+            # One account in one place on another target: a shared password.
+            continue
+        for (other_place, _), other in seen.items():
+            if not _overlaps(place, other_place):
                 continue
+            other_ref = other.secret
+            assert other_ref is not None
             if place == other_place:
                 fault = f"resolve to one password at {_address(binding, ref)}"
             else:
-                other_ref = other.secret
-                assert other_ref is not None
                 fault = (
                     f"overlap at {_address(other, other_ref)} and {_address(binding, ref)}: "
                     "writing one password replaces the other"
                 )
+            declared = _declared_in(other, binding)
+            if other.account == binding.account:
+                # The places differ, or `seen` would have skipped this binding.
+                message = f"{binding.account!r} ({declared}) has two places that {fault}"
+            else:
+                message = f"{other.account!r} and {binding.account!r} ({declared}) {fault}"
             raise ConfigError(
-                f"{other.account!r} and {binding.account!r} "
-                f"({_declared_in(other, binding)}) {fault}",
+                message,
                 at=where.get(binding.application, ROOT),
                 hint=(
-                    "each account needs its own place in the document, such as "
+                    "each account needs one place of its own in the document, such as "
                     "path#FIELD/{account}: give the refs distinct, non-nested fields or pointers"
                 ),
             )
-        others.append((place, binding))
+        seen[(place, binding.account)] = binding
 
 
 def _overlaps(one: tuple[str, ...], other: tuple[str, ...]) -> bool:

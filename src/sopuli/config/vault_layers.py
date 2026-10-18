@@ -66,7 +66,11 @@ from dataclasses import replace
 from typing import Any
 from urllib.parse import urlsplit
 
-from sopuli.config.codes import RELAXATION_DEFEATED, THIRD_PARTY_ADDR_OVERRIDES
+from sopuli.config.codes import (
+    RELAXATION_DEFEATED,
+    THIRD_PARTY_ADDR_OVERRIDES,
+    THIRD_PARTY_NAMESPACE_OVERRIDES,
+)
 from sopuli.config.errors import ROOT, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
 from sopuli.config.vault_env import (
@@ -193,9 +197,12 @@ def _merge(
         settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
-    overridden = _addr_overridden(vault.name, settings.get("addr"))
-    if overridden is not None:
-        warnings.append(overridden)
+    for overridden in (
+        _addr_overridden(vault.name, settings.get("addr")),
+        _namespace_overridden(vault.name, settings.get("namespace")),
+    ):
+        if overridden is not None:
+            warnings.append(overridden)
 
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
@@ -245,7 +252,7 @@ def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None
     """
     if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
         return None
-    declared = next((one for one in answer.contributions if one.layer in FILE_LAYERS), None)
+    declared = _declared_under(answer)
     if declared is None or _same_address(declared.value, answer.value):
         return None
     return ConfigWarning(
@@ -263,7 +270,52 @@ def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None
     )
 
 
-#: The layers that are the config file, for :func:`_addr_overridden`.
+def _namespace_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None:
+    """A warning when ``VAULT_NAMESPACE`` moved a store away from the file's ``namespace``.
+
+    The same hazard as :func:`_addr_overridden` (#892): a namespace left over
+    from other work sends this run's login and writes to another Vault
+    Enterprise namespace. No ``SOPULI_*`` variable or flag sets a namespace, so
+    the hint points at the file.
+
+    Nothing to say when the file declares no ``namespace`` for the store, as for
+    the address, or when the two differ only by a leading or trailing ``/``,
+    which Vault ignores.
+
+    ``VAULT_CACERT`` does not warn (#892). Another CA file can only make TLS
+    fail, or verify against another CA, which still has to have issued the
+    server's certificate. It sends nothing to another place.
+    """
+    if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
+        return None
+    declared = _declared_under(answer)
+    if declared is None or declared.value.strip("/") == answer.value.strip("/"):
+        return None
+    return ConfigWarning(
+        message=(
+            f"{answer.detail} sets the namespace of vault {name!r} to {answer.value!r}, "
+            f"not {declared.value!r}, which {declared.detail} declares"
+        ),
+        # No `at`: the message names both locations already.
+        at="",
+        hint=(
+            f"unset {answer.detail} if it is left over from other work; to use that "
+            f"namespace on purpose, declare it in the file, for example in a profile"
+        ),
+        code=THIRD_PARTY_NAMESPACE_OVERRIDES,
+    )
+
+
+def _declared_under(answer: Resolved) -> Contribution | None:
+    """The file's value under ``answer``, or ``None`` when the file declares none.
+
+    The file's answer is its highest layer, which is the one an operator would
+    edit.
+    """
+    return next((one for one in answer.contributions if one.layer in FILE_LAYERS), None)
+
+
+#: The layers that are the config file, for :func:`_declared_under`.
 FILE_LAYERS = frozenset({Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS})
 
 #: The port a scheme implies, so ``https://v`` and ``https://v:443`` are one server.

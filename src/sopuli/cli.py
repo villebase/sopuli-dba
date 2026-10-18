@@ -5049,6 +5049,11 @@ def creds_generate(
     # cited here and not in the docstring, because the docstring is
     # `creds generate --help`.
     document = run.document
+    if from_stdin:
+        # A usage error, so it comes before anything the selection decides:
+        # before a plan is printed or a confirmation is asked, and whether or
+        # not the selection has anything to stage (#862).
+        _refuse_terminal_stdin()
     refuse_if_readonly(
         run.resolved, action="promoting a password" if promote else "staging a password"
     )
@@ -5360,6 +5365,29 @@ def _profile_readings(
     return found
 
 
+def _refuse_terminal_stdin() -> None:
+    """Refuse ``--from-stdin`` when stdin is a terminal (#862).
+
+    The flag is for a pipe or a redirect. At a terminal the read would wait for
+    end of input, and the password the operator typed would show on the screen,
+    in the scrollback and in any recording of the session.
+
+    **What it cannot see.** On Windows, mintty (Git Bash, MSYS2) without
+    ``winpty`` gives a program a named pipe for stdin, and a pipe from a person
+    typing cannot be told from a pipe from another program. ``isatty`` says no
+    there, so the read proceeds. ``winpty`` or Windows Terminal gives the
+    console the check needs.
+    """
+    if is_a_terminal(sys.stdin):
+        raise ArgumentError(
+            "--from-stdin was given and stdin is a terminal",
+            hint=(
+                "pipe the password in, or redirect it from a file -- typed at a terminal, "
+                "it would show on the screen"
+            ),
+        )
+
+
 def _password_from_stdin() -> Secret:
     """Read one password from stdin (invariant 1: never from an option value).
 
@@ -5370,19 +5398,9 @@ def _password_from_stdin() -> Secret:
     local copy of the rule did not, and Windows is precisely where P4 asks for
     identical behaviour.
 
-    **Refused when stdin is a terminal** (#862). The flag is for a pipe or a
-    redirect. At a terminal the read would wait for end of input, and the
-    password the operator typed would show on the screen, in the scrollback and
-    in any recording of the session.
+    A stdin that is a terminal was refused before this, at the start of the
+    command (:func:`_refuse_terminal_stdin`).
     """
-    if is_a_terminal(sys.stdin):
-        raise ArgumentError(
-            "--from-stdin was given and stdin is a terminal",
-            hint=(
-                "pipe the password in, or redirect it from a file -- typed at a terminal, "
-                "it would show on the screen"
-            ),
-        )
     try:
         # Bytes, then a strict decode. The text stream decodes with
         # `surrogateescape`, which turns a byte that is not UTF-8 into a

@@ -1413,8 +1413,7 @@ def account_suspend(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
-    _hold_plan(plan, run, noun="account")
+    _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     if not reached:
@@ -1695,8 +1694,7 @@ def account_expire_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
-    _hold_plan(plan, run, noun="account")
+    _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     if not reached:
@@ -2056,8 +2054,7 @@ def account_reset_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
-    _hold_plan(plan, run, noun="account")
+    _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
     # No-ops outside `--output jsonl`. A seen reset reaches them only as
     # a `--dry-run`: the real one is refused under every machine format above,
     # and a preview is exempt from that refusal because it shows no password
@@ -4018,15 +4015,18 @@ def _confirm_environments(
     _confirm(question, abort=True, err=True)
 
 
-def _hold_plan(plan: Any, run: Invocation, *, noun: str) -> None:
-    """Keep the rendered plan for a run that raises before it finishes (#863).
+def _record_plan(plan: Any, run: Invocation, *, noun: str, confirmation_required: bool) -> None:
+    """Put a mutating verb's plan on the run document, as JSON and as text (#863).
 
-    Invariant 8. A verb's plan is the first thing in the output it returns, and
-    that output is printed when the verb finishes. If the verb raises part way,
-    the command handler prints this to stderr instead, so the operator still
-    sees what the run had been about to touch
-    (:func:`sopuli.invocation._show_unfinished_plan`).
+    One call for both, so a verb cannot set the one and forget the other. The
+    text is for invariant 8. A verb's plan is the first thing in the output it
+    returns, and that output is printed when the verb finishes. If the verb
+    raises part way, the command handler prints the text to stderr instead, so
+    the operator still sees what the run had been about to touch
+    (:func:`sopuli.invocation._show_unfinished_plan`). The prompts print the
+    same text (:func:`_show_plan`).
     """
+    run.document.plan = plan.as_json(confirmation_required=confirmation_required)
     run.document.plan_text = render_plan(plan, noun=noun)
 
 
@@ -4034,11 +4034,13 @@ def _show_plan(plan: Any, run: Invocation, *, noun: str) -> None:
     """Print the plan to stderr before a prompt, once per run (#863).
 
     A run can have two gates, a rollback's and `safety.confirm_environments`,
-    and the operator needs the plan before the first of them, not twice.
+    and the operator needs the plan before the first of them, not twice. The
+    text :func:`_record_plan` kept is printed, so the prompt and a failure show
+    the same plan; ``noun`` renders it only for a verb that recorded none.
     """
     if run.document.plan_shown:
         return
-    _echo_err(render_plan(plan, noun=noun), run=run)
+    _echo_err(run.document.plan_text or render_plan(plan, noun=noun), run=run)
     run.document.plan_shown = True
 
 
@@ -5095,8 +5097,7 @@ def creds_generate(
         config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
-    _hold_plan(plan, run, noun="generation")
+    _record_plan(plan, run, noun="generation", confirmation_required=_asks_environments(plan, run))
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
@@ -6100,6 +6101,9 @@ def creds_apply(
     """
     document = run.document
     refuse_if_readonly(run.resolved, action="applying a password")
+    # Refused here, before anything is read, where the question could not be
+    # answered; it is asked later, after the plan (#863).
+    _refuse_unanswerable_rollback(source_stage, confirmed=confirm, previewing=run.dry_run, run=run)
 
     selection = selected(selectors, targets, accounts, groups, applications)
     refuse_unknown(run.config, selection)
@@ -6146,10 +6150,12 @@ def creds_apply(
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
     )
-    document.plan = plan.as_json(
-        confirmation_required=source_stage == PREVIOUS or _asks_environments(plan, run)
+    _record_plan(
+        plan,
+        run,
+        noun="apply",
+        confirmation_required=source_stage == PREVIOUS or _asks_environments(plan, run),
     )
-    _hold_plan(plan, run, noun="apply")
     # No-ops outside `--output jsonl`, as in `creds check`: nothing here branches on
     # the mode.
     emitter = run.emitter()
@@ -6158,8 +6164,12 @@ def creds_apply(
     # `--source previous` requires -- so the flag answers both gates. Two flags
     # for one word would be the sort of distinction only the implementation cares
     # about. The rollback is asked here, after the plan, so the operator sees
-    # which targets it reaches before answering (#863).
-    _confirm_rollback(source_stage, confirmed=confirm, previewing=run.dry_run, run=run, plan=plan)
+    # which targets it reaches before answering, and only where there is
+    # something to roll back (#863).
+    if bindings:
+        _confirm_rollback(
+            source_stage, confirmed=confirm, previewing=run.dry_run, run=run, plan=plan
+        )
     _confirm_environments(plan, run, action="applying a password", confirmed=confirm, noun="apply")
 
     if not bindings:
@@ -6542,24 +6552,22 @@ class _Promotion:
     held: str | None = None
 
 
-def _confirm_rollback(
-    stage: str | None, *, confirmed: bool, previewing: bool, run: Invocation, plan: Any
+def _refuse_unanswerable_rollback(
+    stage: str | None, *, confirmed: bool, previewing: bool, run: Invocation
 ) -> None:
-    """Ask before a rollback, or refuse where nobody can be asked.
-
-    **Asked after the plan, and the plan is printed first** (#863, invariant
-    8). The question names no targets, so an operator answering it without the
-    plan would be agreeing to a blast radius nobody had shown them.
+    """Refuse a rollback that needs confirmation nobody can give.
 
     UC-1 section 8 puts `--confirm` on this operation and only this one, and the
     reason is worth saying: `--source previous` is the one invocation whose
     *success* makes an application's current credential stop working. Every other
     thing `apply` does converges the estate on what the vault already says.
 
-    The shape is `lock break`'s, for its reasons (:func:`_confirm_break`): the
-    prompt goes to **stderr**, so a confirmation cannot be skipped by asking for
-    JSON, and a closed stdin is a refusal rather than a prompt that reads EOF --
-    exit 8 naming the flag is more use than click aborting on nobody's behalf.
+    The shape is `lock break`'s, for its reasons (:func:`_confirm_break`): a
+    closed stdin is a refusal rather than a prompt that reads EOF -- exit 8
+    naming the flag is more use than click aborting on nobody's behalf.
+    **Asked first**, before anything is read, so an unattended rollback is told
+    about `--confirm` rather than about whatever else would have stopped it
+    later. The question itself is asked after the plan (:func:`_confirm_rollback`).
 
     `--dry-run` needs no confirmation. Nothing is changed, and a preview an
     operator has to authorise is a preview they will stop taking.
@@ -6575,12 +6583,27 @@ def _confirm_rollback(
                 "without touching anything"
             ),
         )
+
+
+def _confirm_rollback(
+    stage: str | None, *, confirmed: bool, previewing: bool, run: Invocation, plan: Any
+) -> None:
+    """Ask before a rollback, after the plan has been printed (#863).
+
+    Invariant 8. The question names no targets, so an operator answering it
+    without the plan would be agreeing to a blast radius nobody had shown them.
+    The prompt goes to **stderr**, so a confirmation cannot be skipped by asking
+    for JSON, and `confirmation.required` is sent first, as the other gates send
+    it, so a stream consumer can tell a waiting run from a hung one.
+    :func:`_refuse_unanswerable_rollback` has already refused where nobody can
+    answer.
+    """
+    if stage != PREVIOUS or confirmed or previewing:
+        return
+    question = "put the vault's `previous` password back on every selected target?"
+    run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     _show_plan(plan, run, noun="apply")
-    _confirm(
-        "put the vault's `previous` password back on every selected target?",
-        abort=True,
-        err=True,
-    )
+    _confirm(question, abort=True, err=True)
 
 
 def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
@@ -9085,8 +9108,7 @@ def creds_finish_rollover(
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings), run.prompt, action="ending a rollover window"
     )
-    document.plan = plan.as_json(confirmation_required=_asks_environments(plan, run))
-    _hold_plan(plan, run, noun="window")
+    _record_plan(plan, run, noun="window", confirmation_required=_asks_environments(plan, run))
     # The one verb here whose purpose is to stop something working, so the gate
     # is if anything more apt: closing a window early is what takes the old
     # password away from whatever has not been given the new one.
@@ -9518,8 +9540,7 @@ def creds_rotate(
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     refuse_if_nobody_to_ask(_targets_of(config, bindings), run.prompt, action="rotating a password")
     # `_confirm_rotation` asks every real run that has something to rotate.
-    document.plan = plan.as_json(confirmation_required=bool(bindings))
-    _hold_plan(plan, run, noun="rotation")
+    _record_plan(plan, run, noun="rotation", confirmation_required=bool(bindings))
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)

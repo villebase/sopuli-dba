@@ -800,10 +800,13 @@ first question is where their test database runs.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
-  A real run prints its plan before any prompt, on stderr, once. A run with no
-  prompt prints it first in its output when it finishes, and a run that raises
-  part way prints it to stderr before the error, so a failure still shows what
-  the run had been about to touch (#863).
+  A real run's plan is the first thing in its output. A run that asks before it
+  changes anything also prints the plan to stderr before the first question,
+  once however many questions follow. A run that raises, is aborted or is
+  interrupted part way, and showed no plan before a question, prints it to
+  stderr before it stops, so a failure still shows what the run had been about
+  to touch. `account reset-password` prints its plan to stderr before its first
+  target whether or not it asks (#863).
 - Every mutating command supports **`--confirm`**, with one exception: UC-2's
   seen reset refuses it as a usage error (exit 2), because there the prompt
   establishes that a person is present. **The tool asks for confirmation where

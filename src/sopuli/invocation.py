@@ -92,7 +92,7 @@ from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.material import TOKEN_FLAG, TOKEN_SOURCES
-from sopuli.output.color import ColorChoice
+from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.debug import debugging, logger
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
@@ -1006,9 +1006,15 @@ def _pass_invocation(func: F) -> F:
             # a Ctrl-C -- stopped it. Raising SystemExit here rather than
             # re-raising is what makes the process agree with the document, since
             # `exit_code` in the document always equals the process's.
+            _show_unfinished_plan(invocation)
             _abort(invocation)
             click.echo("sopuli: aborted", err=True)
             raise SystemExit(ExitCode.ABORTED) from exc
+        except KeyboardInterrupt:
+            # Ctrl-C part way through a run, which is the commonest way one
+            # stops early. Shown, then left to propagate as it always has.
+            _show_unfinished_plan(invocation)
+            raise
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
             _show_unfinished_plan(invocation)
             _fail(invocation, exc)
@@ -1061,13 +1067,17 @@ def _show_unfinished_plan(invocation: Invocation) -> None:
     builds that output, and the error alone does not say what the first four
     were. So the plan goes to stderr here, before the error line.
 
-    Not where a prompt already printed it (``plan_shown``), and not under
-    ``--output json``, whose document carries the plan in ``plan``.
+    Also for a run that was aborted or interrupted part way, which ends here too.
+    Not where a prompt already printed it (``plan_shown``), so a declined
+    prompt does not repeat it, and not under ``--output json``, whose document
+    carries the plan in ``plan``. Colour follows the run's own choice for
+    stderr, as the plan before a prompt does.
     """
     document = invocation.document
     if invocation.is_json or document.plan_text is None or document.plan_shown:
         return
-    click.echo(printable(document.plan_text, colour=False), err=True)
+    colour = resolve_color(invocation.emitter().color_choice, stream=sys.stderr, env=os.environ)
+    click.echo(printable(document.plan_text, colour=colour), err=True, color=colour)
 
 
 def _debug_settings(invocation: Invocation) -> None:

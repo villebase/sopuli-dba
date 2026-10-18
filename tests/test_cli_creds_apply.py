@@ -3518,12 +3518,76 @@ def test_a_failed_json_run_does_not_print_the_plan_as_text(
 ) -> None:
     """The JSON document carries the plan in `plan`, so nothing else is
     added to the streams of a machine-read run."""
-    estate(answers={"ACME_WEB_USER": drifted()})
+    harness = estate(answers={"ACME_WEB_USER": drifted()})
     monkeypatch.setattr("sopuli.cli._promote_documents", _raises_after_the_change)
 
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
 
+    assert harness["sessions"][0].changed
+    assert result.exit_code != ExitCode.SUCCESS
     assert "Plan:" not in result.output
+
+
+def test_an_interrupted_run_still_prints_its_plan(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C part way through is the commonest way a run stops early, and it
+    arrives as `KeyboardInterrupt`, not as an `Exception`."""
+
+    def interrupted(*_: object, **__: object) -> None:
+        raise KeyboardInterrupt
+
+    harness = estate(answers={"ACME_WEB_USER": drifted()})
+    monkeypatch.setattr("sopuli.cli._promote_documents", interrupted)
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert harness["sessions"][0].changed
+    assert result.output.count("Plan:") == 1
+
+
+def test_a_rollback_with_nothing_to_apply_asks_nothing(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """There is nothing to put back, so there is no question to answer."""
+    asked: list[str] = []
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+
+    def answer(question: str, **_: object) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    estate(documents=_rolled())
+    config = write_config(CONFIG.replace("secret_template", "# secret_template"))
+    run(runner, config, "--select", "tenant=alpha", "--source", "previous")
+
+    assert asked == []
+
+
+def test_an_unattended_rollback_is_refused_before_anything_is_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal comes first, naming `--confirm`, and the question is asked
+    later, after the plan."""
+
+    def must_not_run(*_: object, **__: object) -> None:
+        raise AssertionError("reached past the rollback refusal")
+
+    estate(documents=_rolled())
+    monkeypatch.setattr("sopuli.cli.selected", must_not_run)
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--source", "previous")
+
+    assert "nobody here to ask" in str(result.exception)
 
 
 def test_a_rollback_under_a_profile_that_cannot_answer_is_refused(

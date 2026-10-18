@@ -31,6 +31,7 @@ file read.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -411,6 +412,11 @@ def _read(path: Path) -> str:
             hint="save the file as UTF-8",
         ) from error
     except OSError as error:
+        # A file this user cannot open may be one the checks would refuse, and
+        # their refusal says what to fix. Nothing has been read, so checking by
+        # path here costs nothing.
+        with contextlib.suppress(OSError):
+            check_permissions(path, owner=True)
         raise ConfigError(
             f"cannot read the config file: {error.strerror or error}",
             source=path,

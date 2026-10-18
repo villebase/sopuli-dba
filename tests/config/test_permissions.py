@@ -132,9 +132,11 @@ def test_the_owner_is_checked_only_when_asked(config_file: Path, another_user: i
 
 @posix_only
 def test_a_file_root_owns_is_accepted(config_file: Path, another_user: int) -> None:
-    """A config under /etc is root's, and a service account reads it.
+    """``sudo sopuli`` reads a config under /etc that root owns.
 
-    A root-owned file cannot be made without root, so the status says so.
+    The exemption matters only when sopuli runs as root: a root-owned file that
+    passes the mode check is ``0600``, so no other user can open it. A
+    root-owned file cannot be made without root, so the status says so.
     """
     root_owned = os.stat_result((0o100600, 0, 0, 1, 0, 0, 0, 0, 0, 0))
     check_permissions(config_file, owner=True, status=root_owned)
@@ -154,6 +156,34 @@ def test_the_status_given_is_the_one_checked(config_file: Path) -> None:
 def test_the_loader_refuses_a_file_owned_by_another_user(
     config_file: Path, another_user: int
 ) -> None:
+    with pytest.raises(ConfigError, match="owned by another user"):
+        load_document(config_file)
+
+
+@posix_only
+def test_the_loader_checks_the_descriptor_it_reads(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The path is 0600 and the descriptor says 0644, so only the descriptor
+    can be the source of the refusal."""
+    config_file.chmod(0o600)
+    wider = os.stat_result((0o100644, 0, 0, 1, os.getuid(), 0, 0, 0, 0, 0))
+    monkeypatch.setattr(os, "fstat", lambda _fd: wider)
+
+    with pytest.raises(ConfigError, match="mode 0644"):
+        load_document(config_file)
+
+
+@posix_only
+@pytest.mark.skipif(
+    sys.platform != "win32" and os.getuid() == 0, reason="root can open a mode 000 file"
+)
+def test_a_file_that_cannot_be_opened_still_gets_the_owner_refusal(
+    config_file: Path, another_user: int
+) -> None:
+    """The refusal says what to fix, where "permission denied" would not."""
+    config_file.chmod(0o000)
+
     with pytest.raises(ConfigError, match="owned by another user"):
         load_document(config_file)
 

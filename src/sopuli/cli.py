@@ -218,13 +218,16 @@ from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
 from sopuli.output.account_list_view import summarise as summarise_account_list
-from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import (
+    HELD_NARROWED,
+    HELD_SKIPPED,
+    HELD_UNCONFIRMED,
     render_apply,
     render_source_table,
     repair_invocation,
     verification_json,
 )
+from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.color import ColorChoice
@@ -6460,6 +6463,11 @@ class _Promotion:
 
     ``skipped`` is the (account, target) pairs a guardrail skipped for an account
     this document would have promoted (#852), which ``SOPULI-W050`` names.
+
+    ``held`` says why a document that owed a promotion was held back without a
+    write: the run was narrowed (`SOPULI-W027`), a guardrail skipped a target
+    (`SOPULI-W050`), or a target did not confirm. Its confirmed rows then carry
+    `SOPULI-W049` (#873), because `current` is stale for them too.
     """
 
     version: int | None
@@ -6469,6 +6477,7 @@ class _Promotion:
     error: Error | None = None
     conflict: bool = False
     skipped: tuple[tuple[str, str], ...] = ()
+    held: str | None = None
 
 
 def _confirm_rollback(
@@ -6764,7 +6773,8 @@ def _apply_estate(
     enough to need it. A renewal is a write and goes behind the fence like every
     other, so the boundary is also the check that catches a takeover between one
     target and the next -- before the next target's first `ALTER USER` rather
-    than after it.
+    than after it. Inside a target, the fence check before each statement renews
+    once half the TTL has gone (`LockManager.check`, #864).
 
     **A stolen lock ends the run and is returned, not raised.** §8 is explicit
     that the run aborts and mutates nothing further, and what it had already
@@ -8388,6 +8398,7 @@ def _promote_documents(
                 None,
                 "this run was narrower than the promotion, so the vault was left as it was",
                 promotable=True,
+                held=HELD_NARROWED,
             )
             continue
         # A failure is the reason before a skip is: the same run again may fix
@@ -8402,6 +8413,7 @@ def _promote_documents(
                 None,
                 "not every target confirmed, so the vault was left as it was",
                 promotable=True,
+                held=HELD_UNCONFIRMED,
             )
             continue
         skipped = _skipped_pairs(records)
@@ -8412,6 +8424,7 @@ def _promote_documents(
                 "so the vault was left as it was",
                 promotable=True,
                 skipped=skipped,
+                held=HELD_SKIPPED,
             )
             continue
         try:
@@ -8589,15 +8602,15 @@ def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]
     ]
 
 
-def _failed_promotion(
+def _owed_promotion(
     record: _Applied, promotions: Mapping[LockKey, _Promotion]
-) -> tuple[_Promotion, Error] | None:
-    """The failed promotion write this record's password was part of, and its error.
+) -> _Promotion | None:
+    """The promotion this row was for, or ``None`` where it was for none.
 
-    The one definition of a row the failure is about (#805). A row is part of
-    the write when it confirmed and its stage owed one (`apply.promotes`). A
-    sibling applied from `current` owed nothing, so its `current` is right, and a
-    skipped row was left out of the write (:func:`_by_document`).
+    The one definition of a row a promotion is about (#805, #873). A row is part
+    of it when it confirmed and its stage owed one (`apply.promotes`). A sibling
+    applied from `current` owed nothing, so its `current` is right, and a skipped
+    row was left out of the write (:func:`_by_document`).
     """
     binding, source = record.binding, record.source
     if binding.secret is None or binding.vault is None or source is None:
@@ -8606,7 +8619,14 @@ def _failed_promotion(
         return None
     if not apply_states.is_confirmed(record.outcome.state):
         return None
-    promotion = promotions.get(_lock_key(binding))
+    return promotions.get(_lock_key(binding))
+
+
+def _failed_promotion(
+    record: _Applied, promotions: Mapping[LockKey, _Promotion]
+) -> tuple[_Promotion, Error] | None:
+    """The failed promotion write this record's password was part of, and its error."""
+    promotion = _owed_promotion(record, promotions)
     if promotion is None or promotion.error is None:
         return None
     return promotion, promotion.error
@@ -8649,13 +8669,35 @@ def _failed_promotions(
     return diagnostics
 
 
-def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
-    """The rows whose promotion write failed, from :func:`_failed_promotion`.
+def _held_back(record: _Applied, promotions: Mapping[LockKey, _Promotion]) -> str | None:
+    """Why this row's document was held back without a write, or ``None``.
 
-    The summary counts them as failed, not ok: the database took the password
-    and applications still fetch the old one from `current`.
+    For a row the promotion was for (:func:`_owed_promotion`) whose document
+    the gate held back (#873). The database has the password and `current` does
+    not, so the row is as unfinished as one whose write failed.
+
+    **Not after a takeover.** A document the run never reached has no
+    promotion entry, so it is not reported here. The run that took the lock
+    may promote that document itself, so this run cannot say that `current` is
+    stale. `SOPULI-W011` says the run stopped, and `creds check` says what is
+    true.
     """
-    return sum(1 for record in applied if _failed_promotion(record, promotions) is not None)
+    promotion = _owed_promotion(record, promotions)
+    return None if promotion is None else promotion.held
+
+
+def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
+    """The confirmed rows whose document `current` was not moved to.
+
+    The ones whose promotion write failed (:func:`_failed_promotion`) and the
+    ones whose document was held back (:func:`_held_back`). The summary counts
+    them as failed, not ok: the database took the password and applications
+    still fetch the old one from `current`.
+    """
+    owed = [_owed_promotion(record, promotions) for record in applied]
+    return sum(
+        1 for one in owed if one is not None and (one.error is not None or one.held is not None)
+    )
 
 
 def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
@@ -8882,6 +8924,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
         promotion_error=None if failed is None else failed[1],
+        held_back=_held_back(record, promotions),
         mechanism=None if promotion is None else promotion.mechanism,
         overridden=record.overridden,
         attributes=record.attributes,

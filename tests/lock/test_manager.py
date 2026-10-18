@@ -474,7 +474,9 @@ def test_a_check_before_half_the_ttl_writes_nothing() -> None:
     run.check(KEY)
 
     assert run.held[0].fence == 1
-    assert store.read(lock_path(KEY)).version == 1
+    stored = store.read(lock_path(KEY))
+    assert stored is not None
+    assert stored.version == 1
 
 
 def test_a_check_past_half_the_ttl_renews_so_a_long_target_keeps_its_lock() -> None:
@@ -489,7 +491,9 @@ def test_a_check_past_half_the_ttl_renews_so_a_long_target_keeps_its_lock() -> N
         run.check(KEY)
 
     # Twenty minutes in, past the fifteen-minute TTL, and still held.
-    assert run.held[0].fence > 1
+    fence = run.held[0].fence
+    assert fence is not None
+    assert fence > 1
     assert not run.held[0].record.is_expired(now=clock(), skew=run.skew)
 
 

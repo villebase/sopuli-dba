@@ -146,7 +146,7 @@ def test_a_file_root_owns_is_accepted(config_file: Path, another_user: int) -> N
 def test_the_status_given_is_the_one_checked(config_file: Path) -> None:
     """The loader passes the open descriptor's ``fstat``, not the path's."""
     config_file.chmod(0o600)
-    wider = os.stat_result((0o100644, 0, 0, 1, os.getuid(), 0, 0, 0, 0, 0))
+    wider = os.stat_result((0o100644, 0, 0, 1, config_file.stat().st_uid, 0, 0, 0, 0, 0))
 
     with pytest.raises(ConfigError, match="mode 0644"):
         check_permissions(config_file, status=wider)
@@ -167,7 +167,7 @@ def test_the_loader_checks_the_descriptor_it_reads(
     """The path is 0600 and the descriptor says 0644, so only the descriptor
     can be the source of the refusal."""
     config_file.chmod(0o600)
-    wider = os.stat_result((0o100644, 0, 0, 1, os.getuid(), 0, 0, 0, 0, 0))
+    wider = os.stat_result((0o100644, 0, 0, 1, config_file.stat().st_uid, 0, 0, 0, 0, 0))
     monkeypatch.setattr(os, "fstat", lambda _fd: wider)
 
     with pytest.raises(ConfigError, match="mode 0644"):

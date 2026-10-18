@@ -118,7 +118,10 @@ So the four variables are the one place that names the stack.
 `VAULT_ADDR`, `SOPULI_TEST_ORACLE_DSN` and `SOPULI_TEST_ORACLE_CONTAINER`
 still override the defaults when they are set. A shell that lacks the four
 variables works on the first clone's stack, without a warning, because both
-stacks are on loopback.
+stacks publish their ports on `127.0.0.1` and the first one uses the default
+ports. Compose binds every port to `127.0.0.1` only, because the stack's
+credentials are in the repository: on every interface, anyone on the same
+network could log in as Vault root or as SYS.
 
 Everything else in the documentation uses the default names and ports: the
 `docker exec` commands, the Vault UI link below, the configuration samples in

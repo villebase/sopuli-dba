@@ -385,17 +385,16 @@ def test_a_check_can_be_narrowed_to_the_lock_about_to_be_written_under() -> None
     own document lock. Checking all of them would be a store read per held lock
     before every statement, to establish facts nothing was about to act on.
 
-    The takeover is a direct write under the compare-and-set, with the clock
-    left alone. Past half the TTL a check renews every held lock, and a renewal
-    has to verify all of them (`test_a_check_that_is_due_still_finds_a_takeover`),
-    so narrowing is a property of the checks that renew nothing."""
+    Past half the TTL the check renews, and the renewal is narrowed the same
+    way: `KEY` is renewed, and `OTHER`'s takeover is found only when `OTHER`
+    is checked."""
     store = MemoryStore()
-    run = manager(store)
+    clock = Clock()
+    run = manager(store, clock=clock)
     run.acquire([KEY, OTHER])
-    theirs = LockRecord.acquired(
-        correlation_id="01JTHEIRS", command="creds rotate", holder=HOLDER, now=NOW
-    )
-    store.write(lock_path(OTHER), theirs.to_dict(), cas=run.held[1].fence)
+
+    clock.advance(DEFAULT_TTL + CLOCK_SKEW + timedelta(seconds=1))
+    manager(store, correlation_id="01JTHEIRS", clock=clock, break_expired=True).acquire([OTHER])
 
     run.check(KEY)
 
@@ -490,6 +489,40 @@ def test_a_check_past_half_the_ttl_renews_so_a_long_target_keeps_its_lock() -> N
     # Twenty minutes in, past the fifteen-minute TTL, and still held.
     assert run.held[0].fence > 1
     assert not run.held[0].record.is_expired(now=clock(), skew=run.skew)
+
+
+def test_a_check_renews_only_the_lock_it_was_asked_about() -> None:
+    """A narrowed check stays narrowed when it renews: it writes the document
+    about to be changed and no other. The boundary renewal keeps the rest."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY, OTHER])
+    clock.advance(timedelta(minutes=8))
+
+    run.check(KEY)
+
+    fences = {one.key: one.fence for one in run.held}
+    assert fences == {KEY: 2, OTHER: 1}
+
+
+def test_a_released_lock_is_not_checked_or_renewed() -> None:
+    """Rewriting a released record would hold it again, and naming one in a
+    check raises as naming a lock this run never took does."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY])
+    run.release()
+    released = store.read(lock_path(KEY))
+    clock.advance(timedelta(minutes=8))
+
+    run.check()
+    run.renew()
+    with pytest.raises(KeyError):
+        run.check(KEY)
+
+    assert store.read(lock_path(KEY)).version == released.version  # type: ignore[union-attr]
 
 
 def test_a_check_that_is_due_still_finds_a_takeover() -> None:

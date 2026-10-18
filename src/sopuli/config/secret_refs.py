@@ -62,7 +62,8 @@ TRAVERSAL = frozenset({".", ".."})
 #: the path is dropped. A ``%`` lets ``%2e%2e`` reach the server as a ``..`` that
 #: the traversal check never saw. A backslash or a control character has no
 #: use in a vault path. They are refused rather than percent-encoded, as
-#: ``TRAVERSAL`` is, so a path has one spelling and a lock key one meaning.
+#: ``TRAVERSAL`` is: the operator learns at load time, with a location, that
+#: the path does not say what they meant, and no real estate needs them.
 UNSAFE_PATH_CHARACTERS = frozenset("?%\\")
 
 UNSAFE_PATH_HINT = (
@@ -87,11 +88,23 @@ def unsafe_path_characters(text: str) -> list[str]:
     return found
 
 
-def reject_unsafe_path(text: str, *, what: str, at: KeyPath) -> None:
-    """Raise :class:`ConfigError` if ``text`` holds a character a path may not.
+def reject_unaddressable_path(text: str, *, what: str, at: KeyPath, traversal_hint: str) -> None:
+    """Raise :class:`ConfigError` unless ``text`` addresses what it says.
 
-    ``what`` names the value in the message, such as ``secret ref 'apps/x'``.
+    Two rules, for every store path or mount a file names: no ``.`` or ``..``
+    segment (decision #344), and none of the characters
+    :func:`unsafe_path_characters` finds. ``what`` names the value in the
+    message, such as ``secret ref 'apps/x'``. ``traversal_hint`` says what a
+    relative segment would do at this site, which differs between a ref, a
+    prefix and a mount.
     """
+    traversal = sorted({segment for segment in text.split("/") if segment in TRAVERSAL})
+    if traversal:
+        raise ConfigError(
+            f"{what} contains {', '.join(repr(one) for one in traversal)} as a path segment",
+            at=at,
+            hint=traversal_hint,
+        )
     unsafe = unsafe_path_characters(text)
     if unsafe:
         raise ConfigError(
@@ -217,20 +230,17 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
     # some other way. A `..` does not address a document -- it walks out
     # of whatever prefix the caller put it under, which for a lock is the
     # `locks/` prefix that keeps lock writes off the secret itself.
-    traversal = sorted({segment for segment in path.split("/") if segment in TRAVERSAL})
-    if traversal:
-        raise ConfigError(
-            f"secret ref {text!r} contains "
-            f"{', '.join(repr(one) for one in traversal)} as a path segment",
-            at=at,
-            hint=(
-                "write the path the document actually lives at -- a relative segment "
-                "resolves somewhere else on the way to the store, so the ref addresses "
-                "a document other than the one written here; a lock for it, for "
-                "instance, would not land under `locks/`"
-            ),
-        )
-    reject_unsafe_path(path, what=f"secret ref {text!r}", at=at)
+    reject_unaddressable_path(
+        path,
+        what=f"secret ref {text!r}",
+        at=at,
+        traversal_hint=(
+            "write the path the document actually lives at -- a relative segment "
+            "resolves somewhere else on the way to the store, so the ref addresses "
+            "a document other than the one written here; a lock for it, for "
+            "instance, would not land under `locks/`"
+        ),
+    )
 
     return SecretRef(
         path=path,

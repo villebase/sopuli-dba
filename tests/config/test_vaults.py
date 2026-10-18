@@ -531,7 +531,7 @@ def test_a_negative_timeout_is_refused() -> None:
         build_vaults({"vaults": {"v": {**HASHICORP, "timeout_s": -5}}})
 
 
-@pytest.mark.parametrize("mount", ["kv?x", "kv%2f", "k\\v", "kv\t"])
+@pytest.mark.parametrize("mount", ["kv?x", "kv%2f", "k\\v", "kv\t", "kv/../sys", "./kv"])
 def test_a_kv_mount_that_changes_the_url_is_refused(mount: str) -> None:
     """The mount goes into the URL as written, as a path does (#858)."""
     with pytest.raises(ConfigError) as caught:

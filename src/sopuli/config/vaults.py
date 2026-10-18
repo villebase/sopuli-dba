@@ -33,7 +33,7 @@ from sopuli.config.fields import (
 )
 from sopuli.config.locking import build_lock_mode
 from sopuli.config.model import Vault, VaultAuth, VaultPatch, VaultTls
-from sopuli.config.secret_refs import reject_unsafe_path
+from sopuli.config.secret_refs import reject_unaddressable_path
 
 VAULT_KEYS = (
     "type",
@@ -266,7 +266,15 @@ def _build_mount(container: dict[str, Any], *, at: KeyPath) -> str | None:
     """A KV or auth ``mount:``. It goes into the URL as written, as a path does."""
     mount = optional_string(container, "mount", at=at)
     if mount is not None:
-        reject_unsafe_path(mount, what=f"mount {mount!r}", at=at.key("mount"))
+        reject_unaddressable_path(
+            mount,
+            what=f"mount {mount!r}",
+            at=at.key("mount"),
+            traversal_hint=(
+                "write the mount's own path -- httpx resolves a relative segment before "
+                "the request is sent, so `kv/../sys` would reach `sys/`"
+            ),
+        )
     return mount
 
 

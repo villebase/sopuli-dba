@@ -2260,12 +2260,14 @@ A path may not hold a `.` or `..` segment ([#344](../decisions/log.md#344)), and
 it may not hold `?`, `%`, a backslash or a control character (C0, DEL or C1).
 The HashiCorp backends put the path into the URL as written. A `?` starts a
 query, so `apps/acme?x/db` would read `apps/acme`. A `%` lets `%2e%2e` reach the
-server as a `..` that the segment check never saw. The same characters are
-refused in a vault's `mount`, in an auth `mount`, and in `reset_records.prefix`,
-because each goes into a URL too. They are refused rather than percent-encoded,
-so that a path has one spelling and a lock key one meaning. The refusal names the
-key it was read from. `normalise_path` refuses them again, for a path that
-arrives from the command line, such as `lock break`.
+server as a `..` that the segment check never saw. Both rules apply to a vault's
+`mount`, to an auth `mount`, and to `reset_records.prefix`, because each goes
+into a URL too: `mount: kv/../sys` would reach `sys/`. They are refused rather
+than percent-encoded, so the operator learns at load time, and the refusal names
+the key it was read from. `normalise_path` refuses them again, for a path that
+arrives from the command line, such as `lock break`. `lock status` skips a
+listed lock record whose path it refuses, with a debug line: only a record
+written by hand can have one, and the tool could not read or break it.
 
 Only `version` and `stage` are qualifiers, and only one may appear — a pinned
 version and a stage select the same secret two different ways and nothing says

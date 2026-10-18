@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.42.schema.json`](../schemas/sopuli-run-1.42.schema.json),
+Schemas: [`../schemas/sopuli-run-1.43.schema.json`](../schemas/sopuli-run-1.43.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -90,6 +90,30 @@ When colour is off, the serialiser removes escape sequences. Call sites do not
 avoid them. This is the same shape as redaction, for the same reason: a
 guarantee held in one place cannot be lost by a call site that forgot, and a
 vendor message can arrive with escapes already in it.
+
+**Control characters are shown, not sent** (#859). Text output carries strings
+from outside the tool: ORA- messages, vault error bodies, lock holders. A
+terminal acts on a control character in them. An OSC sequence sets the window
+title, a lone `\r` lets the next text overwrite a row, and `\b` deletes what was
+printed, and conceal (`ESC [ 8 m`) hides every row after it. So the serialiser
+shows every C0 and C1 control character and DEL as visible text, such as `\x1b`
+or `\r`. The only escape sequences it writes as escapes are the palette's own:
+kept where colour is on, removed where it is off. Any other escape sequence is
+shown either way, so turning colour off does not hide one that came from
+outside. A server message that uses one of the palette's own sequences cannot
+be told apart from the tool's, so it is treated as the tool's. Those sequences
+only set a colour, bold or dim, so the most such a message can do is colour
+itself. Line breaks and tabs are kept, and `\r\n` becomes a line break. The
+Unicode line and paragraph separators, the bidirectional marks, overrides and
+isolates, and the zero-width and invisible characters are shown as `\uXXXX`.
+Backslashes are not doubled, because paths and DSNs carry them: the guarantee is
+that no character acts on the terminal, and the JSON document has the exact
+text. A table cell shows line breaks and
+tabs too, because one would start a row the table never laid out. The run-level
+error line, the plans and questions a command prints to stderr before a prompt,
+and the `--debug` lines get the same treatment. JSON output is not changed: the
+encoder escapes control characters itself, and the document carries the server's
+text exactly.
 
 ### Progress
 
@@ -1892,6 +1916,7 @@ not contract and may improve.
 | `SOPULI-W048` | `creds generate --no-policy-check` accepted a password that violates the policy. One entry per rule violated, naming the rule and the counts, never the characters. In `results[].warnings[]` |
 | `SOPULI-W049` | On one `creds apply` or `creds rotate` result: `current` may not hold the password this database has, so an application that fetches it may fail to log in. The database changed and did not confirm, and `creds apply` again once the target is well fixes it. Or the promotion write failed, and `SOPULI-W033` on the run says what to do. Or the row confirmed and its document was held back without a write (#873): by a narrowed run (`SOPULI-W027`), by a guardrail skip (`SOPULI-W050`), or because another row of the document did not confirm. The message says which. It is not raised for a document a lock takeover stopped the run before (`SOPULI-W011`): the run that took the lock may promote it. In `results[].warnings[]`, so it survives a consumer that filters the results |
 | `SOPULI-W050` | A secret document was not promoted, because a guardrail skipped one of its accounts on one target and the account confirmed on another, with a `pending` (or, on a rollback, a `previous`) to promote (#852). The guardrails read each database, so one account can hold `DBA` on one target only. The skipped target still holds the old password, so promoting would break invariant 7. `pending` stays and the run exits 4. Raised only when every other target confirmed: a failure is reported as the reason first. It has its own code for `SOPULI-W011`'s reason: the same run again skips the same pair, so the text output prints no `repair with:` line when this is all that held the run back. The remedy is to clear what the guardrail reported on that target and run the same command again. The message names each skipped pair, and says that `--force` overrides the guardrail and waives the guardrails for every account the run selects. It spells out no command, because the right one depends on the verb, the run's options and which accounts a `--force` should reach |
+| `SOPULI-W051` | `VAULT_ADDR` gives a store a different address from the `addr` the file declares for it, so the run authenticates to and writes to the variable's address (#865). P3 puts the variable above the file, and the warning does not change that (`01-configuration.md` §6). Raised on every command that loads the file. The message names both addresses and where each comes from, with any `user:password@` shown as `***@`. Not raised when the two name the same server (scheme and host compared without case, a missing port taken as the scheme's default, a trailing `/` ignored), or when the file declares no `addr` for the store. `SOPULI_VAULT_ADDR` and `--vault-addr` are not warned about, because they were set for this tool |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.

@@ -38,8 +38,6 @@ from contextlib import contextmanager
 from types import TracebackType
 from typing import TextIO
 
-import click
-
 from sopuli.output.printable import printable
 
 #: The logger every part of the tool logs under.
@@ -89,9 +87,9 @@ class DebugFormatter(logging.Formatter):
             message = f"{message}\n{self.formatStack(record.stack_info)}"
         # No colour, whatever `--color` says: a vendor message or a traceback
         # can arrive with escape sequences in it (`03-json-output.md` §*Colour*).
-        # `unstyle` removes only colour, so every other control character is
-        # then shown rather than sent (#859).
-        message = printable(click.unstyle(message))
+        # The palette's own colour is removed and every other control character
+        # is shown rather than sent (#859).
+        message = printable(message, colour=False)
         area = record.name.removeprefix(f"{ROOT}.")
         elapsed = time.monotonic() - self._started
         first, *rest = message.splitlines() or [""]

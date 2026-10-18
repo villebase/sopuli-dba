@@ -69,18 +69,18 @@ def render_table(columns: Sequence[Column], rows: Sequence[Sequence[Cell | str]]
     if not rows:
         return []
 
-    widths = [_width_of(column, index, rows) for index, column in enumerate(columns)]
     # Rows are squared off before anything is measured against them, so a caller
     # that built a row from optional fields gets a blank cell rather than a
     # traceback -- and every zip below can be strict.
     squared = [[_cell(row, index) for index in range(len(columns))] for row in rows]
+    widths = [_width_of(column, index, squared) for index, column in enumerate(columns)]
 
     headings = [Cell(column.heading, Role.HEADING) for column in columns]
     return [_line(headings, widths), *(_line(row, widths) for row in squared)]
 
 
-def _width_of(column: Column, index: int, rows: Sequence[Sequence[Cell | str]]) -> int:
-    longest = max((len(_cell(row, index).text) for row in rows), default=0)
+def _width_of(column: Column, index: int, rows: Sequence[Sequence[Cell]]) -> int:
+    longest = max((len(row[index].text) for row in rows), default=0)
     if column.width is not None:
         longest = min(longest, column.width)
     return max(longest, len(column.heading))

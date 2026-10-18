@@ -95,14 +95,19 @@ vendor message can arrive with escapes already in it.
 from outside the tool: ORA- messages, vault error bodies, lock holders. A
 terminal acts on a control character in them. An OSC sequence sets the window
 title, a lone `\r` lets the next text overwrite a row, and `\b` deletes what was
-printed. So the serialiser shows every C0 and C1 control character and DEL as
-visible text, such as `\x1b` or `\r`, after the colour gate has decided. Line
-breaks and tabs are kept. With colour on, colour sequences are kept and every
-other escape sequence is shown. A table cell shows line breaks and tabs too,
-because one would start a row the table never laid out. The run-level error line
-on stderr and the `--debug` lines get the same treatment. JSON output is not
-changed: the encoder escapes control characters itself, and the document carries
-the server's text exactly.
+printed, and conceal (`ESC [ 8 m`) hides every row after it. So the serialiser
+shows every C0 and C1 control character and DEL as visible text, such as `\x1b`
+or `\r`. The only escape sequences it writes as escapes are the palette's own:
+kept where colour is on, removed where it is off. Any other escape sequence is
+shown either way, so turning colour off does not hide one that came from
+outside. Line breaks and tabs are kept, and `\r\n` becomes a line break. The
+Unicode line and paragraph separators, the bidirectional controls and the
+zero-width characters are shown as `\uXXXX`. A table cell shows line breaks and
+tabs too, because one would start a row the table never laid out. The run-level
+error line, the plans and questions a command prints to stderr before a prompt,
+and the `--debug` lines get the same treatment. JSON output is not changed: the
+encoder escapes control characters itself, and the document carries the server's
+text exactly.
 
 ### Progress
 

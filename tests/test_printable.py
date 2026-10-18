@@ -26,8 +26,9 @@ from sopuli.output.table import Column, render_table
 HOSTILE = "ORA-20000: rejected\x1b]0;owned\x07\rSTATE ok"
 
 
-def test_osc_and_carriage_return_are_shown_not_sent() -> None:
-    shown = printable(HOSTILE)
+@pytest.mark.parametrize("colour", [False, True])
+def test_osc_and_carriage_return_are_shown_not_sent(colour: bool) -> None:
+    shown = printable(HOSTILE, colour=colour)
 
     assert "\x1b" not in shown
     assert "\x07" not in shown
@@ -37,16 +38,31 @@ def test_osc_and_carriage_return_are_shown_not_sent() -> None:
 
 @pytest.mark.parametrize(
     ("character", "shown"),
-    [("\x08", "\\x08"), ("\x7f", "\\x7f"), ("\x9b", "\\x9b"), ("\x9d", "\\x9d"), ("\x00", "\\x00")],
-    ids=["backspace", "delete", "c1-csi", "c1-osc", "nul"],
+    [
+        ("\x08", "\\x08"),
+        ("\x7f", "\\x7f"),
+        ("\x9b", "\\x9b"),
+        ("\x9d", "\\x9d"),
+        ("\x00", "\\x00"),
+        (" ", "\\u2028"),
+        ("‮", "\\u202e"),
+        ("​", "\\u200b"),
+    ],
+    ids=["backspace", "delete", "c1-csi", "c1-osc", "nul", "line-separator", "bidi", "zero-width"],
 )
 def test_every_other_control_character_is_shown(character: str, shown: str) -> None:
-    assert printable(f"a{character}b") == f"a{shown}b"
+    assert printable(f"a{character}b", colour=False) == f"a{shown}b"
 
 
 def test_line_breaks_and_tabs_are_kept_in_free_text() -> None:
     """A multi-line hint or a traceback is still multi-line."""
-    assert printable("first\n\tsecond") == "first\n\tsecond"
+    assert printable("first\n\tsecond", colour=False) == "first\n\tsecond"
+
+
+def test_a_windows_line_end_is_a_line_end() -> None:
+    """Text from a Windows host or an HTTP body would otherwise show a `\\r`
+    on every line."""
+    assert printable("one\r\ntwo", colour=False) == "one\ntwo"
 
 
 def test_a_table_cell_shows_line_breaks_too() -> None:
@@ -54,17 +70,28 @@ def test_a_table_cell_shows_line_breaks_too() -> None:
     assert printable_cell("a\nb\rc\td") == "a\\nb\\rc\\td"
 
 
-def test_colour_is_kept_only_when_asked() -> None:
+def test_the_palettes_colour_is_kept_only_where_colour_is_on() -> None:
     painted = paint("DRIFT", Role.BAD)
 
-    assert printable(painted, keep_colour=True) == painted
-    assert "\x1b" not in printable(painted)
+    assert printable(painted, colour=True) == painted
+    assert printable(painted, colour=False) == "DRIFT"
 
 
-def test_keeping_colour_still_shows_every_other_escape_sequence() -> None:
+@pytest.mark.parametrize("colour", [False, True])
+def test_a_colour_sequence_from_outside_is_shown_either_way(colour: bool) -> None:
+    """Conceal (`ESC [ 8 m`) would hide every row after it, and a cursor move
+    would rewrite one. Only the palette's own sequences are written as escapes,
+    and colour off does not hide one that came from outside."""
+    shown = printable("ORA-20000: x\x1b[8m\x1b[1A", colour=colour)
+
+    assert "\x1b" not in shown
+    assert shown == "ORA-20000: x\\x1b[8m\\x1b[1A"
+
+
+def test_colour_on_still_shows_every_other_escape_sequence() -> None:
     painted = paint("DRIFT", Role.BAD) + HOSTILE
 
-    kept = printable(painted, keep_colour=True)
+    kept = printable(painted, colour=True)
 
     assert kept.startswith(paint("DRIFT", Role.BAD))
     assert "\x1b]" not in kept
@@ -124,7 +151,39 @@ def test_the_debug_formatter_shows_control_characters() -> None:
     formatted = DebugFormatter(started=0.0).format(record)
 
     assert "\x1b" not in formatted
+    assert "\x07" not in formatted
     assert "\r" not in formatted
+    assert "rejected\\x1b]0;owned\\x07\\rSTATE ok" in formatted
+
+
+def test_a_lock_holder_in_a_prompt_is_shown_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`lock break` asks "take this lock from <holder>?", and the holder is
+    the vault's text. A `\\r` in it would overwrite the question."""
+    import sopuli.cli as cli_module
+
+    asked: list[str] = []
+
+    def confirm(question: str, **_: object) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr(click, "confirm", confirm)
+
+    cli_module._confirm("take this lock from svc\x1b]0;x\x07\ryes?", abort=True, err=True)
+
+    assert asked == ["take this lock from svc\\x1b]0;x\\x07\\ryes?"]
+
+
+def test_a_line_for_stderr_is_shown_not_sent(capsys: pytest.CaptureFixture[str]) -> None:
+    """The plan before a prompt goes to stderr outside the emitter, and a lock
+    holder reaches it from the vault."""
+    import sopuli.cli as cli_module
+
+    cli_module._echo_err(f"held by {HOSTILE}")
+
+    printed = capsys.readouterr().err
+    assert "\x1b]" not in printed
+    assert "\\x1b]0;owned\\x07\\rSTATE ok" in printed
 
 
 def test_json_keeps_the_servers_text_exactly() -> None:

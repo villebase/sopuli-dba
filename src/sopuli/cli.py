@@ -2129,7 +2129,7 @@ def account_reset_password(
         # had been about to touch. That is the case the `click.Abort` handling
         # exists for, reached by a different route, and echoing here is the same
         # fix.
-        click.echo(header, err=True)
+        _echo_err(header)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that
     # exists on the seen path and the unseen one alike, and the unit two
@@ -2245,7 +2245,7 @@ def account_reset_password(
         #
         # Unreachable for `manual`, which is refused with `--output json` before a
         # password is drawn. Only an unseen method reaches this line.
-        click.echo(shown, err=True)
+        _echo_err(shown)
         shown = ""
     # Printed as well as serialised: a warning nobody can see in the
     # default output is not surfaced, and these say the run kept no record of
@@ -3314,7 +3314,7 @@ def _hand_over(
             if receipt is not None
             else None
         )
-    click.confirm(
+    _confirm(
         f"show the new password for {account} on {target} on this terminal?",
         abort=True,
         err=True,
@@ -3951,8 +3951,8 @@ def _confirm_break(
                 "without touching anything"
             ),
         )
-    click.echo(render_break(paths, outcome, mode=mode, applied=False), err=True)
-    click.confirm(
+    _echo_err(render_break(paths, outcome, mode=mode, applied=False))
+    _confirm(
         f"take this lock from {describe_holder(outcome.record)}?",
         abort=True,
         err=True,
@@ -4011,8 +4011,8 @@ def _confirm_environments(
     question = f"{action} in `{demand.named}`?"
     # As `rotate`'s gate does: only where somebody is actually asked.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    click.echo(render_plan(plan, noun=noun), err=True)
-    click.confirm(question, abort=True, err=True)
+    _echo_err(render_plan(plan, noun=noun))
+    _confirm(question, abort=True, err=True)
 
 
 def _asks_environments(plan: Any, run: Invocation) -> bool:
@@ -4301,7 +4301,27 @@ def _print_error(message: str) -> None:
     an ORA- message, a vault error body, a lock holder. So every control
     character in it is shown rather than sent (#859).
     """
-    click.echo(f"sopuli: {printable(message)}", err=True)
+    click.echo(f"sopuli: {printable(message, colour=False)}", err=True)
+
+
+def _echo_err(text: str) -> None:
+    """A line for stderr outside the emitter: a plan before a prompt, a hand-over.
+
+    It carries text from outside the tool, such as a lock holder from the
+    vault, so every control character is shown rather than sent (#859). The
+    palette's colour is kept, and click removes it where stderr is not a
+    terminal, as it did before.
+    """
+    click.echo(printable(text, colour=True), err=True)
+
+
+def _confirm(question: str, **options: Any) -> bool:
+    """``click.confirm`` with its question made printable (#859).
+
+    A question can name a lock holder from the vault, and a ``\\r`` in one
+    would overwrite the question being answered.
+    """
+    return bool(click.confirm(printable(question, colour=False), **options))
 
 
 @cli.group("creds")
@@ -6520,7 +6540,7 @@ def _confirm_rollback(
                 "without touching anything"
             ),
         )
-    click.confirm(
+    _confirm(
         "put the vault's `previous` password back on every selected target?",
         abort=True,
         err=True,
@@ -10182,8 +10202,8 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     # from a run that hung. `--confirm` answered in advance, so nothing is waiting
     # and nothing is sent.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    click.echo(render_plan(plan, noun="rotation"), err=True)
-    click.confirm(question, abort=True, err=True)
+    _echo_err(render_plan(plan, noun="rotation"))
+    _confirm(question, abort=True, err=True)
 
 
 def _preview_rotation(

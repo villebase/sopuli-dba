@@ -37,8 +37,6 @@ from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, TextIO
 
-import click
-
 from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339, utc_now
 from sopuli.output.printable import printable
@@ -309,23 +307,18 @@ class Emitter:
         did to an estate, and one carrying a `command` that acts on nothing would
         be a JSON contract entry for a screen that has no JSON form.
 
-        ``click.unstyle`` is the CLI dependency's own function for it, so it
-        adds no display library (ADR-003).
-
-        **Every control character is then shown, not sent** (#859), because the
-        text carries ORA- messages, vault errors and lock holders from outside
-        the tool. With colour on, the tool's own colour sequences are kept and
-        any other escape sequence is shown (:func:`sopuli.output.printable.printable`).
-        :meth:`emit` sends its text through here, so this covers every command.
+        **One pass does both** (:func:`sopuli.output.printable.printable`,
+        #859). The palette's own colour sequences are kept where colour is on and
+        removed where it is off. Every other escape sequence and control
+        character is shown as text, because this text carries ORA- messages,
+        vault errors and lock holders from outside the tool. :meth:`emit` sends
+        its text through here, so this covers every command.
 
         **Flushed**, because `account reset-password` writes here in the middle
         of a run, and the next thing on screen is a prompt on stderr. Unflushed,
         a password could reach the screen after the next target's prompt.
         """
-        if self.use_color():
-            text = printable(text, keep_colour=True)
-        else:
-            text = printable(click.unstyle(text))
+        text = printable(text, colour=self.use_color())
         print(text.rstrip("\n"), file=self._out(), flush=True)
 
 

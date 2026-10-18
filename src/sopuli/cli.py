@@ -8601,15 +8601,15 @@ def _withheld(left_out: Mapping[LockKey, Sequence[Binding]]) -> list[Diagnostic]
     ]
 
 
-def _failed_promotion(
+def _owed_promotion(
     record: _Applied, promotions: Mapping[LockKey, _Promotion]
-) -> tuple[_Promotion, Error] | None:
-    """The failed promotion write this record's password was part of, and its error.
+) -> _Promotion | None:
+    """The promotion this row was for, or ``None`` where it was for none.
 
-    The one definition of a row the failure is about (#805). A row is part of
-    the write when it confirmed and its stage owed one (`apply.promotes`). A
-    sibling applied from `current` owed nothing, so its `current` is right, and a
-    skipped row was left out of the write (:func:`_by_document`).
+    The one definition of a row a promotion is about (#805, #873). A row is part
+    of it when it confirmed and its stage owed one (`apply.promotes`). A sibling
+    applied from `current` owed nothing, so its `current` is right, and a skipped
+    row was left out of the write (:func:`_by_document`).
     """
     binding, source = record.binding, record.source
     if binding.secret is None or binding.vault is None or source is None:
@@ -8618,7 +8618,14 @@ def _failed_promotion(
         return None
     if not apply_states.is_confirmed(record.outcome.state):
         return None
-    promotion = promotions.get(_lock_key(binding))
+    return promotions.get(_lock_key(binding))
+
+
+def _failed_promotion(
+    record: _Applied, promotions: Mapping[LockKey, _Promotion]
+) -> tuple[_Promotion, Error] | None:
+    """The failed promotion write this record's password was part of, and its error."""
+    promotion = _owed_promotion(record, promotions)
     if promotion is None or promotion.error is None:
         return None
     return promotion, promotion.error
@@ -8662,24 +8669,20 @@ def _failed_promotions(
 
 
 def _held_back(record: _Applied, promotions: Mapping[LockKey, _Promotion]) -> str | None:
-    """Why this confirmed row's document was held back, or ``None``.
+    """Why this row's document was held back without a write, or ``None``.
 
-    :func:`_failed_promotion`'s definition of a row the promotion was for -- it
-    confirmed, and its stage owed one -- applied to a document that was held
-    back without a write (#873). The database has the password and `current`
-    does not, so the row is as unfinished as one whose write failed.
+    For a row the promotion was for (:func:`_owed_promotion`) whose document
+    the gate held back (#873). The database has the password and `current` does
+    not, so the row is as unfinished as one whose write failed.
+
+    **Not after a takeover.** A document the run never reached has no
+    promotion entry, so it is not reported here. The run that took the lock
+    may promote that document itself, so this run cannot say that `current` is
+    stale. `SOPULI-W011` says the run stopped, and `creds check` says what is
+    true.
     """
-    binding, source = record.binding, record.source
-    if binding.secret is None or binding.vault is None or source is None:
-        return None
-    if not apply_states.promotes(source.stage):
-        return None
-    if not apply_states.is_confirmed(record.outcome.state):
-        return None
-    promotion = promotions.get(_lock_key(binding))
-    if promotion is None or promotion.version is not None:
-        return None
-    return promotion.held
+    promotion = _owed_promotion(record, promotions)
+    return None if promotion is None else promotion.held
 
 
 def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
@@ -8690,11 +8693,9 @@ def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promo
     them as failed, not ok: the database took the password and applications
     still fetch the old one from `current`.
     """
+    owed = [_owed_promotion(record, promotions) for record in applied]
     return sum(
-        1
-        for record in applied
-        if _failed_promotion(record, promotions) is not None
-        or _held_back(record, promotions) is not None
+        1 for one in owed if one is not None and (one.error is not None or one.held is not None)
     )
 
 

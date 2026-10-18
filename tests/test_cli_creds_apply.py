@@ -2523,8 +2523,11 @@ def test_a_confirmed_row_beside_a_target_that_failed_says_current_is_stale(
 
     (warning,) = _row(result, "appdb-alpha")["warnings"]
     assert warning["code"] == CHANGED_NOT_PROMOTED
-    assert "another target did not confirm" in warning["message"]
-    assert document(result)["summary"]["ok"] == 0
+    assert "another row of this document did not confirm" in warning["message"]
+    # Both rows failed: beta did not confirm, and alpha confirmed with
+    # `current` left stale. Counted once each.
+    summary = document(result)["summary"]
+    assert (summary["ok"], summary["failed"]) == (0, 2)
 
 
 def test_the_withheld_promotion_names_the_wider_run_as_its_remedy(

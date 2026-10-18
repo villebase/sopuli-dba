@@ -851,13 +851,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "characters."
         ),
         CHANGED_NOT_PROMOTED: (
-            "On one `creds apply` result: `current` may not hold the password this database "
-            "has, so an application that fetches it may fail to log in. The database changed "
-            "and did not confirm, and `creds apply` again once the target is well fixes it. "
-            "Or the promotion write failed, and SOPULI-W033 on the run says what to do. Or "
-            "the row confirmed and its document was held back without a write: by a "
-            "narrowed run (SOPULI-W027), by a guardrail skip (SOPULI-W050), or because "
-            "another target did not confirm. The message says which."
+            "On one `creds apply` or `creds rotate` result: `current` may not hold the "
+            "password this database has, so an application that fetches it may fail to log "
+            "in. The database changed and did not confirm, and `creds apply` again once the "
+            "target is well fixes it. Or the promotion write failed, and SOPULI-W033 on the "
+            "run says what to do. Or the row confirmed and its document was held back "
+            "without a write: by a narrowed run (SOPULI-W027), by a guardrail skip "
+            "(SOPULI-W050), or because another row of the document did not confirm. The "
+            "message says which. Not raised for a document a lock takeover stopped the run "
+            "before: the run that took the lock may promote it."
         ),
         PROMOTION_SKIPPED: (
             "A secret document was not promoted because a guardrail skipped one of its "

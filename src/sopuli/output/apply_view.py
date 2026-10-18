@@ -74,8 +74,8 @@ _HELD_MESSAGES = {
     ),
     HELD_UNCONFIRMED: (
         "this database has the new password and the vault was not promoted, because another "
-        "target did not confirm, so `current` still holds the old one -- re-run "
-        "`sopuli creds apply` once that target is well"
+        "row of this document did not confirm, so `current` still holds the old one -- "
+        "that row says why, and the same command again finishes it once that is fixed"
     ),
 }
 
@@ -377,7 +377,7 @@ def _warnings(
     left this process.
     """
     found: list[dict[str, Any]] = []
-    if held_back is not None and not promotion_failed:
+    if held_back is not None:
         found.append(
             {
                 "level": "warning",
@@ -444,11 +444,12 @@ def summarise(states: Sequence[str], *, changed: int, unpromoted: int = 0) -> Su
     is a caveat on a survey, and here it is a target that accepted the password
     and can be promoted on.
 
-    ``unpromoted`` is the confirmed rows whose document's promotion write failed
-    (#805). They move from ``ok`` to ``failed``: the database took the password
-    and `current` still holds the old one, so the run did not finish its work on
-    them. ``by_state`` still counts their state, which is what is true of the
-    database.
+    ``unpromoted`` is the confirmed rows a promotion was for whose document
+    `current` was not moved to: its write failed (#805), or it was held back
+    without a write (#873). They move from ``ok`` to ``failed``: the database
+    took the password and `current` still holds the old one, so the run did not
+    finish its work on them. ``by_state`` still counts their state, which is
+    what is true of the database.
     """
     return Summary(
         total=len(states),

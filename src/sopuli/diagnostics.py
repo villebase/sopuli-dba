@@ -497,9 +497,10 @@ CURRENT_REPLACED = "SOPULI-W047"
 POLICY_VIOLATION_ACCEPTED = "SOPULI-W048"
 
 #: On one `creds apply` result: ``current`` may not hold the password this
-#: database has, because the database changed and did not confirm, or because
+#: database has, because the database changed and did not confirm, because
 #: the promotion write failed (:data:`PROMOTION_FAILED` says why, once per
-#: document).
+#: document), or because the row confirmed and its document was held back
+#: without a write (#873).
 CHANGED_NOT_PROMOTED = "SOPULI-W049"
 
 #: A document was not promoted because a guardrail skipped one of its accounts on
@@ -851,10 +852,12 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         CHANGED_NOT_PROMOTED: (
             "On one `creds apply` result: `current` may not hold the password this database "
-            "has, so an application that fetches it may fail to log in. Either the database "
-            "changed and did not confirm, and `creds apply` again once the target is well "
-            "fixes it, or the promotion write failed, and SOPULI-W033 on the run says what "
-            "to do. The message says which."
+            "has, so an application that fetches it may fail to log in. The database changed "
+            "and did not confirm, and `creds apply` again once the target is well fixes it. "
+            "Or the promotion write failed, and SOPULI-W033 on the run says what to do. Or "
+            "the row confirmed and its document was held back without a write: by a "
+            "narrowed run (SOPULI-W027), by a guardrail skip (SOPULI-W050), or because "
+            "another target did not confirm. The message says which."
         ),
         PROMOTION_SKIPPED: (
             "A secret document was not promoted because a guardrail skipped one of its "

@@ -218,13 +218,16 @@ from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
 from sopuli.output.account_list_view import summarise as summarise_account_list
-from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import (
+    HELD_NARROWED,
+    HELD_SKIPPED,
+    HELD_UNCONFIRMED,
     render_apply,
     render_source_table,
     repair_invocation,
     verification_json,
 )
+from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
 from sopuli.output.color import ColorChoice
@@ -6460,6 +6463,11 @@ class _Promotion:
 
     ``skipped`` is the (account, target) pairs a guardrail skipped for an account
     this document would have promoted (#852), which ``SOPULI-W050`` names.
+
+    ``held`` says why a document that owed a promotion was held back without a
+    write: the run was narrowed (`SOPULI-W027`), a guardrail skipped a target
+    (`SOPULI-W050`), or a target did not confirm. Its confirmed rows then carry
+    `SOPULI-W049` (#873), because `current` is stale for them too.
     """
 
     version: int | None
@@ -6469,6 +6477,7 @@ class _Promotion:
     error: Error | None = None
     conflict: bool = False
     skipped: tuple[tuple[str, str], ...] = ()
+    held: str | None = None
 
 
 def _confirm_rollback(
@@ -8388,6 +8397,7 @@ def _promote_documents(
                 None,
                 "this run was narrower than the promotion, so the vault was left as it was",
                 promotable=True,
+                held=HELD_NARROWED,
             )
             continue
         # A failure is the reason before a skip is: the same run again may fix
@@ -8402,6 +8412,7 @@ def _promote_documents(
                 None,
                 "not every target confirmed, so the vault was left as it was",
                 promotable=True,
+                held=HELD_UNCONFIRMED,
             )
             continue
         skipped = _skipped_pairs(records)
@@ -8412,6 +8423,7 @@ def _promote_documents(
                 "so the vault was left as it was",
                 promotable=True,
                 skipped=skipped,
+                held=HELD_SKIPPED,
             )
             continue
         try:
@@ -8649,13 +8661,41 @@ def _failed_promotions(
     return diagnostics
 
 
-def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
-    """The rows whose promotion write failed, from :func:`_failed_promotion`.
+def _held_back(record: _Applied, promotions: Mapping[LockKey, _Promotion]) -> str | None:
+    """Why this confirmed row's document was held back, or ``None``.
 
-    The summary counts them as failed, not ok: the database took the password
-    and applications still fetch the old one from `current`.
+    :func:`_failed_promotion`'s definition of a row the promotion was for -- it
+    confirmed, and its stage owed one -- applied to a document that was held
+    back without a write (#873). The database has the password and `current`
+    does not, so the row is as unfinished as one whose write failed.
     """
-    return sum(1 for record in applied if _failed_promotion(record, promotions) is not None)
+    binding, source = record.binding, record.source
+    if binding.secret is None or binding.vault is None or source is None:
+        return None
+    if not apply_states.promotes(source.stage):
+        return None
+    if not apply_states.is_confirmed(record.outcome.state):
+        return None
+    promotion = promotions.get(_lock_key(binding))
+    if promotion is None or promotion.version is not None:
+        return None
+    return promotion.held
+
+
+def _unpromoted(applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]) -> int:
+    """The confirmed rows whose document `current` was not moved to.
+
+    The ones whose promotion write failed (:func:`_failed_promotion`) and the
+    ones whose document was held back (:func:`_held_back`). The summary counts
+    them as failed, not ok: the database took the password and applications
+    still fetch the old one from `current`.
+    """
+    return sum(
+        1
+        for record in applied
+        if _failed_promotion(record, promotions) is not None
+        or _held_back(record, promotions) is not None
+    )
 
 
 def _promotion_event(key: LockKey, promotion: _Promotion, run: Invocation) -> None:
@@ -8882,6 +8922,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         rollover=record.rollover,
         promoted_to=None if promotion is None else promotion.version,
         promotion_error=None if failed is None else failed[1],
+        held_back=_held_back(record, promotions),
         mechanism=None if promotion is None else promotion.mechanism,
         overridden=record.overridden,
         attributes=record.attributes,

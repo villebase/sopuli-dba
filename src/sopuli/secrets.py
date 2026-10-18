@@ -11,6 +11,8 @@ The JSON side of the same guarantee lives in :mod:`sopuli.output.emit`.
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 REDACTED = "***"
 
 
@@ -55,5 +57,19 @@ class Secret:
     def __bool__(self) -> bool:
         return bool(self._value)
 
-    def __len__(self) -> int:
-        return len(self._value)
+    # No ``__len__``. A ``len(secret)`` in a message would print the password's
+    # length, and nothing in the tool needs it.
+
+    def __reduce__(self) -> NoReturn:
+        # Pickle would carry the plaintext out of the process, and so would
+        # anything built on it, such as `multiprocessing`.
+        raise TypeError("a Secret cannot be pickled")
+
+    def __copy__(self) -> Secret:
+        # Without this, `copy` falls back to `__reduce__` and fails. A Secret is
+        # immutable, so the copy can be the same object. The memory store
+        # deep-copies what it holds.
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Secret:
+        return self

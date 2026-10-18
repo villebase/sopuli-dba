@@ -72,18 +72,25 @@ UNSAFE_PATH_HINT = (
     "which document it addresses"
 )
 
+CONFIG_PATH_HINT = (
+    "a store path, prefix or mount may not hold `?`, `#`, `%`, a backslash or a "
+    "control character: it goes into the store's URL as written, and these change "
+    "which document it addresses"
+)
 
-def unsafe_path_characters(text: str) -> list[str]:
+
+def unsafe_path_characters(text: str, *, also: str = "") -> list[str]:
     """The characters in ``text`` that a store path or mount may not hold.
 
-    Control characters are C0, DEL and C1. Each one is listed once, in the order
-    it first appears.
+    Control characters are C0, DEL and C1. ``also`` adds characters for one
+    caller. Each one is listed once, in the order it first appears.
     """
     found: list[str] = []
     for character in text:
         code = ord(character)
         control = code < 0x20 or 0x7F <= code <= 0x9F
-        if (control or character in UNSAFE_PATH_CHARACTERS) and character not in found:
+        refused = control or character in UNSAFE_PATH_CHARACTERS or character in also
+        if refused and character not in found:
             found.append(character)
     return found
 
@@ -93,10 +100,15 @@ def reject_unaddressable_path(text: str, *, what: str, at: KeyPath, traversal_hi
 
     Two rules, for every store path or mount a file names: no ``.`` or ``..``
     segment (decision #344), and none of the characters
-    :func:`unsafe_path_characters` finds. ``what`` names the value in the
-    message, such as ``secret ref 'apps/x'``. ``traversal_hint`` says what a
-    relative segment would do at this site, which differs between a ref, a
-    prefix and a mount.
+    :func:`unsafe_path_characters` finds, nor ``#``. httpx drops everything
+    after a ``#`` as a URL fragment. A ref's path cannot hold one, because the
+    ref grammar splits on it, but a prefix or a mount could. ``#`` is checked
+    here and not in :func:`normalise_path`, because that function also builds
+    reset-record paths, and an Oracle ``C##`` account name holds two.
+
+    ``what`` names the value in the message, such as ``secret ref 'apps/x'``.
+    ``traversal_hint`` says what a relative segment would do at this site, which
+    differs between a ref, a prefix and a mount.
     """
     traversal = sorted({segment for segment in text.split("/") if segment in TRAVERSAL})
     if traversal:
@@ -105,12 +117,12 @@ def reject_unaddressable_path(text: str, *, what: str, at: KeyPath, traversal_hi
             at=at,
             hint=traversal_hint,
         )
-    unsafe = unsafe_path_characters(text)
+    unsafe = unsafe_path_characters(text, also=FIELD_SEPARATOR)
     if unsafe:
         raise ConfigError(
             f"{what} contains {', '.join(repr(one) for one in unsafe)}",
             at=at,
-            hint=UNSAFE_PATH_HINT,
+            hint=CONFIG_PATH_HINT,
         )
 
 

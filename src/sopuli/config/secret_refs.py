@@ -57,6 +57,50 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 #: here for that same reason.
 TRAVERSAL = frozenset({".", ".."})
 
+#: Characters a store path or mount may not hold (#858). The HashiCorp backends
+#: put the path into the URL as written. A ``?`` starts a query, so the rest of
+#: the path is dropped. A ``%`` lets ``%2e%2e`` reach the server as a ``..`` that
+#: the traversal check never saw. A backslash or a control character has no
+#: use in a vault path. They are refused rather than percent-encoded, as
+#: ``TRAVERSAL`` is, so a path has one spelling and a lock key one meaning.
+UNSAFE_PATH_CHARACTERS = frozenset("?%\\")
+
+UNSAFE_PATH_HINT = (
+    "a store path or mount may not hold `?`, `%`, a backslash or a control "
+    "character: the path goes into the store's URL as written, and these change "
+    "which document it addresses"
+)
+
+
+def unsafe_path_characters(text: str) -> list[str]:
+    """The characters in ``text`` that a store path or mount may not hold.
+
+    Control characters are C0, DEL and C1. Each one is listed once, in the order
+    it first appears.
+    """
+    found: list[str] = []
+    for character in text:
+        code = ord(character)
+        control = code < 0x20 or 0x7F <= code <= 0x9F
+        if (control or character in UNSAFE_PATH_CHARACTERS) and character not in found:
+            found.append(character)
+    return found
+
+
+def reject_unsafe_path(text: str, *, what: str, at: KeyPath) -> None:
+    """Raise :class:`ConfigError` if ``text`` holds a character a path may not.
+
+    ``what`` names the value in the message, such as ``secret ref 'apps/x'``.
+    """
+    unsafe = unsafe_path_characters(text)
+    if unsafe:
+        raise ConfigError(
+            f"{what} contains {', '.join(repr(one) for one in unsafe)}",
+            at=at,
+            hint=UNSAFE_PATH_HINT,
+        )
+
+
 #: The qualifiers §7 names. Closed, because a misspelt one would otherwise
 #: become part of the field name and read a secret that does not exist -- or,
 #: worse, one that does.
@@ -186,6 +230,7 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
                 "instance, would not land under `locks/`"
             ),
         )
+    reject_unsafe_path(path, what=f"secret ref {text!r}", at=at)
 
     return SecretRef(
         path=path,
@@ -224,7 +269,8 @@ def normalise_path(path: str) -> str:
     well as from a file, and the command boundary already turns it into exit 2.
     A ref in a *file* is refused earlier and with a location, by
     :func:`parse_secret_ref` above, so this is the backstop rather than the
-    message an operator normally sees.
+    message an operator normally sees. The same holds for the characters in
+    :data:`UNSAFE_PATH_CHARACTERS` and the control characters.
     """
     segments = [segment for segment in path.split("/") if segment]
     offending = sorted({segment for segment in segments if segment in TRAVERSAL})
@@ -232,6 +278,12 @@ def normalise_path(path: str) -> str:
         raise ValueError(
             f"secret path {path!r} contains {', '.join(repr(one) for one in offending)}, "
             f"which cannot address a document"
+        )
+    unsafe = unsafe_path_characters(path)
+    if unsafe:
+        raise ValueError(
+            f"secret path {path!r} contains {', '.join(repr(one) for one in unsafe)}; "
+            f"{UNSAFE_PATH_HINT}"
         )
     return "/".join(segments)
 

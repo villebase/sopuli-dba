@@ -33,7 +33,7 @@ from typing import Any
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import mapping, reject_unknown_keys, required_string, string
 from sopuli.config.model import ResetRecords
-from sopuli.config.secret_refs import TRAVERSAL, normalise_path
+from sopuli.config.secret_refs import TRAVERSAL, normalise_path, reject_unsafe_path
 
 RESET_RECORDS_KEYS = ("vault", "prefix")
 
@@ -106,6 +106,7 @@ def _build_prefix(block: dict[str, Any], *, at: KeyPath) -> str:
                 "outside the prefix this file names"
             ),
         )
+    reject_unsafe_path(written, what=f"prefix {written!r}", at=where)
 
     prefix = normalise_path(written)
     if not prefix:

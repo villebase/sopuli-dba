@@ -64,7 +64,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from sopuli.config.codes import RELAXATION_DEFEATED, THIRD_PARTY_ADDR_OVERRIDES
 from sopuli.config.errors import ROOT, KeyPath
@@ -230,19 +230,18 @@ def _merge(
 def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None:
     """A warning when ``VAULT_ADDR`` moved a store away from the file's ``addr``.
 
-    P3 puts ``VAULT_ADDR`` above the file, and that order stands (#865). But the
-    variable is often left over in a shell from other work, and then this run
-    sends its auth material to that address and writes there. Only
-    ``config show --explain`` said so, so every run that loads the file says so
-    now. The variable this tool owns, ``SOPULI_VAULT_ADDR``, and
-    ``--vault-addr`` say nothing: whoever set them meant this tool.
+    P3 puts ``VAULT_ADDR`` above the file (#865). A shell often keeps the
+    variable from other work, and the run then sends its auth material to that
+    address and writes there, so every command that loads the file warns. The
+    variable this tool owns, ``SOPULI_VAULT_ADDR``, and ``--vault-addr`` do not
+    warn: whoever set them meant this tool.
 
     Nothing to say when the file declares no ``addr`` for the store, or the
     two name the same server: see :func:`_same_address`.
 
-    **Userinfo is masked** in the message. The warning reaches every run's
-    output, and an address such as ``https://user:token@proxy`` carries a
-    credential.
+    **Userinfo is masked** in the message by :func:`_shown`. The warning reaches
+    every run's output, and an address such as ``https://user:token@proxy``
+    carries a credential.
     """
     if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
         return None
@@ -274,20 +273,20 @@ DEFAULT_PORTS = {"http": 80, "https": 443}
 def _same_address(first: str, second: str) -> bool:
     """Whether two addresses name the same server and path.
 
-    Scheme and host are compared without case, a missing port is the scheme's
-    default, and a trailing ``/`` is ignored. An address that does not parse
-    is compared as written.
+    Scheme and host are compared without case (``urlsplit`` lowers both), a
+    missing port is the scheme's default, and a trailing ``/`` is ignored. An
+    address that does not parse is compared as written.
     """
     try:
         one, two = urlsplit(first), urlsplit(second)
         ports = [
-            url.port if url.port is not None else DEFAULT_PORTS.get(url.scheme.lower())
+            url.port if url.port is not None else DEFAULT_PORTS.get(url.scheme)
             for url in (one, two)
         ]
     except ValueError:
         return first == second
     return (
-        one.scheme.lower() == two.scheme.lower()
+        one.scheme == two.scheme
         and (one.hostname or "") == (two.hostname or "")
         and ports[0] == ports[1]
         and one.path.rstrip("/") == two.path.rstrip("/")
@@ -295,14 +294,21 @@ def _same_address(first: str, second: str) -> bool:
 
 
 def _shown(address: str) -> str:
-    """``address`` with any ``user:password@`` replaced by ``***@``."""
-    try:
-        parts = urlsplit(address)
-    except ValueError:
+    """``address`` with everything before its last ``@`` shown as ``***``.
+
+    **Not parsed, so it fails closed.** ``urlsplit`` ends the authority at the
+    first ``/``, ``?`` or ``#``, so a password holding one would leave the
+    ``@`` outside the part it masks, and an address it cannot parse would be
+    returned whole. Cutting at the last ``@`` after the scheme masks the
+    credential in every spelling. An ``@`` in the path masks the host too,
+    which hides more than it needs to and never less.
+    """
+    scheme, separator, rest = address.partition("://")
+    if not separator:
+        scheme, rest = "", address
+    if "@" not in rest:
         return address
-    if "@" not in parts.netloc:
-        return address
-    return urlunsplit(parts._replace(netloc=f"***@{parts.netloc.rpartition('@')[2]}"))
+    return f"{scheme}{separator}***@{rest.rpartition('@')[2]}"
 
 
 def _merge_tls(

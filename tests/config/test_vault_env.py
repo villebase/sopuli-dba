@@ -441,14 +441,28 @@ def test_another_port_is_another_address() -> None:
     assert len(overrides(config)) == 1
 
 
-def test_credentials_in_an_address_are_not_repeated_in_the_warning() -> None:
-    """The warning reaches every run's output, so userinfo is masked."""
-    config = loaded({"VAULT_ADDR": "https://ops:s3cret@proxy.example.com:8200"}, {"addr": DECLARED})
+@pytest.mark.parametrize(
+    ("address", "shown"),
+    [
+        ("https://ops:s3cret@proxy.example.com:8200", "https://***@proxy.example.com:8200"),
+        ("https://ops:s3/cret@proxy.example.com", "https://***@proxy.example.com"),
+        ("https://ops:s3?cret@proxy.example.com", "https://***@proxy.example.com"),
+        ("https://ops:s3#cret@proxy.example.com", "https://***@proxy.example.com"),
+        ("https://ops:s3cret@[proxy", "https://***@[proxy"),
+        ("ops:s3cret@proxy.example.com", "***@proxy.example.com"),
+    ],
+    ids=["plain", "slash", "query", "hash", "unparseable", "no-scheme"],
+)
+def test_credentials_in_an_address_are_not_repeated_in_the_warning(
+    address: str, shown: str
+) -> None:
+    """The warning reaches every run's output, so userinfo is masked. A `/`, `?`
+    or `#` in the password, or an address `urlsplit` cannot parse, still masks."""
+    [warning] = overrides(loaded({"VAULT_ADDR": address}, {"addr": DECLARED}))
 
-    [warning] = overrides(config)
-    assert "s3cret" not in warning.message
+    assert "s3" not in warning.message
     assert "ops" not in warning.message
-    assert "https://***@proxy.example.com:8200" in warning.message
+    assert shown in warning.message
 
 
 def test_vault_addr_over_a_defaults_addr_names_the_defaults_key() -> None:

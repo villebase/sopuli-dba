@@ -3225,9 +3225,13 @@ notices until a rotation.
   config file must be owned by the effective user or by root. Otherwise
   `sudo sopuli` in a directory another user controls would read that user's
   `./sopuli.yaml`, which sets `secret_template` and
-  `runtime.oracle.client_lib_dir`. Only the config file is checked. A wallet is
-  often owned by the `oracle` user, and `--vault-token-file` under `sudo` names
-  the invoking user's file
+  `runtime.oracle.client_lib_dir`. Under `sudo` the effective user is root, so
+  a config file you own is refused there too: run as yourself, or chown the file
+  to root. The file is opened once, and the owner and mode are read from that
+  descriptor, so a file renamed over the path after the check is not the one
+  read. Only the config file is checked for its owner. A wallet is often owned
+  by the `oracle` user, and `--vault-token-file` under `sudo` names the invoking
+  user's file
 
 ---
 

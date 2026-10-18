@@ -2442,6 +2442,61 @@ def test_the_lock_is_offered_a_renewal_before_each_change_inside_a_target(
     assert lock.version >= 3
 
 
+#: Two accounts on one target, each in a document of its own.
+TWO_DOCUMENTS_CONFIG = SHARED_CONFIG.replace(
+    "apps/acme/db#DB_CREDENTIALS/{account}", "apps/acme/{account}#DB_CREDENTIALS/{account}"
+)
+
+
+def test_a_renewal_inside_a_target_keeps_every_document_locked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#864, for the lock of a document the rest of the target does not touch.
+    Each `set_password` takes nine minutes. `acme_web_user`'s document is
+    changed first and is not checked again until its promotion, eighteen
+    minutes in. The check before `acme_batch_user` renews every due lock, so
+    no lock this run holds is ever past its expiry."""
+    now = [datetime(2026, 8, 16, 12, 0, tzinfo=UTC)]
+    monkeypatch.setattr(
+        "sopuli.cli.LockManager", functools.partial(LockManager, now=lambda: now[0])
+    )
+    paths = [
+        lock_path(LockKey(store="vault-prod", path=f"apps/acme/{account}"))
+        for account in ("acme_web_user", "acme_batch_user")
+    ]
+    lapsed: list[str] = []
+
+    def slow(harness: dict[str, Any], event: str) -> None:
+        if event != "set_password":
+            return
+        now[0] += timedelta(minutes=9)
+        for path in paths:
+            held = harness["store"].read(path)
+            expires = datetime.fromisoformat(held.data["expires_at"].replace("Z", "+00:00"))
+            if expires <= now[0]:
+                lapsed.append(path)
+
+    estate(
+        documents={
+            f"apps/acme/{account}": {
+                "DB_CREDENTIALS": {account: LIVE},
+                "pending": {account: STAGED},
+            }
+            for account in ("acme_web_user", "acme_batch_user")
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+        on_call=slow,
+    )
+    result = run(runner, write_config(TWO_DOCUMENTS_CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert lapsed == []
+
+
 def test_two_accounts_sharing_a_document_promote_together(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

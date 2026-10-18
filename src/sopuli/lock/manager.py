@@ -453,23 +453,30 @@ class LockManager:
         check that verified nothing is worse than no check at all, because the
         caller believes it ran and mutates on the strength of it.
 
-        **It renews a checked lock once half the TTL has gone** (#864).
-        :meth:`renew` runs at target boundaries, but one target can outlast the
-        TTL: many accounts, a slow database, or a VM paused part way through. A
-        lock that expires there can be taken over by a run with
-        ``locking.break_expired`` between this check and the statement it
-        guards. The check runs before every fenced statement, so renewing here
-        covers all of them. It renews only the locks it was asked about, so a
-        narrowed check stays narrowed: it reads and writes the document about to
-        be changed and no other. The renewal verifies the lock before it writes,
-        so a lock that is renewed is checked as well. Half the TTL means an
-        ordinary target costs no write beyond the boundary renewal, and the
-        renewal lands long before expiry even after a slow account.
+        **It renews once half the TTL has gone** (#864). :meth:`renew` runs at
+        target boundaries, but one target can outlast the TTL: many accounts, a
+        slow database, or a VM paused part way through. A lock that expires there
+        can be taken over by a run with ``locking.break_expired``. The check runs
+        before every fenced statement, so renewing here covers the run between
+        two statements; one statement that hangs for longer than the TTL is not
+        covered.
+
+        **When any checked lock is due, every held lock that is due is
+        renewed**, not only the checked ones. A document untouched for the rest
+        of a long target is still promoted at the end, and its lock must not
+        lapse in the meantime. That reads and writes other documents' locks,
+        which a narrowed check otherwise never does, but only at a renewal:
+        once per half TTL, never on an ordinary target. Every renewed lock is
+        verified before its write, so a check that renews is still a check.
         """
         checking = self._checking(keys)
-        due = [one for one in checking if self._due(one)]
-        self._verify([one for one in checking if one not in due])
-        self._renew(due)
+        if any(self._due(one) for one in checking):
+            due = [one for one in self._checking(()) if self._due(one)]
+            renewing = {one.key for one in due}
+            self._verify([one for one in checking if one.key not in renewing])
+            self._renew(due)
+            return
+        self._verify(checking)
 
     def _due(self, one: HeldLock) -> bool:
         """Whether this lock expires within half a TTL."""
@@ -516,7 +523,9 @@ class LockManager:
                 f"this run does not hold {', '.join(str(key) for key in missing)}; "
                 f"held: {', '.join(str(one.key) for one in live) or 'nothing'}"
             )
-        return [held[key] for key in keys]
+        # Each key once: a lock renewed twice in one pass would send its second
+        # write with the fence the first one replaced.
+        return [held[key] for key in dict.fromkeys(keys)]
 
     def renew(self) -> None:
         """Extend every held lock: at a target boundary, or from :meth:`check` when due.

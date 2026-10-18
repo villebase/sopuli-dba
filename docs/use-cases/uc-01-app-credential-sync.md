@@ -1759,15 +1759,18 @@ and the next. A renewal is itself a write, so it goes behind the fence like ever
 other write. So the boundary catches a takeover *before* the next target's first
 statement, not after it.
 
-**Inside a target the lease is renewed when half the TTL has gone** (#864). One
-target with many accounts, or a slow one, can outlast the TTL, and a lock that
-expires mid-target can be taken over by a run with `locking.break_expired`. The
-fence check before every fenced statement renews the lock it checks when that
-lock expires within half a TTL. So it covers each `ALTER USER`, the window that
-closes a rollover and the promotion write alike, and it stays per document: it
-renews the document about to be changed and no other. The boundary renewal
-keeps the other documents' locks alive. An ordinary target finishes well inside
-half a TTL, so it costs no write beyond the boundary renewal.
+**Inside a target the lease is renewed by the fence check** (#864). One target
+with many accounts, or a slow one, can outlast the TTL, and a lock that expires
+mid-target can be taken over by a run with `locking.break_expired`. The fence
+check before each fenced statement renews when a lock it checks expires within
+half a TTL: each `ALTER USER`, the window that closes a rollover, and the
+promotion write. It then renews every held lock that is due, not only that
+document's, because a document untouched for the rest of a long target is still
+promoted at the end. So a check reads only its own document, except at a
+renewal, which comes at most once per half TTL. An ordinary target finishes well
+inside half a TTL, so it costs no write beyond the boundary renewal. The renewal
+happens at a check, not on a timer, so one statement that hangs for longer than
+the TTL is not covered.
 
 **The check and the write are two requests**, and the tool accepts the window
 between them (decided in [#769](../decisions/log.md#769)). Vault has no
@@ -1888,7 +1891,7 @@ The lock record looks like this:
 
 Nothing in it is a secret value: an account, a selection and a process. So it is
 safe to print at exit 7. The default TTL is 15 minutes, renewed at each target
-boundary, and inside a target once half of it has gone. A lock counts as
+boundary, and at the next fence check once half of it has gone. A lock counts as
 expired only after `expires_at` plus a 60-second clock-skew margin.
 `acquired_at` does not move on renewal. It answers "how long has this been
 going on", which is what somebody reading exit 7 wants to know.

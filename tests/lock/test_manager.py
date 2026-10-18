@@ -385,16 +385,18 @@ def test_a_check_can_be_narrowed_to_the_lock_about_to_be_written_under() -> None
     own document lock. Checking all of them would be a store read per held lock
     before every statement, to establish facts nothing was about to act on.
 
-    Past half the TTL the check renews, and the renewal is narrowed the same
-    way: `KEY` is renewed, and `OTHER`'s takeover is found only when `OTHER`
-    is checked."""
+    Narrowing is a property of a check that renews nothing, so the clock is
+    left alone and the takeover is a direct write under the compare-and-set. A
+    check that renews also renews the other due locks
+    (`test_a_renewal_renews_every_lock_that_is_due`)."""
     store = MemoryStore()
-    clock = Clock()
-    run = manager(store, clock=clock)
+    run = manager(store)
     run.acquire([KEY, OTHER])
-
-    clock.advance(DEFAULT_TTL + CLOCK_SKEW + timedelta(seconds=1))
-    manager(store, correlation_id="01JTHEIRS", clock=clock, break_expired=True).acquire([OTHER])
+    theirs = LockRecord.acquired(
+        correlation_id="01JTHEIRS", command="creds rotate", holder=HOLDER, now=NOW
+    )
+    other = next(one for one in run.held if one.key == OTHER)
+    store.write(lock_path(OTHER), theirs.to_dict(), cas=other.fence)
 
     run.check(KEY)
 
@@ -491,9 +493,9 @@ def test_a_check_past_half_the_ttl_renews_so_a_long_target_keeps_its_lock() -> N
     assert not run.held[0].record.is_expired(now=clock(), skew=run.skew)
 
 
-def test_a_check_renews_only_the_lock_it_was_asked_about() -> None:
-    """A narrowed check stays narrowed when it renews: it writes the document
-    about to be changed and no other. The boundary renewal keeps the rest."""
+def test_a_renewal_renews_every_lock_that_is_due() -> None:
+    """A document untouched for the rest of a long target is still promoted at
+    the end, so a check that renews renews every due lock, not only its own."""
     store = MemoryStore()
     clock = Clock()
     run = manager(store, clock=clock)
@@ -503,7 +505,21 @@ def test_a_check_renews_only_the_lock_it_was_asked_about() -> None:
     run.check(KEY)
 
     fences = {one.key: one.fence for one in run.held}
-    assert fences == {KEY: 2, OTHER: 1}
+    assert fences == {KEY: 2, OTHER: 2}
+
+
+def test_a_key_checked_twice_is_renewed_once() -> None:
+    """A second write in the same pass would carry the fence the first one
+    replaced, and fail as a takeover of this run's own lock."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY])
+    clock.advance(timedelta(minutes=8))
+
+    run.check(KEY, KEY)
+
+    assert run.held[0].fence == 2
 
 
 def test_a_released_lock_is_not_checked_or_renewed() -> None:
@@ -526,7 +542,7 @@ def test_a_released_lock_is_not_checked_or_renewed() -> None:
 
 
 def test_a_check_that_is_due_still_finds_a_takeover() -> None:
-    """The renewal checks every held lock on its way, so a check that renews
+    """Every lock a renewal writes is verified first, so a check that renews
     is a check as well: a takeover stops the run before the statement."""
     store = MemoryStore()
     clock = Clock()

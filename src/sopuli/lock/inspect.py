@@ -271,11 +271,10 @@ def resolvable_locks(config: Config) -> tuple[LockKey, ...]:
 
 @dataclass(frozen=True)
 class SkippedPath:
-    """A listed lock path the tool cannot address, and why (#886)."""
+    """A listed lock path the tool cannot address (#886)."""
 
     store: str
     path: str
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -329,8 +328,8 @@ def discover(declared: Iterable[LockKey], *, stores: Mapping[str, SecretStore]) 
         for path in sorted(store.list(LOCK_PREFIX)):
             try:
                 tail = secret_path(path)
-            except ValueError as error:
-                skipped.append(SkippedPath(store=name, path=path, reason=str(error)))
+            except ValueError:
+                skipped.append(SkippedPath(store=name, path=path))
                 continue
             key = LockKey(store=name, path=tail)
             if key not in known:

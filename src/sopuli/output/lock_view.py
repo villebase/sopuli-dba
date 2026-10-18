@@ -267,10 +267,11 @@ def render_status(
     and it is quiet* and *did not look* are the same empty table, and they are
     different answers.
 
-    ``warnings`` are the messages of the run's ``diagnostics[]``, printed last:
-    a store that could not list (``SOPULI-W005``) and a record at a path the
-    tool cannot address (``SOPULI-W053``) both make the tables narrower than
-    they look, and the text view is the one most operators read.
+    ``warnings`` are the messages of the survey's own warnings, printed last: a
+    store that could not list (``SOPULI-W005``) and a record at a path the tool
+    cannot address (``SOPULI-W053``). Both make the tables narrower than they
+    look, and the text view is the one most operators read. The config's
+    warnings are not passed, as in every verb but the config verbs (#897).
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])

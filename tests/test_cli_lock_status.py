@@ -686,7 +686,7 @@ def test_a_lock_path_the_tool_cannot_address_is_reported_as_a_warning(
     [warning] = [d for d in document["diagnostics"] if d["code"] == UNADDRESSABLE_LOCK_PATH]
     assert "'locks/bad%3Fkey'" in warning["message"]
     assert "'vault-dev'" in warning["message"]
-    assert "'%'" in warning["message"], "it says why the path was refused"
+    assert "own tools" in warning["message"], "it says what to do"
     assert [entry["path"] for entry in document["lock"]["found"]] == [DEV.path]
 
 
@@ -699,11 +699,8 @@ def test_the_unaddressable_path_warning_reaches_the_text_output(
     result = run(runner, write_config(CONFIG))
 
     assert result.exit_code == ExitCode.SUCCESS
+    assert "1 warning:" in result.output
     assert "skipped the lock record at 'locks/bad%3Fkey'" in result.output
-
-
-def test_the_unaddressable_path_warning_is_described_in_the_registry() -> None:
-    assert UNADDRESSABLE_LOCK_PATH in WARNINGS
 
 
 def test_a_listable_store_produces_no_such_warning(

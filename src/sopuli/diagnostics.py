@@ -653,11 +653,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "is accurate; the survey is narrower than it looks."
         ),
         UNADDRESSABLE_LOCK_PATH: (
-            "`lock status` listed a lock record at a path the tool cannot address, such as "
-            "one holding `?`, `%`, a backslash or a control character, so the record is "
-            "not in the report. Only a record written by hand can have such a path, and "
-            "the tool can neither read nor break it. The message names the store, the path "
-            "and why it was refused. Remove the record with the vault's own tools if "
+            "`lock status` listed a lock record at a path the tool refuses in every store "
+            "path: one holding `?`, `%`, a backslash or a control character, or a `.` or "
+            "`..` segment. The record is not in the report. Only a record written by hand "
+            "can have such a path, and the tool can neither read nor break it. The message "
+            "names the store and the path. Remove the record with the vault's own tools if "
             "nothing uses it."
         ),
         CONSTRAINTS_UNREAD: (
@@ -1306,16 +1306,22 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
     learn that it is there, which a debug line did not tell them.
 
     One entry per path rather than one for all, unlike
-    :func:`unlistable_stores`: each is a record somebody has to find and remove,
-    and the reason can differ from one path to the next.
+    :func:`unlistable_stores`: each is a record somebody has to find and remove.
+
+    The message does not quote :func:`~sopuli.config.secret_refs.normalise_path`'s
+    refusal. It names the path a second way, without the ``locks/`` prefix, and
+    its hint is for somebody writing a config, not for somebody removing a
+    record.
     """
     return [
         Diagnostic(
             level="warning",
             code=UNADDRESSABLE_LOCK_PATH,
             message=(
-                f"skipped the lock record at {one.path!r} in store {one.store!r}, which "
-                f"this tool cannot address: {one.reason}"
+                f"skipped the lock record at {one.path!r} in store {one.store!r}: its path "
+                f"holds a character or a segment this tool refuses in every store path, "
+                f"so it can neither read nor break the record. Remove it with the vault's "
+                f"own tools if nothing uses it"
             ),
         )
         for one in skipped

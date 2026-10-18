@@ -19,9 +19,11 @@ import pathlib
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import MaterialRef
 from sopuli.material import (
     TOKEN_FLAG,
@@ -409,6 +411,64 @@ def test_a_token_file_granted_to_a_third_party_is_refused(tmp_path: Path) -> Non
     assert TOKEN_FLAG in message
 
 
+def test_a_refused_token_file_is_not_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The check runs on the open file before its contents are read (#885).
+
+    A refusal after the read would have the token in the process already.
+    """
+    path = token_file(tmp_path)
+    reads: list[str] = []
+    real_open = Path.open
+
+    class RecordingHandle:
+        """The real handle, with its `read` recorded."""
+
+        def __init__(self, real: Any) -> None:
+            self.real = real
+
+        def __enter__(self) -> RecordingHandle:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            self.real.close()
+
+        def fileno(self) -> int:
+            return int(self.real.fileno())
+
+        def read(self) -> bytes:
+            reads.append("read")
+            return bytes(self.real.read())
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> RecordingHandle:
+        return RecordingHandle(real_open(self, *args, **kwargs))
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise ConfigError("the token file is accessible to others", hint="chmod 600 the file")
+
+    monkeypatch.setattr(Path, "open", recording_open)
+    monkeypatch.setattr("sopuli.material.check_permissions", refuse)
+
+    with pytest.raises(MaterialError, match="accessible to others"):
+        resolve_token(ref=None, env={}, token_file=path, where=WHERE)
+
+    assert reads == []
+
+
+@posix_only
+def test_the_token_file_check_tests_the_open_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The path is 0600 and the descriptor says 0644, so only the descriptor
+    can be the source of the refusal: the file checked is the file read."""
+    path = token_file(tmp_path)
+    path.chmod(0o600)
+    wider = os.stat_result((0o100644, 0, 0, 1, path.stat().st_uid, 0, 0, 0, 0, 0))
+    monkeypatch.setattr(os, "fstat", lambda _fd: wider)
+
+    with pytest.raises(MaterialError, match="0644"):
+        resolve_token(ref=None, env={}, token_file=path, where=WHERE)
+
+
 @posix_only
 def test_a_config_written_token_file_is_still_not_permission_checked(tmp_path: Path) -> None:
     """§3a's asymmetry, which ADR-007 keeps rather than widens.
@@ -510,15 +570,15 @@ def test_an_unreadable_token_file_is_not_reported_as_no_token(
     that deny a read differ per platform and the subject here is the branch, not
     the operating system.
     """
-    real_read = pathlib.Path.read_bytes
+    real_open = pathlib.Path.open
 
-    def refuse(self: pathlib.Path) -> bytes:
+    def refuse(self: pathlib.Path, *args: Any, **kwargs: Any) -> Any:
         if self.name == ".vault-token":
             raise PermissionError(13, "Permission denied")
-        return real_read(self)
+        return real_open(self, *args, **kwargs)
 
-    monkeypatch.setattr(pathlib.Path, "read_bytes", refuse)
     (tmp_path / ".vault-token").write_bytes(b"s.unreadable")
+    monkeypatch.setattr(pathlib.Path, "open", refuse)
 
     with pytest.raises(MaterialError) as caught:
         resolve_token(ref=None, env={}, home=tmp_path, where=WHERE)

@@ -8366,10 +8366,15 @@ def _promote_documents(
     """
     promotions: dict[LockKey, _Promotion] = {}
     for key, records in _by_document(applied).items():
+        # A skipped row never owes the write itself: the skip kept in the group
+        # is there to hold the document back, and promoting its stage would be
+        # the breach of invariant 7 it exists to stop.
         owing = [
             record
             for record in records
-            if record.source is not None and apply_states.promotes(record.source.stage)
+            if record.source is not None
+            and apply_states.promotes(record.source.stage)
+            and record.outcome.state != apply_states.SKIPPED
         ]
         if not owing:
             promotions[key] = _Promotion(None, "the vault already holds what was applied")
@@ -8449,7 +8454,7 @@ def _only_skips_held_back(states: Sequence[str], promotions: Mapping[LockKey, _P
     held = [one for one in promotions.values() if one.promotable and one.version is None]
     return (
         bool(held)
-        and all(one.skipped and one.error is None for one in held)
+        and all(one.skipped for one in held)
         and all(
             apply_states.is_confirmed(state) or state == apply_states.SKIPPED for state in states
         )
@@ -8686,21 +8691,27 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     for ever. Dropping it does neither: its `pending` stays staged and its
     neighbours promote.
 
-    **A skip is kept where it would be promoted past** (#852): the account owes
-    the document a write (its stage is `pending`, or `previous` on a rollback)
-    and confirmed on another target. The guardrails read each database, so one
-    account can hold `DBA` on one target and not on another. Its promotion is
-    then one password for all of its targets, and the skipped one still holds the
-    old password, so promoting would advertise a credential that target does not
-    have. A skipped row is not confirmed, so it holds the document back.
+    **A skip is kept where it would be promoted past** (#852): the row owes the
+    document a write (its stage is `pending`, or `previous` on a rollback) and
+    the same credential confirmed on another target. The guardrails read each
+    database, so one account can hold `DBA` on one target and not on another.
+    The promotion then moves one password for all of those targets, and the
+    skipped one still holds the old password, so promoting would advertise a
+    credential that target does not have. A skipped row is not confirmed, so it
+    holds the document back.
 
-    Every other skip is dropped. An account applied from `current` owes no
-    write, so its skip moves nothing. An account that confirmed nowhere else is
-    either skipped everywhere, or held back already by the failure on its other
+    **The same credential is the same place in the same document**, the field
+    and the decoded pointer, which is :func:`_left_out`'s definition too. It is
+    not the account name: one account can have a field per target in one
+    document, and a confirmation on one field does not move the other.
+
+    Every other skip is dropped. A row applied from `current` owes no write, so
+    its skip moves nothing. A credential that confirmed nowhere else is either
+    skipped everywhere, or held back already by the failure on its other
     target, which is then the reason given.
     """
     confirmed_elsewhere = {
-        (_lock_key(record.binding), record.binding.account)
+        (_lock_key(record.binding), _credential_at(record.binding.secret))
         for record in applied
         if record.binding.secret is not None
         and record.binding.vault is not None
@@ -8715,7 +8726,7 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
         if record.outcome.state == apply_states.SKIPPED and not (
             record.source is not None
             and apply_states.promotes(record.source.stage)
-            and (key, binding.account) in confirmed_elsewhere
+            and (key, _credential_at(binding.secret)) in confirmed_elsewhere
         ):
             continue
         grouped.setdefault(key, []).append(record)

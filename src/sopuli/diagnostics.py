@@ -866,8 +866,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "target confirmed; a failure is reported as the reason first. The same run "
             "again skips the same pair, so the run prints no `repair with:` line when this "
             "is all that held it back. The remedy is to clear what the guardrail reported "
-            "on that target. `--force` overrides it, and waives the guardrails for every "
-            "account the run selects, so the message names no command."
+            "on that target and run the same command again. `--force` overrides it, and "
+            "waives the guardrails for every account the run selects, so the message "
+            "spells out no `--force` command."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1373,10 +1374,11 @@ def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagno
     the reader goes to each of those targets next.
 
     **No command is printed.** The one that would finish the job depends on the
-    run's config, profile, source and strategy, and on which accounts a `--force`
-    should reach: a bare one waives the guardrails for every account the run
-    selects, and naming only some narrows the run past a sibling's `pending`. So
-    the message says what `--force` costs and leaves the choice to the operator.
+    verb, the run's config, profile, source and strategy, and on which accounts a
+    `--force` should reach: a bare one waives the guardrails for every account the
+    run selects, and naming only some narrows the run past a sibling's `pending`.
+    So the message says to run the same command again once the guardrail is
+    cleared, says what `--force` costs, and leaves the choice to the operator.
     """
     named = "; ".join(f"{account} on {target}" for account, target in pairs)
     targets = "that target still holds" if len(pairs) == 1 else "those targets still hold"
@@ -1385,9 +1387,9 @@ def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagno
         code=PROMOTION_SKIPPED,
         message=(
             f"{document} was not promoted: a guardrail skipped {named}, and {targets} the "
-            "old password -- clear what the guardrail reported and run `creds apply` again. "
-            "`--force` overrides it, and waives the guardrails for every account the run "
-            "selects"
+            "old password -- clear what the guardrail reported and run the same command "
+            "again. `--force` overrides it, and waives the guardrails for every account "
+            "the run selects"
         ),
     )
 

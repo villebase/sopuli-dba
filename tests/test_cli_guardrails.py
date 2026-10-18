@@ -568,6 +568,64 @@ def test_a_skip_beside_a_failure_leaves_the_failure_as_the_reason(
     assert PROMOTION_SKIPPED not in codes
 
 
+def test_a_skip_on_one_credential_does_not_hold_back_another_of_the_same_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The gate is keyed on the credential, the field and pointer, as `_left_out`
+    is. Here each target has its own field for `acme_web_user`, so the skip on
+    beta's field moves nothing, and alpha's field is promoted."""
+    fields = {
+        f"{account}_{target}": value
+        for account in ("acme_web_user", "acme_batch_user")
+        for target, value in (("appdb-alpha", LIVE), ("appdb-beta", LIVE))
+    }
+    harness = estate(
+        {},
+        by_target=DBA_ON_BETA,
+        document={"DB_CREDENTIALS": fields, "pending": dict.fromkeys(fields, STAGED)},
+    )
+    config = TWO_TARGETS.replace("DB_CREDENTIALS/{account}", "DB_CREDENTIALS/{account}_{target}")
+    result = run(runner, write_config(config), "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user_appdb-alpha"] == STAGED
+    assert held.data["DB_CREDENTIALS"]["acme_web_user_appdb-beta"] == LIVE
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_a_rollback_is_held_back_by_a_skip_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A rollback promotes `previous` to `current`, so the same gate stands in
+    front of it: `appdb-beta` still holds the password being rolled back from."""
+    harness = estate(
+        {},
+        by_target=DBA_ON_BETA,
+        document={
+            "DB_CREDENTIALS": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            "previous": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+        },
+    )
+    result = run(
+        runner,
+        write_config(TWO_TARGETS),
+        "--source",
+        "previous",
+        "--confirm",
+        "--output",
+        "json",
+    )
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED in codes
+
+
 def test_rotate_reports_the_skip_too(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

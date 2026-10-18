@@ -41,6 +41,7 @@ import click
 
 from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339, utc_now
+from sopuli.output.printable import printable
 from sopuli.output.spinner import Spinner
 from sopuli.output.spinner import disabled as spinner_disabled
 from sopuli.output.spinner import make as make_spinner
@@ -311,12 +312,20 @@ class Emitter:
         ``click.unstyle`` is the CLI dependency's own function for it, so it
         adds no display library (ADR-003).
 
+        **Every control character is then shown, not sent** (#859), because the
+        text carries ORA- messages, vault errors and lock holders from outside
+        the tool. With colour on, the tool's own colour sequences are kept and
+        any other escape sequence is shown (:func:`sopuli.output.printable.printable`).
+        :meth:`emit` sends its text through here, so this covers every command.
+
         **Flushed**, because `account reset-password` writes here in the middle
         of a run, and the next thing on screen is a prompt on stderr. Unflushed,
         a password could reach the screen after the next target's prompt.
         """
-        if not self.use_color():
-            text = click.unstyle(text)
+        if self.use_color():
+            text = printable(text, keep_colour=True)
+        else:
+            text = printable(click.unstyle(text))
         print(text.rstrip("\n"), file=self._out(), flush=True)
 
 

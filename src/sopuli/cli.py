@@ -278,6 +278,7 @@ from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
 from sopuli.output.preflight_view import caveat_notes, render_preflight
+from sopuli.output.printable import printable
 from sopuli.output.reset_view import audited_value, render_password
 from sopuli.output.reset_view import build_result as build_reset_result
 from sopuli.output.reset_view import render as render_reset
@@ -4242,7 +4243,7 @@ def main() -> None:
         # broke". The error already knows its own location, hint and code --
         # printing it is all that is left to do. `ArgumentError` comes through
         # here too, carrying exit 2 (J7).
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(exc.exit_code) from exc
     except LockDeniedError as exc:
         # P5's exit 7, and the message carries the holder -- who is running
@@ -4250,7 +4251,7 @@ def main() -> None:
         # need opposite responses. This arm and `_classify` in
         # `sopuli.invocation` have to agree: the document's `exit_code` is
         # defined as equal to the process's.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(ExitCode.LOCK_HELD) from exc
     except StoreError as exc:
         # A store carries its own exit code and category -- a login failure is
@@ -4258,7 +4259,7 @@ def main() -> None:
         # document already reports it from `_classify`.
         # Without this arm the process would exit 1 while its own document said
         # otherwise, and `exit_code` is defined as equal to the process's.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(exc.exit_code) from exc
     except LockError as exc:
         # Everything else about a lock, which today is `LockStolenError`, and
@@ -4271,7 +4272,7 @@ def main() -> None:
         # A command that knows what it applied reports exit 4 from its own
         # document and never reaches this handler. Reaching it means nobody could
         # say, and generic failure is what that is.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(ExitCode.FAILURE) from exc
     except DriverError as exc:
         # A driver carries its own exit code and category, the way a store does
@@ -4282,15 +4283,25 @@ def main() -> None:
         # would be indistinguishable from one that broke.
         #
         # `__str__` already renders the hint, so there is nothing to add here.
-        click.echo(f"sopuli: {exc}", err=True)
+        _print_error(str(exc))
         raise SystemExit(exc.exit_code) from exc
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the boundary
         # An exception none of the arms above classifies. A driver error inside
         # a per-account finding keeps its category, vendor code and hint through
         # `_as_error`, and one that escapes a command whole is handled above, so
         # what reaches here is unclassified and generic failure is what it is.
-        click.echo(f"sopuli: {type(exc).__name__}: {exc}", err=True)
+        _print_error(f"{type(exc).__name__}: {exc}")
         raise SystemExit(ExitCode.FAILURE) from exc
+
+
+def _print_error(message: str) -> None:
+    """The one line :func:`main` prints for a run that failed as a whole.
+
+    The message is the exception's, and it carries text from outside the tool:
+    an ORA- message, a vault error body, a lock holder. So every control
+    character in it is shown rather than sent (#859).
+    """
+    click.echo(f"sopuli: {printable(message)}", err=True)
 
 
 @cli.group("creds")

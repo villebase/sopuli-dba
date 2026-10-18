@@ -91,6 +91,19 @@ avoid them. This is the same shape as redaction, for the same reason: a
 guarantee held in one place cannot be lost by a call site that forgot, and a
 vendor message can arrive with escapes already in it.
 
+**Control characters are shown, not sent** (#859). Text output carries strings
+from outside the tool: ORA- messages, vault error bodies, lock holders. A
+terminal acts on a control character in them. An OSC sequence sets the window
+title, a lone `\r` lets the next text overwrite a row, and `\b` deletes what was
+printed. So the serialiser shows every C0 and C1 control character and DEL as
+visible text, such as `\x1b` or `\r`, after the colour gate has decided. Line
+breaks and tabs are kept. With colour on, colour sequences are kept and every
+other escape sequence is shown. A table cell shows line breaks and tabs too,
+because one would start a row the table never laid out. The run-level error line
+on stderr and the `--debug` lines get the same treatment. JSON output is not
+changed: the encoder escapes control characters itself, and the document carries
+the server's text exactly.
+
 ### Progress
 
 While a verb reads a document from a vault, a spinner turns on **stderr**. It is

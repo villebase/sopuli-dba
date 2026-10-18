@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sopuli.output.palette import Role, paint
+from sopuli.output.printable import printable_cell
 
 #: What a truncated cell ends with. ASCII by the same convention as the rest of
 #: the tool's prose -- this is decoration the tool adds, not text a user supplied.
@@ -86,8 +87,15 @@ def _width_of(column: Column, index: int, rows: Sequence[Sequence[Cell | str]]) 
 
 
 def _cell(row: Sequence[Cell | str], index: int) -> Cell:
+    """One cell, its text made printable before anything measures it (#859).
+
+    Cells carry text from outside the tool -- an ORA- detail, a lock holder --
+    and a control character in one would move the cursor or start a row the
+    table never laid out.
+    """
     value = row[index] if index < len(row) else ""
-    return value if isinstance(value, Cell) else Cell(value)
+    cell = value if isinstance(value, Cell) else Cell(value)
+    return Cell(printable_cell(cell.text), cell.role)
 
 
 def _fit(text: str, width: int) -> str:

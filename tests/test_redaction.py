@@ -79,6 +79,12 @@ def test_pickling_refuses_rather_than_leaking(secret: Secret, protocol: int) -> 
         pickle.dumps(secret, protocol=protocol)
 
 
+def test_getstate_refuses_rather_than_leaking(secret: Secret) -> None:
+    """Python 3.11 gives every object a ``__getstate__`` that returns its slots."""
+    with pytest.raises(TypeError, match="cannot be pickled"):
+        secret.__getstate__()
+
+
 def test_pickling_a_container_refuses(secret: Secret) -> None:
     with pytest.raises(TypeError, match="cannot be pickled"):
         pickle.dumps({"credential": [secret]})
@@ -96,6 +102,6 @@ def test_truth_value_still_works() -> None:
 
 def test_copy_keeps_the_value(secret: Secret) -> None:
     """The memory store deep-copies what it holds, so copying must still work."""
-    assert copy.copy(secret) is secret
+    assert copy.copy(secret).reveal() == PLAINTEXT
     copied = copy.deepcopy({"password": secret})
     assert copied["password"].reveal() == PLAINTEXT

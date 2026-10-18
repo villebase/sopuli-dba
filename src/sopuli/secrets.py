@@ -3,8 +3,8 @@
 Redaction happens because a secret value is *typed*, not because a particular
 call site remembered to mask it. Every stringification of :class:`Secret`
 yields ``***``; the plaintext is reachable only through :meth:`Secret.reveal`,
-which exists so that the two places allowed to see it — the vault write and the
-driver call — can be found by grepping for one method name.
+which exists so that the places allowed to see it, which ``CLAUDE.md``
+invariant 2 lists, can be found by grepping for one method name.
 
 The JSON side of the same guarantee lives in :mod:`sopuli.output.emit`.
 """
@@ -65,11 +65,14 @@ class Secret:
         # anything built on it, such as `multiprocessing`.
         raise TypeError("a Secret cannot be pickled")
 
+    def __getstate__(self) -> NoReturn:
+        # Python 3.11 gives every object one, and it returns the slot values.
+        raise TypeError("a Secret cannot be pickled")
+
     def __copy__(self) -> Secret:
-        # Without this, `copy` falls back to `__reduce__` and fails. A Secret is
-        # immutable, so the copy can be the same object. The memory store
-        # deep-copies what it holds.
-        return self
+        # Without this, `copy` falls back to `__reduce__` and fails. The memory
+        # store deep-copies what it holds. A copy stays in the process.
+        return Secret(self._value)
 
     def __deepcopy__(self, memo: dict[int, object]) -> Secret:
-        return self
+        return Secret(self._value)

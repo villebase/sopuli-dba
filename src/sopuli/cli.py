@@ -230,7 +230,7 @@ from sopuli.output.apply_view import (
 from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
-from sopuli.output.color import ColorChoice
+from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -2129,7 +2129,7 @@ def account_reset_password(
         # had been about to touch. That is the case the `click.Abort` handling
         # exists for, reached by a different route, and echoing here is the same
         # fix.
-        _echo_err(header)
+        _echo_err(header, run=run)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that
     # exists on the seen path and the unseen one alike, and the unit two
@@ -2245,7 +2245,7 @@ def account_reset_password(
         #
         # Unreachable for `manual`, which is refused with `--output json` before a
         # password is drawn. Only an unseen method reaches this line.
-        _echo_err(shown)
+        _echo_err(shown, run=run)
         shown = ""
     # Printed as well as serialised: a warning nobody can see in the
     # default output is not surfaced, and these say the run kept no record of
@@ -3951,7 +3951,7 @@ def _confirm_break(
                 "without touching anything"
             ),
         )
-    _echo_err(render_break(paths, outcome, mode=mode, applied=False))
+    _echo_err(render_break(paths, outcome, mode=mode, applied=False), run=run)
     _confirm(
         f"take this lock from {describe_holder(outcome.record)}?",
         abort=True,
@@ -4011,7 +4011,7 @@ def _confirm_environments(
     question = f"{action} in `{demand.named}`?"
     # As `rotate`'s gate does: only where somebody is actually asked.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    _echo_err(render_plan(plan, noun=noun))
+    _echo_err(render_plan(plan, noun=noun), run=run)
     _confirm(question, abort=True, err=True)
 
 
@@ -4304,15 +4304,16 @@ def _print_error(message: str) -> None:
     click.echo(f"sopuli: {printable(message, colour=False)}", err=True)
 
 
-def _echo_err(text: str) -> None:
+def _echo_err(text: str, *, run: Invocation) -> None:
     """A line for stderr outside the emitter: a plan before a prompt, a hand-over.
 
     It carries text from outside the tool, such as a lock holder from the
-    vault, so every control character is shown rather than sent (#859). The
-    palette's colour is kept, and click removes it where stderr is not a
-    terminal, as it did before.
+    vault, so every control character is shown rather than sent (#859). Colour
+    is decided for stderr by the run's own `--color` choice and `NO_COLOR`, the
+    way the emitter decides it for stdout.
     """
-    click.echo(printable(text, colour=True), err=True)
+    colour = resolve_color(run.emitter().color_choice, stream=sys.stderr, env=os.environ)
+    click.echo(printable(text, colour=colour), err=True, color=colour)
 
 
 def _confirm(question: str, **options: Any) -> bool:
@@ -10202,7 +10203,7 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     # from a run that hung. `--confirm` answered in advance, so nothing is waiting
     # and nothing is sent.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    _echo_err(render_plan(plan, noun="rotation"))
+    _echo_err(render_plan(plan, noun="rotation"), run=run)
     _confirm(question, abort=True, err=True)
 
 

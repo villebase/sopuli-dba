@@ -100,9 +100,15 @@ shows every C0 and C1 control character and DEL as visible text, such as `\x1b`
 or `\r`. The only escape sequences it writes as escapes are the palette's own:
 kept where colour is on, removed where it is off. Any other escape sequence is
 shown either way, so turning colour off does not hide one that came from
-outside. Line breaks and tabs are kept, and `\r\n` becomes a line break. The
-Unicode line and paragraph separators, the bidirectional controls and the
-zero-width characters are shown as `\uXXXX`. A table cell shows line breaks and
+outside. A server message that uses one of the palette's own sequences cannot
+be told apart from the tool's, so it is treated as the tool's. Those sequences
+only set a colour, bold or dim, so the most such a message can do is colour
+itself. Line breaks and tabs are kept, and `\r\n` becomes a line break. The
+Unicode line and paragraph separators, the bidirectional marks, overrides and
+isolates, and the zero-width and invisible characters are shown as `\uXXXX`.
+Backslashes are not doubled, because paths and DSNs carry them: the guarantee is
+that no character acts on the terminal, and the JSON document has the exact
+text. A table cell shows line breaks and
 tabs too, because one would start a row the table never laid out. The run-level
 error line, the plans and questions a command prints to stderr before a prompt,
 and the `--debug` lines get the same treatment. JSON output is not changed: the

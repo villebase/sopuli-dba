@@ -44,11 +44,28 @@ def test_osc_and_carriage_return_are_shown_not_sent(colour: bool) -> None:
         ("\x9b", "\\x9b"),
         ("\x9d", "\\x9d"),
         ("\x00", "\\x00"),
-        (" ", "\\u2028"),
-        ("‮", "\\u202e"),
-        ("​", "\\u200b"),
+        ("\N{LINE SEPARATOR}", "\\u2028"),
+        ("\N{RIGHT-TO-LEFT OVERRIDE}", "\\u202e"),
+        ("\N{ZERO WIDTH SPACE}", "\\u200b"),
+        ("\N{LEFT-TO-RIGHT MARK}", "\\u200e"),
+        ("\N{ARABIC LETTER MARK}", "\\u061c"),
+        ("\N{WORD JOINER}", "\\u2060"),
+        ("\N{SOFT HYPHEN}", "\\xad"),
     ],
-    ids=["backspace", "delete", "c1-csi", "c1-osc", "nul", "line-separator", "bidi", "zero-width"],
+    ids=[
+        "backspace",
+        "delete",
+        "c1-csi",
+        "c1-osc",
+        "nul",
+        "line-separator",
+        "bidi-override",
+        "zero-width",
+        "ltr-mark",
+        "arabic-mark",
+        "word-joiner",
+        "soft-hyphen",
+    ],
 )
 def test_every_other_control_character_is_shown(character: str, shown: str) -> None:
     assert printable(f"a{character}b", colour=False) == f"a{shown}b"
@@ -174,16 +191,33 @@ def test_a_lock_holder_in_a_prompt_is_shown_not_sent(monkeypatch: pytest.MonkeyP
     assert asked == ["take this lock from svc\\x1b]0;x\\x07\\ryes?"]
 
 
-def test_a_line_for_stderr_is_shown_not_sent(capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("colour", [False, True])
+def test_a_line_for_stderr_is_shown_not_sent(colour: bool, monkeypatch: pytest.MonkeyPatch) -> None:
     """The plan before a prompt goes to stderr outside the emitter, and a lock
-    holder reaches it from the vault."""
+    holder reaches it from the vault. Asserted on what is handed to click, so
+    the colour-on path is exercised whatever stderr is in the test."""
+    from types import SimpleNamespace
+
     import sopuli.cli as cli_module
 
-    cli_module._echo_err(f"held by {HOSTILE}")
+    echoed: list[tuple[str, object]] = []
 
-    printed = capsys.readouterr().err
-    assert "\x1b]" not in printed
-    assert "\\x1b]0;owned\\x07\\rSTATE ok" in printed
+    def echo(message: str, **options: object) -> None:
+        echoed.append((message, options.get("color")))
+
+    monkeypatch.setattr(click, "echo", echo)
+    monkeypatch.setattr(cli_module, "resolve_color", lambda *_, **__: colour)
+    run = SimpleNamespace(emitter=lambda: SimpleNamespace(color_choice=ColorChoice.AUTO))
+
+    cli_module._echo_err(paint("plan", Role.HEADING) + f" held by {HOSTILE}", run=run)  # type: ignore[arg-type]
+
+    ((message, passed),) = echoed
+    assert passed is colour
+    assert "\x1b]" not in message
+    assert "\x07" not in message
+    assert "\r" not in message
+    assert message.startswith(paint("plan", Role.HEADING) if colour else "plan")
+    assert "\\x1b]0;owned\\x07\\rSTATE ok" in message
 
 
 def test_json_keeps_the_servers_text_exactly() -> None:

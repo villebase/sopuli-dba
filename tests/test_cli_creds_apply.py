@@ -17,10 +17,11 @@ Two properties carry most of it, and both are about restraint:
 
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -2407,18 +2408,20 @@ def test_the_lock_is_offered_a_renewal_before_each_change_inside_a_target(
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#864. One target with two accounts: the boundary renewal never runs, so
-    without a renewal inside the target a long one could outlast the TTL. Each
-    `ALTER USER` is preceded by `renew_if_due`, which renews only once half the
-    TTL has gone (`tests/lock/test_manager.py`)."""
-    offered: list[int] = []
-    renew_if_due = LockManager.renew_if_due
+    """#864. One target with two accounts, so the boundary renewal never runs.
+    Each `set_password` takes eight minutes on a fake clock, so the run outlasts
+    the fifteen-minute TTL inside the target. The fence check before the next
+    fenced statement renews, so the lock record is written more than the
+    acquisition and the release, and the run finishes under its own lock."""
+    now = [datetime(2026, 8, 16, 12, 0, tzinfo=UTC)]
+    monkeypatch.setattr(
+        "sopuli.cli.LockManager", functools.partial(LockManager, now=lambda: now[0])
+    )
 
-    def counted(self: LockManager) -> bool:
-        offered.append(len(self.held))
-        return renew_if_due(self)
+    def slow(harness: dict[str, Any], event: str) -> None:
+        if event == "set_password":
+            now[0] += timedelta(minutes=8)
 
-    monkeypatch.setattr(LockManager, "renew_if_due", counted)
     harness = estate(
         documents={
             "apps/acme/db": {
@@ -2428,13 +2431,15 @@ def test_the_lock_is_offered_a_renewal_before_each_change_inside_a_target(
         },
         users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
         answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+        on_call=slow,
     )
     result = run(runner, write_config(SHARED_CONFIG))
 
     assert result.exit_code == ExitCode.SUCCESS
-    changed = [name for session in harness["sessions"] for name, _ in session.changed]
-    assert len(offered) == len(changed) == 2
-    assert all(held for held in offered)
+    lock = harness["store"].read(lock_path(LockKey(store="vault-prod", path="apps/acme/db")))
+    assert lock is not None
+    # Acquired (1), renewed at least once inside the target, released.
+    assert lock.version >= 3
 
 
 def test_two_accounts_sharing_a_document_promote_together(

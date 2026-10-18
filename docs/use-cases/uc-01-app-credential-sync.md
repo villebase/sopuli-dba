@@ -1761,10 +1761,11 @@ statement, not after it.
 
 **Inside a target the lease is renewed when half the TTL has gone** (#864). One
 target with many accounts, or a slow one, can outlast the TTL, and a lock that
-expires mid-target can be taken over by a run with `locking.break_expired`.
-Before each account's `ALTER USER`, the run renews if the soonest expiry of its
-locks is less than half a TTL away. An ordinary target finishes well inside
-that, so it costs no extra write.
+expires mid-target can be taken over by a run with `locking.break_expired`. The
+fence check before every fenced statement renews the locks when the soonest
+expiry is less than half a TTL away, so it covers each `ALTER USER`, the window
+that closes a rollover and the promotion write alike. An ordinary target
+finishes well inside that, so it costs no extra write.
 
 **The check and the write are two requests**, and the tool accepts the window
 between them (decided in [#769](../decisions/log.md#769)). Vault has no
@@ -1885,8 +1886,8 @@ The lock record looks like this:
 
 Nothing in it is a secret value: an account, a selection and a process. So it is
 safe to print at exit 7. The default TTL is 15 minutes, renewed at each target
-boundary, and inside a target once half of it has gone. A lock counts as expired only after `expires_at` plus a 60-second
-clock-skew margin. `acquired_at` does not move on renewal. It answers "how long
+boundary, and inside a target once half of it has gone. A lock counts as
+expired only after `expires_at` plus a 60-second clock-skew margin. `acquired_at` does not move on renewal. It answers "how long
 has this been going on", which is what somebody reading exit 7 wants to know.
 
 These rules apply to reading and writing it. Each takes the safe side of a choice

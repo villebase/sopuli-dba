@@ -1713,7 +1713,8 @@ exits 1, and nothing is applied to any database.
  4. generate                  ── vault: pending = new          (fence checked)
  5. apply to each target      ── database changed; old password still valid
                                  if strategy = rollover        (fence checked,
-                                 lock renewed at each boundary)
+                                 lock renewed at each boundary
+                                 and at half the TTL)
  6. verify each target        ── login or hash with the new password
  7. promote                   ── vault: previous = current, current = pending
                                                               (fence checked)
@@ -1757,6 +1758,13 @@ which a renewal needs, because a renewal writes to all of them.
 and the next. A renewal is itself a write, so it goes behind the fence like every
 other write. So the boundary catches a takeover *before* the next target's first
 statement, not after it.
+
+**Inside a target the lease is renewed when half the TTL has gone** (#864). One
+target with many accounts, or a slow one, can outlast the TTL, and a lock that
+expires mid-target can be taken over by a run with `locking.break_expired`.
+Before each account's `ALTER USER`, the run renews if the soonest expiry of its
+locks is less than half a TTL away. An ordinary target finishes well inside
+that, so it costs no extra write.
 
 **The check and the write are two requests**, and the tool accepts the window
 between them (decided in [#769](../decisions/log.md#769)). Vault has no
@@ -1877,7 +1885,7 @@ The lock record looks like this:
 
 Nothing in it is a secret value: an account, a selection and a process. So it is
 safe to print at exit 7. The default TTL is 15 minutes, renewed at each target
-boundary. A lock counts as expired only after `expires_at` plus a 60-second
+boundary, and inside a target once half of it has gone. A lock counts as expired only after `expires_at` plus a 60-second
 clock-skew margin. `acquired_at` does not move on renewal. It answers "how long
 has this been going on", which is what somebody reading exit 7 wants to know.
 

@@ -490,7 +490,7 @@ class LockManager:
         return [held[key] for key in keys]
 
     def renew(self) -> None:
-        """Extend every held lock, at a target boundary.
+        """Extend every held lock: at a target boundary, or from :meth:`renew_if_due`.
 
         Checks the fence on the way through, because a renewal is a write and
         every write goes behind the same guard. The version the renewal returns
@@ -511,6 +511,29 @@ class LockManager:
                 record=renewed,
                 fence=self._write(entry, one.key, renewed, cas=one.fence or 0, acquiring=False),
             )
+
+    def renew_if_due(self) -> bool:
+        """Renew where half the TTL has passed since the last renewal, inside a target.
+
+        :meth:`renew` runs at target boundaries, and one target can outlast the
+        TTL: many accounts, a slow database, or a VM paused part way through
+        (#864). A lock that expires mid-target can be taken over by a run with
+        ``locking.break_expired``, and the window between this run's next check
+        and its `ALTER USER` stays open. Called before each account's change, so
+        the lock never runs out while the run is still changing passwords.
+
+        **Half the TTL**, so a renewal lands long before expiry even after a slow
+        account, and an ordinary target costs no extra write. The soonest expiry
+        of the held locks decides: they were renewed together, so they normally
+        agree. Returns whether it renewed.
+        """
+        if not self.held:
+            return False
+        soonest = min(one.record.expires_at for one in self.held)
+        if soonest - self.now() > self.ttl / 2:
+            return False
+        self.renew()
+        return True
 
     def release(self) -> None:
         """Let go of everything, recording what could not be let go of.

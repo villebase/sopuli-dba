@@ -7180,6 +7180,11 @@ def _apply_one(
             # in place already, or that the guardrails turned away, never met the
             # reuse history, and a warning about a statement nobody sent is noise.
             reuse = user
+        # Inside a target as well as between targets (#864): one target with many
+        # accounts, or a slow one, can outlast the TTL. Renewing checks the fence
+        # on every held lock first, so it raises the same takeover the check
+        # below would.
+        manager.renew_if_due()
         manager.check(_lock_key(binding))
         # Read before the call, and kept on a failure only where the statement
         # went out (`_carried`): a statement the server refuses has still

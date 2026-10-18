@@ -76,6 +76,7 @@ from sopuli.lock import (
     Holder,
     LockDeniedError,
     LockKey,
+    LockManager,
     LockRecord,
     lock_path,
 )
@@ -2398,6 +2399,42 @@ def test_every_problem_is_reported_rather_than_the_first(
     assert "GRANT ALTER USER" in result.output
     assert "GRANT CREATE SESSION" in result.output
     assert "2 problems over 2 targets" in result.output
+
+
+def test_the_lock_is_offered_a_renewal_before_each_change_inside_a_target(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#864. One target with two accounts: the boundary renewal never runs, so
+    without a renewal inside the target a long one could outlast the TTL. Each
+    `ALTER USER` is preceded by `renew_if_due`, which renews only once half the
+    TTL has gone (`tests/lock/test_manager.py`)."""
+    offered: list[int] = []
+    renew_if_due = LockManager.renew_if_due
+
+    def counted(self: LockManager) -> bool:
+        offered.append(len(self.held))
+        return renew_if_due(self)
+
+    monkeypatch.setattr(LockManager, "renew_if_due", counted)
+    harness = estate(
+        documents={
+            "apps/acme/db": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+                "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    result = run(runner, write_config(SHARED_CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    changed = [name for session in harness["sessions"] for name, _ in session.changed]
+    assert len(offered) == len(changed) == 2
+    assert all(held for held in offered)
 
 
 def test_two_accounts_sharing_a_document_promote_together(

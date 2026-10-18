@@ -456,6 +456,50 @@ def test_renewing_extends_the_lock_and_moves_the_fence() -> None:
     assert record_at(store)["acquired_at"].startswith("2026-08-16T12:00")
 
 
+def test_renew_if_due_waits_for_half_the_ttl() -> None:
+    """#864. An ordinary target costs no extra write: nothing is renewed until
+    half the TTL has gone."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY])
+    clock.advance(timedelta(minutes=7))
+
+    assert run.renew_if_due() is False
+    assert run.held[0].fence == 1
+
+
+def test_renew_if_due_renews_a_long_target_before_the_lock_runs_out() -> None:
+    """#864. Past half the TTL it renews, so one long target cannot outlast
+    the lock it holds, and the next account's change is still fenced."""
+    store = MemoryStore()
+    clock = Clock()
+    run = manager(store, clock=clock)
+    run.acquire([KEY])
+    for _ in range(4):
+        clock.advance(timedelta(minutes=5))
+        run.renew_if_due()
+        run.check(KEY)
+
+    # Twenty minutes in, past the fifteen-minute TTL, and still held.
+    assert run.held[0].fence > 1
+    assert not run.held[0].record.is_expired(now=clock(), skew=run.skew)
+
+
+def test_renew_if_due_raises_on_a_stolen_lock() -> None:
+    """It renews through `renew`, so a takeover found there stops the run as
+    the check before an `ALTER USER` would."""
+    store = MemoryStore()
+    clock = Clock()
+    stalled = manager(store, clock=clock)
+    stalled.acquire([KEY])
+    clock.advance(timedelta(minutes=17))
+    manager(store, correlation_id="01JOTHER", clock=clock, break_expired=True).acquire([KEY])
+
+    with pytest.raises(LockStolenError):
+        stalled.renew_if_due()
+
+
 def test_renewing_a_stolen_lock_fails_rather_than_taking_it_back() -> None:
     """A renewal is a write, and every write goes behind the same guard."""
     store = MemoryStore()

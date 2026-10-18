@@ -343,7 +343,17 @@ def test_a_listed_path_the_tool_cannot_address_is_skipped_rather_than_raising() 
     store = stocked(LEFTOVER)
     store.write(f"{LOCK_PREFIX}/apps/acme?x/db", record(), cas=0)
 
-    assert discover([], stores={"vault-dev": store}).keys == (LEFTOVER,)
+    found = discover([], stores={"vault-dev": store})
+
+    assert found.keys == (LEFTOVER,)
+    [skipped] = found.skipped
+    assert skipped.store == "vault-dev"
+    assert skipped.path == f"{LOCK_PREFIX}/apps/acme?x/db"
+    assert "'?'" in skipped.reason
+
+
+def test_a_survey_with_only_addressable_paths_skips_nothing() -> None:
+    assert discover([], stores={"vault-dev": stocked(LEFTOVER)}).skipped == ()
 
 
 def test_discovery_looks_in_every_store_and_keys_by_the_one_it_found_it_in() -> None:

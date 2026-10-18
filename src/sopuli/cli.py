@@ -4922,7 +4922,10 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
 @click.option(
     "--from-stdin",
     is_flag=True,
-    help="Read one password from stdin instead of generating. Applies to every selected account.",
+    help=(
+        "Read one password from a piped stdin instead of generating. Applies to every "
+        "selected account. Refused when stdin is a terminal."
+    ),
 )
 @click.option(
     "--no-policy-check",
@@ -5366,7 +5369,20 @@ def _password_from_stdin() -> Secret:
     was never part of it; the shared function also handles ``\r\n``, which a
     local copy of the rule did not, and Windows is precisely where P4 asks for
     identical behaviour.
+
+    **Refused when stdin is a terminal** (#862). The flag is for a pipe or a
+    redirect. At a terminal the read would wait for end of input, and the
+    password the operator typed would show on the screen, in the scrollback and
+    in any recording of the session.
     """
+    if is_a_terminal(sys.stdin):
+        raise ArgumentError(
+            "--from-stdin was given and stdin is a terminal",
+            hint=(
+                "pipe the password in, or redirect it from a file -- typed at a terminal, "
+                "it would show on the screen"
+            ),
+        )
     try:
         # Bytes, then a strict decode. The text stream decodes with
         # `surrogateescape`, which turns a byte that is not UTF-8 into a

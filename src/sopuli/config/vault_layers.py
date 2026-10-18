@@ -278,29 +278,31 @@ def _namespace_overridden(name: str, answer: Resolved | None) -> ConfigWarning |
     Enterprise namespace. No ``SOPULI_*`` variable or flag sets a namespace, so
     the hint points at the file.
 
-    Nothing to say when the file declares no ``namespace`` for the store, as for
-    the address, or when the two differ only by a leading or trailing ``/``,
-    which Vault ignores.
-
-    ``VAULT_CACERT`` does not warn (#892). Another CA file can only make TLS
-    fail, or verify against another CA, which still has to have issued the
-    server's certificate. It sends nothing to another place.
+    **A file that declares no namespace still warns**, unlike the address. A
+    store with no ``addr`` has no other address, but a store with no
+    ``namespace`` uses the root namespace, and the variable moves it away from
+    that. Nothing to say when the two differ only in ``/`` at either end, which
+    Vault does not count.
     """
     if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
         return None
     declared = _declared_under(answer)
-    if declared is None or declared.value.strip("/") == answer.value.strip("/"):
+    if declared is not None and declared.value.strip("/") == answer.value.strip("/"):
         return None
+    if declared is None:
+        instead = "not the root namespace, which the file implies by declaring none"
+    else:
+        instead = f"not {declared.value!r}, which {declared.detail} declares"
     return ConfigWarning(
         message=(
-            f"{answer.detail} sets the namespace of vault {name!r} to {answer.value!r}, "
-            f"not {declared.value!r}, which {declared.detail} declares"
+            f"{answer.detail} sets the namespace of vault {name!r} to {answer.value!r}, {instead}"
         ),
         # No `at`: the message names both locations already.
         at="",
         hint=(
             f"unset {answer.detail} if it is left over from other work; to use that "
-            f"namespace on purpose, declare it in the file, for example in a profile"
+            f"namespace on purpose, declare it as the namespace of vault {name!r} in the "
+            f"file, or in the profile this run uses"
         ),
         code=THIRD_PARTY_NAMESPACE_OVERRIDES,
     )

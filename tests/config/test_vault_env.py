@@ -544,20 +544,60 @@ def test_vault_namespace_over_a_defaults_namespace_names_the_defaults_key() -> N
     assert f"defaults.vaults.{STORE}.namespace" in warning.message
 
 
+def profiled(env: dict[str, str], vault: dict[str, Any], profile: dict[str, Any]) -> Config:
+    """A file with `vault` declared and a `ci` profile patching it, run under `ci`."""
+    return build_config(
+        document(vault, profiles={"ci": {"vaults": {STORE: profile}}}), env=env, profile="ci"
+    )
+
+
+def test_vault_namespace_matching_the_active_profile_says_nothing() -> None:
+    """The file's answer is its highest layer. The object's namespace, which the
+    profile overrides, is not what the variable moved the store away from."""
+    config = profiled(
+        {"VAULT_NAMESPACE": "acme-prod"}, {"namespace": "acme-dev"}, {"namespace": "acme-prod"}
+    )
+
+    assert namespace_overrides(config) == []
+
+
+def test_vault_namespace_over_a_profile_namespace_names_the_profile() -> None:
+    config = profiled(
+        {"VAULT_NAMESPACE": "acme-prod"}, {"namespace": "acme-dev"}, {"namespace": "acme-qa"}
+    )
+
+    [warning] = namespace_overrides(config)
+    assert "'acme-qa'" in warning.message
+    assert "profiles.ci" in warning.message
+
+
+def test_vault_addr_and_vault_namespace_both_warn() -> None:
+    config = loaded(
+        {"VAULT_ADDR": THIRDPARTY_ADDR, "VAULT_NAMESPACE": "acme-prod"},
+        {"addr": DECLARED, "namespace": "acme-dev"},
+    )
+
+    assert len(overrides(config)) == 1
+    assert len(namespace_overrides(config)) == 1
+
+
 @pytest.mark.parametrize("declared", ["acme-dev", "acme-dev/", "/acme-dev"])
 def test_vault_namespace_that_names_the_same_namespace_says_nothing(declared: str) -> None:
-    """Vault ignores a leading or trailing `/` on a namespace."""
+    """Vault does not count a `/` at either end of a namespace."""
     config = loaded({"VAULT_NAMESPACE": "acme-dev"}, {"namespace": declared})
 
     assert namespace_overrides(config) == []
 
 
-def test_vault_namespace_where_the_file_declares_none_says_nothing() -> None:
-    """Nothing to disagree with, as for the address."""
+def test_vault_namespace_where_the_file_declares_none_warns() -> None:
+    """Unlike the address, no namespace is a real state: the root namespace. The
+    variable moves the store away from it, which is the same hazard."""
     config = loaded({"VAULT_NAMESPACE": "acme-dev"})
 
     assert config.vaults[0].namespace == "acme-dev"
-    assert namespace_overrides(config) == []
+    [warning] = namespace_overrides(config)
+    assert "root namespace" in warning.message
+    assert "'acme-dev'" in warning.message
 
 
 def test_vault_cacert_over_a_different_declared_ca_file_says_nothing() -> None:

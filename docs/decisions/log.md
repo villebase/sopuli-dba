@@ -2377,8 +2377,9 @@ the register.
   file declares for a store. `VAULT_NAMESPACE` and `VAULT_CACERT` override the
   file at the same layer. Should they warn, and under which code?
 - **Decision:** `VAULT_NAMESPACE` over a different `namespace` in the file warns,
-  with a code of its own, `SOPULI-W052`. `VAULT_CACERT` over a different
-  `tls.ca_file` does not warn.
+  with a code of its own, `SOPULI-W052`. It warns where the file declares no
+  `namespace` too, because that means the root namespace. `VAULT_CACERT` over
+  a different `tls.ca_file` does not warn.
 - **Why:** a namespace left over from other work sends the login and the writes
   to another Vault Enterprise namespace, which is the hazard `SOPULI-W051` is
   for. A CA file sends nothing to another place. It can only make TLS fail, or

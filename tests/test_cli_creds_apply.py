@@ -3459,6 +3459,73 @@ def test_a_rollback_without_confirm_is_refused(
     assert result.exit_code != ExitCode.SUCCESS
 
 
+def test_the_rollback_question_comes_after_the_plan(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#863, invariant 8. The question names no targets, so the plan goes to
+    stderr first, and it goes there once."""
+    said: list[str] = []
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr(
+        "sopuli.cli._echo_err", lambda text, *, run: said.append(f"plan: {text.splitlines()[0]}")
+    )
+
+    def answer(question: str, **_: object) -> bool:
+        said.append(f"asked: {question}")
+        return True
+
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    estate(documents=_rolled(), answers={"ACME_WEB_USER": drifted()})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--source", "previous")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert [line.split(":")[0] for line in said] == ["plan", "asked"]
+    assert said[0].startswith("plan: Plan:")
+
+
+def _raises_after_the_change(*_: object, **__: object) -> None:
+    raise RuntimeError("the promotion step broke")
+
+
+def test_a_run_that_raises_after_a_change_still_prints_its_plan(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#863, invariant 8. The plan is the first thing in a verb's output, and
+    that output is built when the verb finishes. A run that raises after the
+    database changed never builds it, so the handler prints the plan before
+    the error, and the operator can see what the run had been about to touch."""
+    harness = estate(answers={"ACME_WEB_USER": drifted()})
+    monkeypatch.setattr("sopuli.cli._promote_documents", _raises_after_the_change)
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert harness["sessions"][0].changed
+    assert result.exit_code != ExitCode.SUCCESS
+    assert result.output.count("Plan:") == 1
+
+
+def test_a_failed_json_run_does_not_print_the_plan_as_text(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The JSON document carries the plan in `plan`, so nothing else is
+    added to the streams of a machine-read run."""
+    estate(answers={"ACME_WEB_USER": drifted()})
+    monkeypatch.setattr("sopuli.cli._promote_documents", _raises_after_the_change)
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert "Plan:" not in result.output
+
+
 def test_a_rollback_under_a_profile_that_cannot_answer_is_refused(
     runner: CliRunner,
     write_config: Callable[[str], Path],

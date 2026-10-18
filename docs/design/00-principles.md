@@ -800,6 +800,10 @@ first question is where their test database runs.
 **Safety**
 
 - Every mutating command supports `--dry-run` and prints the exact plan, redacted.
+  A real run prints its plan before any prompt, on stderr, once. A run with no
+  prompt prints it first in its output when it finishes, and a run that raises
+  part way prints it to stderr before the error, so a failure still shows what
+  the run had been about to touch (#863).
 - Every mutating command supports **`--confirm`**, with one exception: UC-2's
   seen reset refuses it as a usage error (exit 2), because there the prompt
   establishes that a person is present. **The tool asks for confirmation where

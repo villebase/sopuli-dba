@@ -97,6 +97,7 @@ from sopuli.output.debug import debugging, logger
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode
 from sopuli.output.explain_view import ratchet_notes
+from sopuli.output.printable import printable
 from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
@@ -1009,6 +1010,7 @@ def _pass_invocation(func: F) -> F:
             click.echo("sopuli: aborted", err=True)
             raise SystemExit(ExitCode.ABORTED) from exc
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
+            _show_unfinished_plan(invocation)
             _fail(invocation, exc)
             raise
         invocation.emitter().emit(invocation.document, text)
@@ -1048,6 +1050,24 @@ def _pass_invocation(func: F) -> F:
     # `tests/test_cli_precedence.py` can check that a verb really takes `run`.
     functools.update_wrapper(debugged, func)
     return click.pass_context(debugged)  # type: ignore[return-value]
+
+
+def _show_unfinished_plan(invocation: Invocation) -> None:
+    """Print the plan of a run that raised before it could print its output (#863).
+
+    Invariant 8: a mutating command prints a plan first. A verb returns its
+    whole output when it finishes, so on a normal run the plan is the first
+    thing in it and appears once. A run that raises on its fifth target never
+    builds that output, and the error alone does not say what the first four
+    were. So the plan goes to stderr here, before the error line.
+
+    Not where a prompt already printed it (``plan_shown``), and not under
+    ``--output json``, whose document carries the plan in ``plan``.
+    """
+    document = invocation.document
+    if invocation.is_json or document.plan_text is None or document.plan_shown:
+        return
+    click.echo(printable(document.plan_text, colour=False), err=True)
 
 
 def _debug_settings(invocation: Invocation) -> None:

@@ -76,6 +76,7 @@ import os
 import platform
 import sys
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO, TypeVar
@@ -92,12 +93,11 @@ from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
 from sopuli.material import TOKEN_FLAG, TOKEN_SOURCES
-from sopuli.output.color import ColorChoice, resolve_color
+from sopuli.output.color import ColorChoice
 from sopuli.output.debug import debugging, logger
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
-from sopuli.output.emit import Emitter, OutputMode
+from sopuli.output.emit import Emitter, OutputMode, echo_err
 from sopuli.output.explain_view import ratchet_notes
-from sopuli.output.printable import printable
 from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
@@ -1016,7 +1016,7 @@ def _pass_invocation(func: F) -> F:
             _show_unfinished_plan(invocation)
             raise
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
-            _show_unfinished_plan(invocation)
+            _show_unfinished_plan(invocation, exc)
             _fail(invocation, exc)
             raise
         invocation.emitter().emit(invocation.document, text)
@@ -1058,7 +1058,7 @@ def _pass_invocation(func: F) -> F:
     return click.pass_context(debugged)  # type: ignore[return-value]
 
 
-def _show_unfinished_plan(invocation: Invocation) -> None:
+def _show_unfinished_plan(invocation: Invocation, exc: BaseException | None = None) -> None:
     """Print the plan of a run that raised before it could print its output (#863).
 
     Invariant 8: a mutating command prints a plan first. A verb returns its
@@ -1070,14 +1070,25 @@ def _show_unfinished_plan(invocation: Invocation) -> None:
     Also for a run that was aborted or interrupted part way, which ends here too.
     Not where a prompt already printed it (``plan_shown``), so a declined
     prompt does not repeat it, and not under ``--output json``, whose document
-    carries the plan in ``plan``. Colour follows the run's own choice for
-    stderr, as the plan before a prompt does.
+    carries the plan in ``plan``.
+
+    **Not for a refusal** (``exc`` a :class:`ConfigError`, which
+    :class:`~sopuli.safety.RefusedError` is, or a :class:`LockDeniedError`).
+    Those are the run stopping before it changed anything, by design, often
+    right after the plan was built, and printing the whole plan above an
+    "unattended, pass --confirm" refusal would only bury it.
+
+    **Never raises.** It runs on the way out of a failed run, and a stderr that
+    cannot be written must not replace the error the run stopped on, or leave
+    its document unfinished.
     """
     document = invocation.document
     if invocation.is_json or document.plan_text is None or document.plan_shown:
         return
-    colour = resolve_color(invocation.emitter().color_choice, stream=sys.stderr, env=os.environ)
-    click.echo(printable(document.plan_text, colour=colour), err=True, color=colour)
+    if isinstance(exc, ConfigError | LockDeniedError):
+        return
+    with suppress(Exception):
+        echo_err(document.plan_text, color_choice=invocation.emitter().color_choice)
 
 
 def _debug_settings(invocation: Invocation) -> None:

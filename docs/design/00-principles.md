@@ -805,8 +805,9 @@ first question is where their test database runs.
   once however many questions follow. A run that raises, is aborted or is
   interrupted part way, and showed no plan before a question, prints it to
   stderr before it stops, so a failure still shows what the run had been about
-  to touch. `account reset-password` prints its plan to stderr before its first
-  target whether or not it asks (#863).
+  to touch. A refusal is not that: a run refused before it changed anything
+  prints the refusal alone. A real `account reset-password` prints its plan to
+  stderr before its first target whether or not it asks (#863).
 - Every mutating command supports **`--confirm`**, with one exception: UC-2's
   seen reset refuses it as a usage error (exit 2), because there the prompt
   establishes that a person is present. **The tool asks for confirmation where

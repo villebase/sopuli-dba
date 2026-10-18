@@ -3566,9 +3566,33 @@ def test_a_rollback_with_nothing_to_apply_asks_nothing(
     monkeypatch.setattr("sopuli.cli._confirm", answer)
     estate(documents=_rolled())
     config = write_config(CONFIG.replace("secret_template", "# secret_template"))
-    run(runner, config, "--select", "tenant=alpha", "--source", "previous")
+    result = run(runner, config, "--select", "tenant=alpha", "--source", "previous")
 
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "nothing to apply" in result.output
     assert asked == []
+
+
+def test_a_refusal_after_the_plan_does_not_print_the_plan(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal is the run stopping before it changed anything, by design. The
+    plan above it would only bury it."""
+    from sopuli.safety import RefusedError
+
+    def refuse(*_: object, **__: object) -> None:
+        raise RefusedError("needs confirmation, and there is nobody here to ask")
+
+    monkeypatch.setattr("sopuli.cli._confirm_environments", refuse)
+    harness = estate(answers={"ACME_WEB_USER": drifted()})
+
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert harness["sessions"] == []
+    assert "Plan:" not in result.output
 
 
 def test_an_unattended_rollback_is_refused_before_anything_is_read(

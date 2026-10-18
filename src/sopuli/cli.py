@@ -230,7 +230,7 @@ from sopuli.output.apply_view import (
 from sopuli.output.apply_view import build_result as build_apply_result
 from sopuli.output.apply_view import summarise as summarise_apply
 from sopuli.output.check_view import build_result, render_check, summarise
-from sopuli.output.color import ColorChoice, resolve_color
+from sopuli.output.color import ColorChoice
 from sopuli.output.config_view import (
     build_section,
     render_target_list,
@@ -243,7 +243,7 @@ from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
-from sopuli.output.emit import Emitter
+from sopuli.output.emit import Emitter, echo_err
 from sopuli.output.expire_view import build_result as build_expire_result
 from sopuli.output.expire_view import render as render_expire
 from sopuli.output.expire_view import summarise as summarise_expire
@@ -4339,10 +4339,9 @@ def _echo_err(text: str, *, run: Invocation) -> None:
     It carries text from outside the tool, such as a lock holder from the
     vault, so every control character is shown rather than sent (#859). Colour
     is decided for stderr by the run's own `--color` choice and `NO_COLOR`, the
-    way the emitter decides it for stdout.
+    way the emitter decides it for stdout (:func:`sopuli.output.emit.echo_err`).
     """
-    colour = resolve_color(run.emitter().color_choice, stream=sys.stderr, env=os.environ)
-    click.echo(printable(text, colour=colour), err=True, color=colour)
+    echo_err(text, color_choice=run.emitter().color_choice)
 
 
 def _confirm(question: str, **options: Any) -> bool:
@@ -6154,7 +6153,9 @@ def creds_apply(
         plan,
         run,
         noun="apply",
-        confirmation_required=source_stage == PREVIOUS or _asks_environments(plan, run),
+        # The rollback is asked only where something is bound to roll back.
+        confirmation_required=(source_stage == PREVIOUS and bool(bindings))
+        or _asks_environments(plan, run),
     )
     # No-ops outside `--output jsonl`, as in `creds check`: nothing here branches on
     # the mode.

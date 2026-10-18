@@ -25,6 +25,7 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import MaterialRef
+from sopuli.config.permissions import check_permissions
 from sopuli.material import (
     TOKEN_FLAG,
     TOKEN_SOURCES,
@@ -433,6 +434,7 @@ def test_a_refused_token_file_is_not_read(tmp_path: Path, monkeypatch: pytest.Mo
             self.real.close()
 
         def fileno(self) -> int:
+            reads.append("fileno")
             return int(self.real.fileno())
 
         def read(self) -> bytes:
@@ -451,21 +453,50 @@ def test_a_refused_token_file_is_not_read(tmp_path: Path, monkeypatch: pytest.Mo
     with pytest.raises(MaterialError, match="accessible to others"):
         resolve_token(ref=None, env={}, token_file=path, where=WHERE)
 
-    assert reads == []
+    # `fileno` proves the file went through the recorded handle, so a read that
+    # took another route would fail here rather than pass unwatched.
+    assert reads == ["fileno"]
+
+
+def test_the_token_file_check_is_given_the_open_files_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check tests the file that is read, not whatever the path names later."""
+    path = token_file(tmp_path)
+    given: list[os.stat_result | None] = []
+    real_check = check_permissions
+
+    def recording_check(target: Path, **kwargs: Any) -> None:
+        given.append(kwargs.get("status"))
+        real_check(target, **kwargs)
+
+    monkeypatch.setattr("sopuli.material.check_permissions", recording_check)
+
+    assert resolve_token(ref=None, env={}, token_file=path, where=WHERE).reveal() == "s.from-flag"
+    [status] = given
+    assert status is not None, "the check must be given the open file's status"
+    assert (status.st_ino, status.st_dev) == (path.stat().st_ino, path.stat().st_dev)
 
 
 @posix_only
-def test_the_token_file_check_tests_the_open_descriptor(
+def test_a_token_file_that_cannot_be_opened_still_gets_the_permission_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The path is 0600 and the descriptor says 0644, so only the descriptor
-    can be the source of the refusal: the file checked is the file read."""
+    """Mode 0044: the owner cannot open it, others can read it. The refusal says
+    what to fix, where "permission denied" would not."""
     path = token_file(tmp_path)
-    path.chmod(0o600)
-    wider = os.stat_result((0o100644, 0, 0, 1, path.stat().st_uid, 0, 0, 0, 0, 0))
-    monkeypatch.setattr(os, "fstat", lambda _fd: wider)
+    path.chmod(0o044)
+    real_open = Path.open
 
-    with pytest.raises(MaterialError, match="0644"):
+    def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+        # Root opens anything, so the denial is simulated; the mode is real.
+        if self == path:
+            raise PermissionError(13, "Permission denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", denied)
+
+    with pytest.raises(MaterialError, match="accessible to others"):
         resolve_token(ref=None, env={}, token_file=path, where=WHERE)
 
 

@@ -28,6 +28,7 @@ keeps the builders provably unable to reach a credential.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -295,6 +296,12 @@ def _from_file(
             f"{where}: {wrote} is not UTF-8 text", at=ROOT, hint=f"looked in {resolved}"
         ) from error
     except OSError as error:
+        if check is not None:
+            # A file this user cannot open may be one the check would refuse, and
+            # its refusal says what to fix. Nothing has been read, so checking by
+            # path here costs nothing. `config/loading.py` does the same.
+            with contextlib.suppress(OSError):
+                check(resolved.stat())
         raise MaterialError(
             f"{where}: could not read {wrote}: {error.strerror or error}",
             at=ROOT,

@@ -32,6 +32,7 @@ is its own module:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -71,6 +72,47 @@ def check_permissions(path: Path, *, what: str = "config file") -> None:
         _check_windows_acl(path, what)
     else:
         _check_posix_mode(path, what)
+
+
+def check_owner(path: Path, *, euid: int | None = None) -> None:
+    """Raise :class:`ConfigError` unless the effective user or root owns ``path``.
+
+    POSIX only. The mode check cannot see a file that another user owns with
+    mode ``0600``, and that user can rewrite it. ``sudo sopuli`` in a directory
+    another user controls would otherwise read that user's ``./sopuli.yaml``.
+    On Windows the owner is accepted, as it is in the ACL walk.
+
+    Only the config loader calls this. A wallet is often owned by the
+    ``oracle`` user, and a token file under ``sudo`` by the invoking user.
+
+    ``euid`` is the effective user to compare with. It defaults to the
+    process's own, and a test passes another to stand in for a second user.
+    """
+    if sys.platform == "win32":
+        return
+    owner = path.stat().st_uid
+    if euid is None:
+        euid = os.geteuid()
+    if owner in (euid, 0):
+        return
+    raise ConfigError(
+        f"config file is owned by another user, {_user_name(owner)};"
+        f" sopuli is running as {_user_name(euid)}",
+        source=path,
+        hint="run sopuli as the file's owner, or chown the file to the user that runs it",
+    )
+
+
+def _user_name(uid: int) -> str:
+    """``name (uid N)``, or ``uid N`` for a uid with no passwd entry."""
+    if sys.platform == "win32":  # pragma: no cover - only check_owner calls this
+        return f"uid {uid}"
+    import pwd
+
+    try:
+        return f"{pwd.getpwuid(uid).pw_name} (uid {uid})"
+    except KeyError:
+        return f"uid {uid}"
 
 
 def _check_posix_mode(path: Path, what: str) -> None:

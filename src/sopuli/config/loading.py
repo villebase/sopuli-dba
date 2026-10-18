@@ -45,7 +45,7 @@ from sopuli.config.fields import describe, reject_unknown_keys
 from sopuli.config.groups import build_groups
 from sopuli.config.model import Config, ConfigWarning
 from sopuli.config.notify import unserviceable as unserviceable_notify
-from sopuli.config.permissions import check_permissions
+from sopuli.config.permissions import check_owner, check_permissions
 from sopuli.config.personal_accounts import build_personal_accounts, reject_cross_declaration
 from sopuli.config.policies import build_policies
 from sopuli.config.profiles import build_profiles, select_profile
@@ -119,6 +119,7 @@ def load_document(path: Path) -> dict[str, Any]:
             hint="point --config at the file itself, not the directory holding it",
         )
 
+    check_owner(path)
     check_permissions(path)
     document = _require_mapping(parse_yaml(_read(path), source=path), path)
     _require_supported_version(document, path)

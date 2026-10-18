@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.permissions import check_permissions
+from sopuli.config.permissions import check_owner, check_permissions
 
 posix_only = pytest.mark.skipif(
     sys.platform == "win32",
@@ -89,6 +89,44 @@ def test_execute_only_is_still_refused(config_file: Path) -> None:
 
     with pytest.raises(ConfigError):
         check_permissions(config_file)
+
+
+@posix_only
+def test_a_file_the_effective_user_owns_is_accepted(config_file: Path) -> None:
+    check_owner(config_file)
+
+
+@posix_only
+def test_a_file_owned_by_another_user_is_refused(config_file: Path) -> None:
+    """Mode 0600 does not help: the other user can still rewrite the file.
+
+    Making a file another user owns needs root, so the test stands in a second
+    effective user instead: the file is real, the uid compared with it is not.
+    """
+    config_file.chmod(0o600)
+    owner = config_file.stat().st_uid
+    other = owner + 1 if owner != 0 else 1000
+
+    with pytest.raises(ConfigError) as caught:
+        check_owner(config_file, euid=other)
+
+    assert "owned by another user" in str(caught.value)
+    assert f"uid {owner}" in str(caught.value), "the message must name the owner"
+    assert "chown" in str(caught.value)
+
+
+@posix_only
+def test_a_file_root_owns_is_accepted() -> None:
+    """A config under /etc is root's, and a service account reads it."""
+    path = Path("/etc/passwd")
+    if path.stat().st_uid != 0:  # pragma: no cover - every Linux and macOS has it so
+        pytest.skip("/etc/passwd is not owned by root here")
+    check_owner(path, euid=12345)
+
+
+@windows_only
+def test_the_owner_check_is_posix_only(config_file: Path) -> None:
+    check_owner(config_file, euid=12345)
 
 
 # ----------------------------------------------------------------- Windows ---

@@ -3220,6 +3220,14 @@ notices until a rotation.
   no explicit ACE for the user at all. Rights that grant neither content access
   nor control — `READ_CONTROL`, `SYNCHRONIZE`, `FILE_READ_ATTRIBUTES` — do not
   count, so the check fires on real exposure rather than on incidental bits
+- config file **owned by another user** → refuse to run (P4, POSIX). The mode
+  check cannot see this: the owner of a `0600` file can still rewrite it. A
+  config file must be owned by the effective user or by root. Otherwise
+  `sudo sopuli` in a directory another user controls would read that user's
+  `./sopuli.yaml`, which sets `secret_template` and
+  `runtime.oracle.client_lib_dir`. Only the config file is checked. A wallet is
+  often owned by the `oracle` user, and `--vault-token-file` under `sudo` names
+  the invoking user's file
 
 ---
 

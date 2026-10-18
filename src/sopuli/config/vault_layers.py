@@ -64,6 +64,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from sopuli.config.codes import RELAXATION_DEFEATED, THIRD_PARTY_ADDR_OVERRIDES
 from sopuli.config.errors import ROOT, KeyPath
@@ -86,9 +87,6 @@ EnvKeys = Mapping[str, Sequence[Contribution]]
 #: ``auth`` is absent because it is not a scalar; ``tls`` because its members are
 #: merged individually. See the module note.
 REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s")
-
-#: The layers that are the config file, for :func:`_addr_overridden`.
-FILE_LAYERS = frozenset({Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS})
 
 #: The members of ``tls:``, merged one at a time.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
@@ -240,17 +238,21 @@ def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None
     ``--vault-addr`` say nothing: whoever set them meant this tool.
 
     Nothing to say when the file declares no ``addr`` for the store, or the
-    two agree. A trailing ``/`` is not a disagreement.
+    two name the same server: see :func:`_same_address`.
+
+    **Userinfo is masked** in the message. The warning reaches every run's
+    output, and an address such as ``https://user:token@proxy`` carries a
+    credential.
     """
     if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
         return None
     declared = next((one for one in answer.contributions if one.layer in FILE_LAYERS), None)
-    if declared is None or str(declared.value).rstrip("/") == str(answer.value).rstrip("/"):
+    if declared is None or _same_address(declared.value, answer.value):
         return None
     return ConfigWarning(
         message=(
-            f"{answer.detail} sets the address of vault {name!r} to {answer.value}, "
-            f"not {declared.value}, which {declared.detail} declares"
+            f"{answer.detail} sets the address of vault {name!r} to {_shown(answer.value)}, "
+            f"not {_shown(declared.value)}, which {declared.detail} declares"
         ),
         # No `at`: the message names both locations already.
         at="",
@@ -260,6 +262,47 @@ def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None
         ),
         code=THIRD_PARTY_ADDR_OVERRIDES,
     )
+
+
+#: The layers that are the config file, for :func:`_addr_overridden`.
+FILE_LAYERS = frozenset({Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS})
+
+#: The port a scheme implies, so ``https://v`` and ``https://v:443`` are one server.
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _same_address(first: str, second: str) -> bool:
+    """Whether two addresses name the same server and path.
+
+    Scheme and host are compared without case, a missing port is the scheme's
+    default, and a trailing ``/`` is ignored. An address that does not parse
+    is compared as written.
+    """
+    try:
+        one, two = urlsplit(first), urlsplit(second)
+        ports = [
+            url.port if url.port is not None else DEFAULT_PORTS.get(url.scheme.lower())
+            for url in (one, two)
+        ]
+    except ValueError:
+        return first == second
+    return (
+        one.scheme.lower() == two.scheme.lower()
+        and (one.hostname or "") == (two.hostname or "")
+        and ports[0] == ports[1]
+        and one.path.rstrip("/") == two.path.rstrip("/")
+    )
+
+
+def _shown(address: str) -> str:
+    """``address`` with any ``user:password@`` replaced by ``***@``."""
+    try:
+        parts = urlsplit(address)
+    except ValueError:
+        return address
+    if "@" not in parts.netloc:
+        return address
+    return urlunsplit(parts._replace(netloc=f"***@{parts.netloc.rpartition('@')[2]}"))
 
 
 def _merge_tls(

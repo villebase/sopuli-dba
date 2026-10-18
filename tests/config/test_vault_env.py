@@ -418,10 +418,56 @@ def test_vault_addr_over_a_profile_addr_names_the_profile() -> None:
 
 
 @pytest.mark.parametrize(
-    "declared", [THIRDPARTY_ADDR, f"{THIRDPARTY_ADDR}/"], ids=["equal", "trailing-slash"]
+    "declared",
+    [
+        THIRDPARTY_ADDR,
+        f"{THIRDPARTY_ADDR}/",
+        "https://third-party.example.com:443",
+        "HTTPS://Third-Party.example.com",
+    ],
+    ids=["equal", "trailing-slash", "default-port", "case"],
 )
-def test_vault_addr_that_agrees_with_the_file_says_nothing(declared: str) -> None:
+def test_vault_addr_that_names_the_same_server_says_nothing(declared: str) -> None:
+    """A warning on every run for an address that is not different would teach
+    operators to ignore it."""
     assert overrides(loaded({"VAULT_ADDR": THIRDPARTY_ADDR}, {"addr": declared})) == []
+
+
+def test_another_port_is_another_address() -> None:
+    config = loaded(
+        {"VAULT_ADDR": "https://third-party.example.com:8200"}, {"addr": THIRDPARTY_ADDR}
+    )
+
+    assert len(overrides(config)) == 1
+
+
+def test_credentials_in_an_address_are_not_repeated_in_the_warning() -> None:
+    """The warning reaches every run's output, so userinfo is masked."""
+    config = loaded({"VAULT_ADDR": "https://ops:s3cret@proxy.example.com:8200"}, {"addr": DECLARED})
+
+    [warning] = overrides(config)
+    assert "s3cret" not in warning.message
+    assert "ops" not in warning.message
+    assert "https://***@proxy.example.com:8200" in warning.message
+
+
+def test_vault_addr_over_a_defaults_addr_names_the_defaults_key() -> None:
+    """`defaults.vaults` is the file too, so overriding it warns."""
+    config = loaded(
+        {"VAULT_ADDR": THIRDPARTY_ADDR}, defaults={"vaults": {STORE: {"addr": DECLARED}}}
+    )
+
+    [warning] = overrides(config)
+    assert DECLARED in warning.message
+    assert f"defaults.vaults.{STORE}.addr" in warning.message
+
+
+def test_the_flag_over_the_file_says_nothing() -> None:
+    """`--vault-addr` was typed for this run."""
+    config = build_config(document({"addr": DECLARED}), vault_addr=ACTIVE_ADDR)
+
+    assert config.vaults[0].addr == ACTIVE_ADDR
+    assert overrides(config) == []
 
 
 def test_vault_addr_where_the_file_declares_no_addr_says_nothing() -> None:

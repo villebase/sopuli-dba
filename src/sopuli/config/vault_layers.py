@@ -65,7 +65,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from sopuli.config.codes import RELAXATION_DEFEATED
+from sopuli.config.codes import RELAXATION_DEFEATED, THIRD_PARTY_ADDR_OVERRIDES
 from sopuli.config.errors import ROOT, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
 from sopuli.config.vault_env import (
@@ -86,6 +86,9 @@ EnvKeys = Mapping[str, Sequence[Contribution]]
 #: ``auth`` is absent because it is not a scalar; ``tls`` because its members are
 #: merged individually. See the module note.
 REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s")
+
+#: The layers that are the config file, for :func:`_addr_overridden`.
+FILE_LAYERS = frozenset({Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS})
 
 #: The members of ``tls:``, merged one at a time.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
@@ -192,6 +195,9 @@ def _merge(
         settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
+    overridden = _addr_overridden(vault.name, settings.get("addr"))
+    if overridden is not None:
+        warnings.append(overridden)
 
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
@@ -220,6 +226,39 @@ def _merge(
             **values,
         ),
         warnings,
+    )
+
+
+def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None:
+    """A warning when ``VAULT_ADDR`` moved a store away from the file's ``addr``.
+
+    P3 puts ``VAULT_ADDR`` above the file, and that order stands (#865). But the
+    variable is often left over in a shell from other work, and then this run
+    sends its auth material to that address and writes there. Only
+    ``config show --explain`` said so, so every run that loads the file says so
+    now. The variable this tool owns, ``SOPULI_VAULT_ADDR``, and
+    ``--vault-addr`` say nothing: whoever set them meant this tool.
+
+    Nothing to say when the file declares no ``addr`` for the store, or the
+    two agree. A trailing ``/`` is not a disagreement.
+    """
+    if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
+        return None
+    declared = next((one for one in answer.contributions if one.layer in FILE_LAYERS), None)
+    if declared is None or str(declared.value).rstrip("/") == str(answer.value).rstrip("/"):
+        return None
+    return ConfigWarning(
+        message=(
+            f"{answer.detail} sets the address of vault {name!r} to {answer.value}, "
+            f"not {declared.value}, which {declared.detail} declares"
+        ),
+        # No `at`: the message names both locations already.
+        at="",
+        hint=(
+            f"unset {answer.detail} if it is left over from other work; to choose the "
+            f"address for this tool on purpose, use SOPULI_VAULT_ADDR or --vault-addr"
+        ),
+        code=THIRD_PARTY_ADDR_OVERRIDES,
     )
 
 

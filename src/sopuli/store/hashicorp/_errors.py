@@ -98,6 +98,19 @@ def messages(body: Any) -> list[str]:
     return []
 
 
+def from_vault(body: Any) -> bool:
+    """Whether an error body is in Vault's own format: an object with ``errors``.
+
+    Vault 2.0.4 sends one on every refusal: a 403 for an invalid, revoked or
+    missing token, and for a policy that denies the path or the PATCH verb. A
+    proxy or WAF in front of it does not. One that blocks PATCH answered 401 with
+    ``{"code": "401", "message": "Unauthorized"}`` (#904). The transport hands
+    over ``None`` for a body that is empty or not JSON, which is not Vault's
+    format either.
+    """
+    return isinstance(body, dict) and isinstance(body.get("errors"), list)
+
+
 def raise_for(status: int, body: Any, *, path: str) -> NoReturn:
     """Turn a non-2xx answer into the right exception. Never returns.
 
@@ -119,6 +132,18 @@ def raise_for(status: int, body: Any, *, path: str) -> NoReturn:
                 "the path is configured `cas_required`, which is what stops anyone -- a "
                 "vault CLI, a script -- clobbering it without a version. This tool always "
                 "sends one, so an unguarded write here came from `locking: advisory-only`"
+            ),
+        )
+    if status in (401, 403) and not from_vault(body):
+        # The body is not quoted. A proxy may echo the request, and the body of
+        # a write holds passwords.
+        raise StoreAuthError(
+            f"the request to {path!r} was refused with {status}, "
+            f"and the answer did not come from Vault",
+            hint=(
+                "Vault's own refusals carry an `errors` list, so a proxy or WAF in front "
+                "of it probably answered. If it blocks the PATCH method, write "
+                "`merge_patch: false` on the store"
             ),
         )
     if status in (401, 403):

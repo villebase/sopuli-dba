@@ -160,12 +160,14 @@ class Kv2Store:
 
         **403** may mean the policy grants ``update`` and not ``patch``, which is
         an ordinary policy and not a failure. :class:`PatchNotPermittedError`
-        says so and the caller falls back. **401 is not included**, and the
-        asymmetry is the point: Vault answers 403 both for a token it will not
-        accept and for one that may not do this, which is why the second reading
-        is available at all — while 401 says only that the token is not valid,
-        and no policy grants its way out of that. Reading it as a patch refusal
-        would replace a precise message with a wasted round trip.
+        says so and the caller falls back. Vault answers 403 both for a token it
+        will not accept and for one that may not do this, which is why the second
+        reading is available at all. If the token was bad, the fallback's own
+        read fails with the refusal it deserves. **401 is not included.** Vault
+        2.0.4 answers 403 even for an invalid token, so a 401 did not come from
+        its policy check. A proxy or WAF that blocks PATCH answers 401 itself
+        (#904). :func:`._errors.raise_for` reports it, and says when the answer
+        did not come from Vault; ``merge_patch: false`` is the remedy.
 
         **404** means there is nothing at the path to patch. Vault will not
         create a document by merge patch, which is right -- a patch describes a

@@ -13,6 +13,7 @@ from __future__ import annotations
 import socket
 import ssl
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -108,6 +109,56 @@ def test_a_refused_token_is_an_authorization_failure(status: int) -> None:
         raise_for(status, {"errors": ["permission denied"]}, path=PATH)
 
     assert caught.value.category == "authorization"
+
+
+#: What Vault 2.0.4 answered in the tier-1 stack, for an invalid token and for a
+#: policy that denies the path or the PATCH verb. Each one is a 403.
+VAULT_REFUSALS = [
+    {"errors": ["2 errors occurred:\n\t* permission denied\n\t* invalid token\n\n"]},
+    {"errors": ["1 error occurred:\n\t* permission denied\n\n"]},
+    {"errors": ["permission denied"]},
+]
+
+
+@pytest.mark.parametrize("body", VAULT_REFUSALS)
+def test_a_refusal_from_vault_keeps_the_token_message(body: dict[str, Any]) -> None:
+    with pytest.raises(StoreAuthError) as caught:
+        raise_for(403, body, path=PATH)
+
+    assert "the store refused this token" in str(caught.value)
+    assert "did not come from Vault" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        # What a WAF that blocks PATCH answered (#904).
+        (401, {"code": "401", "message": "Unauthorized"}),
+        (403, {"message": "Forbidden"}),
+        # The transport hands over `None` for a body that is empty or not JSON.
+        (401, None),
+        (403, "<html>Forbidden</html>"),
+    ],
+)
+def test_a_refusal_that_did_not_come_from_vault_says_so(status: int, body: Any) -> None:
+    """#905: the token message would send the reader to a policy that is fine."""
+    with pytest.raises(StoreAuthError) as caught:
+        raise_for(status, body, path=PATH)
+
+    rendered = str(caught.value)
+    assert f"refused with {status}, and the answer did not come from Vault" in rendered
+    assert "the store refused this token" not in rendered
+    assert "merge_patch: false" in str(caught.value.hint)
+    assert caught.value.category == "authorization"
+
+
+def test_a_body_that_did_not_come_from_vault_is_not_quoted() -> None:
+    """A proxy may echo the request, and the body of a write holds passwords."""
+    with pytest.raises(StoreAuthError) as caught:
+        raise_for(401, {"message": "echo: acme-password-1"}, path=PATH)
+
+    assert "acme-password-1" not in str(caught.value)
+    assert "acme-password-1" not in str(caught.value.hint)
 
 
 @pytest.mark.parametrize("status", [429, 472, 473, 503])

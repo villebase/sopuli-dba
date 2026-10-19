@@ -48,7 +48,7 @@ from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.driver.protocol import ENCRYPTION_NONE, Encryption, UserState
 from sopuli.driver.protocol import UNKNOWN as ENCRYPTION_UNKNOWN_METHOD
-from sopuli.install_shape import INSTALLED, InstallShape
+from sopuli.install_shape import INSTALLED, Component, InstallShape
 from sopuli.lock.inspect import SkippedPath
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LockableStore, LockManager, Unguarded
@@ -1711,7 +1711,7 @@ def install_diagnostics(
                     code=MISSING_BACKEND,
                     message=(
                         f'vault "{name}" declares type "{component.name}", '
-                        f"{_cannot_serve(component.name, 'backend', component.install_command)}"
+                        f"{_cannot_serve(component, 'backend')}"
                     ),
                 )
             )
@@ -1731,15 +1731,14 @@ def install_diagnostics(
                 level=level,
                 code=MISSING_DRIVER,
                 message=(
-                    f'{subject} type "{component.name}", '
-                    f"{_cannot_serve(component.name, 'driver', component.install_command)}"
+                    f'{subject} type "{component.name}", {_cannot_serve(component, "driver")}'
                 ),
             )
         )
     return found
 
 
-def _cannot_serve(name: str, kind: str, install_command: str | None) -> str:
+def _cannot_serve(component: Component, kind: str) -> str:
     """Why this machine cannot serve it, and what -- if anything -- to do.
 
     The two halves are different sentences because they are different problems,
@@ -1749,18 +1748,20 @@ def _cannot_serve(name: str, kind: str, install_command: str | None) -> str:
     install command for the other is the expensive mistake: it sends somebody to
     `pip` forever for something `pip` cannot supply.
 
-    Takes the three pieces rather than a
-    :class:`~sopuli.install_shape.Component` because the subject of the sentence
-    differs -- a store is named by its ``vaults:`` key and a driver type is
-    counted across the targets that declare it -- while this half is the same
-    fact for both. ``install_command`` being ``None`` is what selects the second
-    reading, and it comes from one place: a
-    :class:`~sopuli.install_shape.Component` carries one only when its status is
-    :data:`~sopuli.install_shape.NOT_INSTALLED`.
+    This is the second half of the sentence only. The caller writes the subject,
+    because it differs: a store is named by its ``vaults:`` key, and a driver
+    type is counted across the targets that declare it. ``install_command``
+    being ``None`` is what selects the second reading, and it comes from one
+    place: a :class:`~sopuli.install_shape.Component` carries one only when its
+    status is :data:`~sopuli.install_shape.NOT_INSTALLED`. The pipx line comes
+    with it, because the pip line is wrong for an install that pipx made.
     """
-    if install_command is not None:
-        return f"but that {kind} is not installed; install it with: {install_command}"
-    return f"but this build has no {name} {kind} yet -- this is not something to install"
+    if component.install_command is not None:
+        return (
+            f"but that {kind} is not installed; install it with: {component.install_command}, "
+            f"or after a pipx install: {component.pipx_install_command}"
+        )
+    return f"but this build has no {component.name} {kind} yet -- this is not something to install"
 
 
 def wallet_diagnostics(report: WalletReport) -> list[Diagnostic]:

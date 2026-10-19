@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from types import ModuleType
 
 from sopuli.config.errors import ConfigError
-from sopuli.extras import MISSING_CLIENT, install_command, installed, missing_kind
+from sopuli.extras import MISSING_CLIENT, install_hint, installed, missing_kind
 
 #: ``error.code`` for a configured channel whose client is not installed, so a
 #: consumer can branch on this rather than parse a message (E5, and
@@ -110,7 +110,7 @@ def resolve(method: str) -> ModuleType:
             raise NotifierNotInstalledError(
                 f"notify method {method!r} needs a client this machine does not have",
                 hint=(
-                    f"{install_command(notifier.extra)} -- or take `delivery.notify` out of "
+                    f"{install_hint(notifier.extra)} -- or take `delivery.notify` out of "
                     f"the file if nobody should be told. The reset is refused rather than run "
                     f"without the notification, because it is refused *before* the password "
                     f"changes and running it would leave somebody holding a credential nobody "

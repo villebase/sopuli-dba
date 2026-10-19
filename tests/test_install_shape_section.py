@@ -128,7 +128,10 @@ def test_installed_and_not_configured_is_reported() -> None:
     assert shape.missing == ()
 
 
-def test_a_configured_backend_with_no_client_is_not_installed_and_says_what_to_run() -> None:
+def test_a_configured_backend_with_no_client_is_not_installed_and_says_what_to_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sopuli.extras.present_extras", lambda: frozenset({"oracle"}))
     shape = survey(
         _config(vaults=("hashicorp",)),
         backends={"hashicorp": CLIENT_MISSING},
@@ -139,6 +142,7 @@ def test_a_configured_backend_with_no_client_is_not_installed_and_says_what_to_r
     assert backend.status == NOT_INSTALLED
     assert backend.configured == ("vault-0",)
     assert backend.install_command == 'pip install "sopuli-dba[hashicorp]"'
+    assert backend.pipx_install_command == 'pipx install --force "sopuli-dba[hashicorp,oracle]"'
     assert shape.missing == (backend,)
 
 
@@ -156,6 +160,7 @@ def test_a_backend_this_build_has_no_module_for_carries_no_install_line() -> Non
     (backend,) = shape.backends
     assert backend.status == NOT_IMPLEMENTED
     assert backend.install_command is None
+    assert backend.pipx_install_command is None
     assert shape.missing == (backend,)
 
 
@@ -235,7 +240,10 @@ def test_the_section_validates_against_the_schema() -> None:
     assert [f"{list(e.path)}: {e.message}" for e in validator.iter_errors(section)] == []
 
 
-def test_the_text_report_shows_every_row_and_the_line_to_paste() -> None:
+def test_the_text_report_shows_every_row_and_the_line_to_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sopuli.extras.present_extras", lambda: frozenset({"oracle"}))
     lines = render(
         survey(
             _config(vaults=("hashicorp",)),
@@ -250,6 +258,23 @@ def test_the_text_report_shows_every_row_and_the_line_to_paste() -> None:
     # needs in order to be quotable as evidence.
     assert "oci" in text
     assert 'pip install "sopuli-dba[hashicorp]"' in text
+    assert 'after a pipx install:  pipx install --force "sopuli-dba[hashicorp,oracle]"' in text
+
+
+def test_a_missing_client_warning_gives_the_pip_and_the_pipx_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#902: after a pipx install the pip line would install a second copy."""
+    monkeypatch.setattr("sopuli.extras.present_extras", lambda: frozenset({"oracle"}))
+    shape = survey(
+        _config(vaults=("hashicorp",)), backends={"hashicorp": CLIENT_MISSING}, drivers={}
+    )
+
+    (found,) = install_diagnostics(shape)
+    assert found.message.endswith(
+        'install it with: pip install "sopuli-dba[hashicorp]", '
+        'or after a pipx install: pipx install --force "sopuli-dba[hashicorp,oracle]"'
+    )
 
 
 def test_the_install_line_is_only_printed_for_something_the_config_asked_for() -> None:
@@ -370,6 +395,7 @@ def test_a_component_with_no_module_is_never_told_to_run_pip() -> None:
     assert found.code == MISSING_BACKEND
     assert "no oci backend yet" in found.message
     assert "pip install" not in found.message
+    assert "pipx install" not in found.message
 
 
 def test_a_component_with_no_module_is_still_reported_when_its_client_is_present() -> None:

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.45.schema.json`](../schemas/sopuli-run-1.45.schema.json),
+Schemas: [`../schemas/sopuli-run-1.46.schema.json`](../schemas/sopuli-run-1.46.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1261,7 +1261,13 @@ unconfigured backend is a row with an empty `vaults`, never a missing row.
 different remedies, and only one is the reader's to apply:
 
 - `not_installed`: the module is here and the client is not. `install_command`
-  is the line to paste.
+  is the pip line to paste, and `pipx_install_command` is the line for an
+  install that pipx made. The pip line would install a second copy there, and
+  the copy that ran would still have no client. The pipx line is
+  `pipx install --force` and names every extra already present as well as the
+  missing one, because `--force` keeps only the extras it names. The tool reads
+  which extras are present from its own package metadata. It does not try to
+  tell which of the two made the install, so it gives both (decided in #902).
 - `not_implemented`: this build has no module for it, and nothing the operator
   installs changes that. Such a row has no install line, however much its name
   suggests one exists.

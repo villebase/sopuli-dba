@@ -42,7 +42,14 @@ from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Target
-from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, install_command, missing_kind
+from sopuli.extras import (
+    MISSING_CLIENT,
+    MISSING_MODULE,
+    install_command,
+    install_hint,
+    missing_kind,
+    pipx_install_command,
+)
 from sopuli.extras import installed as extras_installed
 
 #: ``error.code`` for a configured driver whose client is not installed
@@ -86,6 +93,18 @@ class DatabaseDriver:
         """The line an operator can paste."""
         assert self.extra is not None
         return install_command(self.extra)
+
+    @property
+    def pipx_install_command(self) -> str:
+        """The line for an install that pipx made. See :mod:`sopuli.extras`."""
+        assert self.extra is not None
+        return pipx_install_command(self.extra)
+
+    @property
+    def install_hint(self) -> str:
+        """Both lines, for the message a person reads."""
+        assert self.extra is not None
+        return install_hint(self.extra)
 
 
 #: Every ``type:`` :data:`~sopuli.config.targets.TARGET_TYPES` allows, and what
@@ -176,7 +195,7 @@ def resolve(target: Target) -> ModuleType:
             raise DriverNotInstalledError(
                 f'target "{target.name}" declares type "{target.type}", '
                 f"but that driver is not installed",
-                hint=f"install it with:  {driver.install_command}",
+                hint=f"install it with:  {driver.install_hint}",
             ) from exc
         if kind == MISSING_MODULE:
             raise DriverNotImplementedError(

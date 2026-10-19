@@ -32,7 +32,14 @@ from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
-from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, install_command, missing_kind
+from sopuli.extras import (
+    MISSING_CLIENT,
+    MISSING_MODULE,
+    install_command,
+    install_hint,
+    missing_kind,
+    pipx_install_command,
+)
 from sopuli.extras import installed as extras_installed
 from sopuli.store.protocol import SecretStore
 
@@ -81,6 +88,18 @@ class Backend:
         """
         assert self.extra is not None
         return install_command(self.extra)
+
+    @property
+    def pipx_install_command(self) -> str:
+        """The line for an install that pipx made. See :mod:`sopuli.extras`."""
+        assert self.extra is not None
+        return pipx_install_command(self.extra)
+
+    @property
+    def install_hint(self) -> str:
+        """Both lines, for the message a person reads."""
+        assert self.extra is not None
+        return install_hint(self.extra)
 
 
 #: Every ``type:`` :data:`~sopuli.config.vaults.VAULT_TYPES` allows, and what
@@ -201,7 +220,7 @@ def resolve(vault: Vault) -> ModuleType:
                 # `01-configuration.md` §3a quotes this line verbatim. A
                 # `vaults.<name>:` breadcrumb in front of a sentence that opens
                 # with the same name reads as a stutter.
-                hint=f"install it with:  {backend.install_command}",
+                hint=f"install it with:  {backend.install_hint}",
             ) from exc
         if kind == MISSING_MODULE:
             raise BackendNotImplementedError(

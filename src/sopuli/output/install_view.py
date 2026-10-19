@@ -70,6 +70,8 @@ def _component(component: Component) -> dict[str, Any]:
     found: dict[str, Any] = {"name": component.name, "status": component.status}
     if component.install_command is not None:
         found["install_command"] = component.install_command
+    if component.pipx_install_command is not None:
+        found["pipx_install_command"] = component.pipx_install_command
     return found
 
 
@@ -145,5 +147,7 @@ def render(shape: InstallShape) -> list[str]:
     for one in (*shape.backends, *shape.drivers):
         if one.install_command is not None and one.configured:
             lines.append(f"  {one.name}: install it with:  {one.install_command}")
+            if one.pipx_install_command is not None:
+                lines.append(f"  {one.name}: after a pipx install:  {one.pipx_install_command}")
     lines.append("")
     return lines

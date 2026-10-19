@@ -2392,3 +2392,27 @@ the register.
     messages.
   - Warn about `VAULT_CACERT` too. It is noise for a case that cannot send auth
     material elsewhere.
+
+## #902
+
+- **Decided:** 2026-10-19, #902
+- **Question:** When a backend's or driver's client is not installed, the hint
+  gives a `pip install` line. After a pipx install, that line installs a second
+  copy into the user's own Python, and the copy that ran still has no client.
+  What should the hint say?
+- **Decision:** Both lines. The pip line stays as it was, and a pipx line
+  follows it: `pipx install --force` with the missing extra and every extra
+  already present. The JSON keeps `install_command` and adds
+  `pipx_install_command` beside it. The tool reads which extras are present
+  from its own package metadata.
+- **Why:** pipx is the recommended install (`getting-started.md` §2), so the
+  pip line alone sends most new users to the wrong command. The pipx line names
+  the present extras because `--force` keeps only the extras it names, so a line
+  with the missing extra alone would remove the others. Reading the metadata
+  keeps the list of extras in `pyproject.toml` only.
+- **Rejected:**
+  - Detect pipx from `sys.prefix` and print only the matching line. It is a
+    guess about pipx's folder layout, which pipx does not promise, and a wrong
+    guess sends the reader to the wrong command.
+  - A neutral line that names the extra and links to getting-started. It never
+    goes stale, but the reader cannot paste it.

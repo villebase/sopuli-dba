@@ -25,7 +25,10 @@ written down twice. One copy, two callers, one place to be right.
 
 from __future__ import annotations
 
+import functools
+import importlib.metadata
 import importlib.util
+import re
 from collections.abc import Collection
 
 #: The extra's client is genuinely not installed. The operator runs `pip`.
@@ -46,6 +49,83 @@ def install_command(extra: str) -> str:
     goes into `pip`.
     """
     return f'pip install "sopuli-dba[{extra}]"'
+
+
+def pipx_install_command(extra: str) -> str:
+    """The line for an install that pipx made.
+
+    The pip line is wrong there: it installs a second copy into the user's own
+    Python, and the copy that ran still has no client. ``pipx install --force``
+    replaces the install with exactly the extras it names, so the line names the
+    extras already present as well as the missing one. Without them, the fix for
+    one backend would remove another.
+    """
+    wanted = sorted({*present_extras(), extra})
+    return f'pipx install --force "sopuli-dba[{",".join(wanted)}]"'
+
+
+def install_hint(extra: str) -> str:
+    """Both lines, for a message a person reads.
+
+    The tool does not try to tell whether pipx made the install. pipx does not
+    promise the layout that such a guess would read, and a wrong guess sends the
+    reader to the wrong command. Decided in #902.
+    """
+    return f"{install_command(extra)}, or after a pipx install:  {pipx_install_command(extra)}"
+
+
+#: Extras that do not name a vendor client. ``all`` is the others together, and
+#: ``dev`` is the test tools. Neither belongs in an install line for an operator.
+_NOT_A_CLIENT = frozenset({"all", "dev"})
+
+_EXTRA_MARKER = re.compile(r"""extra\s*==\s*["']([^"']+)["']""")
+_REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+@functools.cache
+def present_extras() -> frozenset[str]:
+    """The extras whose every dependency is installed, read from package metadata.
+
+    The extras and their dependencies come from the installed ``sopuli-dba``
+    distribution, which ``pyproject.toml`` wrote, so this keeps no second copy of
+    that list. A dependency counts as present when its distribution is installed.
+    The version is not checked: the answer only decides which names go in an
+    install line, and pipx checks versions when it runs that line.
+
+    Two extras can share a dependency, as ``hashicorp`` and ``notify`` share
+    ``httpx``. Both then count as present. Naming an extra whose dependencies
+    are already installed costs nothing.
+
+    Without the distribution's metadata, for example when running from a source
+    tree that was never installed, the answer is empty, and the line names only
+    the missing extra.
+    """
+    try:
+        requires = importlib.metadata.requires("sopuli-dba") or []
+    except importlib.metadata.PackageNotFoundError:
+        return frozenset()
+
+    by_extra: dict[str, list[str]] = {}
+    for requirement in requires:
+        marker = _EXTRA_MARKER.search(requirement)
+        name = _REQUIREMENT_NAME.match(requirement)
+        if marker is None or name is None:
+            continue
+        by_extra.setdefault(marker.group(1), []).append(name.group(0))
+
+    return frozenset(
+        extra
+        for extra, names in by_extra.items()
+        if extra not in _NOT_A_CLIENT and all(_distribution_installed(name) for name in names)
+    )
+
+
+def _distribution_installed(name: str) -> bool:
+    try:
+        importlib.metadata.distribution(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
 
 
 def installed(provides: Collection[str]) -> bool:

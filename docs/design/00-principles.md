@@ -415,9 +415,13 @@ rules make that real:
    ```
    $ sopuli creds check
    sopuli: vault "vault-prod" declares type "hashicorp", but that backend is not installed
-     hint: install it with:  pip install "sopuli-dba[hashicorp]"
+     hint: install it with:  pip install "sopuli-dba[hashicorp]", or after a pipx install:  pipx install --force "sopuli-dba[hashicorp,oracle]"
    exit 9
    ```
+
+   The hint gives a pipx line as well, because the pip line would install a
+   second copy beside a pipx install. The pipx line names the extras already
+   installed, here `oracle`, because `--force` keeps only the extras it names.
 
 3. **Nothing in base opens a socket.** The dependency set makes this testable: a
    base install cannot import any of the clients the backends use — `httpx`, the

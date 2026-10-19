@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.76.0](https://github.com/villebase/sopuli-dba/compare/v0.75.0...v0.76.0) (2026-10-19)
+
+
+### Features
+
+* **config:** warn when VAULT_ADDR overrides a store's declared addr ([#865](https://github.com/villebase/sopuli-dba/issues/865)) ([#889](https://github.com/villebase/sopuli-dba/issues/889)) ([faf4694](https://github.com/villebase/sopuli-dba/commit/faf4694c1f1736f099901f7819503555b4637a48))
+* **config:** warn when VAULT_NAMESPACE overrides a store's declared namespace ([#892](https://github.com/villebase/sopuli-dba/issues/892)) ([#894](https://github.com/villebase/sopuli-dba/issues/894)) ([46e306e](https://github.com/villebase/sopuli-dba/commit/46e306e68fed99fe37c546f94b21a6643aa2ffb3))
+* give a pipx line beside the pip line when a client is missing ([#902](https://github.com/villebase/sopuli-dba/issues/902)) ([#903](https://github.com/villebase/sopuli-dba/issues/903)) ([2415155](https://github.com/villebase/sopuli-dba/commit/24151553ccb28be9ff82436fa3a8bcfec462ae7b))
+* **lock:** warn when lock status skips a lock path it cannot address ([#886](https://github.com/villebase/sopuli-dba/issues/886)) ([#896](https://github.com/villebase/sopuli-dba/issues/896)) ([4d76056](https://github.com/villebase/sopuli-dba/commit/4d76056eb81609f6206175eed35c885264bade96))
+* recommend pipx for installing, and run as python -m sopuli ([#900](https://github.com/villebase/sopuli-dba/issues/900)) ([#901](https://github.com/villebase/sopuli-dba/issues/901)) ([2b2131c](https://github.com/villebase/sopuli-dba/commit/2b2131c066ec98c3bb95822533f532d9ba8a351a))
+* **store:** add merge_patch: false for a proxy that blocks PATCH ([#904](https://github.com/villebase/sopuli-dba/issues/904)) ([#906](https://github.com/villebase/sopuli-dba/issues/906)) ([f4bca9d](https://github.com/villebase/sopuli-dba/commit/f4bca9d73601501dbdb680d5a4870d85807d6de8))
+* **store:** say when a 401 or 403 did not come from Vault ([#905](https://github.com/villebase/sopuli-dba/issues/905)) ([#907](https://github.com/villebase/sopuli-dba/issues/907)) ([114e46e](https://github.com/villebase/sopuli-dba/commit/114e46e4f1c4b4f2cc83b738feb8ee4b90bb4d6b))
+
+
+### Bug Fixes
+
+* check --vault-token-file through its descriptor before reading it ([#885](https://github.com/villebase/sopuli-dba/issues/885)) ([#888](https://github.com/villebase/sopuli-dba/issues/888)) ([8fd1792](https://github.com/villebase/sopuli-dba/commit/8fd17923a3db3419a5848d576a4dd250a38518d1))
+* **config:** refuse ?, %, backslash and control characters in a store path ([#858](https://github.com/villebase/sopuli-dba/issues/858)) ([#883](https://github.com/villebase/sopuli-dba/issues/883)) ([fe45de6](https://github.com/villebase/sopuli-dba/commit/fe45de6caa2f33b5110e76ff3c2d6cd15a3a8374))
+* **config:** refuse a POSIX config file owned by another user ([#861](https://github.com/villebase/sopuli-dba/issues/861)) ([#881](https://github.com/villebase/sopuli-dba/issues/881)) ([9cabf76](https://github.com/villebase/sopuli-dba/commit/9cabf762b5c978abe9c51a56eac92c22927543a3))
+* **config:** refuse one account declared twice in different case ([#854](https://github.com/villebase/sopuli-dba/issues/854)) ([#871](https://github.com/villebase/sopuli-dba/issues/871)) ([2243afb](https://github.com/villebase/sopuli-dba/commit/2243afbe57c34527a9a28b6db6358c4874ec3e61))
+* do not promote an account a guardrail skipped on one of its targets ([#852](https://github.com/villebase/sopuli-dba/issues/852)) ([#870](https://github.com/villebase/sopuli-dba/issues/870)) ([c3ddaae](https://github.com/villebase/sopuli-dba/commit/c3ddaaebe4fee56859b07cdab499293ddbfb5d4d))
+* **output:** show control characters from server and vault text ([#859](https://github.com/villebase/sopuli-dba/issues/859)) ([#887](https://github.com/villebase/sopuli-dba/issues/887)) ([54f85b0](https://github.com/villebase/sopuli-dba/commit/54f85b04c44b21ea010aa19c0f16c1feee7b286f))
+* **output:** warn on the confirmed rows of a held-back promotion ([#873](https://github.com/villebase/sopuli-dba/issues/873)) ([#880](https://github.com/villebase/sopuli-dba/issues/880)) ([df169b2](https://github.com/villebase/sopuli-dba/commit/df169b239d2f8a77745bad60616d6db8d6e23b02))
+* print the plan before the rollback prompt and when a run fails ([#863](https://github.com/villebase/sopuli-dba/issues/863)) ([#895](https://github.com/villebase/sopuli-dba/issues/895)) ([af17c3a](https://github.com/villebase/sopuli-dba/commit/af17c3a1e92cf0c087e989a46f5949bc7b64b487))
+* refuse a seen reset when stdin cannot answer the prompt ([#853](https://github.com/villebase/sopuli-dba/issues/853)) ([#875](https://github.com/villebase/sopuli-dba/issues/875)) ([166cc95](https://github.com/villebase/sopuli-dba/commit/166cc9520c15c0a67a65e2fbdcc104d266ddf541))
+* refuse creds generate --from-stdin when stdin is a terminal ([#862](https://github.com/villebase/sopuli-dba/issues/862)) ([#893](https://github.com/villebase/sopuli-dba/issues/893)) ([34f1548](https://github.com/villebase/sopuli-dba/commit/34f154841d2ee6856714e4d289acb12e34122b7e))
+* renew the lock inside a long target in creds apply ([#864](https://github.com/villebase/sopuli-dba/issues/864)) ([#882](https://github.com/villebase/sopuli-dba/issues/882)) ([a8eb746](https://github.com/villebase/sopuli-dba/commit/a8eb7461dd7ebf805a74c5184f05bffc74f12b2a))
+
 ## [0.75.0](https://github.com/villebase/sopuli-dba/compare/v0.74.0...v0.75.0) (2026-10-17)
 
 The first published alpha, and the first release on PyPI. The README's

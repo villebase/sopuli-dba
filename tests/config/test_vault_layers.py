@@ -90,14 +90,14 @@ def test_every_reach_key_can_be_supplied_by_a_layer() -> None:
         **under_defaults(
             addr="https://vault.example.com",
             mount="secret",
-            kv_version=1,
+            kv_version=2,
             namespace="team-a",
             timeout_s=45,
             merge_patch=False,
         )
     )
 
-    assert (vault.addr, vault.mount, vault.kv_version) == ("https://vault.example.com", "secret", 1)
+    assert (vault.addr, vault.mount, vault.kv_version) == ("https://vault.example.com", "secret", 2)
     assert (vault.namespace, vault.timeout_s, vault.merge_patch) == ("team-a", 45, False)
     assert vault.patched == (
         "addr",
@@ -107,6 +107,26 @@ def test_every_reach_key_can_be_supplied_by_a_layer() -> None:
         "namespace",
         "timeout_s",
     )
+
+
+@pytest.mark.parametrize(
+    ("vault", "sections", "says"),
+    [
+        ({"type": "oci", "merge_patch": False}, {}, "no effect on a store of type 'oci'"),
+        ({"kv_version": 1, "merge_patch": False}, {}, "no effect on a KV v1 store"),
+        ({"kv_version": 1}, under_defaults(merge_patch=False), "no effect on a KV v1 store"),
+        ({"merge_patch": False}, under_defaults(kv_version=1), "no effect on a KV v1 store"),
+    ],
+)
+def test_merge_patch_is_refused_where_nothing_reads_it(
+    vault: dict[str, Any], sections: dict[str, Any], says: str
+) -> None:
+    """P3: a key the tool would ignore is refused, and on the merged values, so a
+    layer cannot write it where it does nothing either."""
+    with pytest.raises(ConfigError) as caught:
+        merged(vault, **sections)
+
+    assert says in str(caught.value)
 
 
 def test_a_patch_is_validated_as_strictly_as_a_declaration() -> None:

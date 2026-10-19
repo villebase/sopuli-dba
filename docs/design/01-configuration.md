@@ -744,7 +744,7 @@ config file can be read without knowing what environment it will be read in.
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
 | `timeout_s` | request timeout against this store. `httpx` has no default (ADR-005), so this is not optional the way a stdlib client's would be |
-| `merge_patch` | KV v2 only. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
+| `merge_patch` | HashiCorp KV v2 only, and refused on any other store. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
 | `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below |
 | `auth` | how to authenticate, and where the material comes from — see below |
 | `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |

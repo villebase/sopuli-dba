@@ -2441,6 +2441,19 @@ the register.
   with the same compare-and-set and the same reporting. It is as safe against a
   concurrent writer, and it sends the whole document. A per-store setting fits
   a network where only some machines are behind the proxy.
+
+  A layer may set it, and it does not ratchet. Under a merge patch a sibling
+  account's password is never read into the process, so `false` is the wider of
+  the two. It is still not a safety setting in invariant 10's sense: it relaxes
+  no guardrail, and a Vault policy can already force the same fallback with no
+  configuration at all. The run reports read-modify-write each time it is used,
+  and the message names `merge_patch: false` as one of the causes. A ratchet
+  would make `true` win, which breaks the case the key exists for: a profile for
+  the machines behind the proxy.
+
+  It is refused where nothing reads it: on a store that is not HashiCorp, and on
+  KV v1, which has no merge patch. P3 refuses a key the tool would ignore. The
+  check runs on the merged values, so a layer cannot write it there either.
 - **Rejected:**
   - Read a PATCH 401 whose body is not Vault's `{"errors": [...]}` as a patch
     refusal. It needs no configuration, but it guesses from the shape of a body,

@@ -7,7 +7,9 @@ The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
 ``write(path, …)``       ``POST /v1/<mount>/data/<path>`` with ``options.cas``
 ``metadata(path)``       ``GET  /v1/<mount>/metadata/<path>``
 ``list(prefix)``         ``LIST /v1/<mount>/metadata/<prefix>``, walked
-``supports()``           ``{cas, list, versioning}``
+``patch(path, …)``       ``PATCH /v1/<mount>/data/<path>``, merge-patch JSON
+``supports()``           ``{cas, list, merge_patch, versioning}``, without
+                         ``merge_patch`` when the entry says ``merge_patch: false``
 ======================== =====================================================
 
 Three things the advisory lock depends on, and which are the reason this module
@@ -95,9 +97,8 @@ class Kv2Store:
         caller: ``staging_labels`` is emulated in the payload on this backend
         (Q7), so nothing negotiates it, and undelete has no command that asks.
         """
-        if not self.merge_patch:
-            return frozenset({CAS, LIST, VERSIONING})
-        return frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
+        base = frozenset({CAS, LIST, VERSIONING})
+        return base | {MERGE_PATCH} if self.merge_patch else base
 
     def health(self) -> StoreHealth:
         """Whether the Vault behind this mount is well, and what its clock says.
@@ -175,6 +176,14 @@ class Kv2Store:
         siblings it was written to protect, on the one path where there are none
         yet only because nobody has looked.
         """
+        if not self.merge_patch:
+            # The protocol's rule for a store without the capability, as
+            # MemoryStore enforces it. Sending the PATCH would reach the proxy
+            # that `merge_patch: false` exists to avoid.
+            raise StoreError(
+                f"this store cannot apply a merge patch, and a write to {path!r} asked it to",
+                hint="its entry says `merge_patch: false`; ask `supports()` before patching",
+            )
         body: dict[str, Any] = {"data": changes}
         if cas is not None:
             body["options"] = {"cas": cas}

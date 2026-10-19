@@ -22,7 +22,7 @@ from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.config.vaults import build_vaults
 from sopuli.secrets import Secret
 from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, staged_patch
-from sopuli.store.protocol import CAS, LIST, MERGE_PATCH, VERSIONING, SecretStore
+from sopuli.store.protocol import CAS, LIST, MERGE_PATCH, VERSIONING, SecretStore, StoreError
 
 #: An address nothing listens on. Building a store opens no connection, so the
 #: tier-0 tests never reach it.
@@ -50,6 +50,15 @@ def test_merge_patch_false_drops_only_the_merge_patch() -> None:
 
 def test_merge_patch_true_is_the_same_as_absent() -> None:
     assert _open(merge_patch=True).supports() == _open(merge_patch=None).supports()
+
+
+def test_patch_refuses_without_sending_when_the_merge_patch_is_off() -> None:
+    """The protocol's rule for a store without the capability. The address is one
+    nothing listens on, so a request that was sent would fail differently."""
+    store = _open(merge_patch=False)
+
+    with pytest.raises(StoreError, match="cannot apply a merge patch"):
+        store.patch("acme/dev/acme", {"pending": {}}, cas=1)
 
 
 def test_the_key_is_read_from_a_vaults_entry() -> None:

@@ -214,16 +214,17 @@ what it was used for during the Actions incident in #233.
   repository at this commit. `build` and `publish` are separate jobs so that it
   vouches for exactly what `build` handed over.
 - **Check a release once it is on PyPI.** Set `V` to the version being checked.
-  The output shown is from 0.75.0, the first published release. In a fresh
-  virtual environment, install it the way the README says, and check the version:
+  The output shown is from 0.75.0, the first published release. Install it the
+  way the README says, with pipx, and check the version. `pipx run` installs into
+  a temporary environment, so it does not touch an install you already have:
 
   ```bash
   V=0.75.0
-  python -m venv smoke && . smoke/bin/activate    # smoke\Scripts\activate on Windows
-  pip install "sopuli-dba[oracle,hashicorp]==$V"
-  sopuli --version
+  pipx run --spec "sopuli-dba[oracle,hashicorp]==$V" sopuli --version
   ```
   ```
+  upgrading shared libraries...
+  installing sopuli-dba from spec 'sopuli-dba[hashicorp,oracle]==0.75.0'...
   sopuli, version 0.75.0
   ```
 

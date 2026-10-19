@@ -119,7 +119,7 @@ unfinished part. It promises three things:
 
 | | |
 |---|---|
-| **Install** | `pip install "sopuli-dba[oracle,hashicorp]"`. `sopuli --version` and `sopuli about` report the installed version |
+| **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`. The *Installing* section below says how to get pipx. `sopuli --version` and `sopuli about` report the installed version |
 | **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI |
 | **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
@@ -147,6 +147,29 @@ still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-d
 
 ## Installing
 
+Install the tool with *pipx*. pipx installs a Python program that you run as a
+command. It gives the program its own private set of packages and puts the
+`sopuli` command on your `PATH`, with nothing to activate. A plain `pip install`
+can leave the command in a folder that your shell does not search, and then the
+shell does not recognize `sopuli`.
+
+This installs pipx and then the tool, on Windows:
+
+```powershell
+python -m pip install --user pipx
+python -m pipx ensurepath
+# Open a new terminal, then:
+pipx install "sopuli-dba[oracle,hashicorp]"
+sopuli --version
+```
+
+On Linux, pipx usually comes from the system packages, such as
+`sudo apt install pipx` on Debian and Ubuntu. The tool needs Python 3.11 or
+newer. Where the system's own Python is older, such as on Ubuntu 22.04 or Oracle
+Linux 9, install a newer one first. [`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md)
+§2 has the steps for each platform, what to do when the shell does not find
+`sopuli`, and how to install without pipx.
+
 **Install the backends you have, not all of them.** Every client that exists to
 reach one vendor — a secret store or a database — is an install extra. The base
 install carries the CLI, the config layer and nothing that opens a socket, so
@@ -154,23 +177,23 @@ install carries the CLI, the config layer and nothing that opens a socket, so
 reach nothing.
 
 An *extra* is Python packaging's word for an optional part of a package. You ask
-for one by putting its name in square brackets after the package name, and `pip`
-— the program that installs Python packages — then installs the extra
-dependencies that part needs.
+for one by putting its name in square brackets after the package name, and pipx
+or pip then installs the extra dependencies that part needs. Name several in one
+pair of brackets, separated by commas.
 
 | Install | Adds | Use it when |
 |---|---|---|
-| `pip install sopuli-dba` | nothing beyond the CLI and the config layer | you only need `config validate`, `config show`, `target list` — in an editor, a linter, a pre-commit hook |
-| `pip install "sopuli-dba[oracle]"` | `python-oracledb` | you manage Oracle databases |
-| `pip install "sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
-| `pip install "sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
-| `pip install "sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
-| `pip install "sopuli-dba[all]"` | every extra | CI, or you genuinely have all of them |
+| `sopuli-dba` | nothing beyond the CLI and the config layer | you only need `config validate`, `config show`, `target list` — in an editor, a linter, a pre-commit hook |
+| `"sopuli-dba[oracle]"` | `python-oracledb` | you manage Oracle databases |
+| `"sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
+| `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
+| `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
+| `"sopuli-dba[all]"` | every extra | CI, or you genuinely have all of them |
 
 A working install is one store plus one database. For most sites that is:
 
 ```
-pip install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci]
+pipx install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci]
 ```
 
 `sopuli-dba[all]` exists for CI and the test matrix. It is deliberately not the

@@ -23,8 +23,9 @@ What you need before you start:
 
 Everything below was run on Windows 11 with sopuli 0.58.0 and Instant Client
 23.26.3.0.0, against the project's own test containers. The output shown is what
-those runs printed, except the `sopuli --version` sample in section 2b, which
-comes from installing 0.75.0 from PyPI.
+those runs printed, except the install samples in section 2. Those come from
+installing 0.75.0 from PyPI with pipx, on Windows 11 and on Ubuntu 24.04 in a
+container.
 
 Both versions are a **record of what each capture printed**, not a claim about
 what the current build is. Your own `sopuli --version` prints the version you
@@ -86,46 +87,120 @@ are in [`../test/README.md`](../test/README.md).
 
 ## 2. Install the tool
 
-### 2a. Make a virtual environment
+The recommended way to install the tool is *pipx*. pipx installs a Python
+program that you run as a command. It gives the program its own private folder of
+Python packages, called a *virtual environment*, so the tool cannot disturb
+anything else on the machine. It also puts the `sopuli` command on your `PATH`,
+the list of folders your shell searches for commands. There is nothing to
+activate before each use.
 
-A *virtual environment* is a private folder holding one project's Python
-packages, so installing something for this tool cannot disturb anything else on
-the machine. Make it outside the repository you cloned in section 1, for example
-in your home folder:
+pipx does not come with Python, so install it first.
 
-```bash
-cd ~
-python -m venv .venv
-```
+### 2a. Install pipx
 
-Then *activate* it, which points the `python` and `pip` commands at that folder
-for the rest of your terminal session:
+**Windows.** In PowerShell, install pipx for your own user, then let it add its
+folders to your `PATH`:
 
 ```powershell
-.venv\Scripts\Activate.ps1        # Windows PowerShell
-```
-```bash
-source .venv/bin/activate         # Linux, macOS, WSL
+python -m pip install --user pipx
+python -m pipx ensurepath
 ```
 
-You will need to activate it again in every new terminal window.
+Both commands start with `python -m` on purpose. pip puts `pipx.exe` in a folder
+that is not on your `PATH` yet, so the plain `pipx` command does not work until
+`ensurepath` has run. If `python` itself is not recognized, use `py`, the Python
+launcher for Windows, in its place: `py -m pip install --user pipx`.
+
+**Linux: check your Python first.** The tool needs Python 3.11 or newer. Ask the
+system Python for its version:
+
+```bash
+python3 --version
+```
+
+If it prints 3.11 or newer, the steps below work as written. Ubuntu 24.04 has
+3.12. If it is older, the next steps say what to add. Ubuntu 22.04 has 3.10, and
+Oracle Linux 9 has 3.9.
+
+**Debian and Ubuntu.** Install pipx from the system packages. On recent releases,
+such as Ubuntu 24.04, `pip install --user` is refused with
+`error: externally-managed-environment`, so the system package is the way in:
+
+```bash
+sudo apt install pipx
+pipx ensurepath
+```
+
+If your `python3` is older than 3.11, also install a newer Python, and name it
+when you install the tool in section 2b. On Ubuntu 22.04:
+
+```bash
+sudo apt install python3.11 python3.11-venv
+```
+
+**Oracle Linux and other Red Hat-style systems.** The system `python3` can be
+older than the 3.11 this tool needs. On Oracle Linux 9 it is 3.9. Install a newer
+Python next to it, and run pipx with that Python:
+
+```bash
+sudo dnf install python3.12 python3.12-pip
+python3.12 -m pip install --user pipx
+python3.12 -m pipx ensurepath
+```
+
+pipx then installs programs with the Python that runs it, here 3.12.
+
+On every platform, `ensurepath` says which folders it added to your `PATH`, and
+ends by telling you to open a new terminal. On Ubuntu 24.04 it printed:
+
+```
+Success! Added /home/dba/.local/bin to the PATH environment variable.
+
+Consider adding shell completions for pipx. Run 'pipx completions' for
+instructions.
+
+You will need to open a new terminal or re-login for the PATH changes to take
+effect.
+
+Otherwise pipx is ready to go! ✨ 🌟 ✨
+```
+
+**Open a new terminal now.** A terminal that is already open keeps its old `PATH`.
 
 ### 2b. Install sopuli-dba
 
-`pip` is the program that installs Python packages. It downloads them from
-PyPI, the public package index:
+This command downloads the tool from PyPI, the public Python package index, and
+installs it with the two optional parts named in the brackets: the Oracle driver
+and the HashiCorp Vault client. It is the same on Windows and Linux:
 
 ```bash
-# The tool, plus the two optional parts named in the brackets:
-# the Oracle driver and the HashiCorp Vault client.
-pip install "sopuli-dba[oracle,hashicorp]"
+pipx install "sopuli-dba[oracle,hashicorp]"
+```
+```
+creating virtual environment...
+creating shared libraries...
+upgrading shared libraries...
+installing sopuli-dba from spec 'sopuli-dba[hashicorp,oracle]'...
+  installed package sopuli-dba 0.75.0, installed using Python 3.13.12
+  These apps are now available
+    - sopuli.exe
+done! ✨ 🌟 ✨
 ```
 
 Those names in square brackets are *extras* — Python packaging's word for an
 optional part of a package that brings its own dependencies. This tool installs
 nothing that talks to a vendor unless you ask for it, so a site with no OCI never
 inherits the OCI SDK's version constraints. The reasoning is in
-[ADR-006](decisions/adr-006-optional-dependencies.md).
+[ADR-006](decisions/adr-006-optional-dependencies.md). The README lists every
+extra.
+
+If you installed a newer Python in section 2a because your `python3` is older
+than 3.11, name it with `--python`. Without it, pipx uses its own older Python,
+and the install fails with `No matching distribution found`. On Ubuntu 22.04:
+
+```bash
+pipx install --python python3.11 "sopuli-dba[oracle,hashicorp]"
+```
 
 Check it arrived. It prints the version you installed:
 
@@ -135,6 +210,19 @@ sopuli --version
 ```
 sopuli, version 0.75.0
 ```
+
+If the shell says it does not know `sopuli`, or the version is not the one you
+installed, see section 2d.
+
+To add an extra later, install again with `--force` and name every extra you
+want, the old ones too. pipx replaces the install with the new set:
+
+```bash
+pipx install --force "sopuli-dba[oracle,hashicorp,notify]"
+```
+
+To upgrade to a newer release, run `pipx upgrade sopuli-dba`. It keeps the extras
+you installed.
 
 ### 2c. Install Oracle Instant Client
 
@@ -167,6 +255,110 @@ the tool does not need it.)
 - **Linux, WSL** — unzip to `/opt/oracle/instantclient_23_26`, install the
   `libaio1` package, and either set the `LD_LIBRARY_PATH` environment variable to
   that folder or use `client_lib_dir` as above.
+
+### 2d. When the `sopuli` command is not found
+
+PowerShell says this when no folder on your `PATH` holds the `sopuli` command:
+
+```
+The term 'sopuli' is not recognized as a name of a cmdlet, function, script file, or executable program.
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+```
+
+On Linux, bash says `bash: sopuli: command not found`.
+
+First, open a new terminal, because a terminal that is already open keeps its old
+`PATH`. If that does not help, the folder that holds the command is not on your
+`PATH`. Which folder it is depends on how you installed:
+
+| Installed with | Windows folder | Linux folder |
+|---|---|---|
+| `pipx install` | `%USERPROFILE%\.local\bin` | `~/.local/bin` |
+| `pip install --user`, or a `pip install` that said `Defaulting to user installation` | the folder pip names in its warning, usually `%APPDATA%\Python\Python3xx\Scripts`, where `3xx` is your Python version, such as `313` | `~/.local/bin` |
+
+pip says where it put the command. Look for `WARNING: The script sopuli.exe is
+installed in '...' which is not on PATH` in its output, and use that folder. It
+is a different folder if your Python came from the Microsoft Store.
+
+On Windows, add the folder to your own `PATH` in the settings dialog. It needs
+no administrator rights:
+
+1. Open the Start menu, type `environment variables`, and choose **Edit
+   environment variables for your account**.
+2. Under *User variables*, select `Path` and choose **Edit**.
+3. Choose **New**, paste the folder, and choose **OK** in both windows.
+
+Then open a new terminal. On Linux, run `pipx ensurepath` again, or add the
+folder to `PATH` in your `~/.bashrc`.
+
+**If you cannot change `PATH`**, for example on a managed work laptop, you can
+still run the tool:
+
+- After `pip install`, run `python -m sopuli`. It runs the same tool, with the
+  same options: `python -m sopuli --version`. Start it the same way you started
+  pip: if you ran `py -m pip install`, run `py -m sopuli`. It does not work after
+  `pipx install`, because pipx keeps the tool away from your own `python`.
+- After `pipx install`, run the command by its full path:
+  `& "$env:USERPROFILE\.local\bin\sopuli.exe" --version` in PowerShell, or
+  `~/.local/bin/sopuli --version` on Linux.
+
+**If `sopuli --version` prints an older version** than the one you installed,
+another copy of the tool is on your `PATH` and comes first. This happens when an
+earlier `pip install` is still there. List every copy, in the order the shell
+tries them:
+
+```powershell
+where.exe sopuli        # Windows
+```
+```bash
+which -a sopuli         # Linux
+```
+
+Remove the one you do not want. A copy that pip installed goes with
+`python -m pip uninstall sopuli-dba`, run with the Python that installed it.
+
+### 2e. Without pipx: a virtual environment
+
+If you cannot use pipx, make a virtual environment yourself and install into it
+with pip. Make it outside the repository you cloned in section 1, for example in
+your home folder. On Windows:
+
+```powershell
+cd ~
+python -m venv .venv
+```
+
+On Linux the command is `python3`, and it must be 3.11 or newer, as section 2a
+says. Debian and Ubuntu also need the `python3-venv` package, or the command
+fails with `ensurepip is not available`. On Ubuntu 24.04:
+
+```bash
+sudo apt install python3-venv
+cd ~
+python3 -m venv .venv
+```
+
+On Oracle Linux 9, use `python3.12 -m venv .venv` after the `dnf install` in
+section 2a.
+
+Then *activate* it. This points the `python`, `pip` and `sopuli` commands at that
+folder for the rest of your terminal session:
+
+```powershell
+.venv\Scripts\Activate.ps1        # Windows PowerShell
+```
+```bash
+source .venv/bin/activate         # Linux, macOS, WSL
+```
+
+Install the tool into it:
+
+```bash
+pip install "sopuli-dba[oracle,hashicorp]"
+```
+
+You need to activate the environment again in every new terminal. That is the
+step people forget, and the reason pipx is the recommended way.
 
 ---
 
@@ -477,10 +669,13 @@ it on the database and then promotes it — and that is the next document.
 
 | What you see | What it means |
 |---|---|
+| `The term 'sopuli' is not recognized`, or `sopuli: command not found` | the folder that holds the command is not on your `PATH`. Section 2d |
+| `sopuli --version` prints an older version than you installed | another copy of the tool comes first on your `PATH`. Section 2d |
+| `error: externally-managed-environment` from `pip install` | your Linux distribution does not let pip install into its own Python. Install pipx from the system packages. Section 2a |
 | `config file is accessible to ...`, exit 9 | the file's permissions are too open. Section 3 has the fix |
 | `instant_client  not loaded` in `doctor` | Instant Client is missing or not on the library path. Section 2c |
 | `... declares type "oci", but this build has no oci backend yet`, exit 9 | your config names a store this build has no code for |
-| `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives the `pip` line |
+| `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives the `pip` line. If you installed with pipx, add the extra with `pipx install --force` instead, as section 2b shows |
 | `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *What the fence does in this build*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |
 | exit 3 from `creds check` | not an error. Exit 3 means drift was found — the vault's password does not work on the database. It has its own exit code so a scheduler can tell it apart from a failure |

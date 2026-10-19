@@ -42,6 +42,7 @@ VAULT_KEYS = (
     "kv_version",
     "namespace",
     "timeout_s",
+    "merge_patch",
     "tls",
     "auth",
     "non_production",
@@ -257,6 +258,7 @@ def _reach(entry: dict[str, Any], *, at: KeyPath) -> dict[str, Any]:
         "kv_version": _build_kv_version(entry, at=at),
         "namespace": optional_string(entry, "namespace", at=at),
         "timeout_s": _build_timeout(entry, at=at),
+        "merge_patch": optional_bool(entry, "merge_patch", at=at),
         "tls": _build_tls(entry.get("tls"), at=at.key("tls")),
         "auth": _build_auth(entry.get("auth"), at=at.key("auth")),
     }

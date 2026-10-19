@@ -74,7 +74,7 @@ def test_the_registry_gives_addr_a_cli_layer_and_nothing_else_one() -> None:
     """One key wide, on purpose. A flag per reach key would be six spellings of
     what ``vaults:`` already says once."""
     assert Layer.CLI in setting("vaults.*.addr").layers
-    for key in ("mount", "kv_version", "namespace", "timeout_s"):
+    for key in ("mount", "kv_version", "namespace", "timeout_s", "merge_patch"):
         assert Layer.CLI not in setting(f"vaults.*.{key}").layers, key
 
 

@@ -71,7 +71,7 @@ from sopuli.config.codes import (
     THIRD_PARTY_ADDR_OVERRIDES,
     THIRD_PARTY_NAMESPACE_OVERRIDES,
 )
-from sopuli.config.errors import ROOT, KeyPath
+from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
 from sopuli.config.vault_env import (
     NO_ENV,
@@ -90,7 +90,7 @@ EnvKeys = Mapping[str, Sequence[Contribution]]
 #: The scalar keys of a vault entry, and the order the merged object takes them.
 #: ``auth`` is absent because it is not a scalar; ``tls`` because its members are
 #: merged individually. See the module note.
-REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s")
+REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s", "merge_patch")
 
 #: The members of ``tls:``, merged one at a time.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
@@ -168,6 +168,31 @@ def apply_vault_layers(
     return tuple(merged), tuple(warnings)
 
 
+def _refuse_inert_merge_patch(vault: Vault, values: Mapping[str, Any]) -> None:
+    """``merge_patch`` only means something on a HashiCorp KV v2 store.
+
+    Anywhere else nothing reads it, and P3 says a key the tool would ignore is
+    refused rather than accepted. Checked on the merged values, so a profile that
+    writes it for an OCI store, or a layer that turns a store into KV v1, is
+    refused as well.
+    """
+    if values.get("merge_patch") is None:
+        return
+    at = ROOT.key("vaults").key(vault.name).key("merge_patch")
+    if vault.type != "hashicorp":
+        raise ConfigError(
+            f"`merge_patch` has no effect on a store of type {vault.type!r}",
+            at=at,
+            hint="it turns off HashiCorp KV v2's merge patch; remove it from this store",
+        )
+    if values.get("kv_version") == 1:
+        raise ConfigError(
+            "`merge_patch` has no effect on a KV v1 store",
+            at=at,
+            hint="KV v1 has no merge patch, so every write is already read-modify-write",
+        )
+
+
 def _merge(
     vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
 ) -> tuple[Vault, list[ConfigWarning]]:
@@ -197,6 +222,7 @@ def _merge(
         settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
+    _refuse_inert_merge_patch(vault, values)
     for overridden in (
         _addr_overridden(vault.name, settings.get("addr")),
         _namespace_overridden(vault.name, settings.get("namespace")),

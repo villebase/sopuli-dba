@@ -344,6 +344,11 @@ class Vault:
     #: **no** default timeout, and a request with no deadline is one that can
     #: hold P5's advisory lock for as long as the network stays open.
     timeout_s: int | None = None
+    #: ``False`` turns KV v2's server-side merge patch off, so a write goes
+    #: straight to read-modify-write under compare-and-set. It is for a proxy
+    #: or WAF in front of Vault that blocks the PATCH method (#904). Absent means
+    #: ``True``.
+    merge_patch: bool | None = None
     tls: VaultTls | None = None
     auth: VaultAuth | None = None
     non_production: bool = False
@@ -421,6 +426,7 @@ class VaultPatch:
     kv_version: int | None = None
     namespace: str | None = None
     timeout_s: int | None = None
+    merge_patch: bool | None = None
     tls: VaultTls | None = None
     auth: VaultAuth | None = None
 

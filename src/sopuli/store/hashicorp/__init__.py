@@ -66,7 +66,8 @@ def open_store(vault: Vault, *, token: Secret) -> SecretStore:
     transport = build_transport(vault, token=token)
 
     if version == 2:
-        return Kv2Store(transport=transport, mount=mount)
+        merge_patch = vault.merge_patch is not False
+        return Kv2Store(transport=transport, mount=mount, merge_patch=merge_patch)
     if version == 1:
         return Kv1Store(transport=transport, mount=mount)
     # Unreachable through a config file -- `kv_version` is validated against a

@@ -211,7 +211,8 @@ def _warnings(
                 "level": "info",
                 "message": (
                     "written by read-modify-write rather than a merge patch, so the "
-                    "whole document was sent; the store or its policy has no patch"
+                    "whole document was sent; the store or its policy has no patch, "
+                    "or its entry says `merge_patch: false`"
                 ),
                 "account": binding.account,
             }

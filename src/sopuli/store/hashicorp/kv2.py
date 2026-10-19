@@ -7,7 +7,9 @@ The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
 ``write(path, …)``       ``POST /v1/<mount>/data/<path>`` with ``options.cas``
 ``metadata(path)``       ``GET  /v1/<mount>/metadata/<path>``
 ``list(prefix)``         ``LIST /v1/<mount>/metadata/<prefix>``, walked
-``supports()``           ``{cas, list, versioning}``
+``patch(path, …)``       ``PATCH /v1/<mount>/data/<path>``, merge-patch JSON
+``supports()``           ``{cas, list, merge_patch, versioning}``, without
+                         ``merge_patch`` when the entry says ``merge_patch: false``
 ======================== =====================================================
 
 Three things the advisory lock depends on, and which are the reason this module
@@ -71,6 +73,9 @@ class Kv2Store:
 
     transport: Transport
     mount: str
+    #: The store entry's ``merge_patch:``. ``False`` drops :data:`MERGE_PATCH`
+    #: from :meth:`supports`, so a write takes read-modify-write under CAS.
+    merge_patch: bool = True
 
     def supports(self) -> frozenset[str]:
         """Compare-and-set, listing, versions, and server-side merge patch.
@@ -82,11 +87,18 @@ class Kv2Store:
         method reporting less -- a store that dropped the capability because one
         token was unprivileged would be reporting the wrong subject.
 
+        The one case where it is reported less is ``merge_patch: false`` on the
+        store entry. That is about the path to the mount: a proxy or WAF in front
+        of Vault can answer PATCH itself with a 401 that never reached Vault
+        (#904). :meth:`patch` cannot tell that 401 from a token Vault refused, so
+        the operator says it in the config instead.
+
         The rest of P2's table -- staging labels, soft delete -- still has no
         caller: ``staging_labels`` is emulated in the payload on this backend
         (Q7), so nothing negotiates it, and undelete has no command that asks.
         """
-        return frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
+        base = frozenset({CAS, LIST, VERSIONING})
+        return base | {MERGE_PATCH} if self.merge_patch else base
 
     def health(self) -> StoreHealth:
         """Whether the Vault behind this mount is well, and what its clock says.
@@ -164,6 +176,14 @@ class Kv2Store:
         siblings it was written to protect, on the one path where there are none
         yet only because nobody has looked.
         """
+        if not self.merge_patch:
+            # The protocol's rule for a store without the capability, as
+            # MemoryStore enforces it. Sending the PATCH would reach the proxy
+            # that `merge_patch: false` exists to avoid.
+            raise StoreError(
+                f"this store cannot apply a merge patch, and a write to {path!r} asked it to",
+                hint="its entry says `merge_patch: false`; ask `supports()` before patching",
+            )
         body: dict[str, Any] = {"data": changes}
         if cas is not None:
             body["options"] = {"cas": cas}

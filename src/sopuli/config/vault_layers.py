@@ -90,7 +90,7 @@ EnvKeys = Mapping[str, Sequence[Contribution]]
 #: The scalar keys of a vault entry, and the order the merged object takes them.
 #: ``auth`` is absent because it is not a scalar; ``tls`` because its members are
 #: merged individually. See the module note.
-REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s")
+REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s", "merge_patch")
 
 #: The members of ``tls:``, merged one at a time.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")

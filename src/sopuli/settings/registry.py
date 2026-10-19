@@ -584,6 +584,7 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             _vault_setting("kv_version", type=int),
             _vault_setting("namespace", type=str, env=(Layer.ENV_THIRDPARTY,)),
             _vault_setting("timeout_s", type=int),
+            _vault_setting("merge_patch", type=bool),
             _vault_setting("tls.ca_file", type=str, env=(Layer.ENV_THIRDPARTY,)),
             _vault_setting("tls.ca_path", type=str),
             _vault_setting("tls.client_cert", type=str),

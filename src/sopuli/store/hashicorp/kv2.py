@@ -71,6 +71,9 @@ class Kv2Store:
 
     transport: Transport
     mount: str
+    #: The store entry's ``merge_patch:``. ``False`` drops :data:`MERGE_PATCH`
+    #: from :meth:`supports`, so a write takes read-modify-write under CAS.
+    merge_patch: bool = True
 
     def supports(self) -> frozenset[str]:
         """Compare-and-set, listing, versions, and server-side merge patch.
@@ -82,10 +85,18 @@ class Kv2Store:
         method reporting less -- a store that dropped the capability because one
         token was unprivileged would be reporting the wrong subject.
 
+        The one case where it is reported less is ``merge_patch: false`` on the
+        store entry. That is about the path to the mount: a proxy or WAF in front
+        of Vault can answer PATCH itself with a 401 that never reached Vault
+        (#904). :meth:`patch` cannot tell that 401 from a token Vault refused, so
+        the operator says it in the config instead.
+
         The rest of P2's table -- staging labels, soft delete -- still has no
         caller: ``staging_labels`` is emulated in the payload on this backend
         (Q7), so nothing negotiates it, and undelete has no command that asks.
         """
+        if not self.merge_patch:
+            return frozenset({CAS, LIST, VERSIONING})
         return frozenset({CAS, LIST, MERGE_PATCH, VERSIONING})
 
     def health(self) -> StoreHealth:

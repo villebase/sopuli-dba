@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -381,7 +381,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
 version: 1
 
 runtime:
@@ -744,6 +744,7 @@ config file can be read without knowing what environment it will be read in.
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
 | `timeout_s` | request timeout against this store. `httpx` has no default (ADR-005), so this is not optional the way a stdlib client's would be |
+| `merge_patch` | KV v2 only. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
 | `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below |
 | `auth` | how to authenticate, and where the material comes from — see below |
 | `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |
@@ -2486,6 +2487,17 @@ by asking and the 403 on that one verb is read as "use the other mechanism". A
 the fallback's own read fails with the refusal it deserves — one wasted round
 trip, never a silent success.
 
+**A 401 on the PATCH does not trigger it.** In front of some Vaults, a proxy or a
+web application firewall (WAF) blocks the PATCH method and answers 401 itself,
+while it lets GET, POST and DELETE through. Vault never sees the request. The
+tool cannot tell that 401 from Vault refusing the token, and a 401 from Vault
+means the token is not valid, so the run stops with the auth error. For such a
+store, write `merge_patch: false` on its `vaults:` entry. Then `supports()` has
+no `merge_patch`, and every write goes straight to the read-modify-write under
+compare-and-set. It is the same mechanism as the fallback, and the run reports it
+the same way. A profile can set it too, for a network where only some machines
+are behind the proxy. Reasons: [#904](../decisions/log.md#904).
+
 **The run says which mechanism it used**, per UC-1 §3, and that reporting is
 load-bearing rather than informational: under a merge patch a sibling account's
 password is never read into the process, and under the fallback the whole
@@ -2871,7 +2883,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.0.schema.json`](../schemas/sopuli-config-3.0.schema.json),
+[`docs/schemas/sopuli-config-3.1.schema.json`](../schemas/sopuli-config-3.1.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -2882,7 +2894,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.0.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.1.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -2955,7 +2967,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
 version: 1
 ```
 
@@ -2966,7 +2978,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.0.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.1.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

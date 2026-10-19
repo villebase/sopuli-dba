@@ -2422,3 +2422,29 @@ the register.
     client also upgrades the tool, and an install from a wheel or another index
     is replaced. The line also has to name every extra already present, or
     `--force` removes them.
+
+## #904
+
+- **Decided:** 2026-10-19, #904
+- **Question:** A proxy or WAF in front of Vault can block the PATCH method and
+  answer 401 itself, while it lets GET, POST and DELETE through. The KV v2
+  adapter reads a 401 as an invalid token, so every write fails with an auth
+  error and never falls back to read-modify-write. How does an operator use the
+  tool behind such a proxy?
+- **Decision:** A store key, `merge_patch`, default `true`. `merge_patch: false`
+  drops `merge_patch` from the KV v2 store's `supports()`, so every write goes
+  straight to read-modify-write under compare-and-set, the existing fallback. It
+  is a per-store setting like `timeout_s`, so `defaults.vaults:` or a profile can
+  set it too. It has no environment variable.
+- **Why:** the operator knows the proxy is there and the tool cannot. The
+  fallback it selects is the one a Vault policy without `patch` already gets,
+  with the same compare-and-set and the same reporting. It is as safe against a
+  concurrent writer, and it sends the whole document. A per-store setting fits
+  a network where only some machines are behind the proxy.
+- **Rejected:**
+  - Read a PATCH 401 whose body is not Vault's `{"errors": [...]}` as a patch
+    refusal. It needs no configuration, but it guesses from the shape of a body,
+    and a proxy that copies Vault's format would defeat it.
+  - Leave it to the infrastructure: let PATCH through and grant `patch` in the
+    policy. That is the better fix where an operator can get it done. It is
+    outside the tool, and often outside the operator's reach.

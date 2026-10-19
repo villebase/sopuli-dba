@@ -93,12 +93,20 @@ def test_every_reach_key_can_be_supplied_by_a_layer() -> None:
             kv_version=1,
             namespace="team-a",
             timeout_s=45,
+            merge_patch=False,
         )
     )
 
     assert (vault.addr, vault.mount, vault.kv_version) == ("https://vault.example.com", "secret", 1)
-    assert (vault.namespace, vault.timeout_s) == ("team-a", 45)
-    assert vault.patched == ("addr", "kv_version", "mount", "namespace", "timeout_s")
+    assert (vault.namespace, vault.timeout_s, vault.merge_patch) == ("team-a", 45, False)
+    assert vault.patched == (
+        "addr",
+        "kv_version",
+        "merge_patch",
+        "mount",
+        "namespace",
+        "timeout_s",
+    )
 
 
 def test_a_patch_is_validated_as_strictly_as_a_declaration() -> None:
@@ -327,7 +335,7 @@ def test_the_ratcheted_vault_key_is_declared_where_a_reviewer_looks() -> None:
 def test_the_other_vault_keys_are_not_ratcheted() -> None:
     """An address has no safe direction, and declaring one ratcheted would make
     the ratcheted set unreadable as the thing invariant 10 governs."""
-    for name in ("vaults.*.addr", "vaults.*.mount", "vaults.*.kv_version"):
+    for name in ("vaults.*.addr", "vaults.*.mount", "vaults.*.kv_version", "vaults.*.merge_patch"):
         assert name not in SAFETY_SETTINGS
 
 

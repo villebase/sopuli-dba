@@ -282,7 +282,9 @@ property of the structure: the tool never sends the keys a run did not come for,
 so another account's password is neither read into the process nor written back.
 A store without the capability falls back to a compare-and-set read-modify-write.
 So does a Vault policy that grants `update` and not `patch`; that is a policy, not
-a fault. The run **reports which of the two it used**, because the fallback sends
+a fault. So does a store entry with `merge_patch: false`, for a proxy in front of
+Vault that blocks PATCH (`01-configuration.md` §7). The run **reports which of the
+two it used**, because the fallback sends
 more. Both use the same compare-and-set, so they differ in what they send, never
 in atomicity.
 
@@ -678,7 +680,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.0.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-3.1.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

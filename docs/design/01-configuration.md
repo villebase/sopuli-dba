@@ -2490,14 +2490,16 @@ trip, never a silent success.
 **A 401 on the PATCH does not trigger it.** In front of some Vaults, a proxy or a
 web application firewall (WAF) blocks the PATCH method and answers 401 itself,
 while it lets GET, POST and DELETE through. Vault never sees the request. The run
-stops with an authorization error, exit 6. When the refusal is not in Vault's own
-format, an object with an `errors` list, the message says that the answer did not
-come from Vault, and the hint names `merge_patch: false`. Vault's own refusals
-always have that list: on Vault 2.0.4 every one was a 403 with it, for an
-invalid, revoked or missing token and for a policy that denies the path or the
-verb. The tool does not fall back on such a refusal, because a body's shape is a
-guess and the config is a statement. For such a store, write `merge_patch: false`
-on its `vaults:` entry. Then `supports()` has
+stops with an authorization error, exit 6. When the 401 is not in Vault's own
+format, an object with an `errors` list, the message says so, and the hint names
+`merge_patch: false`. On Vault 2.0.4 every refusal was a 403 with that list, for
+an invalid, revoked or missing token and for a policy that denies the path or the
+verb. The tool does not fall back on the 401, because a body's shape is a guess
+and the config is a statement. A **403** on the PATCH does fall back, whatever
+its body, because Vault's own 403 there can be a policy without `patch`. A 401 or
+403 on any other request that is not in Vault's format gets the same "not in
+Vault's format" message, with a hint about a proxy and about the token. For such a
+store, write `merge_patch: false` on its `vaults:` entry. Then `supports()` has
 no `merge_patch`, and every write goes straight to the read-modify-write under
 compare-and-set. It is the same mechanism as the fallback, and the run reports it
 the same way. A profile can set it too, for a network where only some machines

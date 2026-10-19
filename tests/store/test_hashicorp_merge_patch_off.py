@@ -22,7 +22,16 @@ from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.config.vaults import build_vaults
 from sopuli.secrets import Secret
 from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, staged_patch
-from sopuli.store.protocol import CAS, LIST, MERGE_PATCH, VERSIONING, SecretStore, StoreError
+from sopuli.store.hashicorp._errors import StoreAuthError
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    MERGE_PATCH,
+    VERSIONING,
+    PatchNotPermittedError,
+    SecretStore,
+    StoreError,
+)
 
 #: An address nothing listens on. Building a store opens no connection, so the
 #: tier-0 tests never reach it.
@@ -59,6 +68,54 @@ def test_patch_refuses_without_sending_when_the_merge_patch_is_off() -> None:
 
     with pytest.raises(StoreError, match="cannot apply a merge patch"):
         store.patch("acme/dev/acme", {"pending": {}}, cas=1)
+
+
+def _answering(status: int, body: Any) -> SecretStore:
+    """A KV v2 store whose every request gets this answer, as from a proxy."""
+    httpx = pytest.importorskip("httpx")
+    from sopuli.store.hashicorp._transport import Transport
+    from sopuli.store.hashicorp.kv2 import Kv2Store
+
+    client = httpx.Client(
+        base_url="https://vault.example.com/v1/",
+        transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)),
+    )
+    return Kv2Store(transport=Transport(client), mount="kv")
+
+
+def test_a_patch_401_not_in_vaults_format_names_merge_patch_false() -> None:
+    """#905: what the WAF in #904 answered. Only here is the setting the remedy."""
+    store = _answering(401, {"code": "401", "message": "Unauthorized"})
+
+    with pytest.raises(StoreAuthError) as caught:
+        store.patch("acme/dev/acme", {"pending": {}}, cas=1)
+
+    assert "the answer was not in Vault's format" in str(caught.value)
+    assert "merge_patch: false" in str(caught.value.hint)
+
+
+def test_a_patch_403_falls_back_whatever_its_body() -> None:
+    """Vault's own 403 on PATCH can be a policy without `patch`, so a 403 is a
+    patch refusal and the caller falls back (01-configuration.md §7)."""
+    store = _answering(403, {"message": "Forbidden"})
+
+    with pytest.raises(PatchNotPermittedError):
+        store.patch("acme/dev/acme", {"pending": {}}, cas=1)
+
+
+def test_vaults_own_refusals_are_in_vaults_format(vault_stack: Any) -> None:
+    """Tier 1. The 'not in Vault's format' message rests on this: if a Vault
+    release stops sending `errors` on a refusal, this fails before operators are
+    sent to look for a proxy that is not there."""
+    from sopuli.store.hashicorp._errors import from_vault
+
+    for token in ("not-a-token", ""):
+        response = vault_stack.client.get(
+            f"/v1/{vault_stack.kv2_mount}/data/{vault_stack.scratch}",
+            headers={"X-Vault-Token": token},
+        )
+        assert response.status_code == 403, token
+        assert from_vault(response.json()), response.text
 
 
 def test_the_key_is_read_from_a_vaults_entry() -> None:

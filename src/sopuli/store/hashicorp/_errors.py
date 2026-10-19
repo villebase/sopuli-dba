@@ -91,10 +91,8 @@ def messages(body: Any) -> list[str]:
     a 404 for a path that was never written carries ``errors: []``, which is
     Vault saying "nothing here" rather than declining to explain itself.
     """
-    if isinstance(body, dict):
-        found = body.get("errors")
-        if isinstance(found, list):
-            return [str(item) for item in found]
+    if from_vault(body):
+        return [str(item) for item in body["errors"]]
     return []
 
 
@@ -109,6 +107,27 @@ def from_vault(body: Any) -> bool:
     format either.
     """
     return isinstance(body, dict) and isinstance(body.get("errors"), list)
+
+
+def not_from_vault(status: int, *, path: str, hint: str | None = None) -> StoreAuthError:
+    """A 401 or 403 whose body is not in Vault's format.
+
+    The wording says what the tool knows, the body's shape, and not where the
+    answer came from: a load balancer that rewrites error pages can hide a real
+    Vault refusal. So the hint keeps the token advice too. The body is not
+    quoted: a proxy may echo the request, and the body of a write holds
+    passwords. :meth:`~.kv2.Kv2Store.patch` passes its own ``hint``, because only
+    there is ``merge_patch: false`` the remedy.
+    """
+    return StoreAuthError(
+        f"the request to {path!r} was refused with {status}, "
+        f"and the answer was not in Vault's format",
+        hint=hint
+        or (
+            "a proxy or WAF in front of Vault may have answered; if not, check the "
+            "token's policy for this path, and that it has not expired"
+        ),
+    )
 
 
 def raise_for(status: int, body: Any, *, path: str) -> NoReturn:
@@ -135,17 +154,7 @@ def raise_for(status: int, body: Any, *, path: str) -> NoReturn:
             ),
         )
     if status in (401, 403) and not from_vault(body):
-        # The body is not quoted. A proxy may echo the request, and the body of
-        # a write holds passwords.
-        raise StoreAuthError(
-            f"the request to {path!r} was refused with {status}, "
-            f"and the answer did not come from Vault",
-            hint=(
-                "Vault's own refusals carry an `errors` list, so a proxy or WAF in front "
-                "of it probably answered. If it blocks the PATCH method, write "
-                "`merge_patch: false` on the store"
-            ),
-        )
+        raise not_from_vault(status, path=path)
     if status in (401, 403):
         raise StoreAuthError(
             f"the store refused this token at {path!r}{said}",

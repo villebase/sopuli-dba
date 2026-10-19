@@ -126,7 +126,7 @@ def test_a_refusal_from_vault_keeps_the_token_message(body: dict[str, Any]) -> N
         raise_for(403, body, path=PATH)
 
     assert "the store refused this token" in str(caught.value)
-    assert "did not come from Vault" not in str(caught.value)
+    assert "not in Vault's format" not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -146,9 +146,14 @@ def test_a_refusal_that_did_not_come_from_vault_says_so(status: int, body: Any) 
         raise_for(status, body, path=PATH)
 
     rendered = str(caught.value)
-    assert f"refused with {status}, and the answer did not come from Vault" in rendered
+    assert f"refused with {status}, and the answer was not in Vault's format" in rendered
     assert "the store refused this token" not in rendered
-    assert "merge_patch: false" in str(caught.value.hint)
+    # The shared mapper serves every verb and KV v1, so it names no PATCH remedy,
+    # and it keeps the token advice, because the body's shape is only evidence.
+    hint = str(caught.value.hint)
+    assert "merge_patch" not in hint
+    assert "proxy or WAF" in hint
+    assert "has not expired" in hint
     assert caught.value.category == "authorization"
 
 

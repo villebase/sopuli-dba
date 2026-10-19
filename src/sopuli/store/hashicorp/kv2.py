@@ -44,7 +44,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sopuli.store.hashicorp._errors import raise_for
+from sopuli.store.hashicorp._errors import from_vault, not_from_vault, raise_for
 from sopuli.store.hashicorp._health import health as probe_health
 from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
@@ -90,8 +90,9 @@ class Kv2Store:
         The one case where it is reported less is ``merge_patch: false`` on the
         store entry. That is about the path to the mount: a proxy or WAF in front
         of Vault can answer PATCH itself with a 401 that never reached Vault
-        (#904). :meth:`patch` cannot tell that 401 from a token Vault refused, so
-        the operator says it in the config instead.
+        (#904). :meth:`patch` says when a 401 is not in Vault's format, but a
+        body's shape is a guess, so it does not fall back on it. The operator
+        says it in the config instead.
 
         The rest of P2's table -- staging labels, soft delete -- still has no
         caller: ``staging_labels`` is emulated in the payload on this backend
@@ -166,8 +167,8 @@ class Kv2Store:
         read fails with the refusal it deserves. **401 is not included.** Vault
         2.0.4 answers 403 even for an invalid token, so a 401 did not come from
         its policy check. A proxy or WAF that blocks PATCH answers 401 itself
-        (#904). :func:`._errors.raise_for` reports it, and says when the answer
-        did not come from Vault; ``merge_patch: false`` is the remedy.
+        (#904). When it is not in Vault's format, this says so, and its hint
+        names ``merge_patch: false``, which only here is the remedy.
 
         **404** means there is nothing at the path to patch. Vault will not
         create a document by merge patch, which is right -- a patch describes a
@@ -201,6 +202,15 @@ class Kv2Store:
                 hint=(
                     "a Vault policy grants `patch` separately from `update` -- add it, or "
                     "let the run read the document and write it back under a `cas`"
+                ),
+            )
+        if response.status == 401 and not from_vault(response.body):
+            raise not_from_vault(
+                401,
+                path=path,
+                hint=(
+                    "a proxy or WAF in front of Vault may block the PATCH method; if so, "
+                    "write `merge_patch: false` on the store"
                 ),
             )
         if response.status == 404:
@@ -248,9 +258,9 @@ class Kv2Store:
         ``<mount>/data/<path>`` that writing a record needs, so a policy written
         for secrets alone produces this on a token that then locks perfectly
         well. :class:`MetadataNotPermittedError` says so, and the lock degrades.
-        The asymmetry with :meth:`patch` is deliberate and the same: **401 is not
-        included**, because a token Vault will not accept is not a token some
-        policy could have saved.
+        **401 is not included**, as in :meth:`patch`: Vault answers 403 even for
+        an invalid token, so a 401 came from something in front of it, and
+        :func:`._errors.raise_for` reports it.
         """
         response = self.transport.request(
             "POST", f"{self.mount}/metadata/{path}", json={"cas_required": True}

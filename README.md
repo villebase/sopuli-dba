@@ -164,8 +164,9 @@ sopuli --version
 ```
 
 On Linux, pipx usually comes from the system packages, such as
-`sudo apt install pipx` on Debian and Ubuntu. Oracle Linux needs a newer Python
-first. [`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md)
+`sudo apt install pipx` on Debian and Ubuntu. The tool needs Python 3.11 or
+newer. Where the system's own Python is older, such as on Ubuntu 22.04 or Oracle
+Linux 9, install a newer one first. [`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md)
 §2 has the steps for each platform, what to do when the shell does not find
 `sopuli`, and how to install without pipx.
 
@@ -194,6 +195,7 @@ A working install is one store plus one database. For most sites that is:
 ```
 pipx install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci]
 ```
+
 `sopuli-dba[all]` exists for CI and the test matrix. It is deliberately not the
 recommended line: a tool that handles credentials should be able to answer "what
 is in its dependency tree" with the vendors you actually use, and vendor SDKs

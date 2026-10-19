@@ -111,13 +111,31 @@ that is not on your `PATH` yet, so the plain `pipx` command does not work until
 `ensurepath` has run. If `python` itself is not recognized, use `py`, the Python
 launcher for Windows, in its place: `py -m pip install --user pipx`.
 
-**Debian and Ubuntu.** Install pipx from the system packages. On these systems
-`pip install --user` is refused with `error: externally-managed-environment`, so
-the system package is the way in:
+**Linux: check your Python first.** The tool needs Python 3.11 or newer. Ask the
+system Python for its version:
+
+```bash
+python3 --version
+```
+
+If it prints 3.11 or newer, the steps below work as written. Ubuntu 24.04 has
+3.12. If it is older, the next steps say what to add. Ubuntu 22.04 has 3.10, and
+Oracle Linux 9 has 3.9.
+
+**Debian and Ubuntu.** Install pipx from the system packages. On recent releases,
+such as Ubuntu 24.04, `pip install --user` is refused with
+`error: externally-managed-environment`, so the system package is the way in:
 
 ```bash
 sudo apt install pipx
 pipx ensurepath
+```
+
+If your `python3` is older than 3.11, also install a newer Python, and name it
+when you install the tool in section 2b. On Ubuntu 22.04:
+
+```bash
+sudo apt install python3.11 python3.11-venv
 ```
 
 **Oracle Linux and other Red Hat-style systems.** The system `python3` can be
@@ -175,6 +193,14 @@ nothing that talks to a vendor unless you ask for it, so a site with no OCI neve
 inherits the OCI SDK's version constraints. The reasoning is in
 [ADR-006](decisions/adr-006-optional-dependencies.md). The README lists every
 extra.
+
+If you installed a newer Python in section 2a because your `python3` is older
+than 3.11, name it with `--python`. Without it, pipx uses its own older Python,
+and the install fails with `No matching distribution found`. On Ubuntu 22.04:
+
+```bash
+pipx install --python python3.11 "sopuli-dba[oracle,hashicorp]"
+```
 
 Check it arrived. It prints the version you installed:
 
@@ -248,19 +274,19 @@ First, open a new terminal, because a terminal that is already open keeps its ol
 | Installed with | Windows folder | Linux folder |
 |---|---|---|
 | `pipx install` | `%USERPROFILE%\.local\bin` | `~/.local/bin` |
-| `pip install --user`, or a `pip install` that said `Defaulting to user installation` | `%APPDATA%\Python\Python3xx\Scripts`, where `3xx` is your Python version, such as `313` | `~/.local/bin` |
+| `pip install --user`, or a `pip install` that said `Defaulting to user installation` | the folder pip names in its warning, usually `%APPDATA%\Python\Python3xx\Scripts`, where `3xx` is your Python version, such as `313` | `~/.local/bin` |
 
 pip says where it put the command. Look for `WARNING: The script sopuli.exe is
-installed in '...' which is not on PATH` in its output.
+installed in '...' which is not on PATH` in its output, and use that folder. It
+is a different folder if your Python came from the Microsoft Store.
 
-On Windows, this PowerShell command adds a folder to your own `PATH` for good.
-It needs no administrator rights. Replace the folder with yours from the table:
+On Windows, add the folder to your own `PATH` in the settings dialog. It needs
+no administrator rights:
 
-```powershell
-$folder = "$env:USERPROFILE\.local\bin"
-[Environment]::SetEnvironmentVariable("Path",
-    [Environment]::GetEnvironmentVariable("Path", "User") + ";$folder", "User")
-```
+1. Open the Start menu, type `environment variables`, and choose **Edit
+   environment variables for your account**.
+2. Under *User variables*, select `Path` and choose **Edit**.
+3. Choose **New**, paste the folder, and choose **OK** in both windows.
 
 Then open a new terminal. On Linux, run `pipx ensurepath` again, or add the
 folder to `PATH` in your `~/.bashrc`.
@@ -269,8 +295,9 @@ folder to `PATH` in your `~/.bashrc`.
 still run the tool:
 
 - After `pip install`, run `python -m sopuli`. It runs the same tool, with the
-  same options: `python -m sopuli --version`. It does not work after `pipx
-  install`, because pipx keeps the tool away from your own `python`.
+  same options: `python -m sopuli --version`. Start it the same way you started
+  pip: if you ran `py -m pip install`, run `py -m sopuli`. It does not work after
+  `pipx install`, because pipx keeps the tool away from your own `python`.
 - After `pipx install`, run the command by its full path:
   `& "$env:USERPROFILE\.local\bin\sopuli.exe" --version` in PowerShell, or
   `~/.local/bin/sopuli --version` on Linux.
@@ -294,12 +321,25 @@ Remove the one you do not want. A copy that pip installed goes with
 
 If you cannot use pipx, make a virtual environment yourself and install into it
 with pip. Make it outside the repository you cloned in section 1, for example in
-your home folder:
+your home folder. On Windows:
 
-```bash
+```powershell
 cd ~
 python -m venv .venv
 ```
+
+On Linux the command is `python3`, and it must be 3.11 or newer, as section 2a
+says. Debian and Ubuntu also need the `python3-venv` package, or the command
+fails with `ensurepip is not available`. On Ubuntu 24.04:
+
+```bash
+sudo apt install python3-venv
+cd ~
+python3 -m venv .venv
+```
+
+On Oracle Linux 9, use `python3.12 -m venv .venv` after the `dnf install` in
+section 2a.
 
 Then *activate* it. This points the `python`, `pip` and `sopuli` commands at that
 folder for the rest of your terminal session:

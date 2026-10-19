@@ -48,6 +48,33 @@ def install_command(extra: str) -> str:
     return f'pip install "sopuli-dba[{extra}]"'
 
 
+def pipx_install_command(extra: str) -> str:
+    """The line for an install that pipx made.
+
+    The pip line is wrong there: it installs a second copy into the user's own
+    Python, and the copy that ran still has no client. ``pipx runpip`` runs pip
+    inside the environment pipx made, so the client lands next to the copy that
+    ran.
+
+    pip finds ``sopuli-dba`` already installed and, because it upgrades only what
+    a requirement needs, adds only the extra's dependencies. That keeps the
+    Python, the version, the source the install came from, and every other extra.
+    ``pipx install --force`` was rejected: pipx 1.18 reinstalls from PyPI with it
+    and upgrades to the latest release. Reasons: ``docs/decisions/log.md`` #902.
+    """
+    return f'pipx runpip sopuli-dba install "sopuli-dba[{extra}]"'
+
+
+def install_hint(extra: str) -> str:
+    """Both lines, for a message a person reads.
+
+    The tool does not try to tell whether pipx made the install. pipx does not
+    promise the layout that such a guess would read, and a wrong guess sends the
+    reader to the wrong command. Decided in #902.
+    """
+    return f"{install_command(extra)}, or after a pipx install:  {pipx_install_command(extra)}"
+
+
 def installed(provides: Collection[str]) -> bool:
     """Whether every module in ``provides`` is importable, **without importing**.
 

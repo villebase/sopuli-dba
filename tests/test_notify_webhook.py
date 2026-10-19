@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from sopuli.extras import install_hint
 from sopuli.notify import webhook
 from sopuli.notify.registry import (
     NOTIFIER_NOT_INSTALLED,
@@ -153,7 +154,8 @@ def test_a_missing_client_says_what_to_install(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(NotifierNotInstalledError) as raised:
         resolve("webhook")
 
-    assert "sopuli-dba[notify]" in str(raised.value.hint)
+    assert str(raised.value.hint).startswith(install_hint("notify"))
+    assert "pipx runpip sopuli-dba install" in str(raised.value.hint)
     assert raised.value.code == NOTIFIER_NOT_INSTALLED
     assert raised.value.category == "config"
 

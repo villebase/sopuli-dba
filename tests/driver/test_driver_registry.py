@@ -39,7 +39,7 @@ from sopuli.driver.registry import (
     resolve,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, missing_kind
+from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, install_hint, missing_kind
 from sopuli.install_shape import survey
 from sopuli.output.document import Diagnostic
 
@@ -139,6 +139,8 @@ def test_an_uninstalled_driver_is_the_whole_contract(monkeypatch: pytest.MonkeyP
     rendered = str(refused.value)
     assert 'target "cdb1-pdb-orders"' in rendered
     assert 'pip install "sopuli-dba[oracle]"' in rendered
+    assert refused.value.hint == f"install it with:  {install_hint('oracle')}"
+    assert "pipx runpip sopuli-dba install" in str(refused.value.hint)
     assert refused.value.category == "config"
     assert refused.value.code == DRIVER_NOT_INSTALLED
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID

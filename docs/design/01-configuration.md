@@ -797,7 +797,7 @@ What changes is where it stops:
 ```
 $ sopuli creds check
 sopuli: vault "vault-prod" declares type "hashicorp", but that backend is not installed
-  hint: install it with:  pip install "sopuli-dba[hashicorp]"
+  hint: install it with:  pip install "sopuli-dba[hashicorp]", or after a pipx install:  pipx runpip sopuli-dba install "sopuli-dba[hashicorp]"
 exit 9
 ```
 
@@ -3011,12 +3011,14 @@ client is not installed. Without the first, a file whose every store was unusabl
 would validate as `ok: 0 warnings`. The wording says which case it is:
 
 ```console
-$ sopuli config validate
+$ sopuli --config validate.yaml config validate
+config: validate.yaml
+
 ok: 0 targets, 0 bindings, 2 warnings
 
 2 warnings:
   vault "vault-local" declares type "file", but this build has no file backend yet -- this is not something to install
-  vault "vault-hc" declares type "hashicorp", but that backend is not installed; install it with: pip install "sopuli-dba[hashicorp]"
+  vault "vault-hc" declares type "hashicorp", but that backend is not installed; install it with: pip install "sopuli-dba[hashicorp]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[hashicorp]"
 ```
 
 Ordered by backend `type:` rather than by the order the stores are written in —

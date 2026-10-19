@@ -214,15 +214,20 @@ sopuli, version 0.75.0
 If the shell says it does not know `sopuli`, or the version is not the one you
 installed, see section 2d.
 
-To add an extra later, install again with `--force` and name every extra you
-want, the old ones too. pipx replaces the install with the new set:
+To add an extra later, run pip inside the environment pipx made. This adds the
+`notify` extra's packages and changes nothing else, not the version and not the
+other extras:
 
 ```bash
-pipx install --force "sopuli-dba[oracle,hashicorp,notify]"
+pipx runpip sopuli-dba install "sopuli-dba[notify]"
 ```
 
+Do not use `pipx install --force` for this. It also upgrades the tool to the
+latest release.
+
 To upgrade to a newer release, run `pipx upgrade sopuli-dba`. It keeps the extras
-you installed.
+you installed. `pipx reinstall` keeps only the extras you named in
+`pipx install`, so run the `runpip` line again after it.
 
 ### 2c. Install Oracle Instant Client
 
@@ -675,7 +680,7 @@ it on the database and then promotes it — and that is the next document.
 | `config file is accessible to ...`, exit 9 | the file's permissions are too open. Section 3 has the fix |
 | `instant_client  not loaded` in `doctor` | Instant Client is missing or not on the library path. Section 2c |
 | `... declares type "oci", but this build has no oci backend yet`, exit 9 | your config names a store this build has no code for |
-| `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives the `pip` line. If you installed with pipx, add the extra with `pipx install --force` instead, as section 2b shows |
+| `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives two lines. Use the `pipx` one if you installed with pipx, as section 2 recommends, and the `pip` one otherwise |
 | `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *What the fence does in this build*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |
 | exit 3 from `creds check` | not an error. Exit 3 means drift was found — the vault's password does not work on the database. It has its own exit code so a scheduler can tell it apart from a failure |

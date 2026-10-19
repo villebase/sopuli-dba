@@ -156,7 +156,10 @@ def test_a_missing_client_names_the_extra(
     assert str(error.message) == (
         'vault "oci-prod" declares type "oci", but that backend is not installed'
     )
-    assert error.hint == 'install it with:  pip install "sopuli-dba[oci]"'
+    assert error.hint == (
+        'install it with:  pip install "sopuli-dba[oci]", or after a pipx install:  '
+        'pipx runpip sopuli-dba install "sopuli-dba[oci]"'
+    )
 
 
 def test_a_missing_client_is_config_and_exit_nine() -> None:

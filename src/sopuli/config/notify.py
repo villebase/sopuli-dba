@@ -37,7 +37,7 @@ from sopuli.config.auth import read_material
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.fields import choice, mapping, reject_unknown_keys, required_string
 from sopuli.config.model import Notify, WebhookNotify
-from sopuli.extras import install_command
+from sopuli.extras import install_hint
 from sopuli.notify import PLACEHOLDERS
 from sopuli.notify.registry import NOTIFIERS
 
@@ -266,7 +266,7 @@ def unserviceable(notify: Notify | None) -> str | None:
         return (
             f"`delivery.notify.method: {notify.method}` is configured and its client is not "
             f"installed, so nothing can send through it "
-            f"({install_command(notifier.extra)})"
+            f"({install_hint(notifier.extra)})"
         )
     return None
 

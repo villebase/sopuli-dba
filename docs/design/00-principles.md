@@ -415,9 +415,14 @@ rules make that real:
    ```
    $ sopuli creds check
    sopuli: vault "vault-prod" declares type "hashicorp", but that backend is not installed
-     hint: install it with:  pip install "sopuli-dba[hashicorp]"
+     hint: install it with:  pip install "sopuli-dba[hashicorp]", or after a pipx install:  pipx runpip sopuli-dba install "sopuli-dba[hashicorp]"
    exit 9
    ```
+
+   The hint gives a pipx line as well, because the pip line would install a
+   second copy beside a pipx install. The pipx line runs pip inside pipx's own
+   environment, so it adds only the client. Reasons:
+   [#902](../decisions/log.md#902).
 
 3. **Nothing in base opens a socket.** The dependency set makes this testable: a
    base install cannot import any of the clients the backends use — `httpx`, the

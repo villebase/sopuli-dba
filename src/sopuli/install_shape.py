@@ -79,13 +79,16 @@ class Component:
     ``install_command`` is present only where one exists and would help, which is
     :data:`NOT_INSTALLED` alone. An installed component does not need it, and an
     unimplemented one has no such command however much its name suggests
-    otherwise.
+    otherwise. ``pipx_install_command`` is present under the same condition. It
+    is the line for an install that pipx made, where the pip line would install
+    a second copy instead (:mod:`sopuli.extras`).
     """
 
     name: str
     status: str
     configured: tuple[str, ...] = ()
     install_command: str | None = None
+    pipx_install_command: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,11 +163,13 @@ def _component(name: str, entry: Backend | DatabaseDriver, configured: Sequence[
     everywhere else.
     """
     status = status_of(entry)
+    missing = status == NOT_INSTALLED
     return Component(
         name=name,
         status=status,
         configured=tuple(configured),
-        install_command=entry.install_command if status == NOT_INSTALLED else None,
+        install_command=entry.install_command if missing else None,
+        pipx_install_command=entry.pipx_install_command if missing else None,
     )
 
 

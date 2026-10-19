@@ -40,6 +40,7 @@ from sopuli.cli import cli
 from sopuli.config.model import Config, Vault
 from sopuli.diagnostics import MISSING_BACKEND, WARNINGS, install_diagnostics
 from sopuli.exit_codes import ExitCode
+from sopuli.extras import install_hint
 from sopuli.install_shape import survey
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.store.registry import BACKENDS, Backend, BackendNotInstalledError
@@ -114,7 +115,7 @@ def _refuse(*_: object, **__: object) -> None:
     """
     raise BackendNotInstalledError(
         'vault "oci-prod" declares type "oci", but that backend is not installed',
-        hint='install it with:  pip install "sopuli-dba[oci]"',
+        hint=f"install it with:  {install_hint('oci')}",
     )
 
 

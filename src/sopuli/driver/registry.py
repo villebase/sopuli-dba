@@ -3,14 +3,9 @@
 ADR-006 rules 1 and 2, applied to drivers exactly as they are applied to
 stores. A vendor client is imported inside its own module when something
 actually connects, and a target declaring a driver this machine has not
-installed is a structured error naming the extra that supplies it:
-
-.. code-block:: text
-
-    $ sopuli creds check --application acme
-    error: target "cdb1-pdb-orders" declares type "oracle", but that driver is not installed
-           install it with:  pip install "sopuli-dba[oracle]"
-    exit 9
+installed is a structured error naming the extra that supplies it. It exits 9,
+and its hint gives the pip line and the pipx line from :mod:`sopuli.extras`.
+``01-configuration.md`` §3a shows the same error for a store.
 
 **Why a driver is an extra at all** (D9, E1): ``python-oracledb`` exists only to
 reach Oracle. Binding stores and not drivers would read as arbitrary, and D3

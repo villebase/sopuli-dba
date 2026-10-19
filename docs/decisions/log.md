@@ -2401,18 +2401,24 @@ the register.
   copy into the user's own Python, and the copy that ran still has no client.
   What should the hint say?
 - **Decision:** Both lines. The pip line stays as it was, and a pipx line
-  follows it: `pipx install --force` with the missing extra and every extra
-  already present. The JSON keeps `install_command` and adds
-  `pipx_install_command` beside it. The tool reads which extras are present
-  from its own package metadata.
+  follows it: `pipx runpip sopuli-dba install "sopuli-dba[<extra>]"`. The JSON
+  keeps `install_command` and adds `pipx_install_command` beside it.
 - **Why:** pipx is the recommended install (`getting-started.md` §2), so the
-  pip line alone sends most new users to the wrong command. The pipx line names
-  the present extras because `--force` keeps only the extras it names, so a line
-  with the missing extra alone would remove the others. Reading the metadata
-  keeps the list of extras in `pyproject.toml` only.
+  pip line alone sends most new users to the wrong command. `pipx runpip` runs
+  pip inside the environment pipx made. pip finds the tool already installed
+  and upgrades only what a requirement needs, so it adds the extra's
+  dependencies and nothing else. On pipx 1.0.0 and 1.18.4 this kept the
+  install's Python, its version and its other extras, and they stayed after a
+  `pipx upgrade`. The cost: pipx does not record an extra added this way, so a
+  `pipx reinstall` drops it.
 - **Rejected:**
   - Detect pipx from `sys.prefix` and print only the matching line. It is a
     guess about pipx's folder layout, which pipx does not promise, and a wrong
     guess sends the reader to the wrong command.
   - A neutral line that names the extra and links to getting-started. It never
     goes stale, but the reader cannot paste it.
+  - `pipx install --force "sopuli-dba[<every extra wanted>]"`. On pipx 1.18.4
+    it reinstalls from PyPI and upgrades to the latest release, so adding one
+    client also upgrades the tool, and an install from a wheel or another index
+    is replaced. The line also has to name every extra already present, or
+    `--force` removes them.

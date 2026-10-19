@@ -1263,11 +1263,11 @@ different remedies, and only one is the reader's to apply:
 - `not_installed`: the module is here and the client is not. `install_command`
   is the pip line to paste, and `pipx_install_command` is the line for an
   install that pipx made. The pip line would install a second copy there, and
-  the copy that ran would still have no client. The pipx line is
-  `pipx install --force` and names every extra already present as well as the
-  missing one, because `--force` keeps only the extras it names. The tool reads
-  which extras are present from its own package metadata. It does not try to
-  tell which of the two made the install, so it gives both (decided in #902).
+  the copy that ran would still have no client. The pipx line runs pip inside
+  the environment pipx made, `pipx runpip sopuli-dba install "sopuli-dba[<extra>]"`,
+  so it adds only the extra's dependencies and keeps everything else. The tool
+  does not try to tell which of the two made the install, so it gives both.
+  Reasons: [#902](../decisions/log.md#902).
 - `not_implemented`: this build has no module for it, and nothing the operator
   installs changes that. Such a row has no install line, however much its name
   suggests one exists.

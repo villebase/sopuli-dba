@@ -1786,7 +1786,7 @@
         },
         "pipx_install_command": {
           "type": "string",
-          "description": "Present exactly when `install_command` is. The line for an install that pipx made, where `install_command` would install a second copy instead: `pipx install --force` with this extra and every extra already present, because `--force` keeps only the extras it names."
+          "description": "Present exactly when `install_command` is. The line for an install that pipx made, where `install_command` would install a second copy instead. It runs pip inside the environment pipx made: `pipx runpip sopuli-dba install \"sopuli-dba[<extra>]\"`."
         },
         "vaults": {
           "type": "array",

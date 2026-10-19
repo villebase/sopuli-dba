@@ -149,7 +149,7 @@ store that cannot work is failing at its one job, so E4 covers both halves:
 
 | What is wrong | What the warning says |
 |---|---|
-| the extra's client is not installed | *install it with:* `pip install "sopuli-dba[…]"`*, or after a pipx install:* `pipx install --force "sopuli-dba[…]"` |
+| the extra's client is not installed | *install it with:* `pip install "sopuli-dba[…]"`*, or after a pipx install:* `pipx runpip sopuli-dba install "sopuli-dba[…]"` |
 | this build has no module for it | *this build has no `<type>` backend yet — this is not something to install* |
 
 The cost accepted here is a **warning `pip` cannot act on**: a reader who writes

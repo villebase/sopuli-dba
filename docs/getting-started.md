@@ -214,15 +214,20 @@ sopuli, version 0.75.0
 If the shell says it does not know `sopuli`, or the version is not the one you
 installed, see section 2d.
 
-To add an extra later, install again with `--force` and name every extra you
-want, the old ones too. pipx replaces the install with the new set:
+To add an extra later, run pip inside the environment pipx made. This adds the
+`notify` extra's packages and changes nothing else, not the version and not the
+other extras:
 
 ```bash
-pipx install --force "sopuli-dba[oracle,hashicorp,notify]"
+pipx runpip sopuli-dba install "sopuli-dba[notify]"
 ```
 
+Do not use `pipx install --force` for this. It also upgrades the tool to the
+latest release.
+
 To upgrade to a newer release, run `pipx upgrade sopuli-dba`. It keeps the extras
-you installed.
+you installed. `pipx reinstall` keeps only the extras you named in
+`pipx install`, so run the `runpip` line again after it.
 
 ### 2c. Install Oracle Instant Client
 

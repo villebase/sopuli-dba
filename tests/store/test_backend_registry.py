@@ -147,7 +147,6 @@ def test_a_missing_client_names_the_extra(
         "oci",
         Backend(module=name, extra="oci", provides=frozenset({ABSENT})),
     )
-    monkeypatch.setattr("sopuli.extras.present_extras", lambda: frozenset({"oracle"}))
 
     with pytest.raises(BackendNotInstalledError) as caught:
         resolve(vault(name="oci-prod", backend="oci"))
@@ -159,7 +158,7 @@ def test_a_missing_client_names_the_extra(
     )
     assert error.hint == (
         'install it with:  pip install "sopuli-dba[oci]", or after a pipx install:  '
-        'pipx install --force "sopuli-dba[oci,oracle]"'
+        'pipx runpip sopuli-dba install "sopuli-dba[oci]"'
     )
 
 

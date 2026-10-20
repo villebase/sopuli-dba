@@ -2461,3 +2461,30 @@ the register.
   - Leave it to the infrastructure: let PATCH through and grant `patch` in the
     policy. That is the better fix where an operator can get it done. It is
     outside the tool, and often outside the operator's reach.
+
+## #909
+
+- **Decided:** 2026-10-20, #909
+- **Question:** Should the tool connect with an administrative privilege
+  (`SYSDBA`), so that a DBA can point a target at `SYS`? A DBA trying the tool
+  often uses `SYS` before installing the service account. `SYS` logs on only as
+  SYSDBA or SYSOPER, so the connect fails with `ORA-28009`.
+- **Decision:** No. The tool connects only as an ordinary account. `ORA-28009`
+  is mapped to `config` and exit 9, and its hint names the service account that
+  `sql/oracle/00_install.sql` creates, and `SYSTEM` for a first try (#908).
+- **Why:** a change made as `SYS` is recorded in the audit trail under `SYS`,
+  not under a named account. The audit trail is the evidence that a rotation
+  happened and who made it, and the security model calls auditing the boundary.
+  A first try does not need SYSDBA: `SYSTEM` connects with no setup, and on
+  2026-10-20 `creds generate`, `creds apply` and `creds check` as `SYSTEM`
+  succeeded against the tier-1 container. `doctor --check-privileges` reports
+  how much more than the tool needs `SYSTEM` holds.
+- **Rejected:**
+  - `admin.privilege: sysdba`, with a warning on every run. It is the easiest
+    start, and every rotation would be attributed to `SYS`. It also needs a
+    config key, a warning code, a run-schema bump and tier-1 coverage, and
+    nobody has checked capability probing or `container_scope` for a SYS session
+    in `CDB$ROOT`, which sees every container.
+  - SYSDBA for the read-only verbs only, refused at plan time for a verb that
+    changes something. No rotation is attributed to `SYS`, but it costs most of
+    the option above, and `SYSTEM` already gives a first try without it.

@@ -268,8 +268,13 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
     lines.extend(render_table(columns, rows))
 
     for entry in entries:
-        if entry.get("error"):
-            lines.append(f"  {entry['target']}: {entry['error'].get('message', '')}")
+        error = entry.get("error")
+        if error:
+            lines.append(f"  {entry['target']}: {error.get('message', '')}")
+            # The server's message says what failed and the hint says what to do,
+            # so a reader who runs `doctor` to find out why gets both (#908).
+            if error.get("hint"):
+                lines.append(f"    hint: {error['hint']}")
         asserted = entry.get("asserted")
         if asserted is not None and not asserted["matches"]:
             scope = entry.get("scope") or {}

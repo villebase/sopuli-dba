@@ -220,6 +220,32 @@ def test_the_report_names_a_failure_and_its_target() -> None:
 
     assert "orders-pdb" in text
     assert "no listener" in text
+    assert "hint:" not in text
+
+
+def test_the_report_gives_a_failures_hint_under_its_message() -> None:
+    """`doctor` is where a reader goes to find out why a target fails (#908)."""
+    text = render(
+        [
+            build_target(
+                _target(),
+                connected=False,
+                error=Error(
+                    category="connectivity",
+                    message="ORA-12541: no listener",
+                    code="ORA-12541",
+                    hint="no listener at that address; it may be down rather than wrong",
+                ),
+            )
+        ],
+        client={},
+    )
+
+    lines = text.splitlines()
+    failure = lines.index("  orders-pdb: ORA-12541: no listener")
+    assert lines[failure + 1] == (
+        "    hint: no listener at that address; it may be down rather than wrong"
+    )
 
 
 def test_a_session_that_opened_but_could_not_be_described_stays_reachable() -> None:

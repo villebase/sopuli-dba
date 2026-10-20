@@ -69,6 +69,7 @@ PASSWORD_EXPIRED = "password_expired"
 PASSWORD_IN_GRACE = "password_in_grace"
 INSUFFICIENT_PRIVILEGE = "insufficient_privilege"
 CONTAINER_MISUSE = "container_misuse"
+ADMINISTRATIVE_LOGON = "administrative_logon"
 UNREACHABLE = "unreachable"
 VERIFIER_MISMATCH = "verifier_mismatch"
 CLIENT_LIBRARY = "client_library"
@@ -196,6 +197,21 @@ RULES: dict[str, _Rule] = {
         hint=(
             "the statement succeeded in the root and failed in a PDB, so containers now "
             "disagree about this account; the server message names the PDB"
+        ),
+    ),
+    # SYS as the admin account. SYS logs on only AS SYSDBA or AS SYSOPER, and the
+    # tool never asks for either (#909), so the file is what has to change. The
+    # hint offers SYSTEM for a first try because it connects with no setup;
+    # `doctor --check-privileges` reports how much more than the tool needs it holds.
+    "ORA-28009": _Rule(
+        ADMINISTRATIVE_LOGON,
+        "config",
+        exit_code=ExitCode.CONFIG_INVALID,
+        hint=(
+            "SYS logs on only as SYSDBA or SYSOPER, and sopuli connects as an ordinary "
+            "account. Point the target's admin at the service account that "
+            f"{INSTALL_SCRIPT} creates. To try the tool first, SYSTEM connects with no "
+            "setup"
         ),
     ),
     "ORA-12154": _Rule(

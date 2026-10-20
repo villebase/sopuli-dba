@@ -2471,14 +2471,19 @@ the register.
   SYSDBA or SYSOPER, so the connect fails with `ORA-28009`.
 - **Decision:** No. The tool connects only as an ordinary account. `ORA-28009`
   is mapped to `config` and exit 9, and its hint names the service account that
-  `sql/oracle/00_install.sql` creates, and `SYSTEM` for a first try (#908).
+  `sql/oracle/00_install.sql` creates, and `SYSTEM` for a trial in a PDB (#908).
 - **Why:** a change made as `SYS` is recorded in the audit trail under `SYS`,
   not under a named account. The audit trail is the evidence that a rotation
   happened and who made it, and the security model calls auditing the boundary.
-  A first try does not need SYSDBA: `SYSTEM` connects with no setup, and on
-  2026-10-20 `creds generate`, `creds apply` and `creds check` as `SYSTEM`
-  succeeded against the tier-1 container. `doctor --check-privileges` reports
-  how much more than the tool needs `SYSTEM` holds.
+  A trial does not need SYSDBA: `SYSTEM` connects to a PDB with no setup. On
+  2026-10-20, `creds generate`, `creds apply` and `creds check` as `SYSTEM`
+  succeeded in `FREEPDB1` on 26ai Free 23.26.2.0.0.
+
+  `SYSTEM` is for a trial only, and the hint says so. It has the same audit
+  problem as `SYS`: its changes are recorded under `SYSTEM`, and it holds `DBA`.
+  In `CDB$ROOT` it also falls short: its `ALTER USER` comes through a role, which
+  reads as absent (`02-oracle-privileges.md`), so common accounts are refused.
+  `doctor --check-privileges` reports how much more than the tool needs it holds.
 - **Rejected:**
   - `admin.privilege: sysdba`, with a warning on every run. It is the easiest
     start, and every rotation would be attributed to `SYS`. It also needs a
@@ -2487,4 +2492,4 @@ the register.
     in `CDB$ROOT`, which sees every container.
   - SYSDBA for the read-only verbs only, refused at plan time for a verb that
     changes something. No rotation is attributed to `SYS`, but it costs most of
-    the option above, and `SYSTEM` already gives a first try without it.
+    the option above, and `SYSTEM` already gives a trial in a PDB without it.

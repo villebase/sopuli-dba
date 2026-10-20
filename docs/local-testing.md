@@ -353,7 +353,7 @@ $ sopuli --config sopuli.yaml doctor
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE  CAPABILITIES  ENCRYPTION
 free-pdb  no         -      -          -          -             -
   free-pdb: target 'free-pdb' admin credential: the environment variable SOPULI_DB_ADMIN_PASSWORD is not set
-    hint: an empty value counts as unset (§6). Check the name, and that whatever exports it runs in the same process tree as this command
+    hint: an empty value counts as unset (01-configuration.md §6). Check the name, and that whatever exports it runs in the same process tree as this command
 ```
 
 Exit 1. Set it and run again:

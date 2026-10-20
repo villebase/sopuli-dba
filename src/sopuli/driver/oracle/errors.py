@@ -201,8 +201,10 @@ RULES: dict[str, _Rule] = {
     ),
     # SYS as the admin account. SYS logs on only AS SYSDBA or AS SYSOPER, and the
     # tool never asks for either (#909), so the file is what has to change. The
-    # hint offers SYSTEM for a first try because it connects with no setup;
-    # `doctor --check-privileges` reports how much more than the tool needs it holds.
+    # hint offers SYSTEM for a trial in a PDB, because it connects there with no
+    # setup. Not beyond that: its changes are audited under SYSTEM rather than a
+    # named account, and in CDB$ROOT its role-granted ALTER USER reads as absent,
+    # so common accounts are refused.
     "ORA-28009": _Rule(
         ADMINISTRATIVE_LOGON,
         "config",
@@ -210,8 +212,8 @@ RULES: dict[str, _Rule] = {
         hint=(
             "SYS logs on only as SYSDBA or SYSOPER, and sopuli connects as an ordinary "
             "account. Point the target's admin at the service account that "
-            f"{INSTALL_SCRIPT} creates. To try the tool first, SYSTEM connects with no "
-            "setup"
+            f"{INSTALL_SCRIPT} creates. For a trial in a PDB, SYSTEM connects with no "
+            "setup; it holds far more than the tool needs, so do not keep it"
         ),
     ),
     "ORA-12154": _Rule(

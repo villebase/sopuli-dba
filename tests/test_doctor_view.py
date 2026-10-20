@@ -248,6 +248,20 @@ def test_the_report_gives_a_failures_hint_under_its_message() -> None:
     )
 
 
+def test_a_hint_two_targets_share_is_printed_once() -> None:
+    refused = Error(category="config", message="not set", hint="set the variable")
+    text = render(
+        [
+            build_target(_target(), connected=False, error=refused),
+            build_target(_target("billing-pdb"), connected=False, error=refused),
+        ],
+        client={},
+    )
+
+    assert text.count("hint: set the variable") == 1
+    assert "  billing-pdb: not set" in text
+
+
 def test_a_session_that_opened_but_could_not_be_described_stays_reachable() -> None:
     """`reachable` means *a session was opened*, and nothing more.
 

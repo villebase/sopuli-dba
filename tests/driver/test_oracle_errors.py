@@ -16,6 +16,7 @@ import pytest
 
 from sopuli.driver.oracle.errors import (
     ACCOUNT_LOCKED,
+    ADMINISTRATIVE_LOGON,
     CLIENT_LIBRARY,
     CONTAINER_MISUSE,
     EXPIRED,
@@ -92,6 +93,7 @@ def test_the_table_covers_every_row_uc1_names() -> None:
         "ORA-65040",
         "ORA-65048",
         "ORA-65066",
+        "ORA-28009",
         "ORA-12154",
         "ORA-12541",
         "ORA-01109",
@@ -231,6 +233,24 @@ def test_an_application_common_account_says_where_to_rotate_it_instead() -> None
     assert found.exit_code == ExitCode.CONFIG_INVALID
     assert found.hint is not None
     assert "application root" in found.hint
+
+
+def test_sys_as_the_admin_is_a_config_problem_that_names_the_way_out() -> None:
+    """The first thing a DBA trying the tool as SYS sees (#908).
+
+    The tool never connects as SYSDBA (#909), so the fix is in the file, and the
+    hint names both ways out: the service account, and SYSTEM for a first try.
+    """
+    server = "ORA-28009: connection as SYS should be as SYSDBA or SYSOPER"
+    found = classify("ORA-28009", server)
+
+    assert found.kind == ADMINISTRATIVE_LOGON
+    assert found.category == "config"
+    assert found.exit_code == ExitCode.CONFIG_INVALID
+    assert found.message == server
+    assert found.hint is not None
+    assert "00_install.sql" in found.hint
+    assert "SYSTEM" in found.hint
 
 
 def test_a_verifier_mismatch_explains_the_password_version_trap() -> None:

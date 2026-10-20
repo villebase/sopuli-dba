@@ -71,6 +71,10 @@ Friday, and the tool should notice rather than quietly benefit from it. The full
 list, and the reason each entry is on it, is in
 [`design/02-oracle-privileges.md`](design/02-oracle-privileges.md) §3.
 
+The tool also never connects with an administrative privilege, so it cannot run
+as `SYS` ([#909](decisions/log.md#909)). Every change it makes is then recorded
+in the audit trail under the account you gave it, not under `SYS`.
+
 ---
 
 ## 2. What stops a mistake from being silent

@@ -236,7 +236,8 @@ def _from_env(name: str, *, env: Mapping[str, str], where: str) -> Secret:
             f"{where}: the environment variable {name} is not set",
             at=ROOT,
             hint=(
-                "an empty value counts as unset (§6). Check the name, and that whatever "
+                "an empty value counts as unset (01-configuration.md §6). Check the name, "
+                "and that whatever "
                 "exports it runs in the same process tree as this command"
             ),
         )

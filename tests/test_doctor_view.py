@@ -224,7 +224,7 @@ def test_the_report_names_a_failure_and_its_target() -> None:
 
 
 def test_the_report_gives_a_failures_hint_under_its_message() -> None:
-    """`doctor` is where a reader goes to find out why a target fails (#908)."""
+    """`doctor` is where a reader goes to find out why a target fails."""
     text = render(
         [
             build_target(

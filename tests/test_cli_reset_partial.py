@@ -711,6 +711,28 @@ def test_a_declined_prompt_prints_the_notes_for_every_target_reset(
     assert "sopuli: aborted" in result.stderr
 
 
+def test_a_declined_prompt_prints_the_hint_of_a_target_that_failed_before_it(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first target cannot be reached and the second is declined. The run
+    stops before `emit`, so the declined path adds the hints itself."""
+    session = Succeeding("OPEN", DENIED)
+    refused = DriverError("ORA-28009: connection as SYS", code="ORA-28009", hint="use the svc")
+
+    def opening(target: Any, run: Any, config: Any) -> FakeSession:
+        if target.name == TARGET:
+            raise refused
+        return session
+
+    monkeypatch.setattr("sopuli.cli._open_session", opening)
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
+
+    result = _run(runner, write_config(TWO_TARGETS), input="n\n")
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    assert f"ORA-28009 on {TARGET}: use the svc" in result.stdout
+
+
 class Remembering(Succeeding):
     """A session that keeps each password it set, so a test can look for it."""
 

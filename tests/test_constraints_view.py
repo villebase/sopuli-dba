@@ -210,7 +210,7 @@ def test_a_target_that_did_not_answer_carries_its_error(
     validator: Draft202012Validator,
 ) -> None:
     """Without it, a wrong admin account and a listener that is down read the
-    same (#910). The fallback stays; only the reason is added."""
+    same. The fallback stays; only the reason is added."""
     section = _section(survey([], unreachable=("alpha",)))
     with_error = build_constraints(survey([], unreachable=("alpha",)), {"alpha": REFUSED})
 

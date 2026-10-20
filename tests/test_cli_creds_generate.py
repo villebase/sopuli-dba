@@ -1199,7 +1199,7 @@ def test_an_unreachable_estate_still_gets_a_section(
     """The target cannot be reached, so the run falls back -- and the section
     is the evidence that the estate was consulted, which is `install`'s rule.
 
-    The entry keeps why (#910). This config declares no admin credential, so
+    The entry keeps why. This config declares no admin credential, so
     the reason is that, not a network error."""
     found = document(run(runner, write_config(CONFIG), "--output", "json"))
 
@@ -1214,7 +1214,7 @@ def test_an_unreachable_estate_still_gets_a_section(
 def test_an_unreachable_target_prints_its_reason_under_the_line(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """The text output says why, not only that nothing answered (#910)."""
+    """The text output says why, not only that nothing answered."""
     output = run(runner, write_config(CONFIG)).output
 
     assert "constraints: no target answered (appdb-alpha)" in output

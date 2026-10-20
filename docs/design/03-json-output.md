@@ -54,6 +54,32 @@ JSON output does not depend on this. `json.dumps` escapes non-ASCII by default,
 so the document is ASCII on the wire. The rule is for `--output text`, and for
 error and diagnostic messages that carry a server's own wording.
 
+### Hints in text output
+
+A result's `error.hint` says what to do next. In text output a verb's table
+carries the error's message, if it shows the error at all, and a column cannot
+hold a second sentence. So the emitter prints the hints under the verb's text,
+in a block like the notes: each distinct hint once, after every code that raised
+it and the targets it was raised on. Some tables show a state and not the error,
+so the targets say which rows a hint is for. The emitter adds them, not each
+verb, so no verb can leave them out. A declined `account reset-password` prints
+its table before it stops, and adds the hints there too.
+
+```
+$ sopuli --config sys.yaml creds apply
+...
+ACCOUNT          TARGET    STATE  DETAIL
+acme_app_user    free-pdb  ERROR  ORA-28009: connection as SYS should be as SYSDBA or SYSOPER
+acme_batch_user  free-pdb  ERROR  ORA-28009: connection as SYS should be as SYSDBA or SYSOPER
+
+nothing changed, 2 not confirmed
+
+1 hint:
+  ORA-28009 on free-pdb: SYS logs on only as SYSDBA or SYSOPER, and sopuli connects as an ordinary account. Point the target's admin at the service account that sql/oracle/00_install.sql creates. For a trial in a PDB, SYSTEM connects with no setup; it holds far more than the tool needs, so do not keep it
+```
+
+`sys.yaml` names `SYS` as the target's admin account.
+
 ### Colour
 
 Colour is a property of a run. It is resolved once, and every call site asks
@@ -1567,7 +1593,7 @@ only when something was wrong could never be quoted as proof that nothing was.
 The fallback to the policy is the run's to take, but the reason is the
 operator's to fix, and a wrong admin account and a listener that is down need
 different fixes. The text output prints the message and the hint under the
-`constraints:` line. Added in run schema 1.47 (#910).
+`constraints:` line. Added in run schema 1.47.
 
 **Every reading is kept.** A limit is a byte count *and* the character set it is
 counted in, so 128 bytes of `WE8MSWIN1252` and 128 of `AL32UTF8` do not contain

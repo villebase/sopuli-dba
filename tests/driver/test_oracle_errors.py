@@ -236,7 +236,7 @@ def test_an_application_common_account_says_where_to_rotate_it_instead() -> None
 
 
 def test_sys_as_the_admin_is_a_config_problem_that_names_the_way_out() -> None:
-    """The first thing a DBA trying the tool as SYS sees (#908).
+    """The first thing a DBA trying the tool as SYS sees.
 
     The tool never connects as SYSDBA (#909), so the fix is in the file, and the
     hint names both ways out: the service account, and SYSTEM for a first try.

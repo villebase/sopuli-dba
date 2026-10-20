@@ -538,6 +538,37 @@ def test_a_prompt_accepted_breaks_the_lock(
     assert "take this lock from" in result.output
 
 
+def test_the_config_warnings_are_printed_before_the_question(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    with_locks: Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This prompt has no plan, and W051 can say the lock is in another vault,
+    which the answer depends on (#897)."""
+    with_locks((PROD, held(ago=LAPSED)))
+    monkeypatch.setenv("VAULT_ADDR", "https://vault-other.example.com:8200")
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+
+    result = run(runner, write_config(CONFIG), str(PROD), input="n\n")
+
+    assert result.exit_code == ExitCode.ABORTED
+    assert result.stderr.count("1 warning:") == 1
+    assert result.stderr.index("1 warning:") < result.stderr.index("[y/N]")
+
+
+def test_a_usage_error_prints_no_config_warnings(
+    runner: CliRunner, write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usage error is about argv, not the file (J7)."""
+    monkeypatch.setenv("VAULT_ADDR", "https://vault-other.example.com:8200")
+
+    result = run(runner, write_config(CONFIG), "nocolon", "--confirm")
+
+    assert result.exit_code == ExitCode.USAGE
+    assert "warning:" not in result.output
+
+
 # ---------------------------------------------------------------- the document ---
 
 

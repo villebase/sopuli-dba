@@ -3974,6 +3974,9 @@ def _confirm_break(
             ),
         )
     _echo_err(render_break(paths, outcome, mode=mode, applied=False), run=run)
+    # This prompt has no plan, so `_show_plan` does not print the warnings. W051
+    # can say the lock is in another vault, which the answer depends on.
+    show_warnings(run)
     _confirm(
         f"take this lock from {describe_holder(outcome.record)}?",
         abort=True,

@@ -75,10 +75,12 @@ summary line, and prints the install warnings in the same block.
 
 Two moments come before the verb's text, and the warnings go to stderr at
 each, once per run. Before a confirmation prompt they follow the plan, so the
-operator reads them before answering. A run that stops on an error prints no
-text of its own, so they go before the error line. The warning can be the
-reason for the error: `SOPULI-W051` says the run went to a vault other than the
-one the file names.
+operator reads them before answering. The text on stdout still carries them,
+as it still carries the plan. A run that stops on an error prints no text of
+its own, so they go before the error line. The warning can be the reason for
+the error: `SOPULI-W051` says the run went to a vault other than the one the
+file names. A usage error (exit 2) does not print them, because it is about the
+command line and not the file.
 
 ```
 $ VAULT_ADDR=http://127.0.0.1:8399 sopuli --config sopuli.yaml lock status

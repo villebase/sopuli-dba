@@ -1020,7 +1020,9 @@ def _pass_invocation(func: F) -> F:
             raise
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
             _show_unfinished_plan(invocation, exc)
-            show_warnings(invocation)
+            if _classify(exc)[0] is not ExitCode.USAGE:
+                # A usage error is about argv, not the file (J7).
+                show_warnings(invocation)
             _fail(invocation, exc)
             raise
         invocation.emitter().emit(invocation.document, text)

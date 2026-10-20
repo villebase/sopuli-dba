@@ -1,8 +1,8 @@
-"""The hints for ``results[].error``, under a verb's text output (#912).
+"""The hints for ``results[].error``, under a verb's text output.
 
-Tier 0. A verb's ``DETAIL`` cell carries an error's message; the hint that says
-what to do next is added once per run, by the emitter, so no verb can leave it
-out.
+Tier 0. A verb's table carries an error's message, if it shows the error at
+all; the hint that says what to do next is added once per run, by the emitter,
+so no verb can leave it out.
 """
 
 from __future__ import annotations
@@ -55,6 +55,24 @@ def test_distinct_hints_keep_the_order_they_were_raised_in() -> None:
         "  ORA-28009: point the target's admin at the service account",
         "  set the variable",
     ]
+
+
+def test_two_codes_that_share_a_hint_are_both_named() -> None:
+    """A rollback refusal gives ORA-28007 and ORA-28003 one hint; naming only the
+    first would say only that one happened."""
+    shared = "the previous password is refused; rotate instead"
+    reused = {"category": "policy", "message": "reused", "code": "ORA-28007", "hint": shared}
+    rejected = {"category": "policy", "message": "rejected", "code": "ORA-28003", "hint": shared}
+
+    lines = _plain(render_hints([_result("a", reused), _result("b", rejected)]))
+
+    assert lines[1:] == ["1 hint:", f"  ORA-28007, ORA-28003: {shared}"]
+
+
+def test_every_line_of_a_hint_is_indented() -> None:
+    long = {"category": "config", "message": "m", "code": "X-1", "hint": "first\nsecond"}
+
+    assert _plain(render_hints([_result("a", long)]))[2:] == ["  X-1: first", "  second"]
 
 
 def test_a_run_with_no_hint_adds_nothing() -> None:

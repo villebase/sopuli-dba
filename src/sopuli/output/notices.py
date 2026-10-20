@@ -1,15 +1,17 @@
-"""Row-level findings rendered under a table.
+"""Blocks of findings rendered under a verb's text output.
 
-`check` and `creds status` both report things that belong to one account but do
-not fit in a column -- a grace period and the date it ends, so far. In
-``--output json`` they are ``results[].warnings[]``; here they are the block
-that makes them visible to somebody reading a terminal. A warning a terminal
-user cannot see is not surfaced: UC-1 §4 says so for the constraint caveats, and
-``03-json-output.md`` §3 says it per diagnostic code.
+Two blocks share one shape: a counted heading, then an indented line per entry.
 
-**One renderer for both verbs**, because it is one block: `config validate`
-already prints warnings this way under its summary, and a third spelling of the
-same idea would be a third thing to keep consistent.
+* **Notes** are things that belong to one account but do not fit in a column --
+  a grace period and the date it ends, so far. In ``--output json`` they are
+  ``results[].warnings[]``. `check` and `creds status` print them, and
+  `config validate` prints its warnings the same way under its summary.
+* **Hints** say what to do about the errors in ``results[]``. A verb's table
+  carries an error's message, if it shows the error at all, and the hint was in
+  the JSON only. The emitter prints them for every verb.
+
+A warning a terminal user cannot see is not surfaced: UC-1 §4 says so for the
+constraint caveats, and ``03-json-output.md`` §3 says it per diagnostic code.
 """
 
 from __future__ import annotations
@@ -23,26 +25,34 @@ __all__ = ["render_hints", "render_notices"]
 
 
 def render_hints(results: Sequence[Mapping[str, Any]] | None) -> list[str]:
-    """What to do about the errors in ``results[]``, each hint once (#912).
+    """What to do about the errors in ``results[]``, each hint once.
 
-    A result's ``DETAIL`` cell carries the error's message, and the hint that says
-    what to do next was in the JSON only. A column cannot hold a second sentence,
-    so the hints go under the run, as the notes do. Each distinct hint is printed
-    once, with the code that raised it where there is one: twenty accounts on one
-    target refused for one reason need one hint, not twenty.
+    A table cannot hold a second sentence, so the hints go under the run, as
+    the notes do. Each distinct hint is printed once, after every code that
+    raised it: twenty accounts on one target refused for one reason need one
+    hint, not twenty. Two codes can share a hint, so the line names both rather
+    than suggesting only the first one happened.
 
     Empty where no result carries a hint, so a run with nothing to fix prints
     nothing more.
     """
-    found: dict[str, str | None] = {}
+    found: dict[str, list[str]] = {}
     for result in results or ():
         error = result.get("error") or {}
         hint = error.get("hint")
-        if hint and hint not in found:
-            found[hint] = error.get("code")
+        if not hint:
+            continue
+        codes = found.setdefault(hint, [])
+        code = error.get("code")
+        if code and code not in codes:
+            codes.append(code)
     if not found:
         return []
-    body = [f"  {code}: {hint}" if code else f"  {hint}" for hint, code in found.items()]
+    body: list[str] = []
+    for hint, codes in found.items():
+        first, *rest = hint.splitlines()
+        body.append(f"  {', '.join(codes)}: {first}" if codes else f"  {first}")
+        body.extend(f"  {line}" for line in rest)
     count = "1 hint" if len(found) == 1 else f"{len(found)} hints"
     return ["", paint(f"{count}:", Role.NOTABLE), *body]
 

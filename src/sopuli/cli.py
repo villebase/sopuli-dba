@@ -244,7 +244,7 @@ from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
-from sopuli.output.emit import Emitter, echo_err
+from sopuli.output.emit import Emitter, echo_err, with_hints
 from sopuli.output.expire_view import build_result as build_expire_result
 from sopuli.output.expire_view import render as render_expire
 from sopuli.output.expire_view import summarise as summarise_expire
@@ -2260,8 +2260,10 @@ def account_reset_password(
         # print is the only way the operator learns them. The boundary then
         # exits 8.
         # Through the emitter, which strips the table's colour when colour is
-        # off.
-        emitter.emit_text("\n\n".join(part for part in (header, body, told, shown) if part))
+        # off. With the hints, which `emit` adds on every other path: a target
+        # that failed before the prompt was declined still says what to do.
+        text = "\n\n".join(part for part in (header, body, told, shown) if part)
+        emitter.emit_text(with_hints(document, text))
         raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
 
@@ -5348,7 +5350,7 @@ def _constraints_for(
     installed and a wallet that cannot be read are all the same thing to a
     command that is not going to write to a database either way. The error is
     kept all the same, and reported beside the fallback: the fallback is the
-    run's to take, and the reason is the operator's to fix (#910).
+    run's to take, and the reason is the operator's to fix.
 
     `--dry-run` still reads. The plan is a claim about what would be staged, and
     a preview that skipped the constraint would be previewing a different draw

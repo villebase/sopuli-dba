@@ -57,10 +57,12 @@ error and diagnostic messages that carry a server's own wording.
 ### Hints in text output
 
 A result's `error.hint` says what to do next. In text output a verb's table
-carries the error's message, and a column cannot hold a second sentence. So the
-emitter prints the hints under the verb's text, in a block like the notes: each
-distinct hint once, with the code that raised it. The emitter adds them, not
-each verb, so no verb can leave them out (#912).
+carries the error's message, if it shows the error at all, and a column cannot
+hold a second sentence. So the emitter prints the hints under the verb's text,
+in a block like the notes: each distinct hint once, after every code that raised
+it. The emitter adds them, not each verb, so no verb can leave them out. A
+declined `account reset-password` prints its table before it stops, and adds
+the hints there too.
 
 ```
 nothing changed, 2 not confirmed
@@ -1584,7 +1586,7 @@ only when something was wrong could never be quoted as proof that nothing was.
 The fallback to the policy is the run's to take, but the reason is the
 operator's to fix, and a wrong admin account and a listener that is down need
 different fixes. The text output prints the message and the hint under the
-`constraints:` line. Added in run schema 1.47 (#910).
+`constraints:` line. Added in run schema 1.47.
 
 **Every reading is kept.** A limit is a byte count *and* the character set it is
 counted in, so 128 bytes of `WE8MSWIN1252` and 128 of `AL32UTF8` do not contain

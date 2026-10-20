@@ -273,7 +273,7 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
         if error:
             lines.append(f"  {entry['target']}: {error.get('message', '')}")
             # The server's message says what failed and the hint says what to do,
-            # so a reader who runs `doctor` to find out why gets both (#908).
+            # so a reader who runs `doctor` to find out why gets both.
             # Each hint once, under the first target that raised it: twenty
             # targets sharing one unset variable need one hint, not twenty.
             hint = error.get("hint")

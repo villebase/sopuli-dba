@@ -92,6 +92,17 @@ def echo_err(text: str, *, color_choice: ColorChoice) -> None:
     click.echo(printable(text, colour=colour), err=True, color=colour)
 
 
+def with_hints(document: RunDocument, text: str) -> str:
+    """A verb's text, with the hints for ``results[].error`` under it.
+
+    Added by :meth:`Emitter.emit` rather than by each verb, for the reason colour
+    is gated there: no verb can leave them out. A verb that prints its text some
+    other way before it stops, as a declined reset does, calls this itself.
+    """
+    hints = render_hints(document.results)
+    return "\n".join([text, *hints]) if hints else text
+
+
 def render_json(document: RunDocument) -> str:
     """Render a run document as the ``--output json`` contract document."""
     return json.dumps(document.to_dict(), cls=RedactingJSONEncoder, indent=2)
@@ -215,10 +226,7 @@ class Emitter:
         if self.is_json:
             print(render_json(document), file=self._out())
             return
-        # The hints for `results[].error`, added here rather than by each verb,
-        # for the reason colour is gated here: no verb can forget them (#912).
-        hints = render_hints(document.results)
-        self.emit_text("\n".join([text, *hints]) if hints else text)
+        self.emit_text(with_hints(document, text))
 
     def event(
         self,

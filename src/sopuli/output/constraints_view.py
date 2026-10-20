@@ -59,7 +59,7 @@ def build_constraints(
     ``errors`` is why each unreachable target did not answer, by target name. It
     is passed beside ``found`` rather than kept on it, because
     :mod:`sopuli.constraints` is a pure layer and an error is what a connection
-    produced (#910).
+    produced.
     """
     if found.source == UNREAD:
         return None
@@ -113,7 +113,7 @@ def _unanswered(target: str, error: Error | None) -> dict[str, Any]:
     """One target that did not answer, with the reason where the run has one.
 
     The reason is the server's code and message. Without it, a wrong admin
-    account and a listener that is down read the same (#910).
+    account and a listener that is down read the same.
     """
     entry: dict[str, Any] = {"target": target, "reachable": False}
     if error is not None:
@@ -156,7 +156,7 @@ def render_constraints(found: Constraints, errors: Mapping[str, Error] = _NO_ERR
     Under the line, each target that did not answer gets a line with its
     message, and each distinct hint is printed once, under the first target
     that raised it. The fallback is legitimate, but the reason is the
-    operator's to fix (#910).
+    operator's to fix.
     """
     if found.source == UNREAD:
         return None

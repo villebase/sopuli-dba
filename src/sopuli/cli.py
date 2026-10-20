@@ -1139,6 +1139,9 @@ def _as_error(error: Exception) -> Error:
     # and a client one carries whatever `oracledb` said -- which runs to
     # several lines including a documentation link. A survey puts one line per
     # target beside a table, so the rest belongs in the hint where it already is.
+    # The trim also keeps a password verify function's own message, which is on
+    # the second line of an ORA-28003 and can quote part of the password, out of
+    # every run's `error.message`. Joining the lines would undo that.
     message = getattr(error, "message", None) or str(error)
     # `"".splitlines()` is `[]`, so indexing it raises on an exception carrying no
     # message -- `Exception()`, or a vendor client raising a bare class. Reachable

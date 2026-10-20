@@ -2493,3 +2493,30 @@ the register.
   - SYSDBA for the read-only verbs only, refused at plan time for a verb that
     changes something. No rotation is attributed to `SYS`, but it costs most of
     the option above, and `SYSTEM` already gives a trial in a PDB without it.
+
+## #792
+
+- **Decided:** 2026-10-20, #792
+- **Question:** The `ORA-28003` hint said the server message carries an
+  `ORA-20000` naming the broken rule. A per-target error keeps only the first
+  line of the message, and the `ORA-20000` is on the second, so text and JSON
+  showed the hint and dropped the line it pointed at. Should the hint change, or
+  should the line be kept?
+- **Decision:** Change the hint. It now says where the verify function's own
+  message is: above the hint when the error ends the run, and under `--debug`
+  otherwise. It also says not to share that output, because the message can
+  quote part of the password. A per-target `error.message` still keeps the
+  first line only.
+- **Why:** the verify function is site-written PL/SQL that receives the
+  password. The driver masks the exact value (#786), and a function that quotes
+  part of it is not caught. Today that partial quote reaches `--debug` output,
+  which an operator asks for, and stderr when a driver error ends the run. It
+  does not reach `error.message`. Keeping the line would put it in
+  `error.message` on every run, in the JSON a scheduler stores and ships.
+  The first-line trim in `cli._as_error` exists for table layout, and its
+  comment now says it also does this job.
+- **Rejected:**
+  - Keep the `ORA-20000` line in a policy error's message. The reader sees
+    which rule failed without a second run, but a partial quote then reaches
+    every run's output. That loosens invariant 2's guard on what leaves the
+    process.

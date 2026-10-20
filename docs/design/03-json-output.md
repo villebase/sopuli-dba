@@ -2099,7 +2099,11 @@ These consequences show in the schema:
   inside the `ORA-28003`. So the Oracle driver replaces the password with `***` in
   the message of any error from a statement that carried one. It replaces the
   exact value only: a function that quotes part of the value, or the value
-  changed, is not caught ([#786](../decisions/log.md#786)).
+  changed, is not caught ([#786](../decisions/log.md#786)). A per-target
+  `error.message` keeps only the first line of the server's message, so the
+  `ORA-20000` line reaches the output only under `--debug`, and when a driver
+  error ends the run. The `ORA-28003` hint says so
+  ([#792](../decisions/log.md#792)).
 - `error.message`, a `diagnostic.message` and the `sopuli:` line on stderr also
   carry the message of an exception that a library raised, when the tool did
   not convert it. Code that passes a `Secret`, or bytes read as one, to a

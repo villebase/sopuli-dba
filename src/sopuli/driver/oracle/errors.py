@@ -123,9 +123,14 @@ RULES: dict[str, _Rule] = {
     "ORA-28003": _Rule(
         PASSWORD_REJECTED,
         "policy",
+        # The verify function's own ORA-20000, which names the broken rule, is
+        # on the message's second line. Per-target output keeps the first line
+        # only, because the function can quote part of the password and only
+        # the exact value is masked, so the hint says where the line is shown.
         hint=(
             "the profile's password verify function refused this candidate; draw another. "
-            "The server message usually carries an ORA-20000 saying which rule was broken"
+            "Run with --debug to see the function's own message, which usually says which "
+            "rule was broken; it can quote part of the password, so do not share it"
         ),
     ),
     "ORA-28007": _Rule(

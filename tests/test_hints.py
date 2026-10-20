@@ -25,8 +25,10 @@ REFUSED = {
 }
 
 
-def _result(account: str, error: dict[str, Any] | None = None) -> dict[str, Any]:
-    entry: dict[str, Any] = {"account": account, "target": "free-pdb", "state": "ERROR"}
+def _result(
+    account: str, error: dict[str, Any] | None = None, *, target: str = "free-pdb"
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {"account": account, "target": target, "state": "ERROR"}
     if error is not None:
         entry["error"] = error
     return entry
@@ -37,12 +39,25 @@ def _plain(lines: list[str]) -> list[str]:
     return [click.unstyle(line) for line in lines]
 
 
-def test_a_hint_is_printed_once_with_its_code() -> None:
+def test_a_hint_is_printed_once_with_its_code_and_target() -> None:
     lines = _plain(
         render_hints([_result("acme_app_user", REFUSED), _result("acme_batch_user", REFUSED)])
     )
 
-    assert lines == ["", "1 hint:", "  ORA-28009: point the target's admin at the service account"]
+    assert lines == [
+        "",
+        "1 hint:",
+        "  ORA-28009 on free-pdb: point the target's admin at the service account",
+    ]
+
+
+def test_every_target_a_hint_was_raised_on_is_named() -> None:
+    """Some tables show a state and not the error, so the hint says which rows."""
+    results = [_result("a", REFUSED), _result("b", REFUSED, target="billing-pdb")]
+
+    assert _plain(render_hints(results))[2] == (
+        "  ORA-28009 on free-pdb, billing-pdb: point the target's admin at the service account"
+    )
 
 
 def test_distinct_hints_keep_the_order_they_were_raised_in() -> None:
@@ -52,8 +67,8 @@ def test_distinct_hints_keep_the_order_they_were_raised_in() -> None:
 
     assert lines[1] == "2 hints:"
     assert lines[2:] == [
-        "  ORA-28009: point the target's admin at the service account",
-        "  set the variable",
+        "  ORA-28009 on free-pdb: point the target's admin at the service account",
+        "  free-pdb: set the variable",
     ]
 
 
@@ -66,13 +81,17 @@ def test_two_codes_that_share_a_hint_are_both_named() -> None:
 
     lines = _plain(render_hints([_result("a", reused), _result("b", rejected)]))
 
-    assert lines[1:] == ["1 hint:", f"  ORA-28007, ORA-28003: {shared}"]
+    assert lines[1:] == ["1 hint:", f"  ORA-28007, ORA-28003 on free-pdb: {shared}"]
 
 
-def test_every_line_of_a_hint_is_indented() -> None:
+def test_a_hints_later_lines_are_indented_further_than_its_first() -> None:
+    """Otherwise a hint of two lines reads as two hints."""
     long = {"category": "config", "message": "m", "code": "X-1", "hint": "first\nsecond"}
 
-    assert _plain(render_hints([_result("a", long)]))[2:] == ["  X-1: first", "  second"]
+    assert _plain(render_hints([_result("a", long)]))[2:] == [
+        "  X-1 on free-pdb: first",
+        "    second",
+    ]
 
 
 def test_a_run_with_no_hint_adds_nothing() -> None:
@@ -102,7 +121,7 @@ def test_the_emitter_adds_the_hints_under_the_verbs_text() -> None:
         "nothing changed, 1 not confirmed",
         "",
         "1 hint:",
-        "  ORA-28009: point the target's admin at the service account",
+        "  ORA-28009 on free-pdb: point the target's admin at the service account",
     ]
 
 

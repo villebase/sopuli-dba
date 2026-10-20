@@ -29,30 +29,41 @@ def render_hints(results: Sequence[Mapping[str, Any]] | None) -> list[str]:
 
     A table cannot hold a second sentence, so the hints go under the run, as
     the notes do. Each distinct hint is printed once, after every code that
-    raised it: twenty accounts on one target refused for one reason need one
-    hint, not twenty. Two codes can share a hint, so the line names both rather
-    than suggesting only the first one happened.
+    raised it and the targets it was raised on: twenty accounts on one target
+    refused for one reason need one hint, not twenty. Two codes can share a
+    hint, so the line names both rather than suggesting only the first one
+    happened. The targets are named because some tables show a state and not
+    the error, and a reader has to be able to tell which rows a hint is for.
+
+    A hint's later lines are indented further than its first, so a hint of
+    several lines does not read as several hints.
 
     Empty where no result carries a hint, so a run with nothing to fix prints
     nothing more.
     """
-    found: dict[str, list[str]] = {}
+    found: dict[str, tuple[list[str], list[str]]] = {}
     for result in results or ():
         error = result.get("error") or {}
         hint = error.get("hint")
         if not hint:
             continue
-        codes = found.setdefault(hint, [])
+        codes, targets = found.setdefault(hint, ([], []))
         code = error.get("code")
         if code and code not in codes:
             codes.append(code)
+        target = result.get("target")
+        if target and target not in targets:
+            targets.append(target)
     if not found:
         return []
     body: list[str] = []
-    for hint, codes in found.items():
+    for hint, (codes, targets) in found.items():
         first, *rest = hint.splitlines()
-        body.append(f"  {', '.join(codes)}: {first}" if codes else f"  {first}")
-        body.extend(f"  {line}" for line in rest)
+        where = ", ".join(codes)
+        if targets:
+            where = f"{where} on {', '.join(targets)}" if where else ", ".join(targets)
+        body.append(f"  {where}: {first}" if where else f"  {first}")
+        body.extend(f"    {line}" for line in rest)
     count = "1 hint" if len(found) == 1 else f"{len(found)} hints"
     return ["", paint(f"{count}:", Role.NOTABLE), *body]
 

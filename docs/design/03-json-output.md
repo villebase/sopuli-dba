@@ -60,18 +60,25 @@ A result's `error.hint` says what to do next. In text output a verb's table
 carries the error's message, if it shows the error at all, and a column cannot
 hold a second sentence. So the emitter prints the hints under the verb's text,
 in a block like the notes: each distinct hint once, after every code that raised
-it. The emitter adds them, not each verb, so no verb can leave them out. A
-declined `account reset-password` prints its table before it stops, and adds
-the hints there too.
+it and the targets it was raised on. Some tables show a state and not the error,
+so the targets say which rows a hint is for. The emitter adds them, not each
+verb, so no verb can leave them out. A declined `account reset-password` prints
+its table before it stops, and adds the hints there too.
 
 ```
+$ sopuli --config sys.yaml creds apply
+...
+ACCOUNT          TARGET    STATE  DETAIL
+acme_app_user    free-pdb  ERROR  ORA-28009: connection as SYS should be as SYSDBA or SYSOPER
+acme_batch_user  free-pdb  ERROR  ORA-28009: connection as SYS should be as SYSDBA or SYSOPER
+
 nothing changed, 2 not confirmed
 
 1 hint:
-  ORA-28009: SYS logs on only as SYSDBA or SYSOPER, and sopuli connects as an ordinary account. Point the target's admin at the service account that sql/oracle/00_install.sql creates. For a trial in a PDB, SYSTEM connects with no setup; it holds far more than the tool needs, so do not keep it
+  ORA-28009 on free-pdb: SYS logs on only as SYSDBA or SYSOPER, and sopuli connects as an ordinary account. Point the target's admin at the service account that sql/oracle/00_install.sql creates. For a trial in a PDB, SYSTEM connects with no setup; it holds far more than the tool needs, so do not keep it
 ```
 
-This is the end of `creds apply` with `SYS` as the admin account.
+`sys.yaml` names `SYS` as the target's admin account.
 
 ### Colour
 

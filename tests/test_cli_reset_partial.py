@@ -730,7 +730,7 @@ def test_a_declined_prompt_prints_the_hint_of_a_target_that_failed_before_it(
     result = _run(runner, write_config(TWO_TARGETS), input="n\n")
 
     assert result.exit_code == ExitCode.ABORTED, result.output
-    assert "ORA-28009: use the svc" in result.stdout
+    assert f"ORA-28009 on {TARGET}: use the svc" in result.stdout
 
 
 class Remembering(Succeeding):

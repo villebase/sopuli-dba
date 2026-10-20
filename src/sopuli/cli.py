@@ -5126,8 +5126,8 @@ def creds_generate(
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
 
     supplied = _password_from_stdin() if from_stdin else None
-    limits = _constraints_for(bindings, run, config, offline=offline)
-    document.constraints = build_constraints(limits)
+    limits, unanswered = _constraints_for(bindings, run, config, offline=offline)
+    document.constraints = build_constraints(limits, unanswered)
     notices = constraint_diagnostics(limits, supplied=supplied is not None)
     document.diagnostics.extend(notices)
     if document.constraints is not None:
@@ -5183,7 +5183,7 @@ def creds_generate(
     # in JSON is reported to nobody who ran this by hand. The same block `check`
     # and `config validate` print, for the same reason: a warning that cannot be
     # seen in the default output is not surfaced.
-    read = render_constraints(limits)
+    read = render_constraints(limits, unanswered)
     lines = [render_plan(plan, noun="generation"), ""]
     if read is not None:
         # `SOPULI-W015` is deliberately not among them: the line above already
@@ -5332,8 +5332,9 @@ def _constraints_for(
     config: Config,
     *,
     offline: bool,
-) -> Constraints:
-    """What the selected targets say a password may be (UC-1 §4 step 2).
+) -> tuple[Constraints, dict[str, Error]]:
+    """What the selected targets say a password may be (UC-1 §4 step 2), and why
+    each target that did not answer did not.
 
     **One connection per target, not per account** (§4 step 2). A selection
     routinely puts several accounts on one database, so each distinct target is
@@ -5345,31 +5346,35 @@ def _constraints_for(
     to the policy's declared limits and say so. That is why this catches broadly
     -- a listener that is down, a credential that is wrong, a driver that is not
     installed and a wallet that cannot be read are all the same thing to a
-    command that is not going to write to a database either way.
+    command that is not going to write to a database either way. The error is
+    kept all the same, and reported beside the fallback: the fallback is the
+    run's to take, and the reason is the operator's to fix (#910).
 
     `--dry-run` still reads. The plan is a claim about what would be staged, and
     a preview that skipped the constraint would be previewing a different draw
     from the one the real run makes.
     """
     if offline:
-        return Constraints(source=constraint_source.UNREAD)
+        return Constraints(source=constraint_source.UNREAD), {}
 
     readings: list[tuple[str, ByteLimit]] = []
     accounts: list[tuple[str, AccountConstraints]] = []
-    unreachable: list[str] = []
+    errors: dict[str, Error] = {}
     for name in dict.fromkeys(binding.target for binding in bindings):
         session = None
         try:
             session = _open_session(_expanded(config, name), run, config)
             readings.append((name, session.byte_limit()))
             accounts.extend(_profile_readings(session, name, bindings))
-        except Exception:  # noqa: BLE001 -- every failure is the same caveat
-            unreachable.append(name)
+        except Exception as error:  # noqa: BLE001 -- every failure takes the same fallback
+            # The fallback is the same for every failure; the reason is kept.
+            errors[name] = _finding(error)
         finally:
             if session is not None:
                 with suppress(Exception):
                     session.close()
-    return constraint_source.survey(readings, unreachable=unreachable, accounts=accounts)
+    found = constraint_source.survey(readings, unreachable=list(errors), accounts=accounts)
+    return found, errors
 
 
 def _profile_readings(

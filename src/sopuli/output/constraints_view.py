@@ -30,15 +30,24 @@ themselves as warnings with codes of their own (`SOPULI-W015`, `SOPULI-W016`,
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from sopuli.constraints import NAMED, POLICY, UNREAD, AccountConstraints, Constraints
+from sopuli.output.document import Error
 from sopuli.passwords import ByteLimit
 
 __all__ = ["build_constraints", "render_constraints"]
 
+#: No reasons: the default for a caller that has none, read-only so that a
+#: shared default cannot be changed.
+_NO_ERRORS: Mapping[str, Error] = MappingProxyType({})
 
-def build_constraints(found: Constraints) -> dict[str, Any] | None:
+
+def build_constraints(
+    found: Constraints, errors: Mapping[str, Error] = _NO_ERRORS
+) -> dict[str, Any] | None:
     """The ``constraints`` section, or ``None`` where nothing was asked.
 
     ``None`` for ``--offline`` alone. The document omits the section entirely
@@ -46,6 +55,11 @@ def build_constraints(found: Constraints) -> dict[str, Any] | None:
     run declined to consult the estate, and an empty section would say it
     consulted one and learned nothing -- which is
     :data:`~sopuli.constraints.POLICY`, a different run.
+
+    ``errors`` is why each unreachable target did not answer, by target name. It
+    is passed beside ``found`` rather than kept on it, because
+    :mod:`sopuli.constraints` is a pure layer and an error is what a connection
+    produced (#910).
     """
     if found.source == UNREAD:
         return None
@@ -64,7 +78,7 @@ def build_constraints(found: Constraints) -> dict[str, Any] | None:
         section["strictest_target"] = found.strictest_target
     section["targets"] = [
         *(_answered(target, limit) for target, limit in found.readings),
-        *({"target": target, "reachable": False} for target in found.unreachable),
+        *(_unanswered(target, errors.get(target)) for target in found.unreachable),
     ]
     accounts = [_account(target, one) for target, one in found.accounts]
     if accounts:
@@ -95,6 +109,18 @@ def _answered(target: str, limit: ByteLimit) -> dict[str, Any]:
     return entry
 
 
+def _unanswered(target: str, error: Error | None) -> dict[str, Any]:
+    """One target that did not answer, with the reason where the run has one.
+
+    The reason is the server's code and message. Without it, a wrong admin
+    account and a listener that is down read the same (#910).
+    """
+    entry: dict[str, Any] = {"target": target, "reachable": False}
+    if error is not None:
+        entry["error"] = error.to_dict()
+    return entry
+
+
 def _account(target: str, one: AccountConstraints) -> dict[str, Any]:
     """One account's profile constraints, none of which gate anything.
 
@@ -119,27 +145,53 @@ def _account(target: str, one: AccountConstraints) -> dict[str, Any]:
     return entry
 
 
-def render_constraints(found: Constraints) -> str | None:
+def render_constraints(found: Constraints, errors: Mapping[str, Error] = _NO_ERRORS) -> str | None:
     """One line saying what bound the draw, or ``None`` where there is nothing to say.
 
     Deliberately a line and not a table. The section carries a row per target and
     a row per account; what an operator reading a terminal needs before they look
     at the write table is which of §4's two answers this run got, and the
     caveats print themselves as warnings.
+
+    Under the line, each target that did not answer gets a line with its
+    message, and each distinct hint is printed once, under the first target
+    that raised it. The fallback is legitimate, but the reason is the
+    operator's to fix (#910).
     """
     if found.source == UNREAD:
         return None
     if found.source == POLICY:
-        return (
+        line = (
             "constraints: no target answered ("
             + ", ".join(found.unreachable)
             + "); the policy's declared length governs"
         )
+        return _with_reasons(line, found.unreachable, errors)
     limit = found.drawing_limit
     if limit is None:  # pragma: no cover - `source` is TARGETS only with readings
         return None
     where = found.strictest_target or ", ".join(found.read)
     line = f"constraints: {limit.max_bytes} bytes in {limit.described}, from {where}"
     if found.partial:
-        return line + "; not read from " + ", ".join(found.unreachable)
+        line += "; not read from " + ", ".join(found.unreachable)
+        return _with_reasons(line, found.unreachable, errors)
     return line
+
+
+def _with_reasons(line: str, unreachable: tuple[str, ...], errors: Mapping[str, Error]) -> str:
+    """The line, then the message of each target that did not answer.
+
+    Each hint once: twenty targets with the same wrong admin account need one
+    hint, not twenty.
+    """
+    lines = [line]
+    hinted: set[str] = set()
+    for target in unreachable:
+        error = errors.get(target)
+        if error is None:
+            continue
+        lines.append(f"  {target}: {error.message}")
+        if error.hint is not None and error.hint not in hinted:
+            hinted.add(error.hint)
+            lines.append(f"    hint: {error.hint}")
+    return "\n".join(lines)

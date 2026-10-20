@@ -1011,7 +1011,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.46 0 {'total': 2, 'ok': 2, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 2}}
+1.47 0 {'total': 2, 'ok': 2, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 2}}
 ```
 
 No field holds a password. Every exit code except 2 produces a document.
@@ -1022,9 +1022,9 @@ it. The last event carries the summary and the exit code:
 
 ```
 $ sopuli --config sopuli.yaml creds check --output jsonl
-{"schema_version":"1.8","event":"run.started","seq":0,"ts":"2026-10-11T17:43:54.109387Z","correlation_id":"10f83e0a-6d89-4b63-b2b2-d6e294e08c5e","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.9","event":"run.started","seq":0,"ts":"2026-10-20T15:41:40.845196Z","correlation_id":"91367fe6-e68d-4731-8e90-85157ff0bbd1","data":{"command":"creds.check","dry_run":false}}
 ...
-{"schema_version":"1.8","event":"run.finished","seq":6,"ts":"2026-10-11T17:43:55.487705Z","correlation_id":"10f83e0a-6d89-4b63-b2b2-d6e294e08c5e","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
+{"schema_version":"1.9","event":"run.finished","seq":6,"ts":"2026-10-20T15:41:42.338921Z","correlation_id":"91367fe6-e68d-4731-8e90-85157ff0bbd1","data":{"summary":{"total":2,"ok":2,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":2}},"exit_code":0}}
 ```
 
 Other commands refuse it:

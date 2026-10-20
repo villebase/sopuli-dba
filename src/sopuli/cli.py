@@ -194,6 +194,7 @@ from sopuli.invocation import (
     check_vault_token,
     global_options,
     group_options,
+    show_warnings,
 )
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
@@ -244,7 +245,7 @@ from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
-from sopuli.output.emit import Emitter, echo_err, with_hints
+from sopuli.output.emit import Emitter, echo_err, with_findings
 from sopuli.output.expire_view import build_result as build_expire_result
 from sopuli.output.expire_view import render as render_expire
 from sopuli.output.expire_view import summarise as summarise_expire
@@ -2269,8 +2270,10 @@ def account_reset_password(
         # every other path: a target that failed before the prompt was declined
         # still says what to do.
         text = "\n\n".join(part for part in (header, body, told, shown) if part)
-        emitter.emit_text(with_hints(document, text))
+        # Marked first: a write that fails part way must not have the abort
+        # handler print the warnings a second time.
         document.warnings_shown = True
+        emitter.emit_text(with_findings(document, text))
         raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
 
@@ -4056,11 +4059,16 @@ def _show_plan(plan: Any, run: Invocation, *, noun: str) -> None:
     and the operator needs the plan before the first of them, not twice. The
     text :func:`_record_plan` kept is printed, so the prompt and a failure show
     the same plan; ``noun`` renders it only for a verb that recorded none.
+
+    The config's warnings follow the plan (#897), because W051 can say the run
+    is about to write to another vault, and the answer is given before the
+    text that would carry them is printed.
     """
     if run.document.plan_shown:
         return
     _echo_err(run.document.plan_text or render_plan(plan, noun=noun), run=run)
     run.document.plan_shown = True
+    show_warnings(run)
 
 
 def _asks_environments(plan: Any, run: Invocation) -> bool:
@@ -4256,7 +4264,7 @@ def config_validate(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    return render_validation(paths, config, [warning.message for warning in warnings])
+    return render_validation(paths, config, warnings=len(document.warnings_text))
 
 
 def main() -> None:

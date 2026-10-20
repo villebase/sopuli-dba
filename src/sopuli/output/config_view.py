@@ -159,9 +159,7 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
     return "\n".join(lines)
 
 
-def render_validation(
-    paths: Sequence[Path], config: Config, extra_warnings: Sequence[str] = ()
-) -> str:
+def render_validation(paths: Sequence[Path], config: Config, *, warnings: int) -> str:
     """The human view of ``config validate`` -- what was read, and what it holds.
 
     Deliberately short. A validation that passed has nothing to show, and the
@@ -177,9 +175,10 @@ def render_validation(
     a charset a target may not support -- and a summary line would be the wrong
     place to meet one.
 
-    ``extra_warnings`` are findings the *config layer* could not make, because
-    making them is not pure: a configured-but-uninstalled backend (ADR-006, E4)
-    is a fact about this machine rather than about the file, and
+    ``warnings`` is the number the emitter prints, so the count and the block
+    come from one list. It includes findings the *config layer* could not make,
+    because making them is not pure: a configured-but-uninstalled backend
+    (ADR-006, E4) is a fact about this machine rather than about the file, and
     ``04-testing.md`` §4 keeps the config layer free of anything that has to look
     outside the document. They are counted and printed exactly like the file's
     own, because to the person reading the output the distinction is ours and
@@ -194,7 +193,7 @@ def render_validation(
             (
                 _count(len(config.expanded_targets), "target"),
                 _count(len(config.bindings), "binding"),
-                _count(len(config.warnings) + len(extra_warnings), "warning"),
+                _count(warnings, "warning"),
             )
         )
     )

@@ -92,7 +92,7 @@ def echo_err(text: str, *, color_choice: ColorChoice) -> None:
     click.echo(printable(text, colour=colour), err=True, color=colour)
 
 
-def with_hints(document: RunDocument, text: str) -> str:
+def with_findings(document: RunDocument, text: str) -> str:
     """A verb's text, with the config's warnings and the hints for
     ``results[].error`` under it.
 
@@ -227,7 +227,7 @@ class Emitter:
         if self.is_json:
             print(render_json(document), file=self._out())
             return
-        self.emit_text(with_hints(document, text))
+        self.emit_text(with_findings(document, text))
 
     def event(
         self,

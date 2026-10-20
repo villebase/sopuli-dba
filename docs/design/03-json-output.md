@@ -71,10 +71,14 @@ The configuration's warnings (`01-configuration.md` §10) are in `diagnostics[]`
 on every verb that loads the file. In text output the emitter prints them under
 the verb's text, before the hints, in the same kind of block. The config verbs
 do not print a copy of their own. `config validate` also counts them in its
-summary line, and prints the install warnings in the same block. A run that
-stops on an error prints no text of its own, so the warnings go to stderr before
-the error line. The warning can be the reason for the error: `SOPULI-W051` says
-the run went to a vault other than the one the file names.
+summary line, and prints the install warnings in the same block.
+
+Two moments come before the verb's text, and the warnings go to stderr at
+each, once per run. Before a confirmation prompt they follow the plan, so the
+operator reads them before answering. A run that stops on an error prints no
+text of its own, so they go before the error line. The warning can be the
+reason for the error: `SOPULI-W051` says the run went to a vault other than the
+one the file names.
 
 ```
 $ VAULT_ADDR=http://127.0.0.1:8399 sopuli --config sopuli.yaml lock status

@@ -35,11 +35,7 @@ def render_warnings(warnings: Sequence[str]) -> list[str]:
 
     Empty when there are none.
     """
-    if not warnings:
-        return []
-    body = [f"  {line}" for warning in warnings for line in warning.splitlines()]
-    count = "1 warning" if len(warnings) == 1 else f"{len(warnings)} warnings"
-    return ["", paint(f"{count}:", Role.NOTABLE), *body]
+    return _block(warnings, "warning")
 
 
 def render_hints(results: Sequence[Mapping[str, Any]] | None) -> list[str]:
@@ -93,13 +89,18 @@ def render_notices(notices: Sequence[str]) -> list[str]:
     can see in the default output is not surfaced, and `results[].warnings[]`
     alone does not show one to a person reading a terminal.
 
-    The same block `config validate` prints under its summary, and deliberately
-    the same words: an operator who has read one of these has read all of them.
+    The same block the config's warnings are printed in, and deliberately the
+    same words: an operator who has read one of these has read all of them.
     Empty for the ordinary run, so nothing is added to the output that says
     nothing.
     """
-    if not notices:
+    return _block(notices, "note")
+
+
+def _block(entries: Sequence[str], noun: str) -> list[str]:
+    """A counted heading and an indented line per line of each entry."""
+    if not entries:
         return []
-    body = [f"  {line}" for notice in notices for line in notice.splitlines()]
-    count = "1 note" if len(notices) == 1 else f"{len(notices)} notes"
+    body = [f"  {line}" for entry in entries for line in entry.splitlines()]
+    count = f"1 {noun}" if len(entries) == 1 else f"{len(entries)} {noun}s"
     return ["", paint(f"{count}:", Role.NOTABLE), *body]

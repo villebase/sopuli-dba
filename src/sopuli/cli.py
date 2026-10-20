@@ -5366,7 +5366,8 @@ def _constraints_for(
             session = _open_session(_expanded(config, name), run, config)
             readings.append((name, session.byte_limit()))
             accounts.extend(_profile_readings(session, name, bindings))
-        except Exception as error:  # noqa: BLE001 -- every failure is the same caveat
+        except Exception as error:  # noqa: BLE001 -- every failure takes the same fallback
+            # The fallback is the same for every failure; the reason is kept.
             errors[name] = _finding(error)
         finally:
             if session is not None:

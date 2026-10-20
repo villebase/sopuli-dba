@@ -31,6 +31,7 @@ themselves as warnings with codes of their own (`SOPULI-W015`, `SOPULI-W016`,
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from sopuli.constraints import NAMED, POLICY, UNREAD, AccountConstraints, Constraints
@@ -39,9 +40,13 @@ from sopuli.passwords import ByteLimit
 
 __all__ = ["build_constraints", "render_constraints"]
 
+#: No reasons: the default for a caller that has none, read-only so that a
+#: shared default cannot be changed.
+_NO_ERRORS: Mapping[str, Error] = MappingProxyType({})
+
 
 def build_constraints(
-    found: Constraints, errors: Mapping[str, Error] | None = None
+    found: Constraints, errors: Mapping[str, Error] = _NO_ERRORS
 ) -> dict[str, Any] | None:
     """The ``constraints`` section, or ``None`` where nothing was asked.
 
@@ -73,7 +78,7 @@ def build_constraints(
         section["strictest_target"] = found.strictest_target
     section["targets"] = [
         *(_answered(target, limit) for target, limit in found.readings),
-        *(_unanswered(target, (errors or {}).get(target)) for target in found.unreachable),
+        *(_unanswered(target, errors.get(target)) for target in found.unreachable),
     ]
     accounts = [_account(target, one) for target, one in found.accounts]
     if accounts:
@@ -140,7 +145,7 @@ def _account(target: str, one: AccountConstraints) -> dict[str, Any]:
     return entry
 
 
-def render_constraints(found: Constraints, errors: Mapping[str, Error] | None = None) -> str | None:
+def render_constraints(found: Constraints, errors: Mapping[str, Error] = _NO_ERRORS) -> str | None:
     """One line saying what bound the draw, or ``None`` where there is nothing to say.
 
     Deliberately a line and not a table. The section carries a row per target and
@@ -148,9 +153,10 @@ def render_constraints(found: Constraints, errors: Mapping[str, Error] | None = 
     at the write table is which of §4's two answers this run got, and the
     caveats print themselves as warnings.
 
-    Under the line, each target that did not answer gets its reason and hint,
-    the way `doctor` prints a target it could not reach. The fallback is
-    legitimate, but the reason is the operator's to fix (#910).
+    Under the line, each target that did not answer gets a line with its
+    message, and each distinct hint is printed once, under the first target
+    that raised it. The fallback is legitimate, but the reason is the
+    operator's to fix (#910).
     """
     if found.source == UNREAD:
         return None
@@ -172,16 +178,20 @@ def render_constraints(found: Constraints, errors: Mapping[str, Error] | None = 
     return line
 
 
-def _with_reasons(
-    line: str, unreachable: tuple[str, ...], errors: Mapping[str, Error] | None
-) -> str:
-    """The line, then the message and hint of each target that did not answer."""
+def _with_reasons(line: str, unreachable: tuple[str, ...], errors: Mapping[str, Error]) -> str:
+    """The line, then the message of each target that did not answer.
+
+    Each hint once: twenty targets with the same wrong admin account need one
+    hint, not twenty.
+    """
     lines = [line]
+    hinted: set[str] = set()
     for target in unreachable:
-        error = (errors or {}).get(target)
+        error = errors.get(target)
         if error is None:
             continue
         lines.append(f"  {target}: {error.message}")
-        if error.hint is not None:
+        if error.hint is not None and error.hint not in hinted:
+            hinted.add(error.hint)
             lines.append(f"    hint: {error.hint}")
     return "\n".join(lines)

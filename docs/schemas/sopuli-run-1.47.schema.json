@@ -2079,6 +2079,20 @@
           "type": "string",
           "description": "The codec the byte count was measured in, which the character set does not always imply: an unmapped character set falls back to `ascii` deliberately, which refuses a non-ASCII password rather than guessing its width. A reader whose database refuses one wants to see that here rather than deduce it."
         }
+      },
+      "if": {
+        "properties": {
+          "reachable": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "error"
+          ]
+        }
       }
     },
     "account_constraint": {

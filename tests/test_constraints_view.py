@@ -246,6 +246,28 @@ def test_a_partly_read_estate_gives_the_missing_targets_reason() -> None:
     assert lines[1] == "  beta: ORA-28009: connection as SYS should be as SYSDBA or SYSOPER"
 
 
+def test_a_hint_two_targets_share_is_printed_once() -> None:
+    line = render_constraints(
+        survey([], unreachable=("alpha", "beta")), {"alpha": REFUSED, "beta": REFUSED}
+    )
+
+    assert line is not None
+    assert line.count("hint: ") == 1
+    assert "  beta: ORA-28009" in line
+
+
+def test_the_schema_refuses_an_error_on_a_target_that_answered(
+    validator: Draft202012Validator,
+) -> None:
+    document = RunDocument.start("creds.generate")
+    section = _section(survey([("alpha", MODERN)]))
+    section["targets"][0]["error"] = REFUSED.to_dict()
+    document.constraints = section
+    document.finish(0, Summary(total=1, ok=1, changed=1))
+
+    assert not validator.is_valid(document.to_dict())
+
+
 def test_offline_prints_no_line() -> None:
     """Repeating a flag back at the person who typed it is not reporting."""
     assert render_constraints(Constraints()) is None

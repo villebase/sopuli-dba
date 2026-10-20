@@ -7,7 +7,7 @@ for text output that keep it consistent with both.
 published schemas.
 
 Schemas: [`../schemas/sopuli-run-1.47.schema.json`](../schemas/sopuli-run-1.47.schema.json),
-[`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
+[`../schemas/sopuli-event-1.9.schema.json`](../schemas/sopuli-event-1.9.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)

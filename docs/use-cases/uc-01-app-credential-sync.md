@@ -1357,7 +1357,7 @@ window answers "did the old password stop working just now".
 
 | Error | Meaning | Tool behaviour |
 |---|---|---|
-| ORA-28003 | password verify function rejected it | `apply` redraws (bounded), keeps the server message with the password replaced by `***` ([#786](../decisions/log.md#786)). Per-target output keeps the first line; the function's own `ORA-20000` shows under `--debug`, and the hint says so ([#792](../decisions/log.md#792)) |
+| ORA-28003 | password verify function rejected it | `apply` redraws (bounded). A per-target error keeps the first line of the server message, with the password replaced by `***` ([#786](../decisions/log.md#786)). The function's own `ORA-20000` is on the second line: it shows under `--debug`, and when the error ends the run, and the hint says so ([#792](../decisions/log.md#792)) |
 | ORA-28007 | password cannot be reused | `apply` redraws; never retries the same value |
 | ORA-01017 | invalid credentials | verification failure → drift, not a crash |
 | ORA-28000 | account locked | report `LOCKED`; unlock only where the policy declares it (§5) |

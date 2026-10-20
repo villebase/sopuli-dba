@@ -2502,15 +2502,19 @@ the register.
   line of the message, and the `ORA-20000` is on the second, so text and JSON
   showed the hint and dropped the line it pointed at. Should the hint change, or
   should the line be kept?
-- **Decision:** Change the hint. It now says to run with `--debug` to see the
-  verify function's own message, and not to share that output, because the
-  message can quote part of the password. A per-target `error.message` still
-  keeps the first line only.
+- **Decision:** Change the hint. It now says where the verify function's own
+  message is: above the hint when the error ends the run, and under `--debug`
+  otherwise. It also says not to share that output, because the message can
+  quote part of the password. A per-target `error.message` still keeps the
+  first line only.
 - **Why:** the verify function is site-written PL/SQL that receives the
   password. The driver masks the exact value (#786), and a function that quotes
-  part of it is not caught. Today that partial quote reaches only `--debug`
-  output, which an operator asks for. Keeping the line would put it in
+  part of it is not caught. Today that partial quote reaches `--debug` output,
+  which an operator asks for, and stderr when a driver error ends the run. It
+  does not reach `error.message`. Keeping the line would put it in
   `error.message` on every run, in the JSON a scheduler stores and ships.
+  The first-line trim in `cli._as_error` exists for table layout, and its
+  comment now says it also does this job.
 - **Rejected:**
   - Keep the `ORA-20000` line in a policy error's message. The reader sees
     which rule failed without a second run, but a partial quote then reaches

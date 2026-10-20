@@ -143,8 +143,8 @@ def test_a_refused_password_means_draw_another_and_never_resend(code: str, kind:
 
 def test_a_verify_function_refusal_says_where_its_own_message_is() -> None:
     """The function's ORA-20000 is on the message's second line, which per-target
-    output drops, so the hint sends the reader to `--debug` -- and warns that the
-    line can quote part of the password."""
+    output drops, so the hint says where it is -- above, when the error ends the
+    run, or under `--debug` -- and warns that it can quote part of the password."""
     hint = classify("ORA-28003", "refused").hint
 
     assert hint is not None

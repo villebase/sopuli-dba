@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.46.schema.json`](../schemas/sopuli-run-1.46.schema.json),
+Schemas: [`../schemas/sopuli-run-1.47.schema.json`](../schemas/sopuli-run-1.47.schema.json),
 [`../schemas/sopuli-event-1.8.schema.json`](../schemas/sopuli-event-1.8.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1561,6 +1561,13 @@ look" are answers a report must never merge. Absence is the third value.
 **It is present even when nothing answered**, as `install` is and `wallet` is
 not. The section is evidence that the estate was consulted, and one that appeared
 only when something was wrong could never be quoted as proof that nothing was.
+
+**A target that did not answer carries its `error`**, as an unreachable target in
+`targets[]` does: the category, the server's code and message, and the hint.
+The fallback to the policy is the run's to take, but the reason is the
+operator's to fix, and a wrong admin account and a listener that is down need
+different fixes. The text output prints the message and the hint under the
+`constraints:` line. Added in run schema 1.47 (#910).
 
 **Every reading is kept.** A limit is a byte count *and* the character set it is
 counted in, so 128 bytes of `WE8MSWIN1252` and 128 of `AL32UTF8` do not contain

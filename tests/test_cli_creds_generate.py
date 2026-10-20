@@ -1196,13 +1196,30 @@ def test_offline_emits_no_section_because_nothing_was_asked(
 def test_an_unreachable_estate_still_gets_a_section(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
-    """`db.example.com` does not exist, so the run falls back -- and the section
-    is the evidence that the estate was consulted, which is `install`'s rule."""
+    """The target cannot be reached, so the run falls back -- and the section
+    is the evidence that the estate was consulted, which is `install`'s rule.
+
+    The entry keeps why (#910). This config declares no admin credential, so
+    the reason is that, not a network error."""
     found = document(run(runner, write_config(CONFIG), "--output", "json"))
 
     assert found["constraints"]["source"] == "policy"
-    assert found["constraints"]["targets"] == [{"target": "appdb-alpha", "reachable": False}]
+    [entry] = found["constraints"]["targets"]
+    assert entry["target"] == "appdb-alpha"
+    assert entry["reachable"] is False
+    assert "declares no admin credential" in entry["error"]["message"]
     assert "accounts" not in found["constraints"]
+
+
+def test_an_unreachable_target_prints_its_reason_under_the_line(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """The text output says why, not only that nothing answered (#910)."""
+    output = run(runner, write_config(CONFIG)).output
+
+    assert "constraints: no target answered (appdb-alpha)" in output
+    assert "  appdb-alpha: target 'appdb-alpha' declares no admin credential" in output
+    assert "    hint: " in output
 
 
 def test_a_verify_function_is_warned_about_once_for_the_profile(

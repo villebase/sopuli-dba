@@ -22,7 +22,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli.constraints import AccountConstraints, Constraints, survey
 from sopuli.output.constraints_view import build_constraints, render_constraints
-from sopuli.output.document import SCHEMA_VERSION, RunDocument, Summary
+from sopuli.output.document import SCHEMA_VERSION, Error, RunDocument, Summary
 from sopuli.passwords import ByteLimit
 
 RUN_SCHEMA = (
@@ -194,6 +194,56 @@ def test_the_line_says_when_nothing_answered() -> None:
     assert line is not None
     assert "no target answered" in line
     assert "policy" in line
+
+
+#: The connect error a run with `SYS` as the admin gets, as the driver maps it.
+REFUSED = Error(
+    category="config",
+    message="ORA-28009: connection as SYS should be as SYSDBA or SYSOPER",
+    code="ORA-28009",
+    hint="point the target's admin at the service account",
+    retryable=False,
+)
+
+
+def test_a_target_that_did_not_answer_carries_its_error(
+    validator: Draft202012Validator,
+) -> None:
+    """Without it, a wrong admin account and a listener that is down read the
+    same (#910). The fallback stays; only the reason is added."""
+    section = _section(survey([], unreachable=("alpha",)))
+    with_error = build_constraints(survey([], unreachable=("alpha",)), {"alpha": REFUSED})
+
+    assert section["targets"] == [{"target": "alpha", "reachable": False}]
+    assert with_error is not None
+    assert with_error["source"] == "policy"
+    assert with_error["targets"] == [
+        {"target": "alpha", "reachable": False, "error": REFUSED.to_dict()}
+    ]
+    document = RunDocument.start("creds.generate")
+    document.constraints = with_error
+    document.finish(0, Summary(total=1, ok=1, changed=1))
+    validator.validate(document.to_dict())
+
+
+def test_the_line_gives_each_unanswered_targets_reason_and_hint() -> None:
+    line = render_constraints(survey([], unreachable=("alpha",)), {"alpha": REFUSED})
+
+    assert line is not None
+    assert line.splitlines() == [
+        "constraints: no target answered (alpha); the policy's declared length governs",
+        "  alpha: ORA-28009: connection as SYS should be as SYSDBA or SYSOPER",
+        "    hint: point the target's admin at the service account",
+    ]
+
+
+def test_a_partly_read_estate_gives_the_missing_targets_reason() -> None:
+    line = render_constraints(survey([("alpha", MODERN)], unreachable=("beta",)), {"beta": REFUSED})
+
+    assert line is not None
+    lines = line.splitlines()
+    assert lines[0].endswith("; not read from beta")
+    assert lines[1] == "  beta: ORA-28009: connection as SYS should be as SYSDBA or SYSOPER"
 
 
 def test_offline_prints_no_line() -> None:

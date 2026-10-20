@@ -194,6 +194,7 @@ from sopuli.invocation import (
     check_vault_token,
     global_options,
     group_options,
+    show_warnings,
 )
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
@@ -244,7 +245,7 @@ from sopuli.output.delivery_view import render_handover
 from sopuli.output.doctor_view import build_target
 from sopuli.output.doctor_view import render as render_doctor
 from sopuli.output.document import Diagnostic, Error, RunDocument, Summary
-from sopuli.output.emit import Emitter, echo_err, with_hints
+from sopuli.output.emit import Emitter, echo_err, with_findings
 from sopuli.output.expire_view import build_result as build_expire_result
 from sopuli.output.expire_view import render as render_expire
 from sopuli.output.expire_view import summarise as summarise_expire
@@ -507,18 +508,20 @@ def describe_selection(selection: Selection) -> str | None:
     return ", ".join(parts) or None
 
 
-def config_diagnostics(config: Config) -> list[Diagnostic]:
-    """§10's warnings, as run-level diagnostics.
+def report_config_warnings(document: RunDocument, config: Config) -> None:
+    """§10's warnings, as run-level diagnostics and as text (#897).
 
     Run-level rather than per-target because a config warning is not
-    attributable to one target. Both config verbs report warnings the same way,
-    in both views -- in full in the text, and here for the schedulers and CI
-    jobs that read the document and never see the text at all.
+    attributable to one target. Every verb that loads the file reports them in
+    both views: in ``diagnostics`` for the schedulers and CI jobs that read the
+    document, and in full under the text, where the emitter prints
+    ``warnings_text``.
     """
-    return [
-        Diagnostic(level="warning", message=str(warning), code=warning.code)
-        for warning in config.warnings
-    ]
+    for warning in config.warnings:
+        document.diagnostics.append(
+            Diagnostic(level="warning", message=str(warning), code=warning.code)
+        )
+        document.warnings_text.append(str(warning))
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -721,7 +724,7 @@ def config_show(
     config = _narrow(run.config, selection)
 
     reached = len(config.expanded_targets)
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
     document.selection = selection.as_json() or None
     document.config = build_section(paths, config, run.declared, resolved=resolved)
     if explain:
@@ -786,7 +789,7 @@ def target_list(
     config = _narrow(run.config, selection)
 
     reached = len(config.expanded_targets)
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
     document.selection = selection.as_json() or None
     # The same `config` section `config show --resolved` emits, deliberately.
     # It is one estate, and a second JSON shape for it would be two answers to
@@ -879,7 +882,7 @@ def doctor(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     # Before anything connects, because it is the half of the answer that needs
     # no network -- and because a driver this machine does not have is the reason
@@ -1272,7 +1275,7 @@ def policy_sample(
     samples = [generate(policy, limit=limit) for _ in range(count)]
     described = describe_all(samples, policy, limit=limit)
 
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
     document.policy = build_policy_section(chosen, policy, described, limit=limit)
     document.finish(
         ExitCode.SUCCESS,
@@ -1406,7 +1409,7 @@ def account_suspend(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
@@ -1687,7 +1690,7 @@ def account_expire_password(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
@@ -2040,7 +2043,7 @@ def account_reset_password(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
@@ -2263,10 +2266,14 @@ def account_reset_password(
         # print is the only way the operator learns them. The boundary then
         # exits 8.
         # Through the emitter, which strips the table's colour when colour is
-        # off. With the hints, which `emit` adds on every other path: a target
-        # that failed before the prompt was declined still says what to do.
+        # off. With the config's warnings and the hints, which `emit` adds on
+        # every other path: a target that failed before the prompt was declined
+        # still says what to do.
         text = "\n\n".join(part for part in (header, body, told, shown) if part)
-        emitter.emit_text(with_hints(document, text))
+        # Marked first: a write that fails part way must not have the abort
+        # handler print the warnings a second time.
+        document.warnings_shown = True
+        emitter.emit_text(with_findings(document, text))
         raise click.Abort
     return "\n\n".join(part for part in (header, body, told, shown) if part)
 
@@ -3393,7 +3400,7 @@ def account_list_command(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     reached = config.expanded_targets
     if not reached:
@@ -3768,7 +3775,7 @@ def lock_status(
     )
     mode = mode_of(stores)
 
-    document.diagnostics.extend(config_diagnostics(filter_estate(config, selection)))
+    report_config_warnings(document, filter_estate(config, selection))
     narrowed = [
         *unlistable_stores(leftovers.unlistable),
         *unaddressable_lock_paths(leftovers.skipped),
@@ -3885,7 +3892,7 @@ def lock_break(
     check_fenceable(key, entry)
     mode = mode_of({key.store: entry.store})
 
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     try:
         state = survey([key], stores={key.store: entry.store})[0]
@@ -3967,6 +3974,9 @@ def _confirm_break(
             ),
         )
     _echo_err(render_break(paths, outcome, mode=mode, applied=False), run=run)
+    # This prompt has no plan, so `_show_plan` does not print the warnings. W051
+    # can say the lock is in another vault, which the answer depends on.
+    show_warnings(run)
     _confirm(
         f"take this lock from {describe_holder(outcome.record)}?",
         abort=True,
@@ -4052,11 +4062,16 @@ def _show_plan(plan: Any, run: Invocation, *, noun: str) -> None:
     and the operator needs the plan before the first of them, not twice. The
     text :func:`_record_plan` kept is printed, so the prompt and a failure show
     the same plan; ``noun`` renders it only for a verb that recorded none.
+
+    The config's warnings follow the plan (#897), because W051 can say the run
+    is about to write to another vault, and the answer is given before the
+    text that would carry them is printed.
     """
     if run.document.plan_shown:
         return
     _echo_err(run.document.plan_text or render_plan(plan, noun=noun), run=run)
     run.document.plan_shown = True
+    show_warnings(run)
 
 
 def _asks_environments(plan: Any, run: Invocation) -> bool:
@@ -4244,14 +4259,15 @@ def config_validate(
     # E6 and its alone -- this command answers "is my file good", and a table of
     # every registry entry would bury the answer.
     warnings = install_diagnostics(install_survey(config), level="warning")
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
     document.diagnostics.extend(warnings)
+    document.warnings_text.extend(warning.message for warning in warnings)
     targets = len(config.expanded_targets)
     document.finish(
         ExitCode.SUCCESS,
         Summary(total=targets, ok=targets, changed=0, failed=0),
     )
-    return render_validation(paths, config, [warning.message for warning in warnings])
+    return render_validation(paths, config, warnings=len(document.warnings_text))
 
 
 def main() -> None:
@@ -4463,7 +4479,7 @@ def creds_check(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     # C15's plan-time half (decision #250), before anything is planned: a
     # profile's `vault:` and SOPULI_VAULT are not consulted while bindings are
@@ -5105,7 +5121,7 @@ def creds_generate(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(
@@ -6186,7 +6202,7 @@ def creds_apply(
             # worth explaining.
             repair_notes.append(stale.message)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="applying a password")
@@ -9150,7 +9166,7 @@ def creds_finish_rollover(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="ending a rollover window")
@@ -9573,7 +9589,7 @@ def creds_rotate(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="rotating a password")
@@ -10466,7 +10482,7 @@ def creds_status(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    document.diagnostics.extend(config_diagnostics(config))
+    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="taking an inventory")

@@ -90,7 +90,6 @@ def render_text(
         # `--explain` still answers its own question: a selector that matched
         # nothing says nothing about where `output` came from.
         lines.extend(explain_section(explained))
-        lines.extend(_warnings(config))
         return "\n".join(lines)
 
     sections = _resolved_sections(config) if resolved else _declared_sections(config)
@@ -101,7 +100,6 @@ def render_text(
         lines.extend(body)
 
     lines.extend(explain_section(explained))
-    lines.extend(_warnings(config))
     return "\n".join(lines)
 
 
@@ -119,9 +117,8 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
     commands rather than an oversight: which store masters a target is a fact
     about the binding, and this view is about the target.
 
-    §10's warnings are rendered here as they are in every other view, including
-    the path where nothing matched. A command that reads a config and shows
-    none of its findings is the same defect whichever view does it.
+    §10's warnings are not rendered here. The emitter prints them under every
+    verb's text (:func:`~sopuli.output.notices.render_warnings`).
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -130,7 +127,6 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
 
     if not config.expanded_targets:
         lines.extend(["", f"no targets carry {_pairs(match)}" if match else "no targets"])
-        lines.extend(_warnings(config))
         return "\n".join(lines)
 
     rows = [
@@ -160,13 +156,10 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
             _estate_summary(config),
         ]
     )
-    lines.extend(_warnings(config))
     return "\n".join(lines)
 
 
-def render_validation(
-    paths: Sequence[Path], config: Config, extra_warnings: Sequence[str] = ()
-) -> str:
+def render_validation(paths: Sequence[Path], config: Config, *, warnings: int) -> str:
     """The human view of ``config validate`` -- what was read, and what it holds.
 
     Deliberately short. A validation that passed has nothing to show, and the
@@ -176,18 +169,20 @@ def render_validation(
     otherwise, and how much the file turned out to declare, since a config that
     expands to no targets at all passes validation and manages nothing.
 
-    Warnings are rendered in full by the same helper ``config show`` uses. §10
-    puts real findings behind them -- a profile named after an environment, a
-    charset a target may not support -- and a summary line would be the wrong
+    The summary counts the warnings, and the emitter prints them in full under
+    it, as it does for every verb (:func:`~sopuli.output.notices.render_warnings`).
+    §10 puts real findings behind them -- a profile named after an environment,
+    a charset a target may not support -- and a summary line would be the wrong
     place to meet one.
 
-    ``extra_warnings`` are findings the *config layer* could not make, because
-    making them is not pure: a configured-but-uninstalled backend (ADR-006, E4)
-    is a fact about this machine rather than about the file, and
+    ``warnings`` is the number the emitter prints, so the count and the block
+    come from one list. It includes findings the *config layer* could not make,
+    because making them is not pure: a configured-but-uninstalled backend
+    (ADR-006, E4) is a fact about this machine rather than about the file, and
     ``04-testing.md`` §4 keeps the config layer free of anything that has to look
-    outside the document. They arrive from the boundary already worded and are
-    counted and shown here exactly like the file's own, because to the person
-    reading the output the distinction is ours and not theirs.
+    outside the document. They are counted and printed exactly like the file's
+    own, because to the person reading the output the distinction is ours and
+    not theirs.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
@@ -198,11 +193,10 @@ def render_validation(
             (
                 _count(len(config.expanded_targets), "target"),
                 _count(len(config.bindings), "binding"),
-                _count(len(config.warnings) + len(extra_warnings), "warning"),
+                _count(warnings, "warning"),
             )
         )
     )
-    lines.extend(_warnings(config, extra_warnings))
     return "\n".join(lines)
 
 
@@ -1002,16 +996,6 @@ def _pairs(pairs: tuple[tuple[str, str], ...]) -> str:
 def _named(names: Any) -> list[str]:
     listed = sorted(names)
     return [", ".join(listed)] if listed else []
-
-
-def _warnings(config: Config, extra: Sequence[str] = ()) -> list[str]:
-    """§10's warnings, in full. This is the only place anybody will read them."""
-    messages = [str(warning) for warning in config.warnings]
-    messages.extend(extra)
-    if not messages:
-        return []
-    body = [f"  {line}" for message in messages for line in message.splitlines()]
-    return ["", paint(f"{_count(len(messages), 'warning')}:", Role.NOTABLE), *body]
 
 
 def _count(number: int, noun: str, plural: str | None = None) -> str:

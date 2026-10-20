@@ -41,7 +41,7 @@ import click
 
 from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339, utc_now
-from sopuli.output.notices import render_hints
+from sopuli.output.notices import render_hints, render_warnings
 from sopuli.output.printable import printable
 from sopuli.output.spinner import Spinner
 from sopuli.output.spinner import disabled as spinner_disabled
@@ -92,15 +92,16 @@ def echo_err(text: str, *, color_choice: ColorChoice) -> None:
     click.echo(printable(text, colour=colour), err=True, color=colour)
 
 
-def with_hints(document: RunDocument, text: str) -> str:
-    """A verb's text, with the hints for ``results[].error`` under it.
+def with_findings(document: RunDocument, text: str) -> str:
+    """A verb's text, with the config's warnings and the hints for
+    ``results[].error`` under it.
 
     Added by :meth:`Emitter.emit` rather than by each verb, for the reason colour
     is gated there: no verb can leave them out. A verb that prints its text some
     other way before it stops, as a declined reset does, calls this itself.
     """
-    hints = render_hints(document.results)
-    return "\n".join([text, *hints]) if hints else text
+    below = [*render_warnings(document.warnings_text), *render_hints(document.results)]
+    return "\n".join([text, *below]) if below else text
 
 
 def render_json(document: RunDocument) -> str:
@@ -226,7 +227,7 @@ class Emitter:
         if self.is_json:
             print(render_json(document), file=self._out())
             return
-        self.emit_text(with_hints(document, text))
+        self.emit_text(with_findings(document, text))
 
     def event(
         self,

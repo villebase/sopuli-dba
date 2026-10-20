@@ -1,11 +1,13 @@
 """Blocks of findings rendered under a verb's text output.
 
-Two blocks share one shape: a counted heading, then an indented line per entry.
+Three blocks share one shape: a counted heading, then an indented line per entry.
 
 * **Notes** are things that belong to one account but do not fit in a column --
   a grace period and the date it ends, so far. In ``--output json`` they are
-  ``results[].warnings[]``. `check` and `creds status` print them, and
-  `config validate` prints its warnings the same way under its summary.
+  ``results[].warnings[]``. `check` and `creds status` print them.
+* **Warnings** are the configuration's own (``01-configuration.md`` §10), and
+  for `config validate` the install's. In ``--output json`` they are
+  ``diagnostics[]``. The emitter prints them for every verb that loads the file.
 * **Hints** say what to do about the errors in ``results[]``. A verb's table
   carries an error's message, if it shows the error at all, and the hint was in
   the JSON only. The emitter prints them for every verb.
@@ -21,7 +23,19 @@ from typing import Any
 
 from sopuli.output.palette import Role, paint
 
-__all__ = ["render_hints", "render_notices"]
+__all__ = ["render_hints", "render_notices", "render_warnings"]
+
+
+def render_warnings(warnings: Sequence[str]) -> list[str]:
+    """The configuration's warnings, in full.
+
+    Printed under every verb's text, not only under the config verbs'. W051 and
+    W052 exist for a shell variable left over from other work, and an operator
+    who runs a verb by hand reads the text and not the JSON.
+
+    Empty when there are none.
+    """
+    return _block(warnings, "warning")
 
 
 def render_hints(results: Sequence[Mapping[str, Any]] | None) -> list[str]:
@@ -75,13 +89,18 @@ def render_notices(notices: Sequence[str]) -> list[str]:
     can see in the default output is not surfaced, and `results[].warnings[]`
     alone does not show one to a person reading a terminal.
 
-    The same block `config validate` prints under its summary, and deliberately
-    the same words: an operator who has read one of these has read all of them.
+    The same block the config's warnings are printed in, and deliberately the
+    same words: an operator who has read one of these has read all of them.
     Empty for the ordinary run, so nothing is added to the output that says
     nothing.
     """
-    if not notices:
+    return _block(notices, "note")
+
+
+def _block(entries: Sequence[str], noun: str) -> list[str]:
+    """A counted heading and an indented line per line of each entry."""
+    if not entries:
         return []
-    body = [f"  {line}" for notice in notices for line in notice.splitlines()]
-    count = "1 note" if len(notices) == 1 else f"{len(notices)} notes"
+    body = [f"  {line}" for entry in entries for line in entry.splitlines()]
+    count = f"1 {noun}" if len(entries) == 1 else f"{len(entries)} {noun}s"
     return ["", paint(f"{count}:", Role.NOTABLE), *body]

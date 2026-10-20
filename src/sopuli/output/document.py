@@ -377,6 +377,14 @@ class RunDocument:
     plan_text: str | None = None
     #: Whether the plan has already gone to stderr, before a prompt.
     plan_shown: bool = False
+    #: The config's warnings as text output prints them, never serialised
+    #: (#897): ``diagnostics`` carries them in the JSON. The emitter prints them
+    #: under every verb's text, and the command handler prints them to stderr
+    #: for a run that fails, so no verb has to remember to.
+    warnings_text: list[str] = field(default_factory=list)
+    #: Whether the warnings have already been printed, by a verb that printed its
+    #: text before it stopped.
+    warnings_shown: bool = False
     #: The ``lock`` section, on a run that took locks. Same arrangement as
     #: ``config`` and ``policy``: :mod:`sopuli.output.lock_view` owns the shape.
     #: Absent *means* something here rather than merely omitting something -- no

@@ -667,3 +667,29 @@ def test_a_verb_that_changes_nothing_needs_no_yes(
     )
 
     assert required(result) is False
+
+
+def test_the_config_warnings_are_printed_before_the_prompt(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W051 can say the run is about to write to another vault, so the operator
+    reads it before answering, and a declined prompt does not print it again
+    (#897). This estate names no default store, so the variable raises W038
+    instead; where the block goes is the same for every warning."""
+    monkeypatch.setenv("VAULT_ADDR", "https://vault-other.example.com:8200")
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    estate()
+    config = write_config(CONFIG)
+
+    result = runner.invoke(
+        cli,
+        ["creds", "apply", "--config", str(config), "--select", "tenant=alpha"],
+        input="n\n",
+    )
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    assert result.output.count("1 warning:") == 1
+    assert result.output.index("1 warning:") < result.output.index("[y/N]")

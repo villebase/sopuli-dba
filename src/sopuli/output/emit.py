@@ -41,6 +41,7 @@ import click
 
 from sopuli.output.color import ColorChoice, resolve_color
 from sopuli.output.document import to_rfc3339, utc_now
+from sopuli.output.notices import render_hints
 from sopuli.output.printable import printable
 from sopuli.output.spinner import Spinner
 from sopuli.output.spinner import disabled as spinner_disabled
@@ -214,7 +215,10 @@ class Emitter:
         if self.is_json:
             print(render_json(document), file=self._out())
             return
-        self.emit_text(text)
+        # The hints for `results[].error`, added here rather than by each verb,
+        # for the reason colour is gated here: no verb can forget them (#912).
+        hints = render_hints(document.results)
+        self.emit_text("\n".join([text, *hints]) if hints else text)
 
     def event(
         self,

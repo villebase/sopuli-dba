@@ -14,11 +14,37 @@ same idea would be a third thing to keep consistent.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from sopuli.output.palette import Role, paint
 
-__all__ = ["render_notices"]
+__all__ = ["render_hints", "render_notices"]
+
+
+def render_hints(results: Sequence[Mapping[str, Any]] | None) -> list[str]:
+    """What to do about the errors in ``results[]``, each hint once (#912).
+
+    A result's ``DETAIL`` cell carries the error's message, and the hint that says
+    what to do next was in the JSON only. A column cannot hold a second sentence,
+    so the hints go under the run, as the notes do. Each distinct hint is printed
+    once, with the code that raised it where there is one: twenty accounts on one
+    target refused for one reason need one hint, not twenty.
+
+    Empty where no result carries a hint, so a run with nothing to fix prints
+    nothing more.
+    """
+    found: dict[str, str | None] = {}
+    for result in results or ():
+        error = result.get("error") or {}
+        hint = error.get("hint")
+        if hint and hint not in found:
+            found[hint] = error.get("code")
+    if not found:
+        return []
+    body = [f"  {code}: {hint}" if code else f"  {hint}" for hint, code in found.items()]
+    count = "1 hint" if len(found) == 1 else f"{len(found)} hints"
+    return ["", paint(f"{count}:", Role.NOTABLE), *body]
 
 
 def render_notices(notices: Sequence[str]) -> list[str]:

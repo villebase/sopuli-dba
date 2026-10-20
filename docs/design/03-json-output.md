@@ -54,6 +54,23 @@ JSON output does not depend on this. `json.dumps` escapes non-ASCII by default,
 so the document is ASCII on the wire. The rule is for `--output text`, and for
 error and diagnostic messages that carry a server's own wording.
 
+### Hints in text output
+
+A result's `error.hint` says what to do next. In text output a verb's table
+carries the error's message, and a column cannot hold a second sentence. So the
+emitter prints the hints under the verb's text, in a block like the notes: each
+distinct hint once, with the code that raised it. The emitter adds them, not
+each verb, so no verb can leave them out (#912).
+
+```
+nothing changed, 2 not confirmed
+
+1 hint:
+  ORA-28009: SYS logs on only as SYSDBA or SYSOPER, and sopuli connects as an ordinary account. Point the target's admin at the service account that sql/oracle/00_install.sql creates. For a trial in a PDB, SYSTEM connects with no setup; it holds far more than the tool needs, so do not keep it
+```
+
+This is the end of `creds apply` with `SYS` as the admin account.
+
 ### Colour
 
 Colour is a property of a run. It is resolved once, and every call site asks

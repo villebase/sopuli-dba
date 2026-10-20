@@ -98,6 +98,7 @@ from sopuli.output.debug import debugging, logger
 from sopuli.output.document import Diagnostic, Error, Option, RunDocument
 from sopuli.output.emit import Emitter, OutputMode, echo_err
 from sopuli.output.explain_view import ratchet_notes
+from sopuli.output.notices import render_warnings
 from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
@@ -1007,6 +1008,7 @@ def _pass_invocation(func: F) -> F:
             # re-raising is what makes the process agree with the document, since
             # `exit_code` in the document always equals the process's.
             _show_unfinished_plan(invocation)
+            _show_warnings(invocation)
             _abort(invocation)
             click.echo("sopuli: aborted", err=True)
             raise SystemExit(ExitCode.ABORTED) from exc
@@ -1014,9 +1016,11 @@ def _pass_invocation(func: F) -> F:
             # Ctrl-C part way through a run, which is the commonest way one
             # stops early. Shown, then left to propagate as it always has.
             _show_unfinished_plan(invocation)
+            _show_warnings(invocation)
             raise
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
             _show_unfinished_plan(invocation, exc)
+            _show_warnings(invocation)
             _fail(invocation, exc)
             raise
         invocation.emitter().emit(invocation.document, text)
@@ -1089,6 +1093,35 @@ def _show_unfinished_plan(invocation: Invocation, exc: BaseException | None = No
         return
     with suppress(Exception):
         echo_err(document.plan_text, color_choice=invocation.emitter().color_choice)
+
+
+def _show_warnings(invocation: Invocation) -> None:
+    """Print the config's warnings for a run that stopped before its output (#897).
+
+    A run that finishes prints them under its text. A run that raises prints
+    only the error, and the warning may be the reason for it: W051 names a
+    ``VAULT_ADDR`` that points the run at another vault. So they go to stderr
+    here, before the error line, refusals included. Not under ``--output
+    json``, whose document carries them in ``diagnostics``, and not where the
+    verb already printed them (``warnings_shown``).
+
+    Taken from the loaded file when the verb raised before it reported them. A
+    verb reports them once its I/O is done, and a run that cannot reach the
+    store W051 is about stops before that.
+
+    **Never raises**, for the reason :func:`_show_unfinished_plan` gives.
+    """
+    document = invocation.document
+    if invocation.is_json or document.warnings_shown:
+        return
+    with suppress(Exception):
+        warnings = document.warnings_text
+        if not warnings and invocation.loaded is not None:
+            warnings = [str(warning) for warning in invocation.loaded.config.warnings]
+        if not warnings:
+            return
+        text = "\n".join(render_warnings(warnings)).lstrip("\n")
+        echo_err(text, color_choice=invocation.emitter().color_choice)
 
 
 def _debug_settings(invocation: Invocation) -> None:

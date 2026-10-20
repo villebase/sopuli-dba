@@ -1,11 +1,13 @@
 """Blocks of findings rendered under a verb's text output.
 
-Two blocks share one shape: a counted heading, then an indented line per entry.
+Three blocks share one shape: a counted heading, then an indented line per entry.
 
 * **Notes** are things that belong to one account but do not fit in a column --
   a grace period and the date it ends, so far. In ``--output json`` they are
-  ``results[].warnings[]``. `check` and `creds status` print them, and
-  `config validate` prints its warnings the same way under its summary.
+  ``results[].warnings[]``. `check` and `creds status` print them.
+* **Warnings** are the configuration's own (``01-configuration.md`` §10), and
+  for `config validate` the install's. In ``--output json`` they are
+  ``diagnostics[]``. The emitter prints them for every verb that loads the file.
 * **Hints** say what to do about the errors in ``results[]``. A verb's table
   carries an error's message, if it shows the error at all, and the hint was in
   the JSON only. The emitter prints them for every verb.
@@ -21,7 +23,23 @@ from typing import Any
 
 from sopuli.output.palette import Role, paint
 
-__all__ = ["render_hints", "render_notices"]
+__all__ = ["render_hints", "render_notices", "render_warnings"]
+
+
+def render_warnings(warnings: Sequence[str]) -> list[str]:
+    """The configuration's warnings, in full.
+
+    Printed under every verb's text, not only under the config verbs'. W051 and
+    W052 exist for a shell variable left over from other work, and an operator
+    who runs a verb by hand reads the text and not the JSON.
+
+    Empty when there are none.
+    """
+    if not warnings:
+        return []
+    body = [f"  {line}" for warning in warnings for line in warning.splitlines()]
+    count = "1 warning" if len(warnings) == 1 else f"{len(warnings)} warnings"
+    return ["", paint(f"{count}:", Role.NOTABLE), *body]
 
 
 def render_hints(results: Sequence[Mapping[str, Any]] | None) -> list[str]:

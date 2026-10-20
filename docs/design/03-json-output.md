@@ -65,6 +65,26 @@ so the targets say which rows a hint is for. The emitter adds them, not each
 verb, so no verb can leave them out. A declined `account reset-password` prints
 its table before it stops, and adds the hints there too.
 
+### Config warnings in text output
+
+The configuration's warnings (`01-configuration.md` §10) are in `diagnostics[]`
+on every verb that loads the file. In text output the emitter prints them under
+the verb's text, before the hints, in the same kind of block. The config verbs
+do not print a copy of their own. `config validate` also counts them in its
+summary line, and prints the install warnings in the same block. A run that
+stops on an error prints no text of its own, so the warnings go to stderr before
+the error line. The warning can be the reason for the error: `SOPULI-W051` says
+the run went to a vault other than the one the file names.
+
+```
+$ VAULT_ADDR=http://127.0.0.1:8399 sopuli --config sopuli.yaml lock status
+1 warning:
+  VAULT_ADDR sets the address of vault 'vault-dev' to http://127.0.0.1:8399, not http://127.0.0.1:8200, which vaults.vault-dev.addr declares
+    hint: unset VAULT_ADDR if it is left over from other work; to choose the address for this tool on purpose, use SOPULI_VAULT_ADDR or --vault-addr
+sopuli: could not reach the store: [WinError 10061] No connection could be made because the target machine actively refused it
+  hint: check `addr`, and `tls.ca_file` if the certificate is your own CA
+```
+
 ```
 $ sopuli --config sys.yaml creds apply
 ...

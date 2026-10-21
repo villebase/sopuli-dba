@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.77.1](https://github.com/villebase/sopuli-dba/compare/v0.77.0...v0.77.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **audit:** count a common logon policy for a common person ([#839](https://github.com/villebase/sopuli-dba/issues/839)) ([#925](https://github.com/villebase/sopuli-dba/issues/925)) ([d644d71](https://github.com/villebase/sopuli-dba/commit/d644d7148be9fe33446e4e75403b5d4e93cda266))
+* **config:** refuse a / or # in a name a secret template uses ([#935](https://github.com/villebase/sopuli-dba/issues/935)) ([#939](https://github.com/villebase/sopuli-dba/issues/939)) ([1072ab0](https://github.com/villebase/sopuli-dba/commit/1072ab06b35d8091af4b855229832d82c9a09ffa))
+* **config:** refuse a JSON pointer with an invalid ~ escape ([#928](https://github.com/villebase/sopuli-dba/issues/928)) ([#932](https://github.com/villebase/sopuli-dba/issues/932)) ([0001c91](https://github.com/villebase/sopuli-dba/commit/0001c91be9f7a2a7fcbe6166739fbb5f3d20d424))
+* **config:** refuse a name that does a separator's job in a secret ref ([#940](https://github.com/villebase/sopuli-dba/issues/940)) ([#942](https://github.com/villebase/sopuli-dba/issues/942)) ([752c7d9](https://github.com/villebase/sopuli-dba/commit/752c7d95d58c83c5988d9d2ee07b087ba719226c))
+* **oracle:** redact a password clause with no space after BY ([#944](https://github.com/villebase/sopuli-dba/issues/944)) ([#946](https://github.com/villebase/sopuli-dba/issues/946)) ([eebce00](https://github.com/villebase/sopuli-dba/commit/eebce00666276f21881bad22a43ad5322f254c25))
+* **output:** carry the config's warnings in a failed run's document ([#918](https://github.com/villebase/sopuli-dba/issues/918)) ([#919](https://github.com/villebase/sopuli-dba/issues/919)) ([e028071](https://github.com/villebase/sopuli-dba/commit/e028071137b6b552fe816d93229af4b478f0a484))
+* **output:** print account list row notices in the text output ([#826](https://github.com/villebase/sopuli-dba/issues/826)) ([#920](https://github.com/villebase/sopuli-dba/issues/920)) ([eb15d86](https://github.com/villebase/sopuli-dba/commit/eb15d86260a37e337b2df5a12eb43bbd856268a0))
+* **output:** say why account list's date columns are empty ([#921](https://github.com/villebase/sopuli-dba/issues/921)) ([#926](https://github.com/villebase/sopuli-dba/issues/926)) ([d0e4b21](https://github.com/villebase/sopuli-dba/commit/d0e4b21ac58ae808bb4a01fc82c35ec26e7ef988))
+* **output:** say why account list's RESET_AT is empty when the journal fails ([#929](https://github.com/villebase/sopuli-dba/issues/929)) ([#936](https://github.com/villebase/sopuli-dba/issues/936)) ([fc15a50](https://github.com/villebase/sopuli-dba/commit/fc15a50559515fc7fe44448512df8765d3905424))
+* **store:** keep Vault's reasons when an error entry has several lines ([#934](https://github.com/villebase/sopuli-dba/issues/934)) ([#943](https://github.com/villebase/sopuli-dba/issues/943)) ([5e91968](https://github.com/villebase/sopuli-dba/commit/5e9196863dbc9ddbd5d6d5f0f149594c3133cf54))
+* **test:** start the nne and emulators compose profiles ([#937](https://github.com/villebase/sopuli-dba/issues/937)) ([#941](https://github.com/villebase/sopuli-dba/issues/941)) ([9f6b56e](https://github.com/villebase/sopuli-dba/commit/9f6b56e4be1e56a7aaf9f8d092b4e070e979cba5))
+
 ## [0.77.0](https://github.com/villebase/sopuli-dba/compare/v0.76.0...v0.77.0) (2026-10-20)
 
 

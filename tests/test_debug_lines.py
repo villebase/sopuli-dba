@@ -127,6 +127,21 @@ def test_a_string_with_a_password_clause_is_cut_off_after_it(debug: io.StringIO)
     assert 'oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in ' in written
 
 
+@pytest.mark.parametrize(
+    "clause",
+    [f'IDENTIFIED BY"{PASSWORD}"', f"identified\tby\n{PASSWORD}", f"IDENTIFIED BY {PASSWORD}"],
+    ids=["no-space-before-the-quote", "other-whitespace", "unquoted"],
+)
+def test_the_backstop_holds_for_every_spelling_oracle_accepts(
+    debug: io.StringIO, clause: str
+) -> None:
+    """Oracle accepts `IDENTIFIED BY"pw"` with no space, so the backstop cannot
+    need one (#944)."""
+    TracedCursor(FakeCursor()).execute(f'ALTER USER "ACME_APP_USER" {clause}')
+
+    assert PASSWORD not in debug.getvalue()
+
+
 def test_parameters_reach_the_client_as_the_caller_passed_them() -> None:
     """``execute(sql)`` and ``execute(sql, None)`` are two calls, and a fake
     that told them apart would break if the cursor merged them."""

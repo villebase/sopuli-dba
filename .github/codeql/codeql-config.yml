@@ -1,0 +1,10 @@
+# What CodeQL analyses (#944). The shipped code is src/sopuli, the only package
+# in the wheel. tests/ and test/ are left out: they assert on URLs and secrets by
+# design, proxy requests to a test Vault on purpose (tests/fault_harness.py),
+# and fingerprint values to compare them without printing them
+# (test/k8s_eso_probe.py). Their first-run alerts were each one of those, and
+# alerts on them would only be dismissed. The workflows are still analysed, by
+# the `actions` language.
+paths-ignore:
+  - tests
+  - test

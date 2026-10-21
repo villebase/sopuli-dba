@@ -46,7 +46,8 @@ from sopuli.output.debug import logger
 LOG = logger("oracle")
 
 #: Where a password starts in an ``ALTER USER`` or ``CREATE USER`` written as a string.
-_PASSWORD_CLAUSE = re.compile(r"(identified\s+by)\s.*", re.IGNORECASE | re.DOTALL)
+#: No space is needed after ``BY``: Oracle accepts ``IDENTIFIED BY"pw"`` (#944).
+_PASSWORD_CLAUSE = re.compile(r"(identified\s+by)\b.*", re.IGNORECASE | re.DOTALL)
 
 
 class TracedCursor:

@@ -1,0 +1,27 @@
+# Keeps the pins current (#868): the SHA-pinned actions in .github/workflows,
+# and the hash-pinned release tools in .github/requirements/release.txt. Weekly
+# and grouped, so each ecosystem's updates are one pull request a week that CI
+# checks like any other. ci.yml's `release-build` job installs and builds from
+# the updated release.txt, so a bad update fails there and not at a release.
+# The Instant Client in tier1.yml has no ecosystem; docs/workflow.md says how
+# to move it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+  - package-ecosystem: pip
+    directory: /.github/requirements
+    schedule:
+      interval: weekly
+    groups:
+      release-tools:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

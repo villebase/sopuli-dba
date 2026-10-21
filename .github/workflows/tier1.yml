@@ -154,16 +154,29 @@ jobs:
             sudo ln -s "$lib" "${lib%1t64}1"
             echo "linked ${lib%1t64}1 -> $lib"
           fi
-          curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
-          sudo mkdir -p /opt/oracle
-          sudo unzip -q instantclient-basiclite-linuxx64.zip -d /opt/oracle
-          # SQL*Plus for tests/test_password_paths.py, which logs in through a
+          # One named release, checked against the SHA-256 that Oracle's
+          # download page publishes for it (#868). The unversioned "latest" URLs
+          # change under the job, and nothing could check what they served.
+          # SQL*Plus is for tests/test_password_paths.py, which logs in through a
           # connect string the way an operator does. It unpacks into the same
-          # directory as the client.
-          curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/instantclient-sqlplus-linuxx64.zip
-          sudo unzip -qo instantclient-sqlplus-linuxx64.zip -d /opt/oracle
-          # The directory carries the version, so it is found rather than named:
-          # pinning it here would break on the next release for no benefit.
+          # directory as the client. To move to a new release, change `ver`,
+          # `dir` and the two hashes, all from
+          # https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+          ver=23.26.3.0.0
+          dir=2326300
+          basic=instantclient-basiclite-linux.x64-$ver.zip
+          sqlplus=instantclient-sqlplus-linux.x64-$ver.zip
+          curl -fsSLO "https://download.oracle.com/otn_software/linux/instantclient/$dir/$basic"
+          curl -fsSLO "https://download.oracle.com/otn_software/linux/instantclient/$dir/$sqlplus"
+          sha256sum --check --strict - <<SUMS
+          88c2b59d473f0d34615556dbee51cb90cce61a9104b4c1c772d13c344fba19c9  $basic
+          6570d7939856767cdbb549b51e1423d6a5f53143c57c30c015669706f65a632a  $sqlplus
+          SUMS
+          sudo mkdir -p /opt/oracle
+          sudo unzip -q "$basic" -d /opt/oracle
+          sudo unzip -qo "$sqlplus" -d /opt/oracle
+          # The directory is found rather than named, so a new release needs only
+          # the four values above changed.
           # Checked rather than assumed, because the failure is otherwise silent
           # and lands somewhere else: `find` printing nothing makes `dirname`
           # answer `.`, and the lane then reports DPI-1047 from a step that said

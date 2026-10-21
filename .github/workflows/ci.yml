@@ -293,6 +293,29 @@ jobs:
   # 0 and needs no container; one interpreter and one OS is enough, because
   # nothing here is platform-conditional -- `pywin32` is in base under a marker
   # and is not an extra.
+  # The release job's own steps, on every pull request that touches code
+  # (#868). That job runs only once release-please has cut the tag, so a
+  # broken pin in .github/requirements/release.txt, or a pinned hatchling that
+  # cannot build pyproject.toml, would otherwise show first as a release with
+  # nothing on PyPI. Keep these steps the same as release-please.yml's `build`.
+  release-build:
+    name: release build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --require-hashes -r .github/requirements/release.txt
+      - run: python -m pip check
+      - run: python -m build --no-isolation
+      - run: python -m twine check --strict dist/*
+
   install-shape:
     name: install shape (${{ matrix.shape }})
     needs: changes
@@ -429,7 +452,7 @@ jobs:
   # for the wrong one.
   ci-ok:
     name: ci ok
-    needs: [changes, lint, test, install-shape, docs]
+    needs: [changes, lint, test, install-shape, release-build, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

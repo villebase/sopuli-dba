@@ -18,6 +18,8 @@ from click.testing import CliRunner
 from sopuli import cli as cli_module
 from sopuli.cli import cli
 from sopuli.exit_codes import ExitCode
+from sopuli.output.document import Diagnostic
+from sopuli.store import StoreError
 
 CONFIG = """\
 version: 1
@@ -142,4 +144,101 @@ def test_a_run_that_fails_carries_the_warning_in_its_document_once(
 
     document = json.loads(result.stdout)
     assert document["exit_code"] == result.exit_code != ExitCode.SUCCESS
+    assert [one["code"] for one in document["diagnostics"]] == ["SOPULI-W051"]
+
+
+#: An application, so that `lock status` has a lock to survey and opens a store.
+WITH_AN_APPLICATION = f"""{CONFIG}applications:
+  - name: acme
+    accounts: [acme_web_user]
+    secret_template: "apps/acme/{{target}}#password"
+"""
+
+
+def test_a_run_that_cannot_reach_the_store_carries_the_warning(
+    monkeypatch: pytest.MonkeyPatch, write_config: Callable[[str], Path]
+) -> None:
+    """#918's own case: VAULT_ADDR names a vault the run cannot reach."""
+    monkeypatch.setenv("VAULT_ADDR", "https://other.example.com")
+
+    def unreachable(*args: object, **kwargs: object) -> None:
+        raise StoreError("could not reach the store: refused by the test")
+
+    monkeypatch.setattr(cli_module, "connect", unreachable)
+
+    result = CliRunner().invoke(
+        cli,
+        ["lock", "status", "--output", "json", "--config", str(write_config(WITH_AN_APPLICATION))],
+    )
+
+    document = json.loads(result.stdout)
+    assert document["error"]["message"] == "could not reach the store: refused by the test"
+    assert [one["code"] for one in document["diagnostics"]] == ["SOPULI-W051"]
+
+
+#: `--profile ci` widens `max_targets`, which the ratchet refuses with W039.
+RATCHETED = f"""{CONFIG}profiles:
+  ci:
+    safety:
+      max_targets: 200
+"""
+
+
+def test_the_warnings_follow_the_ratchet_notes_and_precede_the_verbs_own(
+    config: Path, monkeypatch: pytest.MonkeyPatch, write_config: Callable[[str], Path]
+) -> None:
+    """The order 03-json-output.md §diagnostics gives.
+
+    `config validate`'s install warnings are its own, and come last."""
+    own = Diagnostic(level="warning", message="the verb's own")
+    monkeypatch.setattr(cli_module, "install_diagnostics", lambda *a, **k: [own])
+    path = write_config(
+        RATCHETED.replace("defaults:\n", "defaults:\n  safety: { max_targets: 1 }\n")
+    )
+
+    result = CliRunner().invoke(
+        cli, ["config", "validate", "--profile", "ci", "--output", "json", "--config", str(path)]
+    )
+
+    diagnostics = json.loads(result.stdout)["diagnostics"]
+    assert [one.get("code", one["message"]) for one in diagnostics] == [
+        "SOPULI-W039",
+        "SOPULI-W051",
+        "the verb's own",
+    ]
+
+
+#: Two layers with no delivery method in common: the file loads, and resolving
+#: its settings fails.
+DISJOINT = f"""{CONFIG}profiles:
+  ci:
+    safety:
+      delivery:
+        allowed_methods: [manual]
+""".replace(
+    "defaults:\n", "defaults:\n  safety: { delivery: { allowed_methods: [vault_wrapped] } }\n"
+)
+
+
+def test_a_run_whose_settings_do_not_resolve_carries_the_warning(
+    config: Path, write_config: Callable[[str], Path]
+) -> None:
+    """The handler adds them itself, because `refresh_document` never saw the file."""
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "sample",
+            "--profile",
+            "ci",
+            "--output",
+            "json",
+            "--config",
+            str(write_config(DISJOINT)),
+        ],
+    )
+
+    document = json.loads(result.stdout)
+    assert document["exit_code"] == ExitCode.CONFIG_INVALID
+    assert "resolves to nothing" in document["error"]["message"]
     assert [one["code"] for one in document["diagnostics"]] == ["SOPULI-W051"]

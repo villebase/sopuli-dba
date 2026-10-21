@@ -479,13 +479,22 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
     }
     document.diagnostics[:] = ratchet_notes(invocation.resolved)
     if invocation.loaded is not None:
-        warnings = invocation.loaded.config.warnings
-        document.diagnostics.extend(
-            Diagnostic(level="warning", message=str(warning), code=warning.code)
-            for warning in warnings
-        )
-        document.warnings_text[:] = [str(warning) for warning in warnings]
+        add_config_warnings(document, invocation.loaded.config)
     return document
+
+
+def add_config_warnings(document: RunDocument, config: Config) -> None:
+    """The config's warnings, in ``diagnostics`` and in ``warnings_text``.
+
+    :func:`refresh_document` adds them after the ratchet notes. The command
+    handler adds them itself when the file loaded and resolving its settings
+    then failed, so that run carries them too.
+    """
+    document.diagnostics.extend(
+        Diagnostic(level="warning", message=str(warning), code=warning.code)
+        for warning in config.warnings
+    )
+    document.warnings_text[:] = [str(warning) for warning in config.warnings]
 
 
 def all_options(invocation: Invocation) -> dict[str, Option]:
@@ -995,14 +1004,21 @@ def _pass_invocation(func: F) -> F:
         # one if the file was read, the command line's own if it was not.
         try:
             loaded = load_config_layers(invocation, env=os.environ)
-            invocation = resolve_invocation(
-                group,
-                verb,
-                env=os.environ,
-                command=command,
-                loaded=loaded,
-                document=invocation.document,
-            )
+            try:
+                invocation = resolve_invocation(
+                    group,
+                    verb,
+                    env=os.environ,
+                    command=command,
+                    loaded=loaded,
+                    document=invocation.document,
+                )
+            except Exception:
+                # A setting the file loaded with did not resolve, so
+                # `refresh_document` never saw the file. Its warnings may still
+                # be why the run stopped (#918).
+                add_config_warnings(invocation.document, loaded.config)
+                raise
             # Again, because a profile may have supplied `output` -- and an
             # output format the tool does not have is still not a request it can
             # honour, wherever it was written.

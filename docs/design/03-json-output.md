@@ -473,7 +473,10 @@ The sections below explain the parts that encode a decision.
 `diagnostics[]` holds run-level findings: things the run reports and did not
 refuse to run over. A config warning (`01-configuration.md` §10) is one, because
 it belongs to no single target. Every command that loads a config emits its
-warnings, including `config show` in both views and `config validate`. A warning
+warnings, including `config show` in both views and `config validate`. The
+command handler adds them as soon as the file has loaded, not each verb, so a
+run that fails after that carries them too. They come after the
+notes on settings the ratchet refused, and before anything the verb adds. A warning
 that reached only the text output would be invisible to the scheduler, which is
 the reader that most needs it.
 

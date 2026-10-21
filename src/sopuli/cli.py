@@ -508,22 +508,6 @@ def describe_selection(selection: Selection) -> str | None:
     return ", ".join(parts) or None
 
 
-def report_config_warnings(document: RunDocument, config: Config) -> None:
-    """§10's warnings, as run-level diagnostics and as text (#897).
-
-    Run-level rather than per-target because a config warning is not
-    attributable to one target. Every verb that loads the file reports them in
-    both views: in ``diagnostics`` for the schedulers and CI jobs that read the
-    document, and in full under the text, where the emitter prints
-    ``warnings_text``.
-    """
-    for warning in config.warnings:
-        document.diagnostics.append(
-            Diagnostic(level="warning", message=str(warning), code=warning.code)
-        )
-        document.warnings_text.append(str(warning))
-
-
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option(version=get_version(), prog_name="sopuli")
 @group_options
@@ -724,7 +708,6 @@ def config_show(
     config = _narrow(run.config, selection)
 
     reached = len(config.expanded_targets)
-    report_config_warnings(document, config)
     document.selection = selection.as_json() or None
     document.config = build_section(paths, config, run.declared, resolved=resolved)
     if explain:
@@ -789,7 +772,6 @@ def target_list(
     config = _narrow(run.config, selection)
 
     reached = len(config.expanded_targets)
-    report_config_warnings(document, config)
     document.selection = selection.as_json() or None
     # The same `config` section `config show --resolved` emits, deliberately.
     # It is one estate, and a second JSON shape for it would be two answers to
@@ -882,7 +864,6 @@ def doctor(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     # Before anything connects, because it is the half of the answer that needs
     # no network -- and because a driver this machine does not have is the reason
@@ -1275,7 +1256,6 @@ def policy_sample(
     samples = [generate(policy, limit=limit) for _ in range(count)]
     described = describe_all(samples, policy, limit=limit)
 
-    report_config_warnings(document, config)
     document.policy = build_policy_section(chosen, policy, described, limit=limit)
     document.finish(
         ExitCode.SUCCESS,
@@ -1409,7 +1389,6 @@ def account_suspend(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
@@ -1690,7 +1669,6 @@ def account_expire_password(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
@@ -2043,7 +2021,6 @@ def account_reset_password(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action=action, estate=config)
@@ -3400,7 +3377,6 @@ def account_list_command(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     reached = config.expanded_targets
     if not reached:
@@ -3775,7 +3751,6 @@ def lock_status(
     )
     mode = mode_of(stores)
 
-    report_config_warnings(document, filter_estate(config, selection))
     narrowed = [
         *unlistable_stores(leftovers.unlistable),
         *unaddressable_lock_paths(leftovers.skipped),
@@ -3891,8 +3866,6 @@ def lock_break(
     # though this particular lock could not be taken.
     check_fenceable(key, entry)
     mode = mode_of({key.store: entry.store})
-
-    report_config_warnings(document, config)
 
     try:
         state = survey([key], stores={key.store: entry.store})[0]
@@ -4259,7 +4232,6 @@ def config_validate(
     # E6 and its alone -- this command answers "is my file good", and a table of
     # every registry entry would bury the answer.
     warnings = install_diagnostics(install_survey(config), level="warning")
-    report_config_warnings(document, config)
     document.diagnostics.extend(warnings)
     document.warnings_text.extend(warning.message for warning in warnings)
     targets = len(config.expanded_targets)
@@ -4479,7 +4451,6 @@ def creds_check(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     # C15's plan-time half (decision #250), before anything is planned: a
     # profile's `vault:` and SOPULI_VAULT are not consulted while bindings are
@@ -5121,7 +5092,6 @@ def creds_generate(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(
@@ -6202,7 +6172,6 @@ def creds_apply(
             # worth explaining.
             repair_notes.append(stale.message)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="applying a password")
@@ -9166,7 +9135,6 @@ def creds_finish_rollover(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="ending a rollover window")
@@ -9589,7 +9557,6 @@ def creds_rotate(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="rotating a password")
@@ -10482,7 +10449,6 @@ def creds_status(
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    report_config_warnings(document, config)
 
     config = binding_stores.complete(config, env=os.environ)
     binding_stores.refuse_unresolved(config, action="taking an inventory")

@@ -120,13 +120,13 @@ dependency is declared, not which dependency it is. See
 **Error mapping lives at the transport boundary** —
 `sopuli/store/hashicorp/_errors.py`, one module, never at call sites and never
 in `protocol.py`. Vault's `errors[]` strings are kept in `StoreError.message`:
-they are Vault's answer, and the request's token and body are not in them. Each
-entry is made one line, because the CLI keeps only the first line of a message.
+they are Vault's answer, and the request's token and body are not in them.
 Vault sends a refused token as one entry, `2 errors occurred:` followed by one
-reason per line, and the reasons would be lost (#934). An error that httpx raises while it builds or sends the request
-is named by its type only, because it can quote the token or the body. The
-mapper assigns the category. Two rules the probe
-made concrete:
+reason per line. A run document's `error.message` keeps only the first line of
+a message, so that entry is made one line, `permission denied; invalid token`,
+and its reasons are kept (#934). An error that httpx raises while it builds or
+sends the request is named by its type only, because it can quote the token or
+the body. The mapper assigns the category. Two rules the probe made concrete:
 
 - **Fail closed.** An unrecognised 400 is not a lost race. Misclassifying a
   real conflict costs one retry; misclassifying a hard error as a lost race

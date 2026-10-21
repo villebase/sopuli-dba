@@ -89,21 +89,24 @@ class StoreUnavailableError(StoreError):
 #: ``"2 errors occurred:\n\t* permission denied\n\t* invalid token\n\n"``.
 _MULTIERROR_HEADER = re.compile(r"\d+ errors? occurred:")
 
+#: The mark before each reason in a ``multierror``: ``*`` and a tab or a space.
+_MULTIERROR_BULLET = re.compile(r"\*\s+")
+
 
 def messages(body: Any) -> list[str]:
-    """Vault's ``errors[]``, one line per entry.
+    """Vault's ``errors[]``, with each multi-error entry made one line.
 
     Preserved rather than summarised (CLAUDE.md, Style: never swallow a vendor
     code -- map it, and keep the server's own message). An empty list is normal:
     a 404 for a path that was never written carries ``errors: []``, which is
     Vault saying "nothing here" rather than declining to explain itself.
 
-    Each entry is made one line here, because the CLI keeps only the first line
-    of an error's message (``_as_error`` in :mod:`sopuli.cli`). A multi-error
-    entry would otherwise keep only its header, ``2 errors occurred:``, and lose
-    Vault's reasons (#934). The reasons are Vault's words about the token, the
-    policy or the path. None that Vault 2.0.4 sent in the tier-1 stack quotes
-    the request's body, so a password in a write does not reach them. A body
+    A run document's ``error.message`` keeps only the first line of an error's
+    message (``_as_error`` in :mod:`sopuli.cli`), and so does a survey's note. A
+    multi-error entry would keep only its header, ``2 errors occurred:``, and
+    lose Vault's reasons (#934). So that one format is made one line here. Its
+    reasons are Vault's words about the token, the policy or the path. Any other
+    entry is only stripped, so the first-line trim still applies to it. A body
     that is not in Vault's format is never quoted (:func:`not_from_vault`).
     """
     if from_vault(body):
@@ -112,20 +115,29 @@ def messages(body: Any) -> list[str]:
 
 
 def _one_line(entry: str) -> str:
-    """A multi-line entry as one line: ``permission denied; invalid token``.
+    """A multi-error entry as one line: ``permission denied; invalid token``.
 
     Drops each ``N errors occurred:`` header and the ``*`` before each reason,
     and joins the reasons with ``; ``, so a nested multi-error is flattened too.
-    An entry of one line comes back as it was.
+    A line with no ``*`` continues the reason before it. An entry whose first
+    line is not a header comes back stripped and otherwise as it was.
     """
-    lines = entry.splitlines()
-    if len(lines) <= 1:
-        return entry
-    reasons = []
-    for line in lines:
-        text = line.strip().removeprefix("* ")
-        if text and not _MULTIERROR_HEADER.fullmatch(text):
-            reasons.append(text)
+    text = entry.strip()
+    lines = text.splitlines()
+    if not lines or not _MULTIERROR_HEADER.fullmatch(lines[0].strip()):
+        return text
+    reasons: list[str] = []
+    for line in lines[1:]:
+        part = line.strip()
+        bullet = _MULTIERROR_BULLET.match(part)
+        if bullet:
+            part = part[bullet.end() :]
+        if not part or _MULTIERROR_HEADER.fullmatch(part):
+            continue
+        if bullet or not reasons:
+            reasons.append(part)
+        else:
+            reasons[-1] = f"{reasons[-1]} {part}"
     return "; ".join(reasons) or lines[0].strip()
 
 

@@ -72,16 +72,22 @@ def _rows() -> tuple[tuple[str, ...], ...]:
     return tuple(rows)
 
 
+def _releases_section(text: str) -> tuple[dict[str, str], str]:
+    """The *Releases* table, as each release and its description, and the text below it."""
+    _, rest = text.split("## Releases\n", 1)
+    table, below = rest.split("\n## ", 1)
+    rows = re.finditer(r"^\| `([^`]+)` \|(.*)$", table, re.MULTILINE)
+    return {row.group(1): row.group(2) for row in rows}, below
+
+
+def _clients_in(releases: dict[str, str]) -> frozenset[str]:
+    """The releases that a *Releases* table marks as a client, not a database."""
+    return frozenset(release for release, about in releases.items() if NOT_A_DATABASE in about)
+
+
 @functools.cache
 def _clients() -> frozenset[str]:
-    """The releases the *Releases* table marks as a client, not a database."""
-    _, rest = MATRIX.read_text(encoding="utf-8").split("## Releases\n", 1)
-    releases = rest.split("\n## ", 1)[0]
-    return frozenset(
-        match.group(1)
-        for match in re.finditer(r"^\| `([^`]+)` \|(.*)$", releases, re.MULTILINE)
-        if NOT_A_DATABASE in match.group(2)
-    )
+    return _clients_in(_releases_section(MATRIX.read_text(encoding="utf-8"))[0])
 
 
 def _released(text: str) -> set[str]:
@@ -109,14 +115,14 @@ def _disagreement(
     in_header = _released(header) - clients
     companion = name.removesuffix(".py") + ".sql"
     if name.endswith(".py") and name not in matrix and companion in header:
-        ran = matrix.get(companion, set())
+        ran = matrix.get(companion, set()) - clients
         if in_header <= ran:
             return None
         return (
             f"{name} reads the output of {companion}, and names "
             f"{sorted(in_header - ran)} that {MATRIX.name} does not list for it."
         )
-    in_matrix = matrix.get(name, set())
+    in_matrix = matrix.get(name, set()) - clients
     if in_header == in_matrix:
         return None
     return (
@@ -148,13 +154,24 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(script: Path) -> 
     assert problem is None, problem
 
 
-def test_the_releases_table_marks_the_instant_client() -> None:
-    requires_repo(MATRIX)
-    assert "23.26.3.0.0" in _clients()
-    assert "23.26.2.0.0" not in _clients()
+RELEASES = """\
+## Releases
+
+| Release | Product, and where it ran |
+|---|---|
+| `23.26.2.0.0` | 26ai Free, a container |
+| `23.26.3.0.0` | Instant Client for Windows. Not a database: the client |
+
+## Scripts
+"""
 
 
-MATRIX_06 = {"06_x.sql": {"19.3.0.0.0", "21.3.0.0.0"}}
+def test_a_release_marked_not_a_database_is_a_client() -> None:
+    releases, _ = _releases_section(RELEASES)
+    assert _clients_in(releases) == {"23.26.3.0.0"}
+
+
+MATRIX_06 = {"06_x.sql": {"19.3.0.0.0", "21.3.0.0.0"}, "07_x.sql": {"23.26.3.0.0"}}
 CLIENTS = frozenset({"23.26.3.0.0"})
 
 
@@ -169,6 +186,7 @@ CLIENTS = frozenset({"23.26.3.0.0"})
         ("06_x.py", "reads 06_x.sql's output, from 18.4.0.0.0", False),
         ("06_x.py", "its own run on 19.3.0.0.0, with Instant Client `23.26.3.0.0`", False),
         ("06_x.py", "names no script and no release", True),
+        ("07_x.sql", "client 23.26.3.0.0 only", True),
     ],
     ids=[
         "own-rows-missing",
@@ -179,6 +197,7 @@ CLIENTS = frozenset({"23.26.3.0.0"})
         "companion-names-another",
         "same-name-but-not-a-companion",
         "no-rows-no-releases",
+        "a-client-in-the-release-column",
     ],
 )
 def test_the_comparison(name: str, header: str, agrees: bool) -> None:
@@ -189,10 +208,11 @@ def test_the_comparison(name: str, header: str, agrees: bool) -> None:
 
 
 def test_a_byte_order_mark_is_not_part_of_the_header(tmp_path: Path) -> None:
+    bom = chr(0xFEFF)
     probe = tmp_path / "15_x.py"
-    probe.write_bytes('﻿"""Run on 19.3.0.0.0."""\n'.encode())
+    probe.write_bytes(f'{bom}"""Run on 19.3.0.0.0."""\n'.encode())
     script = tmp_path / "15_x.sql"
-    script.write_bytes("﻿-- Run on 19.3.0.0.0.\nSELECT 1 FROM dual;\n".encode())
+    script.write_bytes(f"{bom}-- Run on 19.3.0.0.0.\nSELECT 1 FROM dual;\n".encode())
 
     assert _header(probe) == "Run on 19.3.0.0.0."
     assert _header(script) == "-- Run on 19.3.0.0.0."
@@ -207,9 +227,7 @@ def test_the_matrix_names_only_scripts_that_exist() -> None:
 
 def test_every_release_used_is_in_the_releases_table() -> None:
     requires_repo(MATRIX)
-    text = MATRIX.read_text(encoding="utf-8")
-    _, rest = text.split("## Releases\n", 1)
-    releases, below = rest.split("\n## ", 1)
-    listed = {m.group(1) for m in re.finditer(r"^\| `([^`]+)` \|", releases, re.MULTILINE)}
+    table, below = _releases_section(MATRIX.read_text(encoding="utf-8"))
+    listed = set(table)
     used = _released(below)
     assert used <= listed, f"releases with no row in ## Releases: {sorted(used - listed)}"

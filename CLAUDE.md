@@ -186,9 +186,9 @@ sample from a real run.
 
 **Measurements.** When you run a script in `sql/oracle/`, update its header (a
 Python probe's docstring) and the matrix in `docs/measurements.md`;
-`tests/test_measurements.py` checks that they agree. Name the full release, such as 19.3.0.0.0 or 19.32.0.0.0, never
-"19c". Results differ between releases, and between release updates of one
-release.
+`tests/test_measurements.py` checks that they agree. Name the full release, such
+as 19.3.0.0.0 or 19.32.0.0.0, never "19c". Results differ between releases, and
+between release updates of one release.
 
 **Keep pure layers pure.** Config parsing and validation, target-set expansion,
 precedence resolution, SecretRef parsing, password generation and redaction do no

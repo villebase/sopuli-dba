@@ -44,6 +44,7 @@ from sopuli.config.model import (
     Override,
     as_dict,
 )
+from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, normalise_path, parse_secret_ref
 from sopuli.config.selection import matches, select
@@ -123,22 +124,23 @@ def _check_one_account_per_password(
     one Oracle user is the duplicate-name rule's question, not this one's, and
     that rule sees one entry. Across entries it is open (#874).
     """
-    documents: dict[tuple[str | None, str], dict[tuple[tuple[str, ...], str], Binding]] = {}
+    documents: dict[tuple[str | None, str], dict[tuple[PasswordKey, str], Binding]] = {}
     for binding in bindings:
-        ref = binding.secret
-        if ref is None:
+        key = declared_password_key(binding)
+        if key is None:
             continue
-        place = () if ref.field is None else (ref.field, *ref.pointer_segments)
-        seen = documents.setdefault((binding.vault, normalise_path(ref.path)), {})
-        if (place, binding.account) in seen:
+        ref = binding.secret
+        assert ref is not None
+        seen = documents.setdefault((key.store, key.path), {})
+        if (key, binding.account) in seen:
             # One account in one place on another target: a shared password.
             continue
-        for (other_place, _), other in seen.items():
-            if not _overlaps(place, other_place):
+        for (other_key, _), other in seen.items():
+            if not key.overlaps(other_key):
                 continue
             other_ref = other.secret
             assert other_ref is not None
-            if place == other_place:
+            if key == other_key:
                 fault = f"resolve to one password at {_address(binding, ref)}"
             else:
                 fault = (
@@ -159,13 +161,7 @@ def _check_one_account_per_password(
                     "path#FIELD/{account}: give the refs distinct, non-nested fields or pointers"
                 ),
             )
-        seen[(place, binding.account)] = binding
-
-
-def _overlaps(one: tuple[str, ...], other: tuple[str, ...]) -> bool:
-    """Whether one place contains the other, or they are the same place."""
-    shorter = min(len(one), len(other))
-    return one[:shorter] == other[:shorter]
+        seen[(key, binding.account)] = binding
 
 
 def _declared_in(first: Binding, second: Binding) -> str:
@@ -218,13 +214,14 @@ def _check_one_policy_per_password(
     Two *different* accounts on one field never reach it:
     ``_check_one_account_per_password`` refuses them first.
     """
-    seen: dict[tuple[str, str | None, str, str | None, str | None], Binding] = {}
+    seen: dict[tuple[str, PasswordKey], Binding] = {}
     for binding in bindings:
-        ref = binding.secret
-        if ref is None:
+        key = declared_password_key(binding)
+        if key is None:
             continue
-        key = (binding.account, binding.vault, normalise_path(ref.path), ref.field, ref.pointer)
-        first = seen.setdefault(key, binding)
+        ref = binding.secret
+        assert ref is not None
+        first = seen.setdefault((binding.account, key), binding)
         if first.policy == binding.policy:
             continue
         address = _address(binding, ref)

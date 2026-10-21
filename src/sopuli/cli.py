@@ -108,6 +108,7 @@ from sopuli.config import (
 from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
+from sopuli.config.password_keys import place_of
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
@@ -8664,13 +8665,13 @@ def _left_out(
     it rather than promoting past it.
     """
     visited = {(binding.account, binding.target) for binding in scope}
-    credentials: dict[LockKey, set[tuple[str | None, tuple[str, ...]]]] = {}
+    credentials: dict[LockKey, set[tuple[str, ...]]] = {}
     forward: set[LockKey] = set()
     for binding, is_forward in owing:
         if binding.secret is None or binding.vault is None:
             continue
         key = _lock_key(binding)
-        credentials.setdefault(key, set()).add(_credential_at(binding.secret))
+        credentials.setdefault(key, set()).add(place_of(binding.secret))
         if is_forward:
             forward.add(key)
     by_path: dict[str, list[LockKey]] = {}
@@ -8688,16 +8689,11 @@ def _left_out(
         key = _lock_key(binding)
         if key not in credentials:
             continue
-        if _credential_at(binding.secret) in credentials[key] or (
+        if place_of(binding.secret) in credentials[key] or (
             key in forward and _has_pending(binding, documents)
         ):
             found.setdefault(key, []).append(binding)
     return found
-
-
-def _credential_at(ref: SecretRef) -> tuple[str | None, tuple[str, ...]]:
-    """Where in its document a ref's value lives: the field and the decoded pointer."""
-    return ref.field, ref.pointer_segments
 
 
 def _declared_estate(config: Config) -> Config:
@@ -8877,7 +8873,8 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     holds the document back.
 
     **The same credential is the same place in the same document**, the field
-    and the decoded pointer, which is :func:`_left_out`'s definition too. It is
+    and the decoded pointer: :func:`~sopuli.config.password_keys.place_of`, which
+    :func:`_left_out` and every "same password" check use too (#847). It is
     not the account name: one account can have a field per target in one
     document, and a confirmation on one field does not move the other.
 
@@ -8887,7 +8884,7 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     target, which is then the reason given.
     """
     confirmed_elsewhere = {
-        (_lock_key(record.binding), _credential_at(record.binding.secret))
+        (_lock_key(record.binding), place_of(record.binding.secret))
         for record in applied
         if record.binding.secret is not None
         and record.binding.vault is not None
@@ -8902,7 +8899,7 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
         if record.outcome.state == apply_states.SKIPPED and not (
             record.source is not None
             and apply_states.promotes(record.source.stage)
-            and (key, _credential_at(binding.secret)) in confirmed_elsewhere
+            and (key, place_of(binding.secret)) in confirmed_elsewhere
         ):
             continue
         grouped.setdefault(key, []).append(record)

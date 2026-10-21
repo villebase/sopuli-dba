@@ -99,7 +99,8 @@ that the installed `sopuli` binary runs. No containers, under a minute.
     open needs the network, so the `pending-work` workflow checks that weekly
     instead of on each pull request.
   - `tests/test_measurements.py` checks that `docs/measurements.md` and the
-    header of each script in `sql/oracle/` name the same Oracle releases.
+    header of each SQL script and Python probe in `sql/oracle/` name the same
+    Oracle releases.
 
   Without the job, a mistyped slug or a
   documented flag the CLI does not have would merge green, because every other

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import ipaddress
 import urllib.parse
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -143,6 +143,40 @@ def dsn_host(dsn: str) -> str:
     """
     remainder = dsn.split("://", 1)[-1].lstrip("/")
     return remainder.split("/")[0].rsplit(":", 1)[0]
+
+
+#: The `SYS` password, where it is not the admin account's. The gvenzl images set
+#: both from one `ORACLE_PASSWORD`, so the public stack needs neither variable.
+#: A maintainer environment, such as 19.3 or OCI, can have two passwords.
+SYS_PASSWORD_VAR = "SOPULI_TEST_ORACLE_SYS_PASSWORD"
+
+#: The admin account's password, and the `SYS` one's when that is not set.
+PASSWORD_VAR = "SOPULI_TEST_ORACLE_PASSWORD"
+
+#: The code for a refused logon.
+INVALID_LOGON = "ORA-01017"
+
+
+def sys_password(env: Mapping[str, str]) -> str:
+    """The password the suite logs in as `SYS AS SYSDBA` with.
+
+    The one place that reads it, for the `sysdba` fixture and for SQL\\*Plus in
+    `test_oracle_install_script.py`.
+    """
+    return env.get(SYS_PASSWORD_VAR) or env.get(PASSWORD_VAR) or "sopuli-test"
+
+
+def sys_login_refused(env: Mapping[str, str]) -> str:
+    """The skip reason for a `SYS` logon that failed with `ORA-01017`.
+
+    It names the variable the password came from, and the one to set, because
+    the reader's next step is to set it.
+    """
+    if env.get(SYS_PASSWORD_VAR):
+        used = f"{SYS_PASSWORD_VAR}: check it"
+    else:
+        used = f"{PASSWORD_VAR}: set {SYS_PASSWORD_VAR} where SYS has a password of its own"
+    return f"environment unavailable: SYS AS SYSDBA was refused with {INVALID_LOGON} using {used}"
 
 
 def service_account_grants(account: str) -> tuple[str, ...]:

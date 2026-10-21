@@ -23,6 +23,8 @@ from oracle_harness import (
     decide_skip,
     dsn_host,
     render_matrix,
+    sys_login_refused,
+    sys_password,
 )
 from sopuli.driver.oracle.capabilities import NO_CONTAINERS
 from sopuli.driver.protocol import CAPABILITIES, PASSWORD_ROLLOVER
@@ -235,3 +237,33 @@ def test_any_other_error_is_raised_rather_than_read_as_non_cdb() -> None:
     error = Exception("ORA-03113: end-of-file on communication channel")
     with pytest.raises(Exception, match="ORA-03113"):
         current_container(_Connection(error))
+
+
+# --------------------------------------------------------------- sys login ---
+
+
+def test_the_sys_password_is_its_own_variable_where_one_is_set() -> None:
+    env = {"SOPULI_TEST_ORACLE_SYS_PASSWORD": "sys-pw", "SOPULI_TEST_ORACLE_PASSWORD": "system-pw"}
+    assert sys_password(env) == "sys-pw"
+
+
+def test_the_sys_password_falls_back_to_the_admin_password() -> None:
+    """The gvenzl images set both from one `ORACLE_PASSWORD`, so the public
+    stack needs nothing new (#779)."""
+    assert sys_password({"SOPULI_TEST_ORACLE_PASSWORD": "system-pw"}) == "system-pw"
+    assert sys_password({}) == "sopuli-test"
+
+
+def test_a_refused_sys_login_names_the_variable_to_set() -> None:
+    reason = sys_login_refused({})
+
+    assert reason.startswith("environment unavailable:")
+    assert "ORA-01017" in reason
+    assert "using SOPULI_TEST_ORACLE_PASSWORD" in reason
+    assert "set SOPULI_TEST_ORACLE_SYS_PASSWORD" in reason
+
+
+def test_a_refused_sys_login_names_the_sys_variable_when_it_was_used() -> None:
+    reason = sys_login_refused({"SOPULI_TEST_ORACLE_SYS_PASSWORD": "wrong"})
+
+    assert "using SOPULI_TEST_ORACLE_SYS_PASSWORD: check it" in reason

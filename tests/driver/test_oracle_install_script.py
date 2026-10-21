@@ -49,6 +49,7 @@ from typing import NoReturn
 import pytest
 from _pytest.outcomes import Failed
 
+from oracle_harness import INVALID_LOGON, sys_login_refused, sys_password
 from repo_files import requires_repo
 from sopuli.driver.oracle.privileges import (
     PREDICATE_READS,
@@ -78,7 +79,7 @@ CONTAINER = os.environ.get(
 #: would be quoted as evidence.
 TIER1 = "SOPULI_TEST_TIER1"
 
-SYS_PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
+SYS_PASSWORD = sys_password(os.environ)
 
 #: Connect strings for the two containers. `/ as sysdba` is OS authentication
 #: from inside the container and lands in `CDB$ROOT`, which is `COMMON` mode's
@@ -236,22 +237,27 @@ def _exec(
     """
     try:
         if script is None:
-            return subprocess.run(
+            result = subprocess.run(
                 ["docker", "exec", container, "sqlplus", "-s", connect, *args],
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,
                 timeout=EXEC_TIMEOUT_S,
             )
-        return subprocess.run(
-            ["docker", "exec", "-i", container, "sqlplus", "-s", connect, *args],
-            input=script,
-            capture_output=True,
-            text=True,
-            timeout=EXEC_TIMEOUT_S,
-        )
+        else:
+            result = subprocess.run(
+                ["docker", "exec", "-i", container, "sqlplus", "-s", connect, *args],
+                input=script,
+                capture_output=True,
+                text=True,
+                timeout=EXEC_TIMEOUT_S,
+            )
     except subprocess.TimeoutExpired as expired:
         pytest.fail(_timeout_report(container, expired), pytrace=False)
+    # Only the PDB logon carries a password. `ROOT` is OS authentication.
+    if connect == PDB and INVALID_LOGON in result.stdout:
+        _missing(sys_login_refused(os.environ))
+    return result
 
 
 def _timeout_report(container: str, expired: subprocess.TimeoutExpired) -> str:

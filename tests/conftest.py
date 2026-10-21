@@ -21,12 +21,15 @@ import pytest
 
 from fault_harness import ACCOUNT, OLD, Estate
 from oracle_harness import (
+    INVALID_LOGON,
     Environment,
     decide_skip,
     dsn_is_loopback,
     is_loopback,
     probe,
     render_matrix,
+    sys_login_refused,
+    sys_password,
 )
 from repo_files import FROM_SDIST, reason, repo_relative
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
@@ -623,12 +626,24 @@ def sysdba(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
     :func:`oracle_harness.current_container` to learn the target's shape. So a
     fixture that moves it with `ALTER SESSION SET CONTAINER` moves it back
     before it returns.
+
+    The password is :func:`oracle_harness.sys_password`'s. Where the `SYS` logon
+    is refused, the test skips with a reason that names the variable (#779).
     """
     oracledb = pytest.importorskip("oracledb")
     session_module.initialise(env=os.environ)
-    connection = oracledb.connect(
-        user="sys", password=PASSWORD, dsn=live_oracle.dsn, mode=oracledb.AUTH_MODE_SYSDBA
-    )
+    try:
+        connection = oracledb.connect(
+            user="sys",
+            password=sys_password(os.environ),
+            dsn=live_oracle.dsn,
+            mode=oracledb.AUTH_MODE_SYSDBA,
+        )
+    except oracledb.DatabaseError as error:
+        if INVALID_LOGON not in str(error):
+            raise
+        _SKIPS["environment"] += 1
+        _missing_environment(sys_login_refused(os.environ))
     try:
         yield connection
     finally:

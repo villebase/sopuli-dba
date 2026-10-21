@@ -168,8 +168,9 @@ def render_account_list(rows: Sequence[Row], *, run_notes: Sequence[str] = ()) -
     **A ``-`` in a date column says why, under the table.** `SOPULI-W021` is
     per account and is grouped per target and reason, as `creds status` prints
     it. ``run_notes`` are the run's own, such as `SOPULI-W023` for an empty
-    ``RESET_AT``, and are printed last. They are not the config's warnings,
-    which the emitter prints from ``warnings_text``.
+    ``RESET_AT``, and are printed last. The command decides which apply. They
+    are not the config's warnings, which the emitter prints from
+    ``warnings_text``.
     """
     if not rows:
         return "no declared personal accounts on the selected targets"
@@ -199,10 +200,7 @@ def render_account_list(rows: Sequence[Row], *, run_notes: Sequence[str] = ()) -
         (row.target, row.account, None if row.state is None else row.state.password_changed_unknown)
         for row in rows
     )
-    # A run where no target answered has no RESET_AT to explain, and a note about
-    # the journal would point the reader away from the unreachable target.
-    answered = any(not row.failed for row in rows)
-    notes = [*_notes(rows), *dates, *(run_notes if answered else ())]
+    notes = [*_notes(rows), *dates, *run_notes]
     return "\n".join([*lines, "", _count(rows), *render_notices(notes)])
 
 

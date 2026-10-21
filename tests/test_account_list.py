@@ -473,15 +473,6 @@ def test_the_runs_own_notes_print_last() -> None:
     assert "RESET_AT is empty for every account" in printed[1]
 
 
-def test_a_run_where_no_target_answered_prints_no_journal_note() -> None:
-    """With every row an `ERROR`, there is no `RESET_AT` to explain, and a note
-    about the journal would point the reader away from the unreachable target."""
-    text = render_account_list([unreachable()], run_notes=[no_reset_journal()[0].message])
-
-    assert "reset_records" not in text
-    assert click.unstyle(text).splitlines()[-1].startswith("0 declared accounts")
-
-
 def test_an_empty_reason_prints_no_date_note() -> None:
     """The document emits `SOPULI-W021` only for a reason with text in it, so the
     text does the same, and the two cannot disagree."""

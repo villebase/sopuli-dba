@@ -3395,7 +3395,11 @@ def account_list_command(
 
     document.results = [build_account_list_result(row) for row in rows]
     document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
-    return render_account_list(rows, run_notes=[one.message for one in unjournaled])
+    # Where no target answered there is no RESET_AT to explain, and a note about
+    # the journal would point the reader away from the unreachable targets.
+    answered = errors < len(reached)
+    notes = [one.message for one in unjournaled] if answered else []
+    return render_account_list(rows, run_notes=notes)
 
 
 def _list_one(

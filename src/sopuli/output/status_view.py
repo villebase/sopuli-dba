@@ -163,7 +163,7 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
             )
         )
     unknown = None if row.user is None else row.user.password_changed_unknown
-    if unknown is not None:
+    if unknown:
         # Beside the `password_age_days` it explains, one per result.
         found.append(
             Diagnostic(

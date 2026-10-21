@@ -67,3 +67,25 @@ def test_no_journal_is_said_in_the_text_and_in_the_document(no_journal: str) -> 
     assert "no `reset_records:` block is declared" in click.unstyle(text.output)
     found = json.loads(document.output)
     assert NO_RESET_JOURNAL in [one["code"] for one in found["diagnostics"]]
+
+
+def test_a_run_where_no_target_answered_prints_no_journal_note(
+    write_config: WriteConfig, oracle_client: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no target answering there is no `RESET_AT` to explain, and a note
+    about the journal would point the reader away from the unreachable target.
+    The document still says no journal is declared, because that is still true.
+
+    Port 1 on loopback has nothing listening, so the refusal is immediate.
+    """
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, "unused")
+    config = str(write_config(NO_JOURNAL.format(dsn="127.0.0.1:1/NOPE", user="system")))
+    runner = CliRunner()
+
+    text = runner.invoke(cli, ["--config", config, "account", "list"])
+    document = runner.invoke(cli, ["--config", config, "--output", "json", "account", "list"])
+
+    assert text.exit_code == ExitCode.PARTIAL, text.output
+    assert "reset_records" not in text.output
+    found = json.loads(document.output)
+    assert NO_RESET_JOURNAL in [one["code"] for one in found["diagnostics"]]

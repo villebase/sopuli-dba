@@ -152,7 +152,7 @@ def summarise(rows: Sequence[Row]) -> Summary:
     )
 
 
-def render_account_list(rows: Sequence[Row]) -> str:
+def render_account_list(rows: Sequence[Row], *, run_notes: Sequence[str] = ()) -> str:
     """The table, or a sentence where the declaration matched nothing.
 
     **Matching nothing is a true answer and reads like one.** §2's asymmetry says
@@ -164,6 +164,12 @@ def render_account_list(rows: Sequence[Row]) -> str:
     `role:` predicate the commonest one is `SYSTEM`, admitted because creating a
     role grants it to the creator. A reader of the table alone would not know
     that no reset touches it.
+
+    **A ``-`` in a date column says why, under the table.** `SOPULI-W021` is
+    per account and is grouped per target and reason, as `creds status` prints
+    it. ``run_notes`` are the run's own, such as `SOPULI-W023` for an empty
+    ``RESET_AT``, and are printed last. They are not the config's warnings,
+    which the emitter prints from ``warnings_text``.
     """
     if not rows:
         return "no declared personal accounts on the selected targets"
@@ -189,7 +195,8 @@ def render_account_list(rows: Sequence[Row]) -> str:
             for row in rows
         ],
     )
-    return "\n".join([*lines, "", _count(rows), *render_notices(_notes(rows))])
+    notes = [*_notes(rows), *_unknown_dates(rows), *run_notes]
+    return "\n".join([*lines, "", _count(rows), *render_notices(notes)])
 
 
 def _notes(rows: Sequence[Row]) -> list[str]:
@@ -207,6 +214,24 @@ def _notes(rows: Sequence[Row]) -> list[str]:
         f"{account} on {', '.join(where)}: {message}"
         for (account, message), where in targets.items()
     ]
+
+
+def _unknown_dates(rows: Sequence[Row]) -> list[str]:
+    """Why ``DB_PW_CHANGED`` is empty, one line per target and reason.
+
+    The same words `creds status` prints for `SOPULI-W021`, so the two commands
+    describe one absence the same way.
+    """
+    unknown: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        reason = None if row.state is None else row.state.password_changed_unknown
+        if reason is not None:
+            unknown.setdefault((row.target, reason), []).append(row.account)
+    lines = []
+    for (target, reason), accounts in unknown.items():
+        who = accounts[0] if len(accounts) == 1 else f"{len(accounts)} accounts"
+        lines.append(f"{target}: DB_PW_CHANGED is empty for {who}: {reason}")
+    return lines
 
 
 def _declared_by(row: Row) -> str:

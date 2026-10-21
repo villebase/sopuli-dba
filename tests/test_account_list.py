@@ -34,7 +34,11 @@ from sopuli.account_list import (
 )
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.diagnostics import ADMITTED_CROSS_DECLARED, ADMITTED_VENDOR_ACCOUNT
+from sopuli.diagnostics import (
+    ADMITTED_CROSS_DECLARED,
+    ADMITTED_VENDOR_ACCOUNT,
+    no_reset_journal,
+)
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
     build_result,
@@ -435,6 +439,38 @@ def test_a_table_with_no_notices_ends_with_the_count() -> None:
     lines = click.unstyle(render_account_list(rows())).splitlines()
 
     assert lines[-1] == "2 declared accounts, 2 on the selected targets"
+
+
+def test_an_empty_db_pw_changed_says_why_once_per_target_and_reason() -> None:
+    """`SOPULI-W021` reached `results[].warnings[]` and never the text, so the
+    `-` in the column had no reason a terminal reader could see (#921). Grouped
+    as `creds status` groups it."""
+    rule = config().personal_accounts[1]
+    reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE"
+    unknown = [
+        Row(
+            account=name,
+            target=TARGET,
+            rule=rule,
+            state=user(name, password_changed_unknown=reason),
+        )
+        for name in ("SYSTEM", "CAROL")
+    ]
+
+    printed = notes(render_account_list([*rows()[:1], *unknown]))
+
+    assert printed == ["1 note:", f"  {TARGET}: DB_PW_CHANGED is empty for 2 accounts: {reason}"]
+
+
+def test_the_runs_own_notes_print_last() -> None:
+    """`SOPULI-W023` is one per run, so it is the cli's to pass in: the rows do
+    not know the configuration declares no journal (#921)."""
+    message = no_reset_journal()[0].message
+
+    printed = notes(render_account_list(rows(), run_notes=[message]))
+
+    assert printed == ["1 note:", f"  {message}"]
+    assert "RESET_AT is empty for every account" in printed[1]
 
 
 # ------------------------------------------------------ reading the journal ---

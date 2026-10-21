@@ -18,6 +18,7 @@ from sopuli.driver.oracle.audit import (
     ALL_USERS,
     BY_ROLE,
     BY_USER,
+    COMMON_QUERY,
     ENABLED_QUERY,
     EXCEPT_USER,
     MODE_QUERY,
@@ -33,6 +34,7 @@ from sopuli.driver.oracle.audit import (
 from sopuli.driver.protocol import AuditCoverage
 
 PERSON = "ACME_DEV_ALICE"
+COMMON_PERSON = "C##ACME_DEV_CAROL"
 DBA = "ACME_DBA1"
 
 
@@ -307,6 +309,62 @@ def test_a_common_policy_records_nothing_of_local_accounts() -> None:
     assert "C##P is a common policy" in found.detail
 
 
+#: The install scripts' policies for a COMMON install run in the root with the
+#: person in the list, and in the PDB with no list. #839's case.
+ROOT_AND_PDB = (
+    [
+        enabled("SOPULI_POL"),
+        enabled("SOPULI_CDB_POL"),
+        enabled("SOPULI_CDB_PERSON_LOGON_POL", BY_USER, COMMON_PERSON),
+    ],
+    [
+        action("SOPULI_POL", "ALTER USER"),
+        action("SOPULI_CDB_POL", "ALTER USER", common=True),
+        action("SOPULI_CDB_PERSON_LOGON_POL", "LOGON", common=True),
+    ],
+)
+
+
+def test_a_common_policy_covers_a_common_persons_logon() -> None:
+    """Measured (AC9): a common logon policy enabled `BY` a common person records
+    their proxy logon in the root and in the PDB. With the PDB's every-user
+    `ALTER USER` policy, the reset is audited (#839)."""
+    enablements, options = ROOT_AND_PDB
+
+    found = classify("TRUE", enablements, options, COMMON_PERSON, common=True)
+
+    assert found.audited is True
+    assert found.detail == "LOGON by SOPULI_CDB_PERSON_LOGON_POL; ALTER USER by SOPULI_POL"
+
+
+def test_the_same_policies_for_a_local_person_stay_unknown() -> None:
+    """AC6 and AC8: a common policy records nothing of a local account."""
+    enablements, options = ROOT_AND_PDB
+    listed = [
+        enabled(one.policy, one.option, PERSON) if one.entity == COMMON_PERSON else one
+        for one in enablements
+    ]
+
+    found = classify("TRUE", listed, options, PERSON, common=False)
+
+    assert found.audited is None
+    assert "SOPULI_CDB_PERSON_LOGON_POL is a common policy, which records nothing of local" in (
+        found.detail
+    )
+
+
+def test_a_common_policy_never_covers_alter_user_even_for_a_common_person() -> None:
+    """A DBA issues the `ALTER USER`, and the tool cannot know that the DBA is
+    common. The detail says why, and does not call the person local."""
+    found = classify(
+        "TRUE", [enabled("C##P")], both("C##P", common=True), COMMON_PERSON, common=True
+    )
+
+    assert found.audited is None
+    assert found.detail.startswith("LOGON by C##P; ALTER USER might be recorded:")
+    assert "records nothing of a local DBA's ALTER USER" in found.detail
+
+
 def test_a_role_is_not_resolved() -> None:
     found = answer([enabled("P", BY_ROLE, "ACME_DBA_ROLE")], both("P"))
 
@@ -392,7 +450,8 @@ class Cursor:
         self._last = statement
 
     def fetchone(self) -> Any:
-        return self.answers[self._last]
+        """``None`` for a query with no answer, as for a person with no row."""
+        return self.answers.get(self._last)
 
     def fetchall(self) -> Any:
         return self.answers[self._last]
@@ -413,7 +472,31 @@ def test_the_three_reads_are_classified() -> None:
     found = coverage_of(cursor, PERSON)
 
     assert found.audited is True
-    assert [parameters for _, parameters in cursor.asked] == [None, None, None], "nothing bound"
+    assert [parameters for _, parameters in cursor.asked] == [None, {"name": PERSON}, None, None], (
+        "only the person's name is bound"
+    )
+
+
+def test_the_persons_common_column_reaches_the_rules() -> None:
+    """`DBA_USERS.COMMON` decides whether a common logon policy counts (#839)."""
+    cursor = Cursor(
+        {
+            MODE_QUERY: ("TRUE",),
+            COMMON_QUERY: ("YES",),
+            ENABLED_QUERY: [
+                ("C##P", "BY USER", COMMON_PERSON, "YES"),
+                ("P", "BY USER", "ALL USERS", "YES"),
+            ],
+            OPTIONS_QUERY: [
+                ("C##P", "LOGON", "STANDARD ACTION", "NONE", "YES"),
+                ("P", "ALTER USER", "STANDARD ACTION", "NONE", "NO"),
+            ],
+        }
+    )
+
+    assert coverage_of(cursor, COMMON_PERSON).audited is True
+    cursor.answers[COMMON_QUERY] = ("NO",)
+    assert coverage_of(cursor, COMMON_PERSON).audited is None
 
 
 def test_an_unreadable_policy_view_names_the_grant() -> None:

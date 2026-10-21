@@ -1204,13 +1204,22 @@ so it does not guess:
 - **It has a row for `ALTER USER`, and is enabled through a `BY` or `EXCEPT`
   list.** Some users are covered, and the tool cannot tell whether the DBA is
   one of them.
-- **It is a common policy**, with `COMMON = 'YES'` in `AUDIT_UNIFIED_POLICIES`.
-  From the PDB, a common policy enabled in `CDB$ROOT` looks like a policy
-  enabled for every user. The probe measured that such a policy recorded
-  nothing of the route by local accounts: no `ALTER USER` and no logon, in any
-  container's trail. It did record a common account's logon to the PDB. So a
-  common DBA account taking the route might be recorded, and a local one is
-  not.
+- **It is a common policy**, with `COMMON = 'YES'` in `AUDIT_UNIFIED_POLICIES`,
+  and the action is `ALTER USER` or the person is a local account. From the PDB,
+  a common policy enabled in `CDB$ROOT` looks like a policy enabled for every
+  user. The probe measured that such a policy recorded nothing of the route by
+  local accounts: no `ALTER USER` and no logon, in any container's trail (AC6,
+  AC8). The DBA issues the `ALTER USER`, and the tool cannot know whether that
+  DBA is common, so a common policy never covers `ALTER USER`.
+
+  **For a common person, a common policy counts for `LOGON`.** The check reads
+  the person's `DBA_USERS.COMMON`. The person issues the logon, and the probe
+  measured that a common policy records a common account's logon: AC6's
+  control logged on to the PDB directly, and in AC9 a common DBA's proxy logon
+  as a common person, under a logon policy enabled `BY` that person with
+  `CONTAINER = ALL`, was recorded in the root and in the PDB. The other rules
+  still apply: the policy must be enabled for the person, record successes and
+  have no condition.
 - **It has a row of a kind the probe has not measured.** A `SYSTEM PRIVILEGE`
   row records the statements that use the privilege. A logon uses
   `CREATE SESSION`, so `PRIVILEGES CREATE SESSION` might record `LOGON`. No
@@ -1273,8 +1282,11 @@ For a reset in a PDB, the value depends on which run's list names the person:
 - `true` where the script ran in the PDB with the person in that run's list.
   `sopuli_pol` covers `ALTER USER` for every user, and
   `sopuli_person_logon_pol` covers the person's `LOGON`;
-- `unknown` where no PDB run names the person and the root's list does,
-  because the check reads a common policy as *might cover*;
+- `true` for a common person where the script ran in the PDB and the root's
+  list names the person. `sopuli_pol` covers `ALTER USER`, and
+  `sopuli_cdb_person_logon_pol` covers the common person's `LOGON`;
+- `unknown` for a local person where no PDB run names the person and the root's
+  list does, because a common policy records nothing of local accounts;
 - `false` where neither list names the person. No policy records the person's
   logon or might record it: `sopuli_logon_pol` and `sopuli_cdb_logon_pol`
   record only the service account's failed logons.

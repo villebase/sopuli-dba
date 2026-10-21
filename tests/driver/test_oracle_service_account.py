@@ -538,3 +538,49 @@ def test_nothing_recording_logons_is_false_on_a_unified_only_database(
 
     assert found.audited is False, found.detail
     assert found.detail == f"no enabled policy records LOGON for {PERSON}"
+
+
+#: A common person, and a common logon policy enabled `BY` them in the root.
+COMMON_PERSON = "C##ACME_DEV_CAROL"
+COMMON_POLICY = "acme_route_cdb_logon"
+
+
+def _drop_common(sysdba: Any) -> None:
+    for statement in (
+        f"noaudit policy {COMMON_POLICY} by {COMMON_PERSON}",
+        f"drop audit policy {COMMON_POLICY}",
+        f"drop user {COMMON_PERSON} cascade",
+    ):
+        with contextlib.suppress(Exception):
+            execute(sysdba, statement)
+
+
+def test_a_common_logon_policy_covers_a_common_persons_logon(
+    audit_reader: Any, sysdba: Any
+) -> None:
+    """#839, as `13_audit_coverage_probe.sql` AC9a measured it: a logon policy
+    created `CONTAINER = ALL` in the root and enabled `BY` the common person,
+    with an every-user `ALTER USER` policy in the PDB, is `true`."""
+    here = current_container(sysdba)
+    if here == "NON-CDB":
+        pytest.skip("this database has no containers, so it has no common accounts")
+
+    execute(sysdba, "alter session set container = CDB$ROOT")
+    try:
+        _drop_common(sysdba)
+        execute(
+            sysdba,
+            f'create user {COMMON_PERSON} identified by "AcmeCarol#4521" container = all',
+            f"create audit policy {COMMON_POLICY} actions logon container = all",
+            f"audit policy {COMMON_POLICY} by {COMMON_PERSON} whenever successful",
+        )
+        execute(sysdba, f"alter session set container = {here}")
+        with _policy(sysdba, "alter user"):
+            found = audit_reader.audit_coverage(COMMON_PERSON)
+    finally:
+        execute(sysdba, "alter session set container = CDB$ROOT")
+        _drop_common(sysdba)
+        execute(sysdba, f"alter session set container = {here}")
+
+    assert found.audited is True, found.detail
+    assert found.detail == (f"LOGON by {COMMON_POLICY.upper()}; ALTER USER by {POLICY.upper()}")

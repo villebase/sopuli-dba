@@ -1,0 +1,10 @@
+# What CodeQL analyses (#944). The wheel ships src/sopuli, as
+# [tool.hatch.build.targets.wheel] in pyproject.toml says. tests/ and test/ are
+# left out because they are not shipped and do on purpose what CodeQL warns
+# about: they assert on URLs and secrets, proxy requests to a test Vault
+# (tests/fault_harness.py), and fingerprint values to compare them without
+# printing them (test/k8s_eso_probe.py). The workflows are still analysed, by
+# the `actions` language.
+paths-ignore:
+  - tests
+  - test

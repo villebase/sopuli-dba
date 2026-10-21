@@ -45,8 +45,12 @@ from sopuli.output.debug import logger
 
 LOG = logger("oracle")
 
-#: Where a password starts in an ``ALTER USER`` or ``CREATE USER`` written as a string.
-_PASSWORD_CLAUSE = re.compile(r"(identified\s+by)\s.*", re.IGNORECASE | re.DOTALL)
+#: Where a password can start in an ``ALTER USER`` or ``CREATE USER`` written as a
+#: string. Everything after the word ``IDENTIFIED`` is cut, because Oracle accepts
+#: ``IDENTIFIED BY"pw"`` with no space, and a comment between the two words
+#: (#944). It also cuts ``IDENTIFIED EXTERNALLY`` and any text that only mentions
+#: the word; losing that from a debug line is the safe way to be wrong.
+_PASSWORD_CLAUSE = re.compile(r"(identified)\b.*", re.IGNORECASE | re.DOTALL)
 
 
 class TracedCursor:

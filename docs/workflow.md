@@ -285,10 +285,12 @@ what it was used for during the Actions incident in #233.
   certifying the change as they reviewed it.
 - CodeQL (`codeql.yml`) analyses the Python source and the workflows on every
   pull request, every push to `main`, and weekly, so new queries reach unchanged
-  code. Its findings are code scanning alerts in the Security tab. A new alert
-  of high severity or above turns the pull request's `CodeQL` check red. Neither
-  `ci ok` nor the ruleset requires that check, so an alert is triaged in the
-  Security tab and does not block a merge by itself.
+  code. `.github/codeql/codeql-config.yml` leaves out `tests/` and `test/`,
+  which are not shipped, and says why. CodeQL's findings are code scanning
+  alerts in the Security tab. A new alert of high severity or above turns the
+  pull request's `CodeQL` check red. Neither `ci ok` nor the ruleset requires
+  that check, so an alert is triaged in the Security tab and does not block a
+  merge by itself.
 - The tier-1 job downloads one named Instant Client release and checks it
   against the SHA-256 Oracle publishes. To move to a new release, take both
   URLs and both hashes from Oracle's download page; `tier1.yml` names it.

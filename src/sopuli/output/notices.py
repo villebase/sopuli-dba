@@ -3,8 +3,9 @@
 Three blocks share one shape: a counted heading, then an indented line per entry.
 
 * **Notes** are things that belong to one account but do not fit in a column --
-  a grace period and the date it ends, so far. In ``--output json`` they are
-  ``results[].warnings[]``. `check` and `creds status` print them.
+  a grace period and the date it ends, or an account a predicate admitted that
+  no reset will touch. In ``--output json`` they are ``results[].warnings[]``.
+  `check`, `creds status` and `account list` print them.
 * **Warnings** are the configuration's own (``01-configuration.md`` §10), and
   for `config validate` the install's. In ``--output json`` they are
   ``diagnostics[]``. The emitter prints them for every verb that loads the file.

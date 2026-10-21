@@ -189,10 +189,24 @@ def render_account_list(rows: Sequence[Row]) -> str:
             for row in rows
         ],
     )
-    notes = [
-        f"{row.account} on {row.target}: {notice.message}" for row in rows for notice in row.notices
+    return "\n".join([*lines, "", _count(rows), *render_notices(_notes(rows))])
+
+
+def _notes(rows: Sequence[Row]) -> list[str]:
+    """One line per account and notice, naming every target it was raised on.
+
+    A `role:` predicate over twenty targets admits `SYSTEM` on each of them, and
+    twenty copies of one sentence teach the reader to skip the block. `creds
+    status` groups its notes for the same reason.
+    """
+    targets: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        for notice in row.notices:
+            targets.setdefault((row.account, notice.message), []).append(row.target)
+    return [
+        f"{account} on {', '.join(where)}: {message}"
+        for (account, message), where in targets.items()
     ]
-    return "\n".join([*lines, "", _count(rows), *render_notices(notes)])
 
 
 def _declared_by(row: Row) -> str:

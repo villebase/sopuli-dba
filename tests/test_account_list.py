@@ -373,38 +373,68 @@ def test_a_failed_target_is_not_counted_as_a_declared_account() -> None:
     assert "not present" not in text, "an unanswered target is not a missing account"
 
 
+def described(name: str, *, vendor: bool = False, on: str = TARGET) -> Row:
+    """A row as `account list` builds it, with the notices' real messages."""
+    from sopuli.cli import _describe_row
+
+    built = config(
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+        applications=[
+            {"name": "acme", "accounts": ["acme_web_user"], "secret": "vault-dev:acme/db#pw"}
+        ],
+        personal_accounts=[{"role": "ACME_DEV_TEAM"}],
+    )
+    target = next(one for one in built.targets if one.name == on)
+
+    class Session:
+        def describe_user(self, account: str) -> UserState:
+            return user(account.upper(), roles=("ACME_DEV_TEAM",), vendor_maintained=vendor)
+
+    return _describe_row(Session(), name, target, built)
+
+
+def notes(text: str) -> list[str]:
+    """The lines from the notes heading on, without colour."""
+    lines = click.unstyle(text).splitlines()
+    return lines[next(i for i, line in enumerate(lines) if line.endswith(("note:", "notes:"))) :]
+
+
 def test_the_table_prints_a_vendor_row_and_a_cross_declared_row_under_notes() -> None:
     """The notices reached `results[].warnings[]` and never the text, so a
     terminal reader was not told that `SYSTEM` was admitted and that no reset
     will touch it (#826)."""
-    rule = config().personal_accounts[1]
-    vendor = Row(
-        account="SYSTEM",
-        target=TARGET,
-        rule=rule,
-        state=user("SYSTEM", vendor_maintained=True),
-        notices=(Notice(ADMITTED_VENDOR_ACCOUNT, "the database reports this account as its own"),),
-    )
-    shared = Row(
-        account="ACME_WEB_USER",
-        target=TARGET,
-        rule=rule,
-        state=user("ACME_WEB_USER"),
-        notices=(Notice(ADMITTED_CROSS_DECLARED, "also declared by acme"),),
-    )
+    vendor = described("SYSTEM", vendor=True)
+    shared = described("acme_web_user")
 
-    text = click.unstyle(render_account_list([*rows(), vendor, shared]))
-    lines = text.splitlines()
+    printed = notes(render_account_list([*rows(), vendor, shared]))
 
-    assert lines[-3:] == [
+    assert printed == [
         "2 notes:",
-        f"  SYSTEM on {TARGET}: the database reports this account as its own",
-        f"  ACME_WEB_USER on {TARGET}: also declared by acme",
+        f"  SYSTEM on {TARGET}: {vendor.notices[0].message}",
+        f"  ACME_WEB_USER on {TARGET}: {shared.notices[0].message}",
+    ]
+    assert "guardrail 2" in printed[1]
+    assert "also declared by acme" in printed[2]
+
+
+def test_one_notice_on_several_targets_is_one_line_naming_them() -> None:
+    """A `role:` predicate admits `SYSTEM` on every target, and twenty copies of
+    one sentence teach the reader to skip the block."""
+    found = [
+        described("SYSTEM", vendor=True),
+        described("SYSTEM", vendor=True, on="appdb-qa-alpha"),
     ]
 
+    printed = notes(render_account_list(found))
 
-def test_a_table_with_no_notices_prints_no_notes_block() -> None:
-    assert "note" not in render_account_list(rows())
+    assert printed[0] == "1 note:"
+    assert printed[1].startswith(f"  SYSTEM on {TARGET}, appdb-qa-alpha: ")
+
+
+def test_a_table_with_no_notices_ends_with_the_count() -> None:
+    lines = click.unstyle(render_account_list(rows())).splitlines()
+
+    assert lines[-1] == "2 declared accounts, 2 on the selected targets"
 
 
 # ------------------------------------------------------ reading the journal ---

@@ -9,7 +9,7 @@ name: release-please
 # `release: published`, because release-please creates the Release with this
 # workflow's GITHUB_TOKEN, and GitHub starts no workflow run for an event that
 # token caused -- a separate workflow would silently never run. On every push
-# that cuts no release, `build`, `publish` and `release-assets` show as skipped.
+# that cuts no release, `build`, `publish`, `sign` and `attach` show as skipped.
 
 on:
   push:
@@ -94,16 +94,15 @@ jobs:
 
   # The same files on the GitHub release, each with a Sigstore bundle (#947).
   # Scorecard's Signed-Releases check reads release assets, not PyPI, so the PEP
-  # 740 attestations above do not count for it. A job of its own, after
-  # `publish`, so `publish` keeps only its OIDC token: attaching assets needs
-  # `contents: write`, and signing needs an OIDC token of this job's own. It
-  # takes the `dist` artifact `publish` uploaded, never a rebuild, so the
-  # release carries the bytes that are on PyPI.
-  release-assets:
-    needs: [release-please, publish]
+  # 740 attestations above do not count for it. Two jobs after `publish`, so
+  # each holds one credential: `sign` runs the third-party signing action with
+  # only an OIDC token, and `attach` holds `contents: write` and runs only
+  # GitHub's own actions and `gh`. Both take the `dist` artifact `build`
+  # uploaded, never a rebuild, so the release carries the bytes on PyPI.
+  sign:
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
-      contents: write
       id-token: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -123,6 +122,28 @@ jobs:
           verify-oidc-issuer: https://token.actions.githubusercontent.com
           release-signing-artifacts: false
           upload-signing-artifacts: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed
+          path: dist/
+          if-no-files-found: error
+
+  # release-please publishes the release, so this attaches to a published
+  # release. That works while immutable releases are off for the repository;
+  # turning them on would need a draft release that a last step publishes.
+  # If this job fails after `publish` succeeded, use "Re-run failed jobs" on
+  # this run, while its artifacts are kept: a new run would not see a release
+  # created and would skip every job. docs/workflow.md says so.
+  attach:
+    needs: [release-please, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed
+          path: dist/
       - name: attach the files and their bundles to the release
         env:
           GH_TOKEN: ${{ github.token }}

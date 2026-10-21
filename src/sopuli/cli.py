@@ -3357,7 +3357,8 @@ def account_list_command(
     somebody changed the password after the tool delivered it.
 
     Either can be empty and an empty one is never silent: SOPULI-W021 says why
-    there is no database date, SOPULI-W023 that no journal is configured.
+    there is no database date, SOPULI-W023 that no journal is configured, and
+    SOPULI-W054 that the journal could not be opened or read.
 
     A predicate naming a profile or role that does not exist is refused -- that
     is a misspelling. One that exists and matches no accounts is not an error,
@@ -3398,10 +3399,9 @@ def account_list_command(
 
     # Only a target that answered reads the journal, so this needs no `answered`.
     unreadable: list[Diagnostic] = []
-    if unread.reason is not None and config.reset_records is not None:
-        unreadable.append(
-            reset_journal_unread(config.reset_records.vault, unread.accounts, unread.reason)
-        )
+    if unread.first is not None:
+        store, reason = unread.first
+        unreadable.append(reset_journal_unread(store, unread.accounts, reason))
     document.diagnostics.extend(unreadable)
     document.results = [build_account_list_result(row) for row in rows]
     document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
@@ -3417,17 +3417,40 @@ def account_list_command(
 class _JournalFailures:
     """How many accounts the reset journal could not answer for, and why (#929).
 
-    The first reason is kept and the rest are counted. A revoked token or a down
-    vault fails every read the same way, so one reason says what happened.
+    The first store and reason are kept and the rest are counted. A revoked token
+    or a down vault fails every read the same way, so one reason says what
+    happened. ``unopened`` is set when the store could not be opened, so the
+    targets after it do not try again and wait out the same failure.
     """
 
     accounts: int = 0
-    reason: str | None = None
+    first: tuple[str, str] | None = None
+    unopened: bool = False
 
-    def add(self, reason: str, *, accounts: int = 1) -> None:
+    def add(self, store: str, error: Exception, *, accounts: int = 1) -> None:
         self.accounts += accounts
-        if self.reason is None:
-            self.reason = reason
+        if self.first is None:
+            found = _finding(error)
+            # The hint is where a store says what to do, such as where a token can go.
+            reason = f"{found.message} -- {found.hint}" if found.hint else found.message
+            self.first = (store, reason)
+
+
+def _open_journal(run: Invocation, config: Config, unread: _JournalFailures) -> SecretStore | None:
+    """:func:`_reset_journal`, tried once per run, and never raising.
+
+    A store that could not be opened is recorded in ``unread`` and not dialled
+    again, so nine targets do not wait out one login failure nine times.
+    """
+    records = config.reset_records
+    if records is None or unread.unopened:
+        return None
+    try:
+        return _reset_journal(run, config)
+    except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
+        unread.unopened = True
+        unread.add(records.vault, error, accounts=0)
+        return None
 
 
 def _list_one(
@@ -3457,12 +3480,9 @@ def _list_one(
             return [_unreachable_row(target, _finding(error))], 1
 
         names = _declared_names(session, config, target, wanted=wanted)
-        journal = None
-        try:
-            journal = _reset_journal(run, config)
-        except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
-            if names:
-                unread.add(_finding(error).message, accounts=len(names))
+        journal = _open_journal(run, config, unread) if names else None
+        if unread.unopened:
+            unread.accounts += len(names)
         rows = [
             _describe_row(session, name, target, config, journal=journal, unread=unread)
             for name in names
@@ -3568,7 +3588,7 @@ def _reset_at(
     target: str,
     account: str,
     *,
-    unread: _JournalFailures | None = None,
+    unread: _JournalFailures,
 ) -> str | None:
     """What the journal says about this account's last reset, if anything.
 
@@ -3590,8 +3610,7 @@ def _reset_at(
     try:
         stored = journal.read(reset_record.record_path(records, target=target, account=account))
     except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
-        if unread is not None:
-            unread.add(_finding(error).message)
+        unread.add(records.vault, error)
         return None
     if stored is None or not isinstance(stored.data, dict):
         return None
@@ -3606,7 +3625,7 @@ def _describe_row(
     config: Config,
     *,
     journal: SecretStore | None = None,
-    unread: _JournalFailures | None = None,
+    unread: _JournalFailures,
 ) -> account_list.Row:
     """One account: its state, the rule that admitted it, and what is worth saying.
 

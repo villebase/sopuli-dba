@@ -145,7 +145,7 @@ def test_an_account_a_predicate_and_an_application_both_declare_is_named() -> No
 def test_the_row_gives_each_notice_its_own_code() -> None:
     """`_describe_row` is where each notice gets its code, so a swap of the two
     codes, or a lost one, fails here rather than passing every view test."""
-    from sopuli.cli import _describe_row
+    from sopuli.cli import _describe_row, _JournalFailures
 
     both = config(
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
@@ -164,7 +164,7 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
         def describe_user(self, name: str) -> UserState:
             return user(name.upper(), profile="DEV_USERS", vendor_maintained=True)
 
-    row = _describe_row(Session(), "acme_web_user", target, both)
+    row = _describe_row(Session(), "acme_web_user", target, both, unread=_JournalFailures())
 
     assert [notice.code for notice in row.notices] == [
         ADMITTED_VENDOR_ACCOUNT,
@@ -380,7 +380,7 @@ def test_a_failed_target_is_not_counted_as_a_declared_account() -> None:
 
 def described(name: str, *, vendor: bool = False, on: str = TARGET) -> Row:
     """A row as `account list` builds it, with the notices' real messages."""
-    from sopuli.cli import _describe_row
+    from sopuli.cli import _describe_row, _JournalFailures
 
     built = config(
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
@@ -395,7 +395,7 @@ def described(name: str, *, vendor: bool = False, on: str = TARGET) -> Row:
         def describe_user(self, account: str) -> UserState:
             return user(account.upper(), roles=("ACME_DEV_TEAM",), vendor_maintained=vendor)
 
-    return _describe_row(Session(), name, target, built)
+    return _describe_row(Session(), name, target, built, unread=_JournalFailures())
 
 
 def notes(text: str) -> list[str]:
@@ -492,7 +492,7 @@ def test_the_reset_at_column_is_read_from_the_journal() -> None:
     """`reset_at` is on the model and in the schema, so something must populate
     it. Otherwise a documented column would be permanently `-`, even where a
     journal existed and held a record."""
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore
 
     journal = MemoryStore()
@@ -506,13 +506,14 @@ def test_the_reset_at_column_is_read_from_the_journal() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(journal, built, TARGET, "jdoe") == "2026-09-17T09:14:22Z"
+    found = _reset_at(journal, built, TARGET, "jdoe", unread=_JournalFailures())
+    assert found == "2026-09-17T09:14:22Z"
 
 
 def test_a_journal_with_no_record_for_this_account_is_not_a_finding() -> None:
     """Nobody has reset them through this tool. That is not an absence worth a
     code -- unlike a journal that is not configured at all, which is W023."""
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore
 
     built = config(
@@ -520,7 +521,9 @@ def test_a_journal_with_no_record_for_this_account_is_not_a_finding() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(MemoryStore(), built, TARGET, "jdoe") is None
+    unread = _JournalFailures()
+    assert _reset_at(MemoryStore(), built, TARGET, "jdoe", unread=unread) is None
+    assert unread.first is None
 
 
 def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
@@ -528,7 +531,7 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
     would be refusing to describe an estate over its history -- the priority
     inversion UC-2 §3.4 rules out for the reset, and it applies at least as
     strongly to a read."""
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore
 
     class Broken(MemoryStore):
@@ -540,7 +543,7 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(Broken(), built, TARGET, "jdoe") is None
+    assert _reset_at(Broken(), built, TARGET, "jdoe", unread=_JournalFailures()) is None
 
 
 def test_a_journal_that_cannot_be_read_is_recorded_with_its_reason() -> None:
@@ -564,9 +567,48 @@ def test_a_journal_that_cannot_be_read_is_recorded_with_its_reason() -> None:
     _reset_at(MemoryStore(), built, TARGET, "asmith", unread=unread)
 
     assert unread.accounts == 2
-    assert unread.reason == (
-        "the store refused this token at 'sopuli/personal-resets/appdb-dev-alpha/jdoe'"
+    assert unread.first == (
+        "vault-dev",
+        "the store refused this token at 'sopuli/personal-resets/appdb-dev-alpha/jdoe'",
     )
+
+
+def test_a_journal_that_cannot_be_opened_is_tried_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nine targets must not wait out one login failure nine times."""
+    from sopuli.cli import _JournalFailures, _open_journal
+    from sopuli.store import StoreError
+
+    calls = []
+
+    def refuse(run: Any, config: Any) -> None:
+        calls.append(run)
+        raise StoreError("could not reach the store")
+
+    monkeypatch.setattr("sopuli.cli._reset_journal", refuse)
+    built = config(
+        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+    )
+    unread = _JournalFailures()
+    run: Any = object()
+
+    assert _open_journal(run, built, unread) is None
+    assert _open_journal(run, built, unread) is None
+
+    assert len(calls) == 1
+    assert unread.unopened
+    assert unread.first == ("vault-dev", "could not reach the store")
+
+
+def test_the_unread_reason_keeps_the_stores_hint() -> None:
+    """The hint is where a store says what to do next, such as where a token can go."""
+    from sopuli.cli import _JournalFailures
+    from sopuli.store import StoreError
+
+    unread = _JournalFailures()
+    unread.add("vault-dev", StoreError("no token", hint="supply one with --vault-token-file"))
+
+    assert unread.first == ("vault-dev", "no token -- supply one with --vault-token-file")
 
 
 def test_the_unread_journal_warning_names_the_store_and_ends_with_the_reason() -> None:
@@ -579,6 +621,6 @@ def test_the_unread_journal_warning_names_the_store_and_ends_with_the_reason() -
 
 
 def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
 
-    assert _reset_at(None, config(), TARGET, "jdoe") is None
+    assert _reset_at(None, config(), TARGET, "jdoe", unread=_JournalFailures()) is None

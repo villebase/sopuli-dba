@@ -1319,8 +1319,8 @@ def reset_journal_unread(store: str, accounts: int, reason: str) -> Diagnostic:
     every read the same way, and four hundred copies of one error would hide the
     table they explain. The count says how far it reached.
 
-    The reason is the first one the store gave, and it comes last, for
-    :func:`reset_record_unwritten`'s reason.
+    The reason is the first one the store gave, with its hint, and it comes
+    last, for :func:`reset_record_unwritten`'s reason.
     """
     whom = "1 account" if accounts == 1 else f"{accounts} accounts"
     return Diagnostic(

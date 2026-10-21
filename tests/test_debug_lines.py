@@ -124,19 +124,29 @@ def test_a_string_with_a_password_clause_is_cut_off_after_it(debug: io.StringIO)
     assert cursor.calls == [(sql,)]
     written = debug.getvalue()
     assert PASSWORD not in written
-    assert 'oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in ' in written
+    assert 'oracle: ALTER USER "ACME_APP_USER" IDENTIFIED *** in ' in written
 
 
 @pytest.mark.parametrize(
     "clause",
-    [f'IDENTIFIED BY"{PASSWORD}"', f"identified\tby\n{PASSWORD}", f"IDENTIFIED BY {PASSWORD}"],
-    ids=["no-space-before-the-quote", "other-whitespace", "unquoted"],
+    [
+        f'IDENTIFIED BY"{PASSWORD}"',
+        f"identified\tby\n{PASSWORD}",
+        f"IDENTIFIED BY {PASSWORD}",
+        f'IDENTIFIED/**/BY"{PASSWORD}"',
+        f"IDENTIFIED -- a note\nBY {PASSWORD}",
+    ],
+    ids=[
+        "no-space-before-the-quote",
+        "other-whitespace",
+        "unquoted",
+        "block-comment",
+        "line-comment",
+    ],
 )
-def test_the_backstop_holds_for_every_spelling_oracle_accepts(
-    debug: io.StringIO, clause: str
-) -> None:
-    """Oracle accepts `IDENTIFIED BY"pw"` with no space, so the backstop cannot
-    need one (#944)."""
+def test_the_backstop_holds_for_unusual_spellings(debug: io.StringIO, clause: str) -> None:
+    """Oracle accepts `IDENTIFIED BY"pw"` with no space, and a comment between the
+    two words, so the backstop cuts after `IDENTIFIED` itself (#944)."""
     TracedCursor(FakeCursor()).execute(f'ALTER USER "ACME_APP_USER" {clause}')
 
     assert PASSWORD not in debug.getvalue()

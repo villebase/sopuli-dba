@@ -44,6 +44,7 @@ cost is the one place a ref no longer renders back byte-for-byte; see
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
@@ -157,6 +158,8 @@ QUALIFIER_SEPARATOR = "@"
 #: RFC 6901's escapes. ``~1`` must be decoded before ``~0``, as the RFC says:
 #: the other order turns ``~01`` into ``/`` rather than the ``~1`` it means.
 _POINTER_ESCAPES = (("~1", POINTER_SEPARATOR), ("~0", "~"))
+#: A `~` that does not start one of the two escapes RFC 6901 defines.
+_INVALID_ESCAPE = re.compile(r"~(?![01])")
 
 
 @dataclass(frozen=True)
@@ -506,6 +509,19 @@ def _split_field(remainder: str, text: str, *, at: KeyPath) -> tuple[str, str | 
             hint=(
                 "RFC 6901 allows a key named nothing; a credential store has no such key, "
                 "so this is a stray `/`"
+            ),
+        )
+    if _INVALID_ESCAPE.search(pointer):
+        # RFC 6901 §3: `~` only as `~0` or `~1`. Decoding anything else would
+        # give two spellings one key (`a~2` and `a~02` are both `a~2`), so a
+        # typo would address another key without a word (#928).
+        raise ConfigError(
+            f"secret ref {text!r} has a `~` in its pointer that is not `~0` or `~1`",
+            at=at,
+            hint=(
+                "a pointer writes a literal `~` as `~0` and a `/` inside a key as `~1` "
+                "(RFC 6901). If a placeholder such as {account} put it there, the "
+                "name it stands for contains a `~`"
             ),
         )
     return path, field, f"{POINTER_SEPARATOR}{pointer}"

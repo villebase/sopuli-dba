@@ -13,9 +13,13 @@ and the malformed refs that must be refused rather than quietly reinterpreted.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.loading import load_config
 from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 
 # --------------------------------------------------- the reference's table ---
@@ -218,6 +222,48 @@ def test_the_escape_order_is_the_one_the_rfc_specifies() -> None:
     """`~01` decodes to `~1`, not to `/`. The other order silently addresses a
     different key."""
     assert parse_secret_ref("creds#DB/a~01b").pointer_segments == ("a~1b",)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["creds#DB/a~2", "creds#DB/a~", "creds#DB/~x/b", "creds#DB/ok/a~b"],
+    ids=["tilde-two", "trailing-tilde", "tilde-letter", "in-a-later-segment"],
+)
+def test_a_tilde_that_is_not_an_escape_is_refused(ref: str) -> None:
+    """RFC 6901 allows `~` only as `~0` or `~1` (#928). Decoding anything else
+    would give `a~2` and `a~02` one key, so a typo would address another key."""
+    with pytest.raises(ConfigError) as caught:
+        parse_secret_ref(ref)
+
+    assert "is not `~0` or `~1`" in str(caught.value)
+    assert "~0" in (caught.value.hint or "")
+
+
+def test_a_placeholder_that_brings_a_tilde_is_refused_where_the_template_is(
+    write_config: Callable[[str], Path],
+) -> None:
+    """A substituted account name is part of the pointer too, so the ref it
+    renders is checked like any other, and the hint says where it came from."""
+    path = write_config(
+        "version: 1\n"
+        "vaults:\n"
+        "  vault-dev: { type: hashicorp, addr: https://v.example.com }\n"
+        "defaults: { vault: vault-dev }\n"
+        "targets:\n"
+        "  - name: appdb-alpha\n"
+        "    type: oracle\n"
+        "    dsn: db.example.com:1521/alpha.example.com\n"
+        "applications:\n"
+        "  - name: acme\n"
+        "    accounts: ['acme~web']\n"
+        "    secret_template: 'apps/acme#DB/{account}'\n"
+    )
+
+    with pytest.raises(ConfigError) as caught:
+        load_config(path)
+
+    assert "is not `~0` or `~1`" in str(caught.value)
+    assert "{account}" in (caught.value.hint or "")
 
 
 # ------------------------------------------------------------ round-tripping ---

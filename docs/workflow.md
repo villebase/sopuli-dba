@@ -284,9 +284,11 @@ what it was used for during the Actions incident in #233.
   The maintainer who merges one adds their own sign-off to the squash commit,
   certifying the change as they reviewed it.
 - CodeQL (`codeql.yml`) analyses the Python source and the workflows on every
-  pull request and every push to `main`. Its findings are code scanning alerts
-  in the Security tab. They do not fail a check, and `ci ok` does not wait for
-  CodeQL, so an alert is triaged there.
+  pull request, every push to `main`, and weekly, so new queries reach unchanged
+  code. Its findings are code scanning alerts in the Security tab. A new alert
+  of high severity or above turns the pull request's `CodeQL` check red. Neither
+  `ci ok` nor the ruleset requires that check, so an alert is triaged in the
+  Security tab and does not block a merge by itself.
 - The tier-1 job downloads one named Instant Client release and checks it
   against the SHA-256 Oracle publishes. To move to a new release, take both
   URLs and both hashes from Oracle's download page; `tier1.yml` names it.

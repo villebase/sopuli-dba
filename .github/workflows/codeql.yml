@@ -2,9 +2,12 @@ name: codeql
 
 # Static analysis (#848): CodeQL on the Python source and on these workflows,
 # on every pull request and every push to main, so Scorecard's SAST check sees
-# it on all commits. Findings go to the Security tab as code scanning alerts. A
-# finding does not fail this job, and the job is not one of the checks `ci ok`
-# gathers, so an alert is triaged there and never blocks a merge by itself.
+# it on all commits, and weekly, so new queries reach unchanged code. Findings
+# go to the Security tab as code scanning alerts. A finding does not fail this
+# job. Code scanning also adds its own `CodeQL` check to a pull request, which
+# goes red on a new alert of high severity or above. Neither is a check `ci ok`
+# gathers or the ruleset requires, so an alert is triaged in the Security tab
+# and does not block a merge by itself.
 #
 # A workflow rather than GitHub's default setup, so the action is pinned by SHA
 # like every other here and Dependabot updates it.
@@ -17,15 +20,22 @@ on:
     - cron: "41 4 * * 1"
   workflow_dispatch:
 
-permissions: read-all
+# Each job states what it needs, so a job added here without a block gets none.
+permissions: {}
+
+# A newer push to the same pull request cancels the older analysis. A run on
+# main, scheduled or pushed, is never cancelled.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # A job-level block replaces `read-all`, so the reads are restated:
-    # `contents` for the checkout, `actions` for the workflow queries.
+    # `contents` for the checkout, `actions` for the workflow queries, and
+    # `security-events` to upload the results.
     permissions:
       contents: read
       actions: read

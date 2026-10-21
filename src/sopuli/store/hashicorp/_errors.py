@@ -35,6 +35,7 @@ retries into a wall.
 
 from __future__ import annotations
 
+import re
 from typing import Any, NoReturn
 
 from sopuli.exit_codes import ExitCode
@@ -83,17 +84,49 @@ class StoreUnavailableError(StoreError):
     category = "connectivity"
 
 
+#: The header line of a Go ``multierror``. Vault 2.0.4 sends one as a single
+#: entry of ``errors[]`` for a refused token:
+#: ``"2 errors occurred:\n\t* permission denied\n\t* invalid token\n\n"``.
+_MULTIERROR_HEADER = re.compile(r"\d+ errors? occurred:")
+
+
 def messages(body: Any) -> list[str]:
-    """Vault's ``errors[]``, verbatim.
+    """Vault's ``errors[]``, one line per entry.
 
     Preserved rather than summarised (CLAUDE.md, Style: never swallow a vendor
     code -- map it, and keep the server's own message). An empty list is normal:
     a 404 for a path that was never written carries ``errors: []``, which is
     Vault saying "nothing here" rather than declining to explain itself.
+
+    Each entry is made one line here, because the CLI keeps only the first line
+    of an error's message (``_as_error`` in :mod:`sopuli.cli`). A multi-error
+    entry would otherwise keep only its header, ``2 errors occurred:``, and lose
+    Vault's reasons (#934). The reasons are Vault's words about the token, the
+    policy or the path. None that Vault 2.0.4 sent in the tier-1 stack quotes
+    the request's body, so a password in a write does not reach them. A body
+    that is not in Vault's format is never quoted (:func:`not_from_vault`).
     """
     if from_vault(body):
-        return [str(item) for item in body["errors"]]
+        return [_one_line(str(item)) for item in body["errors"]]
     return []
+
+
+def _one_line(entry: str) -> str:
+    """A multi-line entry as one line: ``permission denied; invalid token``.
+
+    Drops each ``N errors occurred:`` header and the ``*`` before each reason,
+    and joins the reasons with ``; ``, so a nested multi-error is flattened too.
+    An entry of one line comes back as it was.
+    """
+    lines = entry.splitlines()
+    if len(lines) <= 1:
+        return entry
+    reasons = []
+    for line in lines:
+        text = line.strip().removeprefix("* ")
+        if text and not _MULTIERROR_HEADER.fullmatch(text):
+            reasons.append(text)
+    return "; ".join(reasons) or lines[0].strip()
 
 
 def from_vault(body: Any) -> bool:

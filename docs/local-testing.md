@@ -317,11 +317,7 @@ Exit 9. A token the vault rejects is exit 6 instead:
 
 ```
 $ VAULT_TOKEN=not-a-token sopuli --config sopuli.yaml lock status
-sopuli: the store refused this token at 'locks/': 2 errors occurred:
-	* permission denied
-	* invalid token
-
-
+sopuli: the store refused this token at 'locks/': permission denied; invalid token
   hint: check the token's policy for this path, and that it has not expired
 ```
 

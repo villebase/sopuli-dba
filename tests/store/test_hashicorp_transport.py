@@ -190,6 +190,35 @@ def test_messages_reads_vaults_error_list_and_nothing_else() -> None:
     assert messages(None) == []
 
 
+@pytest.mark.parametrize(
+    ("entry", "line"),
+    [
+        (VAULT_REFUSALS[0]["errors"][0], "permission denied; invalid token"),
+        (VAULT_REFUSALS[1]["errors"][0], "permission denied"),
+        ("permission denied", "permission denied"),
+        # A nested multi-error, in the format Go's `multierror` gives it.
+        (
+            "2 errors occurred:\n\t* 2 errors occurred:\n\t* a\n\t* b\n\n\n\t* c\n\n",
+            "a; b; c",
+        ),
+        # Nothing but a header: the header is better than an empty reason.
+        ("0 errors occurred:\n\n", "0 errors occurred:"),
+    ],
+)
+def test_messages_makes_each_entry_one_line(entry: str, line: str) -> None:
+    """#934: the CLI keeps the first line of a message, and Vault's multi-error
+    entry would keep only `2 errors occurred:` and lose the reasons."""
+    assert messages({"errors": [entry]}) == [line]
+
+
+def test_a_refused_token_keeps_vaults_reasons_on_the_first_line() -> None:
+    with pytest.raises(StoreAuthError) as caught:
+        raise_for(403, VAULT_REFUSALS[0], path=PATH)
+
+    first_line = str(caught.value).splitlines()[0]
+    assert first_line.endswith(": permission denied; invalid token")
+
+
 # ---------------------------------------------------------------- transport ---
 
 

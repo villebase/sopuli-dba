@@ -119,9 +119,11 @@ dependency is declared, not which dependency it is. See
 
 **Error mapping lives at the transport boundary** —
 `sopuli/store/hashicorp/_errors.py`, one module, never at call sites and never
-in `protocol.py`. Vault's `errors[]` string is kept as it is in
-`StoreError.message`: it is Vault's answer, and the request's token and body
-are not in it. An error that httpx raises while it builds or sends the request
+in `protocol.py`. Vault's `errors[]` strings are kept in `StoreError.message`:
+they are Vault's answer, and the request's token and body are not in them. Each
+entry is made one line, because the CLI keeps only the first line of a message.
+Vault sends a refused token as one entry, `2 errors occurred:` followed by one
+reason per line, and the reasons would be lost (#934). An error that httpx raises while it builds or sends the request
 is named by its type only, because it can quote the token or the body. The
 mapper assigns the category. Two rules the probe
 made concrete:

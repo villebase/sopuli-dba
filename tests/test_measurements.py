@@ -10,18 +10,20 @@ not the other fails here.
 A release is written in full, five numbers: `19.32.0.0.0`, not `19c`. A SQL
 script's header is the comment block at the top, up to its first line that is
 not a comment. A Python probe's header is its module docstring, read with `ast`
-so that the probe, which imports `oracledb`, is not imported. An Instant Client
-release in a header is the client's, not a database's, so it is not compared.
+so that the probe, which imports `oracledb`, is not imported. A release that the
+*Releases* table marks "Not a database", such as an Instant Client, is not
+compared.
 
 A Python probe with rows of its own is checked like a SQL script. A probe with
-no rows that has a SQL script of the same name reads that script's output, as
-`06_verifier_reproduce.py` does, so it may name only releases that the script's
-rows list.
+no rows whose header names the SQL script of the same name reads that script's
+output, as `06_verifier_reproduce.py` does, so it may name only releases that
+the script's rows list.
 """
 
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from pathlib import Path
 
@@ -35,30 +37,30 @@ SCRIPTS = ROOT / "sql" / "oracle"
 
 #: A full Oracle release, such as `19.32.0.0.0` or `11.2.0.2.0`.
 RELEASE = re.compile(r"\b\d{2}\.\d{1,2}\.\d\.\d\.\d\b")
-#: The client a probe ran with, such as `Instant Client 23.26.3.0.0`.
-CLIENT = re.compile(r"Instant\s+Client\s+" + RELEASE.pattern)
 #: The marker on the line before the *Scripts* table.
 MARKER = "<!-- measurements: scripts -->"
+#: What the *Releases* table says of a release that is a client.
+NOT_A_DATABASE = "Not a database"
 #: Every script and probe whose header is checked.
 PROBES = sorted([*SCRIPTS.glob("*.sql"), *SCRIPTS.glob("*.py")])
 
 
 def _header(script: Path) -> str:
     """A SQL script's top comment block, or a Python probe's docstring."""
-    text = script.read_text(encoding="utf-8")
+    # `utf-8-sig`, so that a byte order mark an editor added is not read as text.
+    text = script.read_text(encoding="utf-8-sig")
     if script.suffix == ".py":
-        header = ast.get_docstring(ast.parse(text)) or ""
-    else:
-        lines = []
-        for line in text.splitlines():
-            if not line.startswith("--"):
-                break
-            lines.append(line)
-        header = "\n".join(lines)
-    return CLIENT.sub("", header)
+        return ast.get_docstring(ast.parse(text)) or ""
+    lines = []
+    for line in text.splitlines():
+        if not line.startswith("--"):
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
-def _rows() -> list[list[str]]:
+@functools.cache
+def _rows() -> tuple[tuple[str, ...], ...]:
     """The cells of each body row of the *Scripts* table."""
     lines = MATRIX.read_text(encoding="utf-8").splitlines()
     start = lines.index(MARKER) + 1
@@ -66,8 +68,20 @@ def _rows() -> list[list[str]]:
     for line in lines[start + 2 :]:
         if not line.startswith("|"):
             break
-        rows.append([cell.strip() for cell in line.strip("|").split("|")])
-    return rows
+        rows.append(tuple(cell.strip() for cell in line.strip("|").split("|")))
+    return tuple(rows)
+
+
+@functools.cache
+def _clients() -> frozenset[str]:
+    """The releases the *Releases* table marks as a client, not a database."""
+    _, rest = MATRIX.read_text(encoding="utf-8").split("## Releases\n", 1)
+    releases = rest.split("\n## ", 1)[0]
+    return frozenset(
+        match.group(1)
+        for match in re.finditer(r"^\| `([^`]+)` \|(.*)$", releases, re.MULTILINE)
+        if NOT_A_DATABASE in match.group(2)
+    )
 
 
 def _released(text: str) -> set[str]:
@@ -80,6 +94,36 @@ def _matrix() -> dict[str, set[str]]:
     for script, release, *_ in _rows():
         found.setdefault(script.strip("`"), set()).update(_released(release))
     return found
+
+
+def _disagreement(
+    name: str, header: str, matrix: dict[str, set[str]], clients: frozenset[str]
+) -> str | None:
+    """How a script's header and the matrix disagree, or ``None`` if they agree.
+
+    A Python probe with no rows of its own, whose header names a SQL script with
+    the same name, reads that script's output. It may name only releases that the
+    script's rows list. Every other script must name the same releases as its
+    rows.
+    """
+    in_header = _released(header) - clients
+    companion = name.removesuffix(".py") + ".sql"
+    if name.endswith(".py") and name not in matrix and companion in header:
+        ran = matrix.get(companion, set())
+        if in_header <= ran:
+            return None
+        return (
+            f"{name} reads the output of {companion}, and names "
+            f"{sorted(in_header - ran)} that {MATRIX.name} does not list for it."
+        )
+    in_matrix = matrix.get(name, set())
+    if in_header == in_matrix:
+        return None
+    return (
+        f"{name}: the header names {sorted(in_header - in_matrix)} that "
+        f"{MATRIX.name} does not, and {MATRIX.name} names {sorted(in_matrix - in_header)} "
+        "that the header does not. Record a run in both."
+    )
 
 
 def test_the_scripts_table_is_found() -> None:
@@ -100,22 +144,58 @@ def test_every_row_names_one_release_and_a_date() -> None:
 @pytest.mark.parametrize("script", PROBES, ids=lambda p: p.name)
 def test_a_script_header_and_the_matrix_name_the_same_releases(script: Path) -> None:
     requires_repo(MATRIX)
-    in_header = _released(_header(script))
-    matrix = _matrix()
-    companion = script.with_suffix(".sql")
-    if script.suffix == ".py" and script.name not in matrix and companion.is_file():
-        ran = matrix.get(companion.name, set())
-        assert in_header <= ran, (
-            f"{script.name} reads the output of {companion.name}, and names "
-            f"{sorted(in_header - ran)} that {MATRIX.name} does not list for it."
-        )
-        return
-    in_matrix = matrix.get(script.name, set())
-    assert in_header == in_matrix, (
-        f"{script.name}: the header names {sorted(in_header - in_matrix)} that "
-        f"{MATRIX.name} does not, and {MATRIX.name} names {sorted(in_matrix - in_header)} "
-        "that the header does not. Record a run in both."
-    )
+    problem = _disagreement(script.name, _header(script), _matrix(), _clients())
+    assert problem is None, problem
+
+
+def test_the_releases_table_marks_the_instant_client() -> None:
+    requires_repo(MATRIX)
+    assert "23.26.3.0.0" in _clients()
+    assert "23.26.2.0.0" not in _clients()
+
+
+MATRIX_06 = {"06_x.sql": {"19.3.0.0.0", "21.3.0.0.0"}}
+CLIENTS = frozenset({"23.26.3.0.0"})
+
+
+@pytest.mark.parametrize(
+    ("name", "header", "agrees"),
+    [
+        ("14_x.py", "run on 19.3.0.0.0, Instant Client 23.26.3.0.0", False),
+        ("06_x.sql", "run on 19.3.0.0.0 and 21.3.0.0.0", True),
+        ("06_x.sql", "run on 19.3.0.0.0", False),
+        ("06_x.py", "reads 06_x.sql's output, from 19.3.0.0.0", True),
+        ("06_x.py", "reads 06_x.sql's output", True),
+        ("06_x.py", "reads 06_x.sql's output, from 18.4.0.0.0", False),
+        ("06_x.py", "its own run on 19.3.0.0.0, with Instant Client `23.26.3.0.0`", False),
+        ("06_x.py", "names no script and no release", True),
+    ],
+    ids=[
+        "own-rows-missing",
+        "sql-agrees",
+        "sql-row-unrecorded",
+        "companion-subset",
+        "companion-names-none",
+        "companion-names-another",
+        "same-name-but-not-a-companion",
+        "no-rows-no-releases",
+    ],
+)
+def test_the_comparison(name: str, header: str, agrees: bool) -> None:
+    """Each rule, on made-up headers, so a rule that always passes fails here.
+
+    An Instant Client release is never compared, however it is written."""
+    assert (_disagreement(name, header, MATRIX_06, CLIENTS) is None) is agrees
+
+
+def test_a_byte_order_mark_is_not_part_of_the_header(tmp_path: Path) -> None:
+    probe = tmp_path / "15_x.py"
+    probe.write_bytes('﻿"""Run on 19.3.0.0.0."""\n'.encode())
+    script = tmp_path / "15_x.sql"
+    script.write_bytes("﻿-- Run on 19.3.0.0.0.\nSELECT 1 FROM dual;\n".encode())
+
+    assert _header(probe) == "Run on 19.3.0.0.0."
+    assert _header(script) == "-- Run on 19.3.0.0.0."
 
 
 def test_the_matrix_names_only_scripts_that_exist() -> None:

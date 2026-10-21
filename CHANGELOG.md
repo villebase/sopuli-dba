@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.77.0](https://github.com/villebase/sopuli-dba/compare/v0.76.0...v0.77.0) (2026-10-20)
+
+
+### Features
+
+* **oracle:** map ORA-28009 and print a target's hint in doctor ([#908](https://github.com/villebase/sopuli-dba/issues/908)) ([#911](https://github.com/villebase/sopuli-dba/issues/911)) ([68db8b0](https://github.com/villebase/sopuli-dba/commit/68db8b0c84e2ab95c91ded379f361affc67cc88f)), closes [#909](https://github.com/villebase/sopuli-dba/issues/909)
+* **output:** print each result error's hint under a verb's text ([#912](https://github.com/villebase/sopuli-dba/issues/912)) ([#915](https://github.com/villebase/sopuli-dba/issues/915)) ([df133ee](https://github.com/villebase/sopuli-dba/commit/df133ee1c361768caa10861337879603a1d97d09))
+
+
+### Bug Fixes
+
+* **generate:** keep the reason a target gave no constraints ([#910](https://github.com/villebase/sopuli-dba/issues/910)) ([#913](https://github.com/villebase/sopuli-dba/issues/913)) ([c0a7b66](https://github.com/villebase/sopuli-dba/commit/c0a7b6668513e62a81f201b63f2d03c2c36a78a4))
+* **oracle:** point the ORA-28003 hint at --debug ([#792](https://github.com/villebase/sopuli-dba/issues/792)) ([#916](https://github.com/villebase/sopuli-dba/issues/916)) ([f327085](https://github.com/villebase/sopuli-dba/commit/f327085aa88b2b3702a403ab03e4b69350b0c83a))
+* **output:** print config warnings under every verb's text ([#897](https://github.com/villebase/sopuli-dba/issues/897)) ([#917](https://github.com/villebase/sopuli-dba/issues/917)) ([4945c81](https://github.com/villebase/sopuli-dba/commit/4945c81eee35b5acc81c0b646854314eb55e43f2))
+
 ## [0.76.0](https://github.com/villebase/sopuli-dba/compare/v0.75.0...v0.76.0) (2026-10-19)
 
 

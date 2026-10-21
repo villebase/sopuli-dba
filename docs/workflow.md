@@ -197,8 +197,9 @@ what it was used for during the Actions incident in #233.
   `.github/requirements/release.txt` with `--require-hashes`, runs
   `python -m build --no-isolation` and `twine check --strict`, and uploads
   `dist/`. `--no-isolation` makes the build use the pinned `hatchling`.
-  `.github/requirements/release.in` says how to regenerate the pins.
-  `publish` downloads it and hands it to `pypa/gh-action-pypi-publish`
+  `.github/requirements/release.in` says how to regenerate the pins, and the
+  `release build` job in `ci.yml` runs the same steps on every pull request.
+  `publish` downloads `dist/` and hands it to `pypa/gh-action-pypi-publish`
   through trusted publishing. There is no PyPI token anywhere: `publish` holds an
   OIDC token PyPI trusts for that one workflow, and `id-token: write` is the only
   permission it has. On a push that cuts no release, both jobs show as skipped.
@@ -278,7 +279,10 @@ what it was used for during the Actions incident in #233.
   `sopuli-dba`, workflow `release-please.yml` and environment `pypi`.
 - Every action in every workflow is pinned to a commit SHA, with the tag in a
   comment beside it. Dependabot (`.github/dependabot.yml`) opens one pull
-  request a week that updates the pins.
+  request a week for the actions, and one for the release tools in
+  `.github/requirements/release.txt`. Its commits carry no `Signed-off-by:`.
+  The maintainer who merges one adds their own sign-off to the squash commit,
+  certifying the change as they reviewed it.
 - The tier-1 job downloads one named Instant Client release and checks it
   against the SHA-256 Oracle publishes. To move to a new release, take both
   URLs and both hashes from Oracle's download page; `tier1.yml` names it.

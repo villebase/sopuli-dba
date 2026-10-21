@@ -56,10 +56,13 @@ jobs:
         with:
           python-version: "3.13"
       # Pinned by hash, the build backend included, so a new release of any of
-      # them cannot change the published files unseen (#868).
-      # `--no-isolation` makes `build` use that pinned hatchling rather than
-      # install an unpinned one into an isolated environment.
-      - run: python -m pip install --require-hashes --no-deps -r .github/requirements/release.txt
+      # them cannot change the published files unseen (#868). Without
+      # `--no-deps`, `--require-hashes` refuses a dependency the file does not
+      # pin. `--no-isolation` makes `build` use that pinned hatchling rather
+      # than install an unpinned one into an isolated environment. ci.yml's
+      # `release-build` job runs these same steps on every pull request.
+      - run: python -m pip install --require-hashes -r .github/requirements/release.txt
+      - run: python -m pip check
       - run: python -m build --no-isolation
       - run: python -m twine check --strict dist/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

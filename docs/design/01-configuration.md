@@ -2275,10 +2275,11 @@ literal `~`. An empty segment (`#DB/`, `#DB/a//b`) is refused: the RFC allows a
 key named nothing, and a credential store has no such key, so it is a stray `/`.
 A `~` that is not `~0` or `~1` (`#DB/a~2`, a trailing `~`) is refused too, as the
 RFC requires. Decoding it anyway would give `a~2` and `a~02` one key. The check
-runs on the template as written and again after placeholders are filled in. So
-an account name with a `~` in a `#DB/{account}` template is refused where the
-template is written. So is an escape split across a placeholder, such as
-`#DB/x~{n}`: write the whole escape in the template.
+runs on the template as written and again after placeholders are filled in, so a
+`~` that a label brings into the pointer is refused where the template is written.
+So is an escape split across a placeholder, such as `#DB/x~{n}`: write the whole
+escape in the template. A `~` that a name brings is refused earlier, by the name
+rule below.
 
 A path may not hold a `.` or `..` segment ([#344](../decisions/log.md#344)), and
 it may not hold `?`, `%`, a backslash or a control character (C0, DEL or C1).
@@ -2388,10 +2389,16 @@ user's name starts with `C##`, so it cannot go through a placeholder at all:
 declare it in an application entry of its own with a literal ref. A name the
 template does not use is not checked. Neither is `{target}`, `{env}` or a label,
 a label called `container` included: whoever writes the template chooses those
-values and where they go, and may mean a level. A `~` in the pointer that is not
-an escape is refused by the pointer rule above, and the parser reports any other
-fault, quoting the ref as rendered. A `~1` in a name in the pointer, a leading
-`x:` and `@stage=` still re-address a ref (open: #940).
+values and where they go, and may mean a level.
+
+A name is also refused where one of its characters does a separator's job
+([#940](../decisions/log.md#940)): a `~` in the pointer, which starts an escape
+(`acme~1web` would be the key `acme/web`); a `:` that names a vault, as a leading
+`db:` does; and the `@` or `=` of an `@version=` or `@stage=` qualifier. The same
+character where it does no job is allowed, such as `acme:web` mid-path, `acme~web`
+in the path, or an `@` with no `=` after it. Two names that make a qualifier
+between them are refused too. The parser reports any other fault, quoting the ref
+as rendered.
 
 Rule: a template must resolve to **one** secret per (account × logical scope). If
 an account exists in eleven PDBs and the template mentions no distinguishing

@@ -283,6 +283,10 @@ what it was used for during the Actions incident in #233.
   `.github/requirements/release.txt`. Its commits carry no `Signed-off-by:`.
   The maintainer who merges one adds their own sign-off to the squash commit,
   certifying the change as they reviewed it.
+- CodeQL (`codeql.yml`) analyses the Python source and the workflows on every
+  pull request and every push to `main`. Its findings are code scanning alerts
+  in the Security tab. They do not fail a check, and `ci ok` does not wait for
+  CodeQL, so an alert is triaged there.
 - The tier-1 job downloads one named Instant Client release and checks it
   against the SHA-256 Oracle publishes. To move to a new release, take both
   URLs and both hashes from Oracle's download page; `tier1.yml` names it.

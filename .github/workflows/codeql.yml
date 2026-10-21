@@ -1,0 +1,48 @@
+name: codeql
+
+# Static analysis (#848): CodeQL on the Python source and on these workflows,
+# on every pull request and every push to main, so Scorecard's SAST check sees
+# it on all commits. Findings go to the Security tab as code scanning alerts. A
+# finding does not fail this job, and the job is not one of the checks `ci ok`
+# gathers, so an alert is triaged there and never blocks a merge by itself.
+#
+# A workflow rather than GitHub's default setup, so the action is pinned by SHA
+# like every other here and Dependabot updates it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A job-level block replaces `read-all`, so the reads are restated:
+    # `contents` for the checkout, `actions` for the workflow queries.
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Neither language is compiled, so there is nothing to build.
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          category: /language:${{ matrix.language }}

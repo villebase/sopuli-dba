@@ -33,8 +33,18 @@ What each environment is, and what to know before using it:
 - **12.2.0.1 EE**, profile `oracle12c`, is maintainer-only on the same terms as
   19.3, and needs a one-time `docker exec` after its first start. See
   `docs/maintainer-environments.md` §3.
-- `nne` and `emulators` do not start (#937). `nne` exits with `ORA-01078` on
-  every start, and `emulators` names an image tag that does not exist.
+- **nne** (`oracle-nne`, port 1525) is an Oracle Free that requires Native
+  Network Encryption. A thin-mode connection fails with `DPY-3001`, and a
+  thick-mode one connects with AES256 and SHA256. Checked on 2026-10-21 with
+  server 23.26.3.0.0, python-oracledb 26.0.1 and Instant Client 23.26.3.0.0
+  for Windows. The script in `oracle-init-nne/`
+  adds the NNE settings to the server's `sqlnet.ora` on each start. Start it as
+  CI starts tier 1, because `--wait` fails on the one-shot `vault-init`:
+  `docker compose --profile nne up -d --wait vault oracle-nne`, then
+  `docker compose --profile nne up -d vault-init`. It was healthy in 37 s.
+- **emulators** (`lowkey-vault`, port 8443) is `nagyesta/lowkey-vault:7.3.112`.
+  `docker compose --profile emulators up -d --wait` returned in 9 s on
+  2026-10-21, and `https://127.0.0.1:8443/ping` then answered `pong`.
 
 CI starts tier 1 for each pull request, except one that changes only files
 that `.github/workflows/tier1.yml` lists under `paths-ignore`. Every other
@@ -51,7 +61,8 @@ Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testi
 docker compose --profile tier0 up -d      # Vault + PostgreSQL, seconds
 docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
 docker compose --profile tier2 up -d      # + 21c/18c/11g XE, about 90 s once pulled
-docker compose --profile nne   up -d      # Oracle requiring NNE; does not start yet (#937)
+docker compose --profile nne   up -d      # Vault + Oracle requiring NNE, on 1525
+docker compose --profile emulators up -d  # lowkey-vault, on 8443
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
 docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only; run its init.sh once, then healthy
@@ -157,11 +168,6 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 | oracle-19c-ru | 1527 | **19.19.0.0.0 EE, `--profile oracle19c-ru` only**, same terms as oracle-19c. **The image is linux/arm64 only and needs an arm64 host**: under QEMU on x86 DBCA dies with `ORA-00443` / `ORA-01096` (#565). The one pullable 19c past 19.12, so the one that can open a rollover window. Untested on arm64 so far. Named volume, so it survives `down` |
 | oracle-12c | 1528 | **12.2.0.1.0 EE, `--profile oracle12c` only**, same terms as oracle-19c. CDB `ORCLCDB`, PDB service **`ORCLPDB1.localdomain`** (this image appends `DB_DOMAIN`; a bare `ORCLPDB1` is `ORA-12514`); `SYSTEM` / `sopuli-test`. **`WE8DEC`, not `AL32UTF8`**. No rollover. Run `test/oracle-init-12c/init.sh` once after the first start — the image has no user-script hook. Named volume, so it survives `down` |
 
-## Before trusting any of this
-
-1. Confirm the `sqlnet.ora` mount path for the NNE service — it is image- and
-   version-specific.
-
 ## Gotchas found by actually running tier0 and tier1
 
 - **`SOPULI_STRONG` reads as `FROM ROOT`, not as the function name.** In the PDB,
@@ -193,6 +199,8 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
   because `tests/store/test_hashicorp_cas_conflict.py`
   asserts on Vault's own error wording and an upstream bump has to be a
   deliberate line change here, not a silent moving target.
+- **lowkey-vault is pinned to `nagyesta/lowkey-vault:7.3.112`.** The image
+  publishes version tags only, so it has no `:latest` to track.
 - **`gvenzl/oracle-free:latest` is 26ai**, which is the *same database* as 23ai
   under a new name, not a newer version. So this image is the 23ai line, and
   results from it apply to it; there is no separate 23ai to obtain. Cite the release number rather than the name, because next quarter's 26ai
@@ -223,7 +231,8 @@ The public test suite must be green using only what a contributor can pull —
 |---|---|
 | `compose.yaml` | the stack, split by profile |
 | `oracle-init/01_test_profiles.sql` | profiles the suite needs: lockout, strong verify function, password reuse, rollover |
-| `oracle-init/sqlnet-nne.ora` | forces Native Network Encryption on the NNE service |
+| `oracle-init-nne/sqlnet-nne.ora` | the server settings that require Native Network Encryption on the NNE service |
+| `oracle-init-nne/01_require_nne.sh` | adds `sqlnet-nne.ora` to the NNE service's `sqlnet.ora` on each start |
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
 | `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |

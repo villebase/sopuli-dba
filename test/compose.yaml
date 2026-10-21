@@ -7,7 +7,8 @@
 #   docker compose --profile tier0 up -d     # Vault + PostgreSQL, seconds
 #   docker compose --profile tier1 up -d     # + Oracle Free, ~30-60 s to healthy
 #   docker compose --profile tier2 up -d     # + older Oracle lines, ~90 s once pulled
-#   docker compose --profile nne   up -d     # Oracle requiring NNE; does not start yet (#937)
+#   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525
+#   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
 #   docker compose --profile oracle12c up -d # 12.2.0.1 EE, maintainer-only
@@ -332,16 +333,20 @@ services:
 
   # ------------------------------------------------------------------ NNE ---
   # Approximates the OCI constraint locally: the server REQUIRES Native Network
-  # Encryption, so a thin-mode connection must fail with DPY-3001. This covers the
-  # failure path and the diagnostics; the success path still needs real OCI.
+  # Encryption, so a thin-mode connection fails with DPY-3001 and a thick-mode
+  # one connects encrypted. Start it as README.md says: `--wait` on the whole
+  # profile fails on the one-shot vault-init.
   oracle-nne:
     image: gvenzl/oracle-free:latest
     profiles: [nne]
     environment:
       ORACLE_PASSWORD: sopuli-test
     ports: ["127.0.0.1:1525:1521", "[::1]:1525:1521"]
+    # Not a mount at dbconfig/FREE/sqlnet.ora: that creates dbconfig/FREE, and
+    # the image then skips creating the database. The startup script in
+    # oracle-init-nne/ adds the file to sqlnet.ora on each start instead.
     volumes:
-      - ./oracle-init/sqlnet-nne.ora:/opt/oracle/oradata/dbconfig/FREE/sqlnet.ora:ro
+      - ./oracle-init-nne:/container-entrypoint-startdb.d:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 10s
@@ -354,9 +359,19 @@ services:
   # more; the real services are the release evidence. There is no AWS emulator
   # here: LocalStack's image needs an account token (T3).
   lowkey-vault:
-    image: nagyesta/lowkey-vault:latest
+    # Pinned, as vault is: the image publishes version tags only, and has no
+    # :latest.
+    image: nagyesta/lowkey-vault:7.3.112
     profiles: [emulators]
     ports: ["127.0.0.1:8443:8443", "[::1]:8443:8443"]
+    # The image declares no healthcheck, so without this `up --wait` returns
+    # about 8 s before the service answers. /ping on the HTTP port inside the
+    # container answers `pong` once it is ready.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
 volumes:
   # Only the two 19c services and 12.2 keep their datafiles; see oracle-19c for why.

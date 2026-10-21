@@ -49,7 +49,7 @@ from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, normalise_path, parse_secret_ref
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
-from sopuli.config.templates import substitute
+from sopuli.config.templates import PLACEHOLDER, substitute
 from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
 from sopuli.payload import stage_layout
 
@@ -559,8 +559,38 @@ def _render(
     """
     if ref is None:
         return None
-    rendered = substitute(ref, _tokens(application, account, expanded), at=at, source=_SCOPE)
+    tokens = _tokens(application, account, expanded)
+    _refuse_a_slash_in_a_name(ref, tokens, at=at)
+    rendered = substitute(ref, tokens, at=at, source=_SCOPE)
     return parse_secret_ref(rendered, at=at)
+
+
+#: The placeholders that stand for a name: an account, a target, an application.
+#: A label is a value somebody chose for the template, so it is not one of them.
+_NAMES = ("account", "account_lower", "account_upper", "target", "application")
+
+
+def _refuse_a_slash_in_a_name(ref: str, tokens: Mapping[str, str], *, at: KeyPath) -> None:
+    """Refuse a name placeholder whose value contains ``/`` (decision #935).
+
+    A value is put into the ref as written, so a ``/`` in it adds a level. In
+    ``#DB/{account}``, the account ``acme/web`` stores its password under
+    ``acme``, then ``web``. In the path, it addresses another document. Either
+    way the password lands somewhere the operator never wrote. A label is not
+    refused: a template author chooses where a label goes, and may mean a level.
+    """
+    for name in dict.fromkeys(PLACEHOLDER.findall(ref)):
+        value = tokens.get(name)
+        if name not in _NAMES or value is None or "/" not in value:
+            continue
+        raise ConfigError(
+            f"{{{name}}} in secret ref {ref!r} is {value!r}, which contains a `/`",
+            at=at,
+            hint=(
+                "a `/` in a name would add a level to where the password is stored; "
+                "rename it, or write a ref for it that does not use the placeholder"
+            ),
+        )
 
 
 def _tokens(application: Application, account: str, expanded: ExpandedTarget) -> dict[str, str]:

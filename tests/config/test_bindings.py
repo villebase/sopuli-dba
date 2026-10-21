@@ -193,6 +193,50 @@ def test_the_application_token_is_empty_in_the_inline_form() -> None:
     assert str(config.bindings[0].secret) == "apps/alpha#DB/acme_web_user"
 
 
+@pytest.mark.parametrize(
+    "template",
+    ["apps/acme#DB/{account}", "apps/{account}#password", "apps/{account_lower}#DB/x"],
+    ids=["in-the-pointer", "in-the-path", "a-case-variant"],
+)
+def test_an_account_name_with_a_slash_is_refused(template: str) -> None:
+    """Decision #935. The value goes in as written, so `acme/web` in `#DB/{account}`
+    would store the password under `acme`, then `web`, a key nobody wrote."""
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["acme/web"], secret_template=template)
+
+    assert "contains a `/`" in str(caught.value)
+    assert "'acme/web'" in str(caught.value)
+
+
+def test_a_name_with_a_slash_is_fine_where_the_template_does_not_use_it() -> None:
+    """The rule is about where the password lands, not about the name itself."""
+    binding = only(**one_target(accounts=["acme/web"], secret_template="apps/acme#password"))
+
+    assert str(binding.secret) == "apps/acme#password"
+
+
+def test_a_label_with_a_slash_is_not_refused() -> None:
+    """A template author chooses where a label goes, and may mean a level."""
+    target_set = {**APPDB, "labels": {"region": "eu/north"}}
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "target_sets": {"appdb": target_set},
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": {"match": {"tenant": "alpha", "env": "qa"}},
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "{region}/acme#DB/{account}",
+                }
+            ],
+        }
+    )
+
+    assert str(config.bindings[0].secret) == "eu/north/acme#DB/acme_web_user"
+
+
 def test_a_built_in_token_wins_over_a_label_of_the_same_name() -> None:
     """One of the two is specified and the other is whatever somebody typed."""
     target_set = {**APPDB, "labels": {"target": "not-the-name"}}

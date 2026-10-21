@@ -2379,6 +2379,14 @@ one thing that cannot be checked early is a token whose *value* turns out to
 contain `:`, `#` or `/` — that changes the structure, and the labels are not
 known until target expansion.
 
+A name token whose value contains `/` is refused when the ref renders:
+`{account}`, `{account_lower}`, `{account_upper}`, `{target}` and
+`{application}`. The value goes in as written, so the account `acme/web` in
+`#DB/{account}` would store its password under `acme`, then `web`, and in the
+path it would address another document ([#935](../decisions/log.md#935)). A name
+the template does not use may contain `/`. A label may too: whoever writes the
+template chooses where a label goes, and may mean the level.
+
 Rule: a template must resolve to **one** secret per (account × logical scope). If
 an account exists in eleven PDBs and the template mentions no distinguishing
 label, all eleven share one password — legal and often intended, but the plan

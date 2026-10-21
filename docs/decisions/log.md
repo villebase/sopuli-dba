@@ -2520,3 +2520,26 @@ the register.
     which rule failed without a second run, but a partial quote then reaches
     every run's output. That loosens invariant 2's guard on what leaves the
     process.
+
+## #935
+
+- **Decided:** 2026-10-21, #935
+- **Question:** A placeholder's value goes into a secret ref as written, so a
+  `/` in it adds a level. The account `acme/web` in `#DB/{account}` stores its
+  password under `acme`, then `web`. Should such a value be escaped, refused,
+  or left alone?
+- **Decision:** Refuse it, for the name tokens: `{account}` and its case
+  variants, `{target}` and `{application}`, wherever they appear in the ref.
+  The error names the token and the value. A name the template does not use may
+  contain `/`, and so may a label.
+- **Why:** the password would land at a key, or in a document, that the
+  operator never wrote. #928 and the empty-segment rule refuse the same kind
+  of silent addressing in the pointer. A name is chosen for the database, not
+  for the template, so a `/` in one is never a level the template meant. A
+  label is chosen by whoever writes the template, so it may mean one.
+- **Rejected:**
+  - Escape the value (`/` as `~1`). The name would mean what it says, but a
+    file that nests through a placeholder today would store its password
+    somewhere else after the change, with no error.
+  - Leave it. A `/` in a name is rare, and the overlap check (#841) catches it
+    only when two accounts collide.

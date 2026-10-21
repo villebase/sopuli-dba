@@ -184,6 +184,13 @@ def verdict(
             )
         if not common:
             return MIGHT, f"{policy} is a common policy, which records nothing of local accounts"
+        # AC9a measured a common policy enabled BY the person. For every user,
+        # EXCEPT a list or for a role, nobody has measured the proxy logon.
+        if account not in listed:
+            return MIGHT, (
+                f"{policy} is a common policy not enabled BY the person, and only that "
+                f"shape is measured to record a common person's logon"
+            )
     if any(one.condition for one in names):
         return MIGHT, f"{policy} has a condition, which is not evaluated"
 
@@ -268,10 +275,7 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         mode = str(row[0]) if row and row[0] else None
         if mode is None:
             return AuditCoverage(audited=None, detail=NO_UNIFIED)
-        reading = "DBA_USERS"
-        cursor.execute(COMMON_QUERY, {"name": account})
-        row = cursor.fetchone()
-        common = bool(row) and str(row[0]).upper() == "YES"
+        person_common = _is_common(cursor, account)
         reading = POLICY_VIEWS
         cursor.execute(ENABLED_QUERY)
         enabled = [
@@ -294,7 +298,7 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
             )
             for policy, option, kind, condition, common in cursor.fetchall()
         ]
-        return classify(mode, enabled, options, account, common=common)
+        return classify(mode, enabled, options, account, common=person_common)
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
         if reading == POLICY_VIEWS and diagnosis.code == NO_COLUMN:
@@ -306,6 +310,21 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
             detail=f"reading {reading} failed with {diagnosis.code or 'no code'}: "
             f"{diagnosis.message}",
         )
+
+
+def _is_common(cursor: Cursor, account: str) -> bool:
+    """Whether ``account`` is a common account, or ``False`` where that cannot be read.
+
+    ``False`` is the safe reading. It can only turn a common policy's *covers*
+    into *might cover*, so a failed read never makes the answer ``True``, and it
+    does not cost the answer the check could give without it.
+    """
+    try:
+        cursor.execute(COMMON_QUERY, {"name": account})
+        row = cursor.fetchone()
+    except Exception:  # noqa: BLE001 -- read as a local account, which is the cautious answer
+        return False
+    return bool(row) and str(row[0]).upper() == "YES"
 
 
 def _names(option: Option, action: str) -> bool:

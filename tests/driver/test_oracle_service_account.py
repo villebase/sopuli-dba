@@ -562,8 +562,8 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
     created `CONTAINER = ALL` in the root and enabled `BY` the common person,
     with an every-user `ALTER USER` policy in the PDB, is `true`."""
     here = current_container(sysdba)
-    if here == "NON-CDB":
-        pytest.skip("this database has no containers, so it has no common accounts")
+    if here in ("NON-CDB", "CDB$ROOT"):
+        pytest.skip(f"the DSN's container is {here}; this test needs a PDB")
 
     execute(sysdba, "alter session set container = CDB$ROOT")
     try:
@@ -578,8 +578,11 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
         with _policy(sysdba, "alter user"):
             found = audit_reader.audit_coverage(COMMON_PERSON)
     finally:
-        execute(sysdba, "alter session set container = CDB$ROOT")
-        _drop_common(sysdba)
+        # Suppressed, so a failed cleanup does not hide the test's own error.
+        # The next run's `_drop_common` removes anything left behind.
+        with contextlib.suppress(Exception):
+            execute(sysdba, "alter session set container = CDB$ROOT")
+            _drop_common(sysdba)
         execute(sysdba, f"alter session set container = {here}")
 
     assert found.audited is True, found.detail

@@ -28,6 +28,7 @@ from sopuli.driver.oracle.audit import (
     UNREADABLE,
     Enablement,
     Option,
+    _is_common,
     classify,
     coverage_of,
 )
@@ -357,12 +358,42 @@ def test_a_common_policy_never_covers_alter_user_even_for_a_common_person() -> N
     """A DBA issues the `ALTER USER`, and the tool cannot know that the DBA is
     common. The detail says why, and does not call the person local."""
     found = classify(
-        "TRUE", [enabled("C##P")], both("C##P", common=True), COMMON_PERSON, common=True
+        "TRUE",
+        [enabled("C##P", BY_USER, COMMON_PERSON)],
+        both("C##P", common=True),
+        COMMON_PERSON,
+        common=True,
     )
 
     assert found.audited is None
     assert found.detail.startswith("LOGON by C##P; ALTER USER might be recorded:")
     assert "records nothing of a local DBA's ALTER USER" in found.detail
+
+
+@pytest.mark.parametrize(
+    "enablement",
+    [
+        enabled("C##LOG"),
+        enabled("C##LOG", EXCEPT_USER, DBA),
+        enabled("C##LOG", BY_ROLE, "ACME_DEV_ROLE"),
+    ],
+    ids=["every user", "except a list", "a role"],
+)
+def test_a_common_policy_not_enabled_by_the_person_might_cover_their_logon(
+    enablement: Enablement,
+) -> None:
+    """AC9a measured only a common policy enabled `BY` the person. Every other
+    shape is unmeasured for a proxy logon, so it is not counted."""
+    found = classify(
+        "TRUE",
+        [enablement, enabled("P")],
+        [action("C##LOG", "LOGON", common=True), action("P", "ALTER USER")],
+        COMMON_PERSON,
+        common=True,
+    )
+
+    assert found.audited is None
+    assert "C##LOG is a common policy not enabled BY the person" in found.detail
 
 
 def test_a_role_is_not_resolved() -> None:
@@ -435,7 +466,11 @@ def test_no_unified_auditing_is_unknown() -> None:
 
 
 class Cursor:
-    """Answers each of the three queries from a table, or fails one of them."""
+    """Answers each of the four queries from a table, or fails one of them.
+
+    A query with no entry raises ``KeyError``, so a test cannot pass on a read it
+    forgot to answer.
+    """
 
     def __init__(self, answers: dict[str, Any], fail: dict[str, Exception] | None = None):
         self.answers = answers
@@ -450,17 +485,17 @@ class Cursor:
         self._last = statement
 
     def fetchone(self) -> Any:
-        """``None`` for a query with no answer, as for a person with no row."""
-        return self.answers.get(self._last)
+        return self.answers[self._last]
 
     def fetchall(self) -> Any:
         return self.answers[self._last]
 
 
-def test_the_three_reads_are_classified() -> None:
+def test_the_four_reads_are_classified() -> None:
     cursor = Cursor(
         {
             MODE_QUERY: ("TRUE",),
+            COMMON_QUERY: ("NO",),
             ENABLED_QUERY: [("P", "BY USER", "ALL USERS", "YES")],
             OPTIONS_QUERY: [
                 ("P", "LOGON", "STANDARD ACTION", "NONE", "NO"),
@@ -497,6 +532,35 @@ def test_the_persons_common_column_reaches_the_rules() -> None:
     assert coverage_of(cursor, COMMON_PERSON).audited is True
     cursor.answers[COMMON_QUERY] = ("NO",)
     assert coverage_of(cursor, COMMON_PERSON).audited is None
+
+
+@pytest.mark.parametrize(
+    ("row", "common"),
+    [(("yes",), True), (None, False), ((None,), False)],
+    ids=["lower case", "no row", "null"],
+)
+def test_the_common_column_is_read_carefully(row: Any, common: bool) -> None:
+    """No row or a `NULL` is a local person, the cautious reading."""
+    cursor = Cursor({COMMON_QUERY: row})
+    assert _is_common(cursor, COMMON_PERSON) is common
+
+
+def test_an_unreadable_common_column_reads_the_person_as_local() -> None:
+    """A failed `DBA_USERS` read must not cost the answer the check gave before
+    it read the column: here, `false`, because nothing records the logon."""
+    cursor = Cursor(
+        {
+            MODE_QUERY: ("TRUE",),
+            ENABLED_QUERY: [("P", "BY USER", "ALL USERS", "YES")],
+            OPTIONS_QUERY: [("P", "ALTER USER", "STANDARD ACTION", "NONE", "NO")],
+        },
+        fail={COMMON_QUERY: RuntimeError("ORA-00942: table or view does not exist")},
+    )
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is False
+    assert found.detail == f"no enabled policy records LOGON for {PERSON}"
 
 
 def test_an_unreadable_policy_view_names_the_grant() -> None:

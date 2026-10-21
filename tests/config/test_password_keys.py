@@ -1,8 +1,9 @@
 """One key for "the same password" (#847).
 
-Tier 0 (04-testing.md §4): pure, no I/O. The loader's two checks and
-``creds generate`` all key on :func:`sopuli.config.password_keys.password_key`,
-so what makes two bindings one password is decided here.
+Tier 0 (04-testing.md §4): pure, no I/O. The loader's two checks,
+``creds generate`` and the promotion gate all key on
+:mod:`sopuli.config.password_keys`, so what makes two bindings one password is
+decided here.
 """
 
 from __future__ import annotations
@@ -10,7 +11,8 @@ from __future__ import annotations
 import pytest
 
 from sopuli.config.model import Binding
-from sopuli.config.password_keys import PasswordKey, password_key
+from sopuli.config.password_keys import PasswordKey, place_of
+from sopuli.config.password_keys import declared_password_key as password_key
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.generate import password_key as generate_key
 
@@ -39,6 +41,12 @@ def test_the_pointer_is_decoded() -> None:
 
 def test_a_ref_with_no_field_is_the_whole_document() -> None:
     assert key("apps/acme").place == ()
+
+
+def test_the_promotion_gate_reads_the_same_place() -> None:
+    """``creds apply``'s gate compares ``place_of`` the refs, so it agrees with the key."""
+    ref = parse_secret_ref("apps/acme#DB/a~1b")
+    assert place_of(ref) == key("apps/acme#DB/a~1b").place
 
 
 def test_the_store_is_part_of_the_key() -> None:

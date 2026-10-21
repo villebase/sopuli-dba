@@ -2,12 +2,14 @@
 
 A password is a place in one document of one store: the field, then the
 pointer's segments. Two bindings with one key hold one password, whatever else
-differs. Three places ask the question. The loader refuses two accounts on one
-password and one password under two policies, and ``creds generate`` draws each
-password once and refuses a write that carries two values for one. They used to
-build a key each, and agreed only because each happened to normalise the same
-way (#847). This module is the one definition, and it is in the config layer so
-that both the loader and :mod:`sopuli.generate` can import it.
+differs. Four places ask the question. The loader refuses two accounts on one
+password and one password under two policies. ``creds generate`` draws each
+password once and refuses a write that carries two values for one. The
+promotion gate in ``creds apply`` asks whether a credential confirmed on another
+target. They used to build a key each, and agreed only because each happened to
+normalise the same way (#847). This module is the one definition, and it is in
+the config layer so that the loader, :mod:`sopuli.generate` and the CLI can all
+import it.
 
 Pure: no I/O, as the rest of config parsing (CLAUDE.md, *Keep pure layers pure*).
 """
@@ -17,9 +19,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sopuli.config.model import Binding
-from sopuli.config.secret_refs import normalise_path
+from sopuli.config.secret_refs import SecretRef, normalise_path
 
-__all__ = ["PasswordKey", "password_key"]
+__all__ = ["PasswordKey", "declared_password_key", "place_of"]
 
 
 @dataclass(frozen=True)
@@ -54,10 +56,19 @@ class PasswordKey:
         return self.place[:shorter] == other.place[:shorter]
 
 
-def password_key(binding: Binding) -> PasswordKey | None:
-    """Where ``binding``'s password is stored, or ``None`` if it names no ref."""
+def place_of(ref: SecretRef) -> tuple[str, ...]:
+    """Where in its document a ref's value lives: the field, then the decoded pointer."""
+    return () if ref.field is None else (ref.field, *ref.pointer_segments)
+
+
+def declared_password_key(binding: Binding) -> PasswordKey | None:
+    """Where ``binding``'s password is stored, with the store as the file declares it.
+
+    ``None`` if it names no ref. ``store`` is ``None`` where the store comes
+    later. :func:`sopuli.generate.password_key` is the one to use once a run has
+    its stores: it gives no key for a binding that has none.
+    """
     ref = binding.secret
     if ref is None:
         return None
-    place = () if ref.field is None else (ref.field, *ref.pointer_segments)
-    return PasswordKey(store=binding.vault, path=normalise_path(ref.path), place=place)
+    return PasswordKey(store=binding.vault, path=normalise_path(ref.path), place=place_of(ref))

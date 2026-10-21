@@ -44,7 +44,7 @@ from sopuli.config.model import (
     Override,
     as_dict,
 )
-from sopuli.config.password_keys import PasswordKey, password_key
+from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, normalise_path, parse_secret_ref
 from sopuli.config.selection import matches, select
@@ -126,10 +126,11 @@ def _check_one_account_per_password(
     """
     documents: dict[tuple[str | None, str], dict[tuple[PasswordKey, str], Binding]] = {}
     for binding in bindings:
-        ref = binding.secret
-        key = password_key(binding)
-        if ref is None or key is None:
+        key = declared_password_key(binding)
+        if key is None:
             continue
+        ref = binding.secret
+        assert ref is not None
         seen = documents.setdefault((key.store, key.path), {})
         if (key, binding.account) in seen:
             # One account in one place on another target: a shared password.
@@ -215,10 +216,11 @@ def _check_one_policy_per_password(
     """
     seen: dict[tuple[str, PasswordKey], Binding] = {}
     for binding in bindings:
-        ref = binding.secret
-        key = password_key(binding)
-        if ref is None or key is None:
+        key = declared_password_key(binding)
+        if key is None:
             continue
+        ref = binding.secret
+        assert ref is not None
         first = seen.setdefault((binding.account, key), binding)
         if first.policy == binding.policy:
             continue

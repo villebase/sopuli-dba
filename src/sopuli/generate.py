@@ -59,12 +59,11 @@ from typing import Any
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Binding, Config, PasswordPolicy
-from sopuli.config.password_keys import PasswordKey
-from sopuli.config.password_keys import password_key as stored_at
+from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
-from sopuli.lock.keys import LockKey, normalise_path
+from sopuli.lock.keys import LockKey
 from sopuli.passwords import ByteLimit, PasswordPolicyError, Violation, check
 from sopuli.passwords import generate as draw_password
 from sopuli.payload import GENERATED, ORIGIN, PENDING, SUPPLIED, merge
@@ -198,7 +197,7 @@ def password_key(binding: Binding) -> PasswordKey | None:
     ``None`` where it names no ref or no store yet. :func:`group` refuses such a
     binding, so it never reaches a write.
     """
-    key = stored_at(binding)
+    key = declared_password_key(binding)
     if key is None or key.store is None:
         return None
     return key
@@ -317,12 +316,13 @@ def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:
     grouped: dict[LockKey, list[Candidate]] = {}
     for candidate in candidates:
         binding = candidate.binding
-        if binding.secret is None or binding.vault is None:
+        password = password_key(binding)
+        if password is None or password.store is None:
             raise ValueError(
                 f"cannot stage {binding.account!r} in {binding.target!r}: "
                 f"the binding names no {'secret ref' if binding.secret is None else 'store'}"
             )
-        key = LockKey(store=binding.vault, path=normalise_path(binding.secret.path))
+        key = LockKey(store=password.store, path=password.path)
         grouped.setdefault(key, []).append(candidate)
     writes = tuple(
         DocumentWrite(key=key, candidates=tuple(found)) for key, found in grouped.items()

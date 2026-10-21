@@ -127,8 +127,9 @@ COMMON_SVC_OTHER = f"C##{SVC_OTHER.upper()}"
 #: script twice -- and the container operations are faster still, so this is
 #: roughly 300x headroom over the slowest thing it governs and nothing that merely
 #: *finishes slowly* can reach it. It covers every call; the known case is a
-#: `GRANT CREATE SESSION ... CONTAINER=ALL` that prints its label and never
-#: returns (TODO(#326)).
+#: `GRANT CREATE SESSION ... CONTAINER=ALL` that printed its label and never
+#: returned (#326). If it happens again, reopen #326 with the report
+#: :func:`_blocked_sessions` writes.
 #:
 #: One number for both because it is one question -- *did a docker call stop?* --
 #: and a second constant would be a second thing to keep proportionate to a
@@ -307,6 +308,9 @@ def _timeout_report(container: str, expired: subprocess.TimeoutExpired) -> str:
             "This is a stall, not a slow run: one `00_install.sql` takes under a",
             "second, so do not raise EXEC_TIMEOUT_S to make it pass.",
             "",
+            "Seen before as #326, on GRANT CREATE SESSION ... CONTAINER=ALL:",
+            "reopen it with this report.",
+            "",
             f"command: {' '.join(expired.cmd)}",
             "",
             "last output before the kill (the label names the statement that hung):",
@@ -338,8 +342,8 @@ def _blocked_sessions(container: str) -> str:
     Best effort by construction, and **its own failure is an answer** rather than
     something to swallow. Three outcomes and they point at three different fixes:
 
-    * rows -- Oracle was waiting, and on what. The hypothesis (TODO(#326):
-      unconfirmed) is a dictionary lock behind `CONTAINER=ALL`, and
+    * rows -- Oracle was waiting, and on what. The hypothesis in #326, never
+      confirmed, is a dictionary lock behind `CONTAINER=ALL`, and
       ``BLOCKING_SESSION`` is what confirms or kills it;
     * no rows -- the session was gone by the time this ran, so the stall was
       probably not the database at all;
@@ -1127,6 +1131,19 @@ def test_the_report_refuses_the_obvious_wrong_fix(monkeypatch: pytest.MonkeyPatc
 
     assert "stall, not a slow run" in report
     assert "do not raise EXEC_TIMEOUT_S" in report
+
+
+def test_the_report_points_at_the_closed_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#326 is closed as not recurring. A recurrence has to reach it, with its
+    history, rather than start a new issue, so the report says where to go."""
+    monkeypatch.setattr(
+        "test_oracle_install_script._blocked_sessions", lambda _container: "(stubbed)"
+    )
+
+    report = _timeout_report(CONTAINER, _expired())
+
+    assert "Seen before as #326" in report
+    assert "reopen it with this report" in report
 
 
 PIPED = "SELECT 1 FROM dual;\nEXIT\n"

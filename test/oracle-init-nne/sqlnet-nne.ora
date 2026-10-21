@@ -2,8 +2,7 @@
 # constraint locally. With this in place a thin-mode python-oracledb connection
 # fails with DPY-3001, which is the failure path the tool has to diagnose
 # clearly, and a thick-mode one connects encrypted. 01_require_nne.sh adds these
-# lines to the server's sqlnet.ora; test/README.md says what they were checked
-# with.
+# lines to the server's sqlnet.ora.
 
 SQLNET.ENCRYPTION_SERVER = required
 SQLNET.ENCRYPTION_TYPES_SERVER = (AES256, AES192, AES128)

@@ -447,10 +447,9 @@ With Docker Desktop, `127.0.0.1` reaches the containers from WSL.
 ## 9. The NNE container
 
 ```bash
-docker compose --profile nne up -d --wait vault oracle-nne   # Oracle on 1525, NNE required
-docker compose --profile nne up -d vault-init
+docker compose --profile nne up -d      # Oracle on 1525, NNE required
 ```
 
 This approximates Base Database Service's encryption requirement locally. A
 thin-mode connection fails with `DPY-3001`, and a thick-mode one connects.
-`test/README.md` says what it was checked with.
+`test/README.md` says how to wait until it is healthy.

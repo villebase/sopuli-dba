@@ -35,16 +35,14 @@ What each environment is, and what to know before using it:
   `docs/maintainer-environments.md` §3.
 - **nne** (`oracle-nne`, port 1525) is an Oracle Free that requires Native
   Network Encryption. A thin-mode connection fails with `DPY-3001`, and a
-  thick-mode one connects with AES256 and SHA256. Checked on 2026-10-21 with
-  server 23.26.3.0.0, python-oracledb 26.0.1 and Instant Client 23.26.3.0.0
-  for Windows. The script in `oracle-init-nne/`
-  adds the NNE settings to the server's `sqlnet.ora` on each start. Start it as
-  CI starts tier 1, because `--wait` fails on the one-shot `vault-init`:
+  thick-mode one connects with AES256 and SHA256. The script in
+  `oracle-init-nne/` adds the NNE settings to the server's `sqlnet.ora` on each
+  start. `--wait` on the whole profile fails on the one-shot `vault-init`, so to
+  wait for it, start it as CI starts tier 1:
   `docker compose --profile nne up -d --wait vault oracle-nne`, then
-  `docker compose --profile nne up -d vault-init`. It was healthy in 37 s.
+  `docker compose --profile nne up -d vault-init`.
 - **emulators** (`lowkey-vault`, port 8443) is `nagyesta/lowkey-vault:7.3.112`.
-  `docker compose --profile emulators up -d --wait` returned in 9 s on
-  2026-10-21, and `https://127.0.0.1:8443/ping` then answered `pong`.
+  Once it is healthy, `https://127.0.0.1:8443/ping` answers `pong`.
 
 CI starts tier 1 for each pull request, except one that changes only files
 that `.github/workflows/tier1.yml` lists under `paths-ignore`. Every other
@@ -148,8 +146,8 @@ Everything else in the documentation uses the default names and ports: the
 `docker exec` commands, the Vault UI link below, the configuration samples in
 `docs/local-testing.md` and the run instructions in the headers of the scripts in
 `sql/oracle/`. In the second clone, change the name and the port in them. The
-tier2 and maintainer-only services keep fixed ports, so only one clone can run
-each of them.
+tier2's Oracle services, `oracle-nne`, `lowkey-vault` and the maintainer-only
+services keep fixed ports, so only one clone can run each of them.
 
 Measured on 2026-10-14: a healthy tier1 stack uses about 2.5 GB of memory in
 its containers, and about 2.9 GB while the suite runs against it. Oracle Free is

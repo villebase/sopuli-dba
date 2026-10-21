@@ -7,7 +7,7 @@
 #   docker compose --profile tier0 up -d     # Vault + PostgreSQL, seconds
 #   docker compose --profile tier1 up -d     # + Oracle Free, ~30-60 s to healthy
 #   docker compose --profile tier2 up -d     # + older Oracle lines, ~90 s once pulled
-#   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525
+#   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525; see README.md
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
@@ -348,7 +348,10 @@ services:
     volumes:
       - ./oracle-init-nne:/container-entrypoint-startdb.d:ro
     healthcheck:
-      test: ["CMD", "healthcheck.sh"]
+      # The image's own check, and the block the startup script adds. The image
+      # runs that script after its own check can already pass, so without the
+      # second condition `up --wait` can return before NNE is required.
+      test: ["CMD-SHELL", "healthcheck.sh && grep -qx '# BEGIN sopuli oracle-init-nne' /opt/oracle/oradata/dbconfig/FREE/sqlnet.ora"]
       interval: 10s
       timeout: 5s
       retries: 60
@@ -365,8 +368,8 @@ services:
     profiles: [emulators]
     ports: ["127.0.0.1:8443:8443", "[::1]:8443:8443"]
     # The image declares no healthcheck, so without this `up --wait` returns
-    # about 8 s before the service answers. /ping on the HTTP port inside the
-    # container answers `pong` once it is ready.
+    # before the service answers. /ping on the HTTP port inside the container
+    # answers `pong` once it is ready.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ping"]
       interval: 2s

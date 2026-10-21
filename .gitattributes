@@ -3,3 +3,7 @@
 # Windows checkout with core.autocrlf=true: a CRLF line makes bash look for a
 # command called "sqlplus" followed by a carriage return.
 *.sh text eol=lf
+# Net configuration files are copied into a server's sqlnet.ora inside a Linux
+# container (test/oracle-init-nne/), so a CRLF checkout would carry carriage
+# returns into the values.
+*.ora text eol=lf

@@ -668,11 +668,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         RESET_JOURNAL_UNREAD: (
             "`account list` could not open or read the reset journal that `reset_records:` "
-            "declares, so RESET_AT is empty for the accounts it names, and an empty RESET_AT "
-            "there does not mean that nobody reset them. One entry for the run, naming the "
-            "store, the number of accounts, and the first error the store gave. A journal "
-            "with no record for an account is not this code: nobody has reset that account "
-            "through this tool."
+            "declares, or read a record in it with no `reset_at`, so RESET_AT is empty on "
+            "those rows, and an empty RESET_AT there does not mean that nobody reset them. "
+            "One entry for the run, naming the store, the number of rows, and the first "
+            "error. A journal with no record for an account is not this code: nobody has "
+            "reset that account through this tool."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1312,23 +1312,25 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
     ]
 
 
-def reset_journal_unread(store: str, accounts: int, reason: str) -> Diagnostic:
+def reset_journal_unread(store: str, rows: int, reason: str) -> Diagnostic:
     """Say why `account list`'s ``RESET_AT`` is empty where the journal failed (#929).
 
-    One entry for the run rather than one per account. A revoked token fails
-    every read the same way, and four hundred copies of one error would hide the
-    table they explain. The count says how far it reached.
+    One entry for the run rather than one per row. A revoked token fails every
+    read the same way, and four hundred copies of one error would hide the table
+    they explain. The count is of rows, an account on one target each, because
+    RESET_AT is a column of the table.
 
-    The reason is the first one the store gave, with its hint, and it comes
-    last, for :func:`reset_record_unwritten`'s reason.
+    The reason is the first one, for one of the rows, with the store's hint. It
+    comes last, for :func:`reset_record_unwritten`'s reason.
     """
-    whom = "1 account" if accounts == 1 else f"{accounts} accounts"
+    where = "1 row" if rows == 1 else f"{rows} rows"
     return Diagnostic(
         level="warning",
         code=RESET_JOURNAL_UNREAD,
         message=(
-            f"the reset journal in store {store!r} could not be read for {whom}, so "
-            f"RESET_AT is empty there and does not say whether they were reset: {reason}"
+            f"the reset journal in store {store!r} could not be read, so RESET_AT is "
+            f"empty on {where} and does not say whether those accounts were reset. "
+            f"The first error was: {reason}"
         ),
     )
 

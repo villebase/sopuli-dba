@@ -3401,7 +3401,7 @@ def account_list_command(
     unreadable: list[Diagnostic] = []
     if unread.first is not None:
         store, reason = unread.first
-        unreadable.append(reset_journal_unread(store, unread.accounts, reason))
+        unreadable.append(reset_journal_unread(store, unread.rows, reason))
     document.diagnostics.extend(unreadable)
     document.results = [build_account_list_result(row) for row in rows]
     document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
@@ -3415,41 +3415,51 @@ def account_list_command(
 
 @dataclass
 class _JournalFailures:
-    """How many accounts the reset journal could not answer for, and why (#929).
+    """The rows the reset journal could not answer for, and why (#929).
 
-    The first store and reason are kept and the rest are counted. A revoked token
+    The first store and reason are kept and the rows are counted. A revoked token
     or a down vault fails every read the same way, so one reason says what
-    happened. ``unopened`` is set when the store could not be opened, so the
-    targets after it do not try again and wait out the same failure.
+    happened.
+
+    ``dead`` is set when the store failed as a whole: it could not be opened, or
+    a read failed other than by a refusal. Nothing is read after that, so four
+    hundred accounts do not wait out one unreachable vault's timeout four hundred
+    times. A refusal does not set it, because a token's policy is per path and
+    the next record may be readable.
     """
 
-    accounts: int = 0
+    rows: int = 0
     first: tuple[str, str] | None = None
-    unopened: bool = False
+    dead: bool = False
 
-    def add(self, store: str, error: Exception, *, accounts: int = 1) -> None:
-        self.accounts += accounts
+    def failed(self, store: str, reason: str) -> None:
+        self.rows += 1
         if self.first is None:
-            found = _finding(error)
-            # The hint is where a store says what to do, such as where a token can go.
-            reason = f"{found.message} -- {found.hint}" if found.hint else found.message
             self.first = (store, reason)
+
+
+def _store_reason(error: Exception) -> str:
+    """A store's error as one reason, with its hint, which says what to do next."""
+    found = _finding(error)
+    return f"{found.message} -- {found.hint}" if found.hint else found.message
 
 
 def _open_journal(run: Invocation, config: Config, unread: _JournalFailures) -> SecretStore | None:
     """:func:`_reset_journal`, tried once per run, and never raising.
 
-    A store that could not be opened is recorded in ``unread`` and not dialled
-    again, so nine targets do not wait out one login failure nine times.
+    A store that could not be opened marks ``unread`` dead and is not dialled
+    again, so nine targets do not wait out one login failure nine times. Its rows
+    are counted where they are read, in :func:`_reset_at`.
     """
     records = config.reset_records
-    if records is None or unread.unopened:
+    if records is None or unread.dead:
         return None
     try:
         return _reset_journal(run, config)
     except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
-        unread.unopened = True
-        unread.add(records.vault, error, accounts=0)
+        unread.dead = True
+        if unread.first is None:
+            unread.first = (records.vault, _store_reason(error))
         return None
 
 
@@ -3481,8 +3491,6 @@ def _list_one(
 
         names = _declared_names(session, config, target, wanted=wanted)
         journal = _open_journal(run, config, unread) if names else None
-        if unread.unopened:
-            unread.accounts += len(names)
         rows = [
             _describe_row(session, name, target, config, journal=journal, unread=unread)
             for name in names
@@ -3566,10 +3574,11 @@ def _no_such_predicate(target: ExpandedTarget, noun: str, name: str) -> click.Cl
 def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
     """The store UC-2's reset records live in, or ``None`` where none is declared.
 
-    Opened **once per target** rather than once per account, for
-    :func:`_stores_for`'s own reason: a store is a client, and an estate with
-    four hundred developers in one vault should authenticate once. The run's
-    client cache makes it once per *run* in practice.
+    Opened once per run rather than once per account, for :func:`_stores_for`'s
+    own reason: a store is a client, and an estate with four hundred developers
+    in one vault should authenticate once. The run's client cache does that for
+    a store that opened, and `account list` calls this through
+    :func:`_open_journal`, which does not try again after a failure.
 
     ``None`` is the documented mode, not a failure (UC-2 3.4): a configuration
     with no `reset_records:` block keeps no journal, `SOPULI-W023` says so, and
@@ -3595,9 +3604,9 @@ def _reset_at(
     **Three absences, one rendering, and two of them are findings.** No journal
     configured is `SOPULI-W023`, raised once for the run. A journal with no
     record for this account is not a finding at all -- nobody has reset them
-    through this tool -- and gets no code. A journal that could not be read is
-    added to ``unread``, and `account list` reports it once for the run as
-    `SOPULI-W054`, with the first error the store gave.
+    through this tool -- and gets no code. A journal that could not be read, or a
+    record with no `reset_at` in it, is added to ``unread``, and `account list`
+    reports it once for the run as `SOPULI-W054`, with the first reason.
 
     Never raises. A listing verb that failed because a *metadata* store was
     unreachable would be refusing to describe an estate over its history, which
@@ -3605,17 +3614,30 @@ def _reset_at(
     at least as strongly to a read.
     """
     records = config.reset_records
-    if journal is None or records is None:
+    if records is None:
         return None
+    if unread.dead:
+        unread.rows += 1
+        return None
+    if journal is None:
+        return None
+    path = reset_record.record_path(records, target=target, account=account)
     try:
-        stored = journal.read(reset_record.record_path(records, target=target, account=account))
+        stored = journal.read(path)
     except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
-        unread.add(records.vault, error)
+        unread.failed(records.vault, _store_reason(error))
+        # A refusal is about this path. Anything else, such as a timeout, is the
+        # whole store, and the next read would wait it out again.
+        if getattr(error, "category", None) != "authorization":
+            unread.dead = True
         return None
-    if stored is None or not isinstance(stored.data, dict):
+    if stored is None:
         return None
-    moment = stored.data.get("reset_at")
-    return moment if isinstance(moment, str) else None
+    moment = stored.data.get("reset_at") if isinstance(stored.data, dict) else None
+    if not isinstance(moment, str):
+        unread.failed(records.vault, f"the record at {path!r} holds no `reset_at` string")
+        return None
+    return moment
 
 
 def _describe_row(

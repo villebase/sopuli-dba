@@ -371,8 +371,7 @@ which absence it is. **That warning is `SOPULI-W023`**, once per run, not once p
 account, because a missing journal is a property of the configuration, while a
 missing database date is a property of one account. A journal that is declared
 and cannot be opened or read is `SOPULI-W054`, also once per run. It names the
-store, says how many accounts it could not answer for, and keeps the first error
-the store gave. A journal with no record for an account is not a finding:
+store, says on how many rows it could not answer, and keeps the first error. A journal with no record for an account is not a finding:
 nobody has reset that account through this tool. The text output prints these
 reasons as notes under the table. It leaves out `SOPULI-W023` when no
 target answered, because then there is no `RESET_AT` to explain, and the run

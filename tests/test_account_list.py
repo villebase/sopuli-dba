@@ -546,36 +546,70 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
     assert _reset_at(Broken(), built, TARGET, "jdoe", unread=_JournalFailures()) is None
 
 
-def test_a_journal_that_cannot_be_read_is_recorded_with_its_reason() -> None:
+JOURNALLED = {
+    "reset_records": {"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+    "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+}
+
+
+def test_a_refused_read_is_recorded_and_the_next_record_is_still_read() -> None:
     """The reason is kept for the run's `SOPULI-W054`, so the empty RESET_AT
-    does not read as "nobody was reset" (#929)."""
+    does not read as "nobody was reset" (#929). A token's policy is per path, so
+    one refusal says nothing about the next record."""
     from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore, StoreError
 
-    class Broken(MemoryStore):
-        def read(self, path: str, *, version: int | None = None) -> Any:
-            raise StoreError(f"the store refused this token at {path!r}")
+    class RefusedError(StoreError):
+        category = "authorization"
 
-    built = config(
-        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
-        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
-    )
+    class Refusing(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Any:
+            raise RefusedError(f"the store refused this token at {path!r}")
+
+    built = config(**JOURNALLED)
     unread = _JournalFailures()
 
-    _reset_at(Broken(), built, TARGET, "jdoe", unread=unread)
-    _reset_at(Broken(), built, TARGET, "rroe", unread=unread)
+    _reset_at(Refusing(), built, TARGET, "jdoe", unread=unread)
+    _reset_at(Refusing(), built, TARGET, "rroe", unread=unread)
     _reset_at(MemoryStore(), built, TARGET, "asmith", unread=unread)
 
-    assert unread.accounts == 2
+    assert unread.rows == 2
+    assert not unread.dead
     assert unread.first == (
         "vault-dev",
         "the store refused this token at 'sopuli/personal-resets/appdb-dev-alpha/jdoe'",
     )
 
 
+def test_a_store_that_fails_otherwise_is_not_read_again() -> None:
+    """Four hundred accounts must not wait out one unreachable vault's timeout
+    four hundred times. The rows after it are still counted."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore, StoreError
+
+    reads = []
+
+    class Unreachable(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Any:
+            reads.append(path)
+            raise StoreError("could not reach the store: timed out")
+
+    built = config(**JOURNALLED)
+    unread = _JournalFailures()
+    journal = Unreachable()
+
+    for account in ("jdoe", "rroe", "asmith"):
+        assert _reset_at(journal, built, TARGET, account, unread=unread) is None
+
+    assert len(reads) == 1
+    assert unread.dead
+    assert unread.rows == 3
+
+
 def test_a_journal_that_cannot_be_opened_is_tried_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Nine targets must not wait out one login failure nine times."""
-    from sopuli.cli import _JournalFailures, _open_journal
+    """Nine targets must not wait out one login failure nine times. The rows are
+    counted where they are read."""
+    from sopuli.cli import _JournalFailures, _open_journal, _reset_at
     from sopuli.store import StoreError
 
     calls = []
@@ -585,39 +619,56 @@ def test_a_journal_that_cannot_be_opened_is_tried_once(monkeypatch: pytest.Monke
         raise StoreError("could not reach the store")
 
     monkeypatch.setattr("sopuli.cli._reset_journal", refuse)
-    built = config(
-        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
-        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
-    )
+    built = config(**JOURNALLED)
     unread = _JournalFailures()
     run: Any = object()
 
     assert _open_journal(run, built, unread) is None
     assert _open_journal(run, built, unread) is None
+    _reset_at(None, built, TARGET, "jdoe", unread=unread)
+    _reset_at(None, built, TARGET, "rroe", unread=unread)
 
     assert len(calls) == 1
-    assert unread.unopened
+    assert unread.dead
+    assert unread.rows == 2
     assert unread.first == ("vault-dev", "could not reach the store")
+
+
+def test_a_record_with_no_reset_at_is_recorded() -> None:
+    """A damaged record would otherwise show `-`, the same as no record at all."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore
+
+    journal = MemoryStore()
+    journal.write("sopuli/personal-resets/appdb-dev-alpha/jdoe", {"account": "jdoe"}, cas=None)
+    unread = _JournalFailures()
+
+    assert _reset_at(journal, config(**JOURNALLED), TARGET, "jdoe", unread=unread) is None
+
+    assert unread.rows == 1
+    assert unread.first == (
+        "vault-dev",
+        "the record at 'sopuli/personal-resets/appdb-dev-alpha/jdoe' holds no `reset_at` string",
+    )
 
 
 def test_the_unread_reason_keeps_the_stores_hint() -> None:
     """The hint is where a store says what to do next, such as where a token can go."""
-    from sopuli.cli import _JournalFailures
+    from sopuli.cli import _store_reason
     from sopuli.store import StoreError
 
-    unread = _JournalFailures()
-    unread.add("vault-dev", StoreError("no token", hint="supply one with --vault-token-file"))
+    reason = _store_reason(StoreError("no token", hint="supply one with --vault-token-file"))
 
-    assert unread.first == ("vault-dev", "no token -- supply one with --vault-token-file")
+    assert reason == "no token -- supply one with --vault-token-file"
 
 
 def test_the_unread_journal_warning_names_the_store_and_ends_with_the_reason() -> None:
     message = reset_journal_unread("vault-dev", 3, "the store refused this token").message
 
     assert "store 'vault-dev'" in message
-    assert "for 3 accounts" in message
-    assert message.endswith(": the store refused this token")
-    assert "for 1 account," in reset_journal_unread("vault-dev", 1, "down").message
+    assert "empty on 3 rows" in message
+    assert message.endswith("The first error was: the store refused this token")
+    assert "empty on 1 row " in reset_journal_unread("vault-dev", 1, "down").message
 
 
 def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:

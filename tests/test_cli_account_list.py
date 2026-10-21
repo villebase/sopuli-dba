@@ -164,7 +164,8 @@ def test_a_refused_token_is_said_with_the_stores_error(
 
     assert text.exit_code == ExitCode.SUCCESS, text.output
     note = click.unstyle(text.output)
-    assert "the reset journal in store 'vault-dev' could not be read for 1 account" in note
+    assert "the reset journal in store 'vault-dev' could not be read" in note
+    assert "RESET_AT is empty on 1 row " in note
     assert "the store refused this token" in note
     found = json.loads(document.output)["diagnostics"]
     unread = [one for one in found if one["code"] == RESET_JOURNAL_UNREAD]

@@ -31,7 +31,7 @@ from typing import Any
 from sopuli.account_list import ABSENT, ACCOUNT_MISSING, DECLARED, ERROR, Row
 from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN
 from sopuli.output.document import Diagnostic, Error, Summary
-from sopuli.output.notices import render_notices
+from sopuli.output.notices import render_notices, unknown_change_dates
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 
@@ -195,7 +195,14 @@ def render_account_list(rows: Sequence[Row], *, run_notes: Sequence[str] = ()) -
             for row in rows
         ],
     )
-    notes = [*_notes(rows), *_unknown_dates(rows), *run_notes]
+    dates = unknown_change_dates(
+        (row.target, row.account, None if row.state is None else row.state.password_changed_unknown)
+        for row in rows
+    )
+    # A run where no target answered has no RESET_AT to explain, and a note about
+    # the journal would point the reader away from the unreachable target.
+    answered = any(not row.failed for row in rows)
+    notes = [*_notes(rows), *dates, *(run_notes if answered else ())]
     return "\n".join([*lines, "", _count(rows), *render_notices(notes)])
 
 
@@ -214,24 +221,6 @@ def _notes(rows: Sequence[Row]) -> list[str]:
         f"{account} on {', '.join(where)}: {message}"
         for (account, message), where in targets.items()
     ]
-
-
-def _unknown_dates(rows: Sequence[Row]) -> list[str]:
-    """Why ``DB_PW_CHANGED`` is empty, one line per target and reason.
-
-    The same words `creds status` prints for `SOPULI-W021`, so the two commands
-    describe one absence the same way.
-    """
-    unknown: dict[tuple[str, str], list[str]] = {}
-    for row in rows:
-        reason = None if row.state is None else row.state.password_changed_unknown
-        if reason is not None:
-            unknown.setdefault((row.target, reason), []).append(row.account)
-    lines = []
-    for (target, reason), accounts in unknown.items():
-        who = accounts[0] if len(accounts) == 1 else f"{len(accounts)} accounts"
-        lines.append(f"{target}: DB_PW_CHANGED is empty for {who}: {reason}")
-    return lines
 
 
 def _declared_by(row: Row) -> str:

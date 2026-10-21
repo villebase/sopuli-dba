@@ -9,7 +9,7 @@ name: release-please
 # `release: published`, because release-please creates the Release with this
 # workflow's GITHUB_TOKEN, and GitHub starts no workflow run for an event that
 # token caused -- a separate workflow would silently never run. On every push
-# that cuts no release, `build` and `publish` show as skipped.
+# that cuts no release, `build`, `publish`, `sign` and `attach` show as skipped.
 
 on:
   push:
@@ -91,3 +91,61 @@ jobs:
           path: dist/
       # Attestations are on by default from v1.11; do not set `attestations: false`.
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  # The same files on the GitHub release, each with a Sigstore bundle (#947).
+  # Scorecard's Signed-Releases check reads release assets, not PyPI, so the PEP
+  # 740 attestations above do not count for it. Two jobs after `publish`, so
+  # each holds one credential: `sign` runs the third-party signing action with
+  # only an OIDC token, and `attach` holds `contents: write` and runs only
+  # GitHub's own actions and `gh`. Both take the `dist` artifact `build`
+  # uploaded, never a rebuild, so the release carries the bytes on PyPI.
+  sign:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      # Writes `<file>.sigstore.json` beside each file, then verifies each bundle
+      # against this workflow's identity, so a bundle that would not verify for
+      # a user stops the job before anything is attached. Its own release upload
+      # works only on a `release` event, which this run is not, so it is off and
+      # the step below attaches the files.
+      - uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.workflow_ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+          release-signing-artifacts: false
+          upload-signing-artifacts: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed
+          path: dist/
+          if-no-files-found: error
+
+  # release-please publishes the release, so this attaches to a published
+  # release. That works while immutable releases are off for the repository;
+  # turning them on would need a draft release that a last step publishes.
+  # If this job fails after `publish` succeeded, use "Re-run failed jobs" on
+  # this run, while its artifacts are kept: a new run would not see a release
+  # created and would skip every job. docs/workflow.md says so.
+  attach:
+    needs: [release-please, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed
+          path: dist/
+      - name: attach the files and their bundles to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber

@@ -191,9 +191,9 @@ what it was used for during the Actions incident in #233.
 - release-please runs on push to `main`, maintains a standing release PR
   with the accumulated changelog and version bump. Merging that PR is the
   explicit act that cuts the tag and GitHub Release.
-- **The same merge publishes to PyPI** (#545). `release-please.yml` carries two
-  more jobs, gated on the action's `release_created` output: `build` checks out
-  the new tag, installs `build`, `hatchling` and `twine` from
+- **The same merge publishes to PyPI** (#545). `release-please.yml` carries
+  four more jobs, gated on the action's `release_created` output: `build`
+  checks out the new tag, installs `build`, `hatchling` and `twine` from
   `.github/requirements/release.txt` with `--require-hashes`, runs
   `python -m build --no-isolation` and `twine check --strict`, and uploads
   `dist/`. `--no-isolation` makes the build use the pinned `hatchling`.
@@ -202,7 +202,18 @@ what it was used for during the Actions incident in #233.
   `publish` downloads `dist/` and hands it to `pypa/gh-action-pypi-publish`
   through trusted publishing. There is no PyPI token anywhere: `publish` holds an
   OIDC token PyPI trusts for that one workflow, and `id-token: write` is the only
-  permission it has. On a push that cuts no release, both jobs show as skipped.
+  permission it has. `sign` then signs the same `dist/` files with Sigstore and
+  checks each `.sigstore.json` bundle, and `attach` attaches the files and the
+  bundles to the GitHub release. That is what Scorecard's Signed-Releases check
+  reads (#947). Each job holds one credential: `sign` runs the third-party
+  signing action with only an OIDC token, and `attach` holds `contents: write`
+  and runs only GitHub's own actions and `gh`. Attaching to a release
+  release-please has published works while immutable releases are off for the
+  repository. On a push that cuts no release, all four show as skipped.
+- **If `sign` or `attach` fails after `publish` succeeded**, use *Re-run failed
+  jobs* on that workflow run. A new run would not see a release created and
+  would skip every job. Re-running works while the run's artifacts are kept,
+  which is the repository's artifact retention period.
 - **They are jobs in this workflow and not a separate one on
   `release: published`**, which would never run. release-please creates the
   Release with the workflow's `GITHUB_TOKEN`, and GitHub starts no workflow run
@@ -266,6 +277,22 @@ what it was used for during the Actions incident in #233.
   OK: sopuli_dba-0.75.0-py3-none-any.whl
   OK: sopuli_dba-0.75.0.tar.gz
   ```
+
+  Then check the GitHub release. It must carry four files: the wheel, the sdist,
+  and a `.sigstore.json` bundle for each. Verify the bundles against this
+  workflow's identity, with the `sigstore` package in the same virtual
+  environment:
+
+  ```bash
+  gh release download "v$V" --repo villebase/sopuli-dba --dir "release-$V"
+  pip install sigstore
+  sigstore verify identity \
+    --cert-identity "https://github.com/villebase/sopuli-dba/.github/workflows/release-please.yml@refs/heads/main" \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    "release-$V/sopuli_dba-$V-py3-none-any.whl" "release-$V/sopuli_dba-$V.tar.gz"
+  ```
+
+  Each file must report `OK`. A release from before #947 has no assets to check.
 
   **Anything other than `OK` for either file, or a publisher other than this
   workflow and environment, is a security incident**, not a failed release: a

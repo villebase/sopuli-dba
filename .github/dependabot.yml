@@ -1,0 +1,15 @@
+# Keeps the SHA-pinned actions in .github/workflows current (#868). Every
+# action is pinned to a full commit SHA with its version in a comment, and
+# Dependabot updates both. Weekly and grouped, so a week's updates are one pull
+# request that CI checks like any other.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

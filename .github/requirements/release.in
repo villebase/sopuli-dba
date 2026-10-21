@@ -1,0 +1,13 @@
+# The tools that build and check the files published to PyPI (#868).
+# release.txt pins them, and everything they need, by hash. The release job
+# installs it with --require-hashes and builds with --no-isolation, so the
+# build backend comes from here and not from an unpinned install.
+#
+# Regenerate release.txt after changing this file, from the repository root:
+#
+#   uv pip compile .github/requirements/release.in --generate-hashes \
+#     --python-version 3.13 --python-platform x86_64-manylinux_2_28 \
+#     -o .github/requirements/release.txt
+build
+hatchling
+twine

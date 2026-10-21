@@ -193,6 +193,207 @@ def test_the_application_token_is_empty_in_the_inline_form() -> None:
     assert str(config.bindings[0].secret) == "apps/alpha#DB/acme_web_user"
 
 
+@pytest.mark.parametrize(
+    ("account", "template"),
+    [
+        ("acme/web", "apps/acme#DB/{account}"),
+        ("acme/web", "apps/{account}#password"),
+        ("acme/web", "apps/{account_lower}#DB/x"),
+        ("acme/web", "apps/{account_upper}#DB/x"),
+        ("ACME#WEB", "apps/acme/{account}"),
+        ("ACME#WEB", "apps/{account}#password"),
+        ("a/b#c", "apps/acme#DB/{account}"),
+        ("acme/", "apps/{account}/y#password"),
+    ],
+    ids=[
+        "slash-in-the-pointer",
+        "slash-in-the-path",
+        "slash-lower",
+        "slash-upper",
+        "hash-starts-a-field",
+        "hash-before-the-field",
+        "both",
+        "trailing-slash",
+    ],
+)
+def test_an_account_name_with_a_slash_or_hash_is_refused(account: str, template: str) -> None:
+    """Decision #935. The value goes in as written, so `acme/web` in `#DB/{account}`
+    would store the password under `acme`, then `web`, and `ACME#WEB`, which Oracle
+    allows unquoted, would move where the field starts. Neither is a key anybody
+    wrote."""
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=[account], secret_template=template)
+
+    # A case variant renders the name in its own case.
+    message = caught.value.message.casefold()
+    assert f"is {account!r}, which contains".casefold() in message
+    assert "rename it" in (caught.value.hint or "")
+
+
+def test_a_common_user_is_told_it_needs_an_entry_of_its_own() -> None:
+    """A `C##` name cannot be renamed, so the hint must not stop at "rename it"."""
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["C##ACME_USER"], secret_template="apps/acme#DB/{account}")
+
+    assert "'C##ACME_USER', which contains `#`" in caught.value.message
+    assert "application entry of its own" in (caught.value.hint or "")
+    assert "C##" in (caught.value.hint or "")
+
+
+@pytest.mark.parametrize(
+    ("account", "template"),
+    [
+        ("ACME$WEB", "apps/{account}#DB/x"),
+        ("acme:web", "apps/{account}#password"),
+        ("acme~web", "apps/{account}#password"),
+        ("acme@web", "apps/acme#DB/{account}"),
+    ],
+    ids=["dollar", "colon-mid-path", "tilde-in-the-path", "at-without-a-qualifier"],
+)
+def test_other_characters_are_not_this_rules(account: str, template: str) -> None:
+    """Only `/` and `#` are refused. These change nothing where they sit."""
+    (binding, *_) = bind(accounts=[account], secret_template=template)
+
+    assert account in str(binding.secret)
+
+
+def test_the_inline_forms_empty_application_still_renders_as_a_segment_of_its_own() -> None:
+    """§7 documents `{application}` as empty in the inline form, and an empty
+    name holds no `/`."""
+    config = build_config(
+        document(
+            accounts=["acme_web_user"],
+            secret_template="apps/{application}/{tenant}#DB/{account}",
+        )
+    )
+
+    assert str(config.bindings[0].secret) == "apps//alpha#DB/acme_web_user"
+
+
+def test_a_label_that_breaks_the_pointer_is_reported_by_the_parser() -> None:
+    """#928's path: the parser's error, quoting the ref as rendered, with the hint
+    that a placeholder can bring the `~`."""
+    target_set = {**APPDB, "labels": {"region": "eu~x"}}
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            {
+                "version": 1,
+                "vaults": VAULTS,
+                "target_sets": {"appdb": target_set},
+                "applications": [
+                    {
+                        "name": "acme",
+                        "targets": {"match": {"tenant": "alpha", "env": "qa"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps#DB/{region}/{account}",
+                    }
+                ],
+            }
+        )
+
+    assert "apps#DB/eu~x/acme_web_user" in caught.value.message
+    assert "is not `~0` or `~1`" in caught.value.message
+    assert "placeholder" in (caught.value.hint or "")
+
+
+def _one_app_over(target_set: dict[str, Any], template: str) -> str:
+    """The one ref an application renders over the qa/alpha target of a set."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "target_sets": {"appdb": target_set},
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": {"match": {"tenant": "alpha", "env": "qa"}},
+                    "accounts": ["acme_web_user"],
+                    "secret_template": template,
+                }
+            ],
+        }
+    )
+    return str(config.bindings[0].secret)
+
+
+def test_a_target_name_is_not_checked() -> None:
+    """Whoever writes the template also names the targets, as they write labels."""
+    target_set = {**APPDB, "name": "appdb/{env}-{tenant}"}
+
+    assert _one_app_over(target_set, "{target}/acme#DB/{account}") == (
+        "appdb/qa-alpha/acme#DB/acme_web_user"
+    )
+
+
+def test_a_label_called_container_is_not_a_name() -> None:
+    """With no Oracle container, a label fills `{container}`, and a label is not checked."""
+    target_set = {
+        **APPDB,
+        "oracle": {"scope": "pdb"},
+        "labels": {"container": "eu/x"},
+    }
+
+    assert _one_app_over(target_set, "{container}/acme#DB/{account}") == (
+        "eu/x/acme#DB/acme_web_user"
+    )
+
+
+def test_an_oracle_container_with_a_hash_is_refused() -> None:
+    target_set = {**APPDB, "oracle": {"scope": "pdb", "container": "{tenant}#pdb"}}
+    with pytest.raises(ConfigError) as caught:
+        _one_app_over(target_set, "apps/{container}/acme#DB/{account}")
+
+    assert "{container}" in caught.value.message
+
+
+def test_an_application_name_with_a_slash_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                groups=GROUPS,
+                applications=[
+                    {
+                        "name": "acme/web",
+                        "targets": {"group": "app-pdbs"},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/{application}#DB/{account}",
+                    }
+                ],
+            )
+        )
+
+    assert "{application}" in str(caught.value)
+
+
+def test_a_name_with_a_slash_is_fine_where_the_template_does_not_use_it() -> None:
+    """The rule is about where the password lands, not about the name itself."""
+    binding = only(**one_target(accounts=["acme/web"], secret_template="apps/acme#password"))
+
+    assert str(binding.secret) == "apps/acme#password"
+
+
+def test_a_label_with_a_slash_is_not_refused() -> None:
+    """A template author chooses where a label goes, and may mean a level."""
+    target_set = {**APPDB, "labels": {"region": "eu/north"}}
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "target_sets": {"appdb": target_set},
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": {"match": {"tenant": "alpha", "env": "qa"}},
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "{region}/acme#DB/{account}",
+                }
+            ],
+        }
+    )
+
+    assert str(config.bindings[0].secret) == "eu/north/acme#DB/acme_web_user"
+
+
 def test_a_built_in_token_wins_over_a_label_of_the_same_name() -> None:
     """One of the two is specified and the other is whatever somebody typed."""
     target_set = {**APPDB, "labels": {"target": "not-the-name"}}

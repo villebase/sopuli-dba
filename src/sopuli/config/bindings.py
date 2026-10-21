@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from sopuli.config.applications import ACCOUNT_TOKEN
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import (
     Application,
@@ -49,7 +50,7 @@ from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef, normalise_path, parse_secret_ref
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
-from sopuli.config.templates import substitute
+from sopuli.config.templates import PLACEHOLDER, substitute
 from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
 from sopuli.payload import stage_layout
 
@@ -559,8 +560,56 @@ def _render(
     """
     if ref is None:
         return None
-    rendered = substitute(ref, _tokens(application, account, expanded), at=at, source=_SCOPE)
+    tokens = _tokens(application, account, expanded)
+    rendered = substitute(ref, tokens, at=at, source=_SCOPE)
+    _refuse_a_separator_in_a_name(ref, tokens, expanded, at=at)
     return parse_secret_ref(rendered, at=at)
+
+
+#: What a name may not contain where a template uses it (decision #935).
+_SEPARATORS = ("/", "#")
+
+
+def _is_name(token: str, expanded: ExpandedTarget) -> bool:
+    """Whether a placeholder stands for a name the database or the file chose.
+
+    The account tokens are the ones :data:`~sopuli.config.applications.ACCOUNT_TOKEN`
+    matches, so a new case variant is covered there and here at once. An
+    application is a name, and so is a container, when the target has one: a label
+    called ``container`` fills ``{container}`` on a target without one (see
+    :func:`_tokens`), and a label is not a name. ``{target}``, ``{env}`` and the
+    labels are values whoever writes the template also chose.
+    """
+    if ACCOUNT_TOKEN.fullmatch(f"{{{token}}}") or token == "application":
+        return True
+    return token == "container" and expanded.target.oracle.container is not None
+
+
+def _refuse_a_separator_in_a_name(
+    ref: str, tokens: Mapping[str, str], expanded: ExpandedTarget, *, at: KeyPath
+) -> None:
+    """Refuse a name with a ``/`` or ``#`` in a ref that uses it (decision #935).
+
+    ``01-configuration.md`` §7 says why. Runs after substitution, so a misspelt
+    token or a stray brace reports as itself, and every token the ref uses is
+    then in ``tokens``.
+    """
+    for token in dict.fromkeys(PLACEHOLDER.findall(ref)):
+        value = tokens[token]
+        found = [separator for separator in _SEPARATORS if separator in value]
+        if not found or not _is_name(token, expanded):
+            continue
+        raise ConfigError(
+            f"{{{token}}} in secret ref {ref!r} is {value!r}, which contains "
+            f"{' and '.join(f'`{separator}`' for separator in found)}",
+            at=at,
+            hint=(
+                "a name goes into the ref as written, and a `/` or `#` in it changes where "
+                "the password is stored. Declare it in an application entry of its own, "
+                "with a ref that does not use this placeholder, or rename it where the "
+                "database allows (a common user's `C##` cannot be)"
+            ),
+        )
 
 
 def _tokens(application: Application, account: str, expanded: ExpandedTarget) -> dict[str, str]:

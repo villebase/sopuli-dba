@@ -2520,3 +2520,34 @@ the register.
     which rule failed without a second run, but a partial quote then reaches
     every run's output. That loosens invariant 2's guard on what leaves the
     process.
+
+## #935
+
+- **Decided:** 2026-10-21, #935
+- **Question:** A placeholder's value goes into a secret ref as written, so a
+  `/` in it adds a level. The account `acme/web` in `#DB/{account}` stores its
+  password under `acme`, then `web`. Should such a value be escaped, refused,
+  or left alone?
+- **Decision:** Refuse a `/` or `#` in a name that a ref uses: `{account}` and
+  its case variants, `{application}`, and `{container}` when the target has an
+  Oracle container. `#` is in the rule as well as `/`, because Oracle allows it
+  in an unquoted name. `01-configuration.md` §7 states the rule, with examples.
+- **Why:** the password would land at a key, or in a document, that the
+  operator never wrote. #928 and the empty-segment rule refuse the same kind
+  of silent addressing in the pointer. A name is chosen for the database, not
+  for the template, so the template cannot have meant the level or the field it
+  makes. A common user's `C##` name was already refused through a placeholder,
+  by the parser's "more than one `#`", so for those names this refuses nothing
+  that loaded; it says why. `{target}`, `{env}` and the labels are chosen by whoever writes the
+  template, so they may mean a level. A plain check for two characters has no
+  edge cases to get wrong.
+- **Rejected:**
+  - Escape the value (`/` as `~1`). The name would mean what it says, but a
+    file that nests through a placeholder today would store its password
+    somewhere else after the change, with no error.
+  - Refuse any name that changes the shape of the ref, found by comparing the
+    rendered ref with the template's. It also covers a `~1`, a leading `vault:`
+    and `@stage=`, but three review rounds each found new edge cases in it. Those
+    three are #940.
+  - Leave it. A `/` in a name is rare, and the overlap check (#841) catches it
+    only when two accounts collide.

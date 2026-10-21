@@ -2374,10 +2374,24 @@ rather than missing in the inline form.
 
 A template parses as the ref it will expand into: the punctuation that gives a
 ref its shape is literal, and the tokens sit inside the parts. So
-`tenants/{tenant}#DB_CREDENTIALS/{account}` is checked structurally at load. The
-one thing that cannot be checked early is a token whose *value* turns out to
-contain `:`, `#` or `/` — that changes the structure, and the labels are not
-known until target expansion.
+`tenants/{tenant}#DB_CREDENTIALS/{account}` is checked structurally at load. A
+token's *value* is known only when the ref renders, and it goes in as written.
+
+A name whose value contains `/` or `#` is refused when a ref uses it
+([#935](../decisions/log.md#935)). The names are `{account}`, `{account_lower}`,
+`{account_upper}`, `{application}`, and `{container}` when the target has an
+Oracle container. The account `acme/web` in `#DB/{account}` would store its
+password under `acme`, then `web`. The account `ACME#WEB`, which Oracle allows
+unquoted, in `apps/acme/{account}` would address the document `apps/acme/ACME`
+and its field `WEB`. The error names the placeholder and its value. A common
+user's name starts with `C##`, so it cannot go through a placeholder at all:
+declare it in an application entry of its own with a literal ref. A name the
+template does not use is not checked. Neither is `{target}`, `{env}` or a label,
+a label called `container` included: whoever writes the template chooses those
+values and where they go, and may mean a level. A `~` in the pointer that is not
+an escape is refused by the pointer rule above, and the parser reports any other
+fault, quoting the ref as rendered. A `~1` in a name in the pointer, a leading
+`x:` and `@stage=` still re-address a ref (open: #940).
 
 Rule: a template must resolve to **one** secret per (account × logical scope). If
 an account exists in eleven PDBs and the template mentions no distinguishing

@@ -578,12 +578,15 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
         with _policy(sysdba, "alter user"):
             found = audit_reader.audit_coverage(COMMON_PERSON)
     finally:
-        # Suppressed, so a failed cleanup does not hide the test's own error.
-        # The next run's `_drop_common` removes anything left behind.
+        # Each step suppressed on its own, so a failed cleanup does not hide the
+        # test's own error and one failed step does not skip the next. The next
+        # run's `_drop_common` removes anything left behind. A connection left in
+        # the root fails the fixtures' teardown, which reports it separately.
         with contextlib.suppress(Exception):
             execute(sysdba, "alter session set container = CDB$ROOT")
-            _drop_common(sysdba)
-        execute(sysdba, f"alter session set container = {here}")
+        _drop_common(sysdba)
+        with contextlib.suppress(Exception):
+            execute(sysdba, f"alter session set container = {here}")
 
     assert found.audited is True, found.detail
     assert found.detail == (f"LOGON by {COMMON_POLICY.upper()}; ALTER USER by {POLICY.upper()}")

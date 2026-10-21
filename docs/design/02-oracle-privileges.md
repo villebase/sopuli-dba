@@ -1219,9 +1219,10 @@ so it does not guess:
   recorded in the root and in the PDB. That is the only shape measured for a
   proxy logon. A common policy enabled for every user, `EXCEPT` a list or for a
   role still *might cover* a common person's `LOGON`. The other rules still
-  apply: the policy must record successes and have no condition. If
-  `DBA_USERS` cannot be read, the check treats the person as local. That can
-  only turn a *covers* into a *might cover*.
+  apply: the policy must record successes and have no condition. The check
+  reads `DBA_USERS.COMMON` only when a common policy is enabled. If that read
+  fails, the common policy *might cover*, and the detail gives the server's
+  code and message.
 - **It has a row of a kind the probe has not measured.** A `SYSTEM PRIVILEGE`
   row records the statements that use the privilege. A logon uses
   `CREATE SESSION`, so `PRIVILEGES CREATE SESSION` might record `LOGON`. No

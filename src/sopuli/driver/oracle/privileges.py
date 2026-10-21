@@ -446,9 +446,9 @@ def _common_privileges(cursor: Any) -> frozenset[str]:
         if from_error(error).code != NO_COMMON_COLUMN:
             raise
         return frozenset()
-    return frozenset(str(row[0]).upper() for row in rows if _yes(row[1]))
+    return frozenset(str(row[0]).upper() for row in rows if is_yes(row[1]))
 
 
-def _yes(value: Any) -> bool:
+def is_yes(value: Any) -> bool:
     """Oracle's ``YES``/``NO`` columns, which are strings and not booleans."""
     return str(value).strip().upper() == "YES"

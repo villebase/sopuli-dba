@@ -563,8 +563,13 @@ def _render(
         return None
     tokens = _tokens(application, account, expanded)
     rendered = substitute(ref, tokens, at=at, source=_SCOPE)
-    _refuse_a_name_that_reshapes(ref, tokens, at=at)
-    return parse_secret_ref(rendered, at=at)
+    try:
+        parsed = parse_secret_ref(rendered, at=at)
+    except ConfigError as error:
+        _blame_a_name(ref, tokens, error, at=at)
+        raise
+    _refuse_a_name_that_reshapes(ref, tokens, parsed, at=at)
+    return parsed
 
 
 #: Stands in for a name, to see the shape the template gives a ref. It holds
@@ -611,7 +616,85 @@ def _shape(ref: SecretRef) -> tuple[object, ...]:
     )
 
 
-def _refuse_a_name_that_reshapes(ref: str, tokens: Mapping[str, str], *, at: KeyPath) -> None:
+_RENAME = (
+    "rename it, or declare it in an application entry of its own, with a ref that "
+    "does not use this placeholder"
+)
+_RESHAPE_HINT = (
+    "a name goes into the ref as written, so a `/`, `#`, `~`, a leading `vault:` or "
+    f"an `@stage=` in it changes what the ref addresses: {_RENAME}"
+)
+
+
+def _neutral(ref: str, tokens: Mapping[str, str]) -> dict[str, str]:
+    """``tokens`` with each name the ref uses replaced by the stand-in.
+
+    An empty name stays empty: the inline form's ``{application}`` is empty by
+    design (§7), and a stand-in would give the template a level it never has.
+    """
+    names = _names_in(ref)
+    return {**tokens, **{name: _SENTINEL for name in names if tokens.get(name)}}
+
+
+@functools.lru_cache(maxsize=1024)
+def _shape_of(text: str) -> tuple[object, ...] | None:
+    """The shape of a rendered ref, or ``None`` if it does not parse."""
+    try:
+        return _shape(parse_secret_ref(text))
+    except ConfigError:
+        return None
+
+
+def _culprits(ref: str, tokens: Mapping[str, str], *, at: KeyPath) -> tuple[str, ...]:
+    """The names that, each on its own, give the template another shape.
+
+    Empty when the template's own shape does not parse, because then the fault
+    is not a name's. All of the non-empty names when none does it alone, because
+    then they do it together.
+    """
+    neutral = _neutral(ref, tokens)
+    expected = _shape_of(substitute(ref, neutral, at=at, source=_SCOPE))
+    if expected is None:
+        return ()
+    names = tuple(name for name in _names_in(ref) if tokens.get(name))
+    alone = tuple(
+        name
+        for name in names
+        if _shape_of(substitute(ref, {**neutral, name: tokens[name]}, at=at, source=_SCOPE))
+        != expected
+    )
+    return alone or names
+
+
+def _describe(ref: str, names: Sequence[str], tokens: Mapping[str, str]) -> str:
+    each = " and ".join(f"{{{name}}} is {tokens[name]!r}" for name in names)
+    return f"in secret ref {ref!r}, {each}"
+
+
+def _blame_a_name(ref: str, tokens: Mapping[str, str], error: ConfigError, *, at: KeyPath) -> None:
+    """Name the placeholder behind a rendered ref that does not parse, if one is.
+
+    The parser's own message and hint are kept: they say what is wrong, such as
+    a `%` in the path, and this says which name brought it. A fault the template
+    has with its names stood in for is not a name's, and the parser's error is
+    raised as it is, quoting the real ref.
+    """
+    names = _culprits(ref, tokens, at=at)
+    if names:
+        raise ConfigError(
+            f"{_describe(ref, names, tokens)}: {error.message}",
+            at=at,
+            hint=(
+                f"{error.hint}. The name goes into the ref as written: {_RENAME}"
+                if error.hint
+                else _RESHAPE_HINT
+            ),
+        ) from error
+
+
+def _refuse_a_name_that_reshapes(
+    ref: str, tokens: Mapping[str, str], parsed: SecretRef, *, at: KeyPath
+) -> None:
     """Refuse a name whose value changes the shape of the ref (decision #935).
 
     A value is put into the ref as written. So a ``/`` in it adds a level: in
@@ -623,37 +706,24 @@ def _refuse_a_name_that_reshapes(ref: str, tokens: Mapping[str, str], *, at: Key
     ``@stage=`` selects a stage. Each one lands the password somewhere the
     operator never wrote.
 
-    Each name is put in on its own beside a sentinel for the others, and the ref
-    it gives is compared with the template's own shape. A character that changes
-    nothing where it sits, such as a ``:`` in the middle of a path, is allowed.
-    A label is never refused: whoever writes the template chooses where a label
-    goes, and may mean a level.
+    The rendered ref's shape is compared with the template's, its names stood
+    in for, which is cached per rendering. Only when they differ is each name
+    tried on its own, to say which one did it, or that several did together. A
+    character that changes nothing where it sits, such as a ``:`` in the middle
+    of a path, is allowed. A label is never refused: whoever writes the template
+    chooses where a label goes, and may mean a level.
     """
-    names = _names_in(ref)
-    if not names:
+    if not _names_in(ref):
         return
-    neutral = {**tokens, **dict.fromkeys(names, _SENTINEL)}
-    expected = _shape(parse_secret_ref(substitute(ref, neutral, at=at, source=_SCOPE), at=at))
-    for name in names:
-        value = tokens[name]
-        trial = substitute(ref, {**neutral, name: value}, at=at, source=_SCOPE)
-        try:
-            same = _shape(parse_secret_ref(trial, at=at)) == expected
-        except ConfigError:
-            same = False
-        if same:
-            continue
-        raise ConfigError(
-            f"{{{name}}} in secret ref {ref!r} is {value!r}, which changes where the "
-            "password is stored",
-            at=at,
-            hint=(
-                "a name goes into the ref as written, so a `/`, `#`, `~`, a leading "
-                "`vault:` or an `@stage=` in it changes what the ref addresses. Rename "
-                "it, or declare it in an application entry of its own, with a ref that "
-                "does not use this placeholder"
-            ),
-        )
+    expected = _shape_of(substitute(ref, _neutral(ref, tokens), at=at, source=_SCOPE))
+    if expected is None or _shape(parsed) == expected:
+        return
+    names = _culprits(ref, tokens, at=at)
+    raise ConfigError(
+        f"{_describe(ref, names, tokens)}, which changes where the password is stored",
+        at=at,
+        hint=_RESHAPE_HINT,
+    )
 
 
 def _tokens(application: Application, account: str, expanded: ExpandedTarget) -> dict[str, str]:

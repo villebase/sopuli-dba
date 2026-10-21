@@ -1,0 +1,58 @@
+name: codeql
+
+# Static analysis (#848): CodeQL on the Python source and on these workflows,
+# on every pull request and every push to main, so Scorecard's SAST check sees
+# it on all commits, and weekly, so new queries reach unchanged code. Findings
+# go to the Security tab as code scanning alerts. A finding does not fail this
+# job. Code scanning also adds its own `CodeQL` check to a pull request, which
+# goes red on a new alert of high severity or above. Neither is a check `ci ok`
+# gathers or the ruleset requires, so an alert is triaged in the Security tab
+# and does not block a merge by itself.
+#
+# A workflow rather than GitHub's default setup, so the action is pinned by SHA
+# like every other here and Dependabot updates it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+# Each job states what it needs, so a job added here without a block gets none.
+permissions: {}
+
+# A newer push to the same pull request cancels the older analysis. A run on
+# main, scheduled or pushed, is never cancelled.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # `contents` for the checkout, `actions` for the workflow queries, and
+    # `security-events` to upload the results.
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Neither language is compiled, so there is nothing to build.
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          category: /language:${{ matrix.language }}

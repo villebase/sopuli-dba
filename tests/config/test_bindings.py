@@ -230,6 +230,16 @@ def test_an_account_name_with_a_slash_or_hash_is_refused(account: str, template:
     assert "rename it" in (caught.value.hint or "")
 
 
+def test_a_common_user_is_told_it_needs_an_entry_of_its_own() -> None:
+    """A `C##` name cannot be renamed, so the hint must not stop at "rename it"."""
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["C##ACME_USER"], secret_template="apps/acme#DB/{account}")
+
+    assert "'C##ACME_USER', which contains `#`" in caught.value.message
+    assert "application entry of its own" in (caught.value.hint or "")
+    assert "C##" in (caught.value.hint or "")
+
+
 @pytest.mark.parametrize(
     ("account", "template"),
     [

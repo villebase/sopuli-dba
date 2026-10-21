@@ -2528,18 +2528,19 @@ the register.
   `/` in it adds a level. The account `acme/web` in `#DB/{account}` stores its
   password under `acme`, then `web`. Should such a value be escaped, refused,
   or left alone?
-- **Decision:** Refuse a `/` or `#` in a name that a ref uses. The maintainer
-  decided on `/`, and added `#` after the review of PR #939 showed it: Oracle
-  allows `#` in an unquoted name, and `ACME#WEB` in `apps/acme/{account}`
-  addresses the document `apps/acme/ACME` and its field `WEB`. The names are
-  `{account}` and its case variants, `{application}`, and `{container}` when the
-  target has an Oracle container. The error names the token and the value.
+- **Decision:** Refuse a `/` or `#` in a name that a ref uses: `{account}` and
+  its case variants, `{application}`, and `{container}` when the target has an
+  Oracle container. `#` is in the rule as well as `/`, because Oracle allows it
+  in an unquoted name. `01-configuration.md` §7 states the rule, with examples.
 - **Why:** the password would land at a key, or in a document, that the
   operator never wrote. #928 and the empty-segment rule refuse the same kind
   of silent addressing in the pointer. A name is chosen for the database, not
-  for the template, so a `/` or `#` in one is never meant. `{target}`, `{env}`
-  and the labels are chosen by whoever writes the template, so they may mean a
-  level. A plain check for two characters has no edge cases to get wrong.
+  for the template, so the template cannot have meant the level or the field it
+  makes. A common user's `C##` name was already refused through a placeholder,
+  by the parser's "more than one `#`", so for those names this refuses nothing
+  that loaded; it says why. `{target}`, `{env}` and the labels are chosen by whoever writes the
+  template, so they may mean a level. A plain check for two characters has no
+  edge cases to get wrong.
 - **Rejected:**
   - Escape the value (`/` as `~1`). The name would mean what it says, but a
     file that nests through a placeholder today would store its password

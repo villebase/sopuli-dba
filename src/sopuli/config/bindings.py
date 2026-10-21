@@ -33,7 +33,6 @@ than warning about it.
 
 from __future__ import annotations
 
-import functools
 from collections.abc import Mapping, Sequence
 
 from sopuli.config.applications import ACCOUNT_TOKEN
@@ -571,12 +570,6 @@ def _render(
 _SEPARATORS = ("/", "#")
 
 
-@functools.lru_cache(maxsize=256)
-def _placeholders_in(ref: str) -> tuple[str, ...]:
-    """The placeholders a ref uses, once each, in order."""
-    return tuple(dict.fromkeys(PLACEHOLDER.findall(ref)))
-
-
 def _is_name(token: str, expanded: ExpandedTarget) -> bool:
     """Whether a placeholder stands for a name the database or the file chose.
 
@@ -597,16 +590,12 @@ def _refuse_a_separator_in_a_name(
 ) -> None:
     """Refuse a name with a ``/`` or ``#`` in a ref that uses it (decision #935).
 
-    A value goes into the ref as written. So a ``/`` adds a level: in
-    ``#DB/{account}``, the account ``acme/web`` stores its password under
-    ``acme``, then ``web``, and in the path it names another document. A ``#``
-    moves where the field starts: ``apps/acme/{account}`` with ``ACME#WEB``, which
-    Oracle allows unquoted, addresses the document ``apps/acme/ACME`` and its
-    field ``WEB``. Either way the password lands where the operator never wrote.
-    Runs after substitution, so a misspelt token or a stray brace reports as itself.
+    ``01-configuration.md`` §7 says why. Runs after substitution, so a misspelt
+    token or a stray brace reports as itself, and every token the ref uses is
+    then in ``tokens``.
     """
-    for token in _placeholders_in(ref):
-        value = tokens.get(token, "")
+    for token in dict.fromkeys(PLACEHOLDER.findall(ref)):
+        value = tokens[token]
         found = [separator for separator in _SEPARATORS if separator in value]
         if not found or not _is_name(token, expanded):
             continue
@@ -616,8 +605,9 @@ def _refuse_a_separator_in_a_name(
             at=at,
             hint=(
                 "a name goes into the ref as written, and a `/` or `#` in it changes where "
-                "the password is stored: rename it, or declare it in an application entry "
-                "of its own, with a ref that does not use this placeholder"
+                "the password is stored. Declare it in an application entry of its own, "
+                "with a ref that does not use this placeholder, or rename it where the "
+                "database allows (a common user's `C##` cannot be)"
             ),
         )
 

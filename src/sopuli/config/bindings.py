@@ -563,167 +563,63 @@ def _render(
         return None
     tokens = _tokens(application, account, expanded)
     rendered = substitute(ref, tokens, at=at, source=_SCOPE)
-    try:
-        parsed = parse_secret_ref(rendered, at=at)
-    except ConfigError as error:
-        _blame_a_name(ref, tokens, error, at=at)
-        raise
-    _refuse_a_name_that_reshapes(ref, tokens, parsed, at=at)
-    return parsed
+    _refuse_a_separator_in_a_name(ref, tokens, expanded, at=at)
+    return parse_secret_ref(rendered, at=at)
 
 
-#: Stands in for a name, to see the shape the template gives a ref. It holds
-#: none of the characters that shape one.
-_SENTINEL = "name"
-
-
-def _is_name(token: str) -> bool:
-    """Whether a placeholder stands for a name the database or the file chose.
-
-    The account tokens are the ones :data:`~sopuli.config.applications.ACCOUNT_TOKEN`
-    matches, so a new case variant is covered there and here at once. A target, an
-    application and a container are names too. A label and ``{env}`` are values
-    whoever writes the template chose, so they are not.
-    """
-    return bool(ACCOUNT_TOKEN.fullmatch(f"{{{token}}}")) or token in _OTHER_NAMES
-
-
-_OTHER_NAMES = frozenset({"target", "application", "container"})
+#: What a name may not contain where a template uses it (decision #935).
+_SEPARATORS = ("/", "#")
 
 
 @functools.lru_cache(maxsize=256)
-def _names_in(ref: str) -> tuple[str, ...]:
-    """The name placeholders a ref uses, once each, in order."""
-    return tuple(name for name in dict.fromkeys(PLACEHOLDER.findall(ref)) if _is_name(name))
+def _placeholders_in(ref: str) -> tuple[str, ...]:
+    """The placeholders a ref uses, once each, in order."""
+    return tuple(dict.fromkeys(PLACEHOLDER.findall(ref)))
 
 
-def _shape(ref: SecretRef) -> tuple[object, ...]:
-    """What a ref addresses, without the words: the parts it has and how deep each is.
+def _is_name(token: str, expanded: ExpandedTarget) -> bool:
+    """Whether a placeholder stands for a name the database or the file chose.
 
-    A pointer segment that holds an RFC 6901 escape counts too: the key it decodes
-    to is not the text that was written.
+    The account tokens are the ones :data:`~sopuli.config.applications.ACCOUNT_TOKEN`
+    matches, so a new case variant is covered there and here at once. An
+    application is a name, and so is a container, when the target has one: a label
+    called ``container`` fills ``{container}`` on a target without one (see
+    :func:`_tokens`), and a label is not a name. ``{target}``, ``{env}`` and the
+    labels are values whoever writes the template also chose.
     """
-    raw = [] if ref.pointer is None else ref.pointer.split("/")[1:]
-    escaped = tuple(written != key for written, key in zip(raw, ref.pointer_segments, strict=True))
-    return (
-        ref.vault is not None,
-        len(normalise_path(ref.path).split("/")),
-        ref.field is not None,
-        len(ref.pointer_segments),
-        escaped,
-        ref.version,
-        ref.stage,
-    )
+    if ACCOUNT_TOKEN.fullmatch(f"{{{token}}}") or token == "application":
+        return True
+    return token == "container" and expanded.target.oracle.container is not None
 
 
-_RENAME = (
-    "rename it, or declare it in an application entry of its own, with a ref that "
-    "does not use this placeholder"
-)
-_RESHAPE_HINT = (
-    "a name goes into the ref as written, so a `/`, `#`, `~`, a leading `vault:` or "
-    f"an `@stage=` in it changes what the ref addresses: {_RENAME}"
-)
+def _refuse_a_separator_in_a_name(
+    ref: str, tokens: Mapping[str, str], expanded: ExpandedTarget, *, at: KeyPath
+) -> None:
+    """Refuse a name with a ``/`` or ``#`` in a ref that uses it (decision #935).
 
-
-def _neutral(ref: str, tokens: Mapping[str, str]) -> dict[str, str]:
-    """``tokens`` with each name the ref uses replaced by the stand-in.
-
-    An empty name stays empty: the inline form's ``{application}`` is empty by
-    design (§7), and a stand-in would give the template a level it never has.
+    A value goes into the ref as written. So a ``/`` adds a level: in
+    ``#DB/{account}``, the account ``acme/web`` stores its password under
+    ``acme``, then ``web``, and in the path it names another document. A ``#``
+    moves where the field starts: ``apps/acme/{account}`` with ``ACME#WEB``, which
+    Oracle allows unquoted, addresses the document ``apps/acme/ACME`` and its
+    field ``WEB``. Either way the password lands where the operator never wrote.
+    Runs after substitution, so a misspelt token or a stray brace reports as itself.
     """
-    names = _names_in(ref)
-    return {**tokens, **{name: _SENTINEL for name in names if tokens.get(name)}}
-
-
-@functools.lru_cache(maxsize=1024)
-def _shape_of(text: str) -> tuple[object, ...] | None:
-    """The shape of a rendered ref, or ``None`` if it does not parse."""
-    try:
-        return _shape(parse_secret_ref(text))
-    except ConfigError:
-        return None
-
-
-def _culprits(ref: str, tokens: Mapping[str, str], *, at: KeyPath) -> tuple[str, ...]:
-    """The names that, each on its own, give the template another shape.
-
-    Empty when the template's own shape does not parse, because then the fault
-    is not a name's. All of the non-empty names when none does it alone, because
-    then they do it together.
-    """
-    neutral = _neutral(ref, tokens)
-    expected = _shape_of(substitute(ref, neutral, at=at, source=_SCOPE))
-    if expected is None:
-        return ()
-    names = tuple(name for name in _names_in(ref) if tokens.get(name))
-    alone = tuple(
-        name
-        for name in names
-        if _shape_of(substitute(ref, {**neutral, name: tokens[name]}, at=at, source=_SCOPE))
-        != expected
-    )
-    return alone or names
-
-
-def _describe(ref: str, names: Sequence[str], tokens: Mapping[str, str]) -> str:
-    each = " and ".join(f"{{{name}}} is {tokens[name]!r}" for name in names)
-    return f"in secret ref {ref!r}, {each}"
-
-
-def _blame_a_name(ref: str, tokens: Mapping[str, str], error: ConfigError, *, at: KeyPath) -> None:
-    """Name the placeholder behind a rendered ref that does not parse, if one is.
-
-    The parser's own message and hint are kept: they say what is wrong, such as
-    a `%` in the path, and this says which name brought it. A fault the template
-    has with its names stood in for is not a name's, and the parser's error is
-    raised as it is, quoting the real ref.
-    """
-    names = _culprits(ref, tokens, at=at)
-    if names:
+    for token in _placeholders_in(ref):
+        value = tokens.get(token, "")
+        found = [separator for separator in _SEPARATORS if separator in value]
+        if not found or not _is_name(token, expanded):
+            continue
         raise ConfigError(
-            f"{_describe(ref, names, tokens)}: {error.message}",
+            f"{{{token}}} in secret ref {ref!r} is {value!r}, which contains "
+            f"{' and '.join(f'`{separator}`' for separator in found)}",
             at=at,
             hint=(
-                f"{error.hint}. The name goes into the ref as written: {_RENAME}"
-                if error.hint
-                else _RESHAPE_HINT
+                "a name goes into the ref as written, and a `/` or `#` in it changes where "
+                "the password is stored: rename it, or declare it in an application entry "
+                "of its own, with a ref that does not use this placeholder"
             ),
-        ) from error
-
-
-def _refuse_a_name_that_reshapes(
-    ref: str, tokens: Mapping[str, str], parsed: SecretRef, *, at: KeyPath
-) -> None:
-    """Refuse a name whose value changes the shape of the ref (decision #935).
-
-    A value is put into the ref as written. So a ``/`` in it adds a level: in
-    ``#DB/{account}``, the account ``acme/web`` stores its password under
-    ``acme``, then ``web``. A ``#`` moves where the field starts, so
-    ``apps/acme/{account}`` with the account ``ACME#WEB``, which Oracle allows
-    unquoted, addresses the document ``apps/acme/ACME`` and the field ``WEB``. A
-    leading ``x:`` names a vault, a ``~1`` decodes to a ``/`` inside a key, and
-    ``@stage=`` selects a stage. Each one lands the password somewhere the
-    operator never wrote.
-
-    The rendered ref's shape is compared with the template's, its names stood
-    in for, which is cached per rendering. Only when they differ is each name
-    tried on its own, to say which one did it, or that several did together. A
-    character that changes nothing where it sits, such as a ``:`` in the middle
-    of a path, is allowed. A label is never refused: whoever writes the template
-    chooses where a label goes, and may mean a level.
-    """
-    if not _names_in(ref):
-        return
-    expected = _shape_of(substitute(ref, _neutral(ref, tokens), at=at, source=_SCOPE))
-    if expected is None or _shape(parsed) == expected:
-        return
-    names = _culprits(ref, tokens, at=at)
-    raise ConfigError(
-        f"{_describe(ref, names, tokens)}, which changes where the password is stored",
-        at=at,
-        hint=_RESHAPE_HINT,
-    )
+        )
 
 
 def _tokens(application: Application, account: str, expanded: ExpandedTarget) -> dict[str, str]:

@@ -2528,24 +2528,25 @@ the register.
   `/` in it adds a level. The account `acme/web` in `#DB/{account}` stores its
   password under `acme`, then `web`. Should such a value be escaped, refused,
   or left alone?
-- **Decision:** Refuse it. The maintainer decided on `/`. The review of PR #939
-  found that `#` (legal in an unquoted Oracle name), a leading `vault:`, a `~1`
-  in the pointer and `@stage=` do the same, so the rule covers any name whose
-  value changes the shape of the ref: its vault prefix, the levels of its path
-  or pointer, its field, a pointer escape, its version or its stage. The name
-  tokens are `{account}` and its case variants, `{target}`, `{application}` and
-  `{container}`. The error names the token and the value. A name the template
-  does not use is not checked, and neither is a label or `{env}`.
+- **Decision:** Refuse a `/` or `#` in a name that a ref uses. The maintainer
+  decided on `/`, and added `#` after the review of PR #939 showed it: Oracle
+  allows `#` in an unquoted name, and `ACME#WEB` in `apps/acme/{account}`
+  addresses the document `apps/acme/ACME` and its field `WEB`. The names are
+  `{account}` and its case variants, `{application}`, and `{container}` when the
+  target has an Oracle container. The error names the token and the value.
 - **Why:** the password would land at a key, or in a document, that the
   operator never wrote. #928 and the empty-segment rule refuse the same kind
-  of silent addressing in the pointer. A name is chosen for the database or the
-  file, not for the template, so a change of shape from one is never meant. A
-  label or an environment is chosen by whoever writes the template, so it may
-  mean a level. Comparing shapes, not refusing a list of characters, leaves a
-  name alone where its character changes nothing, such as a `:` mid-path.
+  of silent addressing in the pointer. A name is chosen for the database, not
+  for the template, so a `/` or `#` in one is never meant. `{target}`, `{env}`
+  and the labels are chosen by whoever writes the template, so they may mean a
+  level. A plain check for two characters has no edge cases to get wrong.
 - **Rejected:**
   - Escape the value (`/` as `~1`). The name would mean what it says, but a
     file that nests through a placeholder today would store its password
     somewhere else after the change, with no error.
+  - Refuse any name that changes the shape of the ref, found by comparing the
+    rendered ref with the template's. It also covers a `~1`, a leading `vault:`
+    and `@stage=`, but three review rounds each found new edge cases in it. Those
+    three are #940.
   - Leave it. A `/` in a name is rare, and the overlap check (#841) catches it
     only when two accounts collide.

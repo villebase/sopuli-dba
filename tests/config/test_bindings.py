@@ -201,10 +201,9 @@ def test_the_application_token_is_empty_in_the_inline_form() -> None:
         ("acme/web", "apps/{account_lower}#DB/x"),
         ("acme/web", "apps/{account_upper}#DB/x"),
         ("ACME#WEB", "apps/acme/{account}"),
-        ("ACME#WEB", "apps/acme#DB/{account}"),
-        ("db:acme", "{account}/creds#password"),
-        ("acme~1web", "apps/acme#DB/{account}"),
-        ("acme@stage=pending", "apps/{account}"),
+        ("ACME#WEB", "apps/{account}#password"),
+        ("a/b#c", "apps/acme#DB/{account}"),
+        ("acme/", "apps/{account}/y#password"),
     ],
     ids=[
         "slash-in-the-pointer",
@@ -212,13 +211,12 @@ def test_the_application_token_is_empty_in_the_inline_form() -> None:
         "slash-lower",
         "slash-upper",
         "hash-starts-a-field",
-        "hash-in-the-pointer",
-        "colon-names-a-vault",
-        "escape-in-the-pointer",
-        "at-selects-a-stage",
+        "hash-before-the-field",
+        "both",
+        "trailing-slash",
     ],
 )
-def test_an_account_name_that_reshapes_the_ref_is_refused(account: str, template: str) -> None:
+def test_an_account_name_with_a_slash_or_hash_is_refused(account: str, template: str) -> None:
     """Decision #935. The value goes in as written, so `acme/web` in `#DB/{account}`
     would store the password under `acme`, then `web`, and `ACME#WEB`, which Oracle
     allows unquoted, would move where the field starts. Neither is a key anybody
@@ -226,12 +224,9 @@ def test_an_account_name_that_reshapes_the_ref_is_refused(account: str, template
     with pytest.raises(ConfigError) as caught:
         bind(accounts=[account], secret_template=template)
 
-    # A name that keeps the ref parseable "changes where the password is stored";
-    # one that breaks it keeps the parser's reason. Either way the name is named.
     # A case variant renders the name in its own case.
     message = caught.value.message.casefold()
-    assert message.startswith("in secret ref")
-    assert f"is {account!r}".casefold() in message
+    assert f"is {account!r}, which contains".casefold() in message
     assert "rename it" in (caught.value.hint or "")
 
 
@@ -245,18 +240,16 @@ def test_an_account_name_that_reshapes_the_ref_is_refused(account: str, template
     ],
     ids=["dollar", "colon-mid-path", "tilde-in-the-path", "at-without-a-qualifier"],
 )
-def test_a_character_that_changes_nothing_where_it_sits_is_allowed(
-    account: str, template: str
-) -> None:
-    """The rule is about the shape of the ref, not a list of characters."""
+def test_other_characters_are_not_this_rules(account: str, template: str) -> None:
+    """Only `/` and `#` are refused. These change nothing where they sit."""
     (binding, *_) = bind(accounts=[account], secret_template=template)
 
     assert account in str(binding.secret)
 
 
 def test_the_inline_forms_empty_application_still_renders_as_a_segment_of_its_own() -> None:
-    """§7 documents `{application}` as empty in the inline form. Standing in for it
-    would give the template a level it never has, and refuse a file that is right."""
+    """§7 documents `{application}` as empty in the inline form, and an empty
+    name holds no `/`."""
     config = build_config(
         document(
             accounts=["acme_web_user"],
@@ -267,18 +260,9 @@ def test_the_inline_forms_empty_application_still_renders_as_a_segment_of_its_ow
     assert str(config.bindings[0].secret) == "apps//alpha#DB/acme_web_user"
 
 
-def test_a_name_that_breaks_the_ref_keeps_the_parsers_reason() -> None:
-    """The parser says what is wrong, and the name check says which name brought it."""
-    with pytest.raises(ConfigError) as caught:
-        bind(accounts=["acme%web"], secret_template="apps/{account}#password")
-
-    assert "{account} is 'acme%web'" in caught.value.message
-    assert "`%`" in caught.value.message + (caught.value.hint or "")
-
-
-def test_a_label_that_breaks_the_ref_is_reported_against_the_real_ref() -> None:
-    """A label's fault is not a name's, so the parser's error stands, quoting the
-    ref as rendered, and its hint says a placeholder can bring the `~`."""
+def test_a_label_that_breaks_the_pointer_is_reported_by_the_parser() -> None:
+    """#928's path: the parser's error, quoting the ref as rendered, with the hint
+    that a placeholder can bring the `~`."""
     target_set = {**APPDB, "labels": {"region": "eu~x"}}
     with pytest.raises(ConfigError) as caught:
         build_config(
@@ -302,49 +286,57 @@ def test_a_label_that_breaks_the_ref_is_reported_against_the_real_ref() -> None:
     assert "placeholder" in (caught.value.hint or "")
 
 
-def test_two_names_that_reshape_the_ref_only_together_are_refused() -> None:
-    """Each alone leaves the ref's shape alone; together they select a stage."""
-    with pytest.raises(ConfigError) as caught:
-        build_config(
-            document(
-                groups=GROUPS,
-                applications=[
-                    {
-                        "name": "acme@stage",
-                        "targets": {"group": "app-pdbs"},
-                        "accounts": ["=pending"],
-                        "secret_template": "apps/{application}{account}#password",
-                    }
-                ],
-            )
-        )
+def _one_app_over(target_set: dict[str, Any], template: str) -> str:
+    """The one ref an application renders over the qa/alpha target of a set."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "target_sets": {"appdb": target_set},
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": {"match": {"tenant": "alpha", "env": "qa"}},
+                    "accounts": ["acme_web_user"],
+                    "secret_template": template,
+                }
+            ],
+        }
+    )
+    return str(config.bindings[0].secret)
 
-    assert "{application} is 'acme@stage' and {account} is '=pending'" in caught.value.message
 
-
-def test_a_target_name_that_reshapes_the_ref_is_refused() -> None:
+def test_a_target_name_is_not_checked() -> None:
+    """Whoever writes the template also names the targets, as they write labels."""
     target_set = {**APPDB, "name": "appdb/{env}-{tenant}"}
+
+    assert _one_app_over(target_set, "{target}/acme#DB/{account}") == (
+        "appdb/qa-alpha/acme#DB/acme_web_user"
+    )
+
+
+def test_a_label_called_container_is_not_a_name() -> None:
+    """With no Oracle container, a label fills `{container}`, and a label is not checked."""
+    target_set = {
+        **APPDB,
+        "oracle": {"scope": "pdb"},
+        "labels": {"container": "eu/x"},
+    }
+
+    assert _one_app_over(target_set, "{container}/acme#DB/{account}") == (
+        "eu/x/acme#DB/acme_web_user"
+    )
+
+
+def test_an_oracle_container_with_a_hash_is_refused() -> None:
+    target_set = {**APPDB, "oracle": {"scope": "pdb", "container": "{tenant}#pdb"}}
     with pytest.raises(ConfigError) as caught:
-        build_config(
-            {
-                "version": 1,
-                "vaults": VAULTS,
-                "target_sets": {"appdb": target_set},
-                "applications": [
-                    {
-                        "name": "acme",
-                        "targets": {"match": {"tenant": "alpha", "env": "qa"}},
-                        "accounts": ["acme_web_user"],
-                        "secret_template": "{target}/acme#DB/{account}",
-                    }
-                ],
-            }
-        )
+        _one_app_over(target_set, "apps/{container}/acme#DB/{account}")
 
-    assert "{target}" in str(caught.value)
+    assert "{container}" in caught.value.message
 
 
-def test_an_application_name_that_reshapes_the_ref_is_refused() -> None:
+def test_an_application_name_with_a_slash_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(
             document(

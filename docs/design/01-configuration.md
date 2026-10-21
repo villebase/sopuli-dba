@@ -2375,25 +2375,21 @@ rather than missing in the inline form.
 A template parses as the ref it will expand into: the punctuation that gives a
 ref its shape is literal, and the tokens sit inside the parts. So
 `tenants/{tenant}#DB_CREDENTIALS/{account}` is checked structurally at load. A
-token's *value* is known only when the ref renders, and it goes in as written,
-so a `/`, `#`, leading `x:`, `~1` or `@stage=` in it changes the ref's shape.
+token's *value* is known only when the ref renders, and it goes in as written.
 
-A name token whose value changes the shape is refused when the ref renders
-([#935](../decisions/log.md#935)). The name tokens are `{account}`,
-`{account_lower}`, `{account_upper}`, `{target}`, `{application}` and
-`{container}`. The account `acme/web` in `#DB/{account}` would store its password
-under `acme`, then `web`. The account `ACME#WEB`, which Oracle allows unquoted, in
-`apps/acme/{account}` would address the document `apps/acme/ACME` and its field
-`WEB`. The rendered ref is compared with the template's own shape, its names
-stood in for. If it has a vault prefix, a level, a field, a pointer escape, a
-version or a stage that the template does not give it, or does not parse, the
-error names the placeholder, or the placeholders together, and its value. A
-character that changes nothing where it sits is allowed, such as a `:` in the
-middle of a path or a `~` in the path. An empty name is not a change: the inline
-form's `{application}` is empty by design. A name the template does not use is
-not checked. Neither is a label or `{env}`: whoever writes the template chooses
-those values and where they go, and may mean a level. A label that breaks the ref
-is reported by the parser, quoting the ref as rendered.
+A name whose value contains `/` or `#` is refused when a ref uses it
+([#935](../decisions/log.md#935)). The names are `{account}`, `{account_lower}`,
+`{account_upper}`, `{application}`, and `{container}` when the target has an
+Oracle container. The account `acme/web` in `#DB/{account}` would store its
+password under `acme`, then `web`. The account `ACME#WEB`, which Oracle allows
+unquoted, in `apps/acme/{account}` would address the document `apps/acme/ACME`
+and its field `WEB`. The error names the placeholder and its value. A name the
+template does not use is not checked. Neither is `{target}`, `{env}` or a label,
+a label called `container` included: whoever writes the template chooses those
+values and where they go, and may mean a level. Other characters in a name are
+not refused by this rule. A `~` in the pointer that is not an escape is refused
+by the pointer rule above, and the parser reports any other fault, quoting the
+ref as rendered.
 
 Rule: a template must resolve to **one** secret per (account × logical scope). If
 an account exists in eleven PDBs and the template mentions no distinguishing

@@ -202,6 +202,18 @@ and the install fails with `No matching distribution found`. On Ubuntu 22.04:
 pipx install --python python3.11 "sopuli-dba[oracle,hashicorp]"
 ```
 
+**Windows with Python 3.15.** PyYAML, which the tool uses to read its config,
+has no ready-built package for Python 3.15 on Windows yet. pip then tries to
+build it, and without a C compiler the install fails with
+`error: Microsoft Visual C++ 14.0 or greater is required`. Use Python 3.13 or
+3.14, or tell PyYAML to install without its C part, which is slower but works
+the same:
+
+```powershell
+$env:PYYAML_FORCE_LIBYAML = "0"
+pipx install "sopuli-dba[oracle,hashicorp]"
+```
+
 Check it arrived. It prints the version you installed:
 
 ```bash

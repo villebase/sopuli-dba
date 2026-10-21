@@ -518,6 +518,12 @@ PROMOTION_SKIPPED = "SOPULI-W050"
 #: because the store could list, and the remedy is to remove one record by hand.
 UNADDRESSABLE_LOCK_PATH = "SOPULI-W053"
 
+#: `account list` could not open or read the declared reset journal, so
+#: ``RESET_AT`` is empty for some accounts without meaning that nobody reset them
+#: (#929). Its own code rather than :data:`NO_RESET_JOURNAL`: that one is a
+#: documented mode, and this is a fault in a store the configuration declares.
+RESET_JOURNAL_UNREAD = "SOPULI-W054"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -659,6 +665,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "can have such a path, and the tool can neither read nor break it. The message "
             "names the store and the path. Remove the record with the vault's own tools if "
             "nothing uses it."
+        ),
+        RESET_JOURNAL_UNREAD: (
+            "`account list` could not open or read the reset journal that `reset_records:` "
+            "declares, or read a record in it with no `reset_at`, or derive a record path for "
+            "a name, so RESET_AT is empty on those rows, and an empty RESET_AT there does "
+            "not mean that nobody reset them. "
+            "One entry for the run, naming the store, the number of rows, and the first "
+            "error. A journal with no record for an account is not this code: nobody has "
+            "reset that account through this tool."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1296,6 +1311,29 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
             ),
         )
     ]
+
+
+def reset_journal_unread(store: str, rows: int, reason: str) -> Diagnostic:
+    """Say why `account list`'s ``RESET_AT`` is empty where the journal failed (#929).
+
+    One entry for the run rather than one per row. A revoked token fails every
+    read the same way, and four hundred copies of one error would hide the table
+    they explain. The count is of rows, an account on one target each, because
+    RESET_AT is a column of the table.
+
+    The reason is the first one, for one of the rows, with the store's hint. It
+    comes last, for :func:`reset_record_unwritten`'s reason.
+    """
+    where = "1 row" if rows == 1 else f"{rows} rows"
+    return Diagnostic(
+        level="warning",
+        code=RESET_JOURNAL_UNREAD,
+        message=(
+            f"the reset journal in store {store!r} gave no reset date for {where}, so "
+            f"RESET_AT is empty there and does not say whether those accounts were reset. "
+            f"The first error was: {reason}"
+        ),
+    )
 
 
 def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]:

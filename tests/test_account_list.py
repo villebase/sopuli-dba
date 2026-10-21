@@ -38,6 +38,7 @@ from sopuli.diagnostics import (
     ADMITTED_CROSS_DECLARED,
     ADMITTED_VENDOR_ACCOUNT,
     no_reset_journal,
+    reset_journal_unread,
 )
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
@@ -144,7 +145,7 @@ def test_an_account_a_predicate_and_an_application_both_declare_is_named() -> No
 def test_the_row_gives_each_notice_its_own_code() -> None:
     """`_describe_row` is where each notice gets its code, so a swap of the two
     codes, or a lost one, fails here rather than passing every view test."""
-    from sopuli.cli import _describe_row
+    from sopuli.cli import _describe_row, _JournalFailures
 
     both = config(
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
@@ -163,7 +164,7 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
         def describe_user(self, name: str) -> UserState:
             return user(name.upper(), profile="DEV_USERS", vendor_maintained=True)
 
-    row = _describe_row(Session(), "acme_web_user", target, both)
+    row = _describe_row(Session(), "acme_web_user", target, both, unread=_JournalFailures())
 
     assert [notice.code for notice in row.notices] == [
         ADMITTED_VENDOR_ACCOUNT,
@@ -379,7 +380,7 @@ def test_a_failed_target_is_not_counted_as_a_declared_account() -> None:
 
 def described(name: str, *, vendor: bool = False, on: str = TARGET) -> Row:
     """A row as `account list` builds it, with the notices' real messages."""
-    from sopuli.cli import _describe_row
+    from sopuli.cli import _describe_row, _JournalFailures
 
     built = config(
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
@@ -394,7 +395,7 @@ def described(name: str, *, vendor: bool = False, on: str = TARGET) -> Row:
         def describe_user(self, account: str) -> UserState:
             return user(account.upper(), roles=("ACME_DEV_TEAM",), vendor_maintained=vendor)
 
-    return _describe_row(Session(), name, target, built)
+    return _describe_row(Session(), name, target, built, unread=_JournalFailures())
 
 
 def notes(text: str) -> list[str]:
@@ -491,7 +492,7 @@ def test_the_reset_at_column_is_read_from_the_journal() -> None:
     """`reset_at` is on the model and in the schema, so something must populate
     it. Otherwise a documented column would be permanently `-`, even where a
     journal existed and held a record."""
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore
 
     journal = MemoryStore()
@@ -505,13 +506,14 @@ def test_the_reset_at_column_is_read_from_the_journal() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(journal, built, TARGET, "jdoe") == "2026-09-17T09:14:22Z"
+    found = _reset_at(journal, built, TARGET, "jdoe", unread=_JournalFailures())
+    assert found == "2026-09-17T09:14:22Z"
 
 
 def test_a_journal_with_no_record_for_this_account_is_not_a_finding() -> None:
     """Nobody has reset them through this tool. That is not an absence worth a
     code -- unlike a journal that is not configured at all, which is W023."""
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore
 
     built = config(
@@ -519,7 +521,9 @@ def test_a_journal_with_no_record_for_this_account_is_not_a_finding() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(MemoryStore(), built, TARGET, "jdoe") is None
+    unread = _JournalFailures()
+    assert _reset_at(MemoryStore(), built, TARGET, "jdoe", unread=unread) is None
+    assert unread.first is None
 
 
 def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
@@ -527,7 +531,7 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
     would be refusing to describe an estate over its history -- the priority
     inversion UC-2 §3.4 rules out for the reset, and it applies at least as
     strongly to a read."""
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
     from sopuli.store import MemoryStore
 
     class Broken(MemoryStore):
@@ -539,10 +543,149 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(Broken(), built, TARGET, "jdoe") is None
+    assert _reset_at(Broken(), built, TARGET, "jdoe", unread=_JournalFailures()) is None
+
+
+JOURNALLED = {
+    "reset_records": {"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+    "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+}
+
+
+def test_a_refused_read_is_recorded_and_the_next_record_is_still_read() -> None:
+    """The reason is kept for the run's `SOPULI-W054`, so the empty RESET_AT
+    does not read as "nobody was reset" (#929). A token's policy is per path, so
+    one refusal says nothing about the next record."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore, StoreError
+
+    class RefusedError(StoreError):
+        category = "authorization"
+
+    class Refusing(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Any:
+            raise RefusedError(f"the store refused this token at {path!r}")
+
+    built = config(**JOURNALLED)
+    unread = _JournalFailures()
+
+    _reset_at(Refusing(), built, TARGET, "jdoe", unread=unread)
+    _reset_at(Refusing(), built, TARGET, "rroe", unread=unread)
+    _reset_at(MemoryStore(), built, TARGET, "asmith", unread=unread)
+
+    assert unread.rows == 2
+    assert not unread.dead
+    assert unread.first == (
+        "vault-dev",
+        "the store refused this token at 'sopuli/personal-resets/appdb-dev-alpha/jdoe'",
+    )
+
+
+def test_a_store_that_fails_otherwise_is_not_read_again() -> None:
+    """Four hundred accounts must not wait out one unreachable vault's timeout
+    four hundred times. The rows after it are still counted."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore, StoreError
+
+    reads = []
+
+    class Unreachable(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Any:
+            reads.append(path)
+            raise StoreError("could not reach the store: timed out")
+
+    built = config(**JOURNALLED)
+    unread = _JournalFailures()
+    journal = Unreachable()
+
+    for account in ("jdoe", "rroe", "asmith"):
+        assert _reset_at(journal, built, TARGET, account, unread=unread) is None
+
+    assert len(reads) == 1
+    assert unread.dead
+    assert unread.rows == 3
+
+
+def test_a_journal_that_cannot_be_opened_is_tried_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nine targets must not wait out one login failure nine times. The rows are
+    counted where they are read."""
+    from sopuli.cli import _JournalFailures, _open_journal, _reset_at
+    from sopuli.store import StoreError
+
+    calls = []
+
+    def refuse(run: Any, config: Any) -> None:
+        calls.append(run)
+        raise StoreError("could not reach the store")
+
+    monkeypatch.setattr("sopuli.cli._reset_journal", refuse)
+    built = config(**JOURNALLED)
+    unread = _JournalFailures()
+    run: Any = object()
+
+    assert _open_journal(run, built, unread) is None
+    assert _open_journal(run, built, unread) is None
+    _reset_at(None, built, TARGET, "jdoe", unread=unread)
+    _reset_at(None, built, TARGET, "rroe", unread=unread)
+
+    assert len(calls) == 1
+    assert unread.dead
+    assert unread.rows == 2
+    assert unread.first == ("vault-dev", "could not reach the store")
+
+
+def test_a_record_with_no_reset_at_is_recorded() -> None:
+    """A damaged record would otherwise show `-`, the same as no record at all."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore
+
+    journal = MemoryStore()
+    journal.write("sopuli/personal-resets/appdb-dev-alpha/jdoe", {"account": "jdoe"}, cas=None)
+    unread = _JournalFailures()
+
+    assert _reset_at(journal, config(**JOURNALLED), TARGET, "jdoe", unread=unread) is None
+
+    assert unread.rows == 1
+    assert unread.first == (
+        "vault-dev",
+        "the record at 'sopuli/personal-resets/appdb-dev-alpha/jdoe' holds no `reset_at` string",
+    )
+
+
+def test_the_unread_reason_keeps_the_stores_hint() -> None:
+    """The hint is where a store says what to do next, such as where a token can go."""
+    from sopuli.cli import _store_reason
+    from sopuli.store import StoreError
+
+    reason = _store_reason(StoreError("no token", hint="supply one with --vault-token-file"))
+
+    assert reason == "no token -- supply one with --vault-token-file"
+
+
+def test_the_unread_journal_warning_names_the_store_and_ends_with_the_reason() -> None:
+    message = reset_journal_unread("vault-dev", 3, "the store refused this token").message
+
+    assert "store 'vault-dev'" in message
+    assert "gave no reset date for 3 rows" in message
+    assert message.endswith("The first error was: the store refused this token")
+    assert "for 1 row," in reset_journal_unread("vault-dev", 1, "down").message
+
+
+def test_a_name_with_no_record_path_is_recorded_and_does_not_raise() -> None:
+    """`_reset_at` never raises: a name that is not one path segment has no
+    record, and the listing must still describe the account."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore
+
+    unread = _JournalFailures()
+
+    assert _reset_at(MemoryStore(), config(**JOURNALLED), TARGET, "A/B", unread=unread) is None
+
+    assert unread.rows == 1
+    assert not unread.dead
 
 
 def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:
-    from sopuli.cli import _reset_at
+    from sopuli.cli import _JournalFailures, _reset_at
 
-    assert _reset_at(None, config(), TARGET, "jdoe") is None
+    assert _reset_at(None, config(), TARGET, "jdoe", unread=_JournalFailures()) is None

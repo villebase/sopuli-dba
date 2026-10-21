@@ -205,14 +205,26 @@ pipx install --python python3.11 "sopuli-dba[oracle,hashicorp]"
 **Windows with Python 3.15.** PyYAML, which the tool uses to read its config,
 has no ready-built package for Python 3.15 on Windows yet. pip then tries to
 build it, and without a C compiler the install fails with
-`error: Microsoft Visual C++ 14.0 or greater is required`. Use Python 3.13 or
-3.14, or tell PyYAML to install without its C part, which is slower but works
-the same:
+`error: Microsoft Visual C++ 14.0 or greater is required`. Either name an
+older Python, if you have one:
+
+```powershell
+pipx install --python 3.13 "sopuli-dba[oracle,hashicorp]"
+```
+
+Or tell PyYAML to install without its C part, which is slower but works the
+same:
 
 ```powershell
 $env:PYYAML_FORCE_LIBYAML = "0"
 pipx install "sopuli-dba[oracle,hashicorp]"
 ```
+
+The variable lasts until you close the terminal. Set it again before a later
+`pipx upgrade` or `pipx reinstall`, and before `pip install` in a virtual
+environment (section 2e). The `[oci]` extra has the same problem with two
+other packages, and they have no such switch, so for `[oci]` use Python 3.13 or
+3.14.
 
 Check it arrived. It prints the version you installed:
 

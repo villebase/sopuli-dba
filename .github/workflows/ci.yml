@@ -192,9 +192,10 @@ jobs:
     # because the cp1252 stream-encoding bug (#12, fixed in #14) was Windows-only
     # and invisible on Linux, and P4 requires identical behaviour on both.
     #
-    # **Windows runs one interpreter, not three**, and the axis it is here for is
-    # kept whole. Windows minutes bill at 2x and round up per job, so those three
-    # cells were two thirds of this workflow's cost. What they were buying:
+    # **Windows runs one interpreter, not every version**, and the axis it is here
+    # for is kept whole. Windows minutes bill at 2x and round up per job. When the
+    # matrix had three versions, their three Windows cells were two thirds of this
+    # workflow's cost. What they were buying:
     #
     # * the platform axis -- one cell covers it, and that is the axis the
     #   cp1252 bug, `config/permissions.py`'s DACL walk and the wallet permission
@@ -218,17 +219,11 @@ jobs:
       # Windows-only or 3.11-only is most of the diagnosis.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-        exclude:
+        include:
           - os: windows-latest
-            python-version: "3.11"
-          - os: windows-latest
-            python-version: "3.12"
-          - os: windows-latest
-            python-version: "3.14"
-          - os: windows-latest
-            python-version: "3.15"
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

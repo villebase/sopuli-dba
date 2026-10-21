@@ -39,6 +39,7 @@ was silently ignored look identical to one that was honoured) nor `acme_svc_user
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import subprocess
@@ -49,6 +50,7 @@ from typing import NoReturn
 import pytest
 from _pytest.outcomes import Failed
 
+from conftest import _SKIPS
 from oracle_harness import INVALID_LOGON, sys_login_refused, sys_password
 from repo_files import requires_repo
 from sopuli.driver.oracle.privileges import (
@@ -145,8 +147,10 @@ DIAGNOSE_TIMEOUT_S = 30
 
 
 def _missing(reason: str) -> None:
+    """Skip, or fail where tier 1 is required. A skip is counted in the matrix."""
     if os.environ.get(TIER1) == "required":
         pytest.fail(f"tier 1 required, but: {reason}", pytrace=False)
+    _SKIPS["environment"] += 1
     pytest.skip(reason)
 
 
@@ -200,8 +204,9 @@ def _exec(
     """`docker exec` straight to `sqlplus`, with no shell anywhere in the path.
 
     **An argv list rather than `bash -lc`**, which matters for a reason that is
-    not hypothetical here: the connect string carries a password, and
-    `SOPULI_TEST_ORACLE_PASSWORD` is a contributor's to set. Through a shell, a
+    not hypothetical here: the PDB's connect string carries the `SYS` password,
+    and :func:`oracle_harness.sys_password` reads it from variables a
+    contributor sets. Through a shell, a
     password containing `$`, a backtick or `$(` is expanded rather than sent, and
     the failure would arrive as a puzzling authentication error rather than as
     anything pointing at quoting. The list form also removes the injection
@@ -235,6 +240,8 @@ def _exec(
     every one of this module's eighteen calls goes through this function and the
     next stall will not be in the same one.
     """
+    if connect == PDB and _pdb_logon_refused(container):
+        _missing(sys_login_refused(os.environ))
     try:
         if script is None:
             result = subprocess.run(
@@ -254,10 +261,27 @@ def _exec(
             )
     except subprocess.TimeoutExpired as expired:
         pytest.fail(_timeout_report(container, expired), pytrace=False)
-    # Only the PDB logon carries a password. `ROOT` is OS authentication.
-    if connect == PDB and INVALID_LOGON in result.stdout:
-        _missing(sys_login_refused(os.environ))
     return result
+
+
+@functools.cache
+def _pdb_logon_refused(container: str) -> bool:
+    """Whether the PDB refuses the `SYS` logon with `ORA-01017`, asked once.
+
+    `-L` makes one attempt. Without it, SQL\\*Plus asks for a username again
+    after a refusal and reads the next lines of stdin as more attempts. Only
+    this probe's output is read, so an `ORA-01017` that a script prints after
+    a good logon is not taken for a refused one. `ROOT` is OS authentication
+    and needs no probe.
+    """
+    probe = subprocess.run(
+        ["docker", "exec", container, "sqlplus", "-s", "-L", PDB],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=EXEC_TIMEOUT_S,
+    )
+    return INVALID_LOGON in probe.stdout
 
 
 def _timeout_report(container: str, expired: subprocess.TimeoutExpired) -> str:

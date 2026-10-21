@@ -64,11 +64,13 @@ rather than fail. Wait for `healthy` after a start: the listener answers before
 the PDB is open.
 
 The suite reads these variables for Oracle. Each default is the tier-1 stack's,
-so the public stack needs none of them.
+so a run against that stack on your own machine needs none of them. The tier-1
+CI lane sets `SOPULI_TEST_TIER1=required`.
 
 | Variable | Default | Used for |
 |---|---|---|
 | `SOPULI_TEST_TIER1` | unset | `required` makes a missing environment fail instead of skip |
+| `COMPOSE_PROJECT_NAME` | `sopuli-test` | the `<project>` in the default container name (`test/README.md`, a second clone) |
 | `SOPULI_TEST_ORACLE_DSN` | `localhost:<port>/FREEPDB1` | the database the suite connects to |
 | `SOPULI_TEST_ORACLE_PORT` | `1521` | the port in the default DSN (`test/README.md`, a second clone) |
 | `SOPULI_TEST_ORACLE_USER` | `system` | the admin account |

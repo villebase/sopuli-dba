@@ -162,8 +162,12 @@ def sys_password(env: Mapping[str, str]) -> str:
 
     The one place that reads it, for the `sysdba` fixture and for SQL\\*Plus in
     `test_oracle_install_script.py`.
+
+    The fallback reads the admin password the way every other module does, so
+    the two cannot differ. An empty `SYS` variable counts as unset, because no
+    `SYS` logon takes an empty password.
     """
-    return env.get(SYS_PASSWORD_VAR) or env.get(PASSWORD_VAR) or "sopuli-test"
+    return env.get(SYS_PASSWORD_VAR) or env.get(PASSWORD_VAR, "sopuli-test")
 
 
 def sys_login_refused(env: Mapping[str, str]) -> str:

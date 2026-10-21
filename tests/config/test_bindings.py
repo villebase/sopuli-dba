@@ -241,14 +241,70 @@ def test_a_common_user_is_told_it_needs_an_entry_of_its_own() -> None:
 
 
 @pytest.mark.parametrize(
+    ("account", "template", "job"),
+    [
+        ("acme~1web", "apps/acme#DB/{account}", "`~` starts a JSON pointer escape"),
+        ("acme~0web", "apps/acme#DB/x/{account}", "`~` starts a JSON pointer escape"),
+        ("db:acme", "{account}/creds#password", "`:` names a vault"),
+        ("acme@stage=pending", "apps/{account}", "`@` starts a version or stage qualifier"),
+        ("acme@version=3", "apps/acme#DB/{account}", "`@` starts a version or stage"),
+    ],
+    ids=["escape-1", "escape-0", "vault-prefix", "stage", "version"],
+)
+def test_a_name_that_does_a_separators_job_is_refused(
+    account: str, template: str, job: str
+) -> None:
+    """Decision #940: `acme~1web` in the pointer would decode to the key `acme/web`,
+    a leading `db:` would name a vault, and `@stage=` would select a stage."""
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=[account], secret_template=template)
+
+    assert f"{{account}} in secret ref {template!r} is {account!r}, whose {job}" in (
+        caught.value.message
+    )
+    assert "application entry of its own" in (caught.value.hint or "")
+
+
+def test_two_names_that_make_a_qualifier_between_them_are_refused() -> None:
+    """The `@` lands in one name and the `=` in the other, so the first is named."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                groups=GROUPS,
+                applications=[
+                    {
+                        "name": "acme@stage",
+                        "targets": {"group": "app-pdbs"},
+                        "accounts": ["=pending"],
+                        "secret_template": "apps/{application}{account}#password",
+                    }
+                ],
+            )
+        )
+
+    assert "{application}" in caught.value.message
+    assert "qualifier" in caught.value.message
+
+
+def test_a_label_may_still_bring_a_qualifier_character() -> None:
+    """Labels are not names: whoever writes the template chose the value."""
+    target_set = {**APPDB, "labels": {"region": "vault-other:eu"}}
+
+    assert _one_app_over(target_set, "{region}/acme#DB/{account}") == (
+        "vault-other:eu/acme#DB/acme_web_user"
+    )
+
+
+@pytest.mark.parametrize(
     ("account", "template"),
     [
         ("ACME$WEB", "apps/{account}#DB/x"),
         ("acme:web", "apps/{account}#password"),
         ("acme~web", "apps/{account}#password"),
         ("acme@web", "apps/acme#DB/{account}"),
+        ("acme=web", "apps/{account}#password"),
     ],
-    ids=["dollar", "colon-mid-path", "tilde-in-the-path", "at-without-a-qualifier"],
+    ids=["dollar", "colon-mid-path", "tilde-in-the-path", "at-without-a-qualifier", "equals"],
 )
 def test_other_characters_are_not_this_rules(account: str, template: str) -> None:
     """Only `/` and `#` are refused. These change nothing where they sit."""

@@ -2548,6 +2548,28 @@ the register.
   - Refuse any name that changes the shape of the ref, found by comparing the
     rendered ref with the template's. It also covers a `~1`, a leading `vault:`
     and `@stage=`, but three review rounds each found new edge cases in it. Those
-    three are #940.
+    three are decided in #940.
   - Leave it. A `/` in a name is rare, and the overlap check (#841) catches it
     only when two accounts collide.
+
+## #940
+
+- **Decided:** 2026-10-21, #940
+- **Question:** Decision #935 refuses a `/` or `#` in a name a ref uses. A name
+  can re-address a ref in three more ways: a `~` in the pointer starts an
+  escape, a `:` before any `/` or `#` names a vault, and `@version=` or
+  `@stage=` selects a version. Should those names be refused too?
+- **Decision:** Refuse them, for the same names as #935. A `:`, `@`, `=` or `~`
+  in a name is refused only where it does that job in the rendered ref, found
+  by the parser's own rules. `01-configuration.md` §7 states the rule, with
+  examples.
+- **Why:** the password would land at a key, in a vault or at a version that
+  the operator never wrote, as with #935. Refusing the character only where it
+  does a job keeps names that work today, such as `acme:web` mid-path. Each
+  name's span in the rendered ref is compared with where the separators are,
+  so two names that make a qualifier between them are refused too.
+- **Rejected:**
+  - Refuse `~`, `:` and `@` in a name wherever it lands. It is simpler, but it
+    refuses names that load and address the right secret today.
+  - Leave it. Only quoted Oracle identifiers can hold these characters, so
+    such names are rare, but each one is a password stored where nobody wrote.

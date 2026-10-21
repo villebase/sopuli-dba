@@ -242,8 +242,8 @@ def test_a_tilde_that_is_not_an_escape_is_refused(ref: str) -> None:
 def test_a_placeholder_that_brings_a_tilde_is_refused_where_the_template_is(
     write_config: Callable[[str], Path],
 ) -> None:
-    """A substituted account name is part of the pointer too, so the ref it
-    renders is checked like any other, and the hint says where it came from."""
+    """A substituted account name is part of the pointer too. Decision #940
+    refuses it before the parser, naming the placeholder and its value."""
     path = write_config(
         "version: 1\n"
         "vaults:\n"
@@ -262,8 +262,8 @@ def test_a_placeholder_that_brings_a_tilde_is_refused_where_the_template_is(
     with pytest.raises(ConfigError) as caught:
         load_config(path)
 
-    assert "is not `~0` or `~1`" in str(caught.value)
-    assert "{account}" in (caught.value.hint or "")
+    assert "{account}" in caught.value.message
+    assert "'acme~web', whose `~` starts a JSON pointer escape" in caught.value.message
 
 
 # ------------------------------------------------------------ round-tripping ---

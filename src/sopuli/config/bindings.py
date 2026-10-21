@@ -47,7 +47,13 @@ from sopuli.config.model import (
 )
 from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.references import dangling
-from sopuli.config.secret_refs import SecretRef, normalise_path, parse_secret_ref
+from sopuli.config.secret_refs import (
+    QUALIFIER_SEPARATOR,
+    VAULT_SEPARATOR,
+    SecretRef,
+    normalise_path,
+    parse_secret_ref,
+)
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
 from sopuli.config.templates import PLACEHOLDER, substitute
@@ -563,6 +569,7 @@ def _render(
     tokens = _tokens(application, account, expanded)
     rendered = substitute(ref, tokens, at=at, source=_SCOPE)
     _refuse_a_separator_in_a_name(ref, tokens, expanded, at=at)
+    _refuse_a_name_in_a_separators_place(ref, tokens, expanded, at=at)
     return parse_secret_ref(rendered, at=at)
 
 
@@ -608,6 +615,86 @@ def _refuse_a_separator_in_a_name(
                 "the password is stored. Declare it in an application entry of its own, "
                 "with a ref that does not use this placeholder, or rename it where the "
                 "database allows (a common user's `C##` cannot be)"
+            ),
+        )
+
+
+def _spans(ref: str, tokens: Mapping[str, str]) -> tuple[str, list[tuple[str, int, int]]]:
+    """The rendered ref, and where in it each placeholder's value landed.
+
+    Rendered the way :func:`~sopuli.config.templates.substitute` renders it, which
+    has already checked every token, so the two agree.
+    """
+    parts: list[str] = []
+    spans: list[tuple[str, int, int]] = []
+    length = 0
+    last = 0
+    for match in PLACEHOLDER.finditer(ref):
+        parts.append(ref[last : match.start()])
+        length += match.start() - last
+        value = tokens[match.group(1)]
+        spans.append((match.group(1), length, length + len(value)))
+        parts.append(value)
+        length += len(value)
+        last = match.end()
+    parts.append(ref[last:])
+    return "".join(parts), spans
+
+
+def _structure(rendered: str) -> dict[int, str]:
+    """Where a rendered ref's `:`, `@`, `=` and pointer `~` do a job, and what job.
+
+    Found by :mod:`~sopuli.config.secret_refs`'s own rules: a qualifier is the last
+    `@` with an `=` after it, a vault prefix is a `:` with no `/` or `#` before it,
+    and the pointer starts at the first `/` after the `#`.
+    """
+    places: dict[int, str] = {}
+    head = rendered
+    at_sign = rendered.rfind(QUALIFIER_SEPARATOR)
+    if at_sign != -1 and "=" in rendered[at_sign:]:
+        places[at_sign] = "starts a version or stage qualifier"
+        places[rendered.index("=", at_sign)] = "starts a version or stage qualifier"
+        head = rendered[:at_sign]
+    colon = head.find(VAULT_SEPARATOR)
+    if colon != -1 and not any(0 <= head.find(sign) < colon for sign in ("/", "#")):
+        places[colon] = "names a vault"
+    field = head.find("#")
+    pointer = head.find("/", field) if field != -1 else -1
+    if pointer != -1:
+        for index in range(pointer, len(head)):
+            if head[index] == "~":
+                places[index] = "starts a JSON pointer escape"
+    return places
+
+
+def _refuse_a_name_in_a_separators_place(
+    ref: str, tokens: Mapping[str, str], expanded: ExpandedTarget, *, at: KeyPath
+) -> None:
+    """Refuse a name that brings a vault prefix, a qualifier or a pointer escape (#940).
+
+    ``01-configuration.md`` §7 says why. A `:`, `@`, `=` or `~` is refused only
+    where it does that job, so ``acme:web`` mid-path or ``acme~web`` in a path
+    stay allowed. Two names that make a qualifier between them are caught too,
+    because its `@` and its `=` each land in one of them.
+    """
+    rendered, spans = _spans(ref, tokens)
+    places = _structure(rendered)
+    if not places:
+        return
+    for token, start, end in spans:
+        jobs = [(index, places[index]) for index in range(start, end) if index in places]
+        if not jobs or not _is_name(token, expanded):
+            continue
+        index, job = jobs[0]
+        raise ConfigError(
+            f"{{{token}}} in secret ref {ref!r} is {tokens[token]!r}, whose "
+            f"`{rendered[index]}` {job}",
+            at=at,
+            hint=(
+                "a name goes into the ref as written, so a `:`, `@`, `=` or `~` in it can "
+                "change where the password is stored. Declare it in an application entry "
+                "of its own, with a ref that does not use this placeholder, or rename it "
+                "where the database allows"
             ),
         )
 

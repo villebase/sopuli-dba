@@ -351,7 +351,8 @@ question, so it is one verb, not two.
   says so.** Creating a role grants it to the creator, so `role: ACME_DEV_TEAM`
   admits whoever ran the `CREATE ROLE`. On the tier-1 stack that was `SYSTEM`.
   Guardrail 2 refuses it at plan time, and the row carries a notice saying so.
-  This makes H1's cost visible, which is why the verb exists.
+  The text output prints the notice under the table. This makes H1's cost
+  visible, which is why the verb exists.
 - **The refusals are the ones this section specifies.** The two-rules,
   two-policies refusal fires here exactly as it does in the mutating verbs. A
   listing that quietly showed the first match would be where an operator formed

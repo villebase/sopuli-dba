@@ -31,6 +31,7 @@ from typing import Any
 from sopuli.account_list import ABSENT, ACCOUNT_MISSING, DECLARED, ERROR, Row
 from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN
 from sopuli.output.document import Diagnostic, Error, Summary
+from sopuli.output.notices import render_notices
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 
@@ -158,6 +159,11 @@ def render_account_list(rows: Sequence[Row]) -> str:
     a predicate that exists and admits no accounts is a fact about today's estate,
     not an error -- so this says so plainly rather than rendering an empty table,
     which would read as a failure to look.
+
+    **A row's notices go under the count**, as `check` prints its notes. Under a
+    `role:` predicate the commonest one is `SYSTEM`, admitted because creating a
+    role grants it to the creator. A reader of the table alone would not know
+    that no reset touches it.
     """
     if not rows:
         return "no declared personal accounts on the selected targets"
@@ -183,7 +189,24 @@ def render_account_list(rows: Sequence[Row]) -> str:
             for row in rows
         ],
     )
-    return "\n".join([*lines, "", _count(rows)])
+    return "\n".join([*lines, "", _count(rows), *render_notices(_notes(rows))])
+
+
+def _notes(rows: Sequence[Row]) -> list[str]:
+    """One line per account and notice, naming every target it was raised on.
+
+    A `role:` predicate over twenty targets admits `SYSTEM` on each of them, and
+    twenty copies of one sentence teach the reader to skip the block. `creds
+    status` groups its notes for the same reason.
+    """
+    targets: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        for notice in row.notices:
+            targets.setdefault((row.account, notice.message), []).append(row.target)
+    return [
+        f"{account} on {', '.join(where)}: {message}"
+        for (account, message), where in targets.items()
+    ]
 
 
 def _declared_by(row: Row) -> str:

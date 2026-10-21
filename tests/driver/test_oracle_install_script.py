@@ -308,6 +308,9 @@ def _timeout_report(container: str, expired: subprocess.TimeoutExpired) -> str:
             "This is a stall, not a slow run: one `00_install.sql` takes under a",
             "second, so do not raise EXEC_TIMEOUT_S to make it pass.",
             "",
+            "Seen before as #326, on GRANT CREATE SESSION ... CONTAINER=ALL:",
+            "reopen it with this report.",
+            "",
             f"command: {' '.join(expired.cmd)}",
             "",
             "last output before the kill (the label names the statement that hung):",
@@ -1128,6 +1131,19 @@ def test_the_report_refuses_the_obvious_wrong_fix(monkeypatch: pytest.MonkeyPatc
 
     assert "stall, not a slow run" in report
     assert "do not raise EXEC_TIMEOUT_S" in report
+
+
+def test_the_report_points_at_the_closed_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#326 is closed as not recurring. A recurrence has to reach it, with its
+    history, rather than start a new issue, so the report says where to go."""
+    monkeypatch.setattr(
+        "test_oracle_install_script._blocked_sessions", lambda _container: "(stubbed)"
+    )
+
+    report = _timeout_report(CONTAINER, _expired())
+
+    assert "Seen before as #326" in report
+    assert "reopen it with this report" in report
 
 
 PIPED = "SELECT 1 FROM dual;\nEXIT\n"

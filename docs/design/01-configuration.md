@@ -2379,13 +2379,21 @@ one thing that cannot be checked early is a token whose *value* turns out to
 contain `:`, `#` or `/` — that changes the structure, and the labels are not
 known until target expansion.
 
-A name token whose value contains `/` is refused when the ref renders:
-`{account}`, `{account_lower}`, `{account_upper}`, `{target}` and
-`{application}`. The value goes in as written, so the account `acme/web` in
-`#DB/{account}` would store its password under `acme`, then `web`, and in the
-path it would address another document ([#935](../decisions/log.md#935)). A name
-the template does not use may contain `/`. A label may too: whoever writes the
-template chooses where a label goes, and may mean the level.
+A name token whose value changes the shape of the ref is refused when the ref
+renders ([#935](../decisions/log.md#935)). The name tokens are `{account}`,
+`{account_lower}`, `{account_upper}`, `{target}`, `{application}` and
+`{container}`. The value goes in as written, so the account `acme/web` in
+`#DB/{account}` would store its password under `acme`, then `web`. The account
+`ACME#WEB`, which Oracle allows unquoted, in `apps/acme/{account}` would address
+the document `apps/acme/ACME` and its field `WEB`. A leading `x:` names a vault,
+a `~1` decodes to a `/` inside a key, and `@stage=` selects a stage. Each name is
+put into the template beside a neutral stand-in for the others. If the ref then
+has a vault prefix, a level, a field, a pointer escape, a version or a stage that
+the template does not give it, the name is refused. A character that changes
+nothing where it sits is allowed, such as a `:` in the middle of a path or a `~`
+in the path. A name the template does not use is not checked. Neither is a label
+or `{env}`: whoever writes the template chooses those values and where they go,
+and may mean a level.
 
 Rule: a template must resolve to **one** secret per (account × logical scope). If
 an account exists in eleven PDBs and the template mentions no distinguishing

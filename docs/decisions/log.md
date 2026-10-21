@@ -2528,15 +2528,21 @@ the register.
   `/` in it adds a level. The account `acme/web` in `#DB/{account}` stores its
   password under `acme`, then `web`. Should such a value be escaped, refused,
   or left alone?
-- **Decision:** Refuse it, for the name tokens: `{account}` and its case
-  variants, `{target}` and `{application}`, wherever they appear in the ref.
-  The error names the token and the value. A name the template does not use may
-  contain `/`, and so may a label.
+- **Decision:** Refuse it. The maintainer decided on `/`. The review of PR #939
+  found that `#` (legal in an unquoted Oracle name), a leading `vault:`, a `~1`
+  in the pointer and `@stage=` do the same, so the rule covers any name whose
+  value changes the shape of the ref: its vault prefix, the levels of its path
+  or pointer, its field, a pointer escape, its version or its stage. The name
+  tokens are `{account}` and its case variants, `{target}`, `{application}` and
+  `{container}`. The error names the token and the value. A name the template
+  does not use is not checked, and neither is a label or `{env}`.
 - **Why:** the password would land at a key, or in a document, that the
   operator never wrote. #928 and the empty-segment rule refuse the same kind
-  of silent addressing in the pointer. A name is chosen for the database, not
-  for the template, so a `/` in one is never a level the template meant. A
-  label is chosen by whoever writes the template, so it may mean one.
+  of silent addressing in the pointer. A name is chosen for the database or the
+  file, not for the template, so a change of shape from one is never meant. A
+  label or an environment is chosen by whoever writes the template, so it may
+  mean a level. Comparing shapes, not refusing a list of characters, leaves a
+  name alone where its character changes nothing, such as a `:` mid-path.
 - **Rejected:**
   - Escape the value (`/` as `~1`). The name would mean what it says, but a
     file that nests through a placeholder today would store its password

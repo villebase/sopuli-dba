@@ -33,8 +33,10 @@ than warning about it.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping, Sequence
 
+from sopuli.config.applications import ACCOUNT_TOKEN
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import (
     Application,
@@ -560,35 +562,96 @@ def _render(
     if ref is None:
         return None
     tokens = _tokens(application, account, expanded)
-    _refuse_a_slash_in_a_name(ref, tokens, at=at)
     rendered = substitute(ref, tokens, at=at, source=_SCOPE)
+    _refuse_a_name_that_reshapes(ref, tokens, at=at)
     return parse_secret_ref(rendered, at=at)
 
 
-#: The placeholders that stand for a name: an account, a target, an application.
-#: A label is a value somebody chose for the template, so it is not one of them.
-_NAMES = ("account", "account_lower", "account_upper", "target", "application")
+#: Stands in for a name, to see the shape the template gives a ref. It holds
+#: none of the characters that shape one.
+_SENTINEL = "name"
 
 
-def _refuse_a_slash_in_a_name(ref: str, tokens: Mapping[str, str], *, at: KeyPath) -> None:
-    """Refuse a name placeholder whose value contains ``/`` (decision #935).
+def _is_name(token: str) -> bool:
+    """Whether a placeholder stands for a name the database or the file chose.
 
-    A value is put into the ref as written, so a ``/`` in it adds a level. In
-    ``#DB/{account}``, the account ``acme/web`` stores its password under
-    ``acme``, then ``web``. In the path, it addresses another document. Either
-    way the password lands somewhere the operator never wrote. A label is not
-    refused: a template author chooses where a label goes, and may mean a level.
+    The account tokens are the ones :data:`~sopuli.config.applications.ACCOUNT_TOKEN`
+    matches, so a new case variant is covered there and here at once. A target, an
+    application and a container are names too. A label and ``{env}`` are values
+    whoever writes the template chose, so they are not.
     """
-    for name in dict.fromkeys(PLACEHOLDER.findall(ref)):
-        value = tokens.get(name)
-        if name not in _NAMES or value is None or "/" not in value:
+    return bool(ACCOUNT_TOKEN.fullmatch(f"{{{token}}}")) or token in _OTHER_NAMES
+
+
+_OTHER_NAMES = frozenset({"target", "application", "container"})
+
+
+@functools.lru_cache(maxsize=256)
+def _names_in(ref: str) -> tuple[str, ...]:
+    """The name placeholders a ref uses, once each, in order."""
+    return tuple(name for name in dict.fromkeys(PLACEHOLDER.findall(ref)) if _is_name(name))
+
+
+def _shape(ref: SecretRef) -> tuple[object, ...]:
+    """What a ref addresses, without the words: the parts it has and how deep each is.
+
+    A pointer segment that holds an RFC 6901 escape counts too: the key it decodes
+    to is not the text that was written.
+    """
+    raw = [] if ref.pointer is None else ref.pointer.split("/")[1:]
+    escaped = tuple(written != key for written, key in zip(raw, ref.pointer_segments, strict=True))
+    return (
+        ref.vault is not None,
+        len(normalise_path(ref.path).split("/")),
+        ref.field is not None,
+        len(ref.pointer_segments),
+        escaped,
+        ref.version,
+        ref.stage,
+    )
+
+
+def _refuse_a_name_that_reshapes(ref: str, tokens: Mapping[str, str], *, at: KeyPath) -> None:
+    """Refuse a name whose value changes the shape of the ref (decision #935).
+
+    A value is put into the ref as written. So a ``/`` in it adds a level: in
+    ``#DB/{account}``, the account ``acme/web`` stores its password under
+    ``acme``, then ``web``. A ``#`` moves where the field starts, so
+    ``apps/acme/{account}`` with the account ``ACME#WEB``, which Oracle allows
+    unquoted, addresses the document ``apps/acme/ACME`` and the field ``WEB``. A
+    leading ``x:`` names a vault, a ``~1`` decodes to a ``/`` inside a key, and
+    ``@stage=`` selects a stage. Each one lands the password somewhere the
+    operator never wrote.
+
+    Each name is put in on its own beside a sentinel for the others, and the ref
+    it gives is compared with the template's own shape. A character that changes
+    nothing where it sits, such as a ``:`` in the middle of a path, is allowed.
+    A label is never refused: whoever writes the template chooses where a label
+    goes, and may mean a level.
+    """
+    names = _names_in(ref)
+    if not names:
+        return
+    neutral = {**tokens, **dict.fromkeys(names, _SENTINEL)}
+    expected = _shape(parse_secret_ref(substitute(ref, neutral, at=at, source=_SCOPE), at=at))
+    for name in names:
+        value = tokens[name]
+        trial = substitute(ref, {**neutral, name: value}, at=at, source=_SCOPE)
+        try:
+            same = _shape(parse_secret_ref(trial, at=at)) == expected
+        except ConfigError:
+            same = False
+        if same:
             continue
         raise ConfigError(
-            f"{{{name}}} in secret ref {ref!r} is {value!r}, which contains a `/`",
+            f"{{{name}}} in secret ref {ref!r} is {value!r}, which changes where the "
+            "password is stored",
             at=at,
             hint=(
-                "a `/` in a name would add a level to where the password is stored; "
-                "rename it, or write a ref for it that does not use the placeholder"
+                "a name goes into the ref as written, so a `/`, `#`, `~`, a leading "
+                "`vault:` or an `@stage=` in it changes what the ref addresses. Rename "
+                "it, or declare it in an application entry of its own, with a ref that "
+                "does not use this placeholder"
             ),
         )
 

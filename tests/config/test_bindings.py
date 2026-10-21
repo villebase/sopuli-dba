@@ -194,18 +194,101 @@ def test_the_application_token_is_empty_in_the_inline_form() -> None:
 
 
 @pytest.mark.parametrize(
-    "template",
-    ["apps/acme#DB/{account}", "apps/{account}#password", "apps/{account_lower}#DB/x"],
-    ids=["in-the-pointer", "in-the-path", "a-case-variant"],
+    ("account", "template"),
+    [
+        ("acme/web", "apps/acme#DB/{account}"),
+        ("acme/web", "apps/{account}#password"),
+        ("acme/web", "apps/{account_lower}#DB/x"),
+        ("acme/web", "apps/{account_upper}#DB/x"),
+        ("ACME#WEB", "apps/acme/{account}"),
+        ("ACME#WEB", "apps/acme#DB/{account}"),
+        ("db:acme", "{account}/creds#password"),
+        ("acme~1web", "apps/acme#DB/{account}"),
+        ("acme@stage=pending", "apps/{account}"),
+    ],
+    ids=[
+        "slash-in-the-pointer",
+        "slash-in-the-path",
+        "slash-lower",
+        "slash-upper",
+        "hash-starts-a-field",
+        "hash-in-the-pointer",
+        "colon-names-a-vault",
+        "escape-in-the-pointer",
+        "at-selects-a-stage",
+    ],
 )
-def test_an_account_name_with_a_slash_is_refused(template: str) -> None:
+def test_an_account_name_that_reshapes_the_ref_is_refused(account: str, template: str) -> None:
     """Decision #935. The value goes in as written, so `acme/web` in `#DB/{account}`
-    would store the password under `acme`, then `web`, a key nobody wrote."""
+    would store the password under `acme`, then `web`, and `ACME#WEB`, which Oracle
+    allows unquoted, would move where the field starts. Neither is a key anybody
+    wrote."""
     with pytest.raises(ConfigError) as caught:
-        bind(accounts=["acme/web"], secret_template=template)
+        bind(accounts=[account], secret_template=template)
 
-    assert "contains a `/`" in str(caught.value)
-    assert "'acme/web'" in str(caught.value)
+    assert "changes where the password is stored" in str(caught.value)
+    # A case variant renders the name in its own case.
+    assert repr(account).casefold() in str(caught.value).casefold()
+
+
+@pytest.mark.parametrize(
+    ("account", "template"),
+    [
+        ("ACME$WEB", "apps/{account}#DB/x"),
+        ("acme:web", "apps/{account}#password"),
+        ("acme~web", "apps/{account}#password"),
+        ("acme@web", "apps/acme#DB/{account}"),
+    ],
+    ids=["dollar", "colon-mid-path", "tilde-in-the-path", "at-without-a-qualifier"],
+)
+def test_a_character_that_changes_nothing_where_it_sits_is_allowed(
+    account: str, template: str
+) -> None:
+    """The rule is about the shape of the ref, not a list of characters."""
+    (binding, *_) = bind(accounts=[account], secret_template=template)
+
+    assert account in str(binding.secret)
+
+
+def test_a_target_name_that_reshapes_the_ref_is_refused() -> None:
+    target_set = {**APPDB, "name": "appdb/{env}-{tenant}"}
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            {
+                "version": 1,
+                "vaults": VAULTS,
+                "target_sets": {"appdb": target_set},
+                "applications": [
+                    {
+                        "name": "acme",
+                        "targets": {"match": {"tenant": "alpha", "env": "qa"}},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "{target}/acme#DB/{account}",
+                    }
+                ],
+            }
+        )
+
+    assert "{target}" in str(caught.value)
+
+
+def test_an_application_name_that_reshapes_the_ref_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                groups=GROUPS,
+                applications=[
+                    {
+                        "name": "acme/web",
+                        "targets": {"group": "app-pdbs"},
+                        "accounts": ["acme_web_user"],
+                        "secret_template": "apps/{application}#DB/{account}",
+                    }
+                ],
+            )
+        )
+
+    assert "{application}" in str(caught.value)
 
 
 def test_a_name_with_a_slash_is_fine_where_the_template_does_not_use_it() -> None:

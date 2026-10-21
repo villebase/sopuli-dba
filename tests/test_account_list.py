@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import click
 import pytest
 
 from sopuli.account_list import (
@@ -370,6 +371,40 @@ def test_a_failed_target_is_not_counted_as_a_declared_account() -> None:
     assert "2 declared accounts" in text
     assert "1 target could not be answered" in text
     assert "not present" not in text, "an unanswered target is not a missing account"
+
+
+def test_the_table_prints_a_vendor_row_and_a_cross_declared_row_under_notes() -> None:
+    """The notices reached `results[].warnings[]` and never the text, so a
+    terminal reader was not told that `SYSTEM` was admitted and that no reset
+    will touch it (#826)."""
+    rule = config().personal_accounts[1]
+    vendor = Row(
+        account="SYSTEM",
+        target=TARGET,
+        rule=rule,
+        state=user("SYSTEM", vendor_maintained=True),
+        notices=(Notice(ADMITTED_VENDOR_ACCOUNT, "the database reports this account as its own"),),
+    )
+    shared = Row(
+        account="ACME_WEB_USER",
+        target=TARGET,
+        rule=rule,
+        state=user("ACME_WEB_USER"),
+        notices=(Notice(ADMITTED_CROSS_DECLARED, "also declared by acme"),),
+    )
+
+    text = click.unstyle(render_account_list([*rows(), vendor, shared]))
+    lines = text.splitlines()
+
+    assert lines[-3:] == [
+        "2 notes:",
+        f"  SYSTEM on {TARGET}: the database reports this account as its own",
+        f"  ACME_WEB_USER on {TARGET}: also declared by acme",
+    ]
+
+
+def test_a_table_with_no_notices_prints_no_notes_block() -> None:
+    assert "note" not in render_account_list(rows())
 
 
 # ------------------------------------------------------ reading the journal ---

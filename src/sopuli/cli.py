@@ -143,6 +143,7 @@ from sopuli.diagnostics import (
     promotion_failed,
     promotion_skipped,
     promotion_withheld,
+    reset_journal_unread,
     reset_record_unwritten,
     rollback_reuse,
     unaddressable_lock_paths,
@@ -3389,18 +3390,44 @@ def account_list_command(
 
     rows: list[account_list.Row] = []
     errors = 0
+    unread = _JournalFailures()
     for target in reached:
-        found, failed = _list_one(target, run, config, wanted=account)
+        found, failed = _list_one(target, run, config, wanted=account, unread=unread)
         rows.extend(found)
         errors += failed
 
+    # Only a target that answered reads the journal, so this needs no `answered`.
+    unreadable: list[Diagnostic] = []
+    if unread.reason is not None and config.reset_records is not None:
+        unreadable.append(
+            reset_journal_unread(config.reset_records.vault, unread.accounts, unread.reason)
+        )
+    document.diagnostics.extend(unreadable)
     document.results = [build_account_list_result(row) for row in rows]
     document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
     # Where no target answered there is no RESET_AT to explain, and a note about
     # the journal would point the reader away from the unreachable targets.
     answered = errors < len(reached)
     notes = [one.message for one in unjournaled] if answered else []
+    notes.extend(one.message for one in unreadable)
     return render_account_list(rows, run_notes=notes)
+
+
+@dataclass
+class _JournalFailures:
+    """How many accounts the reset journal could not answer for, and why (#929).
+
+    The first reason is kept and the rest are counted. A revoked token or a down
+    vault fails every read the same way, so one reason says what happened.
+    """
+
+    accounts: int = 0
+    reason: str | None = None
+
+    def add(self, reason: str, *, accounts: int = 1) -> None:
+        self.accounts += accounts
+        if self.reason is None:
+            self.reason = reason
 
 
 def _list_one(
@@ -3409,6 +3436,7 @@ def _list_one(
     config: Config,
     *,
     wanted: str | None,
+    unread: _JournalFailures,
 ) -> tuple[list[account_list.Row], int]:
     """One target: resolve every rule that applies, then describe what they named.
 
@@ -3429,8 +3457,17 @@ def _list_one(
             return [_unreachable_row(target, _finding(error))], 1
 
         names = _declared_names(session, config, target, wanted=wanted)
-        journal = _reset_journal(run, config)
-        return [_describe_row(session, name, target, config, journal=journal) for name in names], 0
+        journal = None
+        try:
+            journal = _reset_journal(run, config)
+        except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
+            if names:
+                unread.add(_finding(error).message, accounts=len(names))
+        rows = [
+            _describe_row(session, name, target, config, journal=journal, unread=unread)
+            for name in names
+        ]
+        return rows, 0
     finally:
         if session is not None:
             with suppress(Exception):
@@ -3525,14 +3562,22 @@ def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
     return opened.get(records.vault)
 
 
-def _reset_at(journal: SecretStore | None, config: Config, target: str, account: str) -> str | None:
+def _reset_at(
+    journal: SecretStore | None,
+    config: Config,
+    target: str,
+    account: str,
+    *,
+    unread: _JournalFailures | None = None,
+) -> str | None:
     """What the journal says about this account's last reset, if anything.
 
-    **Three absences, one rendering, and only one of them is a finding.** No
-    journal configured is `SOPULI-W023`, raised once for the run. A journal with
-    no record for this account is not a finding at all -- nobody has reset them
+    **Three absences, one rendering, and two of them are findings.** No journal
+    configured is `SOPULI-W023`, raised once for the run. A journal with no
+    record for this account is not a finding at all -- nobody has reset them
     through this tool -- and gets no code. A journal that could not be read is
-    reported on the row.
+    added to ``unread``, and `account list` reports it once for the run as
+    `SOPULI-W054`, with the first error the store gave.
 
     Never raises. A listing verb that failed because a *metadata* store was
     unreachable would be refusing to describe an estate over its history, which
@@ -3544,7 +3589,9 @@ def _reset_at(journal: SecretStore | None, config: Config, target: str, account:
         return None
     try:
         stored = journal.read(reset_record.record_path(records, target=target, account=account))
-    except Exception:  # noqa: BLE001 -- history is not worth failing a listing over
+    except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
+        if unread is not None:
+            unread.add(_finding(error).message)
         return None
     if stored is None or not isinstance(stored.data, dict):
         return None
@@ -3559,6 +3606,7 @@ def _describe_row(
     config: Config,
     *,
     journal: SecretStore | None = None,
+    unread: _JournalFailures | None = None,
 ) -> account_list.Row:
     """One account: its state, the rule that admitted it, and what is worth saying.
 
@@ -3613,7 +3661,7 @@ def _describe_row(
         target=target.name,
         rule=admitted,
         state=state,
-        reset_at=_reset_at(journal, config, target.name, name),
+        reset_at=_reset_at(journal, config, target.name, name, unread=unread),
         notices=tuple(notices),
     )
 

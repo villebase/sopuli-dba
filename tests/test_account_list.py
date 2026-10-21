@@ -38,6 +38,7 @@ from sopuli.diagnostics import (
     ADMITTED_CROSS_DECLARED,
     ADMITTED_VENDOR_ACCOUNT,
     no_reset_journal,
+    reset_journal_unread,
 )
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
@@ -540,6 +541,41 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
     )
 
     assert _reset_at(Broken(), built, TARGET, "jdoe") is None
+
+
+def test_a_journal_that_cannot_be_read_is_recorded_with_its_reason() -> None:
+    """The reason is kept for the run's `SOPULI-W054`, so the empty RESET_AT
+    does not read as "nobody was reset" (#929)."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore, StoreError
+
+    class Broken(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Any:
+            raise StoreError(f"the store refused this token at {path!r}")
+
+    built = config(
+        reset_records={"vault": "vault-dev", "prefix": "sopuli/personal-resets"},
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+    )
+    unread = _JournalFailures()
+
+    _reset_at(Broken(), built, TARGET, "jdoe", unread=unread)
+    _reset_at(Broken(), built, TARGET, "rroe", unread=unread)
+    _reset_at(MemoryStore(), built, TARGET, "asmith", unread=unread)
+
+    assert unread.accounts == 2
+    assert unread.reason == (
+        "the store refused this token at 'sopuli/personal-resets/appdb-dev-alpha/jdoe'"
+    )
+
+
+def test_the_unread_journal_warning_names_the_store_and_ends_with_the_reason() -> None:
+    message = reset_journal_unread("vault-dev", 3, "the store refused this token").message
+
+    assert "store 'vault-dev'" in message
+    assert "for 3 accounts" in message
+    assert message.endswith(": the store refused this token")
+    assert "for 1 account," in reset_journal_unread("vault-dev", 1, "down").message
 
 
 def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:

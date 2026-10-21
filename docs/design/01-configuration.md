@@ -2275,8 +2275,10 @@ literal `~`. An empty segment (`#DB/`, `#DB/a//b`) is refused: the RFC allows a
 key named nothing, and a credential store has no such key, so it is a stray `/`.
 A `~` that is not `~0` or `~1` (`#DB/a~2`, a trailing `~`) is refused too, as the
 RFC requires. Decoding it anyway would give `a~2` and `a~02` one key. The check
-runs after placeholders are filled in, so an account name with a `~` in a
-`#DB/{account}` template is refused where the template is written.
+runs on the template as written and again after placeholders are filled in. So
+an account name with a `~` in a `#DB/{account}` template is refused where the
+template is written. So is an escape split across a placeholder, such as
+`#DB/x~{n}`: write the whole escape in the template.
 
 A path may not hold a `.` or `..` segment ([#344](../decisions/log.md#344)), and
 it may not hold `?`, `%`, a backslash or a control character (C0, DEL or C1).

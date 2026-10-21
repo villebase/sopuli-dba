@@ -520,8 +520,8 @@ def _split_field(remainder: str, text: str, *, at: KeyPath) -> tuple[str, str | 
             at=at,
             hint=(
                 "a pointer writes a literal `~` as `~0` and a `/` inside a key as `~1` "
-                "(RFC 6901). If a placeholder such as {account} put it there, the "
-                "name it stands for contains a `~`"
+                "(RFC 6901). Where the ref has no such `~` as written, a placeholder "
+                "such as {account} brought it, and the name it stands for contains one"
             ),
         )
     return path, field, f"{POINTER_SEPARATOR}{pointer}"

@@ -378,9 +378,10 @@ class RunDocument:
     #: Whether the plan has already gone to stderr, before a prompt.
     plan_shown: bool = False
     #: The config's warnings as text output prints them, never serialised
-    #: (#897): ``diagnostics`` carries them in the JSON. The emitter prints them
-    #: under every verb's text, and the command handler prints them to stderr
-    #: for a run that fails, so no verb has to remember to.
+    #: (#897): ``diagnostics`` carries them in the JSON. The command handler
+    #: fills both once the file has loaded (#918). The emitter prints them under
+    #: every verb's text, and the handler prints them to stderr for a run that
+    #: fails, so no verb has to remember to.
     warnings_text: list[str] = field(default_factory=list)
     #: Whether the warnings have already been printed, by a verb that printed its
     #: text before it stopped.

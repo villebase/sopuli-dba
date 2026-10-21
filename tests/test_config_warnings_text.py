@@ -98,23 +98,26 @@ def test_the_json_document_carries_it_and_the_text_does_not_leak_in(config: Path
     assert "warnings_text" not in document
 
 
-@pytest.mark.parametrize(
+FAILING_STEPS = pytest.mark.parametrize(
     "step",
     ["_policy_to_sample", "build_policy_section"],
-    ids=["before-the-verb-reported", "after"],
+    ids=["first-step", "last-step"],
 )
-def test_a_run_that_fails_prints_the_warning_on_stderr(
-    config: Path, monkeypatch: pytest.MonkeyPatch, step: str
-) -> None:
-    """The run prints no text of its own, and the warning may be why it failed.
 
-    Before the verb reported the warnings is the usual case: a verb reports them
-    once its I/O is done, and a run that cannot reach the store stops first."""
 
+def _break(monkeypatch: pytest.MonkeyPatch, step: str) -> None:
     def broken(*args: object, **kwargs: object) -> None:
         raise RuntimeError("this step broke")
 
     monkeypatch.setattr(cli_module, step, broken)
+
+
+@FAILING_STEPS
+def test_a_run_that_fails_prints_the_warning_on_stderr(
+    config: Path, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """The run prints no text of its own, and the warning may be why it failed."""
+    _break(monkeypatch, step)
 
     result = CliRunner().invoke(cli, ["policy", "sample", "--config", str(config)])
 
@@ -122,3 +125,21 @@ def test_a_run_that_fails_prints_the_warning_on_stderr(
     assert result.stdout == ""
     assert result.stderr.startswith("1 warning:\n")
     assert "https://other.example.com" in result.stderr
+
+
+@FAILING_STEPS
+def test_a_run_that_fails_carries_the_warning_in_its_document_once(
+    config: Path, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """#918: a scheduler reads only the document, and W051 may be why the run failed.
+
+    The first step fails before the verb has done anything of its own."""
+    _break(monkeypatch, step)
+
+    result = CliRunner().invoke(
+        cli, ["policy", "sample", "--output", "json", "--config", str(config)]
+    )
+
+    document = json.loads(result.stdout)
+    assert document["exit_code"] == result.exit_code != ExitCode.SUCCESS
+    assert [one["code"] for one in document["diagnostics"]] == ["SOPULI-W051"]

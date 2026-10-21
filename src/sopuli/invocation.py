@@ -445,10 +445,19 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
     otherwise say each one twice. Nothing else has written a diagnostic at this
     point: this runs before the verb does.
 
-    ``config_files`` is filled on the second call and only then, which is
-    what the two-call arrangement is for: the first happens before a file has
-    been read, so there is nothing to name, and a run that never loads one keeps
-    the field absent rather than empty.
+    ``config_files`` and the config's warnings are filled on the second call and
+    only then, which is what the two-call arrangement is for: the first happens
+    before a file has been read, so there is nothing to name, and a run that
+    never loads one keeps the field absent rather than empty.
+
+    The config's warnings (§10) go into both views here, once per run, and not
+    in each verb (#918): ``diagnostics`` for the schedulers and CI jobs that read
+    the document, and ``warnings_text`` for the emitter to print under the text.
+    A run that fails before its verb finishes carries them too. W051 is the case
+    that matters: a ``VAULT_ADDR`` that points the run at a vault it cannot
+    reach, so the run fails, and the warning is the reason. They are run-level
+    because a config warning is not about one target. Narrowing keeps
+    ``warnings``, so the loaded file's list is the narrowed one's too.
 
     **Resolved, not as given.** ``discover`` keeps an
     explicit ``--config estate.yaml`` relative, and a relative path is only
@@ -469,6 +478,13 @@ def refresh_document(document: RunDocument, invocation: Invocation) -> RunDocume
         if invocation.resolved[name].layer is not Layer.BUILTIN
     }
     document.diagnostics[:] = ratchet_notes(invocation.resolved)
+    if invocation.loaded is not None:
+        warnings = invocation.loaded.config.warnings
+        document.diagnostics.extend(
+            Diagnostic(level="warning", message=str(warning), code=warning.code)
+            for warning in warnings
+        )
+        document.warnings_text[:] = [str(warning) for warning in warnings]
     return document
 
 
@@ -1109,10 +1125,6 @@ def show_warnings(invocation: Invocation) -> None:
     them in ``diagnostics``, and not where they were already printed
     (``warnings_shown``).
 
-    Taken from the loaded file when the verb has not reported them yet. A verb
-    reports them once its I/O is done, and a run that cannot reach the store
-    W051 is about stops before that.
-
     **Never raises**, for the reason :func:`_show_unfinished_plan` gives.
     """
     document = invocation.document
@@ -1120,8 +1132,6 @@ def show_warnings(invocation: Invocation) -> None:
         return
     with suppress(Exception):
         warnings = document.warnings_text
-        if not warnings and invocation.loaded is not None:
-            warnings = [str(warning) for warning in invocation.loaded.config.warnings]
         if not warnings:
             return
         text = "\n".join(render_warnings(warnings)).lstrip("\n")

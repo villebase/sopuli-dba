@@ -273,6 +273,8 @@ capability skips alone. This is §3's distinction put to use. A job that exists 
 run tier 1, skips all of it and reports green is worse than no job, because
 people quote it as evidence. Everywhere else, such as a laptop or a fork with no
 stack running, the same tests skip with a reason, as §1 requires.
+[`../maintainer-environments.md`](../maintainer-environments.md) §1 lists the
+variables the suite reads for Oracle, and their defaults.
 
 Tier 0 needs no containers, and it must stay that way: it is what makes the
 inner development loop fast. Every pure-logic concern above (precedence,

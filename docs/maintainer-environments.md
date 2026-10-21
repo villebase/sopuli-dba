@@ -63,6 +63,33 @@ Without `SOPULI_TEST_TIER1=required`, a stopped container makes the tests skip
 rather than fail. Wait for `healthy` after a start: the listener answers before
 the PDB is open.
 
+The suite reads these variables for Oracle. Each default is the tier-1 stack's,
+so a run against that stack on your own machine needs none of them. The tier-1
+CI lane sets `SOPULI_TEST_TIER1=required`.
+
+| Variable | Default | Used for |
+|---|---|---|
+| `SOPULI_TEST_TIER1` | unset | `required` makes a missing environment fail instead of skip |
+| `COMPOSE_PROJECT_NAME` | `sopuli-test` | the `<project>` in the default container name (`test/README.md`, a second clone) |
+| `SOPULI_TEST_ORACLE_DSN` | `localhost:<port>/FREEPDB1` | the database the suite connects to |
+| `SOPULI_TEST_ORACLE_PORT` | `1521` | the port in the default DSN (`test/README.md`, a second clone) |
+| `SOPULI_TEST_ORACLE_USER` | `system` | the admin account |
+| `SOPULI_TEST_ORACLE_PASSWORD` | `sopuli-test` | the admin account's password |
+| `SOPULI_TEST_ORACLE_SYS_PASSWORD` | `SOPULI_TEST_ORACLE_PASSWORD` | the password for `SYS AS SYSDBA` |
+| `SOPULI_TEST_ORACLE_NAME` | `oracle` | the environment's name in the capability matrix |
+| `SOPULI_TEST_ORACLE_CONTAINER` | `<project>-oracle-free-1` | the container SQL\*Plus runs in |
+| `SOPULI_TEST_ORACLE_PDB_SERVICE` | `freepdb1` | the PDB service SQL\*Plus connects to |
+| `SOPULI_TEST_ALLOW_REMOTE_ORACLE` | unset | any value allows a DSN that is not on loopback |
+
+**Set `SOPULI_TEST_ORACLE_SYS_PASSWORD` where `SYS` and the admin account have
+different passwords**, as they can on an OCI DB system or a database where one
+of them was changed. Every image in `test/compose.yaml` sets both from one
+variable, `ORACLE_PASSWORD` or `ORACLE_PWD`, so its stacks do not need it.
+The tests that log in as `SYS` are the `sysdba` fixture's and
+`tests/driver/test_oracle_install_script.py`. If the `SYS` logon fails with
+`ORA-01017`, they skip, and the reason names the variable to set. Under
+`SOPULI_TEST_TIER1=required` they fail instead.
+
 ### Auditing is off in these images
 
 The XE images and 19.3 ship with `AUDIT_TRAIL = NONE`, so nothing is audited.

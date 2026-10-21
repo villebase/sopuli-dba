@@ -3433,7 +3433,16 @@ class _JournalFailures:
     dead: bool = False
 
     def failed(self, store: str, reason: str) -> None:
+        """One row the journal could not answer for."""
         self.rows += 1
+        self._keep(store, reason)
+
+    def store_failed(self, store: str, reason: str) -> None:
+        """The store as a whole: nothing more is read from it."""
+        self.dead = True
+        self._keep(store, reason)
+
+    def _keep(self, store: str, reason: str) -> None:
         if self.first is None:
             self.first = (store, reason)
 
@@ -3457,9 +3466,7 @@ def _open_journal(run: Invocation, config: Config, unread: _JournalFailures) -> 
     try:
         return _reset_journal(run, config)
     except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
-        unread.dead = True
-        if unread.first is None:
-            unread.first = (records.vault, _store_reason(error))
+        unread.store_failed(records.vault, _store_reason(error))
         return None
 
 
@@ -3621,15 +3628,21 @@ def _reset_at(
         return None
     if journal is None:
         return None
-    path = reset_record.record_path(records, target=target, account=account)
+    try:
+        # Inside the guard: a name that is not one path segment has no record path.
+        path = reset_record.record_path(records, target=target, account=account)
+    except ValueError as error:
+        unread.failed(records.vault, str(error))
+        return None
     try:
         stored = journal.read(path)
     except Exception as error:  # noqa: BLE001 -- history is not worth failing a listing over
-        unread.failed(records.vault, _store_reason(error))
+        reason = _store_reason(error)
+        unread.failed(records.vault, reason)
         # A refusal is about this path. Anything else, such as a timeout, is the
         # whole store, and the next read would wait it out again.
         if getattr(error, "category", None) != "authorization":
-            unread.dead = True
+            unread.store_failed(records.vault, reason)
         return None
     if stored is None:
         return None

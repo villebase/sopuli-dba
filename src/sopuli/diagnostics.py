@@ -668,8 +668,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         RESET_JOURNAL_UNREAD: (
             "`account list` could not open or read the reset journal that `reset_records:` "
-            "declares, or read a record in it with no `reset_at`, so RESET_AT is empty on "
-            "those rows, and an empty RESET_AT there does not mean that nobody reset them. "
+            "declares, or read a record in it with no `reset_at`, or derive a record path for "
+            "a name, so RESET_AT is empty on those rows, and an empty RESET_AT there does "
+            "not mean that nobody reset them. "
             "One entry for the run, naming the store, the number of rows, and the first "
             "error. A journal with no record for an account is not this code: nobody has "
             "reset that account through this tool."
@@ -1328,8 +1329,8 @@ def reset_journal_unread(store: str, rows: int, reason: str) -> Diagnostic:
         level="warning",
         code=RESET_JOURNAL_UNREAD,
         message=(
-            f"the reset journal in store {store!r} could not be read, so RESET_AT is "
-            f"empty on {where} and does not say whether those accounts were reset. "
+            f"the reset journal in store {store!r} gave no reset date for {where}, so "
+            f"RESET_AT is empty there and does not say whether those accounts were reset. "
             f"The first error was: {reason}"
         ),
     )

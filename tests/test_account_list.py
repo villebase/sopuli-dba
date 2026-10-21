@@ -666,9 +666,23 @@ def test_the_unread_journal_warning_names_the_store_and_ends_with_the_reason() -
     message = reset_journal_unread("vault-dev", 3, "the store refused this token").message
 
     assert "store 'vault-dev'" in message
-    assert "empty on 3 rows" in message
+    assert "gave no reset date for 3 rows" in message
     assert message.endswith("The first error was: the store refused this token")
-    assert "empty on 1 row " in reset_journal_unread("vault-dev", 1, "down").message
+    assert "for 1 row," in reset_journal_unread("vault-dev", 1, "down").message
+
+
+def test_a_name_with_no_record_path_is_recorded_and_does_not_raise() -> None:
+    """`_reset_at` never raises: a name that is not one path segment has no
+    record, and the listing must still describe the account."""
+    from sopuli.cli import _JournalFailures, _reset_at
+    from sopuli.store import MemoryStore
+
+    unread = _JournalFailures()
+
+    assert _reset_at(MemoryStore(), config(**JOURNALLED), TARGET, "A/B", unread=unread) is None
+
+    assert unread.rows == 1
+    assert not unread.dead
 
 
 def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:

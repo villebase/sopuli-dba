@@ -48,6 +48,8 @@ from sopuli.config.model import (
 from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import (
+    FIELD_SEPARATOR,
+    POINTER_SEPARATOR,
     QUALIFIER_SEPARATOR,
     VAULT_SEPARATOR,
     SecretRef,
@@ -569,7 +571,7 @@ def _render(
     tokens = _tokens(application, account, expanded)
     rendered = substitute(ref, tokens, at=at, source=_SCOPE)
     _refuse_a_separator_in_a_name(ref, tokens, expanded, at=at)
-    _refuse_a_name_in_a_separators_place(ref, tokens, expanded, at=at)
+    _refuse_a_name_in_a_separators_place(ref, rendered, tokens, expanded, at=at)
     return parse_secret_ref(rendered, at=at)
 
 
@@ -619,47 +621,44 @@ def _refuse_a_separator_in_a_name(
         )
 
 
-def _spans(ref: str, tokens: Mapping[str, str]) -> tuple[str, list[tuple[str, int, int]]]:
-    """The rendered ref, and where in it each placeholder's value landed.
+def _spans(ref: str, tokens: Mapping[str, str]) -> list[tuple[str, int, int]]:
+    """Where in the rendered ref each placeholder's value landed, as offsets.
 
-    Rendered the way :func:`~sopuli.config.templates.substitute` renders it, which
-    has already checked every token, so the two agree.
+    :func:`~sopuli.config.templates.substitute` renders each placeholder in
+    place, so a value starts where its placeholder did, moved by the lengths
+    the earlier placeholders gained or lost.
     """
-    parts: list[str] = []
     spans: list[tuple[str, int, int]] = []
-    length = 0
-    last = 0
+    shift = 0
     for match in PLACEHOLDER.finditer(ref):
-        parts.append(ref[last : match.start()])
-        length += match.start() - last
         value = tokens[match.group(1)]
-        spans.append((match.group(1), length, length + len(value)))
-        parts.append(value)
-        length += len(value)
-        last = match.end()
-    parts.append(ref[last:])
-    return "".join(parts), spans
+        start = match.start() + shift
+        spans.append((match.group(1), start, start + len(value)))
+        shift += len(value) - (match.end() - match.start())
+    return spans
 
 
 def _structure(rendered: str) -> dict[int, str]:
     """Where a rendered ref's `:`, `@`, `=` and pointer `~` do a job, and what job.
 
-    Found by :mod:`~sopuli.config.secret_refs`'s own rules: a qualifier is the last
-    `@` with an `=` after it, a vault prefix is a `:` with no `/` or `#` before it,
-    and the pointer starts at the first `/` after the `#`.
+    Found by :mod:`~sopuli.config.secret_refs`'s own rules. A qualifier is an `@`
+    with an `=` after it, peeled from the end, and the parser refuses a second
+    one. So every such `@` is marked, not only the last. A vault prefix is a `:`
+    with no `/` or `#` before it, and the pointer starts at the first `/` after
+    the `#`.
     """
     places: dict[int, str] = {}
     head = rendered
-    at_sign = rendered.rfind(QUALIFIER_SEPARATOR)
-    if at_sign != -1 and "=" in rendered[at_sign:]:
+    while (at_sign := head.rfind(QUALIFIER_SEPARATOR)) != -1 and "=" in head[at_sign:]:
         places[at_sign] = "starts a version or stage qualifier"
-        places[rendered.index("=", at_sign)] = "starts a version or stage qualifier"
-        head = rendered[:at_sign]
+        places[head.index("=", at_sign)] = "gives a version or stage qualifier its value"
+        head = head[:at_sign]
     colon = head.find(VAULT_SEPARATOR)
-    if colon != -1 and not any(0 <= head.find(sign) < colon for sign in ("/", "#")):
+    before = (POINTER_SEPARATOR, FIELD_SEPARATOR)
+    if colon != -1 and not any(0 <= head.find(sign) < colon for sign in before):
         places[colon] = "names a vault"
-    field = head.find("#")
-    pointer = head.find("/", field) if field != -1 else -1
+    field = head.find(FIELD_SEPARATOR)
+    pointer = head.find(POINTER_SEPARATOR, field) if field != -1 else -1
     if pointer != -1:
         for index in range(pointer, len(head)):
             if head[index] == "~":
@@ -668,7 +667,12 @@ def _structure(rendered: str) -> dict[int, str]:
 
 
 def _refuse_a_name_in_a_separators_place(
-    ref: str, tokens: Mapping[str, str], expanded: ExpandedTarget, *, at: KeyPath
+    ref: str,
+    rendered: str,
+    tokens: Mapping[str, str],
+    expanded: ExpandedTarget,
+    *,
+    at: KeyPath,
 ) -> None:
     """Refuse a name that brings a vault prefix, a qualifier or a pointer escape (#940).
 
@@ -677,11 +681,10 @@ def _refuse_a_name_in_a_separators_place(
     stay allowed. Two names that make a qualifier between them are caught too,
     because its `@` and its `=` each land in one of them.
     """
-    rendered, spans = _spans(ref, tokens)
     places = _structure(rendered)
     if not places:
         return
-    for token, start, end in spans:
+    for token, start, end in _spans(ref, tokens):
         jobs = [(index, places[index]) for index in range(start, end) if index in places]
         if not jobs or not _is_name(token, expanded):
             continue

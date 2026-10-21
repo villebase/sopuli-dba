@@ -265,6 +265,23 @@ def test_a_name_that_does_a_separators_job_is_refused(
     assert "application entry of its own" in (caught.value.hint or "")
 
 
+def test_a_name_that_brings_a_second_qualifier_is_refused() -> None:
+    """The parser would refuse two qualifiers without naming the placeholder."""
+    template = "apps/{account}#pw@stage=current"
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["acme@version=3"], secret_template=template)
+
+    assert "is 'acme@version=3', whose `@` starts a version or stage" in caught.value.message
+
+
+def test_a_name_that_brings_only_the_qualifiers_value_is_refused() -> None:
+    """The template writes `@stage` and the name brings `=pending`."""
+    with pytest.raises(ConfigError) as caught:
+        bind(accounts=["=pending"], secret_template="apps/acme#pw@stage{account}")
+
+    assert "whose `=` gives a version or stage qualifier its value" in caught.value.message
+
+
 def test_two_names_that_make_a_qualifier_between_them_are_refused() -> None:
     """The `@` lands in one name and the `=` in the other, so the first is named."""
     with pytest.raises(ConfigError) as caught:
@@ -306,8 +323,9 @@ def test_a_label_may_still_bring_a_qualifier_character() -> None:
     ],
     ids=["dollar", "colon-mid-path", "tilde-in-the-path", "at-without-a-qualifier", "equals"],
 )
-def test_other_characters_are_not_this_rules(account: str, template: str) -> None:
-    """Only `/` and `#` are refused. These change nothing where they sit."""
+def test_a_character_that_does_no_job_where_it_sits_is_allowed(account: str, template: str) -> None:
+    """`/` and `#` are refused anywhere in a name; `:`, `@`, `=` and `~` only where
+    they do a separator's job. Here none of them does."""
     (binding, *_) = bind(accounts=[account], secret_template=template)
 
     assert account in str(binding.secret)

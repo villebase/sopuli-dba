@@ -104,6 +104,7 @@ see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba
 ## Status
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/villebase/sopuli-dba/badge)](https://scorecard.dev/viewer/?uri=github.com/villebase/sopuli-dba)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15767/badge)](https://www.bestpractices.dev/projects/15767)
 
 **Alpha. Do not point this at a production database.**
 

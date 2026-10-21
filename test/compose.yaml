@@ -1,7 +1,6 @@
 # sopuli-dba test stack
 #
-# STATUS: tier0 and tier1 verified working 2026-08-17. tier2, nne and emulators are
-# still unrun and their image tags unverified — see docs/design/04-testing.md §8 T1.
+# Which profiles start, and which of them CI runs, is in README.md.
 #
 # Profiles keep the inner loop fast, and they are additive: every tier0 service also
 # carries tier1 and tier2, so moving up a tier adds services and recreates nothing.

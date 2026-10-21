@@ -33,7 +33,12 @@ What each environment is, and what to know before using it:
 - **12.2.0.1 EE**, profile `oracle12c`, is maintainer-only on the same terms as
   19.3, and needs a one-time `docker exec` after its first start. See
   `docs/maintainer-environments.md` §3.
-- `nne` and `emulators` have not been run.
+- `nne` and `emulators` do not start. `nne` exits on its first start, and
+  `emulators` names an image tag that does not exist (#937).
+
+CI starts tier 1 for each pull request, except one that changes only files
+that `.github/workflows/tier1.yml` lists under `paths-ignore`. Every other
+profile is started by hand.
 
 The releases each environment was measured on are in
 [`../docs/measurements.md`](../docs/measurements.md).

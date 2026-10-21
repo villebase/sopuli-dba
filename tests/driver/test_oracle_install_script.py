@@ -127,8 +127,9 @@ COMMON_SVC_OTHER = f"C##{SVC_OTHER.upper()}"
 #: script twice -- and the container operations are faster still, so this is
 #: roughly 300x headroom over the slowest thing it governs and nothing that merely
 #: *finishes slowly* can reach it. It covers every call; the known case is a
-#: `GRANT CREATE SESSION ... CONTAINER=ALL` that prints its label and never
-#: returns (TODO(#326)).
+#: `GRANT CREATE SESSION ... CONTAINER=ALL` that printed its label and never
+#: returned (#326). If it happens again, reopen #326 with the report
+#: :func:`_blocked_sessions` writes.
 #:
 #: One number for both because it is one question -- *did a docker call stop?* --
 #: and a second constant would be a second thing to keep proportionate to a
@@ -338,8 +339,8 @@ def _blocked_sessions(container: str) -> str:
     Best effort by construction, and **its own failure is an answer** rather than
     something to swallow. Three outcomes and they point at three different fixes:
 
-    * rows -- Oracle was waiting, and on what. The hypothesis (TODO(#326):
-      unconfirmed) is a dictionary lock behind `CONTAINER=ALL`, and
+    * rows -- Oracle was waiting, and on what. The hypothesis in #326, never
+      confirmed, is a dictionary lock behind `CONTAINER=ALL`, and
       ``BLOCKING_SESSION`` is what confirms or kills it;
     * no rows -- the session was gone by the time this ran, so the stall was
       probably not the database at all;

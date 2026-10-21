@@ -494,7 +494,7 @@ def add_config_warnings(document: RunDocument, config: Config) -> None:
         Diagnostic(level="warning", message=str(warning), code=warning.code)
         for warning in config.warnings
     )
-    document.warnings_text[:] = [str(warning) for warning in config.warnings]
+    document.warnings_text.extend(str(warning) for warning in config.warnings)
 
 
 def all_options(invocation: Invocation) -> dict[str, Option]:

@@ -184,8 +184,9 @@ RATCHETED = f"""{CONFIG}profiles:
 """
 
 
+@pytest.mark.usefixtures("config")
 def test_the_warnings_follow_the_ratchet_notes_and_precede_the_verbs_own(
-    config: Path, monkeypatch: pytest.MonkeyPatch, write_config: Callable[[str], Path]
+    monkeypatch: pytest.MonkeyPatch, write_config: Callable[[str], Path]
 ) -> None:
     """The order 03-json-output.md §diagnostics gives.
 
@@ -220,25 +221,21 @@ DISJOINT = f"""{CONFIG}profiles:
 )
 
 
+@pytest.mark.usefixtures("config")
 def test_a_run_whose_settings_do_not_resolve_carries_the_warning(
-    config: Path, write_config: Callable[[str], Path]
+    write_config: Callable[[str], Path],
 ) -> None:
     """The handler adds them itself, because `refresh_document` never saw the file."""
-    result = CliRunner().invoke(
-        cli,
-        [
-            "policy",
-            "sample",
-            "--profile",
-            "ci",
-            "--output",
-            "json",
-            "--config",
-            str(write_config(DISJOINT)),
-        ],
-    )
+    path = str(write_config(DISJOINT))
 
-    document = json.loads(result.stdout)
+    as_json = CliRunner().invoke(
+        cli, ["policy", "sample", "--profile", "ci", "--output", "json", "--config", path]
+    )
+    as_text = CliRunner().invoke(cli, ["policy", "sample", "--profile", "ci", "--config", path])
+
+    document = json.loads(as_json.stdout)
     assert document["exit_code"] == ExitCode.CONFIG_INVALID
     assert "resolves to nothing" in document["error"]["message"]
     assert [one["code"] for one in document["diagnostics"]] == ["SOPULI-W051"]
+    assert as_text.stderr.startswith("1 warning:\n")
+    assert "https://other.example.com" in as_text.stderr

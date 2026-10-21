@@ -9,8 +9,11 @@ is the specification, and `sql/oracle/13_audit_coverage_probe.sql` measured it o
   person. A DBA issues the ``ALTER USER``, and the tool cannot know which DBA, so
   ``ALTER USER`` counts only from a policy enabled for every user.
 - **A common policy enabled in the root records nothing of local accounts**, and
-  looks like an every-user policy from the PDB. So a common policy is never
-  enough on its own.
+  looks like an every-user policy from the PDB. It does record a common
+  account's logon, in the root and in the PDB (AC6's control, AC9). So a common
+  policy counts for ``LOGON`` only where the person is a common account and the
+  policy is enabled ``BY`` them, the one shape AC9a measured for a proxy logon.
+  It never counts for ``ALTER USER``, whose DBA may be local.
 
 Each enabled policy is sorted, for each of the two actions, into *covers*,
 *might cover* or *does not cover*. One policy that covers an action settles it.
@@ -29,6 +32,7 @@ from dataclasses import dataclass
 
 from sopuli.driver.oracle.capabilities import UNREADABLE_CODES, Cursor
 from sopuli.driver.oracle.errors import from_error
+from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.protocol import AuditCoverage
 
 #: The two actions a DBA's routes use (UC-2 §1): an ``ALTER USER``, to reset the
@@ -64,6 +68,11 @@ ENABLED_OPTIONS = frozenset({BY_USER, EXCEPT_USER, BY_ROLE})
 #: no row at all is a release with no unified auditing (11.2).
 MODE_QUERY = "select value from v$option where parameter = 'Unified Auditing'"
 
+#: Whether the person is a common account. ``COMMON`` came with multitenant, in
+#: 12.1, as did unified auditing, so a database that answers :data:`MODE_QUERY`
+#: has the column.
+COMMON_QUERY = "select common from dba_users where username = :name"
+
 #: One row per way an enabled policy is enabled.
 ENABLED_QUERY = (
     "select policy_name, enabled_option, entity_name, success from audit_unified_enabled_policies"
@@ -76,6 +85,9 @@ OPTIONS_QUERY = (
     "from audit_unified_policies "
     "where policy_name in (select policy_name from audit_unified_enabled_policies)"
 )
+
+#: What a failed read of the two policy views is called in a detail.
+POLICY_VIEWS = "the audit policy views"
 
 #: What an operator can do when the policy views cannot be read.
 UNREADABLE = (
@@ -125,13 +137,21 @@ DOES_NOT = "does not cover"
 
 
 def verdict(
-    action: str, account: str, enablements: Sequence[Enablement], options: Sequence[Option]
+    action: str,
+    account: str,
+    enablements: Sequence[Enablement],
+    options: Sequence[Option],
+    *,
+    common: bool = False,
+    unread: str | None = None,
 ) -> tuple[str, str | None]:
     """Whether one policy covers ``action`` for ``account``, and why it might.
 
     ``enablements`` and ``options`` are one policy's rows, all of them: a policy
     enabled for a list has one row per user, and the list is read as a whole.
-    Returns the group and, for :data:`MIGHT`, the reason.
+    ``common`` is whether ``account`` is a common account, and ``unread`` the
+    server's error where that could not be read. Returns the group and, for
+    :data:`MIGHT`, the reason.
     """
     names = [one for one in options if _names(one, action)]
     unmeasured = [one for one in options if _unmeasured(one, action)]
@@ -160,7 +180,26 @@ def verdict(
         kinds = sorted({f"{one.type} {one.option}" for one in unmeasured})
         return MIGHT, f"{policy} has {', '.join(kinds)}, which nobody has measured"
     if any(one.common for one in names):
-        return MIGHT, f"{policy} is a common policy, which records nothing of local accounts"
+        # The person issues the logon, so a common person's logon is recorded
+        # (AC9). A DBA issues the ALTER USER, and that DBA may be local.
+        if action == ALTER_USER:
+            return MIGHT, (
+                f"{policy} is a common policy, which records nothing of a local DBA's {action}"
+            )
+        if unread is not None:
+            return MIGHT, (
+                f"{policy} is a common policy, and whether {account} is a common account "
+                f"could not be read: {unread}"
+            )
+        if not common:
+            return MIGHT, f"{policy} is a common policy, which records nothing of local accounts"
+        # AC9a measured a common policy enabled BY the person. For every user,
+        # EXCEPT a list or for a role, nobody has measured the proxy logon.
+        if account not in listed:
+            return MIGHT, (
+                f"{policy} is a common policy not enabled BY the person, and only that "
+                f"shape is measured to record a common person's logon"
+            )
     if any(one.condition for one in names):
         return MIGHT, f"{policy} has a condition, which is not evaluated"
 
@@ -181,11 +220,15 @@ def classify(
     enablements: Sequence[Enablement],
     options: Sequence[Option],
     account: str,
+    *,
+    common: bool = False,
+    unread: str | None = None,
 ) -> AuditCoverage:
-    """The answer for ``account``, from what the three reads returned.
+    """The answer for ``account``, from what the reads returned.
 
     ``mode`` is ``V$OPTION``'s value for ``Unified Auditing``, or ``None`` where it
-    has no such row.
+    has no such row. ``common`` is ``DBA_USERS.COMMON`` for ``account``, and
+    ``unread`` the server's error where that read failed.
     """
     covered: dict[str, list[str]] = {action: [] for action in ACTIONS}
     doubts: dict[str, list[str]] = {action: [] for action in ACTIONS}
@@ -193,7 +236,7 @@ def classify(
         rows = [one for one in enablements if one.policy == policy]
         names = [one for one in options if one.policy == policy]
         for action in ACTIONS:
-            group, reason = verdict(action, account, rows, names)
+            group, reason = verdict(action, account, rows, names, common=common, unread=unread)
             if group == COVERS:
                 covered[action].append(policy)
             elif group == MIGHT and reason is not None:
@@ -243,14 +286,14 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         mode = str(row[0]) if row and row[0] else None
         if mode is None:
             return AuditCoverage(audited=None, detail=NO_UNIFIED)
-        reading = "the audit policy views"
+        reading = POLICY_VIEWS
         cursor.execute(ENABLED_QUERY)
         enabled = [
             Enablement(
                 policy=str(policy),
                 option=str(option),
                 entity=str(entity),
-                success=str(success).upper() == "YES",
+                success=is_yes(success),
             )
             for policy, option, entity, success in cursor.fetchall()
         ]
@@ -261,22 +304,43 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
                 option=str(option),
                 type=str(kind),
                 condition=None if not condition or condition == "NONE" else str(condition),
-                common=str(common).upper() == "YES",
+                common=is_yes(common),
             )
             for policy, option, kind, condition, common in cursor.fetchall()
         ]
-        return classify(mode, enabled, options, account)
+        # Asked only where it can change the answer: a person's commonness
+        # matters for a common policy and for nothing else.
+        person_common, unread = (
+            _is_common(cursor, account) if any(one.common for one in options) else (False, None)
+        )
+        return classify(mode, enabled, options, account, common=person_common, unread=unread)
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
-        if reading != "V$OPTION" and diagnosis.code == NO_COLUMN:
+        if reading == POLICY_VIEWS and diagnosis.code == NO_COLUMN:
             return AuditCoverage(audited=None, detail=f"{OTHER_COLUMNS}: {diagnosis.message}")
-        if reading != "V$OPTION" and diagnosis.code in UNREADABLE_CODES:
+        if reading == POLICY_VIEWS and diagnosis.code in UNREADABLE_CODES:
             return AuditCoverage(audited=None, detail=UNREADABLE)
         return AuditCoverage(
             audited=None,
             detail=f"reading {reading} failed with {diagnosis.code or 'no code'}: "
             f"{diagnosis.message}",
         )
+
+
+def _is_common(cursor: Cursor, account: str) -> tuple[bool, str | None]:
+    """Whether ``account`` is a common account, and the server's error if that read failed.
+
+    A failed read is ``False``, the safe reading: it can only turn a common
+    policy's *covers* into *might cover*. The error is kept, with its code, so
+    the detail can say why the person was not counted as common.
+    """
+    try:
+        cursor.execute(COMMON_QUERY, {"name": account})
+        row = cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
+        diagnosis = from_error(error)
+        return False, f"{diagnosis.code or 'no code'}: {diagnosis.message}"
+    return bool(row) and is_yes(row[0]), None
 
 
 def _names(option: Option, action: str) -> bool:

@@ -18,6 +18,7 @@ from sopuli.driver.oracle.audit import (
     ALL_USERS,
     BY_ROLE,
     BY_USER,
+    COMMON_QUERY,
     ENABLED_QUERY,
     EXCEPT_USER,
     MODE_QUERY,
@@ -27,12 +28,14 @@ from sopuli.driver.oracle.audit import (
     UNREADABLE,
     Enablement,
     Option,
+    _is_common,
     classify,
     coverage_of,
 )
 from sopuli.driver.protocol import AuditCoverage
 
 PERSON = "ACME_DEV_ALICE"
+COMMON_PERSON = "C##ACME_DEV_CAROL"
 DBA = "ACME_DBA1"
 
 
@@ -307,6 +310,95 @@ def test_a_common_policy_records_nothing_of_local_accounts() -> None:
     assert "C##P is a common policy" in found.detail
 
 
+#: The install scripts' policies for a COMMON install run in the root with the
+#: person in the list, and in the PDB with no list. #839's case.
+ROOT_AND_PDB = (
+    [
+        enabled("SOPULI_POL"),
+        enabled("SOPULI_CDB_POL"),
+        enabled("SOPULI_CDB_PERSON_LOGON_POL", BY_USER, COMMON_PERSON),
+    ],
+    [
+        action("SOPULI_POL", "ALTER USER"),
+        action("SOPULI_CDB_POL", "ALTER USER", common=True),
+        action("SOPULI_CDB_PERSON_LOGON_POL", "LOGON", common=True),
+    ],
+)
+
+
+def test_a_common_policy_covers_a_common_persons_logon() -> None:
+    """Measured (AC9): a common logon policy enabled `BY` a common person records
+    their proxy logon in the root and in the PDB. With the PDB's every-user
+    `ALTER USER` policy, the reset is audited (#839)."""
+    enablements, options = ROOT_AND_PDB
+
+    found = classify("TRUE", enablements, options, COMMON_PERSON, common=True)
+
+    assert found.audited is True
+    assert found.detail == "LOGON by SOPULI_CDB_PERSON_LOGON_POL; ALTER USER by SOPULI_POL"
+
+
+def test_a_common_logon_policy_for_every_user_stays_unknown_for_a_local_person() -> None:
+    """AC6: a common policy enabled for every user looks like an every-user
+    policy from the PDB, and records nothing of a local account. Unchanged by
+    #839."""
+    found = classify(
+        "TRUE",
+        [enabled("SOPULI_POL"), enabled("C##LOGON")],
+        [action("SOPULI_POL", "ALTER USER"), action("C##LOGON", "LOGON", common=True)],
+        PERSON,
+        common=False,
+    )
+
+    assert found.audited is None
+    assert found.detail == (
+        "LOGON might be recorded: C##LOGON is a common policy, which records nothing of "
+        "local accounts; ALTER USER by SOPULI_POL"
+    )
+
+
+def test_a_common_policy_never_covers_alter_user_even_for_a_common_person() -> None:
+    """A DBA issues the `ALTER USER`, and the tool cannot know that the DBA is
+    common. The detail says why, and does not call the person local."""
+    found = classify(
+        "TRUE",
+        [enabled("C##P", BY_USER, COMMON_PERSON)],
+        both("C##P", common=True),
+        COMMON_PERSON,
+        common=True,
+    )
+
+    assert found.audited is None
+    assert found.detail.startswith("LOGON by C##P; ALTER USER might be recorded:")
+    assert "records nothing of a local DBA's ALTER USER" in found.detail
+
+
+@pytest.mark.parametrize(
+    "enablement",
+    [
+        enabled("C##LOG"),
+        enabled("C##LOG", EXCEPT_USER, DBA),
+        enabled("C##LOG", BY_ROLE, "ACME_DEV_ROLE"),
+    ],
+    ids=["every user", "except a list", "a role"],
+)
+def test_a_common_policy_not_enabled_by_the_person_might_cover_their_logon(
+    enablement: Enablement,
+) -> None:
+    """AC9a measured only a common policy enabled `BY` the person. Every other
+    shape is unmeasured for a proxy logon, so it is not counted."""
+    found = classify(
+        "TRUE",
+        [enablement, enabled("P")],
+        [action("C##LOG", "LOGON", common=True), action("P", "ALTER USER")],
+        COMMON_PERSON,
+        common=True,
+    )
+
+    assert found.audited is None
+    assert "C##LOG is a common policy not enabled BY the person" in found.detail
+
+
 def test_a_role_is_not_resolved() -> None:
     found = answer([enabled("P", BY_ROLE, "ACME_DBA_ROLE")], both("P"))
 
@@ -377,7 +469,11 @@ def test_no_unified_auditing_is_unknown() -> None:
 
 
 class Cursor:
-    """Answers each of the three queries from a table, or fails one of them."""
+    """Answers each of the four queries from a table, or fails one of them.
+
+    A query with no entry raises ``KeyError``, so a test cannot pass on a read it
+    forgot to answer.
+    """
 
     def __init__(self, answers: dict[str, Any], fail: dict[str, Exception] | None = None):
         self.answers = answers
@@ -399,6 +495,8 @@ class Cursor:
 
 
 def test_the_three_reads_are_classified() -> None:
+    """With no common policy enabled, the person's `COMMON` is not asked: it
+    cannot change the answer."""
     cursor = Cursor(
         {
             MODE_QUERY: ("TRUE",),
@@ -414,6 +512,67 @@ def test_the_three_reads_are_classified() -> None:
 
     assert found.audited is True
     assert [parameters for _, parameters in cursor.asked] == [None, None, None], "nothing bound"
+
+
+def test_the_persons_common_column_reaches_the_rules() -> None:
+    """`DBA_USERS.COMMON` decides whether a common logon policy counts (#839)."""
+    cursor = Cursor(
+        {
+            MODE_QUERY: ("TRUE",),
+            COMMON_QUERY: ("YES",),
+            ENABLED_QUERY: [
+                ("C##P", "BY USER", COMMON_PERSON, "YES"),
+                ("P", "BY USER", "ALL USERS", "YES"),
+            ],
+            OPTIONS_QUERY: [
+                ("C##P", "LOGON", "STANDARD ACTION", "NONE", "YES"),
+                ("P", "ALTER USER", "STANDARD ACTION", "NONE", "NO"),
+            ],
+        }
+    )
+
+    assert coverage_of(cursor, COMMON_PERSON).audited is True
+    assert (COMMON_QUERY, {"name": COMMON_PERSON}) in cursor.asked, "only the name is bound"
+    cursor.answers[COMMON_QUERY] = ("NO",)
+    assert coverage_of(cursor, COMMON_PERSON).audited is None
+
+
+@pytest.mark.parametrize(
+    ("row", "common"),
+    [(("yes",), True), (None, False), ((None,), False)],
+    ids=["lower case", "no row", "null"],
+)
+def test_the_common_column_is_read_carefully(row: Any, common: bool) -> None:
+    """No row or a `NULL` is a local person, the cautious reading."""
+    cursor = Cursor({COMMON_QUERY: row})
+    assert _is_common(cursor, COMMON_PERSON) == (common, None)
+
+
+def test_an_unreadable_common_column_keeps_the_servers_error() -> None:
+    """A failed `DBA_USERS` read never makes the answer `true`, and the detail
+    says why the person was not counted as common, with the server's code."""
+    cursor = Cursor(
+        {
+            MODE_QUERY: ("TRUE",),
+            ENABLED_QUERY: [
+                ("C##P", "BY USER", COMMON_PERSON, "YES"),
+                ("P", "BY USER", "ALL USERS", "YES"),
+            ],
+            OPTIONS_QUERY: [
+                ("C##P", "LOGON", "STANDARD ACTION", "NONE", "YES"),
+                ("P", "ALTER USER", "STANDARD ACTION", "NONE", "NO"),
+            ],
+        },
+        fail={COMMON_QUERY: RuntimeError("ORA-00942: table or view does not exist")},
+    )
+
+    found = coverage_of(cursor, COMMON_PERSON)
+
+    assert found.audited is None
+    assert f"whether {COMMON_PERSON} is a common account could not be read: ORA-00942" in (
+        found.detail
+    )
+    assert "records nothing of local accounts" not in found.detail
 
 
 def test_an_unreadable_policy_view_names_the_grant() -> None:

@@ -59,6 +59,8 @@ from typing import Any
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Binding, Config, PasswordPolicy
+from sopuli.config.password_keys import PasswordKey
+from sopuli.config.password_keys import password_key as stored_at
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
@@ -186,35 +188,20 @@ class DocumentWrite:
         return tuple(dict.fromkeys(candidate.binding.account for candidate in self.candidates))
 
 
-@dataclass(frozen=True)
-class PasswordKey:
-    """One password: a place in one document.
-
-    ``document`` is the :class:`~sopuli.lock.keys.LockKey` the write and the
-    lock use, so "shares a password" cannot disagree with "shares a write".
-    Two bindings with one key are one password whatever else differs.
-    """
-
-    document: LockKey
-    field: str | None
-    pointer: str | None
-
-
 #: How a caller draws or validates one binding's password.
 DrawFunction = Callable[[Binding], Candidate]
 
 
 def password_key(binding: Binding) -> PasswordKey | None:
-    """Where ``binding``'s password is stored.
+    """Where ``binding``'s password is stored, the key the loader's checks use too.
 
     ``None`` where it names no ref or no store yet. :func:`group` refuses such a
     binding, so it never reaches a write.
     """
-    ref = binding.secret
-    if ref is None or binding.vault is None:
+    key = stored_at(binding)
+    if key is None or key.store is None:
         return None
-    document = LockKey(store=binding.vault, path=normalise_path(ref.path))
-    return PasswordKey(document=document, field=ref.field, pointer=ref.pointer)
+    return key
 
 
 def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate]:

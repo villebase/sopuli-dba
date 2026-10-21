@@ -33,8 +33,8 @@ What each environment is, and what to know before using it:
 - **12.2.0.1 EE**, profile `oracle12c`, is maintainer-only on the same terms as
   19.3, and needs a one-time `docker exec` after its first start. See
   `docs/maintainer-environments.md` §3.
-- `nne` and `emulators` do not start. `nne` exits on its first start, and
-  `emulators` names an image tag that does not exist (#937).
+- `nne` and `emulators` do not start (#937). `nne` exits with `ORA-01078` on
+  every start, and `emulators` names an image tag that does not exist.
 
 CI starts tier 1 for each pull request, except one that changes only files
 that `.github/workflows/tier1.yml` lists under `paths-ignore`. Every other
@@ -50,8 +50,8 @@ Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testi
 ```bash
 docker compose --profile tier0 up -d      # Vault + PostgreSQL, seconds
 docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
-docker compose --profile tier2 up -d      # + 21c/18c/11g XE, minutes
-docker compose --profile nne   up -d      # Oracle requiring Native Network Encryption
+docker compose --profile tier2 up -d      # + 21c/18c/11g XE, about 90 s once pulled
+docker compose --profile nne   up -d      # Oracle requiring NNE; does not start yet (#937)
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
 docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only; run its init.sh once, then healthy

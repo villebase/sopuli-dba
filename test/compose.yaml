@@ -6,8 +6,8 @@
 # carries tier1 and tier2, so moving up a tier adds services and recreates nothing.
 #   docker compose --profile tier0 up -d     # Vault + PostgreSQL, seconds
 #   docker compose --profile tier1 up -d     # + Oracle Free, ~30-60 s to healthy
-#   docker compose --profile tier2 up -d     # + older Oracle lines, several minutes
-#   docker compose --profile nne   up -d     # Oracle with Native Network Encryption required
+#   docker compose --profile tier2 up -d     # + older Oracle lines, ~90 s once pulled
+#   docker compose --profile nne   up -d     # Oracle requiring NNE; does not start yet (#937)
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
 #   docker compose --profile oracle12c up -d # 12.2.0.1 EE, maintainer-only

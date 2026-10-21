@@ -369,8 +369,11 @@ the pair: a documented column that is empty with nothing saying why is a gap in
 the contract. So `account list` prints `-` and carries a warning that says
 which absence it is. **That warning is `SOPULI-W023`**, once per run, not once per
 account, because a missing journal is a property of the configuration, while a
-missing database date is a property of one account. It reports what exists; the
-verb does not fail because history is missing.
+missing database date is a property of one account. The text output prints
+both reasons as notes under the table. It leaves out `SOPULI-W023` when no
+target answered, because then there is no `RESET_AT` to explain, and the run
+document still carries it. It reports what exists; the verb does not fail
+because history is missing.
 
 ### What declares a personal account
 

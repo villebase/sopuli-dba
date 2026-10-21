@@ -19,12 +19,34 @@ constraint caveats, and ``03-json-output.md`` §3 says it per diagnostic code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from sopuli.output.palette import Role, paint
 
-__all__ = ["render_hints", "render_notices", "render_warnings"]
+__all__ = ["render_hints", "render_notices", "render_warnings", "unknown_change_dates"]
+
+
+def unknown_change_dates(found: Iterable[tuple[str, str, str | None]]) -> list[str]:
+    """Why ``DB_PW_CHANGED`` is empty (`SOPULI-W021`), one line per target and reason.
+
+    ``found`` is ``(target, account, reason)`` for each row; a row with no reason
+    is skipped. `creds status` and `account list` both print it through this, so
+    the two commands describe one absence in the same words.
+
+    **Grouped per target and reason**, where the document carries it per
+    result. An 18c target with forty accounts on it has one missing column, and
+    forty identical lines teach the reader to skip the notes block.
+    """
+    unknown: dict[tuple[str, str], list[str]] = {}
+    for target, account, reason in found:
+        if reason:
+            unknown.setdefault((target, reason), []).append(account)
+    lines = []
+    for (target, reason), accounts in unknown.items():
+        who = accounts[0] if len(accounts) == 1 else f"{len(accounts)} accounts"
+        lines.append(f"{target}: DB_PW_CHANGED is empty for {who}: {reason}")
+    return lines
 
 
 def render_warnings(warnings: Sequence[str]) -> list[str]:

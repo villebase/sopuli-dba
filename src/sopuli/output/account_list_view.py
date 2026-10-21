@@ -31,7 +31,7 @@ from typing import Any
 from sopuli.account_list import ABSENT, ACCOUNT_MISSING, DECLARED, ERROR, Row
 from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN
 from sopuli.output.document import Diagnostic, Error, Summary
-from sopuli.output.notices import render_notices
+from sopuli.output.notices import render_notices, unknown_change_dates
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 
@@ -152,7 +152,7 @@ def summarise(rows: Sequence[Row]) -> Summary:
     )
 
 
-def render_account_list(rows: Sequence[Row]) -> str:
+def render_account_list(rows: Sequence[Row], *, run_notes: Sequence[str] = ()) -> str:
     """The table, or a sentence where the declaration matched nothing.
 
     **Matching nothing is a true answer and reads like one.** §2's asymmetry says
@@ -164,6 +164,13 @@ def render_account_list(rows: Sequence[Row]) -> str:
     `role:` predicate the commonest one is `SYSTEM`, admitted because creating a
     role grants it to the creator. A reader of the table alone would not know
     that no reset touches it.
+
+    **A ``-`` in a date column says why, under the table.** `SOPULI-W021` is
+    per account and is grouped per target and reason, as `creds status` prints
+    it. ``run_notes`` are the run's own, such as `SOPULI-W023` for an empty
+    ``RESET_AT``, and are printed last. The command decides which apply. They
+    are not the config's warnings, which the emitter prints from
+    ``warnings_text``.
     """
     if not rows:
         return "no declared personal accounts on the selected targets"
@@ -189,7 +196,12 @@ def render_account_list(rows: Sequence[Row]) -> str:
             for row in rows
         ],
     )
-    return "\n".join([*lines, "", _count(rows), *render_notices(_notes(rows))])
+    dates = unknown_change_dates(
+        (row.target, row.account, None if row.state is None else row.state.password_changed_unknown)
+        for row in rows
+    )
+    notes = [*_notes(rows), *dates, *run_notes]
+    return "\n".join([*lines, "", _count(rows), *render_notices(notes)])
 
 
 def _notes(rows: Sequence[Row]) -> list[str]:

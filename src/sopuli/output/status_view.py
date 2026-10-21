@@ -36,7 +36,7 @@ from sopuli.diagnostics import (
 from sopuli.driver.oracle.rollover import days as rollover_days
 from sopuli.driver.protocol import UserState
 from sopuli.output.document import Diagnostic, Error, Summary
-from sopuli.output.notices import render_notices
+from sopuli.output.notices import render_notices, unknown_change_dates
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.status import PENDING_APPLY, Row
@@ -163,7 +163,7 @@ def _warnings(row: Row) -> list[dict[str, Any]]:
             )
         )
     unknown = None if row.user is None else row.user.password_changed_unknown
-    if unknown is not None:
+    if unknown:
         # Beside the `password_age_days` it explains, one per result.
         found.append(
             Diagnostic(
@@ -278,10 +278,9 @@ def _notices(rows: Sequence[Row]) -> list[str]:
     emphasis. What has no column is the window and when it closes, and the
     reason behind a ``-``.
 
-    **The reason is grouped per target and reason**, where the document carries
-    it per result. An 18c target with forty accounts on it has one
-    missing column, and forty identical lines under a table teach the reader to
-    skip the notes block -- including the grace period above them.
+    The reason is grouped per target and reason by
+    :func:`~sopuli.output.notices.unknown_change_dates`, which `account list`
+    shares.
     """
     found = []
     for row in rows:
@@ -289,14 +288,16 @@ def _notices(rows: Sequence[Row]) -> list[str]:
         if grace is not None:
             found.append(f"{row.binding.account} on {row.binding.target}: {grace}")
 
-    unknown: dict[tuple[str, str], list[str]] = {}
-    for row in rows:
-        reason = None if row.user is None else row.user.password_changed_unknown
-        if reason is not None:
-            unknown.setdefault((row.binding.target, reason), []).append(row.binding.account)
-    for (target, reason), accounts in unknown.items():
-        who = accounts[0] if len(accounts) == 1 else f"{len(accounts)} accounts"
-        found.append(f"{target}: DB_PW_CHANGED is empty for {who}: {reason}")
+    found.extend(
+        unknown_change_dates(
+            (
+                row.binding.target,
+                row.binding.account,
+                None if row.user is None else row.user.password_changed_unknown,
+            )
+            for row in rows
+        )
+    )
     return found
 
 

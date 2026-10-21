@@ -191,9 +191,9 @@ what it was used for during the Actions incident in #233.
 - release-please runs on push to `main`, maintains a standing release PR
   with the accumulated changelog and version bump. Merging that PR is the
   explicit act that cuts the tag and GitHub Release.
-- **The same merge publishes to PyPI** (#545). `release-please.yml` carries two
-  more jobs, gated on the action's `release_created` output: `build` checks out
-  the new tag, installs `build`, `hatchling` and `twine` from
+- **The same merge publishes to PyPI** (#545). `release-please.yml` carries
+  three more jobs, gated on the action's `release_created` output: `build`
+  checks out the new tag, installs `build`, `hatchling` and `twine` from
   `.github/requirements/release.txt` with `--require-hashes`, runs
   `python -m build --no-isolation` and `twine check --strict`, and uploads
   `dist/`. `--no-isolation` makes the build use the pinned `hatchling`.
@@ -202,7 +202,11 @@ what it was used for during the Actions incident in #233.
   `publish` downloads `dist/` and hands it to `pypa/gh-action-pypi-publish`
   through trusted publishing. There is no PyPI token anywhere: `publish` holds an
   OIDC token PyPI trusts for that one workflow, and `id-token: write` is the only
-  permission it has. On a push that cuts no release, both jobs show as skipped.
+  permission it has. `release-assets` then signs the same `dist/` files with
+  Sigstore and attaches each file and its `.sigstore.json` bundle to the GitHub
+  release. That is what Scorecard's Signed-Releases check reads (#947). It is a
+  job of its own because attaching needs `contents: write`, which `publish` must
+  not hold. On a push that cuts no release, all three show as skipped.
 - **They are jobs in this workflow and not a separate one on
   `release: published`**, which would never run. release-please creates the
   Release with the workflow's `GITHUB_TOKEN`, and GitHub starts no workflow run

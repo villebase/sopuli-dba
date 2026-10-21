@@ -9,7 +9,7 @@ name: release-please
 # `release: published`, because release-please creates the Release with this
 # workflow's GITHUB_TOKEN, and GitHub starts no workflow run for an event that
 # token caused -- a separate workflow would silently never run. On every push
-# that cuts no release, `build` and `publish` show as skipped.
+# that cuts no release, `build`, `publish` and `release-assets` show as skipped.
 
 on:
   push:
@@ -91,3 +91,40 @@ jobs:
           path: dist/
       # Attestations are on by default from v1.11; do not set `attestations: false`.
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  # The same files on the GitHub release, each with a Sigstore bundle (#947).
+  # Scorecard's Signed-Releases check reads release assets, not PyPI, so the PEP
+  # 740 attestations above do not count for it. A job of its own, after
+  # `publish`, so `publish` keeps only its OIDC token: attaching assets needs
+  # `contents: write`, and signing needs an OIDC token of this job's own. It
+  # takes the `dist` artifact `publish` uploaded, never a rebuild, so the
+  # release carries the bytes that are on PyPI.
+  release-assets:
+    needs: [release-please, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      # Writes `<file>.sigstore.json` beside each file, then verifies each bundle
+      # against this workflow's identity, so a bundle that would not verify for
+      # a user stops the job before anything is attached. Its own release upload
+      # works only on a `release` event, which this run is not, so it is off and
+      # the step below attaches the files.
+      - uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.workflow_ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+          release-signing-artifacts: false
+          upload-signing-artifacts: false
+      - name: attach the files and their bundles to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber

@@ -192,9 +192,10 @@ jobs:
     # because the cp1252 stream-encoding bug (#12, fixed in #14) was Windows-only
     # and invisible on Linux, and P4 requires identical behaviour on both.
     #
-    # **Windows runs one interpreter, not three**, and the axis it is here for is
-    # kept whole. Windows minutes bill at 2x and round up per job, so those three
-    # cells were two thirds of this workflow's cost. What they were buying:
+    # **Windows runs one interpreter, not every version**, and the axis it is here
+    # for is kept whole. Windows minutes bill at 2x and round up per job. When the
+    # matrix had three versions, their three Windows cells were two thirds of this
+    # workflow's cost. What they were buying:
     #
     # * the platform axis -- one cell covers it, and that is the axis the
     #   cp1252 bug, `config/permissions.py`'s DACL walk and the wallet permission
@@ -203,8 +204,8 @@ jobs:
     #   matrix rather than once (workflow.md) -- also per-platform, and pinned to
     #   `python_version = "3.11"` in pyproject.toml, so mypy gives the identical
     #   answer whichever interpreter starts it;
-    # * the interpreter axis -- untouched, because Linux still runs all three and
-    #   nothing in `src/` or `tests/` branches on `sys.version_info`.
+    # * the interpreter axis -- untouched, because Linux still runs every version
+    #   and nothing in `src/` or `tests/` branches on `sys.version_info`.
     #
     # 3.13 rather than the floor: Linux 3.11 already fails first on anything
     # version-specific, so the Windows cell is better spent on what people install.
@@ -218,13 +219,11 @@ jobs:
       # Windows-only or 3.11-only is most of the diagnosis.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
-        exclude:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        include:
           - os: windows-latest
-            python-version: "3.11"
-          - os: windows-latest
-            python-version: "3.12"
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

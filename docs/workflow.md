@@ -125,19 +125,19 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   OS-independent: it narrows `sys.platform` to the platform it runs on, so
   Windows-only branches are dead code to a Linux run and never get checked
   there.
-- **The matrix is Python 3.11/3.12/3.13 on Linux, and 3.13 alone on Windows.**
+- **The matrix is Python 3.11 to 3.15 on Linux, and 3.13 alone on Windows.**
   3.11 because `requires-python` allows it; Windows because the cp1252
   stream-encoding bug (#12) was invisible on Linux and P4 requires identical
   behaviour on both. macOS is out, per D5.
 
-  Windows bills at 2× and rounds up per job, so three Windows cells were two
-  thirds of this workflow's cost. One cell keeps every axis they were buying: the
+  Windows bills at 2× and rounds up per job. When the matrix had three versions,
+  their three Windows cells were two thirds of this workflow's cost. One cell keeps every axis they were buying: the
   platform axis is per-platform by definition, mypy's narrowing is too — and is
   pinned to `python_version = "3.11"` in `pyproject.toml`, so it gives the same
   answer whichever interpreter starts it — and the interpreter axis is still run
   in full on Linux, with nothing in `src/` or `tests/` branching on
-  `sys.version_info`. Restoring the other two cells is a two-line revert if a
-  Windows-and-version-specific break ever appears.
+  `sys.version_info`. If a Windows-and-version-specific break ever appears,
+  another Windows cell is one more `include` entry in the matrix.
 
 ### "main is always green" is discipline, not enforcement
 

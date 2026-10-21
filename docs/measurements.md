@@ -10,10 +10,13 @@ keeps the `ALTER USER` text in `V$SQLSTATS`, and every later release measured
 does not. So always name the full release, such as `19.32.0.0.0`, and never
 "19c".
 
-Each script in `sql/oracle/` has a header that records its own runs in detail.
-`tests/test_measurements.py` checks that the releases a script's header names are
-the same releases the *Scripts* table below lists for it. When you run a script
-on a new release, update both.
+Each script in `sql/oracle/` has a header that records its own runs in detail. A
+Python probe's header is its docstring. `tests/test_measurements.py` checks that
+the releases a script's header names are the same releases the *Scripts* table
+below lists for it. A Python probe with no rows of its own, beside a SQL script of
+the same name, may name only releases that the SQL script's rows list. An Instant
+Client release is not compared. When you run a script on a new release, update
+both.
 
 The tier-1 suite in CI is not a measurement here. It pulls the moving
 `gvenzl/oracle-free:latest` image, so a green CI run does not show which

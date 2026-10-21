@@ -1,19 +1,27 @@
 """The measurement matrix agrees with the headers of the scripts in `sql/oracle/`.
 
-Tier 0: reads Markdown and SQL comments.
+Tier 0: reads Markdown, SQL comments and Python docstrings.
 
 `docs/measurements.md` is the one place that says which script ran on which
 Oracle release. Each script's header records the same runs in more detail. This
 module checks that the two name the same releases, so a run recorded in one and
 not the other fails here.
 
-A release is written in full, five numbers: `19.32.0.0.0`, not `19c`. The header
-is the comment block at the top of the script, up to its first line that is not
-a comment.
+A release is written in full, five numbers: `19.32.0.0.0`, not `19c`. A SQL
+script's header is the comment block at the top, up to its first line that is
+not a comment. A Python probe's header is its module docstring, read with `ast`
+so that the probe, which imports `oracledb`, is not imported. An Instant Client
+release in a header is the client's, not a database's, so it is not compared.
+
+A Python probe with rows of its own is checked like a SQL script. A probe with
+no rows that has a SQL script of the same name reads that script's output, as
+`06_verifier_reproduce.py` does, so it may name only releases that the script's
+rows list.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -27,18 +35,27 @@ SCRIPTS = ROOT / "sql" / "oracle"
 
 #: A full Oracle release, such as `19.32.0.0.0` or `11.2.0.2.0`.
 RELEASE = re.compile(r"\b\d{2}\.\d{1,2}\.\d\.\d\.\d\b")
+#: The client a probe ran with, such as `Instant Client 23.26.3.0.0`.
+CLIENT = re.compile(r"Instant\s+Client\s+" + RELEASE.pattern)
 #: The marker on the line before the *Scripts* table.
 MARKER = "<!-- measurements: scripts -->"
+#: Every script and probe whose header is checked.
+PROBES = sorted([*SCRIPTS.glob("*.sql"), *SCRIPTS.glob("*.py")])
 
 
 def _header(script: Path) -> str:
-    """The comment block at the top of a SQL script."""
-    lines = []
-    for line in script.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("--"):
-            break
-        lines.append(line)
-    return "\n".join(lines)
+    """A SQL script's top comment block, or a Python probe's docstring."""
+    text = script.read_text(encoding="utf-8")
+    if script.suffix == ".py":
+        header = ast.get_docstring(ast.parse(text)) or ""
+    else:
+        lines = []
+        for line in text.splitlines():
+            if not line.startswith("--"):
+                break
+            lines.append(line)
+        header = "\n".join(lines)
+    return CLIENT.sub("", header)
 
 
 def _rows() -> list[list[str]]:
@@ -80,11 +97,20 @@ def test_every_row_names_one_release_and_a_date() -> None:
         assert result, f"{script} {release}: empty result"
 
 
-@pytest.mark.parametrize("script", sorted(SCRIPTS.glob("*.sql")), ids=lambda p: p.name)
+@pytest.mark.parametrize("script", PROBES, ids=lambda p: p.name)
 def test_a_script_header_and_the_matrix_name_the_same_releases(script: Path) -> None:
     requires_repo(MATRIX)
     in_header = _released(_header(script))
-    in_matrix = _matrix().get(script.name, set())
+    matrix = _matrix()
+    companion = script.with_suffix(".sql")
+    if script.suffix == ".py" and script.name not in matrix and companion.is_file():
+        ran = matrix.get(companion.name, set())
+        assert in_header <= ran, (
+            f"{script.name} reads the output of {companion.name}, and names "
+            f"{sorted(in_header - ran)} that {MATRIX.name} does not list for it."
+        )
+        return
+    in_matrix = matrix.get(script.name, set())
     assert in_header == in_matrix, (
         f"{script.name}: the header names {sorted(in_header - in_matrix)} that "
         f"{MATRIX.name} does not, and {MATRIX.name} names {sorted(in_matrix - in_header)} "

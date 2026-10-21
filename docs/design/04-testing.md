@@ -89,8 +89,9 @@ the service limits that a fixed set of secrets can reach
 
 ### Emulators: smoke tests only
 
-The `emulators` profile in `test/compose.yaml` runs `lowkey-vault` (Azure Key
-Vault, which has a Python example). `cameritelabs/oci-emulator` and Floci
+The `emulators` profile in `test/compose.yaml` is for `lowkey-vault` (Azure Key
+Vault, which has a Python example). It does not start yet, because it names an
+image tag that does not exist (#937). `cameritelabs/oci-emulator` and Floci
 emulate OCI, and neither is in the stack yet. A passing emulator test shows only
 that the code path runs. **The authoritative test for a cloud store is the real
 service.** That is what the OCI tenancy is for. Nobody knows or maintains the

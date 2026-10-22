@@ -68,7 +68,8 @@ PERMITTED = {
         "numbered exception: invariant 2 enumerates the paths a *password* may take, "
         "and material the tool presents to a service it is calling has always been a "
         "separate already-accepted class. A chat URL is a credential (C9), so it is a "
-        "`Secret`, and it is revealed where every credential is -- at the wire"
+        "`Secret`, and it is revealed where every credential is -- at the wire -- "
+        "and once before, to check its scheme and host, which lets neither out"
     ),
     "driver/oracle/statements.py": "building the DDL, which is the driver call's text",
     "driver/oracle/trace.py": (

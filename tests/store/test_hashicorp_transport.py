@@ -419,3 +419,29 @@ def test_a_fault_in_the_tool_is_not_reported_as_the_store() -> None:
 
     with pytest.raises(TypeError):
         transport.request("POST", "kv/data/acme", json={"value": object()})
+
+
+# ------------------------------------------------- plain HTTP, refused ---
+
+
+@pytest.mark.parametrize(
+    "addr", ["http://127.0.0.1:8200", "http://[::1]:8200", "http://localhost:8200"]
+)
+def test_a_loopback_address_opens(addr: str) -> None:
+    build_transport(vault(addr=addr), token=Secret("t")).close()
+
+
+@pytest.mark.parametrize(
+    "addr", ["http://vault.example.com:8200", "http://localhost.example.com:8200"]
+)
+def test_a_vault_built_in_code_is_refused_at_open(addr: str) -> None:
+    """The loader refuses this on the merged address. This is the last point
+    before the token goes anywhere, for a `Vault` that did not come through it."""
+    with pytest.raises(StoreError) as caught:
+        build_transport(vault(addr=addr), token=Secret("t"))
+
+    assert caught.value.message == (
+        "vault 'vault-prod': its address must use https://, and this one uses http"
+    )
+    assert caught.value.hint is not None
+    assert "127.0.0.1, ::1 or localhost" in caught.value.hint

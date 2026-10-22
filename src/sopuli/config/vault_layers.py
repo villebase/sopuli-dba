@@ -73,6 +73,7 @@ from sopuli.config.codes import (
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
+from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.config.vault_env import (
     NO_ENV,
     default_store,
@@ -193,6 +194,28 @@ def _refuse_inert_merge_patch(vault: Vault, values: Mapping[str, Any]) -> None:
         )
 
 
+def _refuse_plain_http(vault: Vault, answer: Resolved | None) -> None:
+    """A HashiCorp store's address must be ``https://``, except to loopback.
+
+    Checked on the merged address, so an address from the file, a profile,
+    ``VAULT_ADDR`` or ``--vault-addr`` is refused the same way, and the message
+    names the one that won. Only a HashiCorp store reads ``addr`` as a URL: a
+    ``file`` store reads it as a path. The rule is
+    :mod:`sopuli.config.plain_http`.
+    """
+    if vault.type != "hashicorp" or answer is None:
+        return
+    scheme = plain_http_scheme(answer.value)
+    if scheme is None:
+        return
+    raise ConfigError(
+        f"vault {vault.name!r}: the address {answer.detail} gives must use https://, "
+        f"and this one uses {scheme}",
+        at=ROOT,
+        hint=PLAIN_HTTP_HINT,
+    )
+
+
 def _merge(
     vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
 ) -> tuple[Vault, list[ConfigWarning]]:
@@ -223,6 +246,7 @@ def _merge(
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
     _refuse_inert_merge_patch(vault, values)
+    _refuse_plain_http(vault, settings.get("addr"))
     for overridden in (
         _addr_overridden(vault.name, settings.get("addr")),
         _namespace_overridden(vault.name, settings.get("namespace")),

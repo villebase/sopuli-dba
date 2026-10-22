@@ -33,6 +33,8 @@ import time
 
 import httpx
 
+from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
@@ -50,14 +52,34 @@ LOG = logger("webhook")
 BODY_KEY = "text"
 
 
+def check_url(url: Secret) -> None:
+    """Refuse a webhook URL that is not ``https://``, unless it is to loopback.
+
+    The URL carries the chat token, so over plain HTTP the token crosses the
+    network in clear. The file names where the URL is, not the URL, so the
+    loader cannot see it. The caller checks it when it resolves the URL, which
+    is before a password is drawn. The message gives the scheme only, because
+    the URL is the credential.
+    """
+    scheme = plain_http_scheme(url.reveal())
+    if scheme is not None:
+        raise ConfigError(
+            f"delivery.notify.webhook.url: the webhook URL must use https://, and this one "
+            f"uses {scheme}",
+            at=ROOT,
+            hint=PLAIN_HTTP_HINT,
+        )
+
+
 def send(url: Secret, message: str) -> None:
     """Post ``message`` to ``url``, or raise.
 
     ``url`` is a :class:`~sopuli.secrets.Secret` because a chat incoming-webhook
     URL embeds its own credential -- that is C9's reason for the config key being a
-    MaterialRef, carried through to the value. It is revealed here and nowhere else,
-    and `tests/test_reveal_sites.py` records the site -- **as a credential on the
-    wire, not as a sixth numbered exception to invariant 2.** That invariant
+    MaterialRef, carried through to the value. It is revealed in this module only:
+    here, at the wire, and in :func:`check_url`, which reads its scheme and host
+    and lets neither out. `tests/test_reveal_sites.py` records the module -- **as
+    a credential on the wire, not as a sixth numbered exception to invariant 2.** That invariant
     enumerates the paths a *password* may take; material the tool presents to a
     service it is calling is a separate class the list has always held, beside the
     vault login and the store transport's token, for the reason that a credential

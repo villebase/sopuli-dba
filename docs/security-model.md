@@ -353,6 +353,12 @@ through `ps` on Linux and the process list on Windows. Where a flag has to name 
 secret, it names *where the secret is* — `--vault-token-file PATH` — and never the
 secret. A supplied password arrives on standard input instead.
 
+**On the network: never in clear.** The tool refuses a vault address that is not
+`https://`, and a notification webhook URL that is not `https://`. Over plain
+HTTP the vault token, the passwords the tool writes, and the webhook's own token
+would cross the network in clear. The one exception is an address on the same
+machine: `127.0.0.1`, `::1` or `localhost`. No setting turns the refusal off.
+
 **A password containing a double quote is rejected.** Oracle's quoted identifiers
 have no escape sequence for `"`, so there is no correct way to send one. The tool
 refuses the password rather than mangling it or guessing.

@@ -3108,8 +3108,8 @@ def _notify_channel(delivery: Delivery) -> _NotifyChannel | None:
     notify -- an estate chose that, and `config validate` is where the choice is
     reported.
 
-    **Invariant 4, and the reason this is not inside :func:`_notify`.** Two things
-    here can fail for reasons knowable in advance, and both must fail early:
+    **Invariant 4, and the reason this is not inside :func:`_notify`.** Three things
+    here can fail for reasons knowable in advance, and all must fail early:
 
     - the client may not be installed, which :func:`~sopuli.notify.registry.resolve`
       turns into `SOPULI-20003` at exit 9. `_notify` catches everything so that a
@@ -3120,7 +3120,10 @@ def _notify_channel(delivery: Delivery) -> _NotifyChannel | None:
       `MaterialRef` names is absent. A missing variable leaves nobody told, as a
       refused request does, but the timing differs: a refused request is news and
       an unset variable is a configuration error, and the second one is
-      answerable before a password is drawn.
+      answerable before a password is drawn;
+    - the URL may not be ``https://``, and not to a loopback host, which would
+      send the chat token in clear. The file cannot show the URL, so this is the
+      first place it can be refused.
 
     What is left to fail at send time is the send, which is what `SOPULI-W026` is
     for.
@@ -3136,6 +3139,7 @@ def _notify_channel(delivery: Delivery) -> _NotifyChannel | None:
         env=material_environment(),
         where="delivery.notify.webhook.url",
     )
+    sender.check_url(url)
     return _NotifyChannel(notify=notify, sender=sender, url=url)
 
 

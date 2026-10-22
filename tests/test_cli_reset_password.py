@@ -1348,6 +1348,10 @@ class Recorder:
     def __init__(self) -> None:
         self.messages: list[str] = []
 
+    def check_url(self, url: Any) -> None:
+        """The rule is tested in `tests/test_notify_webhook.py`. A sender only
+        has to answer, as every notifier module does."""
+
     def send(self, url: Any, message: str) -> None:
         self.messages.append(message)
 

@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from sopuli.config.model import Vault, VaultTls
+from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
@@ -207,6 +208,16 @@ def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
         raise StoreError(
             f"vault {vault.name!r} has no `addr`, and a HashiCorp store needs one",
             hint="add `addr: https://…` to the entry under `vaults:`",
+        )
+    # The loader refuses this on the merged address, whichever layer set it.
+    # Checked again here because a `Vault` can also be built in code, and this is
+    # the last point before the token goes anywhere. A `StoreError`, as the
+    # missing `addr` above is, because that is what this layer's callers handle.
+    scheme = plain_http_scheme(vault.addr)
+    if scheme is not None:
+        raise StoreError(
+            f"vault {vault.name!r}: its address must use https://, and this one uses {scheme}",
+            hint=PLAIN_HTTP_HINT,
         )
 
     verify = build_ssl_context(vault.tls)

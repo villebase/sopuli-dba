@@ -649,6 +649,9 @@ target. `creds check --method hash|both` adds names about an account:
 - `verifier_charset`: the database character set cannot hold the vault value.
 
 `error.hint` names the account, because per-account detail goes there.
+`encrypted_connection` is about a connection: `safety.require_encryption`
+requires one and the target's is not encrypted, or its encryption could not be
+read (#857). Its `error.hint` names the key that required it.
 `offline_verify` is the probe's name for a `SYS.USER$` that this session cannot
 read. On Autonomous Database its hint says that no account there can read it,
 and does not advise a grant nobody there can make.

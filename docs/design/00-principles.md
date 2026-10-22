@@ -577,8 +577,8 @@ resolver — see `adr-002-cli-framework.md`.
 **Safety settings only ratchet toward safe** (invariant 10). No source can relax
 them. `SAFETY_SETTINGS` in `sopuli/settings/registry.py` lists them, and
 `tests/settings/test_ratchet.py` checks each one. They include the `--dry-run`
-flag, `readonly: true`, `safety.max_targets`, `safety.confirm_environments` and
-`safety.delivery.allowed_methods`.
+flag, `readonly: true`, `safety.max_targets`, `safety.confirm_environments`,
+`safety.delivery.allowed_methods` and `safety.require_encryption`.
 
 - If the config says `readonly: true`, no flag re-enables writes. That includes
   `--force`, which is not a setting and has no layer. A run that would mutate a
@@ -681,7 +681,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.1.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-3.2.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

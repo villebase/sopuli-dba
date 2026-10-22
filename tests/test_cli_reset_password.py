@@ -250,6 +250,32 @@ def test_a_dry_run_changes_nothing(
     assert account() == before == "OPEN", "the preview issued the DDL"
 
 
+def test_a_reset_over_an_unencrypted_connection_is_refused_when_encryption_is_required(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+) -> None:
+    """#857, against the tier-1 stack, whose connection is plain TCP with no NNE.
+    Exit 5 before a password is drawn, so the account is still open, and the
+    preview is refused too: it would otherwise say "would be reset"."""
+    config = MANUAL.format(
+        dsn=live_oracle.dsn,
+        user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+        account=ACCOUNT,
+    ).replace(
+        "defaults:\n  policy: personal-standard\n",
+        "defaults:\n  policy: personal-standard\n  safety: { require_encryption: true }\n",
+    )
+
+    result = run(runner, write_config(config), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    assert 'target "tier1-oracle" does not support encrypted_connection' in str(result.exception)
+    assert "`defaults.safety.require_encryption` requires it" in str(result.exception.hint)
+    assert account() == "OPEN"
+
+
 def test_the_preview_prints_no_password(
     runner: CliRunner,
     write_config: WriteConfig,

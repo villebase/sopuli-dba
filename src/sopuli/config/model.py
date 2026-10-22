@@ -190,16 +190,19 @@ class Safety:
     safety settings do *not* follow last-one-wins: the resolved value is the
     safest of all layers -- the lowest ``max_targets``, the union of
     ``confirm_environments``, the *intersection* of
-    ``delivery.allowed_methods``, ``readonly`` if any layer sets it. A layer that
-    says nothing must therefore be distinguishable from one that sets the
-    built-in default, or "safest of all layers" cannot be computed. Resolution
-    itself belongs to the precedence work; this only reads what was written.
+    ``delivery.allowed_methods``, ``readonly`` and ``require_encryption`` if any
+    layer sets them. A layer that says nothing must therefore be distinguishable
+    from one that sets the built-in default, or "safest of all layers" cannot be
+    computed. Resolution itself belongs to the precedence work; this only reads
+    what was written.
     """
 
     max_targets: int | None = None
     confirm_environments: tuple[str, ...] = ()
     readonly: bool | None = None
     delivery: SafetyDelivery | None = None
+    #: Refuse to send a password over a connection that is not encrypted (#857).
+    require_encryption: bool | None = None
 
 
 @dataclass(frozen=True)

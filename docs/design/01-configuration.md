@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -388,7 +388,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
 version: 1
 
 runtime:
@@ -1451,6 +1451,7 @@ keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 | `confirm_environments` | environments a mutation may not enter without an explicit yes |
 | `readonly` | refuse every mutation |
 | `delivery.allowed_methods` | the UC-2 delivery methods this layer permits. At least one — the list only ever narrows, so a layer permitting nothing could never be widened by a later one and is refused rather than stored |
+| `require_encryption` | refuse to send a password over a connection that is not encrypted. Off by default. See below |
 
 A block may be written under `defaults`, a profile, a target, a target set's
 template or `overrides:` entry, or a group. §9 resolves the lot by taking the
@@ -1670,6 +1671,52 @@ The consequence is worth stating plainly rather than leaving to be inferred: an
 estate that marks a target `environment: prod` and writes no
 `confirm_environments` is **not prompted**, and that is specified behaviour and
 not an unimplemented trigger.
+
+#### What `require_encryption` does when it fires
+
+`ALTER USER ... IDENTIFIED BY` carries the new password, and over an
+unencrypted connection it crosses the network in clear. Without the setting, the
+run says so with `SOPULI-W031` or `SOPULI-W032` and goes on (#697). With it,
+`creds apply`, `creds rotate` and `account reset-password` refuse a target whose
+connection is not encrypted, at plan time: exit 5, before any password is drawn
+or any database is changed (invariant 4). `--dry-run` is refused the same way. A
+connection whose encryption could not be read counts as not encrypted. `creds
+check` is not affected, although its logins authenticate with the vault's
+password over the same connection: Oracle's logon protocol is a challenge and
+response, and the password itself never crosses the network. Only the statement
+that sets a password carries it in its text.
+
+**Per target, unlike `readonly`.** The setting decides whether one connection
+may carry a password, so a group that requires it for `prod` does not require it
+of a `dev` target in the same run. `defaults` and a profile speak for every
+target; a target's, a target set's or a group's block speaks for that target.
+
+The run reads the connection again just before each statement that sends a
+password. A target the plan-time read could not reach is refused there, on its
+row, so a refusal at plan time is not the only check.
+
+Here `encrypted.yaml` sets `defaults.safety.require_encryption: true`, and the
+target's connection has no NNE:
+
+```
+$ sopuli --config sopuli.yaml --config encrypted.yaml creds apply --dry-run
+Plan: 2 accounts x 1 target = 2 applys   [dev]
+
+ACCOUNT          TARGET    INTENT                               SECRET
+acme_app_user    free-pdb  verify, password_set, vault_promote  vault-dev:acme/dev/acme
+acme_batch_user  free-pdb  verify, password_set, vault_promote  vault-dev:acme/dev/acme
+
+shared secrets (1 document):
+SECRET                   TARGETS   ACCOUNTS
+vault-dev:acme/dev/acme  free-pdb  acme_app_user, acme_batch_user
+sopuli: target "free-pdb" does not support encrypted_connection
+  hint: `defaults.safety.require_encryption` requires it, and this connection's encryption is none: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
+```
+
+The setting is the tool's guard for a site that cannot set
+`SQLNET.ENCRYPTION_SERVER = REQUIRED` on every target. The server setting is
+the fix, because it covers every client. Reasons:
+[#857](../decisions/log.md#857).
 
 ---
 
@@ -3010,7 +3057,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.1.schema.json`](../schemas/sopuli-config-3.1.schema.json),
+[`docs/schemas/sopuli-config-3.2.schema.json`](../schemas/sopuli-config-3.2.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3021,7 +3068,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.1.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.2.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3095,7 +3142,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
 version: 1
 ```
 
@@ -3106,7 +3153,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.1.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.2.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

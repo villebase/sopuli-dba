@@ -305,8 +305,11 @@ from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
 from sopuli.personal import declared_on
 from sopuli.preflight import Finding
 from sopuli.safety import (
+    ENCRYPTED,
+    ENCRYPTED_CONNECTION,
     RefusedError,
     confirmation_demanded,
+    encryption_required_at,
     for_estate,
     refuse_disallowed_method,
     refuse_if_nobody_to_ask,
@@ -2082,6 +2085,11 @@ def account_reset_password(
     # among the things a preview is *for*.
     channel = _notify_channel(delivery)
 
+    # Before any password is drawn (#857), and after the refusals above, which
+    # need no connection. Under `--dry-run` too: a preview that said "would be
+    # reset" over a connection the run would refuse would be wrong.
+    _require_encryption(reached, run, config)
+
     header = render_plan(plan, noun="account")
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
@@ -2811,6 +2819,16 @@ def _reset_one(
         # drawing one. The real run asks them here as well, which is still the
         # last point before a password is drawn.
         try:
+            # The connection the password would cross, read again (#857).
+            # `_require_encryption` refused the run before this unless it could
+            # not reach the target.
+            required = encryption_required_at(target, config, run.resolved)
+            if required is not None:
+                refusal = _unencrypted(
+                    session.scope().encryption, target=target.name, location=required
+                )
+                if refusal is not None:
+                    raise refusal
             if decision.expire:
                 session.require_no_rollover_window(account)
             policy = _reset_policy(config, account, target.name, state)
@@ -4310,7 +4328,7 @@ def config_validate(
 
     **Validated by the loader, not by the published schema.** The two are not
     equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-3.1.schema.json`` is structural, deliberately
+    ``docs/schemas/sopuli-config-3.2.schema.json`` is structural, deliberately
     leaves the cross-key rules out (``01-configuration.md`` section 9b), and
     ``jsonschema`` is a development dependency that must not become a runtime
     one. The schema is the editor's fast local check; this is the complete one.
@@ -6361,8 +6379,17 @@ def creds_apply(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
-    # A dry run connects only for the pre-flight; without one it reads the vault.
-    connects = not run.dry_run or strategy is not None or preflight_all
+    # A dry run connects only for the pre-flight or for `require_encryption`'s
+    # read (#857); without either it reads the vault.
+    connects = (
+        not run.dry_run
+        or strategy is not None
+        or preflight_all
+        or any(
+            encryption_required_at(target, config, run.resolved) is not None
+            for target in _targets_of(config, bindings)
+        )
+    )
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
     )
@@ -6403,6 +6430,10 @@ def creds_apply(
     stores = _stores_for(
         {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
     )
+    # Before the preview and before the lock (#857), so a refusal is the same for
+    # both and holds no lock. Every target the plan names: one whose accounts have
+    # nothing staged is checked too, which can only refuse more.
+    _require_encryption(_targets_of(config, bindings), run, config)
 
     if run.dry_run:
         # Invariant 8: print the plan, take no lock, write nothing. The documents
@@ -7148,6 +7179,7 @@ def _apply_target(
     """
     run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
+    required = encryption_required_at(target, config, run.resolved)
     session = None
     try:
         try:
@@ -7197,6 +7229,7 @@ def _apply_target(
                     # target can sit on different policies, and only one of them may
                     # have opted into an attribute.
                     attributes=apply_states.attributes_for(config, binding),
+                    encryption_required=required,
                 )
             except _StoppedAfterChangeError as stopped:
                 # The account the run was working on when it lost the lock had
@@ -7306,6 +7339,7 @@ def _apply_one(
     attributes: AccountAttributes,
     force: bool = False,
     requested: str | None = None,
+    encryption_required: str | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
 
@@ -7342,6 +7376,12 @@ def _apply_one(
     re-raised ahead of the catch-all, and the run ends. Where this account had
     already been changed, the error goes out inside :class:`_StoppedAfterChangeError`
     with the account's row, so the run document still records the change.
+
+    ``encryption_required`` is the key that requires an encrypted connection to
+    this target, or ``None`` (#857). Where it is set, the connection is read
+    after the guardrail review and before anything touches the account, and a
+    row is refused rather than sent in clear. :func:`_require_encryption` has
+    normally refused the run before this.
 
     **UC-1 §5's attributes are enforced before the first login**, and only where the
     policy declared one. Before, because an unlock is what makes the login worth
@@ -7432,6 +7472,30 @@ def _apply_one(
         # on the refused ones above: an account the guardrails turned away was not
         # touched, so what an unread check might have said about it changes nothing.
         caveats = review.caveats
+
+        # The connection this account's password would cross (#857), read before
+        # the attribute pass or a login touches the account. The plan-time read
+        # refused the run before this unless it could not reach the target.
+        refusal = (
+            None
+            if encryption_required is None
+            else _unencrypted(
+                session.scope().encryption, target=binding.target, location=encryption_required
+            )
+        )
+        if refusal is not None:
+            reported = _finding(refusal)
+            _left_alone(binding.account, binding.target, check_states.ERROR, reported.message)
+            return _Applied(
+                binding,
+                source,
+                check_states.Outcome(check_states.ERROR, reported.message),
+                changed=False,
+                overridden=overridden,
+                caveats=caveats,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
 
         if attributes.requested():
             # Fenced like every other mutation (P5). `apply_attributes` issues
@@ -7879,6 +7943,59 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
         client_lib_dir=config.runtime.oracle.client_lib_dir,
     )
     return driver.connect(target, credential.credential)
+
+
+def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, config: Config) -> None:
+    """Refuse, at plan time, to send a password over an unencrypted connection
+    (#857).
+
+    Invariant 4: where `safety.require_encryption` asks for an encrypted
+    connection and a target has none, the run stops before any password is drawn
+    or any database is changed, with exit 5 naming the target and the key that
+    required it. `unknown` counts as not encrypted, because a connection whose
+    encryption could not be read may be in clear.
+
+    **One connection per target that requires it, and none otherwise**, so a
+    config that does not turn the setting on costs nothing. A target this cannot
+    reach, or whose scope it cannot read, is left to the run, which reports it on
+    its rows. That is not a way past the check: the run reads the connection it
+    sends over again, and :func:`_unencrypted` refuses that row there.
+    """
+    for expanded in targets:
+        location = encryption_required_at(expanded, config, run.resolved)
+        if location is None:
+            continue
+        try:
+            session = _open_session(expanded, run, config)
+        except Exception:  # noqa: BLE001 -- the run reports it on each row
+            continue
+        try:
+            encryption = session.scope().encryption
+        except Exception:  # noqa: BLE001 -- likewise
+            continue
+        finally:
+            with suppress(Exception):
+                session.close()
+        refusal = _unencrypted(encryption, target=expanded.name, location=location)
+        if refusal is not None:
+            raise refusal
+
+
+def _unencrypted(
+    encryption: Encryption, *, target: str, location: str
+) -> UnsupportedCapabilityError | None:
+    """The refusal for a password about to cross this connection, or ``None``
+    where it is encrypted. ``location`` is the key that required it."""
+    if encryption.method in ENCRYPTED:
+        return None
+    return UnsupportedCapabilityError(
+        ENCRYPTED_CONNECTION,
+        target=target,
+        hint=(
+            f"`{location}` requires it, and this connection's encryption is "
+            f"{encryption.method}: {encryption.hint or 'nothing more is known'}"
+        ),
+    )
 
 
 def _rolling_back(sources: Sequence[tuple[Binding, Source | None]]) -> frozenset[tuple[str, str]]:
@@ -9766,6 +9883,11 @@ def creds_rotate(
     stores = _stores_for(
         {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
     )
+
+    # Before the preview and before the lock (#857), so a refusal is the same for
+    # both and holds no lock. Every target the plan names, due or not: a target
+    # with nothing due is checked too, which can only refuse more.
+    _require_encryption(_targets_of(config, bindings), run, config)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The

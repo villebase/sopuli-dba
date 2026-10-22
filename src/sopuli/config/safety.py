@@ -27,7 +27,7 @@ from sopuli.config.fields import (
 )
 from sopuli.config.model import Safety, SafetyDelivery
 
-SAFETY_KEYS = ("max_targets", "confirm_environments", "readonly", "delivery")
+SAFETY_KEYS = ("max_targets", "confirm_environments", "readonly", "delivery", "require_encryption")
 
 #: The keys a ``safety.delivery:`` block takes. One today, and a block rather
 #: than a flat ``delivery_allowed_methods`` key because UC-2 §6's other safety
@@ -77,6 +77,7 @@ def build_safety(raw: Any, *, at: KeyPath) -> Safety:
             else string_list(block["confirm_environments"], at=at.key("confirm_environments"))
         ),
         readonly=optional_bool(block, "readonly", at=at),
+        require_encryption=optional_bool(block, "require_encryption", at=at),
         delivery=(
             _build_delivery(block["delivery"], at=at.key("delivery"))
             if "delivery" in block

@@ -307,7 +307,7 @@ def target_safety(expanded: ExpandedTarget) -> list[tuple[str, object, str, Laye
 
 
 def safety_block(safety: Safety, *, at: str, layer: Layer) -> list[tuple[str, object, str, Layer]]:
-    """The same four keys, given the path of the **block** rather than of what
+    """The same keys, given the path of the **block** rather than of what
     contains it.
 
     Split out for the one caller that cannot compute the first from the second:
@@ -336,6 +336,12 @@ def safety_block(safety: Safety, *, at: str, layer: Layer) -> list[tuple[str, ob
             "safety.delivery.allowed_methods",
             None if safety.delivery is None else safety.delivery.allowed_methods,
             f"{at}.delivery.allowed_methods",
+            layer,
+        ),
+        (
+            "safety.require_encryption",
+            safety.require_encryption,
+            f"{at}.require_encryption",
             layer,
         ),
     ]

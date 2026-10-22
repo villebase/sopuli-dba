@@ -207,6 +207,7 @@ SAFETY_SETTINGS = frozenset(
         "safety.max_targets",
         "safety.confirm_environments",
         "safety.delivery.allowed_methods",
+        "safety.require_encryption",
         "locking.break_expired",
         "vaults.*.tls.verify",
     }
@@ -505,6 +506,17 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             ),
             _setting(
                 "safety.readonly",
+                type=bool,
+                layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS, Layer.BUILTIN),
+                policy=MergePolicy.RATCHET,
+                builtin=False,
+            ),
+            _setting(
+                # Refuse to send a password over an unencrypted connection
+                # (#857). Off by default: the notice #697 added is the decided
+                # behaviour, and this turns it into a refusal for a site that
+                # cannot set SQLNET.ENCRYPTION_SERVER on every target.
+                "safety.require_encryption",
                 type=bool,
                 layers=(Layer.PROFILE, Layer.OBJECT, Layer.DEFAULTS, Layer.BUILTIN),
                 policy=MergePolicy.RATCHET,

@@ -157,6 +157,7 @@ it came from.** These are the settings that behave this way:
 | `safety.max_targets` | most databases one run may touch | the smallest number any layer named |
 | `safety.confirm_environments` | environments needing an explicit yes | every environment any layer listed |
 | `safety.delivery.allowed_methods` | which ways a reset may hand over a password | only the methods every layer allows |
+| `safety.require_encryption` | refuse to send a password over a connection that is not encrypted | one layer asking for it is enough |
 | `locking.break_expired` | permission to take over an expired lock | one layer withholding it is enough |
 | `vaults.<name>.tls.verify` | check the vault's TLS certificate | one layer asking for it is enough |
 

@@ -121,8 +121,9 @@ detail.
    Reasons: [H7](docs/decisions/log.md#h7).
 
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
-    `max_targets`, `confirm_environments` and `safety.delivery.allowed_methods`
-    cannot be relaxed by a higher-precedence source. See P3. The merge shape is
+    `max_targets`, `confirm_environments`, `safety.delivery.allowed_methods`
+    and `require_encryption` cannot be relaxed by a higher-precedence source,
+    and a later `--config` file is one. See P3. The merge shape is
     declared per setting. `allowed_methods` merges by intersection, so a new
     delivery method is unusable until a config names it. Reasons:
     [H6](docs/decisions/log.md#h6).

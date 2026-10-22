@@ -56,7 +56,7 @@ on which Oracle release, and what it showed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-3.1.schema.json](schemas/sopuli-config-3.1.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-3.2.schema.json](schemas/sopuli-config-3.2.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.51.schema.json](schemas/sopuli-run-1.51.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.12.schema.json](schemas/sopuli-event-1.12.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -78,7 +78,7 @@ the run schema. `tests/test_schemas.py` checks this on every push and pull
 request (invariant 12).
 
 To get completion and inline errors while you edit a config, put
-`# yaml-language-server: $schema=./sopuli-config-3.1.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-3.2.schema.json` on the file's
 first line. [design/01-configuration.md](design/01-configuration.md) §9b says
 why the schema's `$id` is not a URL to paste there.
 
@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
-| — | — | A safety setting that requires an encrypted Oracle connection | open | | #857 |
 | — | — | Run the guardrails on every target before changing an account anywhere | open | | #872 |
 | — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |
 | — | — | Refuse or mask userinfo in a vault address | open | | #891 |

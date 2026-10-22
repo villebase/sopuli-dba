@@ -1434,6 +1434,38 @@ def test_a_window_left_open_is_a_warning_in_the_document(
         if "left the rollover window open" in one["message"]
     ]
     assert left["code"] == ROLLOVER_LEFT_OPEN
+    assert (left["account"], left["target"]) == ("acme_web_user", "appdb-alpha")
+
+
+def test_each_window_left_open_is_one_warning_and_the_terminal_one_line(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """A consumer reads which windows are open from `account` and `target`, not
+    from the message (#825). A person reads one line that names them all."""
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        store=StaleAfterPromotion(),
+    )
+
+    body = document(run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json"))
+    text = run(runner, write_config(CONFIG), "--finish-rollover")
+
+    validator.validate(body)
+    left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert [(one["account"], one["target"]) for one in left] == [
+        ("acme_web_user", "appdb-alpha"),
+        ("acme_web_user", "appdb-beta"),
+    ]
+    assert all(one["level"] == "warning" for one in left)
+    assert text.output.count("left the rollover window open") == 1
+    assert (
+        "left the rollover window open for acme_web_user on appdb-alpha, "
+        "acme_web_user on appdb-beta," in text.output
+    )
 
 
 def test_one_documents_read_back_does_not_withhold_anothers_repair(

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.49.schema.json`](../schemas/sopuli-run-1.49.schema.json),
+Schemas: [`../schemas/sopuli-run-1.50.schema.json`](../schemas/sopuli-run-1.50.schema.json),
 [`../schemas/sopuli-event-1.10.schema.json`](../schemas/sopuli-event-1.10.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -2013,7 +2013,7 @@ not contract and may improve.
 | `SOPULI-W040` | `creds status --max-age-days`: the vault last rotated this credential longer ago than the threshold. One entry per result over it. The age is the vault's (Q9). `password_age_days` is the database's, so the two are never one field |
 | `SOPULI-W041` | `account list` admitted an account the database reports as its own, so a mutating verb refuses it at plan time (guardrail 2). A `role:` predicate can reach one, because creating a role grants it to the creator: on the tier-1 stack that was `SYSTEM`. The text output prints it as a note under the table |
 | `SOPULI-W042` | `account list` admitted an account that an application also declares, so the whitelist is ambiguous about which guarantee applies ([H1](../decisions/log.md#h1)). Only a predicate can reach this, because an enumerated name in both sections is refused when the file loads (`01-configuration.md` §10). A separate code from `SOPULI-W041`, because the fix is in the file, not in the database. The text output prints it as a note under the table |
-| `SOPULI-W043` | `creds rotate --finish-rollover` left a rollover window open, because the vault may not serve the new password. Run `creds finish-rollover` once `current` holds it; where the promotion did not happen, `creds apply` promotes it first. The message names the accounts and targets |
+| `SOPULI-W043` | `creds rotate --finish-rollover` left a rollover window open, because the vault may not serve the new password. Run `creds finish-rollover` once `current` holds it; where the promotion did not happen, `creds apply` promotes it first. **One entry per account and target**, each with `account` and `target`, so a consumer reads which windows are open without parsing the message (#825). Before run schema 1.50 it was one entry for the run. The text output prints one line that names every pair |
 | `SOPULI-W044` | The pre-flight could not read the privilege audit for a target, so it established nothing about the target's grants, either way. A finding of the `privileges` check that does **not** block: an estate that will not grant the audit view could otherwise never run a pre-flight. Each pre-flight check that can warn has its own code. A blocking finding is an `error` diagnostic with no code, because `error.category` already tells it apart |
 | `SOPULI-W045` | The pre-flight could not establish whether the profile an account would move to exists. A finding of the `profile` check that does not block, for `SOPULI-W044`'s reason. The driver asks the same question again before its own statement and refuses that account, so what is lost is the early warning |
 | `SOPULI-W046` | `creds generate --overwrite-pending` replaced a `pending` password that was already staged, on a staging run or a `--promote`. Anything holding the old one is now stale. The message names the document version replaced. In `results[].warnings[]` |

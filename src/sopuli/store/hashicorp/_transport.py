@@ -210,15 +210,13 @@ def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
             f"vault {vault.name!r} has no `addr`, and a HashiCorp store needs one",
             hint="add `addr: https://…` to the entry under `vaults:`",
         )
-    # The loader refuses this in the file. An address from an environment
-    # variable such as `VAULT_ADDR`, or from `--vault-addr`, reaches the store
-    # without passing through it, so the rule is applied again before the token
-    # goes anywhere.
+    # The loader refuses this on the merged address, whichever layer set it.
+    # Checked again here because a `Vault` can also be built in code, and this is
+    # the last point before the token goes anywhere.
     scheme = plain_http_scheme(vault.addr)
     if scheme is not None:
         raise ConfigError(
-            f"vault {vault.name!r}: its address must use https://, and this one uses "
-            f"{scheme}. `sopuli config show` says which layer set it",
+            f"vault {vault.name!r}: its address must use https://, and this one uses {scheme}",
             at=ROOT,
             hint=PLAIN_HTTP_HINT,
         )

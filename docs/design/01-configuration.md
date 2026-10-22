@@ -746,7 +746,7 @@ config file can be read without knowing what environment it will be read in.
 | Key | Meaning |
 |---|---|
 | `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
-| `addr` | backend address, where the backend has one. Must be `https://`, except to a loopback host — see *Plain HTTP* below |
+| `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below |
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
@@ -777,20 +777,21 @@ the config it governs.
 
 #### Plain HTTP — refused off loopback
 
-A vault address must be `https://`. Over plain HTTP everything the tool sends to
-a vault crosses the network in clear: the token, an AppRole `secret_id`, a
+A HashiCorp store's address must be `https://`. Over plain HTTP everything the
+tool sends to it crosses the network in clear: the token, an AppRole `secret_id`, a
 userpass password, every password it writes, and the plaintext it sends to
 `sys/wrapping/wrap`. `http://` is allowed only when the host is `127.0.0.1`,
 `::1` or `localhost`, because a loopback address never leaves the machine. The
 tier-1 stack and a local Vault agent use one. The host is compared whole, so
-`localhost.example.com` is not loopback. An address with no scheme is refused
-too.
+`localhost.example.com` is not loopback. Another scheme, or none, is refused
+too. A `file` store reads `addr` as a path, so the rule does not apply to it.
 
-An `addr` in the file, or in a profile's `vaults:` block, is refused when the
-file is read, and the message names the key. An address from an environment
-variable such as `VAULT_ADDR`, or from `--vault-addr`, is refused when the store
-opens, before the token is sent. There is no setting to waive the refusal: a
-site that runs Vault on plain HTTP inside its own network has to add TLS first.
+The address is checked when the file is read, after every layer is merged, so an
+`addr` from the file, a profile, `defaults.vaults`, `VAULT_ADDR`,
+`SOPULI_VAULT_ADDR` or `--vault-addr` is refused the same way. The message names
+the layer that set it, and not the address, because an address can carry
+userinfo. There is no setting to waive the refusal: a site that runs Vault on
+plain HTTP inside its own network has to add TLS first.
 `delivery.notify.webhook.url` follows the same rule (§1). Reasons:
 [#856](../decisions/log.md#856).
 

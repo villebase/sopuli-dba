@@ -2728,11 +2728,11 @@ the register.
   webhook `url` that is not `https`?
 - **Decision:** Refuse it, unless the host is `127.0.0.1`, `::1` or
   `localhost`. The host is compared whole, so `localhost.example.com` is not
-  exempt. A vault `addr` in the file is refused when the file is read. An
-  address from `VAULT_ADDR` or another layer outside the file is refused when
-  the store opens. The webhook URL is refused when a run resolves it, before a
-  password is drawn, because the file names only where the URL is. No setting
-  waives the refusal.
+  exempt. A HashiCorp store's address is refused when the file is read, after
+  the layers are merged, so `VAULT_ADDR` and `--vault-addr` are refused the
+  same way as the file's `addr`. The webhook URL is refused when a run
+  resolves it, before a password is drawn, because the file names only where
+  the URL is. No setting waives the refusal.
 - **Why:** Over plain HTTP everything the tool sends to a vault crosses the
   network in clear: the token, an AppRole `secret_id`, a userpass password,
   every password it writes, and the plaintext sent to `sys/wrapping/wrap`. A

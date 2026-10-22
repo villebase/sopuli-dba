@@ -14,6 +14,7 @@ Pure: no I/O, as the rest of config parsing (CLAUDE.md, *Keep pure layers pure*)
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
 
 __all__ = ["LOOPBACK_HOSTS", "PLAIN_HTTP_HINT", "plain_http_scheme"]
@@ -28,28 +29,32 @@ PLAIN_HTTP_HINT = (
     "because anything else sends the credentials across the network in clear"
 )
 
+#: A scheme as RFC 3986 spells it, without the `.` it allows. No scheme the tool
+#: could meet has one, and a host does, so `chat.example.com:443/…` is not read
+#: as the scheme `chat.example.com` and quoted back in a message.
+_SCHEME = re.compile(r"([a-z][a-z0-9+-]*)://")
+
 
 def plain_http_scheme(address: str) -> str | None:
-    """The scheme ``address`` would be refused for, or ``None`` if it is allowed.
+    """What ``address`` is refused for, or ``None`` if it is allowed.
 
-    ``https`` is allowed anywhere, and ``http`` only to a loopback host. Any
-    other scheme, or none, is refused too: it is not TLS. The return value is the
-    scheme alone, for a message that must not quote the address, because a
-    webhook URL is a credential.
+    ``https://`` is allowed anywhere, and ``http://`` only to a loopback host.
+    Anything else is refused: another scheme, an ``http:`` or ``https:`` with no
+    ``//``, or no scheme at all. The answer names the scheme, or says which of
+    the other two it is, and never quotes the address, because a webhook URL is
+    a credential.
     """
-    if "://" not in address:
-        # `urlsplit` would read `vault.example.com:8200` as the scheme
-        # `vault.example.com`, and a message quoting that is no help.
-        return "no scheme"
-    parts = urlsplit(address.strip())
-    scheme = parts.scheme.lower()
-    if scheme == "https":
+    text = address.strip()
+    lowered = text.lower()
+    if lowered.startswith("https://"):
         return None
-    if scheme == "http":
+    if lowered.startswith("http://"):
         try:
-            host = parts.hostname
+            host = urlsplit(text).hostname
         except ValueError:
             host = None
-        if host in LOOPBACK_HOSTS:
-            return None
-    return scheme or "no scheme"
+        return None if host in LOOPBACK_HOSTS else "http"
+    if lowered.startswith(("http:", "https:")):
+        return "a scheme with no //"
+    match = _SCHEME.match(lowered)
+    return match.group(1) if match else "no scheme"

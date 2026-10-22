@@ -33,7 +33,6 @@ from sopuli.config.fields import (
 )
 from sopuli.config.locking import build_lock_mode
 from sopuli.config.model import Vault, VaultAuth, VaultPatch, VaultTls
-from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.config.secret_refs import reject_unaddressable_path
 
 VAULT_KEYS = (
@@ -253,7 +252,7 @@ def _reach(entry: dict[str, Any], *, at: KeyPath) -> dict[str, Any]:
     ``timeout_s: 0`` the top-level entry is refused.
     """
     return {
-        "addr": _build_addr(entry, at=at),
+        "addr": optional_string(entry, "addr", at=at),
         "mount": _build_mount(entry, at=at),
         "kv_version": _build_kv_version(entry, at=at),
         "namespace": optional_string(entry, "namespace", at=at),
@@ -262,25 +261,6 @@ def _reach(entry: dict[str, Any], *, at: KeyPath) -> dict[str, Any]:
         "tls": _build_tls(entry.get("tls"), at=at.key("tls")),
         "auth": _build_auth(entry.get("auth"), at=at.key("auth")),
     }
-
-
-def _build_addr(container: dict[str, Any], *, at: KeyPath) -> str | None:
-    """An ``addr:`` that is ``https://``, or ``http://`` to a loopback host.
-
-    An address that reaches a store from an environment variable or
-    ``--vault-addr`` is not in the file. The transport refuses it when the
-    store opens, with the same rule.
-    """
-    addr = optional_string(container, "addr", at=at)
-    if addr is not None:
-        scheme = plain_http_scheme(addr)
-        if scheme is not None:
-            raise ConfigError(
-                f"a vault `addr` must use https://, and this one uses {scheme}",
-                at=at.key("addr"),
-                hint=PLAIN_HTTP_HINT,
-            )
-    return addr
 
 
 def _build_mount(container: dict[str, Any], *, at: KeyPath) -> str | None:

@@ -453,9 +453,8 @@ def test_another_port_is_another_address() -> None:
         ("https://ops:s3?cret@proxy.example.com", "https://***@proxy.example.com"),
         ("https://ops:s3#cret@proxy.example.com", "https://***@proxy.example.com"),
         ("https://ops:s3cret@[proxy", "https://***@[proxy"),
-        ("ops:s3cret@proxy.example.com", "***@proxy.example.com"),
     ],
-    ids=["plain", "slash", "query", "hash", "unparseable", "no-scheme"],
+    ids=["plain", "slash", "query", "hash", "unparseable"],
 )
 def test_credentials_in_an_address_are_not_repeated_in_the_warning(
     address: str, shown: str
@@ -467,6 +466,18 @@ def test_credentials_in_an_address_are_not_repeated_in_the_warning(
     assert "s3" not in warning.message
     assert "ops" not in warning.message
     assert shown in warning.message
+
+
+def test_credentials_in_an_address_with_no_scheme_are_not_repeated_in_the_refusal() -> None:
+    """An address with no scheme is not `https://`, so the load refuses it
+    before any warning. The refusal names the layer, not the address."""
+    with pytest.raises(ConfigError) as caught:
+        loaded({"VAULT_ADDR": "ops:s3cret@proxy.example.com"}, {"addr": DECLARED})
+
+    rendered = str(caught.value)
+    assert "the address VAULT_ADDR gives must use https://, and this one uses no scheme" in rendered
+    assert "s3cret" not in rendered
+    assert "ops" not in rendered
 
 
 def test_vault_addr_over_a_defaults_addr_names_the_defaults_key() -> None:

@@ -23,6 +23,7 @@ import pytest
 # suite still runs on a base+dev install (`04-testing.md` §3).
 httpx = pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
 
+from sopuli.config.errors import ConfigError  # noqa: E402
 from sopuli.config.model import Vault, VaultTls  # noqa: E402
 from sopuli.secrets import Secret  # noqa: E402
 from sopuli.store.hashicorp._errors import (  # noqa: E402
@@ -419,3 +420,27 @@ def test_a_fault_in_the_tool_is_not_reported_as_the_store() -> None:
 
     with pytest.raises(TypeError):
         transport.request("POST", "kv/data/acme", json={"value": object()})
+
+
+# ------------------------------------------------- plain HTTP, refused ---
+
+
+@pytest.mark.parametrize(
+    "addr", ["http://127.0.0.1:8200", "http://[::1]:8200", "http://localhost:8200"]
+)
+def test_a_loopback_address_opens(addr: str) -> None:
+    build_transport(vault(addr=addr), token=Secret("t")).close()
+
+
+@pytest.mark.parametrize(
+    "addr", ["http://vault.example.com:8200", "http://localhost.example.com:8200"]
+)
+def test_a_vault_built_in_code_is_refused_at_open(addr: str) -> None:
+    """The loader refuses this on the merged address. This is the last point
+    before the token goes anywhere, for a `Vault` that did not come through it."""
+    with pytest.raises(ConfigError) as caught:
+        build_transport(vault(addr=addr), token=Secret("t"))
+
+    rendered = str(caught.value)
+    assert "vault 'vault-prod': its address must use https://, and this one uses http" in rendered
+    assert "127.0.0.1, ::1 or localhost" in rendered

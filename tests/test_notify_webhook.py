@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.extras import install_hint
 from sopuli.notify import webhook
 from sopuli.notify.registry import (
@@ -234,3 +235,44 @@ def test_the_warning_still_does_not_carry_the_url() -> None:
 
     assert "chat.example.com" not in one.message
     assert "EXAMPLEEXAMPLE" not in one.message
+
+
+# ------------------------------------------------- plain HTTP, refused ---
+
+
+@pytest.mark.parametrize(
+    "url", ["http://127.0.0.1:9/hook", "http://[::1]:9/hook", "http://localhost:9/hook"]
+)
+def test_a_loopback_webhook_is_allowed(url: str) -> None:
+    webhook.check_url(Secret(url))
+
+
+def test_an_https_webhook_is_allowed() -> None:
+    webhook.check_url(URL)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://chat.example.com/hooks/T00000/B00000/EXAMPLEEXAMPLEEXAMPLE",
+        "http://localhost.example.com/hooks/T00000/B00000/EXAMPLEEXAMPLEEXAMPLE",
+        "chat.example.com:443/hooks/T00000/B00000/EXAMPLEEXAMPLEEXAMPLE?next=https://x",
+    ],
+)
+def test_a_plain_http_webhook_is_refused_without_repeating_it(url: str) -> None:
+    """The URL is the chat credential, so the message names neither its host
+    nor its token."""
+    with pytest.raises(ConfigError) as caught:
+        webhook.check_url(Secret(url))
+
+    rendered = str(caught.value)
+    assert "delivery.notify.webhook.url: the webhook URL must use https://" in rendered
+    assert "example.com" not in rendered
+    assert "EXAMPLEEXAMPLE" not in rendered
+
+
+def test_every_notifier_checks_its_url() -> None:
+    """`cli._notify_channel` calls `check_url` on whichever module serves the
+    method, so a new method's module must define it."""
+    for method in NOTIFIERS:
+        assert callable(getattr(resolve(method), "check_url", None)), method

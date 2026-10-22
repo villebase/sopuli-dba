@@ -1,14 +1,15 @@
 """Plain HTTP off loopback is refused, for a vault address and a webhook URL.
 
-Tier 0. Over ``http://`` the vault token, an AppRole ``secret_id``, every
+Tier 0, pure. Over ``http://`` the vault token, an AppRole ``secret_id``, every
 password written, and a webhook's chat token cross the network in clear. A
 loopback host never leaves the machine, so ``127.0.0.1``, ``::1`` and
 ``localhost`` stay allowed. The host is compared whole, so
 ``localhost.example.com`` is not loopback.
 
-Each address is tested where the tool refuses it: a vault ``addr`` in the file
-when the file is read, any vault address when the store opens (which covers
-``VAULT_ADDR``), and a webhook URL when it is resolved.
+This module covers the rule and the loader, which refuses a HashiCorp store's
+merged address whichever layer set it. The two checks that need ``httpx`` are
+beside their modules: the transport's in ``tests/store/test_hashicorp_transport.py``
+and the webhook URL's in ``tests/test_notify_webhook.py``.
 """
 
 from __future__ import annotations
@@ -17,18 +18,14 @@ from typing import Any
 
 import pytest
 
-from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.errors import ConfigError
+from sopuli.config.loading import build_config
+from sopuli.config.model import Vault
 from sopuli.config.plain_http import plain_http_scheme
-from sopuli.config.vaults import build_vault_patches, build_vaults
-from sopuli.secrets import Secret
-
-httpx = pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
-
-from sopuli.config.model import Vault  # noqa: E402
-from sopuli.notify import webhook  # noqa: E402
-from sopuli.store.hashicorp._transport import build_transport  # noqa: E402
 
 LOOPBACK = ["http://127.0.0.1:8200", "http://[::1]:8200", "http://localhost:8200"]
+
+PLAIN = ["http://vault.example.com:8200", "http://localhost.example.com:8200"]
 
 REFUSED = [
     ("http://vault.example.com:8200", "http"),
@@ -36,17 +33,30 @@ REFUSED = [
     ("http://127.0.0.1.example.com:8200", "http"),
     ("http://192.0.2.10:8200", "http"),
     ("ftp://vault.example.com", "ftp"),
+    ("https:/vault.example.com:8200", "a scheme with no //"),
+    ("http:vault.example.com", "a scheme with no //"),
     ("vault.example.com:8200", "no scheme"),
     ("127.0.0.1:8200", "no scheme"),
+    ("localhost:8200", "no scheme"),
 ]
 
 
-def vaults(addr: str) -> Any:
-    return build_vaults({"vaults": {"vault-dev": {"type": "hashicorp", "addr": addr}}})
+def loaded(addr: str | None = None, *, kind: str = "hashicorp", **options: Any) -> Vault:
+    """`vault-dev`, the default store, through the whole loader and its layers.
 
-
-def store(addr: str) -> Vault:
-    return Vault(name="vault-dev", type="hashicorp", addr=addr)
+    ``options`` go to ``build_config``: ``env``, ``vault_addr`` and ``profile``.
+    A profile named ``standby`` sets ``standby_addr`` when one is given.
+    """
+    standby_addr = options.pop("standby_addr", None)
+    document: dict[str, Any] = {
+        "version": 1,
+        "defaults": {"vault": "vault-dev"},
+        "vaults": {"vault-dev": {"type": kind, **({"addr": addr} if addr else {})}},
+    }
+    if standby_addr is not None:
+        document["profiles"] = {"standby": {"vaults": {"vault-dev": {"addr": standby_addr}}}}
+    (vault,) = build_config(document, **options).vaults
+    return vault
 
 
 # ------------------------------------------------------------- the rule ---
@@ -75,81 +85,61 @@ def test_userinfo_does_not_make_a_host_loopback() -> None:
     assert plain_http_scheme("http://127.0.0.1@vault.example.com") == "http"
 
 
-# ----------------------------------------------------- vault addr, the file ---
+def test_a_host_is_never_given_back_as_the_scheme() -> None:
+    """`urlsplit` reads `chat.example.com:443/…` as the scheme `chat.example.com`.
+    The answer goes into a message, and a webhook URL is a credential."""
+    answer = plain_http_scheme("chat.example.com:443/hooks/T0K3N?next=https://x")
+
+    assert answer == "no scheme"
+
+
+# ------------------------------------------------------- vault addr, at load ---
 
 
 @pytest.mark.parametrize("addr", LOOPBACK)
 def test_a_loopback_addr_in_the_file_loads(addr: str) -> None:
-    (vault,) = vaults(addr)
-
-    assert vault.addr == addr
+    assert loaded(addr).addr == addr
 
 
-@pytest.mark.parametrize("addr", ["http://vault.example.com:8200", "http://localhost.example.com"])
+@pytest.mark.parametrize("addr", PLAIN)
 def test_a_plain_http_addr_in_the_file_is_refused(addr: str) -> None:
     with pytest.raises(ConfigError) as caught:
-        vaults(addr)
+        loaded(addr)
 
     rendered = str(caught.value)
-    assert "a vault `addr` must use https://, and this one uses http" in rendered
-    assert "vaults.vault-dev.addr" in rendered
+    assert (
+        "vault 'vault-dev': the address vaults.vault-dev.addr gives must use https://, "
+        "and this one uses http"
+    ) in rendered
     assert "127.0.0.1, ::1 or localhost" in rendered
 
 
-def test_a_profile_patch_is_held_to_the_same_rule() -> None:
-    """A profile reaches a store by the same reader, so it cannot write what
-    the declaration may not."""
-    with pytest.raises(ConfigError, match="must use https://"):
-        build_vault_patches(
-            {"vaults": {"vault-dev": {"addr": "http://vault.example.com"}}},
-            at=ROOT.key("profiles").key("standby"),
-        )
-
-
-# ------------------------------------------- vault addr, at store open ---
+@pytest.mark.parametrize("addr", PLAIN)
+def test_a_plain_http_vault_addr_variable_is_refused(addr: str) -> None:
+    """`VAULT_ADDR` is merged into the store at load, and the message names it."""
+    with pytest.raises(ConfigError, match="the address VAULT_ADDR gives must use https://"):
+        loaded("https://vault.example.com", env={"VAULT_ADDR": addr})
 
 
 @pytest.mark.parametrize("addr", LOOPBACK)
-def test_a_loopback_address_opens(addr: str) -> None:
-    transport = build_transport(store(addr), token=Secret("t"))
-    transport.close()
+def test_a_loopback_vault_addr_variable_loads(addr: str) -> None:
+    assert loaded("https://vault.example.com", env={"VAULT_ADDR": addr}).addr == addr
 
 
-@pytest.mark.parametrize("addr", ["http://vault.example.com:8200", "http://localhost.example.com"])
-def test_a_plain_http_address_from_the_environment_is_refused_at_open(addr: str) -> None:
-    """`VAULT_ADDR` and `--vault-addr` never pass through the file's reader, so
-    the transport refuses before the token goes anywhere."""
-    with pytest.raises(ConfigError) as caught:
-        build_transport(store(addr), token=Secret("t"))
-
-    rendered = str(caught.value)
-    assert "vault 'vault-dev': its address must use https://, and this one uses http" in rendered
-    assert "127.0.0.1, ::1 or localhost" in rendered
+def test_a_plain_http_vault_addr_flag_is_refused() -> None:
+    with pytest.raises(ConfigError, match="the address --vault-addr gives must use https://"):
+        loaded("https://vault.example.com", vault_addr="http://vault.example.com:8200")
 
 
-# ------------------------------------------------------------ webhook URL ---
+def test_a_profile_is_held_to_the_same_rule() -> None:
+    with pytest.raises(ConfigError, match="must use https://"):
+        loaded(
+            "https://vault.example.com",
+            profile="standby",
+            standby_addr="http://vault.example.com:8200",
+        )
 
 
-@pytest.mark.parametrize("url", LOOPBACK)
-def test_a_loopback_webhook_is_allowed(url: str) -> None:
-    webhook.check_url(Secret(url))
-
-
-def test_an_https_webhook_is_allowed() -> None:
-    webhook.check_url(Secret("https://chat.example.com/hooks/T0K3N"))
-
-
-@pytest.mark.parametrize(
-    "url",
-    ["http://chat.example.com/hooks/T0K3N", "http://localhost.example.com/hooks/T0K3N"],
-)
-def test_a_plain_http_webhook_is_refused_without_repeating_it(url: str) -> None:
-    """The URL is the chat credential, so the message gives the scheme only."""
-    with pytest.raises(ConfigError) as caught:
-        webhook.check_url(Secret(url))
-
-    rendered = str(caught.value)
-    assert "delivery.notify.webhook.url" in rendered
-    assert "must use https://, and this one uses http" in rendered
-    assert "T0K3N" not in rendered
-    assert "chat.example.com" not in rendered
+def test_a_file_store_reads_addr_as_a_path_and_is_not_checked() -> None:
+    """Only a HashiCorp store reads `addr` as a URL."""
+    assert loaded("./store.json", kind="file").addr == "./store.json"

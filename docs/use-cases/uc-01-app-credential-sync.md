@@ -445,7 +445,7 @@ a *value*. A run that needs both passes both.
 are different risks, and an operator should not have to count them. A preview is
 never gated, so it is also how an operator finds out they need the flag. In JSON,
 each plan unit carries `current`: `seeded`, `replaced`, or `unknown` where the
-plan could not tell (`03-json-output.md` §2, #809).
+plan could not tell (`03-json-output.md` §2).
 
 **The refusal happens at plan time** (invariant 4), from the documents read
 before anything is written. The run checks again under the lock, because a

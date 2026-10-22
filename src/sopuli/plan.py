@@ -16,7 +16,7 @@ rather than by convenience.
 `creds generate` is the one verb whose plan also says what the vault held. Its
 refusals depend on a staged `pending` and, under `--promote`, on an existing
 `current` (UC-1 §4), so a preview that left them out would not tell a consumer
-which flag the real run needs (#809). :func:`build` stays pure. The verb reads
+which flag the real run needs. :func:`build` stays pure. The verb reads
 the vault itself and passes what it found to :func:`with_stages`, which is pure
 too.
 
@@ -257,7 +257,7 @@ def with_stages(
     pending: Mapping[tuple[str, str], str],
     current: Mapping[tuple[str, str], str],
 ) -> Plan:
-    """``plan`` with each unit's ``pending`` and ``current`` set (#809).
+    """``plan`` with each unit's ``pending`` and ``current`` set.
 
     Both mappings are keyed on (account, target), the unit's identity. A unit
     missing from a mapping keeps ``None``: a binding with no ref has no document

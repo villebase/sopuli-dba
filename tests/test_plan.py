@@ -125,7 +125,7 @@ def test_none_is_a_legal_intent() -> None:
 
 
 def test_stages_reach_only_the_units_they_name() -> None:
-    """`creds generate` passes what its plan-time read found (#809). A unit it
+    """`creds generate` passes what its plan-time read found. A unit it
     names nothing for keeps no field, so the item shape on other verbs and on
     a unit with no ref is unchanged."""
     plan = build(estate(accounts=["acme_web_user"]), intent=["generate", "vault_promote"])

@@ -5220,7 +5220,7 @@ def creds_generate(
     # a `pending`, and under `--promote` which would be seeded and which
     # replaced. A preview that could not tell those apart would be a preview of
     # the wrong question. The read comes before `plan.resolved`, so the event
-    # and the document carry the same plan (#809). The plan is recorded first
+    # and the document carry the same plan. The plan is recorded first
     # with every stage `unknown`, so a store that cannot be opened still leaves
     # the plan to print, and the document does not claim a read that never ran.
     bindings = [binding for binding in config.bindings if binding.secret is not None]
@@ -5591,7 +5591,7 @@ def _with_stages(
     *,
     promote: bool,
 ) -> Any:
-    """``plan`` with what the plan-time read found, per unit (#809).
+    """``plan`` with what the plan-time read found, per unit.
 
     ``keyed`` is each binding with its document. ``unknown`` where the document
     was not read: :func:`_plan_documents` leaves it out of ``found``, and saying

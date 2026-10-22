@@ -1488,7 +1488,7 @@ def test_the_plan_says_per_unit_whether_a_pending_is_staged(
     validator: Draft202012Validator,
 ) -> None:
     """A JSON consumer finds out from the preview which accounts need
-    `--overwrite-pending`, not from the real run's exit 8 (#809). The real run's
+    `--overwrite-pending`, not from the real run's exit 8. The real run's
     plan is the preview's, as `plan` is on every verb."""
     store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
 
@@ -1510,7 +1510,7 @@ def test_the_plan_says_per_unit_which_current_a_promote_would_replace(
     store: MemoryStore,
     validator: Draft202012Validator,
 ) -> None:
-    """The text's SEEDED and REPLACED columns, per unit (#809)."""
+    """The text's SEEDED and REPLACED columns, per unit."""
     seed_current(store, acme_web_user="the-live-one")
 
     preview = document(

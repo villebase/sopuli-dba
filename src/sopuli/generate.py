@@ -209,7 +209,7 @@ def document_key(binding: Binding) -> LockKey | None:
     :func:`password_key`.
 
     `creds generate` builds the key here only: :func:`group` writes under it,
-    and the plan-time read reads it (#809). Two builders in one verb could
+    and the plan-time read reads it. Two builders in one verb could
     drift, and the read would then miss every document and skip the refusals
     over a staged `pending` or an existing `current`.
     """

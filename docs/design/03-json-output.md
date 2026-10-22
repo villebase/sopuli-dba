@@ -867,7 +867,7 @@ can be answered only at the prompt. Reasons:
 [#663](../decisions/log.md#663).
 
 **On `creds generate`, each unit says what the vault held when the plan read
-it** (#809). `pending` is `staged`, `absent` or `unknown`. A real run refuses
+it**. `pending` is `staged`, `absent` or `unknown`. A real run refuses
 over `staged` without `--overwrite-pending`. Under `--promote`, `current` is
 `seeded` where the document has no `current` for the account, `replaced` where
 it has one. A real run refuses over `replaced` without `--overwrite-current`.

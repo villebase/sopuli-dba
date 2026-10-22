@@ -1358,9 +1358,7 @@ spells them:
 | `app_root` | an application root — a distinct scope, not the same as the CDB root |
 | `app_pdb` | an application PDB |
 
-That is `scope.type` from
-[`sopuli-run-1.11.schema.json`](../schemas/sopuli-run-1.11.schema.json), minus
-`unknown`. Adopting the vocabulary the run document has typed since it was written
+That is the run schema's `scope.type`, minus `unknown`. Adopting the vocabulary the run document has typed since it was written
 means the word a file *asserts* and the word the tool *reports* are the same word,
 so a mismatch between them needs no translation to explain. `unknown` is
 observation-only: something the driver may find, never something a file can claim.

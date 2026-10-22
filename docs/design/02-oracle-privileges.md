@@ -669,7 +669,7 @@ better for three reasons:
   is readable however the grant arrived;
 - a grant row is not access: the view may have been dropped or renamed;
 - the mechanism already exists and is measured. `ABSENT_CODES` treats
-  `ORA-00942`, `ORA-01031` and `ORA-41900` as "no".
+  `ORA-00942`, `ORA-00904`, `ORA-01031` and `ORA-41900` as "no".
 
 The cost is one round trip per documented grant, which is why the audit runs
 only with the flag.
@@ -704,7 +704,8 @@ cannot be quoted as evidence that nothing was.
 | `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, and the second does not fit the nested-role traversal. That is a design question, not a query |
 | `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's default grant set | the optional grant that §2 describes for check 3. With it, the audit reads these rows |
 
-If `DBA_ROLE_PRIVS` is refused at runtime, the three role rows join this list.
+If `DBA_ROLE_PRIVS` is refused at runtime, the five roles of §3's list join this
+list: `DBA`, `PDB_DBA`, `CDB_DBA`, `AUDIT_VIEWER` and `AUDIT_ADMIN`.
 The report never merges "I looked and found nothing" with "I could not look".
 
 **With the optional grant, the password-file rows are read.** On 26ai
@@ -1109,6 +1110,11 @@ exists there too.
 - **It is set before anything else runs**, so no statement can be audited
   without it. A session that cannot be labelled is closed, not used, because
   using it would lose the join this section exists for.
+- **A verification login is the exception.** The login itself is the thing
+  being tested, so nothing can run before it. The identifier is set as soon as
+  the login succeeds. If setting it fails, the session is still used for the
+  answer, because the login has already answered, and a refused `DBMS_SESSION`
+  call must not turn into a reported drift.
 - **The call binds the id.** It does not build a string. This is the reverse of
   invariant 14. `V$SQL_BIND_CAPTURE` keeps bind values in clear, which is why a
   password must never be bound, and why a captured correlation id is useful. The

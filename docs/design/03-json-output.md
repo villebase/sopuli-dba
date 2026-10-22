@@ -2825,6 +2825,13 @@ These rules follow from the two lists:
   `lock.found[].declared` widened from "a binding names this path" to "this
   configuration accounts for this path". Turning the boolean into a three-valued
   string would have been a rename, which is major.
+- **How many entries a diagnostic code emits is contract.** A consumer may count
+  a code's entries, or read the one entry a code emits per run. So changing the
+  count is a minor bump, even when the schema file changes only in its `$id`.
+  It is minor rather than major because a consumer that only tests whether the
+  code is present sees the same answer. `SOPULI-W043` is the example: run
+  schema 1.50 made it one entry per account and target, where it had been one
+  per run, and its row in §3 says so. Reasons: [#979](../decisions/log.md#979).
 - **A new section is better than a widened one** when the new data does not fit
   the old section's required fields. `doctor`'s `targets[]`, `install` and
   `vaults[]` are separate from `results[]` for that reason (§2).

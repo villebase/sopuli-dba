@@ -311,6 +311,7 @@ def _render_safety(
         # through whole, like `max_targets`, rather than being substituted into
         # a value that can only be one of six literals.
         delivery=safety.delivery,
+        require_encryption=safety.require_encryption,
     )
 
 
@@ -565,6 +566,11 @@ def _patch_safety(
         # the template's block as well, so both reach the resolver and the
         # intersection is taken over the two (decision #424).
         delivery=base.delivery if patch.delivery is None else patch.delivery,
+        require_encryption=(
+            base.require_encryption
+            if patch.require_encryption is None
+            else patch.require_encryption
+        ),
     )
 
 

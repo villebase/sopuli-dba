@@ -171,6 +171,7 @@ RESOLVED_SETTINGS = (
     "safety.dry_run",
     "safety.max_targets",
     "safety.readonly",
+    "safety.require_encryption",
     "vault",
 )
 

@@ -36,6 +36,7 @@ from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Config, ExpandedTarget
 from sopuli.config.selection import matches
+from sopuli.driver.protocol import ENCRYPTION_NATIVE, ENCRYPTION_TLS
 from sopuli.exit_codes import ExitCode
 from sopuli.plan import BlastRadius
 from sopuli.settings.registry import Layer
@@ -54,6 +55,17 @@ CONFIRM_ENVIRONMENTS = "safety.confirm_environments"
 #: Which UC-2 delivery methods an estate permits (H6). Ratchets by
 #: intersection, so a layer may only narrow the set.
 ALLOWED_METHODS = "safety.delivery.allowed_methods"
+
+#: Refuse to send a password over a connection that is not encrypted (#857).
+REQUIRE_ENCRYPTION = "safety.require_encryption"
+
+#: The capability a target without an encrypted connection lacks, as
+#: ``error.target_capability`` and the refusal's message name it.
+ENCRYPTED_CONNECTION = "an encrypted connection"
+
+#: The encryption methods that count as encrypted. ``none`` and ``unknown`` do
+#: not: a connection whose encryption could not be read may be in clear.
+ENCRYPTED = frozenset({ENCRYPTION_NATIVE, ENCRYPTION_TLS})
 
 #: How many readonly targets a refusal names before it stops listing them.
 #:
@@ -184,6 +196,43 @@ def _readonly_at(expanded: ExpandedTarget, config: Config) -> str | None:
             and matches(expanded.target, group.match)
         ):
             return f"groups.{group.name}.safety.readonly"
+    return None
+
+
+def encryption_required_at(
+    expanded: ExpandedTarget, config: Config, resolved: Mapping[str, Resolved]
+) -> str | None:
+    """The key that requires an encrypted connection to this target, or ``None``.
+
+    **Per target, unlike ``readonly``.** A ``readonly`` anywhere in the run
+    refuses the whole run (decision #424). This setting decides whether one
+    connection may carry a password, so a group that requires it for ``prod``
+    does not require it of a ``dev`` target in the same run. ``defaults`` and a
+    profile speak for every target, and a target's, its template's or a group's
+    block for that target only.
+
+    ``resolved`` may already hold the estate's blocks
+    (:func:`for_estate`), so only its layers above the objects are read from it.
+    The objects are read here, per target, in :func:`_readonly_at`'s order.
+    """
+    answer = resolved.get(REQUIRE_ENCRYPTION)
+    if answer is not None:
+        # Lowest authority last, so the floor is reported: "ties resolve
+        # downward" (`sopuli/settings/resolver.py`).
+        for one in reversed(answer.contributions):
+            if one.layer not in (Layer.OBJECT, Layer.BUILTIN) and one.value is True:
+                return one.location
+    if expanded.template_safety is not None and expanded.template_safety.require_encryption:
+        return f"target_sets.{expanded.target_set}.safety.require_encryption"
+    if expanded.target.safety is not None and expanded.target.safety.require_encryption:
+        return str(declared_at(expanded, "safety").key("require_encryption"))
+    for group in config.groups:
+        if (
+            group.safety is not None
+            and group.safety.require_encryption
+            and matches(expanded.target, group.match)
+        ):
+            return f"groups.{group.name}.safety.require_encryption"
     return None
 
 

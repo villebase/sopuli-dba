@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -388,7 +388,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
 version: 1
 
 runtime:
@@ -3010,7 +3010,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.1.schema.json`](../schemas/sopuli-config-3.1.schema.json),
+[`docs/schemas/sopuli-config-3.2.schema.json`](../schemas/sopuli-config-3.2.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3021,7 +3021,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.1.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.2.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3095,7 +3095,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
 version: 1
 ```
 
@@ -3106,7 +3106,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.1.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.2.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

@@ -275,6 +275,7 @@ _SAFETY_KEYS = {
     ("safety", "max_targets"): "safety.max_targets",
     ("safety", "confirm_environments"): "safety.confirm_environments",
     ("safety", "delivery", "allowed_methods"): "safety.delivery.allowed_methods",
+    ("safety", "require_encryption"): "safety.require_encryption",
     ("locking", "break_expired"): "locking.break_expired",
     ("tls", "verify"): "vaults.*.tls.verify",
 }

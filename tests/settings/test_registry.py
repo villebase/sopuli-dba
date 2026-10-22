@@ -85,8 +85,8 @@ def test_the_registry_and_the_safety_list_agree() -> None:
 
 
 def test_the_safety_settings_are_the_ones_p3_names() -> None:
-    """Invariant 10 names five members: dry-run, readonly, max_targets,
-    confirm_environments and delivery.allowed_methods.
+    """Invariant 10 names six members: dry-run, readonly, max_targets,
+    confirm_environments, delivery.allowed_methods and require_encryption.
 
     Pinned so that removing one is a decision somebody makes on purpose rather
     than a line lost in a refactor. ``--confirm`` and ``--force`` have no
@@ -107,6 +107,7 @@ def test_the_safety_settings_are_the_ones_p3_names() -> None:
         "safety.max_targets",
         "safety.confirm_environments",
         "safety.delivery.allowed_methods",
+        "safety.require_encryption",
         "locking.break_expired",
         "vaults.*.tls.verify",
     }

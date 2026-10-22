@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.1.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.2.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.1"
+SCHEMA_VERSION = "3.2"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -223,12 +223,13 @@ def _safety() -> Schema:
             "confirm_environments": _array(STRING),
             "readonly": BOOLEAN,
             "delivery": _safety_delivery(),
+            "require_encryption": BOOLEAN,
         },
         description=(
             "Safety settings only ratchet toward safe: the resolved value is the "
             "lowest max_targets, the union of confirm_environments, the intersection "
-            "of delivery.allowed_methods, and readonly if any layer sets it "
-            "(00-principles.md P3, invariant 10)."
+            "of delivery.allowed_methods, and readonly and require_encryption if any "
+            "layer sets them (00-principles.md P3, invariant 10)."
         ),
     )
 

@@ -305,8 +305,11 @@ from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
 from sopuli.personal import declared_on
 from sopuli.preflight import Finding
 from sopuli.safety import (
+    ENCRYPTED,
+    ENCRYPTED_CONNECTION,
     RefusedError,
     confirmation_demanded,
+    encryption_required_at,
     for_estate,
     refuse_disallowed_method,
     refuse_if_nobody_to_ask,
@@ -2055,6 +2058,10 @@ def account_reset_password(
     # be built from is a plan-time refusal (invariant 4) rather than a failure
     # after the password has already changed.
     paths = _record_paths(config, account, reached)
+    # Before any password is drawn (#857). Under `--dry-run` too: a preview that
+    # said "would be reset" over a connection the run would refuse would be
+    # wrong.
+    _require_encryption(reached, run, config)
     # **The delivery backend too, and for the same invariant.** A store
     # that cannot wrap is an unavailable capability, knowable from the file
     # before any database is reached -- so it is exit 5 here, naming the store,
@@ -2811,6 +2818,16 @@ def _reset_one(
         # drawing one. The real run asks them here as well, which is still the
         # last point before a password is drawn.
         try:
+            # The connection the password would cross, read again (#857).
+            # `_require_encryption` refused the run before this unless it could
+            # not reach the target.
+            required = encryption_required_at(target, config, run.resolved)
+            if required is not None:
+                refusal = _unencrypted(
+                    session.scope().encryption, target=target.name, location=required
+                )
+                if refusal is not None:
+                    raise refusal
             if decision.expire:
                 session.require_no_rollover_window(account)
             policy = _reset_policy(config, account, target.name, state)
@@ -4310,7 +4327,7 @@ def config_validate(
 
     **Validated by the loader, not by the published schema.** The two are not
     equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-3.1.schema.json`` is structural, deliberately
+    ``docs/schemas/sopuli-config-3.2.schema.json`` is structural, deliberately
     leaves the cross-key rules out (``01-configuration.md`` section 9b), and
     ``jsonschema`` is a development dependency that must not become a runtime
     one. The schema is the editor's fast local check; this is the complete one.
@@ -6422,6 +6439,7 @@ def creds_apply(
         # mean nothing on the invocation somebody would reach for first. It
         # writes nothing and needs no lock, which is why it can.
         foreseen: list[tuple[str, UserState]] = []
+        _require_encryption(_targets_of(config, _sending(sources)), run, config)
         findings = _preflight(
             _surveyable(sources),
             run,
@@ -6480,6 +6498,9 @@ def creds_apply(
             withheld = _withheld(left_out)
             document.diagnostics.extend(withheld)
             repair_notes.extend(one.message for one in withheld)
+            # Before the first change, inside the lock (#857). Exit 5 releases it
+            # on the way out of `holding`, as every refusal here does.
+            _require_encryption(_targets_of(config, _sending(sources)), run, config)
             findings = _preflight(
                 _surveyable(sources),
                 run,
@@ -7148,6 +7169,7 @@ def _apply_target(
     """
     run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
+    required = encryption_required_at(target, config, run.resolved)
     session = None
     try:
         try:
@@ -7197,6 +7219,7 @@ def _apply_target(
                     # target can sit on different policies, and only one of them may
                     # have opted into an attribute.
                     attributes=apply_states.attributes_for(config, binding),
+                    encryption_required=required,
                 )
             except _StoppedAfterChangeError as stopped:
                 # The account the run was working on when it lost the lock had
@@ -7306,6 +7329,7 @@ def _apply_one(
     attributes: AccountAttributes,
     force: bool = False,
     requested: str | None = None,
+    encryption_required: str | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
 
@@ -7339,7 +7363,12 @@ def _apply_one(
     wrong with one account is a row in the table and the run carries on, which is
     exactly the wrong answer to a takeover: it would turn "somebody else owns this
     estate now" into a footnote and apply to the next account anyway. So it is
-    re-raised ahead of the catch-all, and the run ends. Where this account had
+    re-raised ahead of the catch-all, and the run ends.
+
+    ``encryption_required`` is the key that requires an encrypted connection to
+    this target, or ``None`` (#857). Where it is set, the connection is read
+    just before the statement and a row is refused rather than sent in clear.
+    :func:`_require_encryption` has normally refused the run before this. Where this account had
     already been changed, the error goes out inside :class:`_StoppedAfterChangeError`
     with the account's row, so the run document still records the change.
 
@@ -7504,6 +7533,27 @@ def _apply_one(
         # carried the password across the network, and one the driver refused
         # first has not.
         sent = session.scope().encryption
+        refusal = (
+            None
+            if encryption_required is None
+            else _unencrypted(sent, target=binding.target, location=encryption_required)
+        )
+        if refusal is not None:
+            # The plan-time read could not reach this target, or the
+            # connection changed since. Either way the password stays here.
+            reported = _finding(refusal)
+            return _Applied(
+                binding,
+                source,
+                check_states.Outcome(check_states.ERROR, reported.message),
+                changed=False,
+                verified_before=before,
+                attributes=enforced,
+                overridden=overridden,
+                caveats=caveats,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
         session.set_password(user.name, source.value)
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
@@ -7879,6 +7929,62 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
         client_lib_dir=config.runtime.oracle.client_lib_dir,
     )
     return driver.connect(target, credential.credential)
+
+
+def _sending(sources: Sequence[tuple[Binding, Source | None]]) -> list[Binding]:
+    """The bindings an apply would send a password for: those with a stage."""
+    return [binding for binding, source in sources if source is not None]
+
+
+def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, config: Config) -> None:
+    """Refuse, at plan time, to send a password over an unencrypted connection
+    (#857).
+
+    Invariant 4: where `safety.require_encryption` asks for an encrypted
+    connection and a target has none, the run stops before any password is drawn
+    or any database is changed, with exit 5 naming the target and the key that
+    required it. `unknown` counts as not encrypted, because a connection whose
+    encryption could not be read may be in clear.
+
+    **One connection per target that requires it, and none otherwise**, so a
+    config that does not turn the setting on costs nothing. A target this cannot
+    reach is left to the run, which reports it on its rows. That is not a way
+    past the check: the run reads the connection it sends over again, and
+    :func:`_unencrypted` refuses that row there.
+    """
+    for expanded in targets:
+        location = encryption_required_at(expanded, config, run.resolved)
+        if location is None:
+            continue
+        try:
+            session = _open_session(expanded, run, config)
+        except Exception:  # noqa: BLE001 -- the run reports it on each row
+            continue
+        try:
+            encryption = session.scope().encryption
+        finally:
+            with suppress(Exception):
+                session.close()
+        refusal = _unencrypted(encryption, target=expanded.name, location=location)
+        if refusal is not None:
+            raise refusal
+
+
+def _unencrypted(
+    encryption: Encryption, *, target: str, location: str
+) -> UnsupportedCapabilityError | None:
+    """The refusal for a password about to cross this connection, or ``None``
+    where it is encrypted. ``location`` is the key that required it."""
+    if encryption.method in ENCRYPTED:
+        return None
+    return UnsupportedCapabilityError(
+        ENCRYPTED_CONNECTION,
+        target=target,
+        hint=(
+            f"`{location}` requires it, and this connection's encryption is "
+            f"{encryption.method}: {encryption.hint or 'nothing more is known'}"
+        ),
+    )
 
 
 def _rolling_back(sources: Sequence[tuple[Binding, Source | None]]) -> frozenset[tuple[str, str]]:
@@ -10112,6 +10218,8 @@ def _rotate_estate(
     # Decision #606, and `apply`'s rule: printed at the end with the run's other
     # notes.
     into.caveats = caveat_notes(findings)
+    # Before step 4 draws a password (#857).
+    _require_encryption(_targets_of(config, rotating), run, config)
 
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
     writes = staging.group(

@@ -181,7 +181,8 @@ def merge_layers(
     setting an earlier file wrote at the same key (invariant 10, #855). Only a
     key a mapping holds is ratcheted: a ``targets:`` list a later file writes
     still replaces the earlier one whole, safety blocks included. The warnings
-    are ``SOPULI-W039``, one for each key where a later file asked for less.
+    are ``SOPULI-W039``, one for each key where a later file's value lost. A
+    union defeats nobody, so ``confirm_environments`` never warns.
 
     Two ways round the ratchet are refused rather than merged. A later file
     that replaces a mapping holding an earlier file's safety key, with ``null``
@@ -194,7 +195,7 @@ def merge_layers(
     if names is None:
         names = [f"file {number}" for number in range(1, len(documents) + 1)]
     merged: dict[str, Any] = {}
-    written: dict[tuple[str, ...], tuple[str, list[tuple[str, Any]]]] = {}
+    written: dict[tuple[Any, ...], tuple[str, list[tuple[str, Any]]]] = {}
     for label, document in zip(names, documents, strict=True):
         merged = _merge(merged, document)
         _refuse_erased(merged, written, by=label)
@@ -241,7 +242,7 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
 
 def _refuse_erased(
     merged: dict[str, Any],
-    written: Mapping[tuple[str, ...], tuple[str, list[tuple[str, Any]]]],
+    written: Mapping[tuple[Any, ...], tuple[str, list[tuple[str, Any]]]],
     *,
     by: str,
 ) -> None:
@@ -256,10 +257,9 @@ def _refuse_erased(
         for depth, key in enumerate(path[:-1]):
             node = node.get(key)
             if not isinstance(node, dict):
-                replaced = ".".join(path[: depth + 1])
                 raise ConfigError(
-                    f"{by} replaces `{replaced}` with {describe(node)}, and "
-                    f"`{'.'.join(path)}` under it was set in {values[0][0]}",
+                    f"{by} replaces `{_dotted(path[: depth + 1])}` with {describe(node)}, "
+                    f"and `{_dotted(path)}` under it was set in {values[0][0]}",
                     hint=(
                         "a later --config file cannot remove a safety setting an earlier "
                         "file wrote (invariant 10); write the block as a mapping, or "
@@ -280,7 +280,7 @@ _SAFETY_KEYS = {
 }
 
 
-def _setting_at(path: tuple[str, ...]) -> str | None:
+def _setting_at(path: tuple[Any, ...]) -> str | None:
     """The ratcheted setting a key path holds, or ``None``.
 
     The owner is the part of the path before the setting's own keys, and it must
@@ -310,7 +310,7 @@ def _setting_at(path: tuple[str, ...]) -> str | None:
     return None
 
 
-def _owned_by(owner: tuple[str, ...], pattern: tuple[str, ...]) -> bool:
+def _owned_by(owner: tuple[Any, ...], pattern: tuple[str, ...]) -> bool:
     """Whether ``owner`` is ``pattern``, where ``*`` in the pattern is any name."""
     return len(owner) == len(pattern) and all(
         want in ("*", key) for key, want in zip(owner, pattern, strict=True)
@@ -336,29 +336,48 @@ _VAULT_OWNERS: tuple[tuple[str, ...], ...] = (
 
 
 def _ratcheted_keys(
-    node: dict[str, Any], at: tuple[str, ...]
-) -> Iterator[tuple[tuple[str, ...], str, Any]]:
+    node: dict[Any, Any], at: tuple[Any, ...]
+) -> Iterator[tuple[tuple[Any, ...], str, Any]]:
     """Every key in ``node`` that holds a ratcheted setting: its path, the
     setting's name and the value written.
 
     Walks mappings only. A list is replaced whole by a later file, so a setting
     inside one is never written at the same key by two files.
+
+    **The path keeps the keys as the YAML gave them.** An unquoted ``2026`` is a
+    number, and a path of strings would not find it again in the merged
+    document; validation then says the key must be a string. A key that holds a
+    setting is recorded whatever its value, a mapping included, so a value of
+    the wrong type is refused with its file rather than walked into.
     """
     for key, value in node.items():
-        path = (*at, str(key))
-        if isinstance(value, dict):
-            yield from _ratcheted_keys(value, path)
-            continue
+        path = (*at, key)
         name = _setting_at(path)
         if name is not None:
             yield path, name, value
+        elif isinstance(value, dict):
+            yield from _ratcheted_keys(value, path)
+
+
+def _dotted(path: tuple[Any, ...]) -> str:
+    return ".".join(str(key) for key in path)
 
 
 #: What each ratcheted type is called in a refusal.
 _KINDS = {bool: "true or false", int: "a number", tuple: "a list of strings"}
 
 
-def _ratchet(path: tuple[str, ...], name: str, values: list[tuple[str, Any]]) -> Resolved:
+def _wrong(value: Any, wanted: type) -> str:
+    """What is wrong with ``value``, in the words a refusal uses: for a list
+    setting written as a list, the entry that is not a string."""
+    kind = _KINDS[wanted]
+    if wanted is tuple and isinstance(value, list):
+        entry = next(item for item in value if not isinstance(item, str))
+        return f"must be {kind}, and {entry!r} is {describe(entry)}"
+    return f"must be {kind}, not {describe(value)}"
+
+
+def _ratchet(path: tuple[Any, ...], name: str, values: list[tuple[str, Any]]) -> Resolved:
     """The safest of what the files wrote at ``path``, through the resolver.
 
     The resolver's shapes rather than a copy of them: minimum, union,
@@ -375,16 +394,13 @@ def _ratchet(path: tuple[str, ...], name: str, values: list[tuple[str, Any]]) ->
     definition = setting(name)
     at = ROOT
     for key in path:
-        at = at.key(key)
+        at = at.key(str(key))
     layer = {"defaults": Layer.DEFAULTS, "profiles": Layer.PROFILE}.get(path[0], Layer.OBJECT)
     contributions = []
     for label, value in reversed(values):
         candidate = tuple(value) if isinstance(value, list) else value
         if not definition.accepts(candidate):
-            raise ConfigError(
-                f"must be {_KINDS[definition.type]}, not {describe(value)}, in {label}",
-                at=at,
-            )
+            raise ConfigError(f"{_wrong(value, definition.type)}, in {label}", at=at)
         contributions.append(Contribution(layer=layer, value=candidate, detail=label))
     try:
         answer = resolve(name, contributions)
@@ -399,10 +415,10 @@ def _ratchet(path: tuple[str, ...], name: str, values: list[tuple[str, Any]]) ->
     held = max(
         index for index, one in enumerate(answer.contributions) if one.detail == answer.detail
     )
-    return replace(answer, setting=".".join(path), contributions=answer.contributions[: held + 1])
+    return replace(answer, setting=_dotted(path), contributions=answer.contributions[: held + 1])
 
 
-def _put(document: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
+def _put(document: dict[Any, Any], path: tuple[Any, ...], value: Any) -> None:
     """Set ``path`` in ``document``, which :func:`_refuse_erased` has checked
     still holds every mapping on the way."""
     node = document

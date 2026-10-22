@@ -21,7 +21,14 @@ from typing import Any
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.loading import load_config_from, load_documents, merge_documents, merge_layers
+from sopuli.config.loading import (
+    _setting_at,
+    load_config_from,
+    load_documents,
+    merge_documents,
+    merge_layers,
+)
+from sopuli.config.schema import build_schema
 
 BASE = """
 version: 1
@@ -317,6 +324,89 @@ def test_a_later_file_cannot_erase_a_block_that_holds_a_safety_key(
     assert (
         "`target_sets.appdb.overrides.appdb-prod.safety.readonly` under it was set in floor.yaml"
     ) in caught.value.message
+
+
+def test_a_key_that_is_not_a_string_is_left_to_validation() -> None:
+    """An unquoted `2026` is a number. The path keeps it as one, so the merge
+    finds it again and the second file, which does not touch it, is not refused."""
+    merged, warnings = merge_layers(
+        [{"groups": {2026: {"safety": {"readonly": True}}}}, {"defaults": {}}]
+    )
+
+    assert merged["groups"][2026] == {"safety": {"readonly": True}}
+    assert warnings == ()
+
+
+def test_a_later_file_that_writes_a_mapping_over_the_key_is_refused_with_its_file() -> None:
+    with pytest.raises(ConfigError) as caught:
+        merge_layers(
+            [_safety({"readonly": True}), _safety({"readonly": {}})],
+            names=["floor.yaml", "local.yaml"],
+        )
+
+    assert caught.value.message == "must be true or false, not a mapping, in local.yaml"
+
+
+def test_a_list_with_an_entry_that_is_not_a_string_names_the_entry() -> None:
+    with pytest.raises(ConfigError) as caught:
+        merge_layers(
+            [_safety({"confirm_environments": [1]}), _safety({"confirm_environments": ["dev"]})],
+            names=["floor.yaml", "local.yaml"],
+        )
+
+    assert caught.value.message == "must be a list of strings, and 1 is a number, in floor.yaml"
+
+
+def _owners(schema: dict[str, Any], key: str, definition: str) -> set[tuple[str, ...]]:
+    """Every path at which the published config schema puts a ``key`` block of
+    the shape ``definition`` names, through mappings only, with a name written
+    as ``*``. Lists are replaced whole by a later file, so a block inside one is
+    not ratcheted. The shape is asked as well as the key, because a vault
+    entry's ``locking`` is a string, not the ``locking:`` block."""
+    defs = schema["$defs"]
+    found: set[tuple[str, ...]] = set()
+
+    def walk(node: dict[str, Any], path: tuple[str, ...]) -> None:
+        while "$ref" in node:
+            node = defs[node["$ref"].rsplit("/", 1)[-1]]
+        if len(path) > 6:
+            return
+        for name, sub in node.get("properties", {}).items():
+            if name == key and sub.get("$ref") == f"#/$defs/{definition}":
+                found.add(path)
+            elif name != key:
+                walk(sub, (*path, name))
+        extra = node.get("additionalProperties")
+        if isinstance(extra, dict):
+            walk(extra, (*path, "*"))
+        for branch in ("anyOf", "oneOf", "allOf"):
+            for sub in node.get(branch, ()):
+                walk(sub, path)
+
+    walk(schema, ())
+    return found
+
+
+@pytest.mark.parametrize(
+    ("block", "definition", "leaf", "name"),
+    [
+        ("safety", "safety", ("readonly",), "safety.readonly"),
+        ("locking", "locking", ("break_expired",), "locking.break_expired"),
+        ("tls", "vault_tls", ("verify",), "vaults.*.tls.verify"),
+    ],
+)
+def test_every_mapping_the_schema_gives_a_block_is_ratcheted(
+    block: str, definition: str, leaf: tuple[str, ...], name: str
+) -> None:
+    """The loader's owner tables against the config's own shape. A `safety:`
+    block added to another mapping would otherwise be skipped by the ratchet
+    with every test still passing, and invariant 10 would fail open."""
+    owners = _owners(build_schema(), block, definition)
+
+    assert owners
+    for owner in owners:
+        concrete = tuple("x" if key == "*" else key for key in owner)
+        assert _setting_at((*concrete, block, *leaf)) == name, owner
 
 
 def test_ratcheting_across_three_files_does_not_mutate_the_last() -> None:

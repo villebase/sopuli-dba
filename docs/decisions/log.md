@@ -2648,8 +2648,9 @@ the register.
   file's `true`.
 - **Decision:** Yes. Where two files write a safety setting at the same key in
   a mapping, the merged value is the safer one, by the resolver's own shapes.
-  A later file that asks for less gets `SOPULI-W039`, naming both files. A
-  `targets:` list is still replaced whole, safety blocks included. W039 now
+  A later file whose value loses gets `SOPULI-W039`, naming both files. A
+  later file that erases such a key, or writes it with the wrong type, is
+  refused. A `targets:` list is still replaced whole, safety blocks included. W039 now
   fires in a case it did not before, so run schema 1.51 and event schema 1.12
   (#979). `01-configuration.md` §9 states the rule.
 - **Why:** invariant 10 already reads this way, and P3 lists `--config` as a
@@ -2662,6 +2663,7 @@ the register.
     file is the one written to be relied on.
   - Matching a later `targets:` list's entries to an earlier one's by name, so
     that per-target safety held too. It breaks §9's rule that a list is a whole
-    answer. A floor belongs in `defaults.safety` or a group.
+    answer. A floor belongs in `defaults.safety`, which no later file can
+    narrow to fewer targets.
   - A new warning code. W039 already means "a layer asked to relax a safety
     setting, and the ratchet held".

@@ -2783,8 +2783,9 @@ The keys are those in a mapping: `defaults`, a profile, a group, a target set or
 one of its overrides, and a vault entry. Two things are refused, naming the
 file: a later file that replaces a mapping holding an earlier file's safety key
 with `null` or anything else that is not a mapping, and a value of the wrong
-type in any of the files. A later file that asks for less gets the `SOPULI-W039`
-warning, naming both files:
+type in any of the files. A later file whose value loses gets the `SOPULI-W039`
+warning, naming both files. A union defeats nobody, so `confirm_environments`
+never warns: a later file's environments are added to the earlier file's.
 
 ```yaml
 # floor.yaml
@@ -2815,7 +2816,9 @@ ok: 1 target, 2 bindings, 2 warnings
 
 A `targets:` list is still replaced whole, safety blocks included, because a list
 is a whole answer. A floor that a layered file must not lower belongs in
-`defaults.safety` or in a group. Reasons: [#855](../decisions/log.md#855).
+`defaults.safety`, which applies to every target. A group's block holds between
+files too, but a later file can change which targets the group matches, through
+its `match:` or the targets' labels. Reasons: [#855](../decisions/log.md#855).
 
 Each layer is a config file in its own right, `version:` included, and is checked
 on its own — permissions, encoding, parse, version — before anything is merged.

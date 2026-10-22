@@ -256,6 +256,7 @@ def test_the_settings_printed_hold_no_secret() -> None:
         "safety.dry_run",
         "safety.max_targets",
         "safety.readonly",
+        "safety.require_encryption",
         "vault",
     }
 

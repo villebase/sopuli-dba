@@ -40,7 +40,7 @@ from sopuli.config.model import AccountPolicy, PasswordPolicy, Policy
 
 POLICY_KEYS = ("password", "account")
 
-#: Why a `verify:` block is gone. Profiles had one too, and the reason is the same.
+#: Why a policy has no `verify:` block. A profile has none for the same reason.
 REMOVED_VERIFY = "no run read it; --method and --lockout-margin set these on the command line"
 
 #: Keys a policy does not have, each with the reason. Refused by name, so that a

@@ -2,11 +2,11 @@
 
 A password is a place in one document of one store: the field, then the
 pointer's segments. Two bindings with one key hold one password, whatever else
-differs. Four places ask the question. The loader refuses two accounts on one
-password and one password under two policies. ``creds generate`` draws each
+differs. Several places ask the question. The loader refuses two accounts on
+one password and one password under two policies. ``creds generate`` draws each
 password once and refuses a write that carries two values for one. The
 promotion gate in ``creds apply`` asks whether a credential confirmed on another
-target. All four must agree, and a key each would agree only while each
+target. They must all agree, and a key each would agree only while each
 normalised the same way. This module is the one definition, and it is in
 the config layer so that the loader, :mod:`sopuli.generate` and the CLI can all
 import it.

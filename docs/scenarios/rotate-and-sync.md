@@ -534,9 +534,9 @@ changes it. This one is a profile setting, and one `ALTER PROFILE` changes it.
 |---|---|
 | `DRIFT`, exit 3 | the vault's password does not work on the database. `creds apply` converges it |
 | `UNVERIFIABLE`, `VAULT_V -` | there is no document in the vault yet. `creds generate` then `creds apply` |
-| `UNVERIFIABLE`, "no login attempted" | the lockout guard stopped the check. Fix the drift with `apply`, which does not need to log in first |
+| `UNVERIFIABLE`, "no login attempted" | the lockout guard stopped the check. `apply` still sets the password, because setting one is not a login, but it cannot confirm it either: the account stays `UNVERIFIABLE` and its `pending` is not promoted. Reset the account's failed-login count, then run `apply` again |
 | `ROLLOVER_ACTIVE` | not an error. Two passwords work. `creds finish-rollover` when the restarts are done |
-| `SKIPPED  the account holds DBA` | a guardrail refused an account a credential tool should not touch. The run did the rest of its job. A skip on every target of an account does not change the exit code. A skip on one target, where another target confirmed, holds back that document's promotion, and the run exits 4 with `SOPULI-W050` |
+| `SKIPPED  the account holds DBA` | a guardrail refused an account a credential tool should not touch. The run did the rest of its job. A skip does not change the exit code by itself. It can hold back a promotion: when the account has a `pending` to promote and every other target confirmed it, the run exits 4 with `SOPULI-W050` |
 | exit 7 | somebody else holds the lock on this secret. `sopuli lock status` names them |
 | exit 8 | a confirmation was declined, or a `readonly` setting refused the command |
 | `the vault did not read back the new password for: ...`, exit 4 | every database has the new password and the promotion was written, but the vault serves a different value when read back, or does not answer the read. Nothing needs undoing on a database. Look at the vault, for example a replica behind its primary |

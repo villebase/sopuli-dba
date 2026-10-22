@@ -1004,7 +1004,9 @@ written when the run ends, and by then the tool knows everything about its own
 locks.
 
 **The section is absent on a run that takes no lock**: `check`, `status` and
-every `--dry-run`. Absent means none was needed, not none was available.
+every `--dry-run` except `lock break --dry-run`. Absent means none was needed,
+not none was available. `lock break --dry-run` has the section, because the break
+it would make is its plan; the entry says `applied: false` (below).
 
 **`found[]` lists other runs' locks.** `sopuli lock status` takes no lock. It
 reads the record at every secret path the config declares, and lists each
@@ -1661,9 +1663,11 @@ reason. `summary.unchanged` is the complement of `changed`, not of `ok`: it
 answers "how much did this run leave alone?"
 
 **`actions[]` carries the sequence, not just the outcome.** UC-1 §5 is a flow,
-and an `apply` entry holds up to four steps in the order they ran: the
-pre-flight `verify`, the `password_set`, the `verify` that confirmed it, and the
-`vault_promote`. `applied` on each says whether the step *ran*, never whether it
+and an `apply` entry holds its steps in the order they ran: the pre-flight
+`verify`, the `password_set`, the `verify` that confirmed it, and the
+`vault_promote`. An entry that declares `unlock` or a `profile` adds
+`account_unlock` or `attribute_set`, and a run that closes the window adds
+`rollover_finish`. `applied` on each says whether the step *ran*, never whether it
 succeeded. A `verify` with `applied: false` is a login the lockout guard
 declined, and a `password_set` with `applied: false` is a password that was
 already right. With one action per result, "we did not need to change it" and
@@ -2350,7 +2354,9 @@ events carry the progress per target:
 
 **A dry run streams its reads and nothing else**: `run.started`,
 `plan.resolved`, one `vault.read` per document, and `run.finished`. It takes no
-lock and connects to no target.
+lock and writes nothing. It connects to a target only for the pre-flight that
+`--preflight` or `--strategy` asks for, and reports what that finds in
+`diagnostics`.
 
 **A lock somebody else holds** gives `lock.denied`, then `run.finished` with exit
 7 and the error. This is from the same stack, with a held record planted as
@@ -2728,14 +2734,18 @@ sopuli creds apply --config estate.yaml --repair result.json
 jq '[.results[] | select(.changed)] | map({account,target,actions:[.actions[]|.kind]})' result.json
 
 # targets missing zero-downtime rotation, i.e. what to fix next
-jq -r '.results[] | select((.scope.capabilities // []) | index("password_rollover") | not)
-       | .target' result.json | sort -u
+sopuli doctor --config estate.yaml --output json > doctor.json
+jq -r '.targets[] | select(.scope) | select(.scope.capabilities | index("password_rollover") | not)
+       | .target' doctor.json
 
 # where did this setting come from
 jq '.invocation.options' result.json
 
-# drift grouped by any target label, without parsing target names
-jq -r '.results[] | select(.state=="DRIFT") | .scope.labels.tenant' result.json | sort | uniq -c
+# drift grouped by any target label, without parsing target names:
+# a result names its target, and the resolved config holds the target's labels
+sopuli config show --config estate.yaml --resolved --output json > estate.json
+jq -r --slurpfile e estate.json '($e[0].config.targets | map({(.name): .labels.tenant}) | add) as $t
+       | .results[] | select(.state=="DRIFT") | $t[.target]' result.json | sort | uniq -c
 
 # follow a scheduled check live, one line per target as it finishes
 sopuli creds check --application acme --output jsonl \

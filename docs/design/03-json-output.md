@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.48.schema.json`](../schemas/sopuli-run-1.48.schema.json),
-[`../schemas/sopuli-event-1.9.schema.json`](../schemas/sopuli-event-1.9.schema.json)
+Schemas: [`../schemas/sopuli-run-1.49.schema.json`](../schemas/sopuli-run-1.49.schema.json),
+[`../schemas/sopuli-event-1.10.schema.json`](../schemas/sopuli-event-1.10.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -865,6 +865,21 @@ password, after the password has changed, and `--confirm` cannot answer it
 (UC-2 §6.5). On that path `--confirm` is refused altogether, so a `true` there
 can be answered only at the prompt. Reasons:
 [#663](../decisions/log.md#663).
+
+**On `creds generate`, each unit says what the vault held when the plan read
+it** (#809). `pending` is `staged`, `absent` or `unknown`. A real run refuses
+over `staged` without `--overwrite-pending`. Under `--promote`, `current` is
+`seeded` where the document has no `current` for the account, `replaced` where
+it has one, and `unknown` likewise. A real run refuses over `replaced` without
+`--overwrite-current`. `unknown` means the plan could not read the document. It
+is not `absent`, because that would tell a consumer it needs no flag, and nobody
+knows that. So a `--dry-run` tells a consumer which flags the real run needs,
+per account, as the text output's tables tell a person. The fields are absent on
+other verbs, on a unit with no secret ref, and, for `current`, on a run that
+does not promote. The read happens before `plan.resolved` is sent, so the
+stream and the document carry the same plan. The run reads the documents again
+under the lock, and a `pending` that appeared after the plan is refused there
+(UC-1 §4). Reasons: [#809](../decisions/log.md#809).
 
 **A unit omits `secret` when nothing has named its store yet.** `secret_ref`
 requires `vault` as a string, so there is no shape for half an address, and

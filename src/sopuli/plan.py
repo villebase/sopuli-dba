@@ -13,6 +13,13 @@ diff above compares a plan against results it was never the plan for. So this is
 tier 0 in the sense `04-testing.md` §4 means it: pure, and pure by requirement
 rather than by convenience.
 
+`creds generate` is the one verb whose plan also says what the vault held. Its
+refusals depend on a staged `pending` and, under `--promote`, on an existing
+`current` (UC-1 §4), so a preview that left them out would not tell a consumer
+which flag the real run needs (#809). :func:`build` stays pure. The verb reads
+the vault itself and passes what it found to :func:`with_stages`, which is pure
+too.
+
 Three things here are decisions rather than transcription:
 
 **`intent` is supplied by the verb, not inferred here.** A unit's intent is the
@@ -43,13 +50,31 @@ aimed at.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sopuli.config.model import Binding, Config
 from sopuli.config.sharing import SharedSecret, shared_secrets
 
-__all__ = ["ACTION_KINDS", "BlastRadius", "Plan", "PlanUnit", "build", "build_for_accounts"]
+__all__ = [
+    "ACTION_KINDS",
+    "CURRENT_STATES",
+    "PENDING_STATES",
+    "BlastRadius",
+    "Plan",
+    "PlanUnit",
+    "build",
+    "build_for_accounts",
+    "with_stages",
+]
+
+#: ``plan.units[].pending``. ``unknown`` is a document the plan could not read,
+#: which is not the same as one with nothing staged.
+PENDING_STATES = frozenset(("staged", "absent", "unknown"))
+
+#: ``plan.units[].current``: ``seeded`` where the document has no `current` for
+#: the account, ``replaced`` where it has one, ``unknown`` where it was not read.
+CURRENT_STATES = frozenset(("seeded", "replaced", "unknown"))
 
 
 #: The run schema's ``action_kind`` enum, as a literal.
@@ -96,6 +121,12 @@ class PlanUnit:
     #: The document this unit's credential lives in, or ``None`` where the config
     #: binds no ref. §3 makes `secret` optional and this layer does not invent one.
     secret: dict[str, Any] | None = None
+    #: `creds generate` only: whether a `pending` was staged when the plan read
+    #: the vault. :data:`PENDING_STATES`, or ``None`` on every other verb.
+    pending: str | None = None
+    #: `creds generate --promote` only: what the promotion does to `current`.
+    #: :data:`CURRENT_STATES`, or ``None`` where the run does not promote.
+    current: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         """The run schema's ``plan.units[]`` item.
@@ -103,6 +134,8 @@ class PlanUnit:
         ``secret`` is omitted rather than nulled when there is none: the schema
         types it as a `secret_ref` object, so a null would fail validation, and
         `additionalProperties: false` means nothing else may be added here.
+        ``pending`` and ``current`` are omitted on the verbs that do not set
+        them, for the same reason.
         """
         item: dict[str, Any] = {
             "account": self.account,
@@ -111,6 +144,10 @@ class PlanUnit:
         }
         if self.secret is not None:
             item["secret"] = dict(self.secret)
+        if self.pending is not None:
+            item["pending"] = self.pending
+        if self.current is not None:
+            item["current"] = self.current
         return item
 
 
@@ -211,6 +248,36 @@ def build(config: Config, *, intent: Sequence[str]) -> Plan:
         blast_radius=_blast_radius(config.bindings, environments),
         shared=shared_secrets(config.bindings),
     )
+
+
+def with_stages(
+    plan: Plan,
+    *,
+    pending: Mapping[tuple[str, str], str],
+    current: Mapping[tuple[str, str], str],
+) -> Plan:
+    """``plan`` with each unit's ``pending`` and ``current`` set (#809).
+
+    Both mappings are keyed on (account, target), the unit's identity. A unit
+    missing from a mapping keeps ``None``: a binding with no ref has no document
+    to read, and a run that does not promote has no ``current`` to report.
+
+    A value outside the closed set is refused, because the schema enumerates it
+    and a misspelt state would reach a consumer that branches on it.
+    """
+    for states, allowed in ((pending, PENDING_STATES), (current, CURRENT_STATES)):
+        stray = sorted(set(states.values()) - allowed)
+        if stray:
+            raise ValueError(f"unknown stage state(s) {stray}; allowed: {sorted(allowed)}")
+    units = tuple(
+        replace(
+            unit,
+            pending=pending.get((unit.account, unit.target)),
+            current=current.get((unit.account, unit.target)),
+        )
+        for unit in plan.units
+    )
+    return replace(plan, units=units)
 
 
 def build_for_accounts(

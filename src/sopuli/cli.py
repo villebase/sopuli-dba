@@ -5212,13 +5212,30 @@ def creds_generate(
         config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    _record_plan(plan, run, noun="generation", confirmation_required=_asks_environments(plan, run))
+    asks = _asks_environments(plan, run)
+    _record_plan(plan, run, noun="generation", confirmation_required=asks)
+
+    # **The run reads before it plans**, which is why the stores open here
+    # rather than after the `--dry-run` return. The refusals are plan-time ones
+    # (invariant 4), and the plan itself has to say which accounts already have
+    # a `pending`, and under `--promote` which would be seeded and which
+    # replaced. A preview that could not tell those apart would be a preview of
+    # the wrong question. The read comes before `plan.resolved`, so the event
+    # and the document carry the same plan (#809). The plan is recorded once
+    # before it, so a store that cannot be opened still leaves the plan to print.
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    keys = list(dict.fromkeys(key for key in map(_document_key, bindings) if key is not None))
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
+    found, unread = _plan_documents(keys, stores)
+    plan = _with_stages(plan, bindings, found, promote=promote)
+    _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
 
-    bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
@@ -5250,15 +5267,6 @@ def creds_generate(
     )
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
-
-    # **The run reads before it plans**, which is why the stores open here
-    # rather than after the `--dry-run` return. The refusals are plan-time ones
-    # (invariant 4), and the plan itself has to say which accounts already have
-    # a `pending`, and under `--promote` which would be seeded and which
-    # replaced. A preview that could not tell those apart would be a preview of
-    # the wrong question.
-    stores = _stores_for(names, config, token_file=run.vault_token_file, cache=run.stores)
-    found, unread = _plan_documents(writes, stores)
     held = _holders(writes, found, _holds_current) if promote else {}
     staged_over = _holders(writes, found, _holds_pending)
     # Never under `--dry-run`: a preview is how somebody finds out they need a
@@ -5562,8 +5570,46 @@ def _password_from_stdin() -> Secret:
     return Secret(text)
 
 
+def _document_key(binding: Binding) -> LockKey | None:
+    """The document ``binding``'s password is written to, keyed as
+    :func:`sopuli.generate.group` keys its writes, so the plan-time read and the
+    write address one document."""
+    password = staging.password_key(binding)
+    if password is None or password.store is None:
+        return None
+    return LockKey(store=password.store, path=password.path)
+
+
+def _with_stages(
+    plan: Any, bindings: Sequence[Binding], found: Mapping[LockKey, Any], *, promote: bool
+) -> Any:
+    """``plan`` with what the plan-time read found, per unit (#809).
+
+    ``unknown`` where the document could not be read: :func:`_plan_documents`
+    leaves it out of ``found``, and saying ``absent`` would tell a consumer it
+    needs no flag when nobody knows.
+    """
+    pending: dict[tuple[str, str], str] = {}
+    current: dict[tuple[str, str], str] = {}
+    for binding in bindings:
+        key = _document_key(binding)
+        if key is None:
+            continue
+        unit = (binding.account, binding.target)
+        if key not in found:
+            pending[unit] = "unknown"
+            if promote:
+                current[unit] = "unknown"
+            continue
+        document = found[key]
+        pending[unit] = "staged" if _is_staged(document, binding.secret) else "absent"
+        if promote:
+            current[unit] = "replaced" if _has_current(document, binding.secret) else "seeded"
+    return plan_builder.with_stages(plan, pending=pending, current=current)
+
+
 def _plan_documents(
-    writes: Sequence[DocumentWrite], stores: Mapping[str, SecretStore]
+    keys: Iterable[LockKey], stores: Mapping[str, SecretStore]
 ) -> tuple[dict[LockKey, Any], dict[LockKey, str]]:
     """Each document as the plan-time read found it (decision #257, #769).
 
@@ -5587,14 +5633,14 @@ def _plan_documents(
     """
     found: dict[LockKey, Any] = {}
     errors: dict[LockKey, str] = {}
-    for write in writes:
-        store = stores.get(write.key.store)
-        if store is None:  # pragma: no cover - `names` is built from these keys
+    for key in keys:
+        store = stores.get(key.store)
+        if store is None:  # pragma: no cover - the stores are opened from these keys
             continue
         try:
-            found[write.key] = store.read(write.key.path)
+            found[key] = store.read(key.path)
         except Exception as error:  # noqa: BLE001 -- see the docstring: the write reports it
-            errors[write.key] = _finding(error).message
+            errors[key] = _finding(error).message
     return found, errors
 
 
@@ -5626,7 +5672,11 @@ def _holds_current(document: Any, candidate: Candidate) -> bool:
     that is a configuration problem the write will report; reading it as "there
     is a current here" would turn it into a refusal naming the wrong cause.
     """
-    ref = candidate.binding.secret
+    return _has_current(document, candidate.binding.secret)
+
+
+def _has_current(document: Any, ref: SecretRef | None) -> bool:
+    """:func:`_holds_current` for a ref, as :func:`_is_staged` is for `pending`."""
     if ref is None:  # pragma: no cover - bindings without a ref never reach here
         return False
     try:

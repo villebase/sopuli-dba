@@ -20,7 +20,7 @@ import pytest
 
 from sopuli.config.loading import build_config
 from sopuli.config.selection import Selection, filter_estate
-from sopuli.plan import ACTION_KINDS, BlastRadius, Plan, PlanUnit, build
+from sopuli.plan import ACTION_KINDS, BlastRadius, Plan, PlanUnit, build, with_stages
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}}
 
@@ -119,6 +119,45 @@ def test_none_is_a_legal_intent() -> None:
     assert "none" in ACTION_KINDS
     plan = build(estate(accounts=["acme_web_user"]), intent=["none"])
     assert all(unit.intent == ("none",) for unit in plan.units)
+
+
+# --------------------------------------------------------------- the stages ---
+
+
+def test_stages_reach_only_the_units_they_name() -> None:
+    """`creds generate` passes what its plan-time read found (#809). A unit it
+    names nothing for keeps no field, so the item shape on other verbs and on
+    a unit with no ref is unchanged."""
+    plan = build(estate(accounts=["acme_web_user"]), intent=["generate", "vault_promote"])
+    first, second = plan.units[0], plan.units[1]
+
+    staged = with_stages(
+        plan,
+        pending={(first.account, first.target): "staged"},
+        current={(first.account, first.target): "replaced"},
+    )
+
+    assert staged.units[0].as_json()["pending"] == "staged"
+    assert staged.units[0].as_json()["current"] == "replaced"
+    assert "pending" not in staged.units[1].as_json()
+    assert "current" not in staged.units[1].as_json()
+    assert staged.units[1] == second
+    assert "pending" not in plan.units[0].as_json(), "the input plan is not changed"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"), [("pending", "maybe"), ("current", "absent")], ids=["pending", "current"]
+)
+def test_a_stage_outside_the_schema_enum_is_refused(field: str, value: str) -> None:
+    """Each field has its own closed set: `absent` is a `pending` state and not a
+    `current` one, where the word is `seeded`."""
+    plan = build(estate(accounts=["acme_web_user"]), intent=["generate"])
+    unit = plan.units[0]
+    states: dict[str, dict[tuple[str, str], str]] = {"pending": {}, "current": {}}
+    states[field] = {(unit.account, unit.target): value}
+
+    with pytest.raises(ValueError, match="unknown stage state"):
+        with_stages(plan, pending=states["pending"], current=states["current"])
 
 
 # -------------------------------------------------------------- the secret ---

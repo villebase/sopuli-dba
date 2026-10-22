@@ -363,7 +363,8 @@ read does not change the argument.
   `--overwrite-pending` authorises the discard, for a staged password that
   nobody should use. Like `--overwrite-current`, it is a flag you type, not a
   prompt, and `--confirm` does not satisfy it. `--dry-run` is never refused,
-  and it names the accounts that have a `pending`. To do that it reads the
+  and it names the accounts that have a `pending`. In JSON, each plan unit
+  carries `pending: staged` or `absent` (`03-json-output.md` §2). To do that it reads the
   vault, so a preview needs the vault token, as `--promote --dry-run` does. A
   document the plan cannot read is named, with the note that whether it has a
   `pending` is not known. The run checks again under
@@ -440,7 +441,9 @@ a *value*. A run that needs both passes both.
 **`--promote --dry-run` names the two groups separately.** Accounts whose
 `current` would be **seeded** and accounts whose `current` would be **replaced**
 are different risks, and an operator should not have to count them. A preview is
-never gated, so it is also how an operator finds out they need the flag.
+never gated, so it is also how an operator finds out they need the flag. In JSON,
+each plan unit carries `current: seeded` or `replaced` (`03-json-output.md` §2,
+#809).
 
 **The refusal happens at plan time** (invariant 4), from the documents read
 before anything is written. The run checks again under the lock, because a

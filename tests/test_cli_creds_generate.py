@@ -1476,6 +1476,97 @@ def test_a_dry_run_is_never_refused_and_shows_the_split(
     assert "nothing was written (--dry-run)" in result.output
 
 
+def _per_unit(body: Mapping[str, Any], field: str) -> dict[str, str | None]:
+    return {unit["account"]: unit.get(field) for unit in body["plan"]["units"]}
+
+
+def test_the_plan_says_per_unit_whether_a_pending_is_staged(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """A JSON consumer finds out from the preview which accounts need
+    `--overwrite-pending`, not from the real run's exit 8 (#809). The real run's
+    plan is the preview's, as `plan` is on every verb."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+
+    preview = document(run(runner, write_config(CONFIG), "--dry-run", "--output", "json"))
+
+    validator.validate(preview)
+    assert _per_unit(preview, "pending") == {
+        "acme_web_user": "staged",
+        "acme_batch_user": "absent",
+    }
+    assert _per_unit(preview, "current") == {"acme_web_user": None, "acme_batch_user": None}
+    real = document(run(runner, write_config(CONFIG), "--overwrite-pending", "--output", "json"))
+    assert real["plan"]["units"] == preview["plan"]["units"]
+
+
+def test_the_plan_says_per_unit_which_current_a_promote_would_replace(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """The text's SEEDED and REPLACED columns, per unit (#809)."""
+    seed_current(store, acme_web_user="the-live-one")
+
+    preview = document(
+        run(runner, write_config(CONFIG), "--promote", "--dry-run", "--output", "json")
+    )
+
+    validator.validate(preview)
+    assert _per_unit(preview, "current") == {
+        "acme_web_user": "replaced",
+        "acme_batch_user": "seeded",
+    }
+    assert _per_unit(preview, "pending") == {"acme_web_user": "absent", "acme_batch_user": "absent"}
+
+
+def test_a_document_the_plan_could_not_read_is_unknown_not_absent(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """`absent` would tell a consumer it needs no flag, and nobody knows that."""
+    unread = {LockKey(store="vault-prod", path=PATH): "permission denied"}
+    monkeypatch.setattr("sopuli.cli._plan_documents", lambda keys, stores: ({}, unread))
+
+    preview = document(
+        run(runner, write_config(CONFIG), "--promote", "--dry-run", "--output", "json")
+    )
+
+    validator.validate(preview)
+    assert set(_per_unit(preview, "pending").values()) == {"unknown"}
+    assert set(_per_unit(preview, "current").values()) == {"unknown"}
+
+
+def test_the_streamed_plan_carries_the_stages_too(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    events: Draft202012Validator,
+) -> None:
+    """The plan-time read comes before `plan.resolved`, so the stream and the
+    document carry one plan."""
+    store.write(PATH, {PENDING: {"acme_web_user": "an-earlier-staged-one"}}, cas=0)
+
+    lines = stream(
+        run(runner, write_config(CONFIG), "--dry-run", "--output", "jsonl").stdout, events
+    )
+    preview = document(run(runner, write_config(CONFIG), "--dry-run", "--output", "json"))
+
+    (resolved,) = [line["data"] for line in lines if line["event"] == "plan.resolved"]
+    assert resolved["units"] == preview["plan"]["units"]
+    assert _per_unit({"plan": resolved}, "pending") == {
+        "acme_web_user": "staged",
+        "acme_batch_user": "absent",
+    }
+
+
 def test_the_authorised_overwrite_moves_the_old_value_into_previous(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

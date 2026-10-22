@@ -1394,8 +1394,10 @@ would let a broken capability probe look like a measurement.
 
 **Open mode is checked separately, and only by the commands that write.** UC-1 §5
 step 2 asks for read-write as part of pre-flight, but `check` reads and must keep
-working against a physical standby — so refusing one belongs to `apply` rather
-than to having connected. Implemented in
+working against a physical standby — so refusing one belongs to the change
+itself rather than to having connected. Every driver method that changes an
+account refuses a target that is not open read-write, before it builds its
+statement, and the pre-flight reports one as a finding. Implemented in
 `sopuli/driver/oracle/capabilities.py` as `assert_scope` and
 `require_read_write`, which are two calls for that reason.
 

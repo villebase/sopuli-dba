@@ -870,15 +870,18 @@ can be answered only at the prompt. Reasons:
 it** (#809). `pending` is `staged`, `absent` or `unknown`. A real run refuses
 over `staged` without `--overwrite-pending`. Under `--promote`, `current` is
 `seeded` where the document has no `current` for the account, `replaced` where
-it has one, and `unknown` likewise. A real run refuses over `replaced` without
-`--overwrite-current`. `unknown` means the plan could not read the document. It
-is not `absent`, because that would tell a consumer it needs no flag, and nobody
-knows that. So a `--dry-run` tells a consumer which flags the real run needs,
-per account, as the text output's tables tell a person. The fields are absent on
-other verbs, on a unit with no secret ref, and, for `current`, on a run that
-does not promote. The read happens before `plan.resolved` is sent, so the
-stream and the document carry the same plan. The run reads the documents again
-under the lock, and a `pending` that appeared after the plan is refused there
+it has one. A real run refuses over `replaced` without `--overwrite-current`.
+`unknown` means the plan could not tell: the document could not be read, the
+run failed before the read, or, for `current`, the account's ref does not
+resolve in the document. It is not `absent` or `seeded`, because that would tell
+a consumer it needs no flag, and nobody knows that. So a `--dry-run` tells a
+consumer which flags the real run needs, per account, as the text output's
+tables tell a person. The fields are absent on other verbs, on a unit with no
+secret ref, and, for `current`, on a run that does not promote. The read happens
+before `plan.resolved` is sent, so the stream and the document carry the same
+plan. After a `safety.confirm_environments` prompt the run reads again for its
+refusals, and the plan keeps what it said before the question. Under the lock it
+reads once more, and a `pending` that appeared after the plan is refused there
 (UC-1 §4). Reasons: [#809](../decisions/log.md#809).
 
 **A unit omits `secret` when nothing has named its store yet.** `secret_ref`

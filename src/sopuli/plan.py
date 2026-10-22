@@ -68,12 +68,13 @@ __all__ = [
     "with_stages",
 ]
 
-#: ``plan.units[].pending``. ``unknown`` is a document the plan could not read,
+#: ``plan.units[].pending``. ``unknown`` is a document the plan did not read,
 #: which is not the same as one with nothing staged.
 PENDING_STATES = frozenset(("staged", "absent", "unknown"))
 
 #: ``plan.units[].current``: ``seeded`` where the document has no `current` for
-#: the account, ``replaced`` where it has one, ``unknown`` where it was not read.
+#: the account, ``replaced`` where it has one, ``unknown`` where it was not read
+#: or the account's ref does not resolve in it.
 CURRENT_STATES = frozenset(("seeded", "replaced", "unknown"))
 
 

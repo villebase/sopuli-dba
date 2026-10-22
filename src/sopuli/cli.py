@@ -5213,7 +5213,6 @@ def creds_generate(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     asks = _asks_environments(plan, run)
-    _record_plan(plan, run, noun="generation", confirmation_required=asks)
 
     # **The run reads before it plans**, which is why the stores open here
     # rather than after the `--dry-run` return. The refusals are plan-time ones
@@ -5221,20 +5220,35 @@ def creds_generate(
     # a `pending`, and under `--promote` which would be seeded and which
     # replaced. A preview that could not tell those apart would be a preview of
     # the wrong question. The read comes before `plan.resolved`, so the event
-    # and the document carry the same plan (#809). The plan is recorded once
-    # before it, so a store that cannot be opened still leaves the plan to print.
+    # and the document carry the same plan (#809). The plan is recorded first
+    # with every stage `unknown`, so a store that cannot be opened still leaves
+    # the plan to print, and the document does not claim a read that never ran.
     bindings = [binding for binding in config.bindings if binding.secret is not None]
-    keys = list(dict.fromkeys(key for key in map(_document_key, bindings) if key is not None))
+    keyed = [
+        (binding, key) for binding in bindings if (key := staging.document_key(binding)) is not None
+    ]
+    keys = list(dict.fromkeys(key for _, key in keyed))
+    _record_plan(
+        _with_stages(plan, keyed, {}, promote=promote),
+        run,
+        noun="generation",
+        confirmation_required=asks,
+    )
     stores = _stores_for(
         {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
     )
     found, unread = _plan_documents(keys, stores)
-    plan = _with_stages(plan, bindings, found, promote=promote)
+    plan = _with_stages(plan, keyed, found, promote=promote)
     _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
+    if asks and not run.dry_run:
+        # An answer can take minutes, and the gates below must refuse over a
+        # `pending` staged meanwhile, not leave it to the check under the lock.
+        # The plan keeps what it said before the question.
+        found, unread = _plan_documents(keys, stores)
 
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
@@ -5570,31 +5584,23 @@ def _password_from_stdin() -> Secret:
     return Secret(text)
 
 
-def _document_key(binding: Binding) -> LockKey | None:
-    """The document ``binding``'s password is written to, keyed as
-    :func:`sopuli.generate.group` keys its writes, so the plan-time read and the
-    write address one document."""
-    password = staging.password_key(binding)
-    if password is None or password.store is None:
-        return None
-    return LockKey(store=password.store, path=password.path)
-
-
 def _with_stages(
-    plan: Any, bindings: Sequence[Binding], found: Mapping[LockKey, Any], *, promote: bool
+    plan: Any,
+    keyed: Sequence[tuple[Binding, LockKey]],
+    found: Mapping[LockKey, Any],
+    *,
+    promote: bool,
 ) -> Any:
     """``plan`` with what the plan-time read found, per unit (#809).
 
-    ``unknown`` where the document could not be read: :func:`_plan_documents`
-    leaves it out of ``found``, and saying ``absent`` would tell a consumer it
-    needs no flag when nobody knows.
+    ``keyed`` is each binding with its document. ``unknown`` where the document
+    was not read: :func:`_plan_documents` leaves it out of ``found``, and saying
+    ``absent`` would tell a consumer it needs no flag when nobody knows. An empty
+    ``found`` is the plan before the read, so every unit is ``unknown``.
     """
     pending: dict[tuple[str, str], str] = {}
     current: dict[tuple[str, str], str] = {}
-    for binding in bindings:
-        key = _document_key(binding)
-        if key is None:
-            continue
+    for binding, key in keyed:
         unit = (binding.account, binding.target)
         if key not in found:
             pending[unit] = "unknown"
@@ -5604,8 +5610,25 @@ def _with_stages(
         document = found[key]
         pending[unit] = "staged" if _is_staged(document, binding.secret) else "absent"
         if promote:
-            current[unit] = "replaced" if _has_current(document, binding.secret) else "seeded"
+            current[unit] = _current_state(document, binding.secret)
     return plan_builder.with_stages(plan, pending=pending, current=current)
+
+
+def _current_state(document: Any, ref: SecretRef | None) -> str:
+    """``plan.units[].current`` for one ref: ``seeded``, ``replaced`` or ``unknown``.
+
+    ``unknown`` where the ref does not resolve in the document. The gate does not
+    count such a ref as a holder (:func:`_holds_current`), and the write reports
+    the configuration problem. ``seeded`` would tell a consumer it needs no flag
+    for a run that is about to fail.
+    """
+    if ref is None:  # pragma: no cover - bindings without a ref have no document
+        return "unknown"
+    try:
+        held = resolve(document.data if document is not None else None, ref)
+    except Exception:  # noqa: BLE001 -- see the docstring
+        return "unknown"
+    return "seeded" if held is None else "replaced"
 
 
 def _plan_documents(
@@ -5672,11 +5695,7 @@ def _holds_current(document: Any, candidate: Candidate) -> bool:
     that is a configuration problem the write will report; reading it as "there
     is a current here" would turn it into a refusal naming the wrong cause.
     """
-    return _has_current(document, candidate.binding.secret)
-
-
-def _has_current(document: Any, ref: SecretRef | None) -> bool:
-    """:func:`_holds_current` for a ref, as :func:`_is_staged` is for `pending`."""
+    ref = candidate.binding.secret
     if ref is None:  # pragma: no cover - bindings without a ref never reach here
         return False
     try:

@@ -678,7 +678,7 @@
                   "absent",
                   "unknown"
                 ],
-                "description": "`creds generate` only: whether the unit's document had a `pending` for the account when the plan read the vault. `unknown` where the document could not be read. A real run refuses over `staged` without `--overwrite-pending`. Absent on other verbs and on a unit with no secret ref."
+                "description": "`creds generate` only: whether the unit's document had a `pending` for the account when the plan read the vault. `unknown` where the document could not be read, or the run failed before the read. A real run refuses over `staged` without `--overwrite-pending`. Absent on other verbs and on a unit with no secret ref."
               },
               "current": {
                 "type": "string",
@@ -687,7 +687,7 @@
                   "replaced",
                   "unknown"
                 ],
-                "description": "`creds generate --promote` only: what the promotion does to the account's `current`. `seeded` where there is none, `replaced` where there is one, `unknown` where the document could not be read. A real run refuses over `replaced` without `--overwrite-current`. Absent where the run does not promote."
+                "description": "`creds generate --promote` only: what the promotion does to the account's `current`. `seeded` where there is none, `replaced` where there is one, `unknown` where the document could not be read, the run failed before the read, or the account's ref does not resolve in the document. A real run refuses over `replaced` without `--overwrite-current`. Absent where the run does not promote."
               }
             }
           }

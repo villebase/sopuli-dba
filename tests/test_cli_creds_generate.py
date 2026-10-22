@@ -22,6 +22,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
+from sopuli import cli as cli_module
 from sopuli.cli import _refuse_discard, cli
 from sopuli.clock import utc_now
 from sopuli.config.errors import ConfigError
@@ -1565,6 +1566,74 @@ def test_the_streamed_plan_carries_the_stages_too(
         "acme_web_user": "staged",
         "acme_batch_user": "absent",
     }
+
+
+def test_a_ref_that_does_not_resolve_is_unknown_not_seeded(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """A container where a password should be: the write will report the
+    configuration problem, so `seeded` would tell a consumer it needs no flag
+    for a run that is about to fail."""
+    store.write(PATH, {CONTAINER: {"acme_web_user": {"nested": "a-container"}}}, cas=0)
+
+    preview = document(
+        run(runner, write_config(CONFIG), "--promote", "--dry-run", "--output", "json")
+    )
+
+    assert _per_unit(preview, "current") == {
+        "acme_web_user": "unknown",
+        "acme_batch_user": "seeded",
+    }
+
+
+def test_a_store_that_cannot_be_opened_leaves_a_plan_that_claims_no_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plan is recorded before the read, so a failure prints it, and every
+    stage in it is `unknown` rather than absent."""
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise StoreError("could not reach the store: connection refused")
+
+    monkeypatch.setattr("sopuli.cli._stores_for", refuse)
+
+    found = document(run(runner, write_config(CONFIG), "--promote", "--output", "json"))
+
+    assert found["exit_code"] != ExitCode.SUCCESS
+    assert set(_per_unit(found, "pending").values()) == {"unknown"}
+    assert set(_per_unit(found, "current").values()) == {"unknown"}
+
+
+def test_a_pending_staged_while_the_prompt_waits_is_refused_at_plan_time(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An answer can take minutes. The gates read again after it, so a
+    `pending` staged meanwhile is refused with exit 8, naming the account, and
+    not left to fail the write under the lock."""
+    guarded = CONFIG.replace(
+        "  policy: app-standard\n",
+        "  policy: app-standard\n  safety:\n    confirm_environments: [dev]\n",
+    )
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    asked = cli_module._confirm_environments
+
+    def answered_late(*args: Any, **kwargs: Any) -> None:
+        asked(*args, **kwargs)
+        store.write(PATH, {PENDING: {"acme_web_user": "staged-during-the-prompt"}}, cas=0)
+
+    monkeypatch.setattr("sopuli.cli._confirm_environments", answered_late)
+
+    result = run(runner, write_config(guarded), stdin="y\n")
+
+    assert refused(result) == ExitCode.ABORTED
+    assert "acme_web_user" in str(result.exception)
+    assert staged(store) == {"acme_web_user": "staged-during-the-prompt"}
 
 
 def test_the_authorised_overwrite_moves_the_old_value_into_previous(

@@ -577,8 +577,8 @@ resolver — see `adr-002-cli-framework.md`.
 **Safety settings only ratchet toward safe** (invariant 10). No source can relax
 them. `SAFETY_SETTINGS` in `sopuli/settings/registry.py` lists them, and
 `tests/settings/test_ratchet.py` checks each one. They include the `--dry-run`
-flag, `readonly: true`, `safety.max_targets`, `safety.confirm_environments` and
-`safety.delivery.allowed_methods`.
+flag, `readonly: true`, `safety.max_targets`, `safety.confirm_environments`,
+`safety.delivery.allowed_methods` and `safety.require_encryption`.
 
 - If the config says `readonly: true`, no flag re-enables writes. That includes
   `--force`, which is not a setting and has no layer. A run that would mutate a

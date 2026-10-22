@@ -60,8 +60,9 @@ ALLOWED_METHODS = "safety.delivery.allowed_methods"
 REQUIRE_ENCRYPTION = "safety.require_encryption"
 
 #: The capability a target without an encrypted connection lacks, as
-#: ``error.target_capability`` and the refusal's message name it.
-ENCRYPTED_CONNECTION = "an encrypted connection"
+#: ``error.target_capability`` and the refusal's message name it: a name, never
+#: a sentence (`03-json-output.md` §4).
+ENCRYPTED_CONNECTION = "encrypted_connection"
 
 #: The encryption methods that count as encrypted. ``none`` and ``unknown`` do
 #: not: a connection whose encryption could not be read may be in clear.

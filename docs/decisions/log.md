@@ -2748,3 +2748,30 @@ the register.
   - A setting to waive the refusal. It would be a ratchet setting, which is a
     separate decision. A site that runs Vault on plain HTTP inside its own
     network cannot use the tool until it adds TLS.
+
+## #857
+
+- **Decided:** 2026-10-22, #857
+- **Question:** Should a config be able to require an encrypted Oracle
+  connection before a password is sent? #697 reports an unencrypted connection
+  with a notice, and the run goes on, so `ALTER USER ... IDENTIFIED BY` crosses
+  the network in clear.
+- **Decision:** Yes. `safety.require_encryption`, off by default, is a safety
+  setting under invariant 10. With it on, `creds apply`, `creds rotate` and
+  `account reset-password` refuse a target whose connection is not encrypted,
+  or whose encryption could not be read, at plan time: exit 5, capability
+  `encrypted_connection`, before a password is drawn or a database changed.
+  It is resolved per target, and the connection that sends is read again
+  before each statement. `01-configuration.md` §3a states the rule. Config
+  schema 3.2.
+- **Why:** the server setting, `SQLNET.ENCRYPTION_SERVER = REQUIRED`, is the
+  fix, and the notice says so. A DBA who cannot change `sqlnet.ora` on every
+  target still needs a way to stop the tool sending a password in clear, and a
+  notice cannot stop a run that has already gone on. It is per target rather
+  than for the whole run, unlike `readonly` (#424), because it decides whether
+  one connection may carry a password: a group that requires it for `prod`
+  should not refuse a `dev` target in the same run. It is exit 5 rather than a
+  new code, because a missing capability is what invariant 4 gives exit 5 to.
+- **Rejected:**
+  - Leaving it as a warning. It informs, but it cannot stop the password
+    crossing the wire.

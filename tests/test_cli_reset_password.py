@@ -270,10 +270,8 @@ def test_a_reset_over_an_unencrypted_connection_is_refused_when_encryption_is_re
 
     result = run(runner, write_config(config), "--account", ACCOUNT, "--dry-run")
 
-    assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
-    assert 'target "tier1-oracle" does not support an encrypted connection' in str(
-        result.exception
-    )
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    assert 'target "tier1-oracle" does not support encrypted_connection' in str(result.exception)
     assert "`defaults.safety.require_encryption` requires it" in str(result.exception.hint)
     assert account() == "OPEN"
 

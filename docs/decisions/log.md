@@ -2701,7 +2701,11 @@ the register.
 - **Decision:** No. The loader refuses two entries that bind one user on one
   target to different places. Names are compared with `upper()`, as the driver
   compares them, and targets after expansion. Two entries that bind the user to
-  one place hold one password and stay allowed.
+  one place, in one spelling, hold one password and stay allowed. Two
+  spellings are refused even at one place, because every later step keys on
+  the name as written. A store that comes from a profile or `SOPULI_VAULT`
+  counts as different from a store an entry names, because nothing after the
+  load compares the two once the run has chosen.
 - **Why:** The database holds one password for the user. Two places give two
   documents: `creds generate` draws two passwords, one run rotates the user
   twice, and the document applied second wins. The other application is locked

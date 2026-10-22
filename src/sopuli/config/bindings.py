@@ -104,49 +104,58 @@ def _check_one_user_per_target(
 
     Names are compared with ``upper()``, as the driver compares them, so
     ``acme_web_user`` and ``ACME_WEB_USER`` are one user. Targets are compared
-    after expansion, so the rule sees every target an entry reaches. Two
-    bindings at one place hold one password and are allowed. Places are compared
-    with stores as the file states them, as the rules below compare them. Where
-    one store comes only from a profile or ``SOPULI_VAULT`` and the rest of the
-    place is the same, the file cannot say whether the places differ, and the
-    pair loads.
+    after expansion, so the rule sees every target an entry reaches. Each binding
+    is compared with every earlier binding of the user, so the order of the
+    entries does not matter.
+
+    Two bindings at one place, in one spelling, hold one password and are
+    allowed. Two spellings are refused even at one place: every later step keys
+    on the name as written, so the tool would treat them as two accounts.
+
+    Places are compared with stores as the file states them. A store that comes
+    only from a profile or ``SOPULI_VAULT`` is not the store another entry names,
+    so the pair is refused. The file cannot show that they are one place, and no
+    later step compares them once the run has chosen the store. Naming the store
+    in both entries settles it.
 
     One entry cannot bind a user twice on one target, because the duplicate-name
     rule refuses a name it declares twice. So this rule names two entries.
     """
-    seen: dict[tuple[str, str], tuple[Binding, PasswordKey]] = {}
+    seen: dict[tuple[str, str], list[tuple[Binding, PasswordKey]]] = {}
     for binding in bindings:
         key = declared_password_key(binding)
         if key is None:
             continue
-        user = (binding.target, binding.account.upper())
-        if user not in seen:
-            seen[user] = (binding, key)
-            continue
-        other, other_key = seen[user]
-        if other_key == key or _store_decides(key, other_key):
-            continue
-        ref = binding.secret
-        other_ref = other.secret
-        assert ref is not None
-        assert other_ref is not None
-        raise ConfigError(
-            f"{binding.account!r} on target {binding.target!r} is bound to two places, "
-            f"in {_declared_in(other, binding)}: {_address(other, other_ref)} and "
-            f"{_address(binding, ref)}",
-            at=where.get(binding.application, ROOT),
-            hint=(
-                "the database holds one password for the user, so declare it in one "
-                "entry, or give both entries the same ref"
-            ),
-        )
-
-
-def _store_decides(key: PasswordKey, other: PasswordKey) -> bool:
-    """Whether two keys differ only in a store the file does not state."""
-    if key.store is not None and other.store is not None:
-        return False
-    return (key.path, key.place) == (other.path, other.place)
+        earlier = seen.setdefault((binding.target, binding.account.upper()), [])
+        for other, other_key in earlier:
+            if other.account != binding.account:
+                raise ConfigError(
+                    f"{other.account!r} and {binding.account!r} on target {binding.target!r} "
+                    f"are one database user, spelled two ways in "
+                    f"{_declared_in(other, binding)}",
+                    at=where.get(binding.application, ROOT),
+                    hint=(
+                        "the database compares names in upper case, so spell the user the "
+                        "same way in every entry, and give the entries the same ref"
+                    ),
+                )
+            if other_key == key:
+                continue
+            ref = binding.secret
+            other_ref = other.secret
+            assert ref is not None
+            assert other_ref is not None
+            raise ConfigError(
+                f"{binding.account!r} on target {binding.target!r} is bound to two places, "
+                f"in {_declared_in(other, binding)}: {_address(other, other_ref)} and "
+                f"{_address(binding, ref)}",
+                at=where.get(binding.application, ROOT),
+                hint=(
+                    "the database holds one password for the user, so declare it in one "
+                    "entry, or give both entries the same ref and the same store"
+                ),
+            )
+        earlier.append((binding, key))
 
 
 def _check_one_account_per_password(
@@ -190,9 +199,9 @@ def _check_one_account_per_password(
     password, before anything is written.
 
     Accounts are compared as the file spells them. Two spellings of one Oracle
-    user on one target at two places are refused before this, by
-    ``_check_one_user_per_target``. At one place they reach this rule as two
-    accounts on one password, and it refuses them.
+    user on one target never reach this rule: ``_check_one_user_per_target``
+    refuses them first. On two targets they are two users, and this rule
+    compares them as written.
     """
     documents: dict[tuple[str | None, str], dict[tuple[PasswordKey, str], Binding]] = {}
     for binding in bindings:

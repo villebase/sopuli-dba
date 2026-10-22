@@ -3224,9 +3224,12 @@ notices until a rotation.
   would give two passwords, one run would rotate the user twice, and the
   document applied second would lock the other application out. No verb
   writes one password to two stores, so a mirror in a second store is refused
-  too. Two entries that bind the user to one place hold one password and load.
-  Where one store comes only from a profile or `SOPULI_VAULT` and the rest of
-  the place is the same, the file cannot tell, and the pair loads
+  too. Two entries that bind the user to one place, spelled the same way, hold
+  one password and load. Two spellings are refused even at one place, because
+  every later step keys on the name as written. A store that comes only from a
+  profile or `SOPULI_VAULT` counts as a different store from one an entry
+  names: the run may choose another, and nothing after the load compares the
+  two. Name the store in both entries
   ([#874](../decisions/log.md#874))
 - an `overrides` entry patching `accounts` → error. Invariant 5 says selectors
   filter the declared set and cannot extend it, not even under `--force`. A

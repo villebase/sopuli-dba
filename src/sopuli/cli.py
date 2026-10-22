@@ -10186,7 +10186,7 @@ def _rotate_estate(
         if left:
             # One line for a person, and one entry per pair for a consumer, so
             # that which windows are open is read from `account` and `target`
-            # rather than parsed out of the message (#825).
+            # rather than parsed out of the message.
             into.caveats.append(
                 _left_open_note(", ".join(f"{account} on {target}" for account, target in left))
             )

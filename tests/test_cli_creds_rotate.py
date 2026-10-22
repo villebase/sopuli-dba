@@ -1437,14 +1437,14 @@ def test_a_window_left_open_is_a_warning_in_the_document(
     assert (left["account"], left["target"]) == ("acme_web_user", "appdb-alpha")
 
 
-def test_each_window_left_open_is_one_warning_and_the_terminal_one_line(
+def test_each_window_left_open_is_one_warning(
     runner: CliRunner,
     write_config: Callable[[str], Path],
     estate: Harness,
     validator: Draft202012Validator,
 ) -> None:
     """A consumer reads which windows are open from `account` and `target`, not
-    from the message (#825). A person reads one line that names them all."""
+    from the message. Each message names its own pair only."""
     estate(
         users={"ACME_WEB_USER": user(rollover_enabled=True)},
         capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
@@ -1452,7 +1452,6 @@ def test_each_window_left_open_is_one_warning_and_the_terminal_one_line(
     )
 
     body = document(run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json"))
-    text = run(runner, write_config(CONFIG), "--finish-rollover")
 
     validator.validate(body)
     left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
@@ -1461,6 +1460,23 @@ def test_each_window_left_open_is_one_warning_and_the_terminal_one_line(
         ("acme_web_user", "appdb-beta"),
     ]
     assert all(one["level"] == "warning" for one in left)
+    for one in left:
+        named = one["message"].split(", because")[0]
+        assert named.endswith(f"open for {one['account']} on {one['target']}")
+
+
+def test_the_windows_left_open_are_one_line_in_the_terminal(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A person reads one line that names every pair, not one line per pair."""
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        store=StaleAfterPromotion(),
+    )
+
+    text = run(runner, write_config(CONFIG), "--finish-rollover")
+
     assert text.output.count("left the rollover window open") == 1
     assert (
         "left the rollover window open for acme_web_user on appdb-alpha, "

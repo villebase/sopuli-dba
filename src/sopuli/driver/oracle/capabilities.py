@@ -530,7 +530,7 @@ class ScopeAssertionError(DriverError):
 
 
 class ReadOnlyTargetError(DriverError):
-    """A mutation was planned against a target that is not open read-write.
+    """A mutation was about to run against a target that is not open read-write.
 
     P1 requires this **up front** rather than halfway through a statement: a
     physical standby opens ``READ ONLY``, and finding out at the ``ALTER USER``
@@ -620,9 +620,13 @@ def assert_scope(scope: Scope, declared: TargetOracle | None, *, target: str) ->
 def require_read_write(scope: Scope, *, target: str) -> None:
     """Refuse a mutation against a target that is not open read-write (P1).
 
-    Called by the commands that write, at plan time, and by nothing else --
-    see :class:`ReadOnlyTargetError` for why this is not folded into
-    :func:`assert_scope`.
+    Called by each mutating method of
+    :class:`~sopuli.driver.oracle.session.OracleSession` before it builds a
+    statement, and by nothing else. ``apply_attributes`` with nothing to apply
+    builds none and returns before the call. See :class:`ReadOnlyTargetError`
+    for why this is not folded into :func:`assert_scope`. The pre-flight and
+    `creds finish-rollover` read ``scope.read_write`` themselves, so that they
+    can report a read-only target as a finding rather than raise.
 
     An **unknown** open mode is not a refusal. ``V$DATABASE`` is in the
     documented grant set but a half-installed account cannot read it, and

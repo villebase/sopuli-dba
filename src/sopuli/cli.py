@@ -9104,8 +9104,9 @@ def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     inside one message and not spread over forty rows. `creds generate` already
     groups the constraints it cannot check the same way, for the same reason.
 
-    Emitted by `apply` and by `rotate`, which are the two verbs that ask the
-    guardrails anything. Grouping and wording are
+    Emitted by `apply` and by `rotate`. `account suspend`, `account
+    reset-password` and `account expire-password` ask the guardrails too, and do
+    not report their caveats yet (TODO(#971)). Grouping and wording are
     :func:`sopuli.diagnostics.guardrail_diagnostics`', because turning a domain
     object into something an operator reads is that module's job and the remedy it
     appends is a `GRANT` statement -- product knowledge the guardrails deliberately

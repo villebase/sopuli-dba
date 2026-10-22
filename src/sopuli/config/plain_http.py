@@ -29,10 +29,9 @@ PLAIN_HTTP_HINT = (
     "because anything else sends the credentials across the network in clear"
 )
 
-#: A scheme as RFC 3986 spells it, without the `.` it allows. No scheme the tool
-#: could meet has one, and a host does, so `chat.example.com:443/…` is not read
-#: as the scheme `chat.example.com` and quoted back in a message.
-_SCHEME = re.compile(r"([a-z][a-z0-9+-]*)://")
+#: A scheme as RFC 3986 spells it, without the `.` it allows, so that a host
+#: such as `chat.example.com:443/…` is not taken for one.
+_SCHEME = re.compile(r"[a-z][a-z0-9+-]*://")
 
 
 def plain_http_scheme(address: str) -> str | None:
@@ -40,9 +39,9 @@ def plain_http_scheme(address: str) -> str | None:
 
     ``https://`` is allowed anywhere, and ``http://`` only to a loopback host.
     Anything else is refused: another scheme, an ``http:`` or ``https:`` with no
-    ``//``, or no scheme at all. The answer names the scheme, or says which of
-    the other two it is, and never quotes the address, because a webhook URL is
-    a credential.
+    ``//``, or no scheme at all. The answer is ``http`` or a fixed phrase, never
+    a piece of the address, because a webhook URL is a credential and its first
+    characters may be part of the token.
     """
     text = address.strip()
     lowered = text.lower()
@@ -56,5 +55,4 @@ def plain_http_scheme(address: str) -> str | None:
         return None if host in LOOPBACK_HOSTS else "http"
     if lowered.startswith(("http:", "https:")):
         return "a scheme with no //"
-    match = _SCHEME.match(lowered)
-    return match.group(1) if match else "no scheme"
+    return "another scheme" if _SCHEME.match(lowered) else "no scheme"

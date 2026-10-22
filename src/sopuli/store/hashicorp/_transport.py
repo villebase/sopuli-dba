@@ -26,7 +26,6 @@ from typing import Any
 
 import httpx
 
-from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Vault, VaultTls
 from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.output.debug import logger
@@ -212,12 +211,12 @@ def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
         )
     # The loader refuses this on the merged address, whichever layer set it.
     # Checked again here because a `Vault` can also be built in code, and this is
-    # the last point before the token goes anywhere.
+    # the last point before the token goes anywhere. A `StoreError`, as the
+    # missing `addr` above is, because that is what this layer's callers handle.
     scheme = plain_http_scheme(vault.addr)
     if scheme is not None:
-        raise ConfigError(
+        raise StoreError(
             f"vault {vault.name!r}: its address must use https://, and this one uses {scheme}",
-            at=ROOT,
             hint=PLAIN_HTTP_HINT,
         )
 

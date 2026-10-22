@@ -76,9 +76,10 @@ def send(url: Secret, message: str) -> None:
 
     ``url`` is a :class:`~sopuli.secrets.Secret` because a chat incoming-webhook
     URL embeds its own credential -- that is C9's reason for the config key being a
-    MaterialRef, carried through to the value. It is revealed here and nowhere else,
-    and `tests/test_reveal_sites.py` records the site -- **as a credential on the
-    wire, not as a sixth numbered exception to invariant 2.** That invariant
+    MaterialRef, carried through to the value. It is revealed in this module only:
+    here, at the wire, and in :func:`check_url`, which reads its scheme and host
+    and lets neither out. `tests/test_reveal_sites.py` records the module -- **as
+    a credential on the wire, not as a sixth numbered exception to invariant 2.** That invariant
     enumerates the paths a *password* may take; material the tool presents to a
     service it is calling is a separate class the list has always held, beside the
     vault login and the store transport's token, for the reason that a credential

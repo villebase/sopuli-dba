@@ -23,7 +23,6 @@ import pytest
 # suite still runs on a base+dev install (`04-testing.md` §3).
 httpx = pytest.importorskip("httpx", reason="the hashicorp extra is not installed")
 
-from sopuli.config.errors import ConfigError  # noqa: E402
 from sopuli.config.model import Vault, VaultTls  # noqa: E402
 from sopuli.secrets import Secret  # noqa: E402
 from sopuli.store.hashicorp._errors import (  # noqa: E402
@@ -438,9 +437,11 @@ def test_a_loopback_address_opens(addr: str) -> None:
 def test_a_vault_built_in_code_is_refused_at_open(addr: str) -> None:
     """The loader refuses this on the merged address. This is the last point
     before the token goes anywhere, for a `Vault` that did not come through it."""
-    with pytest.raises(ConfigError) as caught:
+    with pytest.raises(StoreError) as caught:
         build_transport(vault(addr=addr), token=Secret("t"))
 
-    rendered = str(caught.value)
-    assert "vault 'vault-prod': its address must use https://, and this one uses http" in rendered
-    assert "127.0.0.1, ::1 or localhost" in rendered
+    assert caught.value.message == (
+        "vault 'vault-prod': its address must use https://, and this one uses http"
+    )
+    assert caught.value.hint is not None
+    assert "127.0.0.1, ::1 or localhost" in caught.value.hint

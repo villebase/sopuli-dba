@@ -122,7 +122,7 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `common_users` | Session holds `ALTER USER` granted commonly, which is what altering a `C##` user with `CONTAINER=ALL` requires | 12.1+ CDB, and the grant made with `CONTAINER=ALL` |
 | `password_rollover` | Two passwords valid during a grace window | 19.12+ / 21c+ |
 | `offline_verify` | Password verifiable against a stored hash without a login | needs `SYS.USER$` read |
-| `profile_management` | Tool can read/alter password profile parameters | yes |
+| `profile_management` | Tool can read password profile parameters. It never alters a profile; it reports the DDL for an operator to run | yes |
 | `password_reuse_policy` | Server may reject a generated password | yes (`PASSWORD_REUSE_*`, verify function) |
 | `expire_password` | Force expiry / end rollover | yes |
 | `account_lock_state` | Read and set lock state | yes |
@@ -912,8 +912,8 @@ tool safe to run from a scheduler.
   **Only a verb that streams accepts `jsonl`.** `STREAMING_COMMANDS` in
   `sopuli/invocation.py` lists them, and the refusal names them. Any other verb
   refuses `jsonl` as a usage error instead of emitting a stream with less in it
-  than its document. `03-json-output.md` §5 has the rule, and the event schema is
-  `../schemas/sopuli-event-1.7.schema.json`.
+  than its document. `03-json-output.md` §5 has the rule, and the head of that
+  document names the current event schema.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
 - `--debug` writes debug output to stderr, at one level. The tool writes no log

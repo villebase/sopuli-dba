@@ -743,7 +743,7 @@ config file can be read without knowing what environment it will be read in.
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
-| `timeout_s` | request timeout against this store. `httpx` has no default (ADR-005), so this is not optional the way a stdlib client's would be |
+| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's default, 30 seconds. There is no unlimited value, because the advisory lock is held while a request is outstanding |
 | `merge_patch` | HashiCorp KV v2 only, and refused on any other store. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
 | `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below |
 | `auth` | how to authenticate, and where the material comes from — see below |
@@ -1540,7 +1540,9 @@ one and coherent: *this file may not write anything*, lock store included.
 #### Seeing what a file guards
 
 A block's effect is enforced; **where it is written** is a separate question.
-`config show --explain` reports the *run's* settings, and `config show` applies no selector and builds no plan, so
+`config show --explain` reports the *run's* settings. `config show` builds no
+plan, and it does not merge the selected targets' `safety:` blocks into the run's
+settings, even when `--resolved` narrows it by a selector. So
 `safety.readonly = false [built-in default]` is the correct answer there for a
 file whose target sets it — §9 defines that phrase as *nothing else spoke*, and
 about the run, nothing did. So `config show` also has a **`safety` section**: one row per key, by the key that
@@ -3277,10 +3279,9 @@ notices until a rotation.
   halves, which is an ordinary way to write mutual TLS, but a key with no
   certificate presents nothing and is an edit that stopped halfway
 - `timeout_s: 0` or negative → error, rather than being read as "no timeout".
-  Waiting forever is what the key exists to prevent — ADR-005 chose `httpx`
-  partly because it has no default deadline — and the advisory lock is held for
-  as long as the request is outstanding. Omitting the key is how you ask for the
-  backend's own default
+  Waiting forever is what the key exists to prevent, because the advisory lock
+  is held for as long as the request is outstanding. Omitting the key is how you
+  ask for the backend's own default, 30 seconds
 - `VAULT_SKIP_VERIFY` set and non-empty → error (§6), naming
   `vaults.*.tls.verify` and what to write instead
 - a key that was removed → error, naming the key and why it was removed (§9b).

@@ -219,7 +219,7 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 1,
-          "description": "Request timeout against this store, in seconds. Not optional the way a stdlib client's would be: httpx has no default (ADR-005), and the advisory lock is held while the request is outstanding. Zero is refused rather than read as 'no timeout'."
+          "description": "Request timeout against this store, in seconds. Absent means the backend's default, 30 seconds. Zero is refused rather than read as 'no timeout', because the advisory lock is held while the request is outstanding."
         },
         "merge_patch": {
           "type": "boolean",
@@ -297,7 +297,7 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 1,
-          "description": "Request timeout against this store, in seconds. Not optional the way a stdlib client's would be: httpx has no default (ADR-005), and the advisory lock is held while the request is outstanding. Zero is refused rather than read as 'no timeout'."
+          "description": "Request timeout against this store, in seconds. Absent means the backend's default, 30 seconds. Zero is refused rather than read as 'no timeout', because the advisory lock is held while the request is outstanding."
         },
         "merge_patch": {
           "type": "boolean",

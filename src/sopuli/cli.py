@@ -7100,8 +7100,15 @@ def _apply_estate(
     selection: Selection,
     force: bool = False,
     requested: str | None = None,
+    ask_first: bool = True,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
+
+    ``ask_first`` runs :func:`_refused_somewhere`'s guardrail pass before the
+    first change (#872). The redraw's re-apply passes ``False``: its first round
+    has already changed some targets, and the restage has written the new
+    password over the one they hold, so skipping them now would leave them with
+    a password the vault no longer stores anywhere.
 
     Grouped the way `check` groups and for the same reason: a target with six
     accounts in it is one login for this tool rather than six, and six would be
@@ -7130,7 +7137,15 @@ def _apply_estate(
         grouped.setdefault(binding.target, []).append((binding, source))
 
     declared = _declared_accounts(run)
-    refused = _refused_somewhere(sources, by_target, run, config, declared=declared, force=force)
+    refused: dict[Credential, dict[str, guardrails.Review]] = {}
+    if ask_first and not force:
+        # Not under `--force`: it waives every check that can refuse an
+        # application account here, so the pass could find nothing.
+        refused, connected = _refused_somewhere(sources, by_target, run, config, declared=declared)
+        if connected:
+            # The pass sits between taking the lock and the first change, and an
+            # estate of slow targets could spend the lease on it.
+            manager.renew()
     applied: list[_Applied] = []
     for position, (name, work) in enumerate(grouped.items()):
         try:
@@ -7158,10 +7173,12 @@ def _apply_estate(
 
 #: One credential: its document's lock key and its place in the document. Two
 #: bindings with the same one share a password (:func:`_by_document`).
-Credential = tuple[LockKey, Any]
+Credential = tuple[LockKey, tuple[str, ...]]
 
 
 def _credential(binding: Binding) -> Credential | None:
+    """The credential ``binding`` is for, or ``None`` where it names no ref. The
+    one spelling of the key, which :func:`_by_document`'s gate uses too."""
     if binding.secret is None or binding.vault is None:
         return None
     return (_lock_key(binding), place_of(binding.secret))
@@ -7174,12 +7191,13 @@ def _refused_somewhere(
     config: Config,
     *,
     declared: frozenset[str],
-    force: bool,
-) -> dict[Credential, tuple[str, str]]:
-    """The credentials a guardrail refuses on some target, before any is changed.
+) -> tuple[dict[Credential, dict[str, guardrails.Review]], bool]:
+    """The credentials a guardrail refuses on some target, before any is changed,
+    and whether the pass opened a connection.
 
-    Each maps to the target that refuses it and the reason. The estate pass then
-    skips the credential on every target (#872). Without this pass the run changes
+    Each refused credential maps every target that refuses it to that target's
+    review. The estate pass then skips the credential on every target, the
+    refusing ones included, from this answer (#872). Without this pass the run changes
     the credential on the targets it reaches first and learns of the refusal
     later, so those databases hold a password that `current` does not, and the
     promotion is held back with `SOPULI-W050`. With it, no database moves ahead of
@@ -7192,10 +7210,13 @@ def _refused_somewhere(
     there is no gap to close. Most runs therefore open no extra connection.
 
     **The checks are the estate pass's**: :func:`guardrails.review` on the
-    account's `describe_user`. That pass still runs them again at the point of
-    change, because the state can change in between, and W050 still covers a
-    refusal found only there. A target this pass cannot reach, or an account it
-    cannot read, is left to the estate pass, which reports it on that row.
+    account's `describe_user`. The answer decides every target of a refused
+    credential, the refusing ones too, so a refusal that clears between the pass
+    and the change cannot let one target move alone. For a credential this pass
+    found nothing against, the estate pass still asks at the point of change,
+    and W050 covers a refusal found only there. A target this pass cannot reach,
+    or an account it cannot read, is left to the estate pass, which reports it
+    on that row; `--debug` says which.
     """
     bindings: dict[Credential, list[Binding]] = {}
     for binding, source in sources:
@@ -7210,29 +7231,34 @@ def _refused_somewhere(
         for binding in shared:
             asked.setdefault(binding.target, []).append((credential, binding))
 
-    refused: dict[Credential, tuple[str, str]] = {}
+    refused: dict[Credential, dict[str, guardrails.Review]] = {}
     for name, work in asked.items():
         try:
             session = _open_session(by_target[name], run, config)
-        except Exception:  # noqa: BLE001 -- the estate pass reports it per account
+        except Exception as error:  # noqa: BLE001 -- the estate pass reports it per account
+            PLANNING.debug("guardrail pass: %s left to the run: %s", name, _finding(error).message)
             continue
         try:
             for credential, binding in work:
-                if credential in refused:
-                    continue
                 try:
                     user = session.describe_user(binding.account)
-                except Exception:  # noqa: BLE001 -- likewise, on the account's row
+                except Exception as error:  # noqa: BLE001 -- likewise, on the account's row
+                    PLANNING.debug(
+                        "guardrail pass: %s on %s left to the run: %s",
+                        binding.account,
+                        name,
+                        _finding(error).message,
+                    )
                     continue
                 if user is None:
                     continue
-                review = guardrails.review(user, declared=declared, force=force)
+                review = guardrails.review(user, declared=declared, force=False)
                 if not review.permitted:
-                    refused[credential] = (name, guardrails_reason(review))
+                    refused.setdefault(credential, {})[name] = review
         finally:
             with suppress(Exception):
                 session.close()
-    return refused
+    return refused, bool(asked)
 
 
 def _apply_target(
@@ -7248,7 +7274,7 @@ def _apply_target(
     selection: Selection,
     force: bool = False,
     requested: str | None = None,
-    refused: Mapping[Credential, tuple[str, str]] | None = None,
+    refused: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
     out: list[_Applied],
 ) -> None:
     """One target's worth of accounts, over one connection.
@@ -7260,9 +7286,8 @@ def _apply_target(
     does not have to be advertised to applications.
 
     ``refused`` is :func:`_refused_somewhere`'s answer. A credential in it is
-    skipped here without a statement, unless this is the target that refuses
-    it: there :func:`_apply_one` asks the guardrails itself and gives the row
-    its own reason.
+    turned away here without a statement, on every target, from that answer:
+    see :func:`_refused_row`.
     """
     run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
@@ -7301,11 +7326,11 @@ def _apply_target(
         # with the account's row when it had already changed the account.
         for binding, source in work:
             password = _credential(binding)
-            elsewhere = None if refused is None or password is None else refused.get(password)
-            if elsewhere is not None and elsewhere[0] != target.name:
-                skipped = _refused_elsewhere(binding, source, *elsewhere)
-                out.append(skipped)
-                _account_events(skipped, run)
+            refusing = None if refused is None or password is None else refused.get(password)
+            if refusing:
+                turned_away = _refused_row(binding, source, refusing, selection=selection)
+                out.append(turned_away)
+                _account_events(turned_away, run)
                 continue
             try:
                 record = _apply_one(
@@ -7340,20 +7365,39 @@ def _apply_target(
                 session.close()
 
 
-def _refused_elsewhere(
-    binding: Binding, source: Source | None, target: str, reason: str
+def _refused_row(
+    binding: Binding,
+    source: Source | None,
+    refusing: Mapping[str, guardrails.Review],
+    *,
+    selection: Selection,
 ) -> _Applied:
-    """The `SKIPPED` row of a credential a guardrail refuses on another target.
+    """The row of a credential the guardrail pass refused (#872).
 
-    `SKIPPED` whether or not the operator named the account. The account on this
-    target is not what the guardrail refused, and the refusing target's own row
-    is `REFUSED` where it was named, which is what the exit code reads.
+    **On a target that refuses it**, the row :func:`_apply_one` would have
+    written: `REFUSED` where the operator named the account, which is what the
+    exit code reads, and `SKIPPED` otherwise, with that target's own reason.
+
+    **On every other target**, `SKIPPED` whether or not the account was named:
+    the account here is not what a guardrail refused. The detail names each
+    refusing target and its reason.
     """
-    detail = f"a guardrail refuses this credential on {target}, so no target was changed: {reason}"
-    _left_alone(binding.account, binding.target, apply_states.SKIPPED, detail)
-    return _Applied(
-        binding, source, check_states.Outcome(apply_states.SKIPPED, detail), changed=False
-    )
+    own = refusing.get(binding.target)
+    if own is not None:
+        named = selection.names(binding.account)
+        state = apply_states.REFUSED if named else apply_states.SKIPPED
+        detail = guardrails_reason(own, named=named)
+    else:
+        state = apply_states.SKIPPED
+        where = "; ".join(
+            f"{name}: {guardrails_reason(review)}" for name, review in refusing.items()
+        )
+        targets = ", ".join(refusing)
+        detail = (
+            f"a guardrail refuses this credential on {targets}, so no target was changed ({where})"
+        )
+    _left_alone(binding.account, binding.target, state, detail)
+    return _Applied(binding, source, check_states.Outcome(state, detail), changed=False)
 
 
 def _account_events(record: _Applied, run: Invocation) -> None:
@@ -8601,6 +8645,10 @@ def _redraw_estate(
             selection=selection,
             force=force,
             requested=requested,
+            # The first round changed some of these targets, and the restage has
+            # written the new password over the one they hold. Skipping them now
+            # would leave a password the vault no longer stores anywhere.
+            ask_first=False,
         )
         applied = _splice(applied, again)
         if stolen is not None:
@@ -9288,22 +9336,20 @@ def _by_document(applied: Sequence[_Applied]) -> dict[LockKey, list[_Applied]]:
     target, which is then the reason given.
     """
     confirmed_elsewhere = {
-        (_lock_key(record.binding), place_of(record.binding.secret))
+        _credential(record.binding)
         for record in applied
-        if record.binding.secret is not None
-        and record.binding.vault is not None
-        and apply_states.is_confirmed(record.outcome.state)
-    }
+        if apply_states.is_confirmed(record.outcome.state)
+    } - {None}
     grouped: dict[LockKey, list[_Applied]] = {}
     for record in applied:
-        binding = record.binding
-        if binding.secret is None or binding.vault is None:
+        credential = _credential(record.binding)
+        if credential is None:
             continue
-        key = _lock_key(binding)
+        key = credential[0]
         if record.outcome.state == apply_states.SKIPPED and not (
             record.source is not None
             and apply_states.promotes(record.source.stage)
-            and (key, place_of(binding.secret)) in confirmed_elsewhere
+            and credential in confirmed_elsewhere
         ):
             continue
         grouped.setdefault(key, []).append(record)

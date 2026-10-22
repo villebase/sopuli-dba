@@ -24,7 +24,7 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli.admin import Resolved
-from sopuli.apply import SKIPPED
+from sopuli.apply import REFUSED, SKIPPED
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
@@ -472,8 +472,9 @@ def test_an_account_refused_on_one_of_its_targets_is_changed_on_none(
     rows = {(one["account"], one["target"]): one for one in document(result)["results"]}
     alpha = rows[("acme_web_user", "appdb-alpha")]
     assert alpha["state"] == SKIPPED
-    assert alpha["actions"][0]["detail"].startswith(
-        "a guardrail refuses this credential on appdb-beta, so no target was changed: "
+    assert alpha["actions"][0]["detail"] == (
+        "a guardrail refuses this credential on appdb-beta, so no target was changed "
+        "(appdb-beta: the account holds DBA)"
     )
     assert rows[("acme_web_user", "appdb-beta")]["state"] == SKIPPED
     codes = [one.get("code") for one in document(result)["diagnostics"]]
@@ -490,6 +491,90 @@ def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert len(harness["sessions"]) == 1
+
+
+def test_a_named_account_is_refused_on_the_target_that_refuses_it(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass's answer writes the refusing target's row too: `REFUSED`, which
+    the exit code reads, where the operator named the account."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(
+        runner, write_config(TWO_TARGETS), "--account", "acme_web_user", "--output", "json"
+    )
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    rows = {(one["account"], one["target"]): one["state"] for one in document(result)["results"]}
+    # `REFUSED` is spelled `ERROR` in the output, so the state enum is unchanged.
+    assert rows[("acme_web_user", "appdb-beta")] == REFUSED
+    assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
+    assert result.exit_code != ExitCode.SUCCESS
+
+
+def test_each_refusing_target_gives_its_own_reason(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    harness = estate(
+        {},
+        by_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    details = {
+        one["target"]: one["actions"][0]["detail"]
+        for one in document(result)["results"]
+        if one["account"] == "acme_web_user"
+    }
+    assert "DBA" in details["appdb-beta"]
+    assert "DBA" not in details["appdb-alpha"]
+
+
+class RevokedDuringRun(dict[str, Mapping[str, UserState]]):
+    """`DBA_ON_BETA` for the guardrail pass only: `appdb-beta` revokes the grant
+    once the pass has read it, so the estate pass would find nothing to refuse."""
+
+    def __init__(self) -> None:
+        super().__init__(DBA_ON_BETA)
+        self.beta_connections = 0
+
+    def __getitem__(self, name: str) -> Mapping[str, UserState]:
+        if name == "appdb-beta":
+            self.beta_connections += 1
+            if self.beta_connections > 1:
+                return DBA_ON_BETA["appdb-alpha"]
+        return super().__getitem__(name)
+
+
+def test_a_refusal_that_clears_during_the_run_still_changes_no_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass's answer decides every target of the credential. Asking the
+    refusing target again would let it move alone once the grant is revoked,
+    which is the state #872 removes."""
+    harness = estate({}, by_target=RevokedDuringRun())
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_force_runs_no_guardrail_pass(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--force` waives every check that can refuse an application account
+    here, so the pass could find nothing: one connection per target."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    run(runner, write_config(TWO_TARGETS), "--force")
+
+    assert len(harness["sessions"]) == 2
 
 
 def test_an_account_skipped_on_one_of_its_targets_is_not_promoted(

@@ -4081,6 +4081,34 @@ def test_every_target_of_a_redrawn_account_gets_the_new_password(
     assert issued[-2:] == [promoted, promoted]
 
 
+def test_the_redraw_does_not_run_the_guardrail_pass_again(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#872's pass runs before the first change only. On the re-apply some
+    targets already hold the first round's password, and the restage has
+    written the new one over it, so skipping them would leave them holding a
+    password the vault no longer stores anywhere."""
+    import sopuli.cli
+
+    calls: list[int] = []
+    real = sopuli.cli._refused_somewhere
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("sopuli.cli._refused_somewhere", counted)
+    estate(documents=staged(), set_error=refusal(), refusals=1)
+
+    result = run(runner, write_config(REDRAW_CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert len(calls) == 1
+
+
 def test_the_redraw_is_reported_on_the_row_and_in_the_diagnostics(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

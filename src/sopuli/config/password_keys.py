@@ -6,8 +6,8 @@ differs. Four places ask the question. The loader refuses two accounts on one
 password and one password under two policies. ``creds generate`` draws each
 password once and refuses a write that carries two values for one. The
 promotion gate in ``creds apply`` asks whether a credential confirmed on another
-target. They used to build a key each, and agreed only because each happened to
-normalise the same way (#847). This module is the one definition, and it is in
+target. All four must agree, and a key each would agree only while each
+normalised the same way. This module is the one definition, and it is in
 the config layer so that the loader, :mod:`sopuli.generate` and the CLI can all
 import it.
 

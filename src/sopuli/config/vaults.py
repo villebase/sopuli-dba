@@ -118,8 +118,8 @@ STAGING_LABELS = {
 #: Anything with no *required* key may be written as a bare ``auth: NAME``, which
 #: includes ``token``: its ``token:`` is optional because P2 already documents a
 #: source chain -- ``--vault-token-file``, ``$VAULT_TOKEN``, ``~/.vault-token``. That
-#: chain stays within the method. An earlier draft fell through to AppRole after
-#: it, and a fall-through into a *different* method makes an authentication
+#: chain stays within the method. It does not fall through to AppRole after it,
+#: because a fall-through into a *different* method makes an authentication
 #: failure impossible to explain.
 #:
 #: ``mount`` is the auth mount rather than the KV mount on the vault itself, and

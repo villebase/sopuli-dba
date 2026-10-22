@@ -1018,9 +1018,9 @@ it. The last event carries the summary and the exit code:
 
 ```
 $ sopuli --config sopuli.yaml creds check --output jsonl
-{"schema_version":"1.9","event":"run.started","seq":0,"ts":"2026-10-20T15:41:40.845196Z","correlation_id":"91367fe6-e68d-4731-8e90-85157ff0bbd1","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.10","event":"run.started","seq":0,"ts":"2026-10-22T07:25:03.420474Z","correlation_id":"8c3be066-05d0-4aaa-8658-fa94dece343a","data":{"command":"creds.check","dry_run":false}}
 ...
-{"schema_version":"1.9","event":"run.finished","seq":6,"ts":"2026-10-20T15:41:42.338921Z","correlation_id":"91367fe6-e68d-4731-8e90-85157ff0bbd1","data":{"summary":{"total":2,"ok":2,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":2}},"exit_code":0}}
+{"schema_version":"1.10","event":"run.finished","seq":6,"ts":"2026-10-22T07:25:04.244504Z","correlation_id":"8c3be066-05d0-4aaa-8658-fa94dece343a","data":{"summary":{"total":2,"ok":2,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":2}},"exit_code":0}}
 ```
 
 Other commands refuse it:

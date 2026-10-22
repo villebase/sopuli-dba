@@ -5244,7 +5244,7 @@ def creds_generate(
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
-    if asks and not run.dry_run:
+    if asks and not confirm and not run.dry_run:
         # An answer can take minutes, and the gates below must refuse over a
         # `pending` staged meanwhile, not leave it to the check under the lock.
         # The plan keeps what it said before the question.
@@ -5694,14 +5694,11 @@ def _holds_current(document: Any, candidate: Candidate) -> bool:
     document of the wrong shape -- a container where a password should be -- and
     that is a configuration problem the write will report; reading it as "there
     is a current here" would turn it into a refusal naming the wrong cause.
+
+    :func:`_current_state` decides it, so the gate and the plan's `current`
+    cannot disagree.
     """
-    ref = candidate.binding.secret
-    if ref is None:  # pragma: no cover - bindings without a ref never reach here
-        return False
-    try:
-        return resolve(document.data if document is not None else None, ref) is not None
-    except Exception:  # noqa: BLE001 -- see the docstring
-        return False
+    return _current_state(document, candidate.binding.secret) == "replaced"
 
 
 def _is_staged(document: Any, ref: SecretRef | None) -> bool:

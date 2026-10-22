@@ -208,10 +208,10 @@ def document_key(binding: Binding) -> LockKey | None:
     """The document ``binding``'s password is written to, or ``None`` as for
     :func:`password_key`.
 
-    The one place the key is built: :func:`group` writes under it, and `creds
-    generate`'s plan-time read reads it (#809). Two builders could drift, and
-    the read would then miss every document and skip the refusals over a
-    staged `pending` or an existing `current`.
+    `creds generate` builds the key here only: :func:`group` writes under it,
+    and the plan-time read reads it (#809). Two builders in one verb could
+    drift, and the read would then miss every document and skip the refusals
+    over a staged `pending` or an existing `current`.
     """
     password = password_key(binding)
     if password is None or password.store is None:  # the second test narrows the type

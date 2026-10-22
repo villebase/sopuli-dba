@@ -1636,6 +1636,32 @@ def test_a_pending_staged_while_the_prompt_waits_is_refused_at_plan_time(
     assert staged(store) == {"acme_web_user": "staged-during-the-prompt"}
 
 
+def test_a_run_given_confirm_reads_each_document_once_before_the_lock(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing waits on a person, so there is nothing to read again for."""
+    guarded = CONFIG.replace(
+        "  policy: app-standard\n",
+        "  policy: app-standard\n  safety:\n    confirm_environments: [dev]\n",
+    )
+    reads = cli_module._plan_documents
+    calls: list[int] = []
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return reads(*args, **kwargs)
+
+    monkeypatch.setattr("sopuli.cli._plan_documents", counted)
+
+    result = run(runner, write_config(guarded), "--confirm")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(calls) == 1
+
+
 def test_the_authorised_overwrite_moves_the_old_value_into_previous(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

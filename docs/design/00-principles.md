@@ -657,7 +657,8 @@ one shape answer both questions. `sopuli/output/explain_view.py` implements it.
 
 First match wins; `--config` may be repeated to layer files:
 
-1. `--config PATH` (repeatable; later files override earlier ones)
+1. `--config PATH` (repeatable; later files override earlier ones, except that a
+   later file cannot relax a safety setting an earlier file wrote at the same key)
 2. `SOPULI_CONFIG`
 3. `./sopuli.yaml`
 4. `$XDG_CONFIG_HOME/sopuli/config.yaml` → `~/.config/sopuli/config.yaml` (Linux/macOS)

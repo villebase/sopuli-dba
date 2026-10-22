@@ -2773,6 +2773,53 @@ overlay that sets `vaults.vault-dev.addr` must not delete `vaults.vault-prod`,
 while a list is a whole answer — merging two `accounts:` lists would produce a
 whitelist that appears in no file (invariant 5).
 
+**A later file cannot relax a safety setting.** A later file is a
+higher-precedence source, so invariant 10 applies between files. Where two files
+write a safety setting at the same key, the merged value is the safer one, by the
+same rules as between layers: the lowest `max_targets`, the union of
+`confirm_environments`, the intersection of `allowed_methods`, and each
+boolean's safe value for `readonly`, `locking.break_expired` and `tls.verify`.
+The keys are those in a mapping: `defaults`, a profile, a group, a target set or
+one of its overrides, and a vault entry. Two things are refused, naming the
+file: a later file that replaces a mapping holding an earlier file's safety key
+with `null` or anything else that is not a mapping, and a value of the wrong
+type in any of the files. A later file whose value loses gets the `SOPULI-W039`
+warning, naming both files. A union defeats nobody, so `confirm_environments`
+never warns: a later file's environments are added to the earlier file's.
+
+```yaml
+# floor.yaml
+defaults:
+  safety: { readonly: true, max_targets: 5 }
+```
+
+```yaml
+# local.yaml
+defaults:
+  safety: { readonly: false, max_targets: 500 }
+```
+
+```
+$ sopuli --config sopuli.yaml --config floor.yaml --config local.yaml config validate
+config: sopuli.yaml
+        floor.yaml (layered)
+        local.yaml (layered)
+
+ok: 1 target, 2 bindings, 2 warnings
+
+2 warnings:
+  local.yaml asked for false; defaults.safety.readonly stays true (floor.yaml) -- safety settings only ratchet toward safe
+    hint: invariant 10: a safety setting cannot be relaxed by a later --config file
+  local.yaml asked for 500; defaults.safety.max_targets stays 5 (floor.yaml) -- safety settings only ratchet toward safe
+    hint: invariant 10: a safety setting cannot be relaxed by a later --config file
+```
+
+A `targets:` list is still replaced whole, safety blocks included, because a list
+is a whole answer. A floor that a layered file must not lower belongs in
+`defaults.safety`, which applies to every target. A group's block holds between
+files too, but a later file can change which targets the group matches, through
+its `match:` or the targets' labels. Reasons: [#855](../decisions/log.md#855).
+
 Each layer is a config file in its own right, `version:` included, and is checked
 on its own — permissions, encoding, parse, version — before anything is merged.
 So a file-level error still names its file. A *validation* error over several

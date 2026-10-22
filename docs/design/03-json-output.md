@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.50.schema.json`](../schemas/sopuli-run-1.50.schema.json),
-[`../schemas/sopuli-event-1.11.schema.json`](../schemas/sopuli-event-1.11.schema.json)
+Schemas: [`../schemas/sopuli-run-1.51.schema.json`](../schemas/sopuli-run-1.51.schema.json),
+[`../schemas/sopuli-event-1.12.schema.json`](../schemas/sopuli-event-1.12.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -2009,7 +2009,7 @@ not contract and may improve.
 | `SOPULI-W036` | `delivery.notify.method` names a channel this build cannot send through: it has no code for it, or its client is not installed. The message says which. One code for both, as `SOPULI-W003` is one code for a store. `account reset-password` refuses before the password changes, rather than resetting without notifying. A separate code from `SOPULI-W035`, because an estate can have a working delivery method and a channel that cannot send |
 | `SOPULI-W037` | A profile has the name of an environment that a target declares. `--profile <name>` selects no targets, because a profile changes how a run behaves, not what it acts on (`01-configuration.md` §5) |
 | `SOPULI-W038` | A third-party store variable, such as `VAULT_ADDR`, is set and was not applied, because the run has no default store: no layer names one, or the one named is not declared (`01-configuration.md` §6). The message says which. A warning, not a refusal, because the variable may belong to something else on the machine |
-| `SOPULI-W039` | A layer asked to relax a safety setting, and the ratchet held (invariant 10). The message names both ends: the layer that asked, and where the value that held is set. One code for every safety setting, `vaults.*.tls.verify` included. Nothing failed, and the run uses the safer value |
+| `SOPULI-W039` | A layer asked to relax a safety setting, and the ratchet held (invariant 10). The message names both ends: the layer that asked, and where the value that held is set. One code for every safety setting, `vaults.*.tls.verify` included. A later `--config` file is such a layer for a key an earlier file also wrote, with one entry per key, from run schema 1.51 and event schema 1.12 (`01-configuration.md` §9). Nothing failed, and the run uses the safer value |
 | `SOPULI-W040` | `creds status --max-age-days`: the vault last rotated this credential longer ago than the threshold. One entry per result over it. The age is the vault's (Q9). `password_age_days` is the database's, so the two are never one field |
 | `SOPULI-W041` | `account list` admitted an account the database reports as its own, so a mutating verb refuses it at plan time (guardrail 2). A `role:` predicate can reach one, because creating a role grants it to the creator: on the tier-1 stack that was `SYSTEM`. The text output prints it as a note under the table |
 | `SOPULI-W042` | `account list` admitted an account that an application also declares, so the whitelist is ambiguous about which guarantee applies ([H1](../decisions/log.md#h1)). Only a predicate can reach this, because an enumerated name in both sections is refused when the file loads (`01-configuration.md` §10). A separate code from `SOPULI-W041`, because the fix is in the file, not in the database. The text output prints it as a note under the table |

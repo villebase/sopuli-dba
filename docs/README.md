@@ -237,6 +237,14 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
+| — | — | Does a later `--config` file count as a higher-precedence source for the safety ratchet? | open | | #855 |
+| — | — | Refuse or warn on a vault `addr` or webhook `url` that is not `https` | open | | #856 |
+| — | — | A safety setting that requires an encrypted Oracle connection | open | | #857 |
+| — | — | A minimum strength for password policies | open | | #866 |
+| — | — | Run the guardrails on every target before changing an account anywhere | open | | #872 |
+| — | — | One database user declared in two application entries | open | | #874 |
+| — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |
+| — | — | Refuse or mask userinfo in a vault address | open | | #891 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

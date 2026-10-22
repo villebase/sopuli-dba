@@ -7317,15 +7317,9 @@ def _apply_target(
         try:
             if unreachable is not None:
                 raise unreachable
-            module = resolve_driver(target.target)
-            credential = _admin_credential(target, run, config)
-            driver = module.OracleDriver(
-                env=os.environ,
-                correlation_id=run.document.correlation_id,
-                timeouts=_timeouts(run),
-                client_lib_dir=config.runtime.oracle.client_lib_dir,
-            )
-            session = driver.connect(target, credential.credential)
+            # The pass's connection function, so the session the pass asked and
+            # the one that applies cannot come to differ.
+            session = _open_session(target, run, config)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _finding(error)
             elapsed = _elapsed(started)
@@ -7684,7 +7678,15 @@ def _apply_one(
 
         if held:
             # Refused elsewhere by the guardrail pass: read, never change, and
-            # before the attribute pass, which is a change too. One login.
+            # before the attribute pass, which is a change too. One login. Asked
+            # again without the unlock first: the attribute pass will not run, so
+            # a locked account stays locked and is reported as that.
+            locked = apply_states.settled_before_acting(user, source, requested=requested)
+            if locked is not None:
+                _left_alone(binding.account, binding.target, locked.state, locked.detail)
+                return _Applied(
+                    binding, source, locked, changed=False, duration_ms=_elapsed(started)
+                )
             before = session.verify_password(
                 user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=1
             )
@@ -7698,6 +7700,8 @@ def _apply_one(
                     changed=False,
                     verified_before=before,
                     rollover=_rollover_json(user),
+                    overridden=overridden,
+                    caveats=caveats,
                     duration_ms=_elapsed(started),
                 )
             return _refused_row(binding, source, held, selection=selection)

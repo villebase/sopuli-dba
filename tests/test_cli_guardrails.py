@@ -626,6 +626,39 @@ def test_a_missing_account_on_another_target_is_reported_as_missing(
     assert "guardrail" not in alpha["actions"][0]["detail"]
 
 
+def test_a_locked_account_on_another_target_is_reported_as_locked(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The policy may unlock a locked account, but a held credential is never
+    changed, so the attribute pass does not run and the lock is what the row
+    reports, before any guardrail reason."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": account(
+                    "ACME_WEB_USER", vendor_maintained=False, status="LOCKED", locked=True
+                ),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    config = TWO_TARGETS.replace(
+        "password: { length: 24, charset: alnum, first_char: alpha }",
+        "password: { length: 24, charset: alnum, first_char: alpha }\n"
+        "    account: { unlock_if_locked: true }",
+    )
+    result = run(runner, write_config(config), "--output", "json")
+
+    alpha = next(
+        one
+        for one in document(result)["results"]
+        if (one["account"], one["target"]) == ("acme_web_user", "appdb-alpha")
+    )
+    assert alpha["state"] == "LOCKED"
+
+
 def test_an_unreachable_target_is_not_tried_twice(
     runner: CliRunner,
     write_config: Callable[[str], Path],

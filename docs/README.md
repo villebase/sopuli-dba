@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
-| — | — | Refuse or warn on a vault `addr` or webhook `url` that is not `https` | open | | #856 |
 | — | — | A safety setting that requires an encrypted Oracle connection | open | | #857 |
 | — | — | Run the guardrails on every target before changing an account anywhere | open | | #872 |
 | — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |

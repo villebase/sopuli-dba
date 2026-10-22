@@ -33,6 +33,8 @@ import time
 
 import httpx
 
+from sopuli.config.errors import ROOT, ConfigError
+from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
@@ -48,6 +50,25 @@ LOG = logger("webhook")
 #: The key an incoming webhook reads. See this module's docstring for why it is not
 #: configurable.
 BODY_KEY = "text"
+
+
+def check_url(url: Secret) -> None:
+    """Refuse a webhook URL that is not ``https://``, unless it is to loopback.
+
+    The URL carries the chat token, so over plain HTTP the token crosses the
+    network in clear. The file names where the URL is, not the URL, so the
+    loader cannot see it. The caller checks it when it resolves the URL, which
+    is before a password is drawn. The message gives the scheme only, because
+    the URL is the credential.
+    """
+    scheme = plain_http_scheme(url.reveal())
+    if scheme is not None:
+        raise ConfigError(
+            f"delivery.notify.webhook.url: the webhook URL must use https://, and this one "
+            f"uses {scheme}",
+            at=ROOT,
+            hint=PLAIN_HTTP_HINT,
+        )
 
 
 def send(url: Secret, message: str) -> None:

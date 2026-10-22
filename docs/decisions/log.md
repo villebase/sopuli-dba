@@ -2720,3 +2720,31 @@ the register.
     the loader refuses them.
   - Leaving it, with the double rotation and the lockout above. A config that
     loaded before this decision now stops loading; that cost is accepted.
+
+## #856
+
+- **Decided:** 2026-10-22, #856
+- **Question:** Should the tool refuse, or warn about, a vault `addr` or a
+  webhook `url` that is not `https`?
+- **Decision:** Refuse it, unless the host is `127.0.0.1`, `::1` or
+  `localhost`. The host is compared whole, so `localhost.example.com` is not
+  exempt. A vault `addr` in the file is refused when the file is read. An
+  address from `VAULT_ADDR` or another layer outside the file is refused when
+  the store opens. The webhook URL is refused when a run resolves it, before a
+  password is drawn, because the file names only where the URL is. No setting
+  waives the refusal.
+- **Why:** Over plain HTTP everything the tool sends to a vault crosses the
+  network in clear: the token, an AppRole `secret_id`, a userpass password,
+  every password it writes, and the plaintext sent to `sys/wrapping/wrap`. A
+  webhook URL carries the chat token. `tls.verify: false` already raises
+  `SOPULI-W004` on every run, and plain HTTP is weaker than that. A loopback
+  address never leaves the machine, so the tier-1 stack and a local Vault agent
+  keep working.
+- **Rejected:**
+  - A warning on every run, like `SOPULI-W004`. A warning on every run is easy
+    to stop reading, and the exposure here is the credentials themselves.
+  - Leaving it. That the operator chose the address does not make the channel
+    safe.
+  - A setting to waive the refusal. It would be a ratchet setting, which is a
+    separate decision. A site that runs Vault on plain HTTP inside its own
+    network cannot use the tool until it adds TLS.

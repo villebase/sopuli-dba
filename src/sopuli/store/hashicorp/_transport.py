@@ -26,7 +26,9 @@ from typing import Any
 
 import httpx
 
+from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Vault, VaultTls
+from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
@@ -207,6 +209,18 @@ def build_transport(vault: Vault, *, token: Secret | None) -> Transport:
         raise StoreError(
             f"vault {vault.name!r} has no `addr`, and a HashiCorp store needs one",
             hint="add `addr: https://…` to the entry under `vaults:`",
+        )
+    # The loader refuses this in the file. An address from an environment
+    # variable such as `VAULT_ADDR`, or from `--vault-addr`, reaches the store
+    # without passing through it, so the rule is applied again before the token
+    # goes anywhere.
+    scheme = plain_http_scheme(vault.addr)
+    if scheme is not None:
+        raise ConfigError(
+            f"vault {vault.name!r}: its address must use https://, and this one uses "
+            f"{scheme}. `sopuli config show` says which layer set it",
+            at=ROOT,
+            hint=PLAIN_HTTP_HINT,
         )
 
     verify = build_ssl_context(vault.tls)

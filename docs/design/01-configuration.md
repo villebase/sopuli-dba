@@ -310,7 +310,7 @@ delivery:
 | Key | Meaning |
 |---|---|
 | `method` | one of `webhook`. Absent means `webhook` |
-| `webhook.url` | a MaterialRef (C9), required |
+| `webhook.url` | a MaterialRef (C9), required. The URL it names must be `https://`, except to a loopback host |
 | `webhook.template` | the message, required |
 
 **`url` is named rather than written** because a chat incoming-webhook URL embeds
@@ -318,6 +318,13 @@ its own credential, so a literal one is a credential in a file people commit. Th
 URL must also stay hidden wherever the configuration is shown, and the
 MaterialRef makes that *structural*: the model holds a location, so there is no
 value to redact and no step to remember.
+
+**The URL must be `https://`.** Over plain HTTP its token crosses the network in
+clear. `http://` is allowed only to `127.0.0.1`, `::1` or `localhost`, the same
+rule as a vault's `addr` (§3a). The file holds only where the URL is, so the
+loader cannot see it. A run that notifies resolves the URL before it draws a
+password, and refuses it there with a config error. The message gives the
+scheme and not the URL. Reasons: [#856](../decisions/log.md#856).
 
 **The template's placeholders are a closed set** — `{account}`, `{target}`,
 `{expires_at}` — and every other name is refused **at load**. That is UC-2 §6.1
@@ -739,7 +746,7 @@ config file can be read without knowing what environment it will be read in.
 | Key | Meaning |
 |---|---|
 | `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
-| `addr` | backend address, where the backend has one |
+| `addr` | backend address, where the backend has one. Must be `https://`, except to a loopback host — see *Plain HTTP* below |
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
@@ -767,6 +774,25 @@ refused with a config error rather than silently ignored — this is the one
 environment variable in the honoured-third-party list that the tool does not
 honour, precisely because it would otherwise bypass the ratchet from outside
 the config it governs.
+
+#### Plain HTTP — refused off loopback
+
+A vault address must be `https://`. Over plain HTTP everything the tool sends to
+a vault crosses the network in clear: the token, an AppRole `secret_id`, a
+userpass password, every password it writes, and the plaintext it sends to
+`sys/wrapping/wrap`. `http://` is allowed only when the host is `127.0.0.1`,
+`::1` or `localhost`, because a loopback address never leaves the machine. The
+tier-1 stack and a local Vault agent use one. The host is compared whole, so
+`localhost.example.com` is not loopback. An address with no scheme is refused
+too.
+
+An `addr` in the file, or in a profile's `vaults:` block, is refused when the
+file is read, and the message names the key. An address from an environment
+variable such as `VAULT_ADDR`, or from `--vault-addr`, is refused when the store
+opens, before the token is sent. There is no setting to waive the refusal: a
+site that runs Vault on plain HTTP inside its own network has to add TLS first.
+`delivery.notify.webhook.url` follows the same rule (§1). Reasons:
+[#856](../decisions/log.md#856).
 
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.78.0](https://github.com/villebase/sopuli-dba/compare/v0.77.1...v0.78.0) (2026-10-22)
+
+
+### Features
+
+* **output:** say per plan unit what creds generate found in the vault ([#809](https://github.com/villebase/sopuli-dba/issues/809)) ([#974](https://github.com/villebase/sopuli-dba/issues/974)) ([8883a59](https://github.com/villebase/sopuli-dba/commit/8883a59ed53de5ba7829bd6ea1f01918369b767e))
+
+
+### Bug Fixes
+
+* **output:** report each rollover window rotate leaves open as its own W043 ([#825](https://github.com/villebase/sopuli-dba/issues/825)) ([#977](https://github.com/villebase/sopuli-dba/issues/977)) ([5e1ad9d](https://github.com/villebase/sopuli-dba/commit/5e1ad9d0ef25d6e21d21a673731c4cc89b6153a9))
+
 ## [0.77.1](https://github.com/villebase/sopuli-dba/compare/v0.77.0...v0.77.1) (2026-10-21)
 
 

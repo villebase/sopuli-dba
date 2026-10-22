@@ -129,6 +129,11 @@ include = ["/src/sopuli", "/tests", "/pyproject.toml", "/README.md", "/LICENSE",
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Click deprecates an API one major release before it removes it, and
+# `click>=8.1` has no upper bound. Failing on the deprecation keeps the suite
+# ahead of the removal (#951). Matched on the message, because a
+# DeprecationWarning is attributed to its caller, not to the `click` module.
+filterwarnings = ["error:.*removed in Click:DeprecationWarning"]
 
 [tool.ruff]
 line-length = 100

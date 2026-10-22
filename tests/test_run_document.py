@@ -274,7 +274,9 @@ def test_config_files_keeps_layering_order(tmp_path: Path) -> None:
     assert json.loads(result.output)["invocation"]["config_files"] == [str(site), str(team)]
 
 
-def test_config_files_are_resolved_not_stored_as_typed(tmp_path: Path) -> None:
+def test_config_files_are_resolved_not_stored_as_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A relative `--config` is only meaningful beside the directory that
     produced it, which no later reader has.
 
@@ -289,11 +291,11 @@ def test_config_files_are_resolved_not_stored_as_typed(tmp_path: Path) -> None:
     if sys.platform != "win32":
         path.chmod(0o600)
 
-    with CliRunner().isolated_filesystem(temp_dir=tmp_path) as here:
-        relative = os.path.relpath(path, here)
-        result = CliRunner().invoke(
-            cli, ["target", "list", "--config", relative, "--output", "json"]
-        )
+    here = tmp_path / "elsewhere"
+    here.mkdir()
+    monkeypatch.chdir(here)
+    relative = os.path.relpath(path, here)
+    result = CliRunner().invoke(cli, ["target", "list", "--config", relative, "--output", "json"])
 
     assert result.exit_code == ExitCode.SUCCESS
     found = json.loads(result.output)["invocation"]["config_files"]

@@ -29,7 +29,7 @@ VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}}
 
 POLICIES: dict[str, Any] = {
     "app-standard": {"password": {"length": 24, "charset": "alnum", "first_char": "alpha"}},
-    "app-short": {"password": {"length": 8, "charset": "alnum"}},
+    "app-short": {"password": {"length": 12, "charset": "alnum"}},
 }
 
 
@@ -78,7 +78,7 @@ def test_the_binding_s_own_policy_wins_over_the_default() -> None:
     name, policy = generate.policy_for(config, config.bindings[0])
 
     assert name == "app-short"
-    assert policy.length == 8
+    assert policy.length == 12
 
 
 def test_defaults_policy_applies_where_the_entry_names_none() -> None:

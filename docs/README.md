@@ -239,7 +239,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Refuse or warn on a vault `addr` or webhook `url` that is not `https` | open | | #856 |
 | — | — | A safety setting that requires an encrypted Oracle connection | open | | #857 |
-| — | — | A minimum strength for password policies | open | | #866 |
 | — | — | Run the guardrails on every target before changing an account anywhere | open | | #872 |
 | — | — | One database user declared in two application entries | open | | #874 |
 | — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |

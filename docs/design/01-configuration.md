@@ -2573,7 +2573,7 @@ was meant, and whether the shape survives a connect string or a `.env` file.
 | `alnum` | `A–Z a–z 0–9` | safest; no quoting anywhere |
 | `alnum_safe` | alnum + `_ # - . + = ~` | avoids shell, connect-string and SQL-quoting hazards; quote it in a JDBC URL. **Default.** |
 | `printable_ascii` | printable ASCII except space **and except `"`** | requires quoted identifiers; breaks a shell, a `.env` file, a connect string and an unquoted JDBC URL on the characters below |
-| `custom` | explicit `allow:` string | you take responsibility |
+| `custom` | explicit `allow:` string | you take responsibility; at least 10 distinct characters (see *The floor every policy meets*) |
 
 `printable_ascii` names the `"` exclusion rather than leaving it to the rule
 below, because an alphabet containing a character every password is rejected for
@@ -2681,6 +2681,22 @@ thing, and a policy that declares no `account:` block at all means it too.
 An estate that declares no policy is unaffected: applying a password has never
 needed one, and reading these attributes does not make a policy a precondition —
 which is the one way this section could have broken a working config.
+
+### The floor every policy meets
+
+A policy is refused when the file is read if its `length:` is below **12**, or
+if its alphabet has fewer than **10** distinct characters. The alphabet is
+counted after `"` is removed. All three named charsets have more than 10
+characters, so the second rule refuses only a short `allow:`. The message names
+the policy, the value and the floor.
+
+The floor is the same for every policy, and no setting lowers it. A site with a
+legacy account that needs shorter passwords cannot manage that account with the
+tool. Nor can a policy whose `custom` alphabet has characters of 3 bytes or more
+in the database character set be used on a release before 23: 12 such characters
+are at least 36 bytes, over that release's limit of 30. The draw refuses it on
+that target, as it refuses any policy over the limit. Reasons:
+[#866](../decisions/log.md#866).
 
 ### `length` has no default
 
@@ -3019,6 +3035,7 @@ match instead:
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
+| `length:` is at least 12, and the alphabet has at least 10 distinct characters | §8 |
 | every `vault`, `policy`, `group`, `profile` and target name must resolve | yes |
 | a `for_each`'s inner dimension must be one variable throughout | §4 |
 | a profile may not set a key that changes scope | §5 |

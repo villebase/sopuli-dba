@@ -2667,3 +2667,28 @@ the register.
     narrow to fewer targets.
   - A new warning code. W039 already means "a layer asked to relax a safety
     setting, and the ratchet held".
+
+## #866
+
+- **Decided:** 2026-10-22, #866
+- **Question:** Should a password policy have a floor? `length: 1` loaded, and
+  so did `charset: custom` with `allow: "a"`.
+- **Decision:** A fixed floor. A policy is refused at load time if its
+  `length:` is below 12, or its alphabet has fewer than 10 distinct characters
+  after `"` is removed. The floor is the same for every policy, and no setting
+  lowers it. A policy with no `length:` still loads.
+- **Why:** A typo or a copied policy could give an application account a
+  one-character password. Oracle's verify function may reject it, but not
+  every profile has one. A fixed floor is simple to state in an error message.
+  Twelve ASCII characters are 12 bytes, inside Oracle's smallest limit of 30.
+  A `custom` alphabet of 3-byte characters is not: 12 of them are 36 bytes,
+  so such a policy cannot be drawn on a release before 23. All three named
+  charsets have more than 10 characters, so the alphabet rule
+  refuses only a short `allow:`.
+- **Rejected:**
+  - A floor stated as entropy, such as 64 bits. It judges length and alphabet
+    together, but the error message would have to explain bits to a DBA who
+    wrote `length: 8`.
+  - No floor. The typo case would stay open.
+  - A setting to lower the floor. A site with a legacy account that needs
+    shorter passwords cannot manage that account with the tool.

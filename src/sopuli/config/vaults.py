@@ -308,9 +308,9 @@ def _build_timeout(entry: dict[str, Any], *, at: KeyPath) -> int | None:
 
     Refused rather than read as "no timeout", which is what a zero would mean to
     most clients and is the opposite of why the key exists: ADR-005 picked
-    ``httpx`` for its explicit deadlines, and the lock is held while we work. An
-    operator who genuinely wants no deadline can leave the key out, and gets the
-    backend's own default instead of a promise the config file did not make.
+    ``httpx`` for its explicit deadlines, and the lock is held while we work.
+    There is no way to ask for no deadline. Leaving the key out gives the
+    backend's own default.
     """
     timeout = optional_int(entry, "timeout_s", at=at)
     if timeout is not None and timeout < 1:

@@ -317,10 +317,10 @@ def _vault_types() -> dict[str, Schema]:
         "timeout_s": {
             **POSITIVE_INT,
             "description": (
-                "Request timeout against this store, in seconds. Not optional the "
-                "way a stdlib client's would be: httpx has no default (ADR-005), and "
-                "the advisory lock is held while the request is outstanding. Zero is "
-                "refused rather than read as 'no timeout'."
+                "Request timeout against this store, in seconds. Absent means the "
+                "backend's own default. Zero is refused rather than read as 'no "
+                "timeout', because the advisory lock is held while the request is "
+                "outstanding."
             ),
         },
         "merge_patch": {

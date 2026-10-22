@@ -339,10 +339,9 @@ class Vault:
     #: no namespace, which is not the same as the root one: sending the header
     #: empty is a request about a namespace, and omitting it is not.
     namespace: str | None = None
-    #: Request timeout against this store, in seconds. Not optional the way a
-    #: stdlib client's would be: ADR-005 chose ``httpx`` partly because it has
-    #: **no** default timeout, and a request with no deadline is one that can
-    #: hold P5's advisory lock for as long as the network stays open.
+    #: Request timeout against this store, in seconds. ``None`` means the
+    #: backend's own default, never "no deadline": a request with no deadline is
+    #: one that can hold P5's advisory lock for as long as the network stays open.
     timeout_s: int | None = None
     #: ``False`` turns KV v2's server-side merge patch off, so a write goes
     #: straight to read-modify-write under compare-and-set. It is for a proxy

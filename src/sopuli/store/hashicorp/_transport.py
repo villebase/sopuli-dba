@@ -7,8 +7,9 @@ nor a socket. ``tests/store/test_install_shape.py`` is what holds that.
 Everything ADR-005 chose `httpx` *for* is in this module, which is the argument
 for the choice written as code:
 
-* **an explicit deadline on every request.** `httpx` has no default timeout, and
-  P5's advisory lock is held while a request is outstanding -- a hung read is a
+* **an explicit deadline on every request.** Each client is built with the
+  store's ``timeout_s`` or :data:`DEFAULT_TIMEOUT_S`, never httpx's own default,
+  and P5's advisory lock is held while a request is outstanding -- a hung read is a
   lock nobody can take and a rotation nobody can finish.
 * **a real** :class:`ssl.SSLContext`, which is what makes ``tls.ca_path`` and
   mutual TLS expressible at all. A client that took a boolean could express

@@ -318,9 +318,9 @@ def _vault_types() -> dict[str, Schema]:
             **POSITIVE_INT,
             "description": (
                 "Request timeout against this store, in seconds. Absent means the "
-                "backend's default, 30 seconds. Zero is refused rather than read as "
-                "'no timeout', because the advisory lock is held while the request "
-                "is outstanding."
+                "backend's own default. Zero is refused rather than read as 'no "
+                "timeout', because the advisory lock is held while the request is "
+                "outstanding."
             ),
         },
         "merge_patch": {

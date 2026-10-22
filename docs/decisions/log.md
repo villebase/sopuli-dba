@@ -1641,8 +1641,9 @@ the register.
 - **Decision:** A `safety` section in `config show`, with one row for each
   object that writes a block, and its key path. The JSON gains `safety` on
   `config.targets[]`. The `--explain` row itself does not change.
-- **Why:** The `--explain` row was correct: `config show` applies no selector
-  and is not gated by the setting. What was missing was anything saying a block
+- **Why:** The `--explain` row was correct: `config show` does not merge the
+  selected targets' `safety:` blocks into the run's settings, and is not gated
+  by the setting. What was missing was anything saying a block
   existed.
 - **Rejected:**
   - A `SAFETY` column in the target table: a group is not a row in that table,

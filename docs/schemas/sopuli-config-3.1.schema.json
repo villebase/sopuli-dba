@@ -219,7 +219,7 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 1,
-          "description": "Request timeout against this store, in seconds. Absent means the backend's default, 30 seconds. Zero is refused rather than read as 'no timeout', because the advisory lock is held while the request is outstanding."
+          "description": "Request timeout against this store, in seconds. Absent means the backend's own default. Zero is refused rather than read as 'no timeout', because the advisory lock is held while the request is outstanding."
         },
         "merge_patch": {
           "type": "boolean",
@@ -297,7 +297,7 @@
         "timeout_s": {
           "type": "integer",
           "minimum": 1,
-          "description": "Request timeout against this store, in seconds. Absent means the backend's default, 30 seconds. Zero is refused rather than read as 'no timeout', because the advisory lock is held while the request is outstanding."
+          "description": "Request timeout against this store, in seconds. Absent means the backend's own default. Zero is refused rather than read as 'no timeout', because the advisory lock is held while the request is outstanding."
         },
         "merge_patch": {
           "type": "boolean",

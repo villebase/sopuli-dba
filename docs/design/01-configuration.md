@@ -743,7 +743,7 @@ config file can be read without knowing what environment it will be read in.
 | `mount` | KV mount point (HashiCorp) |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
-| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's default, 30 seconds. There is no unlimited value, because the advisory lock is held while a request is outstanding |
+| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's own default; for `hashicorp` that is `DEFAULT_TIMEOUT_S` in `sopuli/store/hashicorp/_transport.py`. There is no unlimited value, because the advisory lock is held while a request is outstanding |
 | `merge_patch` | HashiCorp KV v2 only, and refused on any other store. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
 | `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below |
 | `auth` | how to authenticate, and where the material comes from — see below |
@@ -3281,7 +3281,7 @@ notices until a rotation.
 - `timeout_s: 0` or negative → error, rather than being read as "no timeout".
   Waiting forever is what the key exists to prevent, because the advisory lock
   is held for as long as the request is outstanding. Omitting the key is how you
-  ask for the backend's own default, 30 seconds
+  ask for the backend's own default
 - `VAULT_SKIP_VERIFY` set and non-empty → error (§6), naming
   `vaults.*.tls.verify` and what to write instead
 - a key that was removed → error, naming the key and why it was removed (§9b).

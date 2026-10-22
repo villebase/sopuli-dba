@@ -81,12 +81,72 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
         at = ROOT if application.is_inline else _APPLICATIONS.index(index)
         where[application.name] = at
         bindings.extend(_bind(config, application, at=at))
-    # Two accounts on one password first: where staging is emulated they would
+    # One user at two places first: its message names the user and the target,
+    # which is the fault, where the rules below would name a password.
+    _check_one_user_per_target(bindings, where=where)
+    # Two accounts on one password next: where staging is emulated they would
     # also collide in `pending`, and this message names the actual fault.
     _check_one_account_per_password(bindings, where=where)
     _check_stages_do_not_collide(bindings, config, where=where)
     _check_one_policy_per_password(bindings, where=where)
     return tuple(bindings)
+
+
+def _check_one_user_per_target(
+    bindings: Sequence[Binding], *, where: Mapping[str | None, KeyPath]
+) -> None:
+    """One database user on one target is bound to one place (invariant 5).
+
+    The database holds one password for the user. Two entries that bind it to
+    two places give two documents: `creds generate` draws two passwords, one run
+    rotates the user twice, and whichever document is applied second wins. The
+    other application is locked out.
+
+    Names are compared with ``upper()``, as the driver compares them, so
+    ``acme_web_user`` and ``ACME_WEB_USER`` are one user. Targets are compared
+    after expansion, so the rule sees every target an entry reaches. Two
+    bindings at one place hold one password and are allowed. Places are compared
+    with stores as the file states them, as the rules below compare them. Where
+    one store comes only from a profile or ``SOPULI_VAULT`` and the rest of the
+    place is the same, the file cannot say whether the places differ, and the
+    pair loads.
+
+    One entry cannot bind a user twice on one target, because the duplicate-name
+    rule refuses a name it declares twice. So this rule names two entries.
+    """
+    seen: dict[tuple[str, str], tuple[Binding, PasswordKey]] = {}
+    for binding in bindings:
+        key = declared_password_key(binding)
+        if key is None:
+            continue
+        user = (binding.target, binding.account.upper())
+        if user not in seen:
+            seen[user] = (binding, key)
+            continue
+        other, other_key = seen[user]
+        if other_key == key or _store_decides(key, other_key):
+            continue
+        ref = binding.secret
+        other_ref = other.secret
+        assert ref is not None
+        assert other_ref is not None
+        raise ConfigError(
+            f"{binding.account!r} on target {binding.target!r} is bound to two places, "
+            f"in {_declared_in(other, binding)}: {_address(other, other_ref)} and "
+            f"{_address(binding, ref)}",
+            at=where.get(binding.application, ROOT),
+            hint=(
+                "the database holds one password for the user, so declare it in one "
+                "entry, or give both entries the same ref"
+            ),
+        )
+
+
+def _store_decides(key: PasswordKey, other: PasswordKey) -> bool:
+    """Whether two keys differ only in a store the file does not state."""
+    if key.store is not None and other.store is not None:
+        return False
+    return (key.path, key.place) == (other.path, other.place)
 
 
 def _check_one_account_per_password(
@@ -129,9 +189,10 @@ def _check_one_account_per_password(
     and ``generate.group`` refuses a write that carries two values for one
     password, before anything is written.
 
-    Accounts are compared as the file spells them. Whether two spellings are
-    one Oracle user is the duplicate-name rule's question, not this one's, and
-    that rule sees one entry. Across entries it is an open decision (TODO(#874)).
+    Accounts are compared as the file spells them. Two spellings of one Oracle
+    user on one target at two places are refused before this, by
+    ``_check_one_user_per_target``. At one place they reach this rule as two
+    accounts on one password, and it refuses them.
     """
     documents: dict[tuple[str | None, str], dict[tuple[PasswordKey, str], Binding]] = {}
     for binding in bindings:

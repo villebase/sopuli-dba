@@ -1099,6 +1099,105 @@ def test_one_entry_with_two_accounts_keeps_its_own_message() -> None:
         bind(accounts=["acme_web_user", "acme_api_user"], secret_template="apps/acme#password")
 
 
+# ------------------------------------------------ one user, one place ---
+
+
+def one_user_twice(second_account: str, second_ref: str) -> dict[str, Any]:
+    """`acme_web_user` in `acme-web`, and ``second_account`` in `acme-api`, both
+    over the two dev PDBs."""
+    return document(
+        applications=[
+            {
+                "name": "acme-web",
+                "targets": DEV_PDBS,
+                "accounts": ["acme_web_user"],
+                "secret_template": "acme/{env}/web#DB_CREDENTIALS/{account}",
+            },
+            {
+                "name": "acme-api",
+                "targets": DEV_PDBS,
+                "accounts": [second_account],
+                "secret_template": second_ref,
+            },
+        ],
+    )
+
+
+def test_one_user_bound_to_two_places_in_two_entries_is_refused() -> None:
+    """The database holds one password for the user. Two documents would give
+    two passwords, one run would rotate the user twice, and the document applied
+    second would lock the other application out."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(one_user_twice("acme_web_user", "acme/{env}/api#DB_CREDENTIALS/{account}"))
+
+    assert str(caught.value).splitlines()[0] == (
+        "applications[1]: 'acme_web_user' on target 'appdb-dev-alpha' is bound to two "
+        "places, in entries 'acme-web' and 'acme-api': "
+        "vault-dev:acme/dev/web#DB_CREDENTIALS/acme_web_user and "
+        "vault-dev:acme/dev/api#DB_CREDENTIALS/acme_web_user"
+    )
+
+
+def test_one_user_spelled_in_upper_case_is_the_same_user() -> None:
+    """The driver compares names with `upper()`, so `ACME_WEB_USER` is the same
+    database user as `acme_web_user`."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(one_user_twice("ACME_WEB_USER", "acme/{env}/api#DB_CREDENTIALS/{account}"))
+
+    assert "'ACME_WEB_USER' on target 'appdb-dev-alpha' is bound to two places" in str(caught.value)
+
+
+def test_one_user_at_one_place_in_two_entries_loads() -> None:
+    """Two entries that bind the user to one place hold one password."""
+    config = build_config(
+        one_user_twice("acme_web_user", "acme/{env}/web#DB_CREDENTIALS/{account}")
+    )
+
+    assert {str(b.secret) for b in config.bindings} == {"acme/dev/web#DB_CREDENTIALS/acme_web_user"}
+    assert len(config.bindings) == 4
+
+
+def test_one_user_on_two_targets_may_have_two_places() -> None:
+    """A user on another target is another database user."""
+    document_ = one_user_twice("acme_web_user", "acme/{env}/api#DB_CREDENTIALS/{account}")
+    document_["applications"][0]["targets"] = {"match": {"tenant": "alpha", "env": "dev"}}
+    document_["applications"][1]["targets"] = {"match": {"tenant": "beta", "env": "dev"}}
+
+    assert len(build_config(document_).bindings) == 2
+
+
+def test_a_place_whose_store_comes_from_the_run_is_left_to_the_run() -> None:
+    """One entry names vault-dev and the other names none. With the rest of the
+    place the same, the file cannot say whether they are two places."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": VAULTS,
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": name,
+                    "targets": ["alpha"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                    **({"vault": "vault-dev"} if name == "acme-web" else {}),
+                }
+                for name in ("acme-web", "acme-api")
+            ],
+        }
+    )
+
+    assert [b.vault for b in config.bindings] == ["vault-dev", None]
+
+
 # ------------------------------------------------------------ several apps ---
 
 

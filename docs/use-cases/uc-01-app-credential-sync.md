@@ -585,12 +585,16 @@ guardrails read each database, so one account can hold `DBA` on one target and
 not on another. Before the run changes anything, it reads the guardrail state of
 each credential with a `pending` to promote, or a `previous` on a rollback, on
 every target it is bound to. A credential that a guardrail refuses on any target
-is skipped on all of them, and no database is changed for it. Its row on each
-other target says which target refused it and why. A credential bound to one
-target needs no extra read: the run asks the guardrails there before the change
-anyway. A target this read cannot reach, or an account it cannot read, is left
-to the run, which reports it on that row. The same applies to `creds rotate`.
-Reasons: [#872](../decisions/log.md#872).
+is changed on none of them. Each refusing target's row gives its own reason.
+Each other target is still read and asked by login, but not changed: a target an
+earlier run already moved to the staged password reports that, so the promotion
+is held back as below, and otherwise its row says which target refused the
+credential and why. A credential bound to one target needs no extra read: the
+run asks the guardrails there before the change anyway. A target this read
+cannot reach is reported on its rows without a second attempt, and an account it
+cannot read is left to the run. The same applies to `creds rotate`, but not to
+`--force`, which waives the checks, or to `--dry-run`, which does not make the
+read. Reasons: [#872](../decisions/log.md#872).
 
 A guardrail skip counts against the promotion only where the promotion would
 move past it: the account has a `pending` to promote, or a `previous` on a

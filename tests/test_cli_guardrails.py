@@ -508,7 +508,8 @@ def test_a_named_account_is_refused_on_the_target_that_refuses_it(
     # `REFUSED` is spelled `ERROR` in the output, so the state enum is unchanged.
     assert rows[("acme_web_user", "appdb-beta")] == REFUSED
     assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
-    assert result.exit_code != ExitCode.SUCCESS
+    # Nothing confirmed, because the one account the run names was refused.
+    assert result.exit_code == ExitCode.FAILURE
 
 
 def test_each_refusing_target_gives_its_own_reason(
@@ -564,6 +565,96 @@ def test_a_refusal_that_clears_during_the_run_still_changes_no_target(
     assert "ACME_WEB_USER" not in changed(harness)
     codes = [one.get("code") for one in document(result)["diagnostics"]]
     assert PROMOTION_SKIPPED not in codes
+
+
+class AlphaHoldsTheStagedPassword(FakeSession):
+    """`appdb-alpha` already holds `pending` for `acme_web_user`: an earlier run
+    changed it, and `appdb-beta`'s refusal held the promotion back with W050."""
+
+    def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        web = self.users.get("ACME_WEB_USER")
+        on_alpha = web is not None and "DBA" not in web.roles
+        if on_alpha and account.upper() == "ACME_WEB_USER":
+            self.attempts.append(account.upper())
+            return VerifyResult(
+                "login", PASS if secret.reveal() == STAGED else "fail", latency_ms=9
+            )
+        return super().verify_password(account, secret)
+
+
+def test_the_run_after_a_held_promotion_still_reports_it(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """W050's remedy is to run the same command again. On that run the pass sees
+    the refusal on `appdb-beta`. `appdb-alpha` is still read: it holds the staged
+    password, so its row is confirmed, the promotion stays held back, and W050
+    says why. Marking alpha skipped would drop the credential from the gate and
+    hide a target that is ahead of `current`."""
+    harness = estate({}, by_target=DBA_ON_BETA, session=AlphaHoldsTheStagedPassword)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    rows = {(one["account"], one["target"]): one["state"] for one in document(result)["results"]}
+    assert rows[("acme_web_user", "appdb-alpha")] == "IN_SYNC"
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED in codes
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+
+
+def test_a_missing_account_on_another_target_is_reported_as_missing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass's refusal on `appdb-beta` does not hide that the account does not
+    exist on `appdb-alpha`."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {"ACME_BATCH_USER": ordinary("ACME_BATCH_USER")},
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    alpha = next(
+        one
+        for one in document(result)["results"]
+        if (one["account"], one["target"]) == ("acme_web_user", "appdb-alpha")
+    )
+    assert "guardrail" not in alpha["actions"][0]["detail"]
+
+
+def test_an_unreachable_target_is_not_tried_twice(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pass met the connection error, so the estate pass reports it on the
+    rows rather than waiting out the same timeout a second time."""
+    import sopuli.cli
+
+    real = sopuli.cli._open_session
+
+    def flaky(target: Any, run: Any, config: Any) -> Any:
+        if target.name == "appdb-beta":
+            raise ConnectionError("the listener did not answer")
+        return real(target, run, config)
+
+    # The pass connects through `_open_session`, and the estate pass through the
+    # driver: a beta session in the harness would be the estate pass trying again.
+    monkeypatch.setattr("sopuli.cli._open_session", flaky)
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    on_beta = [
+        session for session in harness["sessions"] if "DBA" in session.users["ACME_WEB_USER"].roles
+    ]
+    assert on_beta == []
+    beta = [one for one in document(result)["results"] if one["target"] == "appdb-beta"]
+    assert {one["state"] for one in beta} == {"ERROR"}
 
 
 def test_force_runs_no_guardrail_pass(

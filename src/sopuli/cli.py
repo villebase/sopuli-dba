@@ -7138,14 +7138,20 @@ def _apply_estate(
 
     declared = _declared_accounts(run)
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
+    unreachable: dict[str, BaseException] = {}
     if ask_first and not force:
         # Not under `--force`: it waives every check that can refuse an
         # application account here, so the pass could find nothing.
-        refused, connected = _refused_somewhere(sources, by_target, run, config, declared=declared)
-        if connected:
-            # The pass sits between taking the lock and the first change, and an
-            # estate of slow targets could spend the lease on it.
-            manager.renew()
+        try:
+            refused, unreachable, connected = _refused_somewhere(
+                sources, by_target, run, config, declared=declared, renew=manager.renew
+            )
+            if connected:
+                # The pass sits between taking the lock and the first change,
+                # and an estate of slow targets could spend the lease on it.
+                manager.renew()
+        except LockStolenError as stolen:
+            return [], stolen
     applied: list[_Applied] = []
     for position, (name, work) in enumerate(grouped.items()):
         try:
@@ -7164,6 +7170,7 @@ def _apply_estate(
                 force=force,
                 requested=requested,
                 refused=refused,
+                unreachable=unreachable.get(name),
                 out=applied,
             )
         except LockStolenError as stolen:
@@ -7191,13 +7198,19 @@ def _refused_somewhere(
     config: Config,
     *,
     declared: frozenset[str],
-) -> tuple[dict[Credential, dict[str, guardrails.Review]], bool]:
-    """The credentials a guardrail refuses on some target, before any is changed,
-    and whether the pass opened a connection.
+    renew: Callable[[], None],
+) -> tuple[dict[Credential, dict[str, guardrails.Review]], dict[str, BaseException], bool]:
+    """The credentials a guardrail refuses on some target, before any is changed;
+    the targets the pass could not connect to, with the error; and whether the
+    pass tried any.
 
     Each refused credential maps every target that refuses it to that target's
-    review. The estate pass then skips the credential on every target, the
-    refusing ones included, from this answer (#872). Without this pass the run changes
+    review. The estate pass then changes the credential on no target (#872): a
+    refusing target's row is the pass's answer, and every other target is read
+    and asked by login but not changed (see ``held`` in :func:`_apply_one`).
+    A target the pass could not connect to is not tried again: the estate pass
+    reports the same error on its rows. ``renew`` is called between targets, so
+    the pass cannot spend the lease. Without this pass the run changes
     the credential on the targets it reaches first and learns of the refusal
     later, so those databases hold a password that `current` does not, and the
     promotion is held back with `SOPULI-W050`. With it, no database moves ahead of
@@ -7207,16 +7220,16 @@ def _refused_somewhere(
     **Only a credential bound to more than one target is asked about**, and only
     one a promotion follows. With one target the estate pass's own check comes
     before the change anyway, and an apply from `current` promotes nothing, so
-    there is no gap to close. Most runs therefore open no extra connection.
+    there is no gap to close, and no extra connection.
 
     **The checks are the estate pass's**: :func:`guardrails.review` on the
     account's `describe_user`. The answer decides every target of a refused
     credential, the refusing ones too, so a refusal that clears between the pass
     and the change cannot let one target move alone. For a credential this pass
     found nothing against, the estate pass still asks at the point of change,
-    and W050 covers a refusal found only there. A target this pass cannot reach,
-    or an account it cannot read, is left to the estate pass, which reports it
-    on that row; `--debug` says which.
+    and W050 covers a refusal found only there. An account the pass cannot read
+    is left to the estate pass, which reports it on that row; `--debug` says
+    which.
     """
     bindings: dict[Credential, list[Binding]] = {}
     for binding, source in sources:
@@ -7232,11 +7245,15 @@ def _refused_somewhere(
             asked.setdefault(binding.target, []).append((credential, binding))
 
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
-    for name, work in asked.items():
+    unreachable: dict[str, BaseException] = {}
+    for position, (name, work) in enumerate(asked.items()):
+        if position:
+            renew()
         try:
             session = _open_session(by_target[name], run, config)
         except Exception as error:  # noqa: BLE001 -- the estate pass reports it per account
-            PLANNING.debug("guardrail pass: %s left to the run: %s", name, _finding(error).message)
+            PLANNING.debug("guardrail pass: %s unreachable: %s", name, _finding(error).message)
+            unreachable[name] = error
             continue
         try:
             for credential, binding in work:
@@ -7258,7 +7275,7 @@ def _refused_somewhere(
         finally:
             with suppress(Exception):
                 session.close()
-    return refused, bool(asked)
+    return refused, unreachable, bool(asked)
 
 
 def _apply_target(
@@ -7275,6 +7292,7 @@ def _apply_target(
     force: bool = False,
     requested: str | None = None,
     refused: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
+    unreachable: BaseException | None = None,
     out: list[_Applied],
 ) -> None:
     """One target's worth of accounts, over one connection.
@@ -7286,8 +7304,10 @@ def _apply_target(
     does not have to be advertised to applications.
 
     ``refused`` is :func:`_refused_somewhere`'s answer. A credential in it is
-    turned away here without a statement, on every target, from that answer:
-    see :func:`_refused_row`.
+    changed on no target: see :func:`_refused_row` and ``held`` in
+    :func:`_apply_one`. ``unreachable`` is the error the pass met connecting to
+    this target, if it did. It is reported on the rows as a connection error
+    here would be, rather than waiting out the same timeout a second time.
     """
     run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
@@ -7295,6 +7315,8 @@ def _apply_target(
     session = None
     try:
         try:
+            if unreachable is not None:
+                raise unreachable
             module = resolve_driver(target.target)
             credential = _admin_credential(target, run, config)
             driver = module.OracleDriver(
@@ -7327,7 +7349,7 @@ def _apply_target(
         for binding, source in work:
             password = _credential(binding)
             refusing = None if refused is None or password is None else refused.get(password)
-            if refusing:
+            if refusing and binding.target in refusing:
                 turned_away = _refused_row(binding, source, refusing, selection=selection)
                 out.append(turned_away)
                 _account_events(turned_away, run)
@@ -7349,6 +7371,7 @@ def _apply_target(
                     # have opted into an attribute.
                     attributes=apply_states.attributes_for(config, binding),
                     encryption_required=required,
+                    held=refusing or None,
                 )
             except _StoppedAfterChangeError as stopped:
                 # The account the run was working on when it lost the lock had
@@ -7494,8 +7517,16 @@ def _apply_one(
     force: bool = False,
     requested: str | None = None,
     encryption_required: str | None = None,
+    held: Mapping[str, guardrails.Review] | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
+
+    ``held`` is set where the guardrail pass refused this credential on other
+    targets (#872), mapping each to its review. The account is still read and
+    asked by login, but never changed: a target an earlier run already moved to
+    the staged password reports that, confirmed, so the promotion stays held
+    back and W050 is raised again, and a missing or locked account is reported
+    as what it is. Otherwise the row is :func:`_refused_row`'s.
 
     UC-1 §5's flow with its two verifications, and the budget declared once:
     ``attempts=2`` says how many logins this run intends against this account, so
@@ -7650,6 +7681,26 @@ def _apply_one(
                 duration_ms=_elapsed(started),
                 error=reported,
             )
+
+        if held:
+            # Refused elsewhere by the guardrail pass: read, never change, and
+            # before the attribute pass, which is a change too. One login.
+            before = session.verify_password(
+                user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=1
+            )
+            done = apply_states.already_applied(user, before, source=source)
+            if done is not None:
+                _left_alone(binding.account, binding.target, done.state, done.detail)
+                return _Applied(
+                    binding,
+                    source,
+                    done,
+                    changed=False,
+                    verified_before=before,
+                    rollover=_rollover_json(user),
+                    duration_ms=_elapsed(started),
+                )
+            return _refused_row(binding, source, held, selection=selection)
 
         if attributes.requested():
             # Fenced like every other mutation (P5). `apply_attributes` issues

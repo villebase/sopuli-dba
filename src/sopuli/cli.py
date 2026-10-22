@@ -6379,8 +6379,17 @@ def creds_apply(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
-    # A dry run connects only for the pre-flight; without one it reads the vault.
-    connects = not run.dry_run or strategy is not None or preflight_all
+    # A dry run connects only for the pre-flight or for `require_encryption`'s
+    # read (#857); without either it reads the vault.
+    connects = (
+        not run.dry_run
+        or strategy is not None
+        or preflight_all
+        or any(
+            encryption_required_at(target, config, run.resolved) is not None
+            for target in _targets_of(config, bindings)
+        )
+    )
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
     )

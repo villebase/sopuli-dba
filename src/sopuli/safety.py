@@ -186,17 +186,25 @@ def _readonly_at(expanded: ExpandedTarget, config: Config) -> str | None:
     the right refusal with a worse message, which is the failure that is hardest
     to notice.
     """
-    if expanded.template_safety is not None and expanded.template_safety.readonly:
-        return f"target_sets.{expanded.target_set}.safety.readonly"
-    if expanded.target.safety is not None and expanded.target.safety.readonly:
-        return str(declared_at(expanded, "safety").key("readonly"))
+    return _marked_at(expanded, config, "readonly")
+
+
+def _marked_at(expanded: ExpandedTarget, config: Config, key: str) -> str | None:
+    """The key of the first block on this target's own path that sets the
+    boolean ``key`` true: its template's, then its own, then a group's that
+    matches it. One walk for every per-target boolean, so ``readonly`` and
+    ``require_encryption`` cannot come to disagree about the order."""
+    if expanded.template_safety is not None and getattr(expanded.template_safety, key):
+        return f"target_sets.{expanded.target_set}.safety.{key}"
+    if expanded.target.safety is not None and getattr(expanded.target.safety, key):
+        return str(declared_at(expanded, "safety").key(key))
     for group in config.groups:
         if (
             group.safety is not None
-            and group.safety.readonly
+            and getattr(group.safety, key)
             and matches(expanded.target, group.match)
         ):
-            return f"groups.{group.name}.safety.readonly"
+            return f"groups.{group.name}.safety.{key}"
     return None
 
 
@@ -223,18 +231,7 @@ def encryption_required_at(
         for one in reversed(answer.contributions):
             if one.layer not in (Layer.OBJECT, Layer.BUILTIN) and one.value is True:
                 return one.location
-    if expanded.template_safety is not None and expanded.template_safety.require_encryption:
-        return f"target_sets.{expanded.target_set}.safety.require_encryption"
-    if expanded.target.safety is not None and expanded.target.safety.require_encryption:
-        return str(declared_at(expanded, "safety").key("require_encryption"))
-    for group in config.groups:
-        if (
-            group.safety is not None
-            and group.safety.require_encryption
-            and matches(expanded.target, group.match)
-        ):
-            return f"groups.{group.name}.safety.require_encryption"
-    return None
+    return _marked_at(expanded, config, "require_encryption")
 
 
 def refuse_if_readonly(

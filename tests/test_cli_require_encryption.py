@@ -311,6 +311,23 @@ def test_a_dry_run_is_refused_too(
     assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
 
 
+def test_a_dry_run_that_must_connect_asks_whether_anyone_can_answer_a_prompt(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """With the setting on, a dry run connects to read the encryption. A target
+    whose admin password is prompted for, with nobody to answer, is then refused
+    in the preview as in the real run, rather than skipped by the read and
+    passed."""
+    estate({"appdb-alpha": NATIVE, "appdb-beta": NATIVE})
+    prompted = REQUIRED.replace(
+        "    vault: vault-prod\n",
+        "    vault: vault-prod\n    admin: { username: C##SOPULI_SVC, auth: { method: prompt } }\n",
+    )
+    result = apply(runner, write_config(prompted), "--dry-run")
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+
+
 def test_a_rotate_dry_run_is_refused_too(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

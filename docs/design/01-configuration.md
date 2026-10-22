@@ -1680,8 +1680,11 @@ run says so with `SOPULI-W031` or `SOPULI-W032` and goes on (#697). With it,
 `creds apply`, `creds rotate` and `account reset-password` refuse a target whose
 connection is not encrypted, at plan time: exit 5, before any password is drawn
 or any database is changed (invariant 4). `--dry-run` is refused the same way. A
-connection whose encryption could not be read counts as not encrypted. A command
-that sends no password, such as `creds check`, is not affected.
+connection whose encryption could not be read counts as not encrypted. `creds
+check` is not affected, although its logins authenticate with the vault's
+password over the same connection: Oracle's logon protocol is a challenge and
+response, and the password itself never crosses the network. Only the statement
+that sets a password carries it in its text.
 
 **Per target, unlike `readonly`.** The setting decides whether one connection
 may carry a password, so a group that requires it for `prod` does not require it

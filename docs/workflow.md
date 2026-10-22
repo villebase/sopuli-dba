@@ -52,9 +52,8 @@ that the installed `sopuli` binary runs. No containers, under a minute.
 - **Pull requests only, not the push to `main` as well.** A `pull_request` run
   checks out `refs/pull/N/merge` — the head *already merged into the base* — so it
   tests the tree the squash merge is about to produce, not the branch in
-  isolation. The run on `main` afterwards re-tested an identical tree and was
-  billed again for it, which on a private repository's free minutes is the
-  single largest duplicate there is.
+  isolation. A run on `main` afterwards would test an identical tree a second
+  time.
 - **A prose-only pull request runs neither *heavy* lane** — no tier 1, and no
   `lint`, `test` or `install shape` — and the two workflows arrange that
   differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
@@ -101,6 +100,9 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   - `tests/test_measurements.py` checks that `docs/measurements.md` and the
     header of each SQL script and Python probe in `sql/oracle/` name the same
     Oracle releases.
+  - `tests/test_warning_codes.py` checks that every warning and error code in
+    `src/` has a row in `03-json-output.md` §3, and that each series, warnings
+    and errors, has no number used twice and no gap.
 
   Without the job, a mistyped slug or a
   documented flag the CLI does not have would merge green, because every other
@@ -130,8 +132,7 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   stream-encoding bug (#12) was invisible on Linux and P4 requires identical
   behaviour on both. macOS is out, per D5.
 
-  Windows bills at 2× and rounds up per job. When the matrix had three versions,
-  their three Windows cells were two thirds of this workflow's cost. One cell keeps every axis they were buying: the
+  One Windows cell keeps every axis that more Windows cells would add: the
   platform axis is per-platform by definition, mypy's narrowing is too — and is
   pinned to `python_version = "3.11"` in `pyproject.toml`, so it gives the same
   answer whichever interpreter starts it — and the interpreter axis is still run
@@ -139,19 +140,17 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   `sys.version_info`. If a Windows-and-version-specific break ever appears,
   another Windows cell is one more `include` entry in the matrix.
 
-### "main is always green" is discipline, not enforcement
+### "main is always green": `ci ok` is the required check
 
-The rule at the top of this document is not enforced by the platform. **Branch
-protection is unavailable on a private repository on the free plan** —
-`/branches/main/protection` returns 403, "Upgrade to GitHub Pro or make this
-repository public". So CI reports a status, and nothing stops a red PR being
-merged anyway.
+A repository ruleset named `main` enforces the rule at the top of this document.
+It applies to the default branch, has no bypass actors, and has three rules:
 
-The gap is open. `ci ok` exists so that closing it is a settings change and not
-a project: when the repository
-goes public (or the plan changes), **add `ci ok` as the required status check.
-One name, and not `lint` or the `test` cells** — that job name is the contract,
-and renaming it silently disables the requirement.
+- **`ci ok` is a required status check.** A pull request cannot merge until it
+  passes. **One name, and not `lint` or the `test` cells**: that job name is the
+  contract. Renaming the job leaves the required `ci ok` check pending for
+  ever, and no pull request can merge until the ruleset names the new job.
+- the branch cannot be deleted;
+- the branch cannot be force-pushed.
 
 `ci.yml` skips its lanes on a prose-only
 pull request — `changes` decides, and `lint`, `test` and `install shape` carry
@@ -174,15 +173,15 @@ request through. `ci ok` needs `changes` like any other lane, so a failure there
 is a failure here. Tier 1 needs none of this — it is not among the required
 checks, so it can keep filtering on the trigger.
 
-**`ci` and `tier 1` do not run on a push to `main`**, and that is not a
-widening of this gap. Because a `pull_request` run tests the merge result, the commit that lands on
-`main` has already been tested — as long as the branch was current when it merged.
-Two pull requests open at once is where that stops being true: the second one's
-last run predates the first one landing, and nothing here enforces up-to-date
-branches, precisely because of the 403 above. One PR at a time is the working
-pattern rather than an enforced rule, and `workflow_dispatch` on `ci` and `tier 1`
-is how `main` gets checked by hand when that assumption does not hold — which is
-what it was used for during the Actions incident in #233.
+**`ci` and `tier 1` do not run on a push to `main`.** Because a `pull_request`
+run tests the merge result, the commit that lands on `main` has already been
+tested, as long as the branch was current when it merged. Two pull requests open
+at once is where that stops being true: the second one's last run predates the
+first one landing. The ruleset does not require branches to be up to date
+(`strict_required_status_checks_policy` is `false`), so a pull request whose
+last run is older than `main` can merge. Merging one pull request at a time is
+the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
+`tier 1` checks `main` by hand when that pattern was not followed.
 
 ## Releases
 

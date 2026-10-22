@@ -115,7 +115,8 @@ image, `motoserver/moto`, not LocalStack, whose image needs an account token
   tests it properly. The `nne` compose profile approximates one locally: its
   `sqlnet.ora` sets `SQLNET.ENCRYPTION_SERVER = required`, so a thin-mode
   connection must fail with `DPY-3001`, and the tool's diagnostics must say
-  something useful. That covers the failure path. The profile has never been run
+  something useful. That covers the failure path, and the profile has been
+  run: a thick-mode connection to it succeeds
   ([`../maintainer-environments.md`](../maintainer-environments.md) §9). The
   success path needs a server that enforces NNE: Base Database Service, **not**
   Autonomous Database. Autonomous Database encrypts with TLS, so it proves
@@ -154,33 +155,43 @@ This gives two things beyond convenience:
   real database, and the right subset of tests runs. No test file changes.
 
 At the end of a run the harness prints the resolved matrix, so that "green" is
-never ambiguous. It has this shape:
+never ambiguous. A run against the tier-1 stack (Oracle Free 23.26.3.0.0)
+prints:
 
 ```
 capabilities exercised
-                       23ai Free  21c XE  18c XE  11g XE  OCI 19c
-common_users               –         –       –       –        ✓
-password_rollover          ✓         –       –       –        ✓
-offline_verify             –         ✓       ✓       ✓        ✓
-password_reuse_policy      ✓         ✓       ✓       ✓        ✓
-
-23 tests skipped (capability absent), 0 skipped (environment unavailable)
+                       oracle
+account_lock_state       ok  
+common_users             --  
+expire_password          ok  
+offline_verify           ok  
+password_reuse_policy    ok  
+password_rollover        ok  
+profile_management       ok  
+role_lookup              ok  
+0 tests skipped (capability absent), 0 skipped (environment unavailable)
 ```
+
+`ok` is present, `--` is absent, and `?` is an environment that could not be
+reached. The harness configures one environment per run, so the matrix has one
+column.
 
 Watch the second skip count. A skip for an absent capability is correct. A skip
 for an absent environment is a gap in coverage.
 
-**A dash can describe the connecting account, not the release.** Two of the
-dashes above are like that:
+**A result can describe the connecting account, not the release.** Two rows
+above are like that:
 
 - `common_users` asks whether the session holds `ALTER USER` *granted commonly*.
   The test lane connects as `SYSTEM`, which holds it through a role, so
   `USER_SYS_PRIVS` returns nothing and the capability is absent.
 - `offline_verify` needs `SELECT ON SYS.USER$`. That is an optional grant (P2),
-  and `SYSTEM` does not hold it on 23ai Free.
+  and `SYSTEM` does not hold it by default. The test stack grants it at
+  container start (`test/oracle-init/01_test_profiles.sql`), so the capability
+  is present.
 
 Both results are correct. Editing the probe does not change them. Connecting as
-an account that the install script has granted does.
+another account, or granting differently, does.
 
 The harness is `tests/oracle_harness.py`, with the tier-1 fixtures in
 `tests/conftest.py`. Three things about it are decisions, not mechanics:
@@ -193,8 +204,9 @@ The harness is `tests/oracle_harness.py`, with the tier-1 fixtures in
   password and lock an account. Those are properties of the product, not of the
   instance. A query such as `select 1 from dual` would look like a probe and
   measure nothing. So these capabilities are declared structural, with the
-  reason attached, and the report shows the difference between *asked, and the
-  answer was yes* and *there was nothing to ask*.
+  reason attached (`STRUCTURAL` in `sopuli/driver/oracle/capabilities.py`). The
+  report marks a structural capability `ok`, the same as a probed one, so read
+  that table for which is which.
 - **Three absences, three messages.** A missing `oracledb`, a missing Instant
   Client and an unreachable database are different findings. Only the third is
   what most people mean by "no test environment". If the other two were
@@ -202,9 +214,9 @@ The harness is `tests/oracle_harness.py`, with the tier-1 fixtures in
   problem is `pip`. So the skip names which one it was, and the Instant Client
   case is reported as itself, not as `DPI-1047`.
 
-The real report uses ASCII, not the check marks drawn above. On Windows, a
-redirected stream uses the locale code page, and a box-drawing character stops
-the writer mid-line (P4). A test report must survive being piped into a log.
+The report is ASCII. On Windows, a redirected stream uses the locale code page,
+and a box-drawing character stops the writer mid-line (P4). A test report must
+survive being piped into a log.
 
 ### Install shape is a dimension too (ADR-006)
 
@@ -537,7 +549,7 @@ for every release: gates 2 and 4 below say when they are. Decided in #547.
    |---|---|
    | **12.1** (unverified: ddl-text-versions) | 11.2 keeps the DDL text and 12.2.0.1.0 does not, so the change is somewhere after 11.2 and no later than 12.2. 12.1 is the one release left in that range, and no image is known for it. Read the 11.2 result as *11.2 keeps it*, never as *every older release keeps it* |
    | **Other 19c release updates** | 19.3.0.0.0 and 19.32.0.0.0 agree. One release update is not every release update, so name the release when you quote a result |
-   | **AWR on 11.2** (unverified: ddl-text-awr) | Whether 11.2's retained `ALTER USER` reaches AWR needs an 11.2 database with the Diagnostics Pack. Every image in this stack sets `control_management_pack_access = NONE` |
+   | **AWR on 11.2** (unverified: ddl-text-awr) | Whether 11.2's retained `ALTER USER` reaches AWR needs an 11.2 database with the Diagnostics Pack. The 11g XE image sets `control_management_pack_access = NONE`, as every XE image does |
 3. **Schema conformance.** Every sample and recorded output validates against the
    published JSON Schema. The schemas and the example in `docs/schemas/`
    validate, a test asserts that the config schema is the one the config layer

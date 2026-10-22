@@ -2627,11 +2627,13 @@ the register.
   account and target, and bumped the run schema to 1.50, a file that differs
   from 1.49 only in its `$id`.
 - **Decision:** The count is contract. Changing how many entries a code emits
-  is a minor bump, as 1.50 was. `03-json-output.md` §8 states the rule.
-- **Why:** a consumer may count a code's entries, or read the one entry a code
-  emits per run, and `schema_version` is how it learns which builds behave
-  which way. The change is minor, not major, because a consumer that only
-  tests whether the code is present sees the same answer.
+  is a minor bump of every schema that carries the code: the run schema, and
+  the event schema where the code is streamed. For W043 that is run schema
+  1.50 and event schema 1.11. `03-json-output.md` §8 states the rule.
+- **Why:** a consumer may count a code's entries, and `schema_version` is how
+  it learns which builds behave which way. The change is minor, not major,
+  because every entry keeps the code's meaning and a consumer that only tests
+  whether the code is present sees the same answer.
 - **Rejected:**
   - The count as wording, like the message. Changes like #825's would need no
     bump, but a consumer that relied on one entry per run would break with no

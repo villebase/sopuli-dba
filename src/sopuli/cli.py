@@ -4529,10 +4529,11 @@ def creds_check(
     target, and never a quiet fall-back to login.
 
     **Locking an account would be worse than the drift this detects**, so all of
-    UC-1's runtime mitigations are in place. One attempt per account per run and
-    no retry on a wrong password -- the driver's signature has no shape for a
-    back-off loop. Where `SELECT ON SYS.USER$` was granted, the failed-login
-    counter is read fresh immediately before the attempt and the login is
+    UC-1's runtime mitigations are in place. One login per account per run (two
+    with `--include-previous`) and no retry on a wrong password -- the driver's
+    signature has no shape for a back-off loop. Where `SELECT ON SYS.USER$` was
+    granted, the failed-login counter is read fresh immediately before the
+    attempt and the login is
     refused within `--lockout-margin` of the profile's limit. That grant is
     optional and not part of the default install, so where it is absent the
     guard is *unavailable* rather than passing: the run says so in the row and
@@ -4830,7 +4831,7 @@ def _check_one(
         else:
             # `attempts` is the budget this run intends against this account, and
             # it is declared up front rather than counted afterwards: mitigation
-            # 1 is one attempt per account per *run*, so `--include-previous`
+            # 1 is a budget per account per *run*, so `--include-previous`
             # must reserve both against the lockout guard before spending the
             # first. Asking per value checked would quietly double the spend on
             # the counter the guard exists to protect.

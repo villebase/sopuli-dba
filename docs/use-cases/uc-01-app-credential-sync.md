@@ -1534,8 +1534,12 @@ failed attempt counts against `FAILED_LOGIN_ATTEMPTS`, and repeated scheduled
 checks will eventually **lock the production application account**. That is
 worse than the drift the check was looking for. All of these mitigations apply:
 
-1. **Never retry.** One attempt per account per run, with no retries on
-   ORA-01017.
+1. **Never retry, and set the budget before the first attempt.** No retries on
+   ORA-01017. `check` and `finish-rollover` make one login per account per run;
+   `check --include-previous` makes up to two, because it also tries the
+   previous password. `apply` and `rotate` make up to two: before the change,
+   and after it to confirm. The lockout guard (2) counts the whole budget before
+   the first attempt.
 2. **Read `LCOUNT` first, where the grant exists.** `SELECT ON SYS.USER$` is
    optional and not part of the default install (`02-oracle-privileges.md` §2
    and §8 P2; decided in #86). The tool probes it as a capability. Where it is

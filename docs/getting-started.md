@@ -597,19 +597,23 @@ install
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
-  vault-dev  hashicorp  ok      yes   -279ms
+  vault-dev  hashicorp  ok      yes   -58ms
 
 client
   tns_admin         (unset)
   instant_client    23.26.3.0.0
   reaches           19.1 and later
 
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
+
+1 note:
+  free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
 ```
 
 `doctor` connects to everything your config names and reports what it found. Read
-it in four parts:
+it in five parts:
 
 - **install** — which backends this machine has code for, against which your
   config asks for. `not_implemented` means this build has no module for that
@@ -621,8 +625,14 @@ it in four parts:
   `detail:` line underneath says why the library was not found. This part works
   with nothing else set up, so it is the first thing to run when something is
   wrong.
-- **the target table** — whether each database answered, and whether it is where
-  you said it was.
+- **the target table** — whether each database answered, whether it is where
+  you said it was, and whether the connection to it is encrypted. The test
+  container's is not, so `doctor` warns that a password would cross it in clear.
+  On a real database, require NNE or TLS before you let the tool set a password.
+- **notes** — facts that are not faults. Here, the admin password came from an
+  environment variable, which the tool accepts and calls low assurance. That is
+  fine for the sandbox. On a real system, take it from whatever your site
+  already uses for that, as section 4 says.
 
 ---
 

@@ -50,8 +50,8 @@ jobs:
   #
   # `tier1.yml` filters with `paths-ignore` and is right to. This one cannot,
   # because `ci ok` -- the last job in this file -- is the status check the
-  # `main` ruleset requires (`workflow.md`), and `ci ok` needs every job below. The two mechanisms look alike and do opposite things under
-  # protection:
+  # `main` ruleset requires (`workflow.md`), and `ci ok` needs every job below.
+  # The two mechanisms look alike and do opposite things under protection:
   #
   # * a workflow skipped by `paths-ignore` never starts, so its check contexts
   #   are never created and a required one stays **pending forever** -- every
@@ -435,7 +435,7 @@ jobs:
   # were never created, pending forever, which is the whole failure #375 set out
   # to avoid, moved one step along.
   #
-  # So `workflow.md` requires this job instead of naming any of them. It has a
+  # So the `main` ruleset requires this job instead of naming any of them. It has a
   # fixed name, it runs on every pull request, and it is red whenever anything
   # above is. That also closes the other edge: a `changes` job that *failed*
   # would skip everything downstream, and skipped-passes would wave the pull

@@ -147,7 +147,8 @@ It applies to the default branch, has no bypass actors, and has three rules:
 
 - **`ci ok` is a required status check.** A pull request cannot merge until it
   passes. **One name, and not `lint` or the `test` cells**: that job name is the
-  contract, and renaming it silently disables the requirement.
+  contract. Renaming the job leaves the required `ci ok` check pending for
+  ever, and no pull request can merge until the ruleset names the new job.
 - the branch cannot be deleted;
 - the branch cannot be force-pushed.
 

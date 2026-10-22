@@ -115,8 +115,8 @@ image, `motoserver/moto`, not LocalStack, whose image needs an account token
   tests it properly. The `nne` compose profile approximates one locally: its
   `sqlnet.ora` sets `SQLNET.ENCRYPTION_SERVER = required`, so a thin-mode
   connection must fail with `DPY-3001`, and the tool's diagnostics must say
-  something useful. That covers the failure path. Run, the profile refuses a
-  thin-mode connection with `DPY-3001` and accepts a thick-mode one
+  something useful. That covers the failure path, and the profile has been
+  run: a thick-mode connection to it succeeds
   ([`../maintainer-environments.md`](../maintainer-environments.md) §9). The
   success path needs a server that enforces NNE: Base Database Service, **not**
   Autonomous Database. Autonomous Database encrypts with TLS, so it proves
@@ -214,9 +214,9 @@ The harness is `tests/oracle_harness.py`, with the tier-1 fixtures in
   problem is `pip`. So the skip names which one it was, and the Instant Client
   case is reported as itself, not as `DPI-1047`.
 
-The real report uses ASCII, not the check marks drawn above. On Windows, a
-redirected stream uses the locale code page, and a box-drawing character stops
-the writer mid-line (P4). A test report must survive being piped into a log.
+The report is ASCII. On Windows, a redirected stream uses the locale code page,
+and a box-drawing character stops the writer mid-line (P4). A test report must
+survive being piped into a log.
 
 ### Install shape is a dimension too (ADR-006)
 

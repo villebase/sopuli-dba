@@ -271,12 +271,11 @@ def render_matrix(
 ) -> str:
     """§3's report: what was actually exercised, so "green" is never ambiguous.
 
-    Takes a sequence because the matrix is a matrix — 23ai Free, 21c XE, 18c XE,
-    11g XE, OCI 19c across the top — even though today's harness configures one
-    environment at a time. Extending it is then data rather than code, which is
-    §3's claim that a new environment costs nothing.
+    Takes a sequence, one column per environment, even though the harness
+    configures one environment at a time. Extending it is then data rather than
+    code, which is §3's claim that a new environment costs nothing.
 
-    **ASCII, not the check marks the document draws with.** P4's cp1252 story is
+    **ASCII.** P4's cp1252 story is
     about exactly this: a redirected stream on Windows takes the locale codepage,
     and a box-drawing character kills the writer mid-line. A test report that
     cannot survive being piped into a log is not much of a report.

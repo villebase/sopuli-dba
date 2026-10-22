@@ -209,9 +209,8 @@ reports about one is not finished when its tests pass.** Bring up tier 1 and run
 the command end to end.
 
 CI already runs tier 1 on every pull request that changes code, so this is not
-about coverage. It
-is about the assertions nobody writes, because a test can only check what its
-author already suspected. Three real examples from this project's history:
+about coverage. It is about the assertions nobody writes, because a test can
+only check what its author already suspected. Three real examples from this project's history:
 
 - **Output that was described rather than produced.** Every sample in a design
   document, a pull request body or a docstring is pasted from a real run. A

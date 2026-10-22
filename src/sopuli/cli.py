@@ -10184,16 +10184,21 @@ def _rotate_estate(
         settled = _settled(into.applied, into.promotions, unconfirmed)
         left = _left_open(into.applied, settled)
         if left:
-            note = (
-                "--finish-rollover left the rollover window open for "
-                + ", ".join(left)
-                + ", because the vault may not serve the new password. Run "
-                "`sopuli creds finish-rollover` once `current` holds it; where the "
-                "promotion did not happen, `sopuli creds apply` promotes it first"
+            # One line for a person, and one entry per pair for a consumer, so
+            # that which windows are open is read from `account` and `target`
+            # rather than parsed out of the message.
+            into.caveats.append(
+                _left_open_note(", ".join(f"{account} on {target}" for account, target in left))
             )
-            into.caveats.append(note)
-            document.diagnostics.append(
-                Diagnostic(level="warning", message=note, code=ROLLOVER_LEFT_OPEN)
+            document.diagnostics.extend(
+                Diagnostic(
+                    level="warning",
+                    message=_left_open_note(f"{account} on {target}"),
+                    code=ROLLOVER_LEFT_OPEN,
+                    account=account,
+                    target=target,
+                )
+                for account, target in left
             )
         try:
             into.closed = _close_windows(
@@ -10319,8 +10324,9 @@ def _settled(
     return settled
 
 
-def _left_open(applied: Sequence[_Applied], settled: Sequence[_Applied]) -> list[str]:
-    """The confirmed pairs whose windows `--finish-rollover` leaves alone.
+def _left_open(applied: Sequence[_Applied], settled: Sequence[_Applied]) -> list[tuple[str, str]]:
+    """The confirmed (account, target) pairs whose windows `--finish-rollover`
+    leaves alone.
 
     Account and target, because :func:`_settled` decides per document, and one
     account on two targets may be closed on one and left open on the other.
@@ -10328,12 +10334,21 @@ def _left_open(applied: Sequence[_Applied], settled: Sequence[_Applied]) -> list
     kept = {id(record) for record in settled}
     return sorted(
         {
-            f"{record.binding.account} on {record.binding.target}"
+            (record.binding.account, record.binding.target)
             for record in applied
             if id(record) not in kept
             and record.binding.secret is not None
             and apply_states.is_confirmed(record.outcome.state)
         }
+    )
+
+
+def _left_open_note(pairs: str) -> str:
+    """`SOPULI-W043`'s message, for the pairs ``pairs`` names."""
+    return (
+        f"--finish-rollover left the rollover window open for {pairs}, because the vault "
+        "may not serve the new password. Run `sopuli creds finish-rollover` once `current` "
+        "holds it; where the promotion did not happen, `sopuli creds apply` promotes it first"
     )
 
 

@@ -869,7 +869,7 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ROLLOVER_LEFT_OPEN: (
             "`creds rotate --finish-rollover` left a rollover window open, because the vault "
             "may not serve the new password. Run `creds finish-rollover` once `current` holds "
-            "it. The message names the accounts and targets."
+            "it. One entry per account and target."
         ),
         PRIVILEGE_AUDIT_UNREAD: (
             "The pre-flight could not read the privilege audit for a target, so it "

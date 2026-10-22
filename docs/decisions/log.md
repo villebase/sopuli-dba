@@ -2597,3 +2597,24 @@ the register.
   - Diagnostics with J3 codes. Seeding a `current` is a normal state, not a
     warning, and on a real run they would repeat `SOPULI-W046` and
     `SOPULI-W047`.
+
+## #825
+
+- **Decided:** 2026-10-22, #825
+- **Question:** `creds rotate --finish-rollover` reported the rollover windows
+  it left open as one `SOPULI-W043` for the run, with the accounts and targets
+  only in the message. Emit one entry per account and target, or keep one entry
+  and add a structured list of the pairs?
+- **Decision:** One `SOPULI-W043` per account and target, each with `account`
+  and `target`. The text output keeps one line that names every pair. Run
+  schema 1.50.
+- **Why:** J3 says the message is not contract, so a consumer must not parse
+  it. Every other per-account warning carries `account` and `target`, and a
+  `diagnostic` already has both fields. The code means what it meant: a window
+  was left open. A consumer that only tests for the code still sees it.
+- **Rejected:**
+  - One entry with a list of the pairs. `diagnostic` has
+    `additionalProperties: false`, so the list would be a new field on every
+    diagnostic that only W043 uses.
+  - Moving W043 to `results[].warnings[]`, on each affected row. A consumer
+    that reads the run-level W043 would stop seeing it.

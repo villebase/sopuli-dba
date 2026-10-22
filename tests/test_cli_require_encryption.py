@@ -95,6 +95,7 @@ class FakeSession:
     def __init__(self, encryption: Encryption) -> None:
         self.encryption = encryption
         self.changed: list[str] = []
+        self.logins: list[str] = []
 
     def scope(self) -> Scope:
         return Scope(
@@ -114,6 +115,7 @@ class FakeSession:
         )
 
     def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        self.logins.append(account.upper())
         held = STAGED if account.upper() in self.changed else LIVE
         return VerifyResult("login", PASS if secret.reveal() == held else "fail", latency_ms=9)
 
@@ -290,6 +292,9 @@ def test_the_connection_that_sends_is_checked_too(
     assert rows["appdb-beta"]["state"] == "ERROR"
     assert "does not support encrypted_connection" in rows["appdb-beta"]["error"]["message"]
     assert changed(harness) == ["ACME_WEB_USER"]
+    # Refused before anything touched the account: no login on `appdb-beta`.
+    beta = [one for one in harness["sessions"] if one.encryption is CLEAR]
+    assert [one.logins for one in beta] == [[]]
     held = harness["store"].read("apps/acme/db")
     assert held is not None
     assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
@@ -304,6 +309,30 @@ def test_a_dry_run_is_refused_too(
     result = apply(runner, write_config(REQUIRED), "--dry-run")
 
     assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
+
+
+def test_a_rotate_dry_run_is_refused_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
+    result = runner.invoke(
+        cli, ["creds", "rotate", "--config", str(write_config(REQUIRED)), "--dry-run"]
+    )
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+
+
+def test_the_refusal_comes_before_the_lock(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A refusal raised under the lock would leave the document without the
+    `locks` it held. Before the lock there is nothing to record: a lock taken
+    and released leaves a `released` record, and there is none."""
+    harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
+    result = apply(runner, write_config(REQUIRED), "--output", "json")
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert harness["store"].list("locks/") == ()
 
 
 def test_rotate_is_refused_before_it_draws_a_password(

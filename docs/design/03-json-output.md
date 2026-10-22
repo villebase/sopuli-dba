@@ -7,7 +7,7 @@ for text output that keep it consistent with both.
 published schemas.
 
 Schemas: [`../schemas/sopuli-run-1.50.schema.json`](../schemas/sopuli-run-1.50.schema.json),
-[`../schemas/sopuli-event-1.10.schema.json`](../schemas/sopuli-event-1.10.schema.json)
+[`../schemas/sopuli-event-1.11.schema.json`](../schemas/sopuli-event-1.11.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -2792,7 +2792,8 @@ jq -r .invocation.correlation_id result.json
 separate versions, and these rules apply to both.
 
 **Minor** (consumers must tolerate): new optional properties, new enum values,
-new event types, new diagnostic codes.
+new event types, new diagnostic codes, a change in how many entries a diagnostic
+code emits.
 
 **Major** (announced, with an overlap release): removing or renaming a property,
 removing an enum value, changing a type, changing the meaning of a field.
@@ -2825,6 +2826,16 @@ These rules follow from the two lists:
   `lock.found[].declared` widened from "a binding names this path" to "this
   configuration accounts for this path". Turning the boolean into a three-valued
   string would have been a rename, which is major.
+- **How many entries a diagnostic code emits is contract.** A consumer may count
+  a code's entries, so the count changes only with a bump of every schema that
+  carries the code: the run schema for `diagnostics[]`, and the event schema
+  for the `diagnostic` events that stream them (§6). The bump is minor, because
+  every entry keeps the code's meaning and a consumer that tests whether the
+  code is present sees the same answer. A consumer that took one entry's
+  message for the whole answer was parsing a message, which the rule above
+  rules out. `SOPULI-W043` is the example: one entry per account and target
+  from run schema 1.50 and event schema 1.11. Its row in §3 gives the count.
+  Reasons: [#979](../decisions/log.md#979).
 - **A new section is better than a widened one** when the new data does not fit
   the old section's required fields. `doctor`'s `targets[]`, `install` and
   `vaults[]` are separate from `results[]` for that reason (§2).
@@ -2834,8 +2845,8 @@ build that emits `schema_version: "1.20"` must be able to fetch the schema it
 validates against. Every event schema version is published. The run schema
 follows the rule from 1.16. Earlier run schema bumps renamed the file instead,
 so 1.0 to 1.9 and 1.15 are not published. A bump is made even when the file is identical apart from its
-`$id`, as it is for a new diagnostic code: `schema_version` tells a consumer
-which builds can emit what.
+`$id`, as it is for a new diagnostic code or a changed count: `schema_version`
+tells a consumer which builds can emit what.
 
 **A shape may be published before the code that fills it.** A section or a
 property in the schema that nothing emits yet constrains nothing, and it gives a

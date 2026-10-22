@@ -2618,3 +2618,23 @@ the register.
     diagnostic that only W043 uses.
   - Moving W043 to `results[].warnings[]`, on each affected row. A consumer
     that reads the run-level W043 would stop seeing it.
+
+## #979
+
+- **Decided:** 2026-10-22, #979
+- **Question:** Is the number of entries a diagnostic code emits part of the
+  JSON contract? #825 changed `SOPULI-W043` from one entry per run to one per
+  account and target, and bumped the run schema to 1.50, a file that differs
+  from 1.49 only in its `$id`.
+- **Decision:** The count is contract. Changing how many entries a code emits
+  is a minor bump of every schema that carries the code: the run schema, and
+  the event schema where the code is streamed. For W043 that is run schema
+  1.50 and event schema 1.11. `03-json-output.md` §8 states the rule.
+- **Why:** a consumer may count a code's entries, and `schema_version` is how
+  it learns which builds behave which way. The change is minor, not major,
+  because every entry keeps the code's meaning and a consumer that only tests
+  whether the code is present sees the same answer.
+- **Rejected:**
+  - The count as wording, like the message. Changes like #825's would need no
+    bump, but a consumer that relied on one entry per run would break with no
+    version to tell it why.

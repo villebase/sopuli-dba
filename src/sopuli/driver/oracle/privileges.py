@@ -195,7 +195,8 @@ REQUIRED_PRIVILEGES = ("CREATE SESSION", "ALTER USER")
 #:   than predicted -- ``ORA-41900`` in particular, which the same ungranted
 #:   object returns to a privileged asker where an unprivileged one gets
 #:   ``ORA-00942``. A second implementation of that rule is a second thing to get
-#:   wrong.
+#:   wrong. It also treats ``ORA-00904`` as "no", but no statement below names a
+#:   column, so a missing column cannot be read as a missing grant here.
 #:
 #: Spelled as the grant rather than as the view, because the point of a missing
 #: entry is that somebody has to go and issue it.

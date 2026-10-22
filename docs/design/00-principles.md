@@ -912,8 +912,8 @@ tool safe to run from a scheduler.
   **Only a verb that streams accepts `jsonl`.** `STREAMING_COMMANDS` in
   `sopuli/invocation.py` lists them, and the refusal names them. Any other verb
   refuses `jsonl` as a usage error instead of emitting a stream with less in it
-  than its document. `03-json-output.md` §5 has the rule, and the event schema is
-  `../schemas/sopuli-event-1.9.schema.json`.
+  than its document. `03-json-output.md` §5 has the rule, and the head of that
+  document names the current event schema.
 - One structured audit record per mutation: who (OS user + vault identity), what
   (account, target, operation), when, correlation id, result. Never the secret.
 - `--debug` writes debug output to stderr, at one level. The tool writes no log

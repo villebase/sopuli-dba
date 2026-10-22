@@ -669,7 +669,9 @@ better for three reasons:
   is readable however the grant arrived;
 - a grant row is not access: the view may have been dropped or renamed;
 - the mechanism already exists and is measured. `ABSENT_CODES` treats
-  `ORA-00942`, `ORA-00904`, `ORA-01031` and `ORA-41900` as "no".
+  `ORA-00942`, `ORA-00904`, `ORA-01031` and `ORA-41900` as "no". Each grant
+  check is a `count(*)` that names no column, so `ORA-00904` cannot arise from
+  one and be read as a missing grant.
 
 The cost is one round trip per documented grant, which is why the audit runs
 only with the flag.
@@ -704,8 +706,8 @@ cannot be quoted as evidence that nothing was.
 | `EXECUTE ON DBMS_LOCK` | an **object** privilege; the three views above carry system privileges and roles | `USER_TAB_PRIVS` and `ROLE_TAB_PRIVS`, and the second does not fit the nested-role traversal. That is a design question, not a query |
 | `SYSDBA` / `SYSOPER` | `V$PWFILE_USERS` is not in §2's default grant set | the optional grant that §2 describes for check 3. With it, the audit reads these rows |
 
-If `DBA_ROLE_PRIVS` is refused at runtime, the five roles of §3's list join this
-list: `DBA`, `PDB_DBA`, `CDB_DBA`, `AUDIT_VIEWER` and `AUDIT_ADMIN`.
+If `DBA_ROLE_PRIVS` is refused at runtime, every role on §3's list joins this
+list.
 The report never merges "I looked and found nothing" with "I could not look".
 
 **With the optional grant, the password-file rows are read.** On 26ai
@@ -1089,7 +1091,7 @@ control, not optional housekeeping. Enable it before the first rotation, not
 after the first incident. `sql/oracle/01_audit_policy.sql` creates it.
 
 **Correlation.** The tool calls `DBMS_SESSION.SET_IDENTIFIER(<correlation_id>)`
-on every connection, so its UUID lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That
+on every session it opens, so its UUID lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That
 joins the tool's JSON output, the database trail and the vault's secret
 metadata. This query finds one run's records:
 
@@ -1103,18 +1105,20 @@ SELECT event_timestamp, dbusername, action_name, object_name, return_code
 On 11.2, use `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL` instead. `CLIENT_ID`
 exists there too.
 
-- **The identifier is set on every connection**, not only on connections that
-  change something. A session in the trail with no `CLIENT_ID` is one somebody
-  must explain later, and setting it costs one round trip on a connection that is
+- **The identifier is set on every session**, not only on sessions that change
+  something. A session in the trail with no `CLIENT_ID` is one somebody must
+  explain later, and setting it costs one round trip on a connection that is
   already open.
-- **It is set before anything else runs**, so no statement can be audited
-  without it. A session that cannot be labelled is closed, not used, because
-  using it would lose the join this section exists for.
-- **A verification login is the exception.** The login itself is the thing
-  being tested, so nothing can run before it. The identifier is set as soon as
-  the login succeeds. If setting it fails, the session is still used for the
-  answer, because the login has already answered, and a refused `DBMS_SESSION`
-  call must not turn into a reported drift.
+- **On a session that runs statements, it is set before anything else runs**,
+  so no statement can be audited without it. Such a session that cannot be
+  labelled is closed, not used, because using it would lose the join this
+  section exists for.
+- **A verification login runs no statement.** Whether the login succeeds is the
+  answer. A successful one is labelled straight away. If labelling fails, the
+  answer stands, because a refused `DBMS_SESSION` call must not turn into a
+  reported drift. A failed login opens no session for the tool to label,
+  so the tool cannot put the run's id on its audit record. Find a failed
+  verification login by `DBUSERNAME` and the run's time window instead.
 - **The call binds the id.** It does not build a string. This is the reverse of
   invariant 14. `V$SQL_BIND_CAPTURE` keeps bind values in clear, which is why a
   password must never be bound, and why a captured correlation id is useful. The

@@ -857,12 +857,19 @@ These rules apply:
   remove, blocks promotion for every other account at that secret path. Dropping
   it avoids both: its `pending` stays staged, and the other accounts are
   promoted.
+- **An account refused on one of its targets is skipped on all of them** (#872).
+  The checks read each database, so one account can hold `DBA` on one target
+  only. Its promotion is one password for all of its targets. So before a
+  mutating run changes anything, it asks the checks on every target a
+  credential with a `pending` to promote is bound to, and skips the credential
+  on all of them if any refuses. It is then skipped everywhere, and the rule
+  above applies.
 - **An account skipped on some targets, and confirmed on others with a
-  `pending` to promote, holds its document back** (#852). The checks read each database, so one account can hold
-  `DBA` on one target only. Its promotion is one password for all of its
-  targets, and the skipped target still holds the old one. The document is not
-  promoted, so the run exits 4 with `SOPULI-W050`, which names the skipped pairs
-  and the remedy. UC-1 §5 has the rule.
+  `pending` to promote, holds its document back** (#852). After the first read,
+  this happens only when a check's answer changes during the run. The skipped
+  target still holds the old password. The document is not promoted, so the run
+  exits 4 with `SOPULI-W050`, which names the skipped pairs and the remedy. UC-1
+  §5 has the rule.
 - **The override is a structured field.** `--force` fills
   `results[].overridden` with the check and what it observed. A consumer can
   then branch on "this account was forced" instead of searching a sentence. The

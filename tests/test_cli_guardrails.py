@@ -409,27 +409,97 @@ applications:""",
 )
 
 
+#: `acme_web_user` holds `DBA` on `appdb-beta` only, the #852 estate.
+DBA_ON_BETA = {
+    "appdb-alpha": {
+        "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+    "appdb-beta": {
+        "ACME_WEB_USER": account(
+            "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+        ),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+}
+
+
+class GrantedDuringRun(dict[str, Mapping[str, UserState]]):
+    """`DBA_ON_BETA`, except that `appdb-beta` grants `DBA` only once the run has
+    logged in or changed a password somewhere.
+
+    The guardrail pass (#872) does neither, so it finds nothing to refuse, and
+    the estate pass reaches `appdb-alpha` before it finds the grant. That is the
+    case `SOPULI-W050` still covers: the state changed between the pass and the
+    change. ``sessions`` is the harness's list, set after `estate` returns.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(DBA_ON_BETA)
+        self.sessions: list[FakeSession] = []
+
+    def __getitem__(self, name: str) -> Mapping[str, UserState]:
+        acted = any(session.attempts or session.changed for session in self.sessions)
+        if name == "appdb-beta" and not acted:
+            return DBA_ON_BETA["appdb-alpha"]
+        return super().__getitem__(name)
+
+
+def granted_during_run(estate: Harness, **options: Any) -> dict[str, Any]:
+    """`estate` over :class:`GrantedDuringRun`."""
+    grants = GrantedDuringRun()
+    harness = estate({}, by_target=grants, **options)
+    grants.sessions = harness["sessions"]
+    return harness
+
+
+def test_an_account_refused_on_one_of_its_targets_is_changed_on_none(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#872. The guardrails are asked on every target before the first change,
+    so `appdb-alpha` is not changed for an account `appdb-beta` refuses. The
+    account is then skipped everywhere, so its neighbour promotes."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--output", "json")
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] == STAGED
+    assert result.exit_code == ExitCode.SUCCESS
+    rows = {(one["account"], one["target"]): one for one in document(result)["results"]}
+    alpha = rows[("acme_web_user", "appdb-alpha")]
+    assert alpha["state"] == SKIPPED
+    assert alpha["actions"][0]["detail"].startswith(
+        "a guardrail refuses this credential on appdb-beta, so no target was changed: "
+    )
+    assert rows[("acme_web_user", "appdb-beta")]["state"] == SKIPPED
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """With one target the estate pass's own check comes before the change, so
+    there is nothing for a pass to close, and a run makes one connection."""
+    harness = estate({"ACME_WEB_USER": ordinary(), "ACME_BATCH_USER": ordinary("ACME_BATCH_USER")})
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert len(harness["sessions"]) == 1
+
+
 def test_an_account_skipped_on_one_of_its_targets_is_not_promoted(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """#852 and invariant 7. The guardrails read each database, so one account
-    can hold `DBA` on one target only. Its promotion is one password for both
-    targets, and the skipped one still holds the old password."""
-    harness = estate(
-        {},
-        by_target={
-            "appdb-alpha": {
-                "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
-                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-            },
-            "appdb-beta": {
-                "ACME_WEB_USER": account(
-                    "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
-                ),
-                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-            },
-        },
-    )
+    can hold `DBA` on one target only. Here it is granted after the guardrail
+    pass, so `appdb-alpha` is changed first. The promotion is one password for
+    both targets, and the skipped one still holds the old password."""
+    harness = granted_during_run(estate)
     result = run(runner, write_config(TWO_TARGETS), "--output", "json")
 
     held = harness["store"].read("apps/acme/db")
@@ -479,27 +549,12 @@ def test_an_account_skipped_on_every_target_does_not_hold_its_neighbours_back(
     assert result.exit_code == ExitCode.SUCCESS
 
 
-#: `acme_web_user` holds `DBA` on `appdb-beta` only, the #852 estate.
-DBA_ON_BETA = {
-    "appdb-alpha": {
-        "ACME_WEB_USER": ordinary("ACME_WEB_USER"),
-        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-    },
-    "appdb-beta": {
-        "ACME_WEB_USER": account(
-            "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
-        ),
-        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-    },
-}
-
-
 def test_a_skip_that_holds_the_promotion_back_prints_its_remedy_and_no_repair_line(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """The run's own `repair with:` line would name a run that skips the same
     pair again, so W050 carries the remedy, and says what `--force` would cost."""
-    estate({}, by_target=DBA_ON_BETA)
+    granted_during_run(estate)
     result = run(runner, write_config(TWO_TARGETS))
 
     assert result.exit_code == ExitCode.PARTIAL
@@ -528,7 +583,7 @@ def test_a_sibling_failure_is_the_reason_before_a_skip(
 ) -> None:
     """The same run again may fix a failure, and `--force` is the wrong remedy
     for it. So the failure holds the document back and W050 is not raised."""
-    harness = estate({}, by_target=DBA_ON_BETA, session=FailsBatchUserOnBeta)
+    harness = granted_during_run(estate, session=FailsBatchUserOnBeta)
     result = run(runner, write_config(TWO_TARGETS), "--output", "json")
 
     held = harness["store"].read("apps/acme/db")
@@ -576,7 +631,7 @@ def test_a_skip_beside_a_failure_leaves_the_failure_as_the_reason(
     """Where the account confirmed nowhere, the failure already holds the
     document back. Reporting the skip would recommend `--force` on a run whose
     real blocker is the target that failed."""
-    harness = estate({}, by_target=DBA_ON_BETA, session=FailsWebUser)
+    harness = granted_during_run(estate, session=FailsWebUser)
     result = run(runner, write_config(TWO_TARGETS), "--output", "json")
 
     held = harness["store"].read("apps/acme/db")
@@ -619,9 +674,8 @@ def test_a_rollback_is_held_back_by_a_skip_too(
 ) -> None:
     """A rollback promotes `previous` to `current`, so the same gate stands in
     front of it: `appdb-beta` still holds the password being rolled back from."""
-    harness = estate(
-        {},
-        by_target=DBA_ON_BETA,
+    harness = granted_during_run(
+        estate,
         document={
             "DB_CREDENTIALS": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
             "previous": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
@@ -652,7 +706,7 @@ def test_rotate_reports_the_skip_too(
     and reports W050 as `apply` does. Whether `--finish-rollover` leaves a
     held-back document's windows open is `_settled`'s rule for every withheld
     promotion, tested in `test_cli_creds_rotate.py`."""
-    harness = estate({}, by_target=DBA_ON_BETA, document=NOTHING_STAGED)
+    harness = granted_during_run(estate, document=NOTHING_STAGED)
     result = runner.invoke(
         cli,
         ["creds", "rotate", "--config", str(write_config(TWO_TARGETS)), "--confirm"]

@@ -7130,6 +7130,7 @@ def _apply_estate(
         grouped.setdefault(binding.target, []).append((binding, source))
 
     declared = _declared_accounts(run)
+    refused = _refused_somewhere(sources, by_target, run, config, declared=declared, force=force)
     applied: list[_Applied] = []
     for position, (name, work) in enumerate(grouped.items()):
         try:
@@ -7147,11 +7148,91 @@ def _apply_estate(
                 selection=selection,
                 force=force,
                 requested=requested,
+                refused=refused,
                 out=applied,
             )
         except LockStolenError as stolen:
             return applied, stolen
     return applied, None
+
+
+#: One credential: its document's lock key and its place in the document. Two
+#: bindings with the same one share a password (:func:`_by_document`).
+Credential = tuple[LockKey, Any]
+
+
+def _credential(binding: Binding) -> Credential | None:
+    if binding.secret is None or binding.vault is None:
+        return None
+    return (_lock_key(binding), place_of(binding.secret))
+
+
+def _refused_somewhere(
+    sources: Sequence[tuple[Binding, Source | None]],
+    by_target: Mapping[str, ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    declared: frozenset[str],
+    force: bool,
+) -> dict[Credential, tuple[str, str]]:
+    """The credentials a guardrail refuses on some target, before any is changed.
+
+    Each maps to the target that refuses it and the reason. The estate pass then
+    skips the credential on every target (#872). Without this pass the run changes
+    the credential on the targets it reaches first and learns of the refusal
+    later, so those databases hold a password that `current` does not, and the
+    promotion is held back with `SOPULI-W050`. With it, no database moves ahead of
+    `current`, and :func:`_by_document`'s rule for a credential skipped everywhere
+    lets its neighbours promote.
+
+    **Only a credential bound to more than one target is asked about**, and only
+    one a promotion follows. With one target the estate pass's own check comes
+    before the change anyway, and an apply from `current` promotes nothing, so
+    there is no gap to close. Most runs therefore open no extra connection.
+
+    **The checks are the estate pass's**: :func:`guardrails.review` on the
+    account's `describe_user`. That pass still runs them again at the point of
+    change, because the state can change in between, and W050 still covers a
+    refusal found only there. A target this pass cannot reach, or an account it
+    cannot read, is left to the estate pass, which reports it on that row.
+    """
+    bindings: dict[Credential, list[Binding]] = {}
+    for binding, source in sources:
+        credential = _credential(binding)
+        if credential is None or source is None or not apply_states.promotes(source.stage):
+            continue
+        bindings.setdefault(credential, []).append(binding)
+    asked: dict[str, list[tuple[Credential, Binding]]] = {}
+    for credential, shared in bindings.items():
+        if len({binding.target for binding in shared}) < 2:
+            continue
+        for binding in shared:
+            asked.setdefault(binding.target, []).append((credential, binding))
+
+    refused: dict[Credential, tuple[str, str]] = {}
+    for name, work in asked.items():
+        try:
+            session = _open_session(by_target[name], run, config)
+        except Exception:  # noqa: BLE001 -- the estate pass reports it per account
+            continue
+        try:
+            for credential, binding in work:
+                if credential in refused:
+                    continue
+                try:
+                    user = session.describe_user(binding.account)
+                except Exception:  # noqa: BLE001 -- likewise, on the account's row
+                    continue
+                if user is None:
+                    continue
+                review = guardrails.review(user, declared=declared, force=force)
+                if not review.permitted:
+                    refused[credential] = (name, guardrails_reason(review))
+        finally:
+            with suppress(Exception):
+                session.close()
+    return refused
 
 
 def _apply_target(
@@ -7167,6 +7248,7 @@ def _apply_target(
     selection: Selection,
     force: bool = False,
     requested: str | None = None,
+    refused: Mapping[Credential, tuple[str, str]] | None = None,
     out: list[_Applied],
 ) -> None:
     """One target's worth of accounts, over one connection.
@@ -7176,6 +7258,11 @@ def _apply_target(
     accounts bound to it are `ERROR`, so the documents they belong to are not
     promoted, so a database that could not be reached cannot cause a password it
     does not have to be advertised to applications.
+
+    ``refused`` is :func:`_refused_somewhere`'s answer. A credential in it is
+    skipped here without a statement, unless this is the target that refuses
+    it: there :func:`_apply_one` asks the guardrails itself and gives the row
+    its own reason.
     """
     run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
@@ -7213,6 +7300,13 @@ def _apply_target(
         # results. `_apply_one` lets a lock error through on purpose, wrapped
         # with the account's row when it had already changed the account.
         for binding, source in work:
+            password = _credential(binding)
+            elsewhere = None if refused is None or password is None else refused.get(password)
+            if elsewhere is not None and elsewhere[0] != target.name:
+                skipped = _refused_elsewhere(binding, source, *elsewhere)
+                out.append(skipped)
+                _account_events(skipped, run)
+                continue
             try:
                 record = _apply_one(
                     binding,
@@ -7244,6 +7338,22 @@ def _apply_target(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+def _refused_elsewhere(
+    binding: Binding, source: Source | None, target: str, reason: str
+) -> _Applied:
+    """The `SKIPPED` row of a credential a guardrail refuses on another target.
+
+    `SKIPPED` whether or not the operator named the account. The account on this
+    target is not what the guardrail refused, and the refusing target's own row
+    is `REFUSED` where it was named, which is what the exit code reads.
+    """
+    detail = f"a guardrail refuses this credential on {target}, so no target was changed: {reason}"
+    _left_alone(binding.account, binding.target, apply_states.SKIPPED, detail)
+    return _Applied(
+        binding, source, check_states.Outcome(apply_states.SKIPPED, detail), changed=False
+    )
 
 
 def _account_events(record: _Applied, run: Invocation) -> None:

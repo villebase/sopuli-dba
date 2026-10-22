@@ -580,15 +580,28 @@ pair the narrow run already converged, and reports `changed: false` for each. An
 account that a guardrail skipped is inside the run, not outside it
 (`02-oracle-privileges.md` §4 says what a skip means).
 
+**The guardrails are asked on every target before the first change.** The
+guardrails read each database, so one account can hold `DBA` on one target and
+not on another. Before the run changes anything, it reads the guardrail state of
+each credential with a `pending` to promote, or a `previous` on a rollback, on
+every target it is bound to. A credential that a guardrail refuses on any target
+is skipped on all of them, and no database is changed for it. Its row on each
+other target says which target refused it and why. A credential bound to one
+target needs no extra read: the run asks the guardrails there before the change
+anyway. A target this read cannot reach, or an account it cannot read, is left
+to the run, which reports it on that row. The same applies to `creds rotate`.
+Reasons: [#872](../decisions/log.md#872).
+
 A guardrail skip counts against the promotion only where the promotion would
 move past it: the account has a `pending` to promote, or a `previous` on a
-rollback, and confirmed on another target. The guardrails read each database, so
-one account can hold `DBA` on one target and not on another. The skipped target
-then still holds the old password, so the document is not promoted: `pending`
-stays, the run exits 4, and `SOPULI-W050` names the skipped pairs. A failure on
-another target is reported first, because the same run again may fix it. Every
-other skip is dropped from the gate: an account skipped on every one of its
-targets, or applied from `current`, does not hold back the other accounts in its
+rollback, and confirmed on another target. After the first read, that happens
+only when a guardrail's state changes during the run, such as a `DBA` grant made
+after the read and before the run reached that target. The skipped target then
+still holds the old password, so the document is not promoted: `pending` stays,
+the run exits 4, and `SOPULI-W050` names the skipped pairs. A failure on another
+target is reported first, because the same run again may fix it. Every other
+skip is dropped from the gate: an account skipped on every one of its targets,
+or applied from `current`, does not hold back the other accounts in its
 document.
 
 The gate counts configured pairs, not visited pairs, because otherwise
@@ -1738,7 +1751,10 @@ exits 1, and nothing is applied to any database.
 
 Step 3 makes the common failures (wrong privileges, closed PDB, unreachable host)
 happen *before* anything is written anywhere. `creds apply` offers the same
-survey as `--preflight` (§5).
+survey as `--preflight` (§5). Step 5 begins by asking the guardrails on every
+target a credential is bound to, before the first database is changed, so a
+credential that one target refuses is changed on none (§5). Its `pending` from
+step 4 stays staged.
 
 **Step 2 and the fence** (Q2, decided in #83). Locks live in the vault, one per
 **secret path**, not per account and not per target. Every target in a run

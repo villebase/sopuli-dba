@@ -143,8 +143,10 @@ still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-d
 - It **is not a general-purpose secrets manager.** It reads and writes the
   passwords of the database accounts your config names, in documents of its own
   shape. Beside them it keeps its own records: a lock, so two runs cannot change
-  one password at once, and a record of each personal password reset.
-  Everything else in your vault is none of its business.
+  one password at once, and a record of each personal password reset. A reset
+  delivered through Vault also leaves a wrapping token holding the new
+  password, for the owner to unwrap. Everything else in your vault is none
+  of its business.
 
 ---
 

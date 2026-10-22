@@ -110,8 +110,8 @@ def margin_reason(
 
     ``attempts`` is how many logins **this run intends against this account**,
     and it is a parameter rather than an assumed 1 because of what
-    ``--include-previous`` does. Mitigation 1 says one attempt per account per
-    run; a flag that checks the previous password too makes two, and restating
+    ``--include-previous`` does. Mitigation 1 sets a fixed budget per account per
+    run; a flag that checks the previous password too makes it two, and restating
     the rule per *value checked* rather than per account would quietly double
     the spend on the counter the guard is protecting. Asking for the budget up
     front is what keeps the flag honest.

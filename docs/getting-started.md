@@ -613,7 +613,7 @@ free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
 ```
 
 `doctor` connects to everything your config names and reports what it found. Read
-it in four parts:
+it in five parts:
 
 - **install** — which backends this machine has code for, against which your
   config asks for. `not_implemented` means this build has no module for that
@@ -629,9 +629,10 @@ it in four parts:
   you said it was, and whether the connection to it is encrypted. The test
   container's is not, so `doctor` warns that a password would cross it in clear.
   On a real database, require NNE or TLS before you let the tool set a password.
-  The note under the table says that an environment variable is a weak place
-  for the admin password. Section 4 says where it would come from on a real
-  system.
+- **notes** — facts that are not faults. Here, the admin password came from an
+  environment variable, which the tool accepts and calls low assurance. That is
+  fine for the sandbox. On a real system, take it from whatever your site
+  already uses for that, as section 4 says.
 
 ---
 

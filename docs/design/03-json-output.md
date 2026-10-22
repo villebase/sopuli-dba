@@ -1003,10 +1003,13 @@ every other takeover. Every field in `held[]` is required, because the section i
 written when the run ends, and by then the tool knows everything about its own
 locks.
 
-**The section is absent on a run that takes no lock**: `check`, `status` and
-every `--dry-run` except `lock break --dry-run`. Absent means none was needed,
-not none was available. `lock break --dry-run` has the section, because the break
-it would make is its plan; the entry says `applied: false` (below).
+**The section is absent on a run that neither takes a lock nor works on one**:
+`check`, `status`, and every `--dry-run` except `lock break --dry-run`. Absent
+means none was needed, not none was available. The `lock` verbs take no lock and
+have the section, because locks are what they report on: `lock status` fills
+`found[]`, and `lock break` fills `broken[]`. Under `--dry-run`, `broken[]` holds
+the break it would make, with `applied: false`, and is empty when there is
+nothing to break (below).
 
 **`found[]` lists other runs' locks.** `sopuli lock status` takes no lock. It
 reads the record at every secret path the config declares, and lists each
@@ -1663,11 +1666,13 @@ reason. `summary.unchanged` is the complement of `changed`, not of `ok`: it
 answers "how much did this run leave alone?"
 
 **`actions[]` carries the sequence, not just the outcome.** UC-1 §5 is a flow,
-and an `apply` entry holds its steps in the order they ran: the pre-flight
-`verify`, the `password_set`, the `verify` that confirmed it, and the
-`vault_promote`. An entry that declares `unlock` or a `profile` adds
-`account_unlock` or `attribute_set`, and a run that closes the window adds
-`rollover_finish`. `applied` on each says whether the step *ran*, never whether it
+and an `apply` entry holds its steps in the order they ran. An entry that
+declares `unlock` or a `profile` starts with `account_unlock` or
+`attribute_set`, because an unlock is what makes the pre-flight login worth
+attempting. Then come the pre-flight `verify`, the `password_set`, the `verify`
+that confirmed it, and the `vault_promote`. Where nothing after the attributes
+ran (a locked or missing account, an empty vault, an unreachable target), the
+entry ends with `none` instead. `applied` on each says whether the step *ran*, never whether it
 succeeded. A `verify` with `applied: false` is a login the lockout guard
 declined, and a `password_set` with `applied: false` is a password that was
 already right. With one action per result, "we did not need to change it" and
@@ -1677,9 +1682,10 @@ already right. With one action per result, "we did not need to change it" and
 for accounts with an open window. `active: false` beside a
 `profile_rollover_time` of `"1"` is a different fact from `active: false` beside
 `null`. The first says a window opened and was closed in the run
-(`--strategy direct`); the second says no window was possible. With the
-`rollover_finish` action, these make the regime each account ran under
-recoverable from the document, so `--strategy` needed no new field.
+(`--strategy direct`); the second says no window was possible. An apply row
+has no `rollover_finish` action, even when the run closed the window, so this
+field is where the regime each account ran under is recovered from. That is why
+`--strategy` needed no new field.
 
 **A promotion is reported on every account in the document it promoted**, with
 the version it produced, because they shared one compare-and-set. Where the
@@ -2355,8 +2361,10 @@ events carry the progress per target:
 **A dry run streams its reads and nothing else**: `run.started`,
 `plan.resolved`, one `vault.read` per document, and `run.finished`. It takes no
 lock and writes nothing. It connects to a target only for the pre-flight that
-`--preflight` or `--strategy` asks for, and reports what that finds in
-`diagnostics`.
+`--preflight` or `--strategy` asks for. A finding that would let the real run go
+ahead is reported in `diagnostics`. A finding that would stop it, or a strategy
+the estate cannot honour, refuses the dry run as it would refuse the real one,
+with the same exit code.
 
 **A lock somebody else holds** gives `lock.denied`, then `run.finished` with exit
 7 and the error. This is from the same stack, with a held record planted as
@@ -2733,9 +2741,10 @@ sopuli creds apply --config estate.yaml --repair result.json
 # anything the tool actually changed, for the change record
 jq '[.results[] | select(.changed)] | map({account,target,actions:[.actions[]|.kind]})' result.json
 
-# targets missing zero-downtime rotation, i.e. what to fix next
+# targets missing zero-downtime rotation, i.e. what to fix next; a target
+# doctor could not describe is listed too, because its capabilities are unknown
 sopuli doctor --config estate.yaml --output json > doctor.json
-jq -r '.targets[] | select(.scope) | select(.scope.capabilities | index("password_rollover") | not)
+jq -r '.targets[] | select((.scope.capabilities // []) | index("password_rollover") | not)
        | .target' doctor.json
 
 # where did this setting come from
@@ -2745,7 +2754,7 @@ jq '.invocation.options' result.json
 # a result names its target, and the resolved config holds the target's labels
 sopuli config show --config estate.yaml --resolved --output json > estate.json
 jq -r --slurpfile e estate.json '($e[0].config.targets | map({(.name): .labels.tenant}) | add) as $t
-       | .results[] | select(.state=="DRIFT") | $t[.target]' result.json | sort | uniq -c
+       | .results[] | select(.state=="DRIFT") | $t[.target] // "(no tenant label)"' result.json | sort | uniq -c
 
 # follow a scheduled check live, one line per target as it finishes
 sopuli creds check --application acme --output jsonl \

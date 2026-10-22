@@ -11,15 +11,14 @@ name: ci
 # checks it -- on pull requests, which is not a weaker place to check it than
 # `main` is. A `pull_request` run checks out `refs/pull/N/merge`, the head already
 # merged into the base, so it tests the tree a squash merge is about to produce
-# rather than the branch in isolation. Re-running on the push to `main` re-tested
-# an identical tree and was billed again for it; on a private repo's free minutes
-# that duplication cost more than the guard was worth.
+# rather than the branch in isolation. A run on the push to `main` would test an
+# identical tree a second time.
 #
 # What it gives up: a PR whose last run predates something else landing on `main`
-# merges on a stale answer. That needs two pull requests open at once, and nothing
-# here enforces up-to-date branches (see workflow.md -- branch protection is 403
-# on this plan). One PR at a time is the working pattern; `workflow_dispatch` is
-# the escape hatch when `main` needs checking by hand.
+# merges on a stale answer. That needs two pull requests open at once, and the
+# `main` ruleset requires `ci ok` without requiring branches to be up to date
+# (see workflow.md). One PR at a time is the working pattern; `workflow_dispatch`
+# is the escape hatch when `main` needs checking by hand.
 
 on:
   pull_request:
@@ -50,10 +49,8 @@ jobs:
   # `paths-ignore` on the trigger, and that difference is the whole point.**
   #
   # `tier1.yml` filters with `paths-ignore` and is right to. This one cannot,
-  # because `workflow.md` names `ci ok` -- the last job in this file -- as the
-  # status check to require the day branch protection becomes available (it is
-  # 403 on a private repository on the free plan today), and `ci ok` needs every
-  # job below. The two mechanisms look alike and do opposite things under
+  # because `ci ok` -- the last job in this file -- is the status check the
+  # `main` ruleset requires (`workflow.md`), and `ci ok` needs every job below. The two mechanisms look alike and do opposite things under
   # protection:
   #
   # * a workflow skipped by `paths-ignore` never starts, so its check contexts

@@ -342,8 +342,9 @@ These entries share a setup. The probe is
   reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli
   issues (C2) did not, because it has no cursor to capture. Open: 11.2, where
   `V$SQLSTATS` keeps the plain `ALTER USER`. Answering it needs an 11.2
-  database with the Diagnostics Pack. The images in the test stack set
-  `control_management_pack_access = NONE`, so they cannot answer it.
+  database with the Diagnostics Pack. The only 11.2 image in the test stack is
+  11g XE, which sets `control_management_pack_access = NONE`, so it cannot
+  answer it.
 - `verified` `ddl-text-trace` (#407) — **Does a traced session capture the
   password?**
   No. At 10046 level 12 the cursor is written cut short, as

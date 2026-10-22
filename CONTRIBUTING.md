@@ -208,7 +208,8 @@ and it changes; this file deliberately does not copy it.
 reports about one is not finished when its tests pass.** Bring up tier 1 and run
 the command end to end.
 
-CI already runs tier 1 on every pull request, so this is not about coverage. It
+CI already runs tier 1 on every pull request that changes code, so this is not
+about coverage. It
 is about the assertions nobody writes, because a test can only check what its
 author already suspected. Three real examples from this project's history:
 

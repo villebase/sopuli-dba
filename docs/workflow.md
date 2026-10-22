@@ -246,6 +246,11 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   sopuli, version 0.78.0
   ```
 
+  The lines before `installing` depend on what pipx already has. `creating
+  shared libraries...` appears only on pipx's first run on a machine. Running
+  the same command again prints only the version line, because pipx reuses the
+  environment it made.
+
   Then ask PyPI's integrity API who published each of the two files. Each must
   name this repository, workflow and environment:
 
@@ -279,10 +284,21 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   OK: sopuli_dba-0.78.0.tar.gz
   ```
 
-  Then check the GitHub release. It must carry four files: the wheel, the sdist,
-  and a `.sigstore.json` bundle for each. Verify the bundles against this
-  workflow's identity, with the `sigstore` package in the same virtual
-  environment:
+  Then check the GitHub release. It must carry exactly four files: the wheel, the
+  sdist, and a `.sigstore.json` bundle for each:
+
+  ```bash
+  gh release view "v$V" --repo villebase/sopuli-dba --json assets --jq '.assets[].name'
+  ```
+  ```
+  sopuli_dba-0.78.0-py3-none-any.whl
+  sopuli_dba-0.78.0-py3-none-any.whl.sigstore.json
+  sopuli_dba-0.78.0.tar.gz
+  sopuli_dba-0.78.0.tar.gz.sigstore.json
+  ```
+
+  Verify the bundles against this workflow's identity, with the `sigstore`
+  package in the same virtual environment:
 
   ```bash
   gh release download "v$V" --repo villebase/sopuli-dba --dir "release-$V"

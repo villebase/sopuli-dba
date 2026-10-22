@@ -131,7 +131,7 @@ def _check_one_account_per_password(
 
     Accounts are compared as the file spells them. Whether two spellings are
     one Oracle user is the duplicate-name rule's question, not this one's, and
-    that rule sees one entry. Across entries it is open (#874).
+    that rule sees one entry. Across entries it is an open decision (TODO(#874)).
     """
     documents: dict[tuple[str | None, str], dict[tuple[PasswordKey, str], Binding]] = {}
     for binding in bindings:

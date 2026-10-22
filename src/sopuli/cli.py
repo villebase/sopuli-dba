@@ -2058,10 +2058,6 @@ def account_reset_password(
     # be built from is a plan-time refusal (invariant 4) rather than a failure
     # after the password has already changed.
     paths = _record_paths(config, account, reached)
-    # Before any password is drawn (#857). Under `--dry-run` too: a preview that
-    # said "would be reset" over a connection the run would refuse would be
-    # wrong.
-    _require_encryption(reached, run, config)
     # **The delivery backend too, and for the same invariant.** A store
     # that cannot wrap is an unavailable capability, knowable from the file
     # before any database is reached -- so it is exit 5 here, naming the store,
@@ -2088,6 +2084,11 @@ def account_reset_password(
     # and opens nothing, and telling an operator their notify client is missing is
     # among the things a preview is *for*.
     channel = _notify_channel(delivery)
+
+    # Before any password is drawn (#857), and after the refusals above, which
+    # need no connection. Under `--dry-run` too: a preview that said "would be
+    # reset" over a connection the run would refuse would be wrong.
+    _require_encryption(reached, run, config)
 
     header = render_plan(plan, noun="account")
     if not reached:
@@ -6420,6 +6421,10 @@ def creds_apply(
     stores = _stores_for(
         {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
     )
+    # Before the preview and before the lock (#857), so a refusal is the same for
+    # both and holds no lock. Every target the plan names: one whose accounts have
+    # nothing staged is checked too, which can only refuse more.
+    _require_encryption(_targets_of(config, bindings), run, config)
 
     if run.dry_run:
         # Invariant 8: print the plan, take no lock, write nothing. The documents
@@ -6439,7 +6444,6 @@ def creds_apply(
         # mean nothing on the invocation somebody would reach for first. It
         # writes nothing and needs no lock, which is why it can.
         foreseen: list[tuple[str, UserState]] = []
-        _require_encryption(_targets_of(config, _sending(sources)), run, config)
         findings = _preflight(
             _surveyable(sources),
             run,
@@ -6498,9 +6502,6 @@ def creds_apply(
             withheld = _withheld(left_out)
             document.diagnostics.extend(withheld)
             repair_notes.extend(one.message for one in withheld)
-            # Before the first change, inside the lock (#857). Exit 5 releases it
-            # on the way out of `holding`, as every refusal here does.
-            _require_encryption(_targets_of(config, _sending(sources)), run, config)
             findings = _preflight(
                 _surveyable(sources),
                 run,
@@ -7363,14 +7364,15 @@ def _apply_one(
     wrong with one account is a row in the table and the run carries on, which is
     exactly the wrong answer to a takeover: it would turn "somebody else owns this
     estate now" into a footnote and apply to the next account anyway. So it is
-    re-raised ahead of the catch-all, and the run ends.
+    re-raised ahead of the catch-all, and the run ends. Where this account had
+    already been changed, the error goes out inside :class:`_StoppedAfterChangeError`
+    with the account's row, so the run document still records the change.
 
     ``encryption_required`` is the key that requires an encrypted connection to
     this target, or ``None`` (#857). Where it is set, the connection is read
-    just before the statement and a row is refused rather than sent in clear.
-    :func:`_require_encryption` has normally refused the run before this. Where this account had
-    already been changed, the error goes out inside :class:`_StoppedAfterChangeError`
-    with the account's row, so the run document still records the change.
+    after the guardrail review and before anything touches the account, and a
+    row is refused rather than sent in clear. :func:`_require_encryption` has
+    normally refused the run before this.
 
     **UC-1 §5's attributes are enforced before the first login**, and only where the
     policy declared one. Before, because an unlock is what makes the login worth
@@ -7462,6 +7464,30 @@ def _apply_one(
         # touched, so what an unread check might have said about it changes nothing.
         caveats = review.caveats
 
+        # The connection this account's password would cross (#857), read before
+        # the attribute pass or a login touches the account. The plan-time read
+        # refused the run before this unless it could not reach the target.
+        refusal = (
+            None
+            if encryption_required is None
+            else _unencrypted(
+                session.scope().encryption, target=binding.target, location=encryption_required
+            )
+        )
+        if refusal is not None:
+            reported = _finding(refusal)
+            _left_alone(binding.account, binding.target, check_states.ERROR, reported.message)
+            return _Applied(
+                binding,
+                source,
+                check_states.Outcome(check_states.ERROR, reported.message),
+                changed=False,
+                overridden=overridden,
+                caveats=caveats,
+                duration_ms=_elapsed(started),
+                error=reported,
+            )
+
         if attributes.requested():
             # Fenced like every other mutation (P5). `apply_attributes` issues
             # `ALTER USER ... ACCOUNT UNLOCK` and `ALTER USER ... PROFILE` -- a
@@ -7533,27 +7559,6 @@ def _apply_one(
         # carried the password across the network, and one the driver refused
         # first has not.
         sent = session.scope().encryption
-        refusal = (
-            None
-            if encryption_required is None
-            else _unencrypted(sent, target=binding.target, location=encryption_required)
-        )
-        if refusal is not None:
-            # The plan-time read could not reach this target, or the
-            # connection changed since. Either way the password stays here.
-            reported = _finding(refusal)
-            return _Applied(
-                binding,
-                source,
-                check_states.Outcome(check_states.ERROR, reported.message),
-                changed=False,
-                verified_before=before,
-                attributes=enforced,
-                overridden=overridden,
-                caveats=caveats,
-                duration_ms=_elapsed(started),
-                error=reported,
-            )
         session.set_password(user.name, source.value)
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
@@ -7931,11 +7936,6 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     return driver.connect(target, credential.credential)
 
 
-def _sending(sources: Sequence[tuple[Binding, Source | None]]) -> list[Binding]:
-    """The bindings an apply would send a password for: those with a stage."""
-    return [binding for binding, source in sources if source is not None]
-
-
 def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, config: Config) -> None:
     """Refuse, at plan time, to send a password over an unencrypted connection
     (#857).
@@ -7948,9 +7948,9 @@ def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, conf
 
     **One connection per target that requires it, and none otherwise**, so a
     config that does not turn the setting on costs nothing. A target this cannot
-    reach is left to the run, which reports it on its rows. That is not a way
-    past the check: the run reads the connection it sends over again, and
-    :func:`_unencrypted` refuses that row there.
+    reach, or whose scope it cannot read, is left to the run, which reports it on
+    its rows. That is not a way past the check: the run reads the connection it
+    sends over again, and :func:`_unencrypted` refuses that row there.
     """
     for expanded in targets:
         location = encryption_required_at(expanded, config, run.resolved)
@@ -7962,6 +7962,8 @@ def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, conf
             continue
         try:
             encryption = session.scope().encryption
+        except Exception:  # noqa: BLE001 -- likewise
+            continue
         finally:
             with suppress(Exception):
                 session.close()
@@ -9873,6 +9875,11 @@ def creds_rotate(
         {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
     )
 
+    # Before the preview and before the lock (#857), so a refusal is the same for
+    # both and holds no lock. Every target the plan names, due or not: a target
+    # with nothing due is checked too, which can only refuse more.
+    _require_encryption(_targets_of(config, bindings), run, config)
+
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The
         # documents are read because `--max-age-days` is answered out of them and
@@ -10218,8 +10225,6 @@ def _rotate_estate(
     # Decision #606, and `apply`'s rule: printed at the end with the run's other
     # notes.
     into.caveats = caveat_notes(findings)
-    # Before step 4 draws a password (#857).
-    _require_encryption(_targets_of(config, rotating), run, config)
 
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
     writes = staging.group(

@@ -2793,13 +2793,14 @@ the register.
   and event schema 1.13 (#979). UC-1 §5 states the rule.
 - **Why:** invariant 4 says a run finds what stops it at plan time, not part
   way through. Asking first means no database moves ahead of `current`, and
-  the rule for an account skipped everywhere lets its neighbours promote.
-- **How:** the read is a second connection to each target, made only for a
-  credential bound to more than one target. With one target the run's own
-  check already comes before the change, so most runs open no extra
-  connection. Holding every target's session open across the run was the
-  alternative, and it would keep connections idle for the length of the run.
+  the rule for an account skipped everywhere lets its neighbours promote. The
+  read is a second connection to each target, made only for a credential
+  bound to more than one target. With one target the run's own check already
+  comes before the change, so most runs open no extra connection.
 - **Rejected:**
+  - Holding every target's session open across the run, so the read costs no
+    second connection. It would keep connections idle for the length of the
+    run.
   - Keeping #870's behaviour. W050 names the remedy and a rollover profile can
     cover the window, but the passing targets stay ahead of `current` until
     someone acts, and without a rollover profile their readers are locked out.

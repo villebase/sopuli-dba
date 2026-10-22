@@ -2775,3 +2775,32 @@ the register.
 - **Rejected:**
   - Leaving it as a warning. It informs, but it cannot stop the password
     crossing the wire.
+
+## #872
+
+- **Decided:** 2026-10-22, #872
+- **Question:** Should `creds apply` run the guardrails on every target an
+  account is bound to before it changes the account anywhere? It asked them per
+  target as it reached each one, so it could change and confirm an account on
+  one target before another refused it. #870 then held the document back with
+  `SOPULI-W050`, leaving the changed target ahead of `current` on every run.
+- **Decision:** Ask first. Before the first change, the run reads the guardrail
+  state of each credential with a `pending` (or, on a rollback, a `previous`)
+  to promote, on every target it is bound to, and skips a refused credential on
+  all of them. The check at the point of change stays, and W050 covers a
+  refusal found only there. `creds rotate` does the same, because it applies
+  through the same code. W050 is now raised on fewer runs, so run schema 1.52
+  and event schema 1.13 (#979). UC-1 §5 states the rule.
+- **Why:** invariant 4 says a run finds what stops it at plan time, not part
+  way through. Asking first means no database moves ahead of `current`, and
+  the rule for an account skipped everywhere lets its neighbours promote. The
+  read is a second connection to each target, made only for a credential
+  bound to more than one target. With one target the run's own check already
+  comes before the change, so most runs open no extra connection.
+- **Rejected:**
+  - Holding every target's session open across the run, so the read costs no
+    second connection. It would keep connections idle for the length of the
+    run.
+  - Keeping #870's behaviour. W050 names the remedy and a rollover profile can
+    cover the window, but the passing targets stay ahead of `current` until
+    someone acts, and without a rollover profile their readers are locked out.

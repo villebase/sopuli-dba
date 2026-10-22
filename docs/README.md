@@ -57,8 +57,8 @@ on which Oracle release, and what it showed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-3.2.schema.json](schemas/sopuli-config-3.2.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.51.schema.json](schemas/sopuli-run-1.51.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
-| [schemas/sopuli-event-1.12.schema.json](schemas/sopuli-event-1.12.schema.json) | JSON Schema for `--output jsonl` events |
+| [schemas/sopuli-run-1.52.schema.json](schemas/sopuli-run-1.52.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-event-1.13.schema.json](schemas/sopuli-event-1.13.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | [schemas/example-creds-status-rollover.json](schemas/example-creds-status-rollover.json) | Worked example: `creds status` with a rollover window open, a password in its grace period, and a run-level warning |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
-| — | — | Run the guardrails on every target before changing an account anywhere | open | | #872 |
 | — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |
 | — | — | Refuse or mask userinfo in a vault address | open | | #891 |
 

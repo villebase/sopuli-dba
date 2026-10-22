@@ -292,9 +292,11 @@ def test_the_connection_that_sends_is_checked_too(
     assert rows["appdb-beta"]["state"] == "ERROR"
     assert "does not support encrypted_connection" in rows["appdb-beta"]["error"]["message"]
     assert changed(harness) == ["ACME_WEB_USER"]
-    # Refused before anything touched the account: no login on `appdb-beta`.
+    # Refused before anything touched the account: no login on `appdb-beta`,
+    # in the guardrail pass's read-only session (#872) or in the run's.
     beta = [one for one in harness["sessions"] if one.encryption is CLEAR]
-    assert [one.logins for one in beta] == [[]]
+    assert beta
+    assert all(not one.logins for one in beta)
     held = harness["store"].read("apps/acme/db")
     assert held is not None
     assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE

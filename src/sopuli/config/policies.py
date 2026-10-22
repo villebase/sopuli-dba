@@ -40,11 +40,11 @@ from sopuli.config.model import AccountPolicy, PasswordPolicy, Policy
 
 POLICY_KEYS = ("password", "account")
 
-#: Why a `verify:` block is gone. Profiles had one too, and the reason is the same.
+#: Why a policy has no `verify:` block. A profile has none for the same reason.
 REMOVED_VERIFY = "no run read it; --method and --lockout-margin set these on the command line"
 
-#: Keys a policy could once write, each with why it is gone (#787). Refused by
-#: name, so that a file written for an older build is not told it has a typo.
+#: Keys a policy does not have, each with the reason. Refused by name, so that a
+#: file written for an older build is not told it has a typo.
 REMOVED_KEYS = {
     "rotation": (
         "no run read it; --strategy and --max-age-days are on the command line, "

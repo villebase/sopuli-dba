@@ -1713,7 +1713,7 @@ def account_expire_password(
         # **Keyed on the state, not on an applied `password_expire`**, because an
         # account found at `EXPIRED & IN ROLLOVER` has only its window closed: no
         # expiry is issued, and it is still this run that left it expired and
-        # nothing else, which the closing line has always said.
+        # nothing else, which is what the closing line says.
         changed=sum(1 for record in found if record.changed and record.state == expire.EXPIRED),
         preview=run.dry_run,
         would_expire=sum(1 for one in found if one.would_expire) if run.dry_run else None,

@@ -1,9 +1,9 @@
 """Process exit codes.
 
-The full table from ``docs/design/00-principles.md`` P5 is written out here even
-though a skeleton can only ever return a few of them. The table is a published
-interface — schedulers branch on these numbers — so it belongs in one place
-rather than being re-derived by whichever command needs a value next.
+The full table from ``docs/design/00-principles.md`` P5 is written out here. The
+table is a published interface — schedulers branch on these numbers — so it
+belongs in one place rather than being re-derived by whichever command needs a
+value next.
 
 The JSON run document's ``exit_code`` mirrors whatever the process returns, with
 one exception that is the whole point of the split between :attr:`ExitCode.USAGE`

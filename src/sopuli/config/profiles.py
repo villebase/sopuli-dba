@@ -74,8 +74,8 @@ FORBIDDEN_KEYS = {
     "effect of running from CI",
 }
 
-#: Keys a profile could once write, each with why it is gone. Refused by name,
-#: so that a file written for an older build is not told it has a typo.
+#: Keys a profile does not have, each with the reason. Refused by name, so that a
+#: file written for an older build is not told it has a typo.
 REMOVED_KEYS = {
     "log_level": "a config cannot turn on debug output; use --debug on the command line",
     "log_file": "the tool writes no log file; use --debug and redirect stderr",

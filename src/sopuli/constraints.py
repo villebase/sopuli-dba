@@ -288,9 +288,9 @@ def survey(
     draw, and folding the two together would put a verify function next to a
     byte limit as though a run could act on both.
 
-    Named for what it does rather than for what the caller wants out of it. An
-    earlier ``strictest()`` promised a single answer and had to invent one; this
-    collects, and :class:`Constraints` answers the two questions separately.
+    Named for what it does rather than for what the caller wants out of it. A
+    function that promised a single strictest answer would have to invent one;
+    this collects, and :class:`Constraints` answers the two questions separately.
     """
     seen = tuple(readings)
     unreached = tuple(unreachable)

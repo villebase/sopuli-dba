@@ -1922,8 +1922,8 @@ profile's `vaults.<name>.*` is merged into the store's declaration while the
 file is built (`sopuli/config/vault_layers.py`). Its `vault` is the store a
 binding or an admin credential falls back to when nothing more specific names
 one (§3a). A key joins the profile with its consumer, which is the
-rule `sopuli/settings/registry.py` states. A profile's `verify:` and `rotation:`
-had none, and were removed (§10).
+rule `sopuli/settings/registry.py` states. A profile's `verify:` and
+`rotation:` keys are refused by name, because no verb would read them (§10).
 
 ### Naming
 

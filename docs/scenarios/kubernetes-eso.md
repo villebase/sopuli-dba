@@ -417,8 +417,10 @@ mount name and the path.
   missing for a reason worth knowing: the test has no database, so it writes
   the password with `creds generate --promote`. `previous` holds whatever
   `current` held before, and there was no earlier `current`. `targets` records
-  which databases *confirmed* the password, and only `creds apply` can write
-  that, because only `apply` asks a database anything. A completed rotation —
+  which databases *confirmed* the password. It is written when `creds apply` or
+  `creds rotate` promotes a `pending`, which happens only after every target
+  the config declares has confirmed it. `creds generate --promote` asks no
+  database, so it does not write it. A completed rotation —
   which is what section 2 was captured from — has both.
 
 ### What it does not establish

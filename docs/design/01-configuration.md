@@ -3217,6 +3217,22 @@ notices until a rotation.
   an unquoted `acme_web_user` and `ACME_WEB_USER` as one user, and `{account}`
   renders each spelling as written, so two spellings would be one user with two
   secret paths, rotated twice in one run
+- one database user on one target bound to two different places by two
+  application entries → error, naming both entries, the user, the target and
+  both refs. Names are compared with `upper()`, as above, and targets after
+  expansion. The database holds one password for the user, so two documents
+  would give two passwords, one run would rotate the user twice, and the
+  document applied second would lock the other application out. No verb
+  writes one password to two stores, so a mirror in a second store is refused
+  too; mirror writes are C6, deferred (§11). An entry with no ref still
+  declares the user, so beside one with a ref it is refused as well. Two
+  entries that bind the user to one place, spelled the same way, hold
+  one password and load. Two spellings are refused even at one place, because
+  every later step keys on the name as written. A store that comes only from a
+  profile or `SOPULI_VAULT` counts as a different store from one an entry
+  names: the run may choose another, and nothing after the load compares the
+  two. Name the store in both entries
+  ([#874](../decisions/log.md#874))
 - an `overrides` entry patching `accounts` → error. Invariant 5 says selectors
   filter the declared set and cannot extend it, not even under `--force`. A
   patchable `accounts` would be a label match buried in a long file that adds to

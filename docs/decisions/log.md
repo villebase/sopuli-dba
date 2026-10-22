@@ -2692,3 +2692,31 @@ the register.
   - No floor. The typo case would stay open.
   - A setting to lower the floor. A site with a legacy account that needs
     shorter passwords cannot manage that account with the tool.
+
+## #874
+
+- **Decided:** 2026-10-22, #874
+- **Question:** May two application entries declare the same database user on
+  the same target with refs that address different places?
+- **Decision:** No. The loader refuses two entries that bind one user on one
+  target to different places. Names are compared with `upper()`, as the driver
+  compares them, and targets after expansion. Two entries that bind the user to
+  one place, in one spelling, hold one password and stay allowed. Two
+  spellings are refused even at one place, because every later step keys on
+  the name as written. A store that comes from a profile or `SOPULI_VAULT`
+  counts as different from a store an entry names, because nothing after the
+  load compares the two once the run has chosen.
+- **Why:** The database holds one password for the user. Two places give two
+  documents: `creds generate` draws two passwords, one run rotates the user
+  twice, and the document applied second wins. The other application is locked
+  out. Invariant 5 already says a name may not be declared twice. No verb
+  writes one password to two places, so a mirror config fails at its first
+  rotation.
+- **Rejected:**
+  - A mirror: `generate` draws once and writes the value to every place the
+    user is bound to. It is a new feature, and invariant 7's promotion gate
+    would then span documents. Mirror writes are C6, which is deferred to a
+    later use case. Until C6 is decided, two entries are not a way to mirror:
+    the loader refuses them.
+  - Leaving it, with the double rotation and the lockout above. A config that
+    loaded before this decision now stops loading; that cost is accepted.

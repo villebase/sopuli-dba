@@ -1099,6 +1099,168 @@ def test_one_entry_with_two_accounts_keeps_its_own_message() -> None:
         bind(accounts=["acme_web_user", "acme_api_user"], secret_template="apps/acme#password")
 
 
+# ------------------------------------------------ one user, one place ---
+
+
+def one_user_twice(second_account: str, second_ref: str) -> dict[str, Any]:
+    """`acme_web_user` in `acme-web`, and ``second_account`` in `acme-api`, both
+    over the two dev PDBs."""
+    return document(
+        applications=[
+            {
+                "name": "acme-web",
+                "targets": DEV_PDBS,
+                "accounts": ["acme_web_user"],
+                "secret_template": "acme/{env}/web#DB_CREDENTIALS/{account}",
+            },
+            {
+                "name": "acme-api",
+                "targets": DEV_PDBS,
+                "accounts": [second_account],
+                "secret_template": second_ref,
+            },
+        ],
+    )
+
+
+def test_one_user_bound_to_two_places_in_two_entries_is_refused() -> None:
+    """The database holds one password for the user. Two documents would give
+    two passwords, one run would rotate the user twice, and the document applied
+    second would lock the other application out."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(one_user_twice("acme_web_user", "acme/{env}/api#DB_CREDENTIALS/{account}"))
+
+    assert str(caught.value).splitlines()[0] == (
+        "applications[1]: 'acme_web_user' on target 'appdb-dev-alpha' is bound to two "
+        "places, in entries 'acme-web' and 'acme-api': "
+        "vault-dev:acme/dev/web#DB_CREDENTIALS/acme_web_user and "
+        "vault-dev:acme/dev/api#DB_CREDENTIALS/acme_web_user"
+    )
+
+
+@pytest.mark.parametrize(
+    "second_ref",
+    ["acme/{env}/api#DB_CREDENTIALS/{account}", "acme/{env}/web#DB_CREDENTIALS/{account}"],
+)
+def test_one_user_spelled_in_upper_case_is_the_same_user(second_ref: str) -> None:
+    """The driver compares names with `upper()`, so `ACME_WEB_USER` is the same
+    database user as `acme_web_user`. Refused even where the refs agree: every
+    later step keys on the name as written, and `{account}` renders each
+    spelling to its own field."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(one_user_twice("ACME_WEB_USER", second_ref))
+
+    assert str(caught.value).splitlines()[0] == (
+        "applications[1]: 'acme_web_user' and 'ACME_WEB_USER' on target 'appdb-dev-alpha' "
+        "are one database user, spelled two ways in entries 'acme-web' and 'acme-api'"
+    )
+    assert caught.value.hint is not None
+    assert "spell the user the same way in every entry" in caught.value.hint
+
+
+def test_one_user_at_one_place_in_two_entries_loads() -> None:
+    """Two entries that bind the user to one place hold one password."""
+    config = build_config(
+        one_user_twice("acme_web_user", "acme/{env}/web#DB_CREDENTIALS/{account}")
+    )
+
+    assert {str(b.secret) for b in config.bindings} == {"acme/dev/web#DB_CREDENTIALS/acme_web_user"}
+    assert len(config.bindings) == 4
+
+
+def test_one_user_on_two_targets_may_have_two_places() -> None:
+    """A user on another target is another database user."""
+    document_ = one_user_twice("acme_web_user", "acme/{env}/api#DB_CREDENTIALS/{account}")
+    document_["applications"][0]["targets"] = {"match": {"tenant": "alpha", "env": "dev"}}
+    document_["applications"][1]["targets"] = {"match": {"tenant": "beta", "env": "dev"}}
+
+    assert len(build_config(document_).bindings) == 2
+
+
+def one_target_with_stores(*stores: str | None) -> dict[str, Any]:
+    """`acme_web_user` on one target with no store of its own, at one path, in
+    one entry per store. `None` is an entry whose store comes from the run."""
+    return {
+        "version": 1,
+        "vaults": VAULTS,
+        "targets": [
+            {
+                "name": "alpha",
+                "type": "oracle",
+                "dsn": "db.example.com:1521/S.example.com",
+                "environment": "dev",
+                "oracle": {"scope": "pdb", "container": "P"},
+            }
+        ],
+        "applications": [
+            {
+                "name": f"acme-{index}",
+                "targets": ["alpha"],
+                "accounts": ["acme_web_user"],
+                "secret_template": "apps/acme#DB_CREDENTIALS/{account}",
+                **({"vault": store} if store is not None else {}),
+            }
+            for index, store in enumerate(stores)
+        ],
+    }
+
+
+def test_a_store_from_the_run_beside_a_named_store_is_refused() -> None:
+    """The run may give the second entry another store, and then they are two
+    documents. Nothing after the load compares them, so the file has to name
+    the store in both."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(one_target_with_stores("vault-dev", None))
+
+    assert (
+        "'acme_web_user' on target 'alpha' is bound to two places, in entries 'acme-0' and "
+        "'acme-1': vault-dev:apps/acme#DB_CREDENTIALS/acme_web_user and "
+        "apps/acme#DB_CREDENTIALS/acme_web_user"
+    ) in str(caught.value)
+    assert caught.value.hint is not None
+    assert "one entry names its store and the other leaves it to the run" in caught.value.hint
+    assert "name the same store in both entries" in caught.value.hint
+
+
+def test_two_entries_that_both_leave_the_store_to_the_run_are_one_place() -> None:
+    """One run gives both the same store."""
+    config = build_config(one_target_with_stores(None, None))
+
+    assert [b.vault for b in config.bindings] == [None, None]
+
+
+@pytest.mark.parametrize(
+    "stores",
+    [
+        ("vault-dev", "vault-other", None),
+        (None, "vault-dev", "vault-other"),
+        ("vault-dev", None, "vault-other"),
+    ],
+)
+def test_the_order_of_the_entries_does_not_matter(stores: tuple[str | None, ...]) -> None:
+    """Each binding is compared with every earlier one, not only the first."""
+    with pytest.raises(ConfigError, match="is bound to two places"):
+        build_config(one_target_with_stores(*stores))
+
+
+@pytest.mark.parametrize("second_account", ["acme_web_user", "ACME_WEB_USER"])
+def test_an_entry_with_no_ref_is_a_second_declaration(second_account: str) -> None:
+    """An entry that names no ref still declares the user. Beside one that
+    does, the user is declared twice, in either spelling."""
+    document_ = one_user_twice(second_account, "unused")
+    del document_["applications"][1]["secret_template"]
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(document_)
+
+    rendered = str(caught.value)
+    if second_account == "acme_web_user":
+        assert "is bound to two places" in rendered
+        assert "and no ref" in rendered
+    else:
+        assert "are one database user, spelled two ways" in rendered
+
+
 # ------------------------------------------------------------ several apps ---
 
 

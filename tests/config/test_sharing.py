@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.sharing import SharedSecret, shared_secrets
 
@@ -135,37 +136,56 @@ def test_two_spellings_of_one_path_are_one_document() -> None:
     assert [entry.path for entry in shared] == ["apps/acme/db"]
 
 
+def two_stores(mirrored: list[str]) -> dict[str, Any]:
+    """One path in two stores: `acme` in `vault-dev`, and `acme-mirror`, which
+    declares ``mirrored``, in `vault-other`."""
+    return {
+        "version": 1,
+        "vaults": VAULTS,
+        "target_sets": {"appdb": APPDB},
+        "groups": {"app-pdbs": {"match": {"target_set": "appdb"}}},
+        "applications": [
+            {
+                "name": "acme",
+                "targets": {"group": "app-pdbs"},
+                "accounts": ACCOUNTS,
+                "secret_template": "apps/acme/db#DB_CREDENTIALS/{account}",
+            },
+            {
+                "name": "acme-mirror",
+                "targets": {"group": "app-pdbs"},
+                "accounts": mirrored,
+                "vault": "vault-other",
+                "secret_template": "apps/acme/db#DB_CREDENTIALS/{account}",
+            },
+        ],
+    }
+
+
 def test_one_path_in_two_stores_is_two_documents() -> None:
     """Same argument as the lock key's: they are two documents, and a write to
     one is not a write to the other."""
-    config = build_config(
-        {
-            "version": 1,
-            "vaults": VAULTS,
-            "target_sets": {"appdb": APPDB},
-            "groups": {"app-pdbs": {"match": {"target_set": "appdb"}}},
-            "applications": [
-                {
-                    "name": "acme",
-                    "targets": {"group": "app-pdbs"},
-                    "accounts": ACCOUNTS,
-                    "secret_template": "apps/acme/db#DB_CREDENTIALS/{account}",
-                },
-                {
-                    "name": "acme-mirror",
-                    "targets": {"group": "app-pdbs"},
-                    "accounts": ACCOUNTS,
-                    "vault": "vault-other",
-                    "secret_template": "apps/acme/db#DB_CREDENTIALS/{account}",
-                },
-            ],
-        }
-    )
+    config = build_config(two_stores(["acme_report_user"]))
 
     assert {entry.vault for entry in shared_secrets(config.bindings)} == {
         "vault-dev",
         "vault-other",
     }
+
+
+def test_two_stores_that_hold_one_user_on_one_target_are_refused() -> None:
+    """A mirror is two documents for one database user, and the database holds
+    one password. No verb writes one password to two places, so `creds generate`
+    would draw two and the second applied would lock the first out. Invariant 5
+    refuses it at load."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(two_stores(ACCOUNTS))
+
+    rendered = str(caught.value)
+    assert "'acme_web_user' on target 'appdb-dev-alpha' is bound to two places" in rendered
+    assert "entries 'acme' and 'acme-mirror'" in rendered
+    assert "vault-dev:apps/acme/db#DB_CREDENTIALS/acme_web_user" in rendered
+    assert "vault-other:apps/acme/db#DB_CREDENTIALS/acme_web_user" in rendered
 
 
 def test_two_applications_sharing_one_document_are_one_entry() -> None:

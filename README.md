@@ -140,9 +140,11 @@ still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-d
   and it is not built.
 - It **never reads a password back out of a database.** Oracle does not store
   passwords in a form anything can read back, and the tool does not try.
-- It **is not a general-purpose secrets manager.** It writes one specific kind of
-  document to your vault — a database account's password — and reads that same
-  document back. Everything else in your vault is none of its business.
+- It **is not a general-purpose secrets manager.** It reads and writes the
+  passwords of the database accounts your config names, in documents of its own
+  shape. Beside them it keeps its own records: a lock, so two runs cannot change
+  one password at once, and a record of each personal password reset.
+  Everything else in your vault is none of its business.
 
 ---
 

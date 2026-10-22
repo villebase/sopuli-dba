@@ -3,9 +3,10 @@
 This guide sets up the local test stack and runs the usual commands against it.
 You see each command succeed, and a few of them refuse on purpose.
 
-Every sample was run between 2026-10-05 and 2026-10-07 on Windows 11, with
-sopuli 0.69.0, Instant Client 23.26.3.0.0, and the `tier1` container stack
-(Oracle 26ai Free and Vault). Commands are written for Git Bash or WSL. Where a
+Every sample was run between 2026-10-05 and 2026-10-21 on Windows 11, with
+Instant Client 23.26.3.0.0 and the `tier1` container stack (Oracle 26ai Free
+and Vault). Most were run with sopuli 0.69.0. A sample that a later change
+altered was run again with the build of that change. Commands are written for Git Bash or WSL. Where a
 sample was shortened, `...` marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
 host name with `op@ws1.example.com`. Nothing else is edited.

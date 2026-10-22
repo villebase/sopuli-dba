@@ -225,8 +225,11 @@ the problem it was detecting.
 
 Four things prevent that:
 
-1. **One attempt per account per run.** No retries, no back-off loop. A wrong
-   password costs exactly one failed login, not five.
+1. **A fixed number of attempts per account per run, counted before the
+   first.** `creds check` logs in once, or twice with `--include-previous`,
+   which also tries the previous password. `creds apply` logs in twice: before
+   it changes the password, and after. No retries, no back-off loop. A wrong
+   password costs one failed login, not five.
 2. **The tool looks before it leaps.** Where it has been granted
    `SELECT ON SYS.USER$`, it reads how many failed attempts the account has
    already collected and compares that with the profile's limit. If one more

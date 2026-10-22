@@ -2780,8 +2780,11 @@ same rules as between layers: the lowest `max_targets`, the union of
 `confirm_environments`, the intersection of `allowed_methods`, and each
 boolean's safe value for `readonly`, `locking.break_expired` and `tls.verify`.
 The keys are those in a mapping: `defaults`, a profile, a group, a target set or
-one of its overrides, and a vault entry. A later file that asks for less gets the
-`SOPULI-W039` warning, naming both files:
+one of its overrides, and a vault entry. Two things are refused, naming the
+file: a later file that replaces a mapping holding an earlier file's safety key
+with `null` or anything else that is not a mapping, and a value of the wrong
+type in any of the files. A later file that asks for less gets the `SOPULI-W039`
+warning, naming both files:
 
 ```yaml
 # floor.yaml

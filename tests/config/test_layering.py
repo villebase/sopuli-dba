@@ -185,6 +185,8 @@ def test_disjoint_delivery_methods_between_files_are_refused() -> None:
         )
 
     assert "local.yaml allows manual; base.yaml allows vault_wrapped" in str(caught.value)
+    # The key, so a profile's block is told from `defaults`.
+    assert str(caught.value.at) == "defaults.safety.delivery.allowed_methods"
 
 
 def test_break_expired_ratchets_toward_false() -> None:
@@ -276,12 +278,58 @@ def test_a_key_named_safety_elsewhere_is_not_ratcheted() -> None:
     assert warnings == ()
 
 
-def test_a_value_of_the_wrong_type_is_left_to_validation() -> None:
-    """The later file's value stays, so validation reports what is wrong with it."""
-    merged, warnings = merge_layers([_safety({"max_targets": 5}), _safety({"max_targets": "lots"})])
+@pytest.mark.parametrize("order", ["earlier", "later"])
+def test_a_value_of_the_wrong_type_is_refused_with_its_file(order: str) -> None:
+    """Validation sees only the merged value, so a wrong one in an earlier file
+    would never be reported, and the ratchet would have nothing to compare."""
+    wrong, right = _safety({"readonly": "yes"}), _safety({"readonly": False})
+    documents = [wrong, right] if order == "earlier" else [right, wrong]
+    names = ["floor.yaml", "local.yaml"]
 
-    assert merged["defaults"]["safety"]["max_targets"] == "lots"
-    assert warnings == ()
+    with pytest.raises(ConfigError) as caught:
+        merge_layers(documents, names=names)
+
+    label = names[documents.index(wrong)]
+    assert caught.value.message == f"must be true or false, not a string, in {label}"
+    assert str(caught.value.at) == "defaults.safety.readonly"
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        {"target_sets": {"appdb": {"overrides": None}}},
+        {"target_sets": {"appdb": "plain"}},
+    ],
+)
+def test_a_later_file_cannot_erase_a_block_that_holds_a_safety_key(
+    replacement: dict[str, Any],
+) -> None:
+    """Only one file wrote the key itself, so without this the setting would go
+    with no ratchet and no warning."""
+    floor = {
+        "target_sets": {"appdb": {"overrides": {"appdb-prod": {"safety": {"readonly": True}}}}}
+    }
+
+    with pytest.raises(ConfigError) as caught:
+        merge_layers([floor, replacement], names=["floor.yaml", "local.yaml"])
+
+    assert caught.value.message.startswith("local.yaml replaces `target_sets.appdb")
+    assert (
+        "`target_sets.appdb.overrides.appdb-prod.safety.readonly` under it was set in floor.yaml"
+    ) in caught.value.message
+
+
+def test_ratcheting_across_three_files_does_not_mutate_the_last() -> None:
+    """The last file's block is the one the result is built on. It is copied,
+    so setting the safe value in the result leaves the caller's document alone."""
+    first = _safety({"readonly": True})
+    middle = {"defaults": {"policy": "app-standard"}}
+    last = _safety({"readonly": False})
+
+    merged, _ = merge_layers([first, middle, last])
+
+    assert merged["defaults"]["safety"] == {"readonly": True}
+    assert last == _safety({"readonly": False})
 
 
 def test_ratcheting_does_not_mutate_the_documents_it_was_given() -> None:

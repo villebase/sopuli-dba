@@ -145,10 +145,19 @@ def load_documents(paths: Sequence[Path]) -> dict[str, Any]:
     A fragment with the key left off cannot be migrated later, which is the
     reason §9a requires it, and that reason does not weaken when the fragment is
     one of several.
+
+    The ``SOPULI-W039`` warnings the merge raises are dropped here. A caller
+    that builds a config from the result wants :func:`load_layers`, which keeps
+    them.
     """
+    return _read_layers(paths)[0]
+
+
+def _read_layers(paths: Sequence[Path]) -> tuple[dict[str, Any], tuple[ConfigWarning, ...]]:
+    """Every file, checked on its own, then merged with its file names."""
     return merge_layers(
         [load_document(path) for path in paths], names=[str(path) for path in paths]
-    )[0]
+    )
 
 
 def merge_documents(documents: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -174,25 +183,29 @@ def merge_layers(
     still replaces the earlier one whole, safety blocks included. The warnings
     are ``SOPULI-W039``, one for each key where a later file asked for less.
 
-    ``names`` labels each document in those warnings, in the same order. A
-    caller with no files to name gets ``file 1``, ``file 2`` and so on.
+    Two ways round the ratchet are refused rather than merged. A later file
+    that replaces a mapping holding an earlier file's safety key, with ``null``
+    or anything else that is not a mapping, would remove the setting. And a
+    value of the wrong type in any of the files would leave nothing to compare.
+
+    ``names`` labels each document in the warnings and refusals, in the same
+    order. A caller with no files to name gets ``file 1``, ``file 2`` and so on.
     """
     if names is None:
         names = [f"file {number}" for number in range(1, len(documents) + 1)]
     merged: dict[str, Any] = {}
-    written: dict[tuple[str, ...], list[tuple[str, Any]]] = {}
+    written: dict[tuple[str, ...], tuple[str, list[tuple[str, Any]]]] = {}
     for label, document in zip(names, documents, strict=True):
         merged = _merge(merged, document)
-        for path, value in _ratcheted_keys(document, ()):
-            written.setdefault(path, []).append((label, value))
+        _refuse_erased(merged, written, by=label)
+        for path, name, value in _ratcheted_keys(document, ()):
+            written.setdefault(path, (name, []))[1].append((label, value))
 
     warnings = []
-    for path, values in written.items():
+    for path, (name, values) in written.items():
         if len(values) < 2:
             continue
-        answer = _ratchet(path, values)
-        if answer is None:
-            continue
+        answer = _ratchet(path, name, values)
         _put(merged, path, list(answer.value) if isinstance(answer.value, tuple) else answer.value)
         note = ratchet_note(answer)
         if note is not None:
@@ -211,14 +224,48 @@ def merge_layers(
 
 
 def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """``overlay`` over ``base``, as a new document.
+
+    A mapping the overlay brings in is copied, not shared, so that setting a
+    ratcheted key in the result never writes into a document the caller holds.
+    """
     merged = dict(base)
     for key, value in overlay.items():
         current = merged.get(key)
-        if isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = _merge(current, value)
+        if isinstance(value, dict):
+            merged[key] = _merge(current if isinstance(current, dict) else {}, value)
         else:
             merged[key] = value
     return merged
+
+
+def _refuse_erased(
+    merged: dict[str, Any],
+    written: Mapping[tuple[str, ...], tuple[str, list[tuple[str, Any]]]],
+    *,
+    by: str,
+) -> None:
+    """Refuse a file that replaced a mapping holding an earlier file's safety key.
+
+    ``target_sets.appdb.overrides: null`` in a later file would otherwise remove
+    every ``readonly`` an earlier file wrote under it, with no ratchet and no
+    warning, because only one file wrote the key itself.
+    """
+    for path, (_, values) in written.items():
+        node: Any = merged
+        for depth, key in enumerate(path[:-1]):
+            node = node.get(key)
+            if not isinstance(node, dict):
+                replaced = ".".join(path[: depth + 1])
+                raise ConfigError(
+                    f"{by} replaces `{replaced}` with {describe(node)}, and "
+                    f"`{'.'.join(path)}` under it was set in {values[0][0]}",
+                    hint=(
+                        "a later --config file cannot remove a safety setting an earlier "
+                        "file wrote (invariant 10); write the block as a mapping, or "
+                        "change the earlier file"
+                    ),
+                )
 
 
 #: The safety settings a mapping can hold, by the keys that end their path. The
@@ -290,8 +337,9 @@ _VAULT_OWNERS: tuple[tuple[str, ...], ...] = (
 
 def _ratcheted_keys(
     node: dict[str, Any], at: tuple[str, ...]
-) -> Iterator[tuple[tuple[str, ...], Any]]:
-    """Every key in ``node`` that holds a ratcheted setting, with its value.
+) -> Iterator[tuple[tuple[str, ...], str, Any]]:
+    """Every key in ``node`` that holds a ratcheted setting: its path, the
+    setting's name and the value written.
 
     Walks mappings only. A list is replaced whole by a later file, so a setting
     inside one is never written at the same key by two files.
@@ -300,11 +348,17 @@ def _ratcheted_keys(
         path = (*at, str(key))
         if isinstance(value, dict):
             yield from _ratcheted_keys(value, path)
-        elif _setting_at(path) is not None:
-            yield path, value
+            continue
+        name = _setting_at(path)
+        if name is not None:
+            yield path, name, value
 
 
-def _ratchet(path: tuple[str, ...], values: list[tuple[str, Any]]) -> Resolved | None:
+#: What each ratcheted type is called in a refusal.
+_KINDS = {bool: "true or false", int: "a number", tuple: "a list of strings"}
+
+
+def _ratchet(path: tuple[str, ...], name: str, values: list[tuple[str, Any]]) -> Resolved:
     """The safest of what the files wrote at ``path``, through the resolver.
 
     The resolver's shapes rather than a copy of them: minimum, union,
@@ -312,20 +366,32 @@ def _ratchet(path: tuple[str, ...], values: list[tuple[str, Any]]) -> Resolved |
     because they are the higher-precedence source, so a tie reports the earliest
     file -- the one to edit.
 
-    ``None`` when a value is not of the setting's type. The merged value is then
-    the later file's, and validation reports it.
+    A value of the wrong type is refused here, naming its file. Validation sees
+    only the merged value, so a wrong value in an earlier file would never be
+    reported, and the ratchet would have nothing to compare it with. A value of
+    the right type that validation refuses, such as ``max_targets: 0``, is left
+    to it.
     """
-    name = _setting_at(path)
-    assert name is not None
     definition = setting(name)
+    at = ROOT
+    for key in path:
+        at = at.key(key)
     layer = {"defaults": Layer.DEFAULTS, "profiles": Layer.PROFILE}.get(path[0], Layer.OBJECT)
     contributions = []
     for label, value in reversed(values):
         candidate = tuple(value) if isinstance(value, list) else value
         if not definition.accepts(candidate):
-            return None
+            raise ConfigError(
+                f"must be {_KINDS[definition.type]}, not {describe(value)}, in {label}",
+                at=at,
+            )
         contributions.append(Contribution(layer=layer, value=candidate, detail=label))
-    answer = resolve(name, contributions)
+    try:
+        answer = resolve(name, contributions)
+    except ConfigError as error:
+        # An empty intersection. The resolver names the setting, not the key, and
+        # here the key is what tells defaults from a profile or a group.
+        raise ConfigError(error.message, at=at, hint=error.hint) from error
     assert answer is not None
     # Only a later file can relax what an earlier one wrote. An earlier file that
     # a later one tightened asked for nothing, so the files before the one that
@@ -337,13 +403,12 @@ def _ratchet(path: tuple[str, ...], values: list[tuple[str, Any]]) -> Resolved |
 
 
 def _put(document: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
-    """Set ``path`` in ``document``. A later file that replaced a mapping on the
-    way with something else has left nothing to set, and validation reports it."""
-    node: Any = document
+    """Set ``path`` in ``document``, which :func:`_refuse_erased` has checked
+    still holds every mapping on the way."""
+    node = document
     for key in path[:-1]:
-        node = node.get(key) if isinstance(node, dict) else None
-    if isinstance(node, dict):
-        node[path[-1]] = value
+        node = node[key]
+    node[path[-1]] = value
 
 
 def load_config(
@@ -410,9 +475,7 @@ def load_layers(
             "no config file to load",
             hint=f"pass --config PATH, or set {CONFIG_ENV}",
         )
-    document, ratcheted = merge_layers(
-        [load_document(path) for path in paths], names=[str(path) for path in paths]
-    )
+    document, ratcheted = _read_layers(paths)
     # With one file a validation error can name it. With several it cannot: the
     # offending value may have been written in one and overridden in another.
     source = paths[0] if len(paths) == 1 else None

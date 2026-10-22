@@ -2574,3 +2574,26 @@ the register.
     refuses names that load and address the right secret today.
   - Leave it. Only quoted Oracle identifiers can hold these characters, so
     such names are rare, but each one is a password stored where nobody wrote.
+
+## #809
+
+- **Decided:** 2026-10-22, #809
+- **Question:** `creds generate` named the accounts with a staged `pending`,
+  and under `--promote` the ones whose `current` would be replaced, only in its
+  text output. Where should the JSON say it: in `plan`, as diagnostics with a
+  J3 code, or per row?
+- **Decision:** Per unit in `plan`. Each `plan.units[]` entry of `creds
+  generate` has `pending` (`staged`, `absent` or `unknown`), and under
+  `--promote` `current` (`seeded`, `replaced` or `unknown`). `unknown` is a
+  document the plan could not read. The read happens before `plan.resolved`,
+  so the stream and the document carry one plan. Run schema 1.49, event
+  schema 1.10.
+- **Why:** a consumer that runs `--dry-run` to decide which flag to pass needs
+  the answer per account. `plan.units[]` has the grain and order of
+  `results[]`, and `plan` is the same on a dry run and a real run (J2).
+- **Rejected:**
+  - A list per document in `plan`, as the text tables show it. The consumer
+    would have to join documents to accounts to units.
+  - Diagnostics with J3 codes. Seeding a `current` is a normal state, not a
+    warning, and on a real run they would repeat `SOPULI-W046` and
+    `SOPULI-W047`.

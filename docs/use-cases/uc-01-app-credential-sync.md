@@ -366,7 +366,10 @@ read does not change the argument.
   and it names the accounts that have a `pending`. To do that it reads the
   vault, so a preview needs the vault token, as `--promote --dry-run` does. A
   document the plan cannot read is named, with the note that whether it has a
-  `pending` is not known. The run checks again under
+  `pending` is not known. In JSON, each plan unit carries `pending`: `staged`,
+  `absent`, or `unknown` for a document the plan could not read
+  (`03-json-output.md` §2). After a `safety.confirm_environments` prompt the
+  run reads again, because an answer can take minutes. It checks again under
   the lock, and a `pending` that appeared after the plan is not discarded: that
   document's write fails and names the accounts.
 - Generating twice with `--overwrite-pending` replaces `pending`, and the run
@@ -440,7 +443,9 @@ a *value*. A run that needs both passes both.
 **`--promote --dry-run` names the two groups separately.** Accounts whose
 `current` would be **seeded** and accounts whose `current` would be **replaced**
 are different risks, and an operator should not have to count them. A preview is
-never gated, so it is also how an operator finds out they need the flag.
+never gated, so it is also how an operator finds out they need the flag. In JSON,
+each plan unit carries `current`: `seeded`, `replaced`, or `unknown` where the
+plan could not tell (`03-json-output.md` §2).
 
 **The refusal happens at plan time** (invariant 4), from the documents read
 before anything is written. The run checks again under the lock, because a

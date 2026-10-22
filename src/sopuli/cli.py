@@ -5213,13 +5213,44 @@ def creds_generate(
         config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    _record_plan(plan, run, noun="generation", confirmation_required=_asks_environments(plan, run))
+    asks = _asks_environments(plan, run)
+
+    # **The run reads before it plans**, which is why the stores open here
+    # rather than after the `--dry-run` return. The refusals are plan-time ones
+    # (invariant 4), and the plan itself has to say which accounts already have
+    # a `pending`, and under `--promote` which would be seeded and which
+    # replaced. A preview that could not tell those apart would be a preview of
+    # the wrong question. The read comes before `plan.resolved`, so the event
+    # and the document carry the same plan. The plan is recorded first
+    # with every stage `unknown`, so a store that cannot be opened still leaves
+    # the plan to print, and the document does not claim a read that never ran.
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    keyed = [
+        (binding, key) for binding in bindings if (key := staging.document_key(binding)) is not None
+    ]
+    keys = list(dict.fromkeys(key for _, key in keyed))
+    _record_plan(
+        _with_stages(plan, keyed, {}, promote=promote),
+        run,
+        noun="generation",
+        confirmation_required=asks,
+    )
+    stores = _stores_for(
+        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    )
+    found, unread = _plan_documents(keys, stores)
+    plan = _with_stages(plan, keyed, found, promote=promote)
+    _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
+    if asks and not confirm and not run.dry_run:
+        # An answer can take minutes, and the gates below must refuse over a
+        # `pending` staged meanwhile, not leave it to the check under the lock.
+        # The plan keeps what it said before the question.
+        found, unread = _plan_documents(keys, stores)
 
-    bindings = [binding for binding in config.bindings if binding.secret is not None]
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
@@ -5251,15 +5282,6 @@ def creds_generate(
     )
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
-
-    # **The run reads before it plans**, which is why the stores open here
-    # rather than after the `--dry-run` return. The refusals are plan-time ones
-    # (invariant 4), and the plan itself has to say which accounts already have
-    # a `pending`, and under `--promote` which would be seeded and which
-    # replaced. A preview that could not tell those apart would be a preview of
-    # the wrong question.
-    stores = _stores_for(names, config, token_file=run.vault_token_file, cache=run.stores)
-    found, unread = _plan_documents(writes, stores)
     held = _holders(writes, found, _holds_current) if promote else {}
     staged_over = _holders(writes, found, _holds_pending)
     # Never under `--dry-run`: a preview is how somebody finds out they need a
@@ -5563,8 +5585,55 @@ def _password_from_stdin() -> Secret:
     return Secret(text)
 
 
+def _with_stages(
+    plan: Any,
+    keyed: Sequence[tuple[Binding, LockKey]],
+    found: Mapping[LockKey, Any],
+    *,
+    promote: bool,
+) -> Any:
+    """``plan`` with what the plan-time read found, per unit.
+
+    ``keyed`` is each binding with its document. ``unknown`` where the document
+    was not read: :func:`_plan_documents` leaves it out of ``found``, and saying
+    ``absent`` would tell a consumer it needs no flag when nobody knows. An empty
+    ``found`` is the plan before the read, so every unit is ``unknown``.
+    """
+    pending: dict[tuple[str, str], str] = {}
+    current: dict[tuple[str, str], str] = {}
+    for binding, key in keyed:
+        unit = (binding.account, binding.target)
+        if key not in found:
+            pending[unit] = "unknown"
+            if promote:
+                current[unit] = "unknown"
+            continue
+        document = found[key]
+        pending[unit] = "staged" if _is_staged(document, binding.secret) else "absent"
+        if promote:
+            current[unit] = _current_state(document, binding.secret)
+    return plan_builder.with_stages(plan, pending=pending, current=current)
+
+
+def _current_state(document: Any, ref: SecretRef | None) -> str:
+    """``plan.units[].current`` for one ref: ``seeded``, ``replaced`` or ``unknown``.
+
+    ``unknown`` where the ref does not resolve in the document. The gate does not
+    count such a ref as a holder (:func:`_holds_current`), and the write reports
+    the configuration problem. ``seeded`` would tell a consumer it needs no flag
+    for a run that is about to fail.
+    """
+    if ref is None:  # pragma: no cover - bindings without a ref have no document
+        return "unknown"
+    try:
+        held = resolve(document.data if document is not None else None, ref)
+    except Exception:  # noqa: BLE001 -- see the docstring
+        return "unknown"
+    return "seeded" if held is None else "replaced"
+
+
 def _plan_documents(
-    writes: Sequence[DocumentWrite], stores: Mapping[str, SecretStore]
+    keys: Iterable[LockKey], stores: Mapping[str, SecretStore]
 ) -> tuple[dict[LockKey, Any], dict[LockKey, str]]:
     """Each document as the plan-time read found it (decision #257, #769).
 
@@ -5588,14 +5657,14 @@ def _plan_documents(
     """
     found: dict[LockKey, Any] = {}
     errors: dict[LockKey, str] = {}
-    for write in writes:
-        store = stores.get(write.key.store)
-        if store is None:  # pragma: no cover - `names` is built from these keys
+    for key in keys:
+        store = stores.get(key.store)
+        if store is None:  # pragma: no cover - the stores are opened from these keys
             continue
         try:
-            found[write.key] = store.read(write.key.path)
+            found[key] = store.read(key.path)
         except Exception as error:  # noqa: BLE001 -- see the docstring: the write reports it
-            errors[write.key] = _finding(error).message
+            errors[key] = _finding(error).message
     return found, errors
 
 
@@ -5626,14 +5695,11 @@ def _holds_current(document: Any, candidate: Candidate) -> bool:
     document of the wrong shape -- a container where a password should be -- and
     that is a configuration problem the write will report; reading it as "there
     is a current here" would turn it into a refusal naming the wrong cause.
+
+    :func:`_current_state` decides it, so the gate and the plan's `current`
+    cannot disagree.
     """
-    ref = candidate.binding.secret
-    if ref is None:  # pragma: no cover - bindings without a ref never reach here
-        return False
-    try:
-        return resolve(document.data if document is not None else None, ref) is not None
-    except Exception:  # noqa: BLE001 -- see the docstring
-        return False
+    return _current_state(document, candidate.binding.secret) == "replaced"
 
 
 def _is_staged(document: Any, ref: SecretRef | None) -> bool:

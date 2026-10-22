@@ -95,6 +95,7 @@ __all__ = [
     "PasswordKey",
     "VAULT_ONLY",
     "candidate_for",
+    "document_key",
     "draw_once",
     "group",
     "one_per_password",
@@ -201,6 +202,21 @@ def password_key(binding: Binding) -> PasswordKey | None:
     if key is None or key.store is None:
         return None
     return key
+
+
+def document_key(binding: Binding) -> LockKey | None:
+    """The document ``binding``'s password is written to, or ``None`` as for
+    :func:`password_key`.
+
+    `creds generate` builds the key here only: :func:`group` writes under it,
+    and the plan-time read reads it. Two builders in one verb could
+    drift, and the read would then miss every document and skip the refusals
+    over a staged `pending` or an existing `current`.
+    """
+    password = password_key(binding)
+    if password is None or password.store is None:  # the second test narrows the type
+        return None
+    return LockKey(store=password.store, path=password.path)
 
 
 def draw_once(bindings: Iterable[Binding], draw: DrawFunction) -> list[Candidate]:
@@ -316,13 +332,12 @@ def group(candidates: Iterable[Candidate]) -> tuple[DocumentWrite, ...]:
     grouped: dict[LockKey, list[Candidate]] = {}
     for candidate in candidates:
         binding = candidate.binding
-        password = password_key(binding)
-        if password is None or password.store is None:
+        key = document_key(binding)
+        if key is None:
             raise ValueError(
                 f"cannot stage {binding.account!r} in {binding.target!r}: "
                 f"the binding names no {'secret ref' if binding.secret is None else 'store'}"
             )
-        key = LockKey(store=password.store, path=password.path)
         grouped.setdefault(key, []).append(candidate)
     writes = tuple(
         DocumentWrite(key=key, candidates=tuple(found)) for key, found in grouped.items()

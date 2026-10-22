@@ -94,9 +94,10 @@ detail.
    `--force` overrides other guardrails, never this one. A personal account may be
    declared by a predicate over a profile or role; a mutating verb then still
    requires the account named on the command line. A name may not be declared
-   twice. One database user on one target is bound to one place: two application
-   entries that bind it to different places are refused, with names compared by
-   `upper()`. Reasons: [H1](docs/decisions/log.md#h1),
+   twice. One database user on one target is bound to one place, in one
+   spelling: two application entries that bind it to different places, or spell
+   it two ways, are refused, with names compared by `upper()`. Reasons:
+   [H1](docs/decisions/log.md#h1),
    [#874](docs/decisions/log.md#874).
 
 6. **Vault is master; direction is vault → database, always.** The database is

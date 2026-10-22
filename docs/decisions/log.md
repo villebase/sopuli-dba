@@ -2715,7 +2715,8 @@ the register.
 - **Rejected:**
   - A mirror: `generate` draws once and writes the value to every place the
     user is bound to. It is a new feature, and invariant 7's promotion gate
-    would then span documents. A real need for mirroring would be a decision of
-    its own.
+    would then span documents. Mirror writes are C6, which is deferred to a
+    later use case. Until C6 is decided, two entries are not a way to mirror:
+    the loader refuses them.
   - Leaving it, with the double rotation and the lockout above. A config that
     loaded before this decision now stops loading; that cost is accepted.

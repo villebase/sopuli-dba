@@ -3224,7 +3224,9 @@ notices until a rotation.
   would give two passwords, one run would rotate the user twice, and the
   document applied second would lock the other application out. No verb
   writes one password to two stores, so a mirror in a second store is refused
-  too. Two entries that bind the user to one place, spelled the same way, hold
+  too; mirror writes are C6, deferred (§11). An entry with no ref still
+  declares the user, so beside one with a ref it is refused as well. Two
+  entries that bind the user to one place, spelled the same way, hold
   one password and load. Two spellings are refused even at one place, because
   every later step keys on the name as written. A store that comes only from a
   profile or `SOPULI_VAULT` counts as a different store from one an entry

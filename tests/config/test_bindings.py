@@ -1218,7 +1218,8 @@ def test_a_store_from_the_run_beside_a_named_store_is_refused() -> None:
         "apps/acme#DB_CREDENTIALS/acme_web_user"
     ) in str(caught.value)
     assert caught.value.hint is not None
-    assert "the same store" in caught.value.hint
+    assert "one entry names its store and the other leaves it to the run" in caught.value.hint
+    assert "name the same store in both entries" in caught.value.hint
 
 
 def test_two_entries_that_both_leave_the_store_to_the_run_are_one_place() -> None:
@@ -1240,6 +1241,24 @@ def test_the_order_of_the_entries_does_not_matter(stores: tuple[str | None, ...]
     """Each binding is compared with every earlier one, not only the first."""
     with pytest.raises(ConfigError, match="is bound to two places"):
         build_config(one_target_with_stores(*stores))
+
+
+@pytest.mark.parametrize("second_account", ["acme_web_user", "ACME_WEB_USER"])
+def test_an_entry_with_no_ref_is_a_second_declaration(second_account: str) -> None:
+    """An entry that names no ref still declares the user. Beside one that
+    does, the user is declared twice, in either spelling."""
+    document_ = one_user_twice(second_account, "unused")
+    del document_["applications"][1]["secret_template"]
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(document_)
+
+    rendered = str(caught.value)
+    if second_account == "acme_web_user":
+        assert "is bound to two places" in rendered
+        assert "and no ref" in rendered
+    else:
+        assert "are one database user, spelled two ways" in rendered
 
 
 # ------------------------------------------------------------ several apps ---

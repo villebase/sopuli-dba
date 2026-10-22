@@ -118,14 +118,16 @@ def _check_one_user_per_target(
     later step compares them once the run has chosen the store. Naming the store
     in both entries settles it.
 
+    A binding with no ref takes part too. Its place is "none", which is not the
+    place of a binding that has a ref, so one entry with a ref and one without
+    are two declarations of the user and are refused.
+
     One entry cannot bind a user twice on one target, because the duplicate-name
     rule refuses a name it declares twice. So this rule names two entries.
     """
-    seen: dict[tuple[str, str], list[tuple[Binding, PasswordKey]]] = {}
+    seen: dict[tuple[str, str], list[tuple[Binding, PasswordKey | None]]] = {}
     for binding in bindings:
         key = declared_password_key(binding)
-        if key is None:
-            continue
         earlier = seen.setdefault((binding.target, binding.account.upper()), [])
         for other, other_key in earlier:
             if other.account != binding.account:
@@ -141,21 +143,42 @@ def _check_one_user_per_target(
                 )
             if other_key == key:
                 continue
-            ref = binding.secret
-            other_ref = other.secret
-            assert ref is not None
-            assert other_ref is not None
             raise ConfigError(
                 f"{binding.account!r} on target {binding.target!r} is bound to two places, "
-                f"in {_declared_in(other, binding)}: {_address(other, other_ref)} and "
-                f"{_address(binding, ref)}",
+                f"in {_declared_in(other, binding)}: {_place(other)} and {_place(binding)}",
                 at=where.get(binding.application, ROOT),
-                hint=(
-                    "the database holds one password for the user, so declare it in one "
-                    "entry, or give both entries the same ref and the same store"
-                ),
+                hint=_one_place_hint(key, other_key),
             )
         earlier.append((binding, key))
+
+
+def _place(binding: Binding) -> str:
+    """Where a binding's password lives, for a message, or that it names none."""
+    if binding.secret is None:
+        return "no ref"
+    return _address(binding, binding.secret)
+
+
+def _one_place_hint(key: PasswordKey | None, other: PasswordKey | None) -> str:
+    """What to change so that two bindings of one user are one place.
+
+    Where only the store differs and one entry names none, the refs already
+    match on the page, so the hint says which half is missing.
+    """
+    if (
+        key is not None
+        and other is not None
+        and (key.path, key.place) == (other.path, other.place)
+        and None in (key.store, other.store)
+    ):
+        return (
+            "one entry names its store and the other leaves it to the run, which may "
+            "choose another: name the same store in both entries"
+        )
+    return (
+        "the database holds one password for the user, so declare it in one entry, "
+        "or give both entries the same ref and the same store"
+    )
 
 
 def _check_one_account_per_password(

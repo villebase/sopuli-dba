@@ -68,13 +68,13 @@ version: 1
 policies:
   simple:
     password:
-      length: 6
+      length: 12
       charset: custom
-      allow: qwerty
+      allow: qwertyuiop
 """
 
 #: What that policy generates once every draw is the alphabet's first character.
-PINNED = "qqqqqq"
+PINNED = "qqqqqqqqqqqq"
 
 
 @pytest.fixture
@@ -153,16 +153,16 @@ def test_the_byte_column_is_counted_in_the_named_encoding(
     reports different byte counts against two databases."""
     path = write_config(
         "version: 1\npolicies:\n  wide:\n"
-        "    password:\n      length: 4\n      charset: custom\n      allow: é\n"
+        "    password:\n      length: 12\n      charset: custom\n      allow: éèêëàâäôöü\n"
     )
 
-    in_utf8 = sample(runner, path, "wide", "--count", "1", "--max-bytes", "20")
+    in_utf8 = sample(runner, path, "wide", "--count", "1", "--max-bytes", "30")
     in_1252 = sample(
-        runner, path, "wide", "--count", "1", "--max-bytes", "20", "--encoding", "cp1252"
+        runner, path, "wide", "--count", "1", "--max-bytes", "30", "--encoding", "cp1252"
     )
 
-    assert "4      8" in in_utf8.output
-    assert "4      4" in in_1252.output
+    assert "12     24" in in_utf8.output
+    assert "12     12" in in_1252.output
 
 
 def test_no_limit_leaves_the_byte_column_empty(

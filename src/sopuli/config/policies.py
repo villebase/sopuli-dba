@@ -19,6 +19,11 @@ their place by catching a config that looks fine and cannot work:
 
 All are the same kind of failure: a file nobody could look at and see was wrong,
 which would surface as a hung or looping rotation rather than as an error.
+
+One more rule is a floor rather than a contradiction: a `length:` below
+:data:`MIN_LENGTH`, or an alphabet with fewer than :data:`MIN_DISTINCT`
+characters. Such a policy works, and gives an account a weak password. Every
+policy meets the same floor, and no setting lowers it.
 """
 
 from __future__ import annotations
@@ -71,6 +76,14 @@ REQUIRE_KEYS = charsets.CLASS_NAMES
 
 ACCOUNT_KEYS = ("unlock_if_locked", "profile")
 
+#: The shortest `length:` a policy may declare (§8). Twelve ASCII characters
+#: are 12 bytes, well inside Oracle's smallest limit of 30.
+MIN_LENGTH = 12
+
+#: The fewest distinct characters a policy's alphabet may have (§8). Every named
+#: charset has more, so this refuses only a short `allow:`.
+MIN_DISTINCT = 10
+
 
 def build_policies(document: dict[str, Any]) -> tuple[Policy, ...]:
     """Read ``policies:`` into entries, in document order."""
@@ -119,6 +132,7 @@ def _build_password(raw: Any, *, at: KeyPath) -> PasswordPolicy:
     _require_allow_matches_charset(policy, at=at)
     _reject_unusable_characters(policy, at=at)
     _require_satisfiable(policy, at=at)
+    _require_floor(policy, at=at)
     return policy
 
 
@@ -234,6 +248,32 @@ def _require_satisfiable(policy: PasswordPolicy, *, at: KeyPath) -> None:
             f"`first_char: {charsets.ALPHA}` needs a letter, but {_names(policy)} has none",
             at=at.key("first_char"),
             hint="no password can satisfy this, so generation would never succeed",
+        )
+
+
+def _require_floor(policy: PasswordPolicy, *, at: KeyPath) -> None:
+    """A policy that would work, and give an account a weak password.
+
+    The alphabet is counted after :func:`~sopuli.config.charsets.alphabet` has
+    removed `"`, so a custom charset and a named one are judged the same way. A
+    policy with no `length:` passes here: generating from it is refused anyway,
+    because there is no default length (§8).
+    """
+    if policy.length is not None and policy.length < MIN_LENGTH:
+        raise ConfigError(
+            f"`length:` is {policy.length}, below the floor of {MIN_LENGTH}",
+            at=at.key("length"),
+            hint=f"write a `length:` of {MIN_LENGTH} or more; no setting lowers the floor (§8)",
+        )
+
+    distinct = len(set(charsets.alphabet(policy)))
+    if distinct < MIN_DISTINCT:
+        raise ConfigError(
+            f"{_names(policy)} has {distinct} distinct characters, "
+            f"below the floor of {MIN_DISTINCT}",
+            at=at.key("allow"),
+            hint=f"add characters to `allow:` until it has at least {MIN_DISTINCT}, "
+            "or use a named charset from §8",
         )
 
 

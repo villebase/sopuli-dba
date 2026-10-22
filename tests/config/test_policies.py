@@ -297,3 +297,61 @@ def test_an_unknown_policy_key_is_refused() -> None:
     rendered = str(caught.value)
     assert "unknown key 'passwrod'" in rendered
     assert "policies.p" in rendered
+
+
+# ---------------------------------------------------------------- floor ---
+
+
+def test_a_length_below_twelve_is_refused() -> None:
+    """A typo or a copied policy must not give an account a short password,
+    whether or not its profile has a verify function. The message names the
+    policy, the value and the floor."""
+    with pytest.raises(ConfigError) as caught:
+        build_policies(document(**{"short": {"password": {"length": 11}}}))
+
+    rendered = str(caught.value)
+    assert "`length:` is 11, below the floor of 12" in rendered
+    assert "policies.short.password.length" in rendered
+
+
+def test_a_length_of_twelve_is_the_floor() -> None:
+    (policy,) = build_policies(document(**{"short": {"password": {"length": 12}}}))
+
+    assert policy.password.length == 12
+
+
+def test_an_allow_of_nine_distinct_characters_is_refused() -> None:
+    """Repeating a character does not make the alphabet larger, so the count is
+    of distinct characters."""
+    with pytest.raises(ConfigError) as caught:
+        build_policies(
+            document(
+                **{
+                    "narrow": {
+                        "password": {"length": 24, "charset": "custom", "allow": "abcdefghia"}
+                    }
+                }
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "`allow:` has 9 distinct characters, below the floor of 10" in rendered
+    assert "policies.narrow.password.allow" in rendered
+
+
+def test_an_allow_of_ten_distinct_characters_is_the_floor() -> None:
+    (policy,) = build_policies(
+        document(
+            **{"narrow": {"password": {"length": 24, "charset": "custom", "allow": "abcdefghij"}}}
+        )
+    )
+
+    assert policy.password.allow == "abcdefghij"
+
+
+def test_a_policy_with_no_length_still_loads() -> None:
+    """The floor does not invent a default length. Generating from this policy
+    is refused, as it was before (§8)."""
+    (policy,) = build_policies(document(**{"open": {"password": {"charset": "alnum"}}}))
+
+    assert policy.password.length is None

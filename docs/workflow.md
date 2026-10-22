@@ -230,19 +230,26 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   repository at this commit. `build` and `publish` are separate jobs so that it
   vouches for exactly what `build` handed over.
 - **Check a release once it is on PyPI.** Set `V` to the version being checked.
-  The output shown is from 0.75.0, the first published release. Install it the
-  way the README says, with pipx, and check the version. `pipx run` installs into
-  a temporary environment, so it does not touch an install you already have:
+  The output shown is from 0.78.0. Install it the way the README says, with
+  pipx, and check the version. `pipx run` installs into a temporary environment,
+  so it does not touch an install you already have:
 
   ```bash
-  V=0.75.0
+  V=0.78.0
   pipx run --spec "sopuli-dba[oracle,hashicorp]==$V" sopuli --version
   ```
   ```
+  creating virtual environment...
+  creating shared libraries...
   upgrading shared libraries...
-  installing sopuli-dba from spec 'sopuli-dba[hashicorp,oracle]==0.75.0'...
-  sopuli, version 0.75.0
+  installing sopuli-dba from spec 'sopuli-dba[hashicorp,oracle]==0.78.0'...
+  sopuli, version 0.78.0
   ```
+
+  The lines before `installing` depend on what pipx already has. `creating
+  shared libraries...` appears only on pipx's first run on a machine. Running
+  the same command again prints only the version line, because pipx reuses the
+  environment it made.
 
   Then ask PyPI's integrity API who published each of the two files. Each must
   name this repository, workflow and environment:
@@ -255,8 +262,8 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   done
   ```
   ```
-  sopuli_dba-0.75.0-py3-none-any.whl [{'environment': 'pypi', 'kind': 'GitHub', 'repository': 'villebase/sopuli-dba', 'workflow': 'release-please.yml'}]
-  sopuli_dba-0.75.0.tar.gz [{'environment': 'pypi', 'kind': 'GitHub', 'repository': 'villebase/sopuli-dba', 'workflow': 'release-please.yml'}]
+  sopuli_dba-0.78.0-py3-none-any.whl [{'environment': 'pypi', 'kind': 'GitHub', 'repository': 'villebase/sopuli-dba', 'workflow': 'release-please.yml'}]
+  sopuli_dba-0.78.0.tar.gz [{'environment': 'pypi', 'kind': 'GitHub', 'repository': 'villebase/sopuli-dba', 'workflow': 'release-please.yml'}]
   ```
 
   Then verify each file's attestation against Sigstore with
@@ -273,14 +280,25 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   done
   ```
   ```
-  OK: sopuli_dba-0.75.0-py3-none-any.whl
-  OK: sopuli_dba-0.75.0.tar.gz
+  OK: sopuli_dba-0.78.0-py3-none-any.whl
+  OK: sopuli_dba-0.78.0.tar.gz
   ```
 
-  Then check the GitHub release. It must carry four files: the wheel, the sdist,
-  and a `.sigstore.json` bundle for each. Verify the bundles against this
-  workflow's identity, with the `sigstore` package in the same virtual
-  environment:
+  Then check the GitHub release. It must carry exactly four files: the wheel, the
+  sdist, and a `.sigstore.json` bundle for each:
+
+  ```bash
+  gh release view "v$V" --repo villebase/sopuli-dba --json assets --jq '.assets[].name'
+  ```
+  ```
+  sopuli_dba-0.78.0-py3-none-any.whl
+  sopuli_dba-0.78.0-py3-none-any.whl.sigstore.json
+  sopuli_dba-0.78.0.tar.gz
+  sopuli_dba-0.78.0.tar.gz.sigstore.json
+  ```
+
+  Verify the bundles against this workflow's identity, with the `sigstore`
+  package in the same virtual environment:
 
   ```bash
   gh release download "v$V" --repo villebase/sopuli-dba --dir "release-$V"
@@ -289,6 +307,10 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
     --cert-identity "https://github.com/villebase/sopuli-dba/.github/workflows/release-please.yml@refs/heads/main" \
     --cert-oidc-issuer https://token.actions.githubusercontent.com \
     "release-$V/sopuli_dba-$V-py3-none-any.whl" "release-$V/sopuli_dba-$V.tar.gz"
+  ```
+  ```
+  OK: release-0.78.0/sopuli_dba-0.78.0-py3-none-any.whl
+  OK: release-0.78.0/sopuli_dba-0.78.0.tar.gz
   ```
 
   Each file must report `OK`. A release from before #947 has no assets to check.

@@ -268,12 +268,20 @@ def _require_floor(policy: PasswordPolicy, *, at: KeyPath) -> None:
 
     distinct = len(set(charsets.alphabet(policy)))
     if distinct < MIN_DISTINCT:
+        # Every named charset clears the floor today, so this is `allow:` in
+        # practice. Naming the key the policy actually has keeps the message
+        # right if a narrower named charset is ever added.
+        custom = policy.charset == charsets.CUSTOM
         raise ConfigError(
             f"{_names(policy)} has {distinct} distinct characters, "
             f"below the floor of {MIN_DISTINCT}",
-            at=at.key("allow"),
-            hint=f"add characters to `allow:` until it has at least {MIN_DISTINCT}, "
-            "or use a named charset from §8",
+            at=at.key("allow" if custom else "charset"),
+            hint=(
+                f"add characters to `allow:` until it has at least {MIN_DISTINCT}, "
+                "or use a named charset from §8"
+                if custom
+                else "use a named charset from §8 with more characters"
+            ),
         )
 
 

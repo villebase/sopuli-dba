@@ -2681,7 +2681,9 @@ the register.
   one-character password. Oracle's verify function may reject it, but not
   every profile has one. A fixed floor is simple to state in an error message.
   Twelve ASCII characters are 12 bytes, inside Oracle's smallest limit of 30.
-  All three named charsets have more than 10 characters, so the alphabet rule
+  A `custom` alphabet of 3-byte characters is not: 12 of them are 36 bytes,
+  so such a policy cannot be drawn on a release before 23. All three named
+  charsets have more than 10 characters, so the alphabet rule
   refuses only a short `allow:`.
 - **Rejected:**
   - A floor stated as entropy, such as 64 bits. It judges length and alphabet

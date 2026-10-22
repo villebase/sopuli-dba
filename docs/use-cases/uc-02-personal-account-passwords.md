@@ -806,7 +806,9 @@ the exposure §4.3's default removes.
 
 The password is generated from a policy, by the same tier-0 code UC-1 uses
 (`01-configuration.md` §8). A seen-path policy is likely to differ, because a
-person types the password once, from a message, but generation is the same. The
+person types the password once, from a message, but generation is the same. It
+may use a simpler charset, but not a shorter length: every policy has a floor of
+12 characters and 10 distinct ones (`01-configuration.md` §8). The
 maximum length is the same question as in UC-1. The tool enforces 30 bytes below
 release 23 and 128 bytes from 23. The draw asks each target for its limit, after
 connecting and before any DDL, so a long policy is refused on that target with an

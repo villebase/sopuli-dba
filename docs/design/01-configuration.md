@@ -2692,7 +2692,11 @@ the policy, the value and the floor.
 
 The floor is the same for every policy, and no setting lowers it. A site with a
 legacy account that needs shorter passwords cannot manage that account with the
-tool. Reasons: [#866](../decisions/log.md#866).
+tool. Nor can a policy whose `custom` alphabet has characters of 3 bytes or more
+in the database character set be used on a release before 23: 12 such characters
+are at least 36 bytes, over that release's limit of 30. The draw refuses it on
+that target, as it refuses any policy over the limit. Reasons:
+[#866](../decisions/log.md#866).
 
 ### `length` has no default
 

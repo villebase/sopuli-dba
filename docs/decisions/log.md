@@ -2638,3 +2638,30 @@ the register.
   - The count as wording, like the message. Changes like #825's would need no
     bump, but a consumer that relied on one entry per run would break with no
     version to tell it why.
+
+## #855
+
+- **Decided:** 2026-10-22, #855
+- **Question:** Does a later `--config` file count as a higher-precedence
+  source for invariant 10? The loader merged the files before the resolver saw
+  any layers, so a later file could set `readonly: false` over an earlier
+  file's `true`.
+- **Decision:** Yes. Where two files write a safety setting at the same key in
+  a mapping, the merged value is the safer one, by the resolver's own shapes.
+  A later file that asks for less gets `SOPULI-W039`, naming both files. A
+  `targets:` list is still replaced whole, safety blocks included. W039 now
+  fires in a case it did not before, so run schema 1.51 and event schema 1.12
+  (#979). `01-configuration.md` §9 states the rule.
+- **Why:** invariant 10 already reads this way, and P3 lists `--config` as a
+  source whose later files override earlier ones. The case the ratchet exists
+  for is a shared base file that holds a site's floor, with a team's own file
+  layered on top.
+- **Rejected:**
+  - Exempting file layering, because whoever passes the files owns them. The
+    person who passes the files often does not own the base file, and the base
+    file is the one written to be relied on.
+  - Matching a later `targets:` list's entries to an earlier one's by name, so
+    that per-target safety held too. It breaks §9's rule that a list is a whole
+    answer. A floor belongs in `defaults.safety` or a group.
+  - A new warning code. W039 already means "a layer asked to relax a safety
+    setting, and the ratchet held".

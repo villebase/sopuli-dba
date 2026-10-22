@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.loading import load_config_from, load_documents, merge_documents
+from sopuli.config.loading import load_config_from, load_documents, merge_documents, merge_layers
 
 BASE = """
 version: 1
@@ -103,6 +103,197 @@ def test_merging_nothing_is_an_empty_document() -> None:
     assert merge_documents([]) == {}
 
 
+# -------------------------------------------------- the ratchet (#855) ---
+
+
+def _safety(block: dict[str, Any]) -> dict[str, Any]:
+    return {"defaults": {"safety": block}}
+
+
+def test_a_later_file_cannot_relax_a_safety_setting() -> None:
+    """Invariant 10 between files: each setting merges by its own shape."""
+    merged, warnings = merge_layers(
+        [
+            _safety(
+                {
+                    "readonly": True,
+                    "max_targets": 5,
+                    "confirm_environments": ["prod"],
+                    "delivery": {"allowed_methods": ["vault_wrapped"]},
+                }
+            ),
+            _safety(
+                {
+                    "readonly": False,
+                    "max_targets": 500,
+                    "confirm_environments": ["dev"],
+                    "delivery": {"allowed_methods": ["manual", "vault_wrapped"]},
+                }
+            ),
+        ],
+        names=["base.yaml", "local.yaml"],
+    )
+
+    assert merged["defaults"]["safety"] == {
+        "readonly": True,
+        "max_targets": 5,
+        "confirm_environments": ["dev", "prod"],
+        "delivery": {"allowed_methods": ["vault_wrapped"]},
+    }
+    # A union defeats nobody, so three of the four warn.
+    assert [warning.code for warning in warnings] == ["SOPULI-W039"] * 3
+    assert warnings[0].message == (
+        "local.yaml asked for false; defaults.safety.readonly stays true (base.yaml) "
+        "-- safety settings only ratchet toward safe"
+    )
+
+
+def test_a_later_file_can_tighten_a_safety_setting_without_a_warning() -> None:
+    merged, warnings = merge_layers(
+        [
+            _safety({"readonly": False, "max_targets": 50}),
+            _safety({"readonly": True, "max_targets": 5}),
+        ]
+    )
+
+    assert merged["defaults"]["safety"] == {"readonly": True, "max_targets": 5}
+    assert warnings == ()
+
+
+def test_a_tie_names_the_earliest_file() -> None:
+    """The file to edit, as "ties resolve downward" does between layers."""
+    _, warnings = merge_layers(
+        [_safety({"max_targets": 5}), _safety({"max_targets": 5}), _safety({"max_targets": 9})],
+        names=["a.yaml", "b.yaml", "c.yaml"],
+    )
+
+    (warning,) = warnings
+    assert warning.message.startswith(
+        "c.yaml asked for 9; defaults.safety.max_targets stays 5 (a.yaml)"
+    )
+
+
+def test_disjoint_delivery_methods_between_files_are_refused() -> None:
+    """The issue's own example: nothing could be delivered under both files."""
+    with pytest.raises(ConfigError) as caught:
+        merge_layers(
+            [
+                _safety({"delivery": {"allowed_methods": ["vault_wrapped"]}}),
+                _safety({"delivery": {"allowed_methods": ["manual"]}}),
+            ],
+            names=["base.yaml", "local.yaml"],
+        )
+
+    assert "local.yaml allows manual; base.yaml allows vault_wrapped" in str(caught.value)
+
+
+def test_break_expired_ratchets_toward_false() -> None:
+    """Its safe value is `false`: it grants permission rather than withholding it."""
+    merged, warnings = merge_layers(
+        [
+            {"profiles": {"ci": {"locking": {"break_expired": False}}}},
+            {"profiles": {"ci": {"locking": {"break_expired": True}}}},
+        ]
+    )
+
+    assert merged["profiles"]["ci"]["locking"]["break_expired"] is False
+    assert len(warnings) == 1
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        ("profiles", "ci", "safety"),
+        ("groups", "prod-dbs", "safety"),
+        ("target_sets", "appdb", "safety"),
+        ("target_sets", "appdb", "overrides", "appdb-prod", "safety"),
+    ],
+)
+def test_every_mapping_that_holds_a_safety_block_ratchets(owner: tuple[str, ...]) -> None:
+    def nested(value: bool) -> dict[str, Any]:
+        node: dict[str, Any] = {"readonly": value}
+        for key in reversed(owner):
+            node = {key: node}
+        return node
+
+    merged, warnings = merge_layers([nested(True), nested(False)])
+
+    node = merged
+    for key in owner:
+        node = node[key]
+    assert node == {"readonly": True}
+    assert len(warnings) == 1
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        ("vaults", "vault-dev"),
+        ("defaults", "vaults", "vault-dev"),
+        ("profiles", "ci", "vaults", "vault-dev"),
+    ],
+)
+def test_tls_verify_ratchets_in_every_vault_entry(owner: tuple[str, ...]) -> None:
+    def nested(value: bool) -> dict[str, Any]:
+        node: dict[str, Any] = {"tls": {"verify": value}}
+        for key in reversed(owner):
+            node = {key: node}
+        return node
+
+    merged, warnings = merge_layers([nested(True), nested(False)])
+
+    node = merged
+    for key in owner:
+        node = node[key]
+    assert node == {"tls": {"verify": True}}
+    assert len(warnings) == 1
+
+
+def test_a_targets_list_is_still_replaced_whole() -> None:
+    """A list is a whole answer (§9), safety blocks included. A floor a layered
+    file must not lower belongs in `defaults.safety` or a group."""
+    merged, warnings = merge_layers(
+        [
+            {"targets": [{"name": "appdb-prod", "safety": {"readonly": True}}]},
+            {"targets": [{"name": "appdb-prod", "safety": {"readonly": False}}]},
+        ]
+    )
+
+    assert merged["targets"] == [{"name": "appdb-prod", "safety": {"readonly": False}}]
+    assert warnings == ()
+
+
+def test_a_key_named_safety_elsewhere_is_not_ratcheted() -> None:
+    """A `for_each` value is free text, and only a declared owner holds a block."""
+    merged, warnings = merge_layers(
+        [
+            {"target_sets": {"appdb": {"for_each": {"env": {"safety": {"readonly": True}}}}}},
+            {"target_sets": {"appdb": {"for_each": {"env": {"safety": {"readonly": False}}}}}},
+        ]
+    )
+
+    assert merged["target_sets"]["appdb"]["for_each"]["env"]["safety"] == {"readonly": False}
+    assert warnings == ()
+
+
+def test_a_value_of_the_wrong_type_is_left_to_validation() -> None:
+    """The later file's value stays, so validation reports what is wrong with it."""
+    merged, warnings = merge_layers([_safety({"max_targets": 5}), _safety({"max_targets": "lots"})])
+
+    assert merged["defaults"]["safety"]["max_targets"] == "lots"
+    assert warnings == ()
+
+
+def test_ratcheting_does_not_mutate_the_documents_it_was_given() -> None:
+    first = _safety({"readonly": True})
+    second = _safety({"readonly": False})
+
+    merge_layers([first, second])
+
+    assert first == _safety({"readonly": True})
+    assert second == _safety({"readonly": False})
+
+
 # ------------------------------------------------------------- the loader ---
 
 
@@ -132,6 +323,23 @@ def test_an_overlay_can_redirect_a_setting_without_restating_the_rest(
     assert vault.addr == "https://ci.example.com"
     assert vault.type == "hashicorp"
     assert vault.kv_version == 2
+
+
+def test_a_defeated_relaxation_reaches_the_config_as_a_warning(
+    tmp_path: Path, write_at: WriteAt
+) -> None:
+    base = write_at(tmp_path / "base.yaml", BASE + "defaults:\n  safety: { readonly: true }\n")
+    local = write_at(
+        tmp_path / "local.yaml", "version: 1\ndefaults:\n  safety: { readonly: false }\n"
+    )
+
+    config = load_config_from([base, local])
+
+    assert config.defaults.safety is not None
+    assert config.defaults.safety.readonly is True
+    (warning,) = [one for one in config.warnings if one.code == "SOPULI-W039"]
+    assert warning.message.startswith(f"{local} asked for false;")
+    assert f"({base})" in warning.message
 
 
 def test_every_layer_is_checked_as_a_file_first(tmp_path: Path, write_at: WriteAt) -> None:

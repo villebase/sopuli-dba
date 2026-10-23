@@ -110,6 +110,22 @@ MIXED = (
     "not read, might record it"
 )
 
+#: ``AUDIT_TRAIL``, read in mixed mode only. Under ``NONE`` the enabled unified
+#: policies recorded nothing on 21.3.0.0.0 and 18.4.0.0.0
+#: (``15_mixed_mode_trail_probe.sql``), so a policy that covers an action does
+#: not make the answer ``True`` there (#1004). In pure unified mode the parameter
+#: does not apply, and it is not read.
+TRAIL_QUERY = "select value from v$parameter where name = 'audit_trail'"
+TRAIL_NONE = (
+    "the database is in mixed audit mode with AUDIT_TRAIL = NONE, where enabled "
+    "unified policies were measured to record nothing (21.3.0.0.0 and 18.4.0.0.0)"
+)
+TRAIL_UNREAD = (
+    "the database is in mixed audit mode, and AUDIT_TRAIL could not be read ({error}); "
+    "GRANT SELECT ON SYS.V_$PARAMETER to the service account "
+    "(02-oracle-privileges.md section 2)"
+)
+
 
 @dataclass(frozen=True)
 class Enablement:
@@ -224,13 +240,20 @@ def classify(
     *,
     common: bool = False,
     unread: str | None = None,
+    trail: str | None = None,
+    trail_unread: str | None = None,
 ) -> AuditCoverage:
     """The answer for ``account``, from what the reads returned.
 
     ``mode`` is ``V$OPTION``'s value for ``Unified Auditing``, or ``None`` where it
     has no such row. ``common`` is ``DBA_USERS.COMMON`` for ``account``, and
-    ``unread`` the server's error where that read failed.
+    ``unread`` the server's error where that read failed. ``trail`` is
+    ``AUDIT_TRAIL``, which matters in mixed mode only. There ``None`` means it was
+    not read, and ``trail_unread`` says why: a ``True`` then becomes unknown,
+    because the tool cannot rule out ``NONE``.
     """
+    mixed = mode is not None and mode.upper() != "TRUE"
+    none = mixed and trail is not None and trail.strip().upper() == "NONE"
     covered: dict[str, list[str]] = {action: [] for action in ACTIONS}
     doubts: dict[str, list[str]] = {action: [] for action in ACTIONS}
     for policy in sorted({one.policy for one in enablements}):
@@ -244,10 +267,13 @@ def classify(
                 doubts[action].append(reason)
 
     if all(covered[action] for action in ACTIONS):
-        return AuditCoverage(
-            audited=True,
-            detail="; ".join(f"{action} by {', '.join(covered[action])}" for action in ACTIONS),
-        )
+        detail = "; ".join(f"{action} by {', '.join(covered[action])}" for action in ACTIONS)
+        if none:
+            return AuditCoverage(audited=None, detail=f"{detail}, but {TRAIL_NONE}")
+        if mixed and trail is None:
+            caveat = TRAIL_UNREAD.format(error=trail_unread or "not read")
+            return AuditCoverage(audited=None, detail=f"{detail}, but {caveat}")
+        return AuditCoverage(audited=True, detail=detail)
 
     # **An action that nothing covers or might cover decides the answer**, whatever
     # the other action's doubts: the route through it is certainly unrecorded,
@@ -257,8 +283,9 @@ def classify(
         nothing = f"no enabled policy records {' or '.join(certain)} for {account}"
         if mode is None:
             return AuditCoverage(audited=None, detail=f"{nothing}, and {NO_UNIFIED}")
-        if mode.upper() != "TRUE":
-            return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}")
+        if mixed:
+            why = TRAIL_NONE if none else MIXED
+            return AuditCoverage(audited=None, detail=f"{nothing}, but {why}")
         return AuditCoverage(audited=False, detail=nothing)
 
     # Unknown: every uncovered action has a doubt. The detail keeps what is known,
@@ -270,6 +297,8 @@ def classify(
         else:
             reasons = "; ".join(dict.fromkeys(doubts[action]))
             parts.append(f"{action} might be recorded: {reasons}")
+    if none:
+        parts.append(TRAIL_NONE)
     return AuditCoverage(audited=None, detail="; ".join(parts))
 
 
@@ -287,6 +316,7 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         mode = str(row[0]) if row and row[0] else None
         if mode is None:
             return AuditCoverage(audited=None, detail=NO_UNIFIED)
+        trail, trail_unread = _audit_trail(cursor) if mode.upper() != "TRUE" else (None, None)
         reading = POLICY_VIEWS
         cursor.execute(ENABLED_QUERY)
         enabled = [
@@ -314,7 +344,16 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         person_common, unread = (
             _is_common(cursor, account) if any(one.common for one in options) else (False, None)
         )
-        return classify(mode, enabled, options, account, common=person_common, unread=unread)
+        return classify(
+            mode,
+            enabled,
+            options,
+            account,
+            common=person_common,
+            unread=unread,
+            trail=trail,
+            trail_unread=trail_unread,
+        )
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
         if reading == POLICY_VIEWS and diagnosis.code == NO_COLUMN:
@@ -342,6 +381,29 @@ def _is_common(cursor: Cursor, account: str) -> tuple[bool, str | None]:
         diagnosis = from_error(error)
         return False, f"{diagnosis.code or 'no code'}: {diagnosis.message}"
     return bool(row) and is_yes(row[0]), None
+
+
+def _audit_trail(cursor: Cursor) -> tuple[str | None, str | None]:
+    """``AUDIT_TRAIL``'s value, and the server's error if that read failed.
+
+    The default install grants no read of ``V$PARAMETER``, so this fails with
+    ``ORA-00942`` unless §2's optional grant was taken (measured on 21.3.0.0.0 and
+    18.4.0.0.0). The server's message is kept for the detail: its first line,
+    which starts with the code, as a per-target error keeps it. The lines after
+    it are Oracle's help link.
+    """
+    try:
+        cursor.execute(TRAIL_QUERY)
+        row = cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
+        diagnosis = from_error(error)
+        first = diagnosis.message.splitlines()[0] if diagnosis.message else ""
+        if diagnosis.code and not first.startswith(diagnosis.code):
+            first = f"{diagnosis.code}: {first}"
+        return None, first or "no code"
+    if not row or row[0] is None:
+        return None, "no row"
+    return str(row[0]), None
 
 
 def _names(option: Option, action: str) -> bool:

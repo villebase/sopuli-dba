@@ -91,7 +91,8 @@ FORBIDDEN_PREFIX = "GRANT ANY"
 #: which is what the traversal is for. ``AUDIT_VIEWER`` and ``AUDIT_ADMIN`` both
 #: read every account's audit records, and ``AUDIT_ADMIN`` can also disable the
 #: policies a reset's ``audited`` check reports on. The check needs only
-#: ``READ`` on two policy views (§2).
+#: ``READ`` on two policy views and, in mixed mode, ``SELECT`` on
+#: ``V$PARAMETER`` (§2).
 FORBIDDEN_ROLES = ("DBA", "PDB_DBA", "CDB_DBA", "AUDIT_VIEWER", "AUDIT_ADMIN")
 
 #: On §3's list and not visible from any read here, on any estate. Reported as

@@ -25,6 +25,8 @@ from sopuli.driver.oracle.audit import (
     OPTIONS_QUERY,
     STANDARD_ACTION,
     SYSTEM_PRIVILEGE,
+    TRAIL_NONE,
+    TRAIL_QUERY,
     UNREADABLE,
     Enablement,
     Option,
@@ -66,9 +68,12 @@ def both(policy: str, **kwargs: Any) -> list[Option]:
 
 
 def answer(
-    enablements: Sequence[Enablement], options: Sequence[Option], mode: str | None = "TRUE"
+    enablements: Sequence[Enablement],
+    options: Sequence[Option],
+    mode: str | None = "TRUE",
+    trail: str | None = None,
 ) -> AuditCoverage:
-    return classify(mode, enablements, options, PERSON)
+    return classify(mode, enablements, options, PERSON, trail=trail)
 
 
 # ------------------------------------------------------------------ covers ---
@@ -125,8 +130,10 @@ def test_a_covering_policy_settles_an_action_whatever_the_others_say() -> None:
 
 
 def test_mixed_mode_does_not_stop_a_true() -> None:
-    """Traditional auditing can only add records, so covered is covered."""
-    assert answer([enabled("P")], both("P"), mode="FALSE").audited is True
+    """Traditional auditing can only add records, so covered is covered, while
+    `AUDIT_TRAIL` is not `NONE`."""
+    assert answer([enabled("P")], both("P"), mode="FALSE", trail="DB").audited is True
+    assert answer([enabled("P")], both("P"), mode="FALSE", trail="DB, EXTENDED").audited is True
 
 
 # ---------------------------------------------------------- does not cover ---
@@ -465,6 +472,57 @@ def test_no_unified_auditing_is_unknown() -> None:
     assert "no unified auditing" in found.detail
 
 
+@pytest.mark.parametrize("trail", ["NONE", "none", " NONE "])
+def test_mixed_mode_with_no_audit_trail_turns_a_true_into_unknown(trail: str) -> None:
+    """Measured (#1006): in mixed mode under `AUDIT_TRAIL = NONE` an enabled
+    policy records nothing, on 21.3.0.0.0 and 18.4.0.0.0. Decided (#1004): the
+    answer is unknown there, never `true`, and not `false` either."""
+    found = answer([enabled("P")], both("P"), mode="FALSE", trail=trail)
+
+    assert found.audited is None
+    assert found.detail == f"LOGON by P; ALTER USER by P, but {TRAIL_NONE}"
+
+
+def test_mixed_mode_with_no_audit_trail_says_so_for_a_gap() -> None:
+    """The reason is the parameter, not traditional auditing, which records
+    nothing under `NONE` either."""
+    found = answer([], [], mode="FALSE", trail="NONE")
+
+    assert found.audited is None
+    assert TRAIL_NONE in found.detail
+    assert "traditional auditing" not in found.detail
+
+
+def test_mixed_mode_with_no_audit_trail_says_so_beside_a_doubt() -> None:
+    found = answer([enabled("COND")], both("COND", condition="x = 1"), mode="FALSE", trail="NONE")
+
+    assert found.audited is None
+    assert found.detail.endswith(TRAIL_NONE)
+
+
+def test_an_unread_audit_trail_in_mixed_mode_turns_a_true_into_unknown() -> None:
+    """The tool cannot rule out `NONE`, so it does not claim `true`, and the
+    detail names the grant that lets it read the parameter."""
+    found = classify(
+        "FALSE",
+        [enabled("P")],
+        both("P"),
+        PERSON,
+        trail_unread="ORA-00942: table or view does not exist",
+    )
+
+    assert found.audited is None
+    assert "AUDIT_TRAIL could not be read (ORA-00942: table or view does not exist)" in (
+        found.detail
+    )
+    assert "GRANT SELECT ON SYS.V_$PARAMETER" in found.detail
+
+
+def test_audit_trail_does_not_apply_in_pure_unified_mode() -> None:
+    assert answer([enabled("P")], both("P"), mode="TRUE", trail="NONE").audited is True
+    assert answer([enabled("P")], both("P"), mode="TRUE").audited is True
+
+
 # ------------------------------------------------------------- the reading ---
 
 
@@ -639,6 +697,68 @@ def test_a_connection_that_cannot_open_a_cursor_is_unknown_and_not_raised() -> N
 
     assert found.audited is None
     assert "DPI-1080" in found.detail
+
+
+def _covered(mode: str) -> dict[str, Any]:
+    return {
+        MODE_QUERY: (mode,),
+        ENABLED_QUERY: [("P", "BY USER", "ALL USERS", "YES")],
+        OPTIONS_QUERY: [
+            ("P", "LOGON", "STANDARD ACTION", "NONE", "NO"),
+            ("P", "ALTER USER", "STANDARD ACTION", "NONE", "NO"),
+        ],
+    }
+
+
+def test_pure_unified_mode_does_not_read_audit_trail() -> None:
+    cursor = Cursor(_covered("TRUE"))
+
+    assert coverage_of(cursor, PERSON).audited is True
+    assert TRAIL_QUERY not in [statement for statement, _ in cursor.asked]
+
+
+def test_mixed_mode_reads_audit_trail() -> None:
+    cursor = Cursor({**_covered("FALSE"), TRAIL_QUERY: ("DB",)})
+
+    assert coverage_of(cursor, PERSON).audited is True
+    cursor.answers[TRAIL_QUERY] = ("NONE",)
+    found = coverage_of(cursor, PERSON)
+    assert found.audited is None
+    assert TRAIL_NONE in found.detail
+
+
+def test_an_unreadable_audit_trail_keeps_the_servers_code() -> None:
+    """Measured on 21.3.0.0.0 and 18.4.0.0.0: an account without the grant gets
+    `ORA-00942` on `V$PARAMETER`. The policy views are still read."""
+    cursor = Cursor(
+        _covered("FALSE"),
+        fail={TRAIL_QUERY: RuntimeError("ORA-00942: table or view does not exist")},
+    )
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is None
+    assert "AUDIT_TRAIL could not be read (ORA-00942" in found.detail
+    assert found.detail.startswith("LOGON by P; ALTER USER by P, but ")
+
+
+def test_an_unreadable_audit_trail_keeps_the_first_line_once() -> None:
+    """Measured on 21.3.0.0.0: the server's message starts with its code and
+    ends with a help link on a second line. The detail keeps the first line, as
+    a per-target error does, and says the code once."""
+    message = (
+        "ORA-00942: table or view does not exist\n"
+        "Help: https://docs.oracle.com/error-help/db/ora-00942/"
+    )
+    cursor = Cursor(_covered("FALSE"), fail={TRAIL_QUERY: RuntimeError(message)})
+
+    found = coverage_of(cursor, PERSON)
+
+    assert "AUDIT_TRAIL could not be read (ORA-00942: table or view does not exist);" in (
+        found.detail
+    )
+    assert found.detail.count("ORA-00942") == 1
+    assert "Help:" not in found.detail
 
 
 def test_no_unified_auditing_row_asks_nothing_else() -> None:

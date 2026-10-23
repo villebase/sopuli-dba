@@ -592,16 +592,24 @@ TCPS is also `unknown`, because none has been measured.
 An unseen reset records whether the database audits the DBA's routes to acting
 as the person (UC-2 §1). To answer, the service account reads two views:
 `AUDIT_UNIFIED_ENABLED_POLICIES` and `AUDIT_UNIFIED_POLICIES`. §5 says how it
-reads them. The grant is optional, not part of the default install: decided in
-H10 (#591).
+reads them. In mixed audit mode it also reads `AUDIT_TRAIL` from `V$PARAMETER`.
+The grants are optional, not part of the default install: decided in H10 (#591).
 
-This grants `READ` on the two views. Connect as `SYS` to run it: `SYSTEM` gets
-`ORA-01031`.
+This grants `READ` on the two views, and `SELECT` on `V$PARAMETER`. Connect as
+`SYS` to run it: `SYSTEM` gets `ORA-01031`.
 
 ```sql
 GRANT READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 GRANT READ ON SYS.AUDIT_UNIFIED_POLICIES TO sopuli_svc;           -- or c##sopuli_svc CONTAINER=ALL
+GRANT SELECT ON SYS.V_$PARAMETER TO sopuli_svc;                   -- or c##sopuli_svc CONTAINER=ALL
 ```
+
+A database in pure unified mode, such as 26ai, does not need the third grant,
+because the check does not read `AUDIT_TRAIL` there. In mixed mode without it,
+the service account gets `ORA-00942` on `V$PARAMETER` (measured on 21.3.0.0.0
+and 18.4.0.0.0). The reset then records `audited: unknown` where the policies
+cover both actions, and the detail names the grant. The tool cannot rule out
+`AUDIT_TRAIL = NONE`, under which those policies record nothing (§5).
 
 For a common service account, run the grants as `SYS` in `CDB$ROOT` with
 `CONTAINER=ALL`. The probe measured that a common account granted this way reads
@@ -634,7 +642,7 @@ comes from `V$OPTION`, which `PUBLIC` can read. These results are from
 | `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |
 | `CREATE USER` / `DROP USER` | creating and dropping accounts is outside UC-1 |
 | `ALTER SYSTEM`, `GRANT ANY *`, `BECOME USER` | no operation needs them |
-| `AUDIT_VIEWER`, `AUDIT_ADMIN` | both read every account's audit records, including what the trail holds about the DBAs. `AUDIT_ADMIN` can also disable the audit policies that a reset's `audited` value reports on. The check needs only `READ` on two policy views (§2) |
+| `AUDIT_VIEWER`, `AUDIT_ADMIN` | both read every account's audit records, including what the trail holds about the DBAs. `AUDIT_ADMIN` can also disable the audit policies that a reset's `audited` value reports on. The check needs only `READ` on two policy views and, in mixed mode, `SELECT` on `V$PARAMETER` (§2) |
 | `EXECUTE ON DBMS_LOCK` | `00-principles.md` P5's advisory lock is in the vault, not the database (UC-1 Q2). A session-scoped database lock does not solve the problem: a stalled run's session is still alive, so its lock blocks others while its plan goes stale. A fencing token, checked again before every change, does solve it, and it needs nothing from the database |
 
 **The service account needs no grant to detect an application container.** `V$PDBS` is
@@ -1270,17 +1278,23 @@ common ones:
 `false` also needs the database to use unified auditing only: `V$OPTION` reports
 `Unified Auditing` as `TRUE`. 26ai Free 23.26.2.0.0 does. In mixed mode (`FALSE`
 on 12.1 and later), traditional auditing might record the action, so the value
-is `unknown`. The XE images of 21.3.0.0.0 and 18.4.0.0.0 run in mixed mode, and
-both enable `ORA_SECURECONFIG` from the start. The check then answers `unknown`,
-because nothing covers `LOGON`, and `true` once a policy covers it. Both answers
-come from the policy views. The images ship `AUDIT_TRAIL = NONE`, and on both
-releases that stops unified records as well. A logon under an enabled
+is `unknown`.
+
+`true` in mixed mode also needs `AUDIT_TRAIL` to be other than `NONE`. The XE
+images of 21.3.0.0.0 and 18.4.0.0.0 run in mixed mode, enable
+`ORA_SECURECONFIG` from the start, and ship `AUDIT_TRAIL = NONE`. On both
+releases `NONE` stops unified records as well. A logon under an enabled
 `ACTIONS LOGON` policy, and an `ALTER USER` under an enabled
 `ACTIONS ALTER USER` policy, leave no row. Under `AUDIT_TRAIL = DB` each leaves
 one (`15_mixed_mode_trail_probe.sql`). The policy view shows the policies
-enabled either way, so there the check answers `true` while the unified trail
-records neither action. What the check should answer in mixed mode under
-`AUDIT_TRAIL = NONE` is not decided (open: #1004).
+enabled either way. So in mixed mode the check reads `AUDIT_TRAIL`, and under
+`NONE` the value is `unknown` where the policies cover both actions, with a
+detail that names the parameter. It is not `false` either, because only two
+releases are measured: decided in
+[#1004](../decisions/log.md#1004). Where `AUDIT_TRAIL` cannot be
+read, the value is `unknown` for the same reason, and the detail names §2's
+grant. In pure unified mode the parameter does not apply, and it is not read.
+
 11.2 has no unified auditing, so the value is `unknown` there too; that is not
 measured. [measurements](../measurements.md) lists the releases the probe has
 run on.

@@ -907,7 +907,15 @@ scope (§1). So every reset of a DBA's personal account needs `--force`, which
 overrides checks 2 to 5 and is recorded in the audit event
 ([P3](../decisions/log.md#p3)).
 
-This document states that and does not resolve it. It may be the right answer: a
+**Check 3 can have no answer.** Where the service account cannot read
+`V$PWFILE_USERS`, which is outside `02-oracle-privileges.md` §2's grant set, the
+check does not run.
+`account suspend`, `account expire-password` and `account reset-password` then
+report `SOPULI-W018` once per target, in `diagnostics[]` and under the table, as
+`creds apply` does. A refused account adds nothing to it, because it was not
+touched.
+
+This document states check 4's conflict and does not resolve it. It may be the right answer: a
 DBA account is where a reset deserves an explicit override. Or it may make
 `--force` routine in a way P3 did not intend.
 

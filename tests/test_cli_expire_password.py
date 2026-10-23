@@ -25,9 +25,10 @@ from click.testing import CliRunner
 from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
-from oracle_harness import Environment
+from oracle_harness import Environment, current_container, execute, service_account_grants
 from sopuli.cli import cli
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
+from sopuli.diagnostics import GUARDRAIL_UNCHECKED
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     PASSWORD_EXPIRE,
@@ -73,9 +74,18 @@ class FakeSession:
         self.status = status
         self.fail = fail
         self.expired: list[str] = []
+        #: Check 3's input. `False` is a target that took §2's optional grant;
+        #: a test about the unread check sets `None`.
+        self.password_file_member: bool | None = False
+        self.roles: frozenset[str] = frozenset()
 
     def describe_user(self, account: str) -> UserState | None:
-        return UserState(name=account.upper(), status=self.status)
+        return UserState(
+            name=account.upper(),
+            status=self.status,
+            password_file_member=self.password_file_member,
+            roles=self.roles,
+        )
 
     def byte_limit(self) -> None:
         """A `reset-password` preview asks it. `None` is a target with no limit."""
@@ -201,6 +211,107 @@ def test_the_plan_says_whether_the_environment_needs_a_yes(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert document(result)["plan"]["confirmation_required"] is expected
+
+
+def _unread(monkeypatch: pytest.MonkeyPatch, **state: Any) -> FakeSession:
+    """A session on a target installed as §2 documents: `V$PWFILE_USERS` is not
+    granted, so check 3 has no input."""
+    session = FakeSession()
+    session.password_file_member = None
+    for name, value in state.items():
+        setattr(session, name, value)
+    monkeypatch.setattr("sopuli.cli._open_session", lambda target, run, config: session)
+    return session
+
+
+def _verb(runner: CliRunner, write_config: WriteConfig, verb: str, *args: str) -> Any:
+    config = (
+        OFFLINE.replace("version: 1\n", "version: 1\ndefaults:\n  policy: standard\n") + RESETTABLE
+    )
+    return runner.invoke(
+        cli,
+        ["--config", str(write_config(config)), "account", verb, "--account", ACCOUNT, *args],
+    )
+
+
+@pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
+def test_an_unread_password_file_check_is_reported(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, verb: str
+) -> None:
+    """#971: the account verbs ask the same guardrails as `creds apply`, so they
+    report check 3's caveat the way it does. Without it, "could not look" reads
+    as "looked and found nothing" (02 §4)."""
+    _unread(monkeypatch)
+
+    result = _verb(runner, write_config, verb, "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    found = [one for one in document(result)["diagnostics"] if one["code"] == GUARDRAIL_UNCHECKED]
+    assert len(found) == 1
+    assert found[0]["target"] == "tier1-oracle"
+    assert found[0]["account"] == ACCOUNT.upper()
+    assert "V_$PWFILE_USERS" in found[0]["message"]
+
+
+@pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
+def test_the_unread_check_is_printed_too(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, verb: str
+) -> None:
+    """A warning only in JSON is reported to nobody at a terminal."""
+    _unread(monkeypatch)
+
+    result = _verb(runner, write_config, verb, "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "guardrail check `password_file` did not run" in result.output
+
+
+@pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
+def test_a_refused_account_reports_no_unread_check(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, verb: str
+) -> None:
+    """An account the guardrails turned away was not touched, so what the unread
+    check might have said about it changes nothing: `creds apply`'s rule."""
+    _unread(monkeypatch, roles=frozenset({"DBA"}))
+
+    result = _verb(runner, write_config, verb, "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert document(result)["results"][0]["state"] == "SKIPPED"
+    codes = [one["code"] for one in document(result).get("diagnostics", [])]
+    assert GUARDRAIL_UNCHECKED not in codes
+
+
+def test_a_forced_row_that_failed_still_records_the_override(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§4: an override is recorded in the JSON. A row whose statement then failed
+    was still let through by `--force`, so it says which check was waived."""
+    _unread(
+        monkeypatch,
+        roles=frozenset({"DBA"}),
+        fail=DriverError("ORA-01031: insufficient privileges", code="ORA-01031"),
+    )
+
+    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT, "--force", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    row = document(result)["results"][0]
+    assert row["state"] == "ERROR"
+    assert [one["check"] for one in row["overridden"]] == ["privileged_role"]
+
+
+def test_a_real_expiry_reports_the_unread_check_after_the_closing_line(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not only a preview: the row that expired the password carries it."""
+    session = _unread(monkeypatch)
+
+    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert session.expired == [ACCOUNT]
+    assert "guardrail check `password_file` did not run" in result.output
 
 
 def test_an_undeclared_account_never_reaches_the_driver(
@@ -441,3 +552,62 @@ def test_a_real_run_and_its_rerun_validate_against_the_schema(
     rerun = document(second)["results"][0]
     assert rerun["changed"] is False, "invariant 9"
     assert rerun["account_status"] == "EXPIRED"
+
+
+#: Fictional, and not `SOPULI_SVC`, so a real install on the same database
+#: cannot collide with it.
+SERVICE = "acme_expire_svc"
+SERVICE_PASSWORD = "Service-Expire-9z"
+
+
+@pytest.fixture
+def as_service_account(
+    sysdba: Any, live_oracle: Environment, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[str]:
+    """A personal account, and §2's service account to expire it with.
+
+    §2's grant set and nothing else, so `V$PWFILE_USERS` is unread: the estate
+    installed as documented, which is the one #971 is about. `system` reads the
+    view, so the run above cannot show the caveat.
+    """
+    if current_container(sysdba) == "CDB$ROOT":
+        pytest.skip("this DSN answers as CDB$ROOT; a local service account needs a PDB")
+    monkeypatch.setenv(ADMIN_PASSWORD_ENV, SERVICE_PASSWORD)
+
+    def drop() -> None:
+        for user in (LIVE_ACCOUNT, SERVICE):
+            with contextlib.suppress(Exception):
+                execute(sysdba, f"drop user {user} cascade")
+
+    drop()
+    try:
+        execute(
+            sysdba,
+            f'create user {SERVICE} identified by "{SERVICE_PASSWORD}"',
+            *service_account_grants(SERVICE),
+            f'create user {LIVE_ACCOUNT} identified by "{LIVE_PASSWORD}"',
+            f"grant create session to {LIVE_ACCOUNT}",
+        )
+        yield CONFIG.format(dsn=live_oracle.dsn, user=SERVICE, account=LIVE_ACCOUNT)
+    finally:
+        drop()
+
+
+def test_a_service_account_without_the_optional_grant_reports_the_unread_check(
+    runner: CliRunner, write_config: WriteConfig, as_service_account: str
+) -> None:
+    """#971 on a real database: the password is expired, and the run says check 3
+    did not run, in JSON and in the document's schema."""
+    validator = Draft202012Validator(json.loads(RUN_SCHEMA.read_text(encoding="utf-8")))
+
+    result = run(
+        runner, write_config(as_service_account), "--account", LIVE_ACCOUNT, "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    found = document(result)
+    validator.validate(found)
+    assert found["results"][0]["changed"] is True
+    unchecked = [one for one in found["diagnostics"] if one["code"] == GUARDRAIL_UNCHECKED]
+    assert len(unchecked) == 1, found["diagnostics"]
+    assert "V_$PWFILE_USERS" in unchecked[0]["message"]

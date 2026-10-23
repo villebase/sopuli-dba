@@ -119,6 +119,10 @@ rotation mechanism:
 }
 ```
 
+`targets` names the targets that confirmed `current`. `creds apply` and
+`creds rotate` write it when they promote. §4 says what `creds generate
+--promote` does with it.
+
 On a store with native staging (OCI, AWSSM), these map to version stages instead
 of extra fields. The tool hides that difference, but reports which mechanism it
 used. There is one exception, below.
@@ -423,6 +427,12 @@ replaces it. It is the prior password, never the one being written. Otherwise
 being seeded has no prior value and gets no `previous`. One CAS write per
 document carries all of this, plus the §3 stamps, like every other write this
 command makes.
+
+**Replacing a `current` clears its `targets`** (decided in #975), in the same
+write. They name the databases that confirmed the old password, and none has the
+new one, so the document never says that a database confirmed a password it has
+not seen. An account being seeded has no `targets`, and none are written.
+`rotated_at` and `rotated_by` describe this write.
 
 **It has its own flag instead of `--confirm`, so that the choice can be undone.**
 `--confirm` already means *proceed without asking* on this verb, and P5 gives

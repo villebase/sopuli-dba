@@ -64,7 +64,11 @@ CURRENT, PENDING, PREVIOUS = STAGES
 #: day somebody reorders the tuple for tidiness.
 ROTATED_AT = "rotated_at"
 
-STAMPS = (ROTATED_AT, "rotated_by", "policy", "targets")
+#: The targets that confirmed ``current``. A promotion writes it or clears it,
+#: so it is spelled once here.
+TARGETS = "targets"
+
+STAMPS = (ROTATED_AT, "rotated_by", "policy", TARGETS)
 
 #: Where the staged password came from: the tool drew it, or an operator
 #: supplied it on stdin and an external system dictated it.
@@ -110,6 +114,7 @@ __all__ = [
     "ROTATED_AT",
     "STAMPS",
     "SUPPLIED",
+    "TARGETS",
     "StageLayout",
     "apply_patch",
     "merge",

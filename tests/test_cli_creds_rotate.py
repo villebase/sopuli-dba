@@ -39,7 +39,7 @@ from sopuli.cli import _reach, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import ROLLOVER_LEFT_OPEN
+from sopuli.diagnostics import ROLLOVER_LEFT_OPEN, ROTATION_UNCONFIRMED
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -1407,6 +1407,35 @@ def test_a_window_stays_open_where_the_vault_may_serve_the_old_password(
     assert finished(harness) == []
     assert "closed 0 rollover windows" in result.output
     assert "left the rollover window open for acme_web_user on appdb-alpha" in result.output
+
+
+def test_a_skipped_sibling_does_not_keep_a_window_open(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1000. A guardrail skips `acme_priv_user`, whose staged password stays in
+    `pending` while `acme_web_user` moves to `current`. The vault serves what was
+    promoted, so the window closes."""
+    harness = estate(
+        documents={
+            f"apps/acme/{target}": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_priv_user": LIVE}
+            }
+            for target in ("appdb-alpha", "appdb-beta")
+        },
+        users={
+            "ACME_WEB_USER": user(rollover_enabled=True),
+            "ACME_PRIV_USER": user("ACME_PRIV_USER", roles=frozenset({"DBA"})),
+        },
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    config = CONFIG.replace("[acme_web_user]", "[acme_web_user, acme_priv_user]")
+    result = run(runner, write_config(config), "--finish-rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    codes = [one.get("code") for one in document(result).get("diagnostics", [])]
+    assert ROTATION_UNCONFIRMED not in codes
+    assert ROLLOVER_LEFT_OPEN not in codes
+    assert finished(harness) == ["ACME_WEB_USER", "ACME_WEB_USER"]
 
 
 def test_a_window_left_open_is_a_warning_in_the_document(

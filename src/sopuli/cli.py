@@ -7273,26 +7273,42 @@ def _guardrail_pass_ahead(
     :func:`guardrails.review`. An account the survey could not read is left out,
     as the pass leaves it to the run.
     """
-    notices: list[Diagnostic] = []
-    for (key, _place), shared in _shared_credentials(sources).items():
-        refusing: list[tuple[str, str]] = []
-        for binding in shared:
+    shared = _shared_credentials(sources)
+    return [
+        guardrail_pass_ahead(
+            str(credential[0]),
+            shared[credential][0].account,
+            [(target, guardrails_reason(review)) for target, review in refusing.items()],
+            [binding.target for binding in shared[credential]],
+        )
+        for credential, refusing in _refusals(shared, states, declared=declared).items()
+    ]
+
+
+def _refusals(
+    shared: Mapping[Credential, Sequence[Binding]],
+    states: Mapping[tuple[str, str], UserState],
+    *,
+    declared: frozenset[str],
+) -> dict[Credential, dict[str, guardrails.Review]]:
+    """The guardrail pass's decision, on accounts already read (#872).
+
+    Each credential in ``shared`` that a guardrail refuses on some target, mapped
+    to each refusing target's review, in binding order. An account missing from
+    ``states`` was not read, or does not exist, and refuses nothing here: the
+    run's own row reports it. The one rule :func:`_refused_somewhere` and the
+    dry run's forecast both apply, so the two cannot come to differ.
+    """
+    refused: dict[Credential, dict[str, guardrails.Review]] = {}
+    for credential, bindings in shared.items():
+        for binding in bindings:
             state = states.get((binding.target, binding.account))
             if state is None:
                 continue
             review = guardrails.review(state, declared=declared, force=False)
             if not review.permitted:
-                refusing.append((binding.target, guardrails_reason(review)))
-        if refusing:
-            notices.append(
-                guardrail_pass_ahead(
-                    str(key),
-                    shared[0].account,
-                    refusing,
-                    [binding.target for binding in shared],
-                )
-            )
-    return notices
+                refused.setdefault(credential, {})[binding.target] = review
+    return refused
 
 
 def _refused_somewhere(
@@ -7335,12 +7351,13 @@ def _refused_somewhere(
     is left to the estate pass, which reports it on that row; `--debug` says
     which.
     """
-    asked: dict[str, list[tuple[Credential, Binding]]] = {}
-    for credential, shared in _shared_credentials(sources).items():
-        for binding in shared:
-            asked.setdefault(binding.target, []).append((credential, binding))
+    shared = _shared_credentials(sources)
+    asked: dict[str, list[Binding]] = {}
+    for bindings in shared.values():
+        for binding in bindings:
+            asked.setdefault(binding.target, []).append(binding)
 
-    refused: dict[Credential, dict[str, guardrails.Review]] = {}
+    states: dict[tuple[str, str], UserState] = {}
     unreachable: dict[str, BaseException] = {}
     for position, (name, work) in enumerate(asked.items()):
         if position:
@@ -7352,7 +7369,7 @@ def _refused_somewhere(
             unreachable[name] = error
             continue
         try:
-            for credential, binding in work:
+            for binding in work:
                 try:
                     user = session.describe_user(binding.account)
                 except Exception as error:  # noqa: BLE001 -- likewise, on the account's row
@@ -7363,15 +7380,12 @@ def _refused_somewhere(
                         _finding(error).message,
                     )
                     continue
-                if user is None:
-                    continue
-                review = guardrails.review(user, declared=declared, force=False)
-                if not review.permitted:
-                    refused.setdefault(credential, {})[name] = review
+                if user is not None:
+                    states[(name, binding.account)] = user
         finally:
             with suppress(Exception):
                 session.close()
-    return refused, unreachable, bool(asked)
+    return _refusals(shared, states, declared=declared), unreachable, bool(asked)
 
 
 def _apply_target(
@@ -7502,13 +7516,12 @@ def _refused_row(
         detail = guardrails_reason(own, named=named)
     else:
         state = apply_states.SKIPPED
-        where = "; ".join(
-            f"{name}: {guardrails_reason(review)}" for name, review in refusing.items()
+        # Each reason in brackets after its target: one target's reasons are
+        # already joined by "; ".
+        where = ", ".join(
+            f"{name} ({guardrails_reason(review)})" for name, review in refusing.items()
         )
-        targets = ", ".join(refusing)
-        detail = (
-            f"a guardrail refuses this credential on {targets}, so no target was changed ({where})"
-        )
+        detail = f"a guardrail refuses this credential on {where}, so no target was changed"
     _left_alone(binding.account, binding.target, state, detail)
     return _Applied(binding, source, check_states.Outcome(state, detail), changed=False)
 

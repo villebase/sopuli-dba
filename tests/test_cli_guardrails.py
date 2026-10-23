@@ -39,6 +39,7 @@ from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
     Credential,
+    DriverError,
     PrivilegeAudit,
     Scope,
     UserState,
@@ -474,8 +475,8 @@ def test_an_account_refused_on_one_of_its_targets_is_changed_on_none(
     alpha = rows[("acme_web_user", "appdb-alpha")]
     assert alpha["state"] == SKIPPED
     assert alpha["actions"][0]["detail"] == (
-        "a guardrail refuses this credential on appdb-beta, so no target was changed "
-        "(appdb-beta: the account holds DBA)"
+        "a guardrail refuses this credential on appdb-beta (the account holds DBA), "
+        "so no target was changed"
     )
     assert rows[("acme_web_user", "appdb-beta")]["state"] == SKIPPED
     codes = [one.get("code") for one in document(result)["diagnostics"]]
@@ -500,10 +501,62 @@ def test_a_dry_run_preflight_says_which_credential_the_pass_would_skip(
     assert len(found) == 1, diagnostics(result)
     assert found[0]["account"] == "acme_web_user"
     assert found[0]["target"] == "appdb-beta"
-    assert "appdb-beta: the account holds DBA" in found[0]["message"]
-    assert "none of appdb-alpha, appdb-beta" in found[0]["message"]
+    assert found[0]["message"] == (
+        "vault-prod:apps/acme/db: a guardrail refuses acme_web_user on appdb-beta "
+        "(the account holds DBA), so the run would change it on none of appdb-alpha, "
+        "appdb-beta"
+    )
     # One connection per target, the survey's own: the forecast opens none.
     assert len(harness["sessions"]) == 2
+
+
+def test_a_forecast_refused_on_two_targets_keeps_each_reason_with_its_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`target` is absent where more than one target refuses, because it takes
+    one value. A target with two reasons keeps both inside its brackets, so the
+    message does not mix up whose reason is whose."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": account(
+                    "ACME_WEB_USER", vendor_maintained=True, roles=frozenset({"DBA"})
+                ),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    (found,) = ahead(result)
+    assert "target" not in found
+    message = found["message"]
+    alpha = message.index("appdb-alpha (")
+    beta = message.index("appdb-beta (")
+    assert "; " in message[alpha:beta], "both of appdb-alpha's reasons, before appdb-beta's"
+    assert "DBA" in message[beta:]
+
+
+def test_an_account_the_survey_could_not_read_is_not_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The survey reports an unread account as its own finding, and the pass
+    leaves it to the run, so the forecast does not guess at it."""
+
+    class Unreadable(FakeSession):
+        def describe_user(self, account: str) -> UserState | None:
+            if account.upper() == "ACME_WEB_USER" and "DBA" in self.users[account.upper()].roles:
+                raise DriverError("ORA-00942: table or view does not exist", code="ORA-00942")
+            return super().describe_user(account)
+
+    estate({}, by_target=DBA_ON_BETA, session=Unreadable)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, "the survey refuses over the unread account"
+    assert ahead(result) == []
 
 
 def test_the_forecast_is_printed_too(

@@ -1497,16 +1497,17 @@ def guardrail_pass_ahead(
 
     ``refusing`` is (target, reason) for each target whose guardrails refuse the
     account, and ``targets`` is every target the credential is bound to, in the
-    run's order.
+    run's order. Each reason is in brackets after its target, because one
+    target's reasons are already joined by ``; ``.
     """
-    where = "; ".join(f"{target}: {reason}" for target, reason in refusing)
+    where = ", ".join(f"{target} ({reason})" for target, reason in refusing)
     return Diagnostic(
         level="warning",
         code=GUARDRAIL_PASS_AHEAD,
         target=refusing[0][0] if len(refusing) == 1 else None,
         account=account,
         message=(
-            f"{document}: a guardrail refuses {account} ({where}), so the run would change "
+            f"{document}: a guardrail refuses {account} on {where}, so the run would change "
             f"it on none of {', '.join(targets)}"
         ),
     )

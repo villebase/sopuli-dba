@@ -102,7 +102,8 @@ NO_UNIFIED = "this database has no unified auditing, and traditional auditing is
 NO_COLUMN = "ORA-00904"
 OTHER_COLUMNS = (
     "the audit policy views on this database do not have the columns the check "
-    "reads, and only 26ai 23.26.2.0.0 has been measured"
+    "reads; the columns were measured on 23.26.2.0.0, 21.3.0.0.0 and 18.4.0.0.0 "
+    "only, so this release is not measured"
 )
 MIXED = (
     "the database is in mixed audit mode, and traditional auditing, which is "

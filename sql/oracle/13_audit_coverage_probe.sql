@@ -51,7 +51,13 @@
 -- started from the state a run stopped in AC4a leaves behind, AC_ALL enabled
 -- BY the person, with the same result. The file as it stands was run three
 -- times on 2026-10-17, from a container with no other policy enabled: exit 0
--- and the same rows each time, and AC0 to AC7 as on 2026-10-15. Untried on
+-- and the same rows each time, and AC0 to AC7 as on 2026-10-15.
+--
+-- Also run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim) and 18c XE
+-- 18.4.0.0.0 (gvenzl/oracle-xe:18-slim), XEPDB1 and CDB$ROOT, on 2026-10-23
+-- (#820), once each, from a copy with svc = XEPDB1 and cdb = XE. 21.3: exit 0.
+-- 18.4: exit 1 in AC4, which reads UNIFIED_AUDIT_TRAIL.EVENT_TIMESTAMP_UTC,
+-- a column 18.4 does not have, so AC4 to AC10 did not run there. Untried on
 -- every other release. 11.2 has neither unified auditing nor containers, so
 -- no section applies there as written.
 --
@@ -155,6 +161,47 @@
 --   root, and a policy in the root records that, common or not. A reset of a
 --   common account made from a PDB is not tried. A name alone does not tell a
 --   common policy from a PDB's own (AC10).
+--
+--
+-- RESULTS -- 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0, XEPDB1, 2026-10-23
+--
+--   AC0  Unified Auditing = FALSE on both: mixed mode. AUDIT_TRAIL is NONE on
+--        both images, read from V$PARAMETER. Unlike 26ai, ORA_SECURECONFIG and
+--        ORA_LOGON_FAILURES are enabled BY USER ALL USERS at the start, in the
+--        PDB and in the root. The grants on the two views and V_$OPTION are as
+--        on 26ai, and AUDIT_VIEWER holds 36 object grants
+--   AC1  as on 26ai: V$OPTION is readable, both views give ORA-00942
+--   AC2  as on 26ai: SYSTEM's GRANT READ gives ORA-01031; after SYS grants
+--        READ, 2 enabled rows (the two shipped policies), and 2449 policy rows
+--        on 21.3 and 2322 on 18.4
+--   AC3  AUDIT_UNIFIED_ENABLED_POLICIES gives the same seven rows as on 26ai,
+--        in ENABLED_OPTION, ENTITY_NAME, ENTITY_TYPE, SUCCESS and FAILURE, on
+--        both releases, and AUDIT_UNIFIED_POLICIES the same options. 18.4's
+--        view also has USER_NAME and ENABLED_OPT, which 21.3's does not; the
+--        columns the check reads are in both
+--   AC4, AC5 (21.3) the trail reads print no rows in any round, where 26ai
+--        printed the route. Read afterwards, on both releases, the trail holds
+--        only the rows written when the image was built (4 on 21.3, 5 on 18.4,
+--        the latest 30-SEP-24). An ALTER USER and a logon made under an
+--        enabled ALTER USER, LOGON policy add none, also after
+--        DBMS_AUDIT_MGMT.FLUSH_UNIFIED_AUDIT_TRAIL. Why is not measured (#1006)
+--   AC6  (21.3) as on 26ai: the common policy reads BY USER ALL USERS from the
+--        PDB, COMMON and INHERITED YES
+--   AC7  (21.3) as on 26ai: the common account reads both views in the PDB
+--   AC8  (21.3) the three placements enable as on 26ai. Their trail rows were
+--        not read back, for AC4's reason
+--   AC9  (21.3) the root's CONNECT THROUGH grant works in the PDB, as on 26ai.
+--        The rounds' trail reads print no rows, for AC4's reason
+--   AC10 (21.3) as on 26ai: both CREATEs succeed, in either order
+--
+--   So the policy views the check reads have the same columns and rows on
+--   18.4 and 21.3 as on 26ai. What either release records in the trail is
+--   not measured. The check itself, run on both through `sopuli account
+--   reset-password --dry-run` as SYSTEM, answers unknown on the stock image:
+--   ORA_SECURECONFIG covers ALTER USER, nothing covers LOGON, and mixed mode
+--   keeps that gap from being false. With a policy for ALTER USER and LOGON
+--   enabled for every user, it answers true, though on these images the trail
+--   recorded nothing of the route (AC4).
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), and

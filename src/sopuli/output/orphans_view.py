@@ -20,13 +20,15 @@ def build_section(survey: Survey, commands: Sequence[str | None]) -> dict[str, A
     """The ``orphans`` section.
 
     Emitted even when ``found`` is empty, as ``lock status`` emits its own:
-    an empty array is the finding.
+    an empty array is the finding. ``listed`` names the stores whose paths
+    were read, so an empty ``found`` says what it covers (#1015).
     """
     return {
+        "listed": list(survey.listed),
         "found": [
             _entry(orphan, command)
             for orphan, command in zip(survey.orphans, commands, strict=True)
-        ]
+        ],
     }
 
 

@@ -705,8 +705,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ORPHANS_UNREAD: (
             "`vault orphans` listed documents it was not allowed to read, so it cannot say "
             "whether this tool wrote them. On a shared mount that is usually another "
-            "team's path. Or a store stopped answering part way, sealed or timed out, or "
-            "refused a listing, and the rest of it was not looked at. One entry per store, "
+            "team's path. Or a store did not answer, was sealed or timed out, or refused "
+            "a listing, and the rest of it was not looked at. One entry per store, "
             "with the count, the first path, and the store's message. Everything reported "
             "is accurate; a record among these would not appear."
         ),

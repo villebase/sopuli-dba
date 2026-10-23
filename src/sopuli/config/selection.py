@@ -494,6 +494,16 @@ def refuse_unknown(config: Config, selection: Selection) -> None:
     )
 
 
+def refuse_unknown_vaults(config: Config, names: Sequence[str]) -> None:
+    """Refuse a ``--vault`` name that ``vaults:`` does not declare.
+
+    Apart from :func:`refuse_unknown` because only ``vault orphans`` takes the
+    flag, and a store is not part of a :class:`Selection`: it narrows which
+    stores are read, not which bindings are in scope.
+    """
+    _refuse_missing("--vault", names, {vault.name for vault in config.vaults})
+
+
 def _refuse_missing(
     flag: str, given: Sequence[str], declared: set[str], *, folded: bool = False
 ) -> None:

@@ -726,6 +726,11 @@ a warning. A path that any application in the config names is never listed, in
 any vault. So if you moved an application to another vault and kept the path,
 the old record is not listed, and you remove it by hand.
 
+If the command cannot log in to one vault in `vaults:`, it fails. To look at
+only some vaults, name each one with `--vault`, for example
+`sopuli vault orphans --vault vault-dev`. The line with the count names the
+vaults it read.
+
 A document that another sopuli config manages has those fields too. Before you
 delete anything, check each record:
 

@@ -107,6 +107,7 @@ _EXPORTS: Final[dict[str, str]] = {
     "parse_secret_ref": "secret_refs",
     "parse_selector": "selection",
     "refuse_unknown": "selection",
+    "refuse_unknown_vaults": "selection",
     "search_path": "discovery",
     "select": "selection",
 }
@@ -197,6 +198,7 @@ if TYPE_CHECKING:
         matches,
         parse_selector,
         refuse_unknown,
+        refuse_unknown_vaults,
         select,
     )
 
@@ -263,6 +265,7 @@ __all__ = [
     "parse_secret_ref",
     "parse_selector",
     "refuse_unknown",
+    "refuse_unknown_vaults",
     "search_path",
     "select",
 ]

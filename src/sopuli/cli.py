@@ -227,6 +227,7 @@ from sopuli.orphans import aliases as orphan_aliases
 from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
+from sopuli.orphans import survey_prefix
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -4145,8 +4146,15 @@ def vault_group() -> None:
     metavar="NAME",
     help="Survey only this entry in `vaults:`. Repeatable.",
 )
+@click.option(
+    "--prefix",
+    "prefix",
+    default=None,
+    metavar="PATH",
+    help="Survey only the secret paths under PATH, and their lock records.",
+)
 @global_options
-def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
+def vault_orphans(vaults: tuple[str, ...], prefix: str | None, run: Invocation) -> str:
     """List vault records this tool wrote that no binding declares (#999).
 
     An application moved to a new secret path leaves its old document and that
@@ -4175,10 +4183,30 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     two entries name is opened through the one named first, so its login is
     the one the operator chose. A path a binding names is still declared in
     every store, a selected one included.
+
+    `--prefix PATH` (#1016) lists only the secret paths under PATH and the lock
+    records under `locks/PATH`, in each store surveyed, so a shared mount's
+    other documents are neither listed nor read. It is a folder: a document at
+    exactly PATH is not under it. The summary and `orphans.prefix` name it, so
+    `no orphans` is not read as a statement about the whole store.
     """
     document = run.document
     config = run.config
     refuse_unknown_vaults(config, vaults)
+    under: str | None = None
+    if prefix is not None:
+        try:
+            under = survey_prefix(prefix)
+        except ValueError as error:
+            # Exit 2 with no document (J7), as a malformed `lock break` key is.
+            raise click.UsageError(str(error)) from error
+    # The selectors as given (03 §invocation.selection), omitted when unused.
+    selection: dict[str, Any] = {}
+    if vaults:
+        selection["vaults"] = list(vaults)
+    if prefix is not None:
+        selection["prefix"] = prefix
+    document.selection = selection or None
     # Entries that name one store are surveyed once: under the first name by
     # default, and through the first entry named for it under --vault.
     names = orphan_aliases(config.vaults)
@@ -4186,7 +4214,6 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     if vaults:
         for name in vaults:
             through.setdefault(names[name], name)
-        document.selection = {"vaults": list(vaults)}
     else:
         through = {store: store for store in names.values()}
     region = reset_region(config)
@@ -4201,7 +4228,7 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     )
     # Every binding's path, declared in every store: `sopuli.orphans` says why.
     declared = orphans_declared_by(config.bindings)
-    found = find_orphans(declared, stores=stores, region=region)
+    found = find_orphans(declared, stores=stores, region=region, prefix=under)
     deletes = orphan_commands(found, config.vaults)
 
     narrowed = [

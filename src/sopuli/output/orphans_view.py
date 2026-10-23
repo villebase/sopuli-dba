@@ -21,10 +21,12 @@ def build_section(survey: Survey, commands: Sequence[str | None]) -> dict[str, A
 
     Emitted even when ``found`` is empty, as ``lock status`` emits its own:
     an empty array is the finding. ``listed`` names the stores whose paths
-    were read, so an empty ``found`` says what it covers (#1015).
+    were read, so an empty ``found`` says what it covers (#1015), and
+    ``prefix`` the secret path the survey was limited to, or ``null`` (#1016).
     """
     return {
         "listed": list(survey.listed),
+        "prefix": survey.prefix,
         "found": [
             _entry(orphan, command)
             for orphan, command in zip(survey.orphans, commands, strict=True)
@@ -62,13 +64,16 @@ def render(
 
     The table, a count, and then the delete commands, each on a line of its own
     so it can be pasted. A path a live lock stands on gets a line saying why it
-    has no command instead. The count names the stores that were listed; one
-    that could not be is in a warning.
+    has no command instead. The count names the stores that were listed, and
+    the prefix where there was one; a store that could not be listed is in a
+    warning.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
     vaults = survey.listed
     where = f"{len(vaults)} vault{'' if len(vaults) == 1 else 's'} ({', '.join(vaults)})"
+    if survey.prefix is not None:
+        where = f"{where} under {survey.prefix}/"
     if not vaults and not survey.unlistable and not survey.unread:
         lines.extend(["", "no vault in `vaults:`"])
     elif not vaults:

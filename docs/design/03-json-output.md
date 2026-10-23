@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.58.schema.json`](../schemas/sopuli-run-1.58.schema.json),
+Schemas: [`../schemas/sopuli-run-1.59.schema.json`](../schemas/sopuli-run-1.59.schema.json),
 [`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -425,7 +425,7 @@ This sketch shows the run document's shape:
   policy     { name, length, charset, first_char, require, limit, samples[] },
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
   lock       { mode, held[], found[], broken, denied },
-  orphans    { listed[], found[] },
+  orphans    { listed[], prefix, found[] },
   results    [ { account, target, scope, secret, state, delivered, handover,
                  audited, audited_detail,
                  account_status, changed, actions[], verification, rollover,
@@ -707,9 +707,11 @@ were given, not as they resolved. The resolved answer is `config.targets[]` or
 The members are `applications`, `accounts`, `targets`, `groups` and `select`.
 They come from `--application`, `--account`, `--target`, `--group` and
 `--select k=v`. `vault orphans` adds `vaults`, from `--vault`, from run
-schema 1.58 ([#1015](https://github.com/villebase/sopuli-dba/issues/1015)). A
-selector that was not given is omitted, not sent empty: an empty array would
-claim the run applied a selector it was not given.
+schema 1.58 ([#1015](https://github.com/villebase/sopuli-dba/issues/1015)), and
+`prefix`, from `--prefix`, from run schema 1.59
+([#1016](https://github.com/villebase/sopuli-dba/issues/1016)). A selector that
+was not given is omitted, not sent empty: an empty array would claim the run
+applied a selector it was not given.
 
 `selection` is absent when the whole estate was in scope. A consumer that reads
 `total: 2` cannot otherwise tell a small estate from a filtered one, and "2
@@ -1209,6 +1211,7 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
 ```json
 "orphans": {
   "listed": [ "vault-dev" ],
+  "prefix": null,
   "found": [ { "vault": "vault-dev", "path": "acme/acme/dev", "kind": "secret",
                "version": 1, "lock": null,
                "delete_command": "vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv acme/acme/dev" },
@@ -1237,6 +1240,8 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
 - **`listed` names the stores whose paths were read**, by the entry each was
   opened through, so an empty `found` says what it covers. A store that could
   not list is not in it. From run schema 1.58.
+- **`prefix` is the secret path the survey was limited to**, normalised, or
+  `null` for every path. From run schema 1.59.
 - **A record may be another config's**, from an estate that shares the mount.
   That is why the verb prints the command and does not run it.
 
@@ -1272,6 +1277,19 @@ opened through the entry named first, with that entry's login. A path a binding
 names is still declared in every store, a selected one included.
 `invocation.selection.vaults` records the names as given, and `listed` the
 entries that were read.
+
+`--prefix PATH` surveys only the secret paths under PATH, and the lock records
+under `locks/PATH`, in each store surveyed
+([#1016](https://github.com/villebase/sopuli-dba/issues/1016)). The store lists
+those two subtrees in place of the whole mount, so the documents outside them
+are not listed or read, and do not appear in the store's audit log. PATH is a
+folder: a document at exactly PATH is not under it. It is checked as a lock key
+is: `.` and `..` segments, and the characters a store path refuses, exit 2. So
+does a PATH under `locks/`, because lock records are found through their secret
+path. The `reset_records:` prefix is still left out. The summary line says
+`under PATH/`, `orphans.prefix` holds the normalised path, and
+`invocation.selection.prefix` the one given, so `no orphans` is not read as a
+statement about the whole store.
 
 ### `targets`, emitted by `doctor`
 

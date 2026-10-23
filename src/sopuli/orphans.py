@@ -132,6 +132,9 @@ class Survey:
     unlistable: tuple[str, ...] = ()
     skipped: tuple[SkippedPath, ...] = ()
     unread: tuple[Unread, ...] = ()
+    #: The secret path the survey was limited to, normalised; ``None`` for the
+    #: whole of each store (#1016).
+    prefix: str | None = None
 
     def held(self) -> frozenset[LockKey]:
         """The keys a live lock stands on.
@@ -211,11 +214,17 @@ def find(
     *,
     stores: Mapping[str, SecretStore],
     region: ResetRegion | None = None,
+    prefix: str | None = None,
 ) -> Survey:
     """Every orphan in ``stores``, sorted by store and path.
 
     ``stores`` holds one entry per store, under the name it was opened
     through. Raises :class:`NothingListedError` when none of them can list.
+
+    ``prefix``, from :func:`survey_prefix`, limits each store to the secret
+    paths under it and the lock records under ``locks/<prefix>`` (#1016): two
+    listings in place of one of the whole mount, so the documents outside it
+    are neither listed nor read.
     """
     found: list[Orphan] = []
     listed: list[str] = []
@@ -227,7 +236,11 @@ def find(
             unlistable.append(name)
             continue
         try:
-            paths = store.list("")
+            paths = (
+                store.list("")
+                if prefix is None
+                else (*store.list(prefix), *store.list(f"{LOCK_PREFIX}/{prefix}"))
+            )
         except StoreError as error:
             unread.append(Unread(store=name, path=None, reason=error.message))
             continue
@@ -252,7 +265,28 @@ def find(
         unlistable=tuple(unlistable),
         skipped=tuple(skipped),
         unread=tuple(unread),
+        prefix=prefix,
     )
+
+
+def survey_prefix(given: str) -> str:
+    """``--prefix``, as the one spelling of a secret path (#1016).
+
+    Checked by :func:`~sopuli.lock.keys.normalise_path`, which a binding's
+    path goes through for its lock key, so a prefix the tool could not lock on
+    is refused, with ``ValueError``. A prefix under ``locks/`` is refused too:
+    lock records are found through their secret's path, and a prefix there
+    would list ``locks/locks/...``.
+    """
+    path = normalise_path(given)
+    if not path:
+        raise ValueError("--prefix names no path; leave it out to survey every path")
+    if path == LOCK_PREFIX or path.startswith(f"{LOCK_PREFIX}/"):
+        raise ValueError(
+            f"--prefix {given!r} is under `{LOCK_PREFIX}/`: give the secret path, and "
+            "its lock records are surveyed with it"
+        )
+    return path
 
 
 def _locks(

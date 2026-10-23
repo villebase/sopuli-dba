@@ -27,7 +27,7 @@ from typing import Any, Literal
 # `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.58"
+SCHEMA_VERSION = "1.59"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -322,8 +322,9 @@ class RunDocument:
     #:
     #: Built by :meth:`sopuli.config.Selection.as_json`, so what the document
     #: reports and what the run filtered on are the same object rather than two
-    #: descriptions of it. ``vault orphans`` writes ``vaults`` here itself
-    #: (#1015): a store is not part of a :class:`~sopuli.config.Selection`.
+    #: descriptions of it. ``vault orphans`` writes ``vaults`` (#1015) and
+    #: ``prefix`` (#1016) here itself: neither a store nor a vault path is part
+    #: of a :class:`~sopuli.config.Selection`.
     selection: dict[str, Any] | None = None
     #: ``invocation.config_files`` -- the files this run read, in layering
     #: order.

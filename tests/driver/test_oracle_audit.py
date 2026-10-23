@@ -459,7 +459,7 @@ def test_a_role_privilege_row_is_unmeasured() -> None:
 
 
 def test_mixed_mode_turns_a_false_into_unknown() -> None:
-    found = answer([], [], mode="FALSE")
+    found = answer([], [], mode="FALSE", trail="DB")
 
     assert found.audited is None
     assert "mixed audit mode" in found.detail
@@ -485,11 +485,14 @@ def test_mixed_mode_with_no_audit_trail_turns_a_true_into_unknown(trail: str) ->
 
 def test_mixed_mode_with_no_audit_trail_says_so_for_a_gap() -> None:
     """The reason is the parameter, not traditional auditing, which records
-    nothing under `NONE` either."""
+    nothing under `NONE` either. And it says why the answer is not `false`:
+    only two releases are measured."""
     found = answer([], [], mode="FALSE", trail="NONE")
 
     assert found.audited is None
-    assert TRAIL_NONE in found.detail
+    nothing = f"no enabled policy records LOGON or ALTER USER for {PERSON}"
+    assert found.detail == f"{nothing}, and {TRAIL_NONE}"
+    assert TRAIL_NONE.endswith("and other releases are not measured")
     assert "traditional auditing" not in found.detail
 
 
@@ -502,20 +505,18 @@ def test_mixed_mode_with_no_audit_trail_says_so_beside_a_doubt() -> None:
 
 def test_an_unread_audit_trail_in_mixed_mode_turns_a_true_into_unknown() -> None:
     """The tool cannot rule out `NONE`, so it does not claim `true`, and the
-    detail names the grant that lets it read the parameter."""
-    found = classify(
-        "FALSE",
-        [enabled("P")],
-        both("P"),
-        PERSON,
-        trail_unread="ORA-00942: table or view does not exist",
-    )
+    detail says why the parameter was not read."""
+    found = classify("FALSE", [enabled("P")], both("P"), PERSON, trail_unread="the reason")
 
     assert found.audited is None
-    assert "AUDIT_TRAIL could not be read (ORA-00942: table or view does not exist)" in (
-        found.detail
-    )
-    assert "GRANT SELECT ON SYS.V_$PARAMETER" in found.detail
+    assert found.detail == "LOGON by P; ALTER USER by P, but the reason"
+
+
+def test_mixed_mode_without_audit_trail_or_a_reason_is_a_caller_error() -> None:
+    """A caller that forgot the parameter would otherwise make every `true`
+    unknown, quietly."""
+    with pytest.raises(ValueError, match="AUDIT_TRAIL"):
+        classify("FALSE", [enabled("P")], both("P"), PERSON)
 
 
 def test_audit_trail_does_not_apply_in_pure_unified_mode() -> None:
@@ -738,8 +739,26 @@ def test_an_unreadable_audit_trail_keeps_the_servers_code() -> None:
     found = coverage_of(cursor, PERSON)
 
     assert found.audited is None
-    assert "AUDIT_TRAIL could not be read (ORA-00942" in found.detail
+    assert "AUDIT_TRAIL is not readable (ORA-00942" in found.detail
+    assert "GRANT SELECT ON SYS.V_$PARAMETER" in found.detail
     assert found.detail.startswith("LOGON by P; ALTER USER by P, but ")
+
+
+def test_a_failed_audit_trail_read_names_no_grant() -> None:
+    """A lost session is not a missing grant, so the detail keeps the code and
+    names nothing to grant."""
+    cursor = Cursor(
+        _covered("FALSE"),
+        fail={TRAIL_QUERY: RuntimeError("ORA-03113: end-of-file on communication channel")},
+    )
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is None
+    assert "reading AUDIT_TRAIL failed (ORA-03113: end-of-file on communication channel)" in (
+        found.detail
+    )
+    assert "GRANT" not in found.detail
 
 
 def test_an_unreadable_audit_trail_keeps_the_first_line_once() -> None:
@@ -754,7 +773,7 @@ def test_an_unreadable_audit_trail_keeps_the_first_line_once() -> None:
 
     found = coverage_of(cursor, PERSON)
 
-    assert "AUDIT_TRAIL could not be read (ORA-00942: table or view does not exist);" in (
+    assert "AUDIT_TRAIL is not readable (ORA-00942: table or view does not exist);" in (
         found.detail
     )
     assert found.detail.count("ORA-00942") == 1

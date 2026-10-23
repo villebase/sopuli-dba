@@ -118,13 +118,17 @@ MIXED = (
 TRAIL_QUERY = "select value from v$parameter where name = 'audit_trail'"
 TRAIL_NONE = (
     "the database is in mixed audit mode with AUDIT_TRAIL = NONE, where enabled "
-    "unified policies were measured to record nothing (21.3.0.0.0 and 18.4.0.0.0)"
+    "unified policies were measured to record nothing on 21.3.0.0.0 and 18.4.0.0.0, "
+    "and other releases are not measured"
 )
-TRAIL_UNREAD = (
-    "the database is in mixed audit mode, and AUDIT_TRAIL could not be read ({error}); "
+#: Why ``AUDIT_TRAIL`` was not read. A missing grant names it; any other failure
+#: keeps the server's code and names no grant, which would not fix it.
+TRAIL_UNREADABLE = (
+    "the database is in mixed audit mode, and AUDIT_TRAIL is not readable ({error}); "
     "GRANT SELECT ON SYS.V_$PARAMETER to the service account "
     "(02-oracle-privileges.md section 2)"
 )
+TRAIL_FAILED = "the database is in mixed audit mode, and reading AUDIT_TRAIL failed ({error})"
 
 
 @dataclass(frozen=True)
@@ -248,11 +252,17 @@ def classify(
     ``mode`` is ``V$OPTION``'s value for ``Unified Auditing``, or ``None`` where it
     has no such row. ``common`` is ``DBA_USERS.COMMON`` for ``account``, and
     ``unread`` the server's error where that read failed. ``trail`` is
-    ``AUDIT_TRAIL``, which matters in mixed mode only. There ``None`` means it was
-    not read, and ``trail_unread`` says why: a ``True`` then becomes unknown,
-    because the tool cannot rule out ``NONE``.
+    ``AUDIT_TRAIL``, which matters in mixed mode only. There one of ``trail`` and
+    ``trail_unread`` is given: ``trail_unread`` says, for the detail, why the
+    parameter was not read, and a ``True`` then becomes unknown, because the tool
+    cannot rule out ``NONE``.
+
+    Raises ``ValueError`` in mixed mode when neither is given: a caller that
+    forgot the parameter would otherwise turn every ``True`` into unknown quietly.
     """
     mixed = mode is not None and mode.upper() != "TRUE"
+    if mixed and trail is None and trail_unread is None:
+        raise ValueError("mixed audit mode needs AUDIT_TRAIL, or why it was not read")
     none = mixed and trail is not None and trail.strip().upper() == "NONE"
     covered: dict[str, list[str]] = {action: [] for action in ACTIONS}
     doubts: dict[str, list[str]] = {action: [] for action in ACTIONS}
@@ -271,8 +281,7 @@ def classify(
         if none:
             return AuditCoverage(audited=None, detail=f"{detail}, but {TRAIL_NONE}")
         if mixed and trail is None:
-            caveat = TRAIL_UNREAD.format(error=trail_unread or "not read")
-            return AuditCoverage(audited=None, detail=f"{detail}, but {caveat}")
+            return AuditCoverage(audited=None, detail=f"{detail}, but {trail_unread}")
         return AuditCoverage(audited=True, detail=detail)
 
     # **An action that nothing covers or might cover decides the answer**, whatever
@@ -283,9 +292,12 @@ def classify(
         nothing = f"no enabled policy records {' or '.join(certain)} for {account}"
         if mode is None:
             return AuditCoverage(audited=None, detail=f"{nothing}, and {NO_UNIFIED}")
+        if none:
+            # Not `false`: what was measured on two releases is not assumed of
+            # the rest (#1004). TRAIL_NONE says so.
+            return AuditCoverage(audited=None, detail=f"{nothing}, and {TRAIL_NONE}")
         if mixed:
-            why = TRAIL_NONE if none else MIXED
-            return AuditCoverage(audited=None, detail=f"{nothing}, but {why}")
+            return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}")
         return AuditCoverage(audited=False, detail=nothing)
 
     # Unknown: every uncovered action has a doubt. The detail keeps what is known,
@@ -384,25 +396,27 @@ def _is_common(cursor: Cursor, account: str) -> tuple[bool, str | None]:
 
 
 def _audit_trail(cursor: Cursor) -> tuple[str | None, str | None]:
-    """``AUDIT_TRAIL``'s value, and the server's error if that read failed.
+    """``AUDIT_TRAIL``'s value, or why it was not read, said for the detail.
 
     The default install grants no read of ``V$PARAMETER``, so this fails with
     ``ORA-00942`` unless §2's optional grant was taken (measured on 21.3.0.0.0 and
-    18.4.0.0.0). The server's message is kept for the detail: its first line,
-    which starts with the code, as a per-target error keeps it. The lines after
-    it are Oracle's help link.
+    18.4.0.0.0). Only a code in :data:`UNREADABLE_CODES` names the grant. The
+    server's message is kept: its first line, which starts with the code, as a
+    per-target error keeps it. The lines after it are Oracle's help link.
     """
     try:
         cursor.execute(TRAIL_QUERY)
         row = cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
-        first = diagnosis.message.splitlines()[0] if diagnosis.message else ""
+        lines = diagnosis.message.splitlines()
+        first = lines[0] if lines else ""
         if diagnosis.code and not first.startswith(diagnosis.code):
-            first = f"{diagnosis.code}: {first}"
-        return None, first or "no code"
+            first = f"{diagnosis.code}: {first}" if first else diagnosis.code
+        reason = TRAIL_UNREADABLE if diagnosis.code in UNREADABLE_CODES else TRAIL_FAILED
+        return None, reason.format(error=first or "no code")
     if not row or row[0] is None:
-        return None, "no row"
+        return None, TRAIL_FAILED.format(error="no row")
     return str(row[0]), None
 
 

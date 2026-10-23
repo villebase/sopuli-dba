@@ -214,8 +214,8 @@ def find(
 ) -> Survey:
     """Every orphan in ``stores``, sorted by store and path.
 
-    ``stores`` holds one entry per store, named as :func:`aliases` names it.
-    Raises :class:`NothingListedError` when none of them can list.
+    ``stores`` holds one entry per store, under the name it was opened
+    through. Raises :class:`NothingListedError` when none of them can list.
     """
     found: list[Orphan] = []
     listed: list[str] = []
@@ -242,7 +242,7 @@ def find(
         unread.extend(failed)
     if stores and not listed and not unread:
         raise NothingListedError(
-            f"no store in `vaults:` can list its paths, so there is nowhere to look: "
+            f"no store this run surveys can list its paths, so there is nowhere to look: "
             f"{', '.join(sorted(unlistable))}",
             hint="`vault orphans` needs a store with the `list` capability",
         )

@@ -104,6 +104,7 @@ from sopuli.config import (
     filter_estate,
     parse_selector,
     refuse_unknown,
+    refuse_unknown_vaults,
 )
 from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at
@@ -4137,8 +4138,15 @@ def vault_group() -> None:
 
 
 @vault_group.command("orphans")
+@click.option(
+    "--vault",
+    "vaults",
+    multiple=True,
+    metavar="NAME",
+    help="Survey only this entry in `vaults:`. Repeatable.",
+)
 @global_options
-def vault_orphans(run: Invocation) -> str:
+def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     """List vault records this tool wrote that no binding declares (#999).
 
     An application moved to a new secret path leaves its old document and that
@@ -4155,19 +4163,37 @@ def vault_orphans(run: Invocation) -> str:
     Exit 0 when it could look, as `lock status`. An orphan is a finding, not a
     failure. Exit 5 when no store can list.
 
-    **Every store in `vaults:` is opened**, so one this run cannot reach or log
-    in to fails the run, as on `lock status`. A survey that left a declared
-    store out would report it as clean.
+    **Every store in `vaults:` is opened**, so one this run cannot log in to
+    fails the run, as on `lock status`. A store with token auth is not
+    contacted until the listing, so one that does not answer is named in W056
+    instead. Any other auth method logs in when the store is opened. A survey
+    that left a declared store out would report it as clean.
+
+    `--vault NAME` (#1015) is how to leave one out: only the named entries are
+    opened, and the summary and `orphans.listed` say which were read. A store
+    two entries name is opened through the one named first, so its login is
+    the one the operator chose. A path a binding names is still declared in
+    every store, a selected one included.
     """
     document = run.document
     config = run.config
-    # Entries that name one store are surveyed once, under the first name.
+    refuse_unknown_vaults(config, vaults)
+    # Entries that name one store are surveyed once: under the first name by
+    # default, and through the first entry named for it under --vault.
     names = orphan_aliases(config.vaults)
+    through: dict[str, str] = {}
+    if vaults:
+        for name in vaults:
+            through.setdefault(names[name], name)
+        document.selection = {"vaults": list(vaults)}
+    else:
+        through = {store: store for store in names.values()}
     region = reset_region(config)
     if region is not None:
-        region = replace(region, store=names.get(region.store, region.store))
+        store = names.get(region.store, region.store)
+        region = replace(region, store=through.get(store, store))
     stores = _stores_for(
-        set(names.values()),
+        set(through.values()),
         config,
         token_file=run.vault_token_file,
         cache=run.stores,

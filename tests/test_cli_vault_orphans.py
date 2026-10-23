@@ -18,6 +18,7 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli.cli import cli
+from sopuli.config import ArgumentError
 from sopuli.config.model import Vault
 from sopuli.diagnostics import ORPHANS_UNREAD, UNADDRESSABLE_LOCK_PATH, UNLISTABLE_STORE
 from sopuli.exit_codes import ExitCode
@@ -499,9 +500,128 @@ def test_a_clean_estate_emits_an_empty_section(
     config = write_config(CONFIG)
     result = run(config, "--output", "json")
 
-    validator.validate(json.loads(result.output))
+    document = json.loads(result.output)
+    validator.validate(document)
     assert found(result) == []
+    assert document["orphans"]["listed"] == ["vault-dev", "vault-old"]
+    assert "selection" not in document["invocation"]
     assert "no orphans in 2 vaults (vault-dev, vault-old)" in run(config).output
+
+
+def _opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the stores the run opens, on top of :func:`_install`'s patch."""
+    import sopuli.cli
+
+    opened: list[str] = []
+    connect = sopuli.cli.connect  # type: ignore[attr-defined]
+
+    def recording(vault: Vault, **kwargs: Any) -> SecretStore:
+        opened.append(vault.name)
+        return connect(vault, **kwargs)
+
+    monkeypatch.setattr("sopuli.cli.connect", recording)
+    return opened
+
+
+def test_vault_surveys_only_the_named_store(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """#1015: the other store is not opened, so one the run cannot reach can be
+    left out, and the run says what it covered."""
+    with_records(
+        ("vault-dev", "acme/alpha/db", PROMOTED),
+        ("vault-old", "acme/gamma/db", PROMOTED),
+    )
+    opened = _opened(monkeypatch)
+    config = write_config(CONFIG)
+    result = run(config, "--vault", "vault-old", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.output)
+    validator.validate(document)
+    assert opened == ["vault-old"]
+    assert [(entry["vault"], entry["path"]) for entry in found(result)] == [
+        ("vault-old", "acme/gamma/db")
+    ]
+    assert document["orphans"]["listed"] == ["vault-old"]
+    assert document["invocation"]["selection"] == {"vaults": ["vault-old"]}
+    assert "1 orphan in 1 vault (vault-old)" in run(config, "--vault", "vault-old").output
+
+
+def test_vault_is_repeatable(write_config: Callable[[str], Path], with_records: Records) -> None:
+    with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    result = run(
+        write_config(CONFIG), "--vault", "vault-old", "--vault", "vault-dev", "--output", "json"
+    )
+
+    assert json.loads(result.output)["orphans"]["listed"] == ["vault-dev", "vault-old"]
+    assert [entry["vault"] for entry in found(result)] == ["vault-dev"]
+
+
+def test_a_declared_path_is_declared_in_a_selected_store(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """No binding names `vault-old`, and the bound path is still declared there."""
+    with_records(("vault-old", "acme/db/alpha", PROMOTED))
+    result = run(write_config(CONFIG), "--vault", "vault-old", "--output", "json")
+
+    assert found(result) == []
+
+
+def test_naming_either_entry_for_one_store_selects_it(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It is opened through the entry named, whose login the operator can use."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    stores["vault-dev-ci"] = stores["vault-dev"]  # type: ignore[index]
+    opened = _opened(monkeypatch)
+    result = run(write_config(TWO_NAMES), "--vault", "vault-dev-ci", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert opened == ["vault-dev-ci"]
+    assert json.loads(result.output)["orphans"]["listed"] == ["vault-dev-ci"]
+    assert [(entry["vault"], entry["path"]) for entry in found(result)] == [
+        ("vault-dev-ci", "acme/alpha/db")
+    ]
+
+
+def test_naming_both_entries_for_one_store_lists_it_once(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    stores["vault-dev-ci"] = stores["vault-dev"]  # type: ignore[index]
+    opened = _opened(monkeypatch)
+    result = run(
+        write_config(TWO_NAMES),
+        "--vault",
+        "vault-dev-ci",
+        "--vault",
+        "vault-dev",
+        "--output",
+        "json",
+    )
+
+    assert opened == ["vault-dev-ci"]
+    assert len(found(result)) == 1
+
+
+def test_a_vault_the_config_does_not_declare_is_refused(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A selector filters the declared set and cannot extend it (invariant 5).
+
+    `main` turns the error into exit 2; `CliRunner` hands back the exception."""
+    with_records()
+    opened = _opened(monkeypatch)
+    result = run(write_config(CONFIG), "--vault", "vault-prod")
+
+    assert isinstance(result.exception, ArgumentError)
+    assert "not declared in the configuration: `vault-prod`" in str(result.exception)
+    assert "vault-dev, vault-old" in (result.exception.hint or "")
+    assert opened == []
 
 
 def test_it_writes_nothing(write_config: Callable[[str], Path], with_records: Records) -> None:

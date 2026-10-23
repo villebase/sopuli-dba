@@ -232,7 +232,7 @@ def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
         if diagnosis.code in ABSENT_CODES:
             return None
         raise ProbeError(
-            f"a capability probe failed with {diagnosis.code or 'no code'}: {diagnosis.message}",
+            f"a capability probe failed: {diagnosis.first_line}",
             code=diagnosis.code or None,
             retryable=diagnosis.retryable,
             hint=(
@@ -453,8 +453,7 @@ def encryption_of(cursor: Cursor) -> Encryption:
         return Encryption(
             method=UNKNOWN,
             protocol=protocol,
-            hint=f"reading {reading} failed with {diagnosis.code or 'no code'}: "
-            f"{diagnosis.message}",
+            hint=f"reading {reading} failed: {diagnosis.first_line}",
         )
 
 

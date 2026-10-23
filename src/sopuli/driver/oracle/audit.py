@@ -389,7 +389,7 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         if reading == POLICY_VIEWS and diagnosis.code in UNREADABLE_CODES:
             return AuditCoverage(audited=None, detail=UNREADABLE)
         return AuditCoverage(
-            audited=None, detail=f"reading {reading} failed with {diagnosis.first_line}"
+            audited=None, detail=f"reading {reading} failed: {diagnosis.first_line}"
         )
 
 

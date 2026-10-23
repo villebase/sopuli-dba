@@ -366,11 +366,10 @@ class OracleSession:
             with traced_cursor(self.connection) as cursor:
                 return coverage_of(cursor, account)
         except Exception as error:  # noqa: BLE001 -- the protocol promises an answer
-            diagnosis = from_error(error)
             return AuditCoverage(
                 audited=None,
-                detail=f"the audit check could not use the connection: "
-                f"{diagnosis.code or 'no code'}: {diagnosis.message}",
+                detail="the audit check could not use the connection: "
+                f"{from_error(error).first_line}",
             )
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:

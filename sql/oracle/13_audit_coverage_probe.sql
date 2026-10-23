@@ -180,8 +180,11 @@
 --        view also has USER_NAME and ENABLED_OPT, which 21.3's does not; the
 --        columns the check reads are in both
 --   AC4, AC5 (21.3) the trail reads print no rows in any round, where 26ai
---        printed the route. Not interpreted: whether mixed mode, AUDIT_TRAIL
---        or a write delay keeps the rows back was not measured
+--        printed the route. Read afterwards, on both releases, the trail holds
+--        only the rows written when the image was built (4 on 21.3, 5 on 18.4,
+--        the latest 30-SEP-24). An ALTER USER and a logon made under an
+--        enabled ALTER USER, LOGON policy add none, also after
+--        DBMS_AUDIT_MGMT.FLUSH_UNIFIED_AUDIT_TRAIL. Why is not measured (#1006)
 --   AC6  (21.3) as on 26ai: the common policy reads BY USER ALL USERS from the
 --        PDB, COMMON and INHERITED YES
 --   AC7  (21.3) as on 26ai: the common account reads both views in the PDB
@@ -197,7 +200,8 @@
 --   reset-password --dry-run` as SYSTEM, answers unknown on the stock image:
 --   ORA_SECURECONFIG covers ALTER USER, nothing covers LOGON, and mixed mode
 --   keeps that gap from being false. With a policy for ALTER USER and LOGON
---   enabled for every user, it answers true.
+--   enabled for every user, it answers true, though on these images the trail
+--   recorded nothing of the route (AC4).
 --
 -- HOW TO RUN
 --   As SYSTEM (or any account that can create users and audit policies), and

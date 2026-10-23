@@ -1268,18 +1268,23 @@ common ones:
 `false` also needs the database to use unified auditing only: `V$OPTION` reports
 `Unified Auditing` as `TRUE`. 26ai Free 23.26.2.0.0 does. In mixed mode (`FALSE`
 on 12.1 and later), traditional auditing might record the action, so the value
-is `unknown`. The 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0 images run in mixed
-mode, and both enable `ORA_SECURECONFIG` from the start, which covers
-`ALTER USER` and not `LOGON`. So on those images the check answers `unknown`,
-or `true` once a policy covers `LOGON` (measured, #820). 11.2 has no unified
-auditing, so the value is `unknown` there too; that is not measured.
-[measurements](../measurements.md) lists the releases the probe has run on.
+is `unknown`. The XE images of 21.3.0.0.0 and 18.4.0.0.0 run in mixed mode, and
+both enable `ORA_SECURECONFIG` from the start. The check then answers `unknown`,
+because nothing covers `LOGON`, and `true` once a policy covers it. Both answers
+come from the policy views. On those images the trail itself recorded nothing at
+run time, so whether a `true` there matches what the database records is not
+established ([#1006](https://github.com/villebase/sopuli-dba/issues/1006)).
+Whether mixed mode with `AUDIT_TRAIL = NONE`, as on those images, should count
+as unified-only is open ([#1004](https://github.com/villebase/sopuli-dba/issues/1004)).
+11.2 has no unified auditing, so the value is `unknown` there too; that is not
+measured. [measurements](../measurements.md) lists the releases the probe has
+run on.
 
 The check reads `ENABLED_OPTION` and `ENTITY_NAME`. The probe found them, with
-the same rows, on 26ai, 21.3 and 18.4. 18.4's view also has `USER_NAME` and
-`ENABLED_OPT`. A release whose view lacks the columns read answers `ORA-00904`,
-and the value is then `unknown` with a detail that says so. No measured release
-lacks them; 12.2 and 19c are not measured.
+the same rows, on 23.26.2.0.0, 21.3.0.0.0 and 18.4.0.0.0. 18.4.0.0.0's view
+also has `USER_NAME` and `ENABLED_OPT`. A release whose view lacks the columns
+read answers `ORA-00904`, and the value is then `unknown` with a detail that says
+so. No measured release lacks them; 12.2.0.1.0 and 19.3.0.0.0 are not measured.
 
 **What `01_audit_policy.sql` creates.** The script creates different policies
 in `CDB$ROOT` and in other containers, because a policy covers different

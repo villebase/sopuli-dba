@@ -1114,8 +1114,8 @@ vault-dev  locks/acme/dev/acme  lock    released
 
 They may be another config's. Check each one before you delete it (getting-started.md, "Moving a secret path"). To delete them:
 
-  vault kv metadata delete -mount=kv acme/dev/acme
-  vault kv metadata delete -mount=kv locks/acme/dev/acme
+  vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv acme/dev/acme
+  vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv locks/acme/dev/acme
 ```
 
 The reset record and its lock are not listed, because they are under the

@@ -2900,9 +2900,10 @@ the register.
   and that no binding declares: a document whose root holds `origin` or
   `rotated_at`, and a lock record under `locks/`. It prints the
   `vault kv metadata delete` command for each, and deletes nothing. It prints
-  no command for a path whose lock is held and has not expired.
-  `getting-started.md` §8 lists the checks to make before deleting. Run schema
-  1.57 adds the `orphans` section.
+  no command for a path whose lock is held and has not expired. A binding
+  whose store comes from `SOPULI_VAULT` or a profile declares its path in every
+  store. `getting-started.md` §8 lists the checks to make before deleting. Run
+  schema 1.57 adds the `orphans` section and `SOPULI-W056`.
 - **Why:** it would have been the first verb to delete from a vault, and the
   vault is master (invariant 6). A record may belong to another config that
   shares the mount, which the tool cannot tell. The operator can, so the

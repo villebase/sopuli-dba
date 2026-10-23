@@ -151,6 +151,7 @@ from sopuli.diagnostics import (
     unaddressable_lock_paths,
     unlistable_for_orphans,
     unlistable_stores,
+    unread_for_orphans,
     vault_diagnostics,
     wallet_diagnostics,
     worse_encryption,
@@ -222,6 +223,7 @@ from sopuli.notify import Facts as NotifyFacts
 from sopuli.notify import registry as notify_registry
 from sopuli.notify import render as render_notification
 from sopuli.orphans import commands as orphan_commands
+from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
@@ -4154,7 +4156,6 @@ def vault_orphans(run: Invocation) -> str:
     """
     document = run.document
     config = run.config
-    everything = resolvable_locks(_declared_estate(config))
     region = reset_region(config)
     stores = _stores_for(
         {vault.name for vault in config.vaults},
@@ -4162,12 +4163,15 @@ def vault_orphans(run: Invocation) -> str:
         token_file=run.vault_token_file,
         cache=run.stores,
     )
-    found = find_orphans(everything, stores=stores, region=region)
+    # The bindings as loaded, not completed from this run's SOPULI_VAULT or
+    # profile: `declared_by` counts an unfixed binding's path in every store.
+    found = find_orphans(orphans_declared_by(config.bindings), stores=stores, region=region)
     deletes = orphan_commands(found, config.vaults)
 
     narrowed = [
         *unlistable_for_orphans(found.unlistable),
         *unaddressable_lock_paths(found.skipped),
+        *unread_for_orphans(found.unread),
     ]
     document.diagnostics.extend(narrowed)
     document.orphans = build_orphans_section(found, deletes)
@@ -4177,7 +4181,6 @@ def vault_orphans(run: Invocation) -> str:
         run.sources,
         found,
         deletes,
-        vaults=sorted(stores),
         warnings=[diagnostic.message for diagnostic in narrowed],
     )
 

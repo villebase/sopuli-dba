@@ -714,14 +714,18 @@ vault-dev  locks/acme/acme/dev  lock    released
 
 They may be another config's. Check each one before you delete it (getting-started.md, "Moving a secret path"). To delete them:
 
-  vault kv metadata delete -mount=kv acme/acme/dev
-  vault kv metadata delete -mount=kv locks/acme/acme/dev
+  vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv acme/acme/dev
+  vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv locks/acme/acme/dev
 ```
 
 It lists a document only if the document has a field this tool writes, `origin`
 or `rotated_at`. So another team's secrets in the same mount are not listed.
-But a document that another sopuli config manages has those fields too. Before
-you delete anything, check each record:
+But it has to read each document to see that, and each read is in the vault's
+audit log, under your token. A document your token may not read is counted in
+a warning.
+
+A document that another sopuli config manages has those fields too. Before you
+delete anything, check each record:
 
 1. The new path has `current` for every account. `sopuli creds check` says so.
 2. Nothing else still reads the old path, such as an External Secrets Operator
@@ -733,10 +737,12 @@ you delete anything, check each record:
 5. The lock is not held. `vault orphans` prints no command for a path whose lock
    is held, and `sopuli lock status` says who holds it.
 
-Then run the commands it printed. `vault kv metadata delete` removes the record
-and all its versions. Do not use `vault kv delete` on a KV v2 mount. It keeps the
-metadata, and on a lock path the next lock there could never be taken. Your
-token needs the `delete` capability on `<mount>/metadata/<path>`.
+Then run the commands it printed. They name the vault's address, so they reach
+the vault in your config whatever `VAULT_ADDR` says. They are quoted for bash.
+`vault kv metadata delete` removes the record and all its versions. Do not use
+`vault kv delete` on a KV v2 mount. It keeps the metadata, and on a lock path
+the next lock there could never be taken. Your token needs the `delete`
+capability on `<mount>/metadata/<path>`.
 
 Run it again to see that they are gone:
 

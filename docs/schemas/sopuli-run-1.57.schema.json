@@ -756,7 +756,7 @@
               },
               "path": {
                 "type": "string",
-                "description": "The record's path in the store, as a delete takes it. A lock record's path starts with `locks/`."
+                "description": "The record's path as the store listed it, which is what a delete takes. A lock record's path starts with `locks/`."
               },
               "kind": {
                 "type": "string",
@@ -767,7 +767,7 @@
                   "integer",
                   "null"
                 ],
-                "description": "The store's version of the record. For a lock record, `null` on a store with no compare-and-set and for a path that has metadata and no record."
+                "description": "The store's version of the record. `null` on a store with no compare-and-set, and for a lock path that has metadata and no record."
               },
               "lock": {
                 "type": [
@@ -802,7 +802,7 @@
                   "string",
                   "null"
                 ],
-                "description": "The vault CLI command that deletes the record and its versions. `null` where a lock that has not expired is held at the secret path, and where this build has no command for the store's type."
+                "description": "The vault CLI command that deletes the record and its versions, naming the store's address and namespace, and quoted for a POSIX shell. `null` where a lock that has not expired is held at the secret path, and where this build has no command for the store's type."
               }
             }
           }

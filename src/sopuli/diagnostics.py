@@ -53,6 +53,7 @@ from sopuli.lock.inspect import SkippedPath
 from sopuli.lock.keys import LockKey
 from sopuli.lock.manager import LOCK_PREFIX, LockableStore, LockManager, Unguarded
 from sopuli.lock.record import LockRecord
+from sopuli.orphans import Unread
 from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
@@ -531,6 +532,10 @@ RESET_JOURNAL_UNREAD = "SOPULI-W054"
 #: could not make.
 GUARDRAIL_PASS_AHEAD = "SOPULI-W055"
 
+#: `vault orphans` listed documents it could not read, so it cannot say whether
+#: they are orphans (#999).
+ORPHANS_UNREAD = "SOPULI-W056"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -696,6 +701,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "opens no connection; `rotate`'s dry run always surveys. A rotation stages a "
             "`pending` for the refused credential before the pass asks, and leaves it "
             "staged."
+        ),
+        ORPHANS_UNREAD: (
+            "`vault orphans` listed documents it was not allowed to read, so it cannot say "
+            "whether this tool wrote them. On a shared mount that is usually another "
+            "team's path. One entry per store, with the count, the first path, and the "
+            "store's message. Everything reported is accurate; a record among these would "
+            "not appear."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1354,6 +1366,32 @@ def unlistable_for_orphans(names: Sequence[str]) -> list[Diagnostic]:
             ),
         )
     ]
+
+
+def unread_for_orphans(unread: Sequence[Unread]) -> list[Diagnostic]:
+    """`SOPULI-W056`: documents `vault orphans` listed and could not read (#999).
+
+    One entry per store, for :func:`reset_journal_unread`'s reason: one token
+    refused on a hundred paths is one finding.
+    """
+    by_store: dict[str, list[Unread]] = {}
+    for one in unread:
+        by_store.setdefault(one.store, []).append(one)
+    diagnostics = []
+    for store, failed in sorted(by_store.items()):
+        first = failed[0]
+        count = "1 document" if len(failed) == 1 else f"{len(failed)} documents"
+        diagnostics.append(
+            Diagnostic(
+                level="warning",
+                code=ORPHANS_UNREAD,
+                message=(
+                    f"could not read {count} in store {store!r}, so an orphan among them "
+                    f"would not appear. The first was {first.path!r}: {first.reason}"
+                ),
+            )
+        )
+    return diagnostics
 
 
 def reset_journal_unread(store: str, rows: int, reason: str) -> Diagnostic:

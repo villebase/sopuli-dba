@@ -54,23 +54,31 @@ def render(
     survey: Survey,
     commands: Sequence[str | None],
     *,
-    vaults: Sequence[str],
     warnings: Sequence[str] = (),
 ) -> str:
     """``vault orphans`` in text.
 
     The table, a count, and then the delete commands, each on a line of its own
     so it can be pasted. A path a live lock stands on gets a line saying why it
-    has no command instead.
+    has no command instead. The count names the stores that were listed; one
+    that could not be is in a warning.
     """
     lines = [f"config: {paths[0]}"]
     lines.extend(f"        {path} (layered)" for path in paths[1:])
+    vaults = survey.listed
     where = f"{len(vaults)} vault{'' if len(vaults) == 1 else 's'} ({', '.join(vaults)})"
-    if not survey.orphans:
+    if not vaults:
+        lines.extend(["", "no vault could be listed"])
+    elif not survey.orphans:
         lines.extend(["", f"no orphans in {where}"])
     else:
         lines.extend(["", *_table(survey.orphans)])
         count = len(survey.orphans)
+        lead = (
+            "To delete them:"
+            if any(command is not None for command in commands)
+            else "No delete command is printed:"
+        )
         lines.extend(
             [
                 "",
@@ -78,18 +86,18 @@ def render(
                 f"like this tool's, at paths no binding in this config declares",
                 "",
                 "They may be another config's. Check each one before you delete it "
-                '(getting-started.md, "Moving a secret path"). To delete them:',
+                f'(getting-started.md, "Moving a secret path"). {lead}',
                 "",
             ]
         )
-        held = survey.held_paths()
+        held = survey.held()
         for orphan, command in zip(survey.orphans, commands, strict=True):
             if command is not None:
                 lines.append(f"  {command}")
-            elif (orphan.store, orphan.secret_path) in held:
+            elif orphan.key in held:
                 lines.append(
                     f"  (none for {orphan.store}:{orphan.path}: a live lock stands on "
-                    f"{orphan.secret_path}; see `sopuli lock status`)"
+                    f"{orphan.key.path}; see `sopuli lock status`)"
                 )
             else:
                 lines.append(

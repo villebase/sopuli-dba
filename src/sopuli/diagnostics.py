@@ -524,6 +524,12 @@ UNADDRESSABLE_LOCK_PATH = "SOPULI-W053"
 #: documented mode, and this is a fault in a store the configuration declares.
 RESET_JOURNAL_UNREAD = "SOPULI-W054"
 
+#: `creds apply --dry-run --preflight` found a credential that the real run's
+#: guardrail pass would skip on every target, because a guardrail refuses it on
+#: one (#988). Raised before anything is written, as `SOPULI-W028` is: a
+#: forecast of the run, not a check the survey could not make.
+GUARDRAIL_PASS_AHEAD = "SOPULI-W055"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -674,6 +680,16 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "One entry for the run, naming the store, the number of rows, and the first "
             "error. A journal with no record for an account is not this code: nobody has "
             "reset that account through this tool."
+        ),
+        GUARDRAIL_PASS_AHEAD: (
+            "A `creds apply --dry-run --preflight` found a credential bound to more than "
+            "one target that a guardrail refuses on at least one of them. The real run "
+            "asks every target before the first change and then changes that credential "
+            "on none of them, so this is the run's `SKIPPED` rows said before it starts. "
+            "One entry per credential, naming the document, the account, each refusing "
+            "target with its reason, and the targets it would be left alone on. Not raised "
+            "under `--force`, which waives the checks the pass asks, or without "
+            "`--preflight`, so that a plain dry run opens no connection."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1467,6 +1483,31 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
             "which this run's selection left out -- run `creds apply` without the narrowing "
             "to finish"
+        ),
+    )
+
+
+def guardrail_pass_ahead(
+    document: str,
+    account: str,
+    refusing: Sequence[tuple[str, str]],
+    targets: Sequence[str],
+) -> Diagnostic:
+    """One credential the real run's guardrail pass would skip everywhere (#988).
+
+    ``refusing`` is (target, reason) for each target whose guardrails refuse the
+    account, and ``targets`` is every target the credential is bound to, in the
+    run's order.
+    """
+    where = "; ".join(f"{target}: {reason}" for target, reason in refusing)
+    return Diagnostic(
+        level="warning",
+        code=GUARDRAIL_PASS_AHEAD,
+        target=refusing[0][0] if len(refusing) == 1 else None,
+        account=account,
+        message=(
+            f"{document}: a guardrail refuses {account} ({where}), so the run would change "
+            f"it on none of {', '.join(targets)}"
         ),
     )
 

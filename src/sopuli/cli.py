@@ -134,6 +134,7 @@ from sopuli.diagnostics import (
     constraint_diagnostics,
     encryption_diagnostics,
     guardrail_diagnostics,
+    guardrail_pass_ahead,
     install_diagnostics,
     lock_broken,
     lock_diagnostics,
@@ -6488,6 +6489,7 @@ def creds_apply(
         # mean nothing on the invocation somebody would reach for first. It
         # writes nothing and needs no lock, which is why it can.
         foreseen: list[tuple[str, UserState]] = []
+        read: dict[tuple[str, str], UserState] = {}
         findings = _preflight(
             _surveyable(sources),
             run,
@@ -6496,6 +6498,7 @@ def creds_apply(
             full=preflight_all,
             rollbacks=_rolling_back(sources),
             reuse=foreseen,
+            states=read,
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
         # The warning the run would raise after the statement, raised before it --
@@ -6503,6 +6506,14 @@ def creds_apply(
         reuse_ahead = rollback_reuse(foreseen)
         document.diagnostics.extend(reuse_ahead)
         repair_notes.extend(one.message for one in reuse_ahead)
+        # The guardrail pass's answer, from the accounts the survey read (#988).
+        # Not under `--force`, where the real run does not ask: it waives every
+        # check that could refuse an application account.
+        skipped_ahead = (
+            [] if force else _guardrail_pass_ahead(sources, read, declared=_declared_accounts(run))
+        )
+        document.diagnostics.extend(skipped_ahead)
+        repair_notes.extend(one.message for one in skipped_ahead)
         if preflight.refusal(findings) is not None:
             return _refuse_preflight(
                 findings, document, header=_header(plan, sources), notes=repair_notes
@@ -7226,6 +7237,64 @@ def _credential(binding: Binding) -> Credential | None:
     return (_lock_key(binding), place_of(binding.secret))
 
 
+def _shared_credentials(
+    sources: Sequence[tuple[Binding, Source | None]],
+) -> dict[Credential, list[Binding]]:
+    """The credentials the guardrail pass asks about, with their bindings.
+
+    :func:`_refused_somewhere`'s rule, here so that `--dry-run --preflight`
+    forecasts the same set (#988): bound to more than one target, and followed
+    by a promotion.
+    """
+    bindings: dict[Credential, list[Binding]] = {}
+    for binding, source in sources:
+        credential = _credential(binding)
+        if credential is None or source is None or not apply_states.promotes(source.stage):
+            continue
+        bindings.setdefault(credential, []).append(binding)
+    return {
+        credential: shared
+        for credential, shared in bindings.items()
+        if len({binding.target for binding in shared}) > 1
+    }
+
+
+def _guardrail_pass_ahead(
+    sources: Sequence[tuple[Binding, Source | None]],
+    states: Mapping[tuple[str, str], UserState],
+    *,
+    declared: frozenset[str],
+) -> list[Diagnostic]:
+    """What the real run's guardrail pass would skip, as `SOPULI-W055` (#988).
+
+    ``states`` is what the pre-flight read with `describe_user`, by (target,
+    account), so this costs no connection of its own. The answer is
+    :func:`_refused_somewhere`'s: the same credentials, the same
+    :func:`guardrails.review`. An account the survey could not read is left out,
+    as the pass leaves it to the run.
+    """
+    notices: list[Diagnostic] = []
+    for (key, _place), shared in _shared_credentials(sources).items():
+        refusing: list[tuple[str, str]] = []
+        for binding in shared:
+            state = states.get((binding.target, binding.account))
+            if state is None:
+                continue
+            review = guardrails.review(state, declared=declared, force=False)
+            if not review.permitted:
+                refusing.append((binding.target, guardrails_reason(review)))
+        if refusing:
+            notices.append(
+                guardrail_pass_ahead(
+                    str(key),
+                    shared[0].account,
+                    refusing,
+                    [binding.target for binding in shared],
+                )
+            )
+    return notices
+
+
 def _refused_somewhere(
     sources: Sequence[tuple[Binding, Source | None]],
     by_target: Mapping[str, ExpandedTarget],
@@ -7266,16 +7335,8 @@ def _refused_somewhere(
     is left to the estate pass, which reports it on that row; `--debug` says
     which.
     """
-    bindings: dict[Credential, list[Binding]] = {}
-    for binding, source in sources:
-        credential = _credential(binding)
-        if credential is None or source is None or not apply_states.promotes(source.stage):
-            continue
-        bindings.setdefault(credential, []).append(binding)
     asked: dict[str, list[tuple[Credential, Binding]]] = {}
-    for credential, shared in bindings.items():
-        if len({binding.target for binding in shared}) < 2:
-            continue
+    for credential, shared in _shared_credentials(sources).items():
         for binding in shared:
             asked.setdefault(binding.target, []).append((credential, binding))
 
@@ -8275,6 +8336,7 @@ def _preflight(
     full: bool,
     rollbacks: Collection[tuple[str, str]] = (),
     reuse: list[tuple[str, UserState]] | None = None,
+    states: dict[tuple[str, str], UserState] | None = None,
 ) -> list[Finding]:
     """UC-1 §8 step 3: ask the estate before anything is written.
 
@@ -8324,6 +8386,10 @@ def _preflight(
     is ``SOPULI-W028``, a warning with a code of its own, and decision #568 is to
     report it rather than refuse: a finding would be the second spelling of one
     warning, and a blocking one would be the refusal that was not chosen.
+
+    **Each account read is kept in ``states``**, by (target, account), where the
+    caller passes one. `apply --dry-run` asks the guardrail pass's question of
+    them (#988), so the forecast costs no connection the survey did not open.
     """
     if strategy is None and not full:
         return []
@@ -8356,6 +8422,7 @@ def _preflight(
                         config,
                         rollbacks=rollbacks,
                         reuse=reuse,
+                        states=states,
                     )
                 )
         finally:
@@ -8372,6 +8439,7 @@ def _preflight_target(
     *,
     rollbacks: Collection[tuple[str, str]] = (),
     reuse: list[tuple[str, UserState]] | None = None,
+    states: dict[tuple[str, str], UserState] | None = None,
 ) -> tuple[Finding, ...]:
     """One reachable target, against §8's remaining checks.
 
@@ -8457,6 +8525,8 @@ def _preflight_target(
                 )
             )
             continue
+        if states is not None and state is not None:
+            states[(target.name, binding.account)] = state
         if state is None:
             missing_accounts.append(binding.account)
             continue

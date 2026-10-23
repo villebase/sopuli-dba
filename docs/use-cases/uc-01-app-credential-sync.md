@@ -596,6 +596,14 @@ cannot read is left to the run. The same applies to `creds rotate`, but not to
 `--force`, which waives the checks, or to `--dry-run`, which does not make the
 read. Reasons: [#872](../decisions/log.md#872).
 
+**`creds apply --dry-run --preflight` says what this read would skip.** The
+survey already reads each account, so the same question is asked of what it
+read, with no connection of its own. Each credential the run would change on no
+target is `SOPULI-W055`, naming the document, the account, each refusing target
+with its reason, and the targets it would be left alone on. A plain `--dry-run`
+opens no connection and does not say it, and nor does `--force`, under which the
+run does not ask. Reasons: [#988](../decisions/log.md#988).
+
 A guardrail skip counts against the promotion only where the promotion would
 move past it: the account has a `pending` to promote, or a `previous` on a
 rollback, and confirmed on another target. After the first read, that happens

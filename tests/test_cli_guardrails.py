@@ -30,6 +30,7 @@ from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
     CHANGED_NOT_PROMOTED,
+    GUARDRAIL_PASS_AHEAD,
     GUARDRAIL_UNCHECKED,
     PROMOTION_SKIPPED,
     WARNINGS,
@@ -479,6 +480,89 @@ def test_an_account_refused_on_one_of_its_targets_is_changed_on_none(
     assert rows[("acme_web_user", "appdb-beta")]["state"] == SKIPPED
     codes = [one.get("code") for one in document(result)["diagnostics"]]
     assert PROMOTION_SKIPPED not in codes
+
+
+def ahead(result: Result) -> list[dict[str, Any]]:
+    return [one for one in diagnostics(result) if one.get("code") == GUARDRAIL_PASS_AHEAD]
+
+
+def test_a_dry_run_preflight_says_which_credential_the_pass_would_skip(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#988. `--dry-run --preflight` asks the pass's question of the accounts the
+    survey read, and says what the real run's `SKIPPED` rows would."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert changed(harness) == []
+    found = ahead(result)
+    assert len(found) == 1, diagnostics(result)
+    assert found[0]["account"] == "acme_web_user"
+    assert found[0]["target"] == "appdb-beta"
+    assert "appdb-beta: the account holds DBA" in found[0]["message"]
+    assert "none of appdb-alpha, appdb-beta" in found[0]["message"]
+    # One connection per target, the survey's own: the forecast opens none.
+    assert len(harness["sessions"]) == 2
+
+
+def test_the_forecast_is_printed_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "so the run would change it on none of appdb-alpha, appdb-beta" in result.output
+
+
+def test_a_plain_dry_run_connects_to_nothing_and_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The decision on #988: only `--preflight`, which already connects."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["sessions"] == []
+    assert ahead(result) == []
+
+
+def test_a_forced_dry_run_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real run skips the pass under `--force`, so the forecast does too."""
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(
+        runner,
+        write_config(TWO_TARGETS),
+        "--dry-run",
+        "--preflight",
+        "--force",
+        "--output",
+        "json",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
+
+
+def test_a_credential_on_one_target_is_not_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass asks only about a credential on more than one target; the
+    refusal on one target is the run's own row, which the plan does not
+    forecast either."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
 
 
 def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(

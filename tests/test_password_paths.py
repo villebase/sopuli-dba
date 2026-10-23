@@ -280,10 +280,28 @@ def _set_password(session: Any, candidate: str) -> None:
     session.set_password(ACCOUNT, Secret(candidate))
 
 
+#: The SQL*Plus output that means the password broke the connect string:
+#: `CONNECT` read part of the password as something other than the password
+#: (SP2-0306), or the server refused the password it was sent (ORA-01017). `&`
+#: asks for a substitution value first, and SQL*Plus then reports SP2-0306.
+#: Measured for each character in `BREAKS["connect"]` in each position, with
+#: SQL*Plus 23.26.3.0.0 on Windows and on Linux against Oracle 26ai Free
+#: 23.26.3.0.0. Any other failure, such as ORA-12541 when no listener answers,
+#: is a fault in the test environment, not a finding about the password.
+SQLPLUS_PASSWORD_FAILURES = ("SP2-0306: ", "ORA-01017: ")
+
+#: Easy Connect read part of the password as the host. This counts against a
+#: password with `@` only: a DSN whose host does not resolve gives the same error.
+SQLPLUS_HOST_FAILURE = "ORA-12262: "
+
+
 def _logs_in(sqlplus: str, session: Any, dsn: str, candidate: str) -> bool:
     """Set the password, then log in with it in SQL*Plus.
 
-    The connect string goes to SQL*Plus on stdin, not in `argv` (invariant 1).
+    A failure that is not one of :data:`SQLPLUS_PASSWORD_FAILURES`, or
+    :data:`SQLPLUS_HOST_FAILURE` for a password with `@`, fails the test instead
+    of counting against the password. So does a timeout. The connect string goes
+    to SQL*Plus on stdin, not in `argv` (invariant 1).
     """
     _set_password(session, candidate)
     script = (
@@ -292,15 +310,30 @@ def _logs_in(sqlplus: str, session: Any, dsn: str, candidate: str) -> bool:
         "select 'LOGGED' || 'IN' from dual;\n"
         "exit\n"
     )
-    result = subprocess.run(
-        [sqlplus, "-S", "-L", "/nolog"],
-        input=script,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=TIMEOUT,
+    try:
+        result = subprocess.run(
+            [sqlplus, "-S", "-L", "/nolog"],
+            input=script,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as timeout:
+        pytest.fail(
+            f"the SQL*Plus login with {candidate!r} took longer than {TIMEOUT}s:\n"
+            f"stdout: {timeout.stdout!r}"
+        )
+    if "LOGGEDIN" in result.stdout:
+        return True
+    if any(failure in result.stdout for failure in SQLPLUS_PASSWORD_FAILURES):
+        return False
+    if SQLPLUS_HOST_FAILURE in result.stdout and "@" in candidate:
+        return False
+    pytest.fail(
+        f"the SQL*Plus login with {candidate!r} failed for a reason other than the password:\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    return "LOGGEDIN" in result.stdout
 
 
 @pytest.mark.parametrize("charset", SAFE)

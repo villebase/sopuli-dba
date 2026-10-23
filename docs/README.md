@@ -239,6 +239,8 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |
 | — | — | Refuse or mask userinfo in a vault address | open | | #891 |
+| — | — | Clean up vault records the config no longer declares | open | | #999 |
+| — | — | Is mixed mode with `AUDIT_TRAIL = NONE` unified-only for the `audited` check? | open | | #1004 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

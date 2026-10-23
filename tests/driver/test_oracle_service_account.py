@@ -589,4 +589,8 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
             execute(sysdba, f"alter session set container = {here}")
 
     assert found.audited is True, found.detail
-    assert found.detail == (f"LOGON by {COMMON_POLICY.upper()}; ALTER USER by {POLICY.upper()}")
+    # `ALTER USER` may be covered by a policy the database enables itself as
+    # well: XE 18.4.0.0.0 and 21.3.0.0.0 enable ORA_SECURECONFIG, which records
+    # it. `LOGON` is covered by the common policy alone.
+    assert found.detail.startswith(f"LOGON by {COMMON_POLICY.upper()}; "), found.detail
+    assert f"ALTER USER by {POLICY.upper()}" in found.detail

@@ -1268,14 +1268,18 @@ common ones:
 `false` also needs the database to use unified auditing only: `V$OPTION` reports
 `Unified Auditing` as `TRUE`. 26ai Free 23.26.2.0.0 does. In mixed mode (`FALSE`
 on 12.1 and later), traditional auditing might record the action, so the value
-is `unknown`. 11.2 has no unified auditing, so the value is `unknown` there too.
-Neither case has been measured. [measurements](../measurements.md) lists the
-releases the probe has run on.
+is `unknown`. The 21c XE 21.3.0.0.0 and 18c XE 18.4.0.0.0 images run in mixed
+mode, and both enable `ORA_SECURECONFIG` from the start, which covers
+`ALTER USER` and not `LOGON`. So on those images the check answers `unknown`,
+or `true` once a policy covers `LOGON` (measured, #820). 11.2 has no unified
+auditing, so the value is `unknown` there too; that is not measured.
+[measurements](../measurements.md) lists the releases the probe has run on.
 
-The check reads `ENABLED_OPTION` and `ENTITY_NAME`, which the probe measured on
-26ai. A release whose view lacks them answers `ORA-00904`, and the value is then
-`unknown` with a detail that says so. That is not measured on any release
-either.
+The check reads `ENABLED_OPTION` and `ENTITY_NAME`. The probe found them, with
+the same rows, on 26ai, 21.3 and 18.4. 18.4's view also has `USER_NAME` and
+`ENABLED_OPT`. A release whose view lacks the columns read answers `ORA-00904`,
+and the value is then `unknown` with a detail that says so. No measured release
+lacks them; 12.2 and 19c are not measured.
 
 **What `01_audit_policy.sql` creates.** The script creates different policies
 in `CDB$ROOT` and in other containers, because a policy covers different

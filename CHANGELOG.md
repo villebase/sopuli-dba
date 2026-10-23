@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.79.0](https://github.com/villebase/sopuli-dba/compare/v0.78.0...v0.79.0) (2026-10-23)
+
+
+### Features
+
+* **apply:** ask the guardrails on every target before the first change ([#872](https://github.com/villebase/sopuli-dba/issues/872)) ([#991](https://github.com/villebase/sopuli-dba/issues/991)) ([d765c18](https://github.com/villebase/sopuli-dba/commit/d765c18f6259e2fe8afae4eb774aa2f4c4320fe2))
+* **apply:** say under --dry-run --preflight which credentials the guardrail pass would skip ([#988](https://github.com/villebase/sopuli-dba/issues/988)) ([#996](https://github.com/villebase/sopuli-dba/issues/996)) ([f7d3130](https://github.com/villebase/sopuli-dba/commit/f7d3130eaf55017eceaed4cd0018d73b27b7d73b))
+* **audit:** answer unknown in mixed mode under AUDIT_TRAIL = NONE ([#1004](https://github.com/villebase/sopuli-dba/issues/1004)) ([#1010](https://github.com/villebase/sopuli-dba/issues/1010)) ([8dce53d](https://github.com/villebase/sopuli-dba/commit/8dce53d4e49230e342ba300e1349d10628fe11a1))
+* **config:** ratchet a safety setting between --config files ([#855](https://github.com/villebase/sopuli-dba/issues/855)) ([#987](https://github.com/villebase/sopuli-dba/issues/987)) ([03689bd](https://github.com/villebase/sopuli-dba/commit/03689bdc68814158917ed96d78c96a7474d1495f))
+* **config:** refuse a password over an unencrypted connection when required ([#857](https://github.com/villebase/sopuli-dba/issues/857)) ([#989](https://github.com/villebase/sopuli-dba/issues/989)) ([0f36e4d](https://github.com/villebase/sopuli-dba/commit/0f36e4ddf8c3395c1dd0c7a3b9ca2f44d8bf6a43))
+* **config:** refuse a password policy below a length of 12 or 10 distinct characters ([#866](https://github.com/villebase/sopuli-dba/issues/866)) ([#984](https://github.com/villebase/sopuli-dba/issues/984)) ([f91489d](https://github.com/villebase/sopuli-dba/commit/f91489d1a7c16fbdf207179ecc48f19cb4750259))
+* **config:** refuse a vault address or webhook URL that is not https, except on loopback ([#856](https://github.com/villebase/sopuli-dba/issues/856)) ([#986](https://github.com/villebase/sopuli-dba/issues/986)) ([feee9e3](https://github.com/villebase/sopuli-dba/commit/feee9e394bc892e8915abc470930fbaf059e20fa))
+* **config:** refuse one database user bound to two places on one target ([#874](https://github.com/villebase/sopuli-dba/issues/874)) ([#985](https://github.com/villebase/sopuli-dba/issues/985)) ([5903994](https://github.com/villebase/sopuli-dba/commit/59039948b7a428ac4e2abcf83120ae1a4f6e7287))
+* **rotate:** say under --dry-run which credentials the guardrail pass would skip ([#997](https://github.com/villebase/sopuli-dba/issues/997)) ([#1002](https://github.com/villebase/sopuli-dba/issues/1002)) ([4db6225](https://github.com/villebase/sopuli-dba/commit/4db622557f348b13902fc9ad9e8d9ef4c21b6502))
+* **vault:** list vault records no binding declares ([#999](https://github.com/villebase/sopuli-dba/issues/999)) ([#1012](https://github.com/villebase/sopuli-dba/issues/1012)) ([70c9137](https://github.com/villebase/sopuli-dba/commit/70c91377181f386608c9b085eeb769c791318300))
+* **vault:** survey only the paths under --prefix for vault orphans ([#1016](https://github.com/villebase/sopuli-dba/issues/1016)) ([#1022](https://github.com/villebase/sopuli-dba/issues/1022)) ([8042013](https://github.com/villebase/sopuli-dba/commit/80420133d4d5cf096ce6f2eee5620a78f8f22538))
+* **vault:** survey only the stores named by --vault for vault orphans ([#1015](https://github.com/villebase/sopuli-dba/issues/1015)) ([#1017](https://github.com/villebase/sopuli-dba/issues/1017)) ([cf5133b](https://github.com/villebase/sopuli-dba/commit/cf5133b7385d09b75b676224582afed695640567))
+
+
+### Bug Fixes
+
+* **account:** report a guardrail check that could not run on the account verbs ([#971](https://github.com/villebase/sopuli-dba/issues/971)) ([#993](https://github.com/villebase/sopuli-dba/issues/993)) ([e0e390e](https://github.com/villebase/sopuli-dba/commit/e0e390ecccf4740f4a6b0c1fc1bf85860f4c3aa9))
+* **audit:** keep only the server's first line, once, in the audited check's error details ([#1011](https://github.com/villebase/sopuli-dba/issues/1011)) ([#1021](https://github.com/villebase/sopuli-dba/issues/1021)) ([0252efe](https://github.com/villebase/sopuli-dba/commit/0252efed648ee27bf54d40adad228b4833938bad))
+* **generate:** clear targets when --overwrite-current replaces a current ([#975](https://github.com/villebase/sopuli-dba/issues/975)) ([#995](https://github.com/villebase/sopuli-dba/issues/995)) ([e76d3bb](https://github.com/villebase/sopuli-dba/commit/e76d3bb3558a4b9cc2afc92eee8b5fea53f4187e))
+* **orphans:** exit 1 when vault orphans could list no store ([#1018](https://github.com/villebase/sopuli-dba/issues/1018)) ([#1019](https://github.com/villebase/sopuli-dba/issues/1019)) ([7132544](https://github.com/villebase/sopuli-dba/commit/713254495dd193777c6deebaff8f7e50b7b06c07))
+* **rotate:** read back only the accounts the promotion moved ([#1000](https://github.com/villebase/sopuli-dba/issues/1000)) ([#1003](https://github.com/villebase/sopuli-dba/issues/1003)) ([caf2645](https://github.com/villebase/sopuli-dba/commit/caf26459aff69565c5f5746a92c267b3ac28e38b))
+* **rotate:** stage nothing the guardrails would skip ([#1009](https://github.com/villebase/sopuli-dba/issues/1009)) ([#1020](https://github.com/villebase/sopuli-dba/issues/1020)) ([0953dd9](https://github.com/villebase/sopuli-dba/commit/0953dd9dc0b6c603685a877332c36fb9a238d61e))
+
 ## [0.78.0](https://github.com/villebase/sopuli-dba/compare/v0.77.1...v0.78.0) (2026-10-22)
 
 

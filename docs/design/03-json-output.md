@@ -1249,9 +1249,12 @@ named in `SOPULI-W056` too, and the rest of it is not read. A store
 with no `list` capability is named in `SOPULI-W005`, and a path the tool
 refuses is named in `SOPULI-W053`. The run exits 0 when it could look. When no
 store surveyed has the `list` capability, it exits 5 with category
-`capability`, because an empty report would read as a clean estate. When every
-store surveyed failed its listing, the run exits 0, with `listed` empty and
-`SOPULI-W056` for each.
+`capability`, because an empty report would read as a clean estate. When no
+store was listed and at least one could list but failed, the run exits 1 with
+category `vault` ([#1018](../decisions/log.md#1018)). The error names those
+stores, `listed` and `found` are empty, and each store's `SOPULI-W056` gives
+its reason. This holds with and without `--vault`. When at least one store was
+listed, the run exits 0.
 
 Every store in `vaults:` is opened, so one the run cannot log in to fails the
 run, as on `lock status`: exit 9 when its login material is not set, and exit 6

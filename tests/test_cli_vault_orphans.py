@@ -345,6 +345,80 @@ def test_a_listing_the_store_refuses_is_a_warning(
     assert "stopped reading store 'vault-dev'" in warning["message"]
 
 
+def _refuse_listing(store: SecretStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refused(prefix: str) -> tuple[str, ...]:
+        raise RefusedError("permission denied")
+
+    monkeypatch.setattr(store, "list", refused)
+
+
+def test_no_store_listed_is_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """An empty report from a run that looked nowhere would read as a clean estate (#1018)."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED), ("vault-old", "x", PROMOTED))
+    for store in stores.values():
+        _refuse_listing(store, monkeypatch)
+    config = write_config(CONFIG)
+    result = run(config, "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE
+    document = json.loads(result.output)
+    validator.validate(document)
+    assert document["exit_code"] == ExitCode.FAILURE
+    assert document["error"]["category"] == "vault"
+    assert "vault-dev, vault-old" in document["error"]["message"]
+    assert document["orphans"] == {"listed": [], "found": []}
+    assert [entry["code"] for entry in document["diagnostics"]] == [ORPHANS_UNREAD] * 2
+
+    text = run(config)
+    assert text.exit_code == ExitCode.FAILURE
+    assert "no vault could be listed" in text.output
+
+
+def test_one_store_listed_is_not_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED), ("vault-old", "x", PROMOTED))
+    _refuse_listing(stores["vault-old"], monkeypatch)
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "error" not in json.loads(result.output)
+
+
+def test_a_failed_listing_beside_an_unlistable_store_is_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exit 1, not 5: one store could list, and it failed."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    stores["vault-old"] = MemoryStore(capabilities=frozenset({CAS}))  # type: ignore[index]
+    _refuse_listing(stores["vault-dev"], monkeypatch)
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert json.loads(result.output)["error"]["message"].endswith(": vault-dev")
+
+
+def test_the_one_selected_store_failing_its_listing_is_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED), ("vault-old", "x", PROMOTED))
+    _refuse_listing(stores["vault-old"], monkeypatch)
+    result = run(write_config(CONFIG), "--vault", "vault-old", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE
+
+
 #: `CONFIG` with a second entry for `vault-dev`'s server and mount, as an estate
 #: with one entry per auth method has.
 TWO_NAMES = CONFIG.replace(

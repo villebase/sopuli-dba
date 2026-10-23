@@ -726,7 +726,8 @@ a warning. A path that any application in the config names is never listed, in
 any vault. So if you moved an application to another vault and kept the path,
 the old record is not listed, and you remove it by hand.
 
-If the command cannot log in to one vault in `vaults:`, it fails. To look at
+If the command cannot log in to one vault in `vaults:`, it fails. It also fails,
+with exit 1, if it could list no vault at all. To look at
 only some vaults, name each one with `--vault`, for example
 `sopuli vault orphans --vault vault-dev`. The line with the count names the
 vaults it read.

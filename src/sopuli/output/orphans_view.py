@@ -69,7 +69,9 @@ def render(
     lines.extend(f"        {path} (layered)" for path in paths[1:])
     vaults = survey.listed
     where = f"{len(vaults)} vault{'' if len(vaults) == 1 else 's'} ({', '.join(vaults)})"
-    if not vaults:
+    if not vaults and not survey.unlistable and not survey.unread:
+        lines.extend(["", "no vault in `vaults:`"])
+    elif not vaults:
         lines.extend(["", "no vault could be listed"])
     elif not survey.orphans:
         lines.extend(["", f"no orphans in {where}"])

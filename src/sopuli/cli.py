@@ -4161,7 +4161,8 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     why the delete is left to the operator.
 
     Exit 0 when it could look, as `lock status`. An orphan is a finding, not a
-    failure. Exit 5 when no store can list.
+    failure. Exit 5 when no store can list, and exit 1 when every store that
+    can failed its listing (#1018).
 
     **Every store in `vaults:` is opened**, so one this run cannot log in to
     fails the run, as on `lock status`. A store with token auth is not
@@ -4211,7 +4212,19 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     document.diagnostics.extend(narrowed)
     document.orphans = build_orphans_section(found, deletes)
     count = len(found.orphans)
-    document.finish(ExitCode.SUCCESS, Summary(total=count, ok=count, changed=0, failed=0))
+    exit_code = ExitCode.SUCCESS
+    if stores and not found.listed:
+        # Every store failed its listing, so the run looked nowhere (#1018).
+        # `find` has already raised when none could list at all (exit 5). With
+        # nothing listed, every unread entry is a failed listing.
+        failed = sorted({unread.store for unread in found.unread})
+        document.error = Error(
+            category="vault",
+            message=f"no store this run surveys could be listed: {', '.join(failed)}",
+            hint="each store's warning gives its reason",
+        )
+        exit_code = ExitCode.FAILURE
+    document.finish(exit_code, Summary(total=count, ok=count, changed=0, failed=0))
     return render_orphans(
         run.sources,
         found,

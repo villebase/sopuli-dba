@@ -332,17 +332,99 @@ def test_a_listing_the_store_refuses_is_a_warning(
         ("vault-dev", "acme/alpha/db", PROMOTED),
         ("vault-old", "acme/alpha/db", PROMOTED),
     )
-
-    def refused(prefix: str) -> tuple[str, ...]:
-        raise RefusedError("permission denied")
-
-    monkeypatch.setattr(stores["vault-dev"], "list", refused)
+    _refuse_listing(stores["vault-dev"], monkeypatch)
     result = run(write_config(CONFIG), "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS
     assert [entry["vault"] for entry in found(result)] == ["vault-old"]
     [warning] = json.loads(result.output)["diagnostics"]
     assert "stopped reading store 'vault-dev'" in warning["message"]
+
+
+def _refuse_listing(store: SecretStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refused(prefix: str) -> tuple[str, ...]:
+        raise RefusedError("permission denied")
+
+    monkeypatch.setattr(store, "list", refused)
+
+
+def test_no_store_listed_is_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """An empty report from a run that looked nowhere would read as a clean estate (#1018)."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED), ("vault-old", "x", PROMOTED))
+    for store in stores.values():
+        _refuse_listing(store, monkeypatch)
+    config = write_config(CONFIG)
+    result = run(config, "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE
+    document = json.loads(result.output)
+    validator.validate(document)
+    assert document["exit_code"] == ExitCode.FAILURE
+    assert document["error"]["category"] == "vault"
+    assert "vault-dev, vault-old" in document["error"]["message"]
+    assert document["orphans"] == {"listed": [], "found": []}
+    assert [entry["code"] for entry in document["diagnostics"]] == [ORPHANS_UNREAD] * 2
+
+    text = run(config)
+    assert text.exit_code == ExitCode.FAILURE
+    assert "no vault could be listed" in text.output
+
+
+def test_one_store_listed_is_not_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED), ("vault-old", "x", PROMOTED))
+    _refuse_listing(stores["vault-old"], monkeypatch)
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "error" not in json.loads(result.output)
+
+
+def test_a_failed_listing_beside_an_unlistable_store_is_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exit 1, not 5: one store could list, and it failed."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    stores["vault-old"] = MemoryStore(capabilities=frozenset({CAS}))  # type: ignore[index]
+    _refuse_listing(stores["vault-dev"], monkeypatch)
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert json.loads(result.output)["error"]["message"].endswith(": vault-dev")
+
+
+def test_the_one_selected_store_failing_its_listing_is_a_failure(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED), ("vault-old", "x", PROMOTED))
+    _refuse_listing(stores["vault-old"], monkeypatch)
+    result = run(write_config(CONFIG), "--vault", "vault-old", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE
+    document = json.loads(result.output)
+    assert document["error"]["message"].endswith(": vault-old")
+    assert document["orphans"]["listed"] == []
+
+
+def test_a_config_with_no_vault_says_so(write_config: Callable[[str], Path]) -> None:
+    """Nothing is declared, so nothing failed, and the text does not say a listing failed."""
+    config = write_config("version: 1\nvaults: {}\n")
+    result = run(config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "no vault in `vaults:`" in result.output
 
 
 #: `CONFIG` with a second entry for `vault-dev`'s server and mount, as an estate

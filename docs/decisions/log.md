@@ -2939,3 +2939,27 @@ the register.
     account holds `DBA`.
   - Keeping the refusal for a skipped account's `pending`, with a hint that
     names the ways out. The document would still not rotate.
+
+## #1018
+
+- **Decided:** 2026-10-23, #1018
+- **Question:** `sopuli vault orphans` exits 0 when every store it surveys
+  failed its listing, with `listed` empty and one `SOPULI-W056` per store. A
+  scheduled job that reads only the exit code sees a clean estate. Should the
+  run fail?
+- **Decision:** Fail when nothing was listed and at least one store that can
+  list failed. The run exits 1 with category `vault`, names those stores, and
+  keeps its `orphans` section and its `SOPULI-W056` warnings. This holds with
+  and without `--vault`. A run where at least one store was listed still exits
+  0, and a run where no store can list still exits 5.
+- **Why:** the verb is meant to run on a schedule, and a survey that read
+  nothing must not look clean to a job that reads the exit code. Exit 1,
+  because no specific code fits: 5 is a missing capability, 6 is right only
+  when every store refused the login for that reason, and 4 means some work
+  succeeded. Each store's `SOPULI-W056` already gives its own reason.
+- **Rejected:**
+  - Keeping exit 0. It holds only for a consumer that reads the document.
+  - Failing only under `--vault`. A default survey with one store, or with
+    every store down at once, would still report a clean estate.
+  - Exit with the first store's own category. With several stores the
+    categories can differ, and the first is no more the reason than the rest.

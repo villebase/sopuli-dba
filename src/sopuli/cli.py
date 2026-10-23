@@ -1584,6 +1584,7 @@ def _suspend_one(
                 changed=False,
                 detail=reported.message,
                 status=status,
+                overridden=overridden,
                 caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
@@ -1877,6 +1878,7 @@ def _expire_one(
                 detail=f"{_expire_detail(error.completed)}; then: {reported.message}",
                 status=status,
                 actions=(*done, (PASSWORD_EXPIRE, False, reported.message)),
+                overridden=overridden,
                 caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
@@ -1890,6 +1892,7 @@ def _expire_one(
                 changed=False,
                 detail=reported.message,
                 status=status,
+                overridden=overridden,
                 caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
@@ -2228,7 +2231,8 @@ def account_reset_password(
         fence = Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
         document.diagnostics.append(fence)
         notices.append(fence)
-    later = [*_reset_notices(found), *_account_caveats(found)]
+    # The unread check before the encryption warnings, `creds apply`'s order.
+    later = [*_account_caveats(found), *_reset_notices(found)]
     document.diagnostics.extend(later)
     notices.extend(later)
     document.finish(
@@ -2945,6 +2949,7 @@ def _reset_one(
                             status=status,
                             started=started,
                         ),
+                        overridden=overridden,
                         caveats=caveats,
                         encryption=sent if _carried(error) else None,
                         audited=audited,

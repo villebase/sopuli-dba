@@ -282,6 +282,25 @@ def test_a_refused_account_reports_no_unread_check(
     assert GUARDRAIL_UNCHECKED not in codes
 
 
+def test_a_forced_row_that_failed_still_records_the_override(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§4: an override is recorded in the JSON. A row whose statement then failed
+    was still let through by `--force`, so it says which check was waived."""
+    _unread(
+        monkeypatch,
+        roles=frozenset({"DBA"}),
+        fail=DriverError("ORA-01031: insufficient privileges", code="ORA-01031"),
+    )
+
+    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT, "--force", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    row = document(result)["results"][0]
+    assert row["state"] == "ERROR"
+    assert [one["check"] for one in row["overridden"]] == ["privileged_role"]
+
+
 def test_a_real_expiry_reports_the_unread_check_after_the_closing_line(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

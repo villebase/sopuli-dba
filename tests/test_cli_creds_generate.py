@@ -1682,7 +1682,7 @@ def test_the_authorised_overwrite_clears_the_targets_of_the_old_value(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:
     """`targets` named the databases that confirmed the replaced value. No
-    database has the new one, so the document must not say any did (#975)."""
+    database has the new one, so the document must not say any did."""
     store.write(
         PATH,
         {

@@ -727,7 +727,7 @@ def test_a_first_rotation_writes_no_previous() -> None:
 
 
 def test_replacing_a_current_no_target_confirmed_clears_its_targets() -> None:
-    """`generate --promote --overwrite-current` (#975). The `targets` beside the
+    """`generate --promote --overwrite-current`. The `targets` beside the
     old value name the databases that confirmed it, not the new one."""
     entry = apply.Promotable(binding(), Secret("new"), Secret("old"), "app-standard", ())
 

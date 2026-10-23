@@ -420,8 +420,8 @@ mount name and the path.
   which databases *confirmed* the password. It is written when `creds apply` or
   `creds rotate` promotes a `pending`, which happens only after every target
   the config declares has confirmed it. `creds generate --promote` asks no
-  database, so it does not write it. With `--overwrite-current` it clears it,
-  because no database has the new password. A completed rotation —
+  database, so it does not write it ([UC-1 §4](../use-cases/uc-01-app-credential-sync.md#--promote-and-its-exception-to-invariant-7-decided-in-257)
+  says what it does with an existing one). A completed rotation —
   which is what section 2 was captured from — has both.
 
 ### What it does not establish

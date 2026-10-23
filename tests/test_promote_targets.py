@@ -1,4 +1,4 @@
-"""`targets` after `creds generate --promote --overwrite-current` (#975).
+"""`targets` after `creds generate --promote --overwrite-current`.
 
 A rotation records in `targets` the databases that confirmed `current`.
 `generate --promote --overwrite-current` replaces `current` with a password no

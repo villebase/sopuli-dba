@@ -102,6 +102,7 @@ from sopuli.payload import (
     PREVIOUS,
     REMOVE,
     SUPPLIED,
+    TARGETS,
     StageLayout,
     merge,
     stage_layout,
@@ -627,7 +628,9 @@ class Promotable:
     replaces: Secret | None
     #: The policy the value was drawn under, for the stamp of the same name.
     policy: str | None
-    #: Which targets this run confirmed, for ``targets``.
+    #: Which targets this run confirmed, for ``targets``. Empty where none was
+    #: asked (`generate --promote`). Empty with a ``replaces`` clears the
+    #: ``targets`` of the value being replaced.
     targets: tuple[str, ...]
 
 
@@ -637,7 +640,9 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
     Five changes per account, and **one write**: ``current`` takes what
     ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` and
     the ``origin`` describing it are removed, and the stamps are refreshed.
-    :func:`sopuli.payload.merge` exists for exactly this -- five writes would be
+    ``targets`` is written where targets confirmed the value. Where none did and
+    a ``current`` is replaced, it is cleared: it named the targets that confirmed
+    the old value. :func:`sopuli.payload.merge` exists for exactly this -- five writes would be
     five versions, four of which describe a state that was never true, and any of
     which can be the one that fails.
 
@@ -673,14 +678,14 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         if entry.policy is not None:
             patches.append(layout.patch("policy", entry.policy))
         if entry.targets:
-            patches.append(layout.patch("targets", list(entry.targets)))
+            patches.append(layout.patch(TARGETS, list(entry.targets)))
         elif entry.replaces is not None:
             # No target confirmed this value (`generate --promote
             # --overwrite-current`), and `targets` names the ones that confirmed
             # the value it replaces. Cleared, so the document never says a
-            # database confirmed a password it has not seen (#975). A seeded
-            # account has no `targets` to clear, so its document keeps its shape.
-            patches.append(layout.patch("targets", REMOVE))
+            # database confirmed a password it has not seen. A seeded account has
+            # no `targets` to clear, so its document keeps its shape.
+            patches.append(layout.patch(TARGETS, REMOVE))
     return merge(*patches)
 
 

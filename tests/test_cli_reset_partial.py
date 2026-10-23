@@ -133,7 +133,9 @@ class FakeSession:
         self.audited = AuditCoverage(audited=True, detail="LOGON by P; ALTER USER by P")
 
     def describe_user(self, account: str) -> UserState | None:
-        return UserState(name=account.upper(), status=self.status)
+        # Check 3 answered, as on a target that took §2's optional grant, so the
+        # notes these tests count are the reset's own.
+        return UserState(name=account.upper(), status=self.status, password_file_member=False)
 
     def scope(self) -> Scope:
         return Scope(encryption=self.encryption)

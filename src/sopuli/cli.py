@@ -1414,6 +1414,8 @@ def account_suspend(
     found = _suspend_estate(reached, account, run, config, force=force, preview=run.dry_run)
 
     document.results = [record.as_json() for record in found]
+    unchecked = _account_caveats(found)
+    document.diagnostics.extend(unchecked)
     states = [record.state for record in found]
     changed = sum(1 for record in found if record.changed)
     document.finish(_suspend_exit(states), summarise_suspend(states, changed=changed))
@@ -1428,7 +1430,9 @@ def account_suspend(
         preview=run.dry_run,
         would_suspend=sum(1 for one in found if one.would_suspend) if run.dry_run else None,
     )
-    return f"{header}\n\n{body}"
+    # Printed as well as serialised, for `creds apply`'s reason: a guardrail that
+    # did not run, reported only in JSON, is reported to nobody at a terminal.
+    return "\n".join([f"{header}\n\n{body}", *render_notices([one.message for one in unchecked])])
 
 
 @dataclass(frozen=True)
@@ -1443,6 +1447,10 @@ class _Suspended:
     #: ``ACCOUNT_STATUS`` as it was **read**, before anything was issued.
     status: str | None = None
     overridden: tuple[guardrails.Refusal, ...] = ()
+    #: §4's checks that could not be run, on a row the guardrails let through.
+    #: **Never serialised as a result field**: the caller turns them into
+    #: `SOPULI-W018` in ``diagnostics[]``, once per (target, check).
+    caveats: tuple[guardrails.Caveat, ...] = ()
     #: Under ``--dry-run``, whether this row cleared every gate and would have
     #: been suspended. Always ``False`` on a real run, where ``changed`` is the
     #: answer -- one field serving both would make "would have" and "did"
@@ -1549,6 +1557,7 @@ def _suspend_one(
                 overridden=overridden,
                 duration_ms=_elapsed(started),
             )
+        caveats = _caveats_of(decision.review)
 
         if preview:
             return _Suspended(
@@ -1559,6 +1568,7 @@ def _suspend_one(
                 detail=f"{decision.detail}; would be suspended",
                 status=status,
                 overridden=overridden,
+                caveats=caveats,
                 would_suspend=True,
                 duration_ms=_elapsed(started),
             )
@@ -1574,6 +1584,7 @@ def _suspend_one(
                 changed=False,
                 detail=reported.message,
                 status=status,
+                caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
             )
@@ -1588,6 +1599,7 @@ def _suspend_one(
             detail=change.detail,
             status=change.status,
             overridden=overridden,
+            caveats=caveats,
             duration_ms=_elapsed(started),
         )
     finally:
@@ -1697,6 +1709,8 @@ def account_expire_password(
     ]
 
     document.results = [record.as_json() for record in found]
+    unchecked = _account_caveats(found)
+    document.diagnostics.extend(unchecked)
     states = [record.state for record in found]
     changed = sum(1 for record in found if record.changed)
     document.finish(_expire_exit(states), summarise_expire(states, changed=changed))
@@ -1721,7 +1735,8 @@ def account_expire_password(
         preview=run.dry_run,
         would_expire=sum(1 for one in found if one.would_expire) if run.dry_run else None,
     )
-    return f"{header}\n\n{body}"
+    # `account suspend`'s rule: printed as well as serialised.
+    return "\n".join([f"{header}\n\n{body}", *render_notices([one.message for one in unchecked])])
 
 
 @dataclass(frozen=True)
@@ -1739,6 +1754,8 @@ class _Expired:
     #: for a row that never reached it.
     actions: tuple[tuple[str, bool, str | None], ...] = ()
     overridden: tuple[guardrails.Refusal, ...] = ()
+    #: ``_Suspended.caveats``: never serialised, reported as `SOPULI-W018`.
+    caveats: tuple[guardrails.Caveat, ...] = ()
     #: Under ``--dry-run``, whether this row cleared every gate. ``_Suspended``'s
     #: rule: one field for "would have" and "did" would blur the two.
     would_expire: bool = False
@@ -1828,6 +1845,7 @@ def _expire_one(
                 overridden=overridden,
                 duration_ms=_elapsed(started),
             )
+        caveats = _caveats_of(decision.review)
 
         if preview:
             return _Expired(
@@ -1838,6 +1856,7 @@ def _expire_one(
                 detail=f"{decision.detail}; would be expired",
                 status=status,
                 overridden=overridden,
+                caveats=caveats,
                 would_expire=True,
                 duration_ms=_elapsed(started),
             )
@@ -1858,6 +1877,7 @@ def _expire_one(
                 detail=f"{_expire_detail(error.completed)}; then: {reported.message}",
                 status=status,
                 actions=(*done, (PASSWORD_EXPIRE, False, reported.message)),
+                caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
             )
@@ -1870,6 +1890,7 @@ def _expire_one(
                 changed=False,
                 detail=reported.message,
                 status=status,
+                caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
             )
@@ -1886,6 +1907,7 @@ def _expire_one(
             status=changes[0].status if changes else status,
             actions=tuple((change.action, change.changed, change.detail) for change in changes),
             overridden=overridden,
+            caveats=caveats,
             duration_ms=_elapsed(started),
         )
     finally:
@@ -2206,7 +2228,7 @@ def account_reset_password(
         fence = Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
         document.diagnostics.append(fence)
         notices.append(fence)
-    later = _reset_notices(found)
+    later = [*_reset_notices(found), *_account_caveats(found)]
     document.diagnostics.extend(later)
     notices.extend(later)
     document.finish(
@@ -2605,6 +2627,8 @@ class _Reset:
     #: destination is a person, by a route the tool did not carry (UC-2 3.1).
     delivered: str | None = None
     overridden: tuple[guardrails.Refusal, ...] = ()
+    #: ``_Suspended.caveats``: never serialised, reported as `SOPULI-W018`.
+    caveats: tuple[guardrails.Caveat, ...] = ()
     #: Under ``--dry-run``, whether this row cleared every gate.
     would_reset: bool = False
     duration_ms: int | None = None
@@ -2801,6 +2825,7 @@ def _reset_one(
                 overridden=overridden,
                 duration_ms=_elapsed(started),
             )
+        caveats = _caveats_of(decision.review)
 
         # **Whether the database audits the DBA's routes to this person** (UC-2
         # §1, H10), on the unseen path only: the seen path's exposure does not
@@ -2844,6 +2869,7 @@ def _reset_one(
                 detail=reported.message,
                 status=status,
                 overridden=overridden,
+                caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
                 audited=audited,
@@ -2865,6 +2891,7 @@ def _reset_one(
                 detail=f"{decision.detail}; would be reset",
                 status=status,
                 overridden=overridden,
+                caveats=caveats,
                 would_reset=True,
                 duration_ms=_elapsed(started),
                 audited=audited,
@@ -2918,6 +2945,7 @@ def _reset_one(
                             status=status,
                             started=started,
                         ),
+                        caveats=caveats,
                         encryption=sent if _carried(error) else None,
                         audited=audited,
                     )
@@ -2932,6 +2960,7 @@ def _reset_one(
                 detail=reported.message,
                 status=status,
                 overridden=overridden,
+                caveats=caveats,
                 duration_ms=_elapsed(started),
                 error=reported,
                 encryption=sent if _carried(error) else None,
@@ -2972,6 +3001,7 @@ def _reset_one(
             delivered=delivery.method,
             handover=receipt.reported() if receipt is not None else None,
             overridden=overridden,
+            caveats=caveats,
             duration_ms=_elapsed(started),
             encryption=sent,
             audited=audited,
@@ -9503,8 +9533,9 @@ def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     groups the constraints it cannot check the same way, for the same reason.
 
     Emitted by `apply` and by `rotate`. `account suspend`, `account
-    reset-password` and `account expire-password` ask the guardrails too, and do
-    not report their caveats yet (TODO(#971)). Grouping and wording are
+    reset-password` and `account expire-password` emit it through
+    :func:`_account_caveats`, which builds the same pairs from their rows. Grouping
+    and wording are
     :func:`sopuli.diagnostics.guardrail_diagnostics`', because turning a domain
     object into something an operator reads is that module's job and the remedy it
     appends is a `GRANT` statement -- product knowledge the guardrails deliberately
@@ -9513,6 +9544,20 @@ def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     return guardrail_diagnostics(
         [(record.binding.target, caveat) for record in applied for caveat in record.caveats]
     )
+
+
+def _account_caveats(rows: Sequence[_Suspended | _Expired | _Reset]) -> list[Diagnostic]:
+    """:func:`_guardrail_caveats` for the account verbs, whose rows name the target."""
+    return guardrail_diagnostics([(row.target, caveat) for row in rows for caveat in row.caveats])
+
+
+def _caveats_of(review: guardrails.Review | None) -> tuple[guardrails.Caveat, ...]:
+    """The caveats an account verb carries on a row the guardrails let through.
+
+    Asked only after the refusal has returned, for `_guardrail_caveats`' rule: an
+    account the guardrails turned away was not touched.
+    """
+    return review.caveats if review is not None else ()
 
 
 def _carried(error: BaseException) -> bool:

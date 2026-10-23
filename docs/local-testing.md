@@ -930,6 +930,9 @@ acme_priv_user   free-pdb  SKIPPED          the account holds DBA
 2 changed, 1 promoted to `current`, 1 not confirmed
 
 rotation: staged 1 document, promoted 1 document
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
 Name the account on the command line, and the same refusal fails the run,

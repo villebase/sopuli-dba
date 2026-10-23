@@ -241,6 +241,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Refuse or mask userinfo in a vault address | open | | #891 |
 | — | — | In mixed mode, which `AUDIT_TRAIL` values keep the `audited` check's `true`? | open | | #1013 |
 | — | — | A guarded account's leftover `pending` blocks every rotation of its document | open | | #1009 |
+| — | — | Should `vault orphans` fail when no store it surveys could be listed? | open | | #1018 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

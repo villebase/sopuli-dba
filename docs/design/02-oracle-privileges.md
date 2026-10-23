@@ -1071,11 +1071,13 @@ written only as a comment in a script does not run.
 
 **Run the extensions with auditing enabled again.** The main probe's cleanup
 drops `SOPULI_PROBE_POL` and issues `NOAUDIT USER`. Run straight afterwards, the
-extensions record nothing, and their masking result proves nothing. 21c makes
-this harder to see than 26ai does. On 26ai nothing is enabled, and the trail is
-visibly empty. On 21c the Oracle-supplied `ORA_SECURECONFIG` policy covers
-`ALTER USER`, so the trail looks populated anyway, by a policy you did not mean
-to test.
+extensions record nothing, and their masking result proves nothing. On 26ai
+nothing is enabled, and the trail is visibly empty. The XE images of 21.3.0.0.0
+and 18.4.0.0.0 ship `AUDIT_TRAIL = NONE`, which stops unified records there
+(§5), so as shipped their trail stays empty too. Once `AUDIT_TRAIL` is changed,
+the Oracle-supplied `ORA_SECURECONFIG` policy, which the images enable and which
+covers `ALTER USER`, makes the trail look populated anyway, by a policy you did
+not mean to test.
 
 ---
 
@@ -1271,11 +1273,14 @@ on 12.1 and later), traditional auditing might record the action, so the value
 is `unknown`. The XE images of 21.3.0.0.0 and 18.4.0.0.0 run in mixed mode, and
 both enable `ORA_SECURECONFIG` from the start. The check then answers `unknown`,
 because nothing covers `LOGON`, and `true` once a policy covers it. Both answers
-come from the policy views. On those images the trail itself recorded nothing at
-run time, so whether a `true` there matches what the database records is not
-established ([#1006](https://github.com/villebase/sopuli-dba/issues/1006)).
-Whether mixed mode with `AUDIT_TRAIL = NONE`, as on those images, should count
-as unified-only is open ([#1004](https://github.com/villebase/sopuli-dba/issues/1004)).
+come from the policy views. The images ship `AUDIT_TRAIL = NONE`, and on both
+releases that stops unified records as well. A logon under an enabled
+`ACTIONS LOGON` policy, and an `ALTER USER` under an enabled
+`ACTIONS ALTER USER` policy, leave no row. Under `AUDIT_TRAIL = DB` each leaves
+one (`15_mixed_mode_trail_probe.sql`). The policy view shows the policies
+enabled either way, so there the check answers `true` while the unified trail
+records neither action. What the check should answer in mixed mode under
+`AUDIT_TRAIL = NONE` is not decided (open: #1004).
 11.2 has no unified auditing, so the value is `unknown` there too; that is not
 measured. [measurements](../measurements.md) lists the releases the probe has
 run on.
@@ -1368,6 +1373,7 @@ the design as it is then.
 | `sql/oracle/12_connection_encryption_probe.sql` | what a session can read about whether its own connection is encrypted, with and without a grant (§2) |
 | `sql/oracle/13_audit_coverage_probe.sql` | what a service account can read about the enabled audit policies, and what each way of enabling a policy records of the proxy route (§2, §5) |
 | `sql/oracle/14_session_loss_probe.py` | the code the client raises when a held session is lost to a closed PDB or a CDB shutdown, and when a logon meets a CDB that is starting (UC-1 §6.4) |
+| `sql/oracle/15_mixed_mode_trail_probe.sql` | whether, in mixed mode, an enabled unified policy records a logon and an `ALTER USER` under each `AUDIT_TRAIL` setting (§5) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

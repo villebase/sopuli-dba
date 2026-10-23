@@ -606,6 +606,15 @@ cannot read is left to the run. The same applies to `creds rotate`, but not to
 `--force`, which waives the checks, or to `--dry-run`, which does not make the
 read. Reasons: [#872](../decisions/log.md#872).
 
+**After a survey, the read is the survey's.** Under `--preflight`, and on every
+`creds rotate`, the survey has just read each of these accounts under the run's
+lock. The run decides from those reads and opens no connection for this step. A
+survey that lets the run through has read every one: under `--preflight`, a
+target it cannot reach, an account it cannot read and an account that is not
+there each refuse the run. A refusal that appears after the survey is still
+found by the check at the point of change. Reasons:
+[#998](../decisions/log.md#998).
+
 **`creds apply --dry-run --preflight` says what this read would skip.** The
 survey already reads each account, so the same question is asked of what it
 read, with no connection of its own. Each credential the run would change on no

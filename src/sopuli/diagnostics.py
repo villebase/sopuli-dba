@@ -524,10 +524,11 @@ UNADDRESSABLE_LOCK_PATH = "SOPULI-W053"
 #: documented mode, and this is a fault in a store the configuration declares.
 RESET_JOURNAL_UNREAD = "SOPULI-W054"
 
-#: `creds apply --dry-run --preflight` found a credential that the real run's
-#: guardrail pass would skip on every target, because a guardrail refuses it on
-#: one (#988). Raised before anything is written, as `SOPULI-W028` is: a
-#: forecast of the run, not a check the survey could not make.
+#: `creds apply --dry-run --preflight` or `creds rotate --dry-run` found a
+#: credential that the real run's guardrail pass would skip on every target,
+#: because a guardrail refuses it on one (#988, #997). Raised before anything is
+#: written, as `SOPULI-W028` is: a forecast of the run, not a check the survey
+#: could not make.
 GUARDRAIL_PASS_AHEAD = "SOPULI-W055"
 
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
@@ -682,14 +683,17 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "reset that account through this tool."
         ),
         GUARDRAIL_PASS_AHEAD: (
-            "A `creds apply --dry-run --preflight` found a credential bound to more than "
-            "one target that a guardrail refuses on at least one of them. The real run "
-            "asks every target before the first change and then changes that credential "
-            "on none of them, so this is the run's `SKIPPED` rows said before it starts. "
-            "One entry per credential, naming the document, the account, each refusing "
-            "target with its reason, and the targets it would be left alone on. Not raised "
-            "under `--force`, which waives the checks the pass asks, or without "
-            "`--preflight`, so that a plain dry run opens no connection."
+            "A `creds apply --dry-run --preflight` or a `creds rotate --dry-run` found a "
+            "credential bound to more than one target that a guardrail refuses on at least "
+            "one of them. The real run asks every target before the first change and then "
+            "changes that credential on none of them, so this is the run's `SKIPPED` rows "
+            "said before it starts. One entry per credential, naming the document, the "
+            "account, each refusing target with its reason, and the targets it would be "
+            "left alone on. Not raised under `--force`, which waives the checks the pass "
+            "asks. `apply` raises it only under `--preflight`, so that its plain dry run "
+            "opens no connection; `rotate`'s dry run always surveys. A rotation stages a "
+            "`pending` for the refused credential before the pass asks, and leaves it "
+            "staged."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

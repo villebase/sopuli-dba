@@ -2847,3 +2847,23 @@ the register.
 - **Rejected:** keeping the second read for a fresher answer. Being fresher
   than the survey protects nothing that the point-of-change check does not
   already protect.
+
+## #997
+
+- **Decided:** 2026-10-23, #997
+- **Question:** Should a rotation preview say which credentials #872's
+  guardrail pass would skip, as `creds apply --dry-run --preflight` does
+  (#988)?
+- **Decision:** Yes. `creds rotate --dry-run` raises `SOPULI-W055` for each
+  credential the real rotation would change on no target. Nothing is staged
+  yet, so the pass's credentials are the ones the rotation would stage: every
+  credential due gets a `pending` that a promotion follows. The decision is the
+  one `apply` uses. Not under `--force`, and not when the survey refuses the
+  run. Run schema 1.55 and event schema 1.16, because the code is raised on a
+  verb where it was not before.
+- **Why:** a rotation's dry run always surveys every account it would rotate,
+  so the forecast costs no connection, and it says before the run what the
+  run's `SKIPPED` rows would.
+- **Rejected:**
+  - Leaving rotate out. A rotation preview would then pass while the rotation
+    changed a shared credential on no target.

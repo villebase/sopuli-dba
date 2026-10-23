@@ -525,7 +525,8 @@ def test_a_survey_that_refuses_forecasts_nothing(
     )
     result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
 
-    assert result.exit_code == ExitCode.FAILURE, "ACME_BATCH_USER is missing on appdb-alpha"
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert refused_missing_batch_user(result)
     assert ahead(result) == []
 
 
@@ -585,6 +586,18 @@ def test_rotate_decides_the_pass_from_its_survey(
     # Exit 4 today: step 8's read-back reports `SOPULI-W012` for the skipped
     # account (#1000). The fix for that turns this into exit 0.
     assert result.exit_code == ExitCode.PARTIAL, result.output
+
+
+def refused_missing_batch_user(result: Result) -> bool:
+    """Whether the survey refused the run because `acme_batch_user` is missing on
+    `appdb-alpha`, rather than for some other reason that also exits 1."""
+    return any(
+        one["level"] == "error"
+        and one.get("target") == "appdb-alpha"
+        and one.get("account") == "acme_batch_user"
+        and "no such user" in one["message"]
+        for one in diagnostics(result)
+    )
 
 
 def test_the_forecast_names_the_account_refused_on_each_target() -> None:
@@ -1515,6 +1528,121 @@ def test_rotate_takes_force_as_well(
     )
 
     assert "ACME_WEB_USER" in changed(harness)
+
+
+def rotate(runner: CliRunner, config: Path, *args: str) -> Result:
+    return runner.invoke(cli, ["creds", "rotate", "--config", str(config), *args])
+
+
+def test_a_rotation_preview_says_which_credential_the_pass_would_skip(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#997. Nothing is staged yet, but every credential due will have a `pending`
+    that a promotion follows, so the preview asks the pass's question of each
+    one the survey read."""
+    harness = estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert changed(harness) == []
+    (found,) = ahead(result)
+    assert found["account"] == "acme_web_user"
+    assert found["target"] == "appdb-beta"
+    assert found["message"] == (
+        "vault-prod:apps/acme/db: a guardrail refuses acme_web_user on appdb-beta "
+        "(the account holds DBA), so the run would change the credential on none of "
+        "appdb-alpha, appdb-beta"
+    )
+    # The survey's connections only: the forecast opens none of its own.
+    assert len(harness["sessions"]) == 2
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data == NOTHING_STAGED
+
+
+def test_the_rotation_preview_and_the_rotation_agree(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The credential the preview names is the one the real rotation skips on
+    every target."""
+    harness = estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    config = write_config(TWO_TARGETS)
+    preview = rotate(runner, config, "--dry-run", "--output", "json")
+    real = rotate(runner, config, "--confirm", "--output", "json")
+
+    (found,) = ahead(preview)
+    rows = {
+        (entry["account"], entry["target"]): entry["state"]
+        for entry in document(real)["results"]
+        if "target" in entry
+    }
+    # The forecast credential is skipped everywhere, and the one it does not
+    # name is still rotated: a run that skipped everything would also pass the
+    # first half.
+    assert rows[(found["account"], "appdb-alpha")] == SKIPPED, rows
+    assert rows[(found["account"], "appdb-beta")] == SKIPPED, rows
+    assert rows[("acme_batch_user", "appdb-alpha")] != SKIPPED, rows
+    assert rows[("acme_batch_user", "appdb-beta")] != SKIPPED, rows
+    assert {"ACME_BATCH_USER"} <= set(changed(harness)), rows
+
+
+def test_a_rotation_preview_prints_the_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "so the run would change the credential on none of appdb-alpha, appdb-beta" in (
+        result.output
+    )
+
+
+def test_a_forced_rotation_preview_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real rotation skips the pass under `--force`, so the preview does too."""
+    estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--force", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
+
+
+def test_a_rotation_preview_the_survey_refuses_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real rotation stops at the survey and never reaches the pass."""
+    estate(
+        {},
+        document=NOTHING_STAGED,
+        by_target={
+            "appdb-alpha": {"ACME_WEB_USER": ordinary("ACME_WEB_USER")},
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert refused_missing_batch_user(result)
+    assert ahead(result) == []
+
+
+def test_a_rotation_preview_of_a_credential_on_one_target_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass asks only about a credential on more than one target."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=NOTHING_STAGED,
+    )
+    result = rotate(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
 
 
 # ------------------------------------------------- the check that could not run ---

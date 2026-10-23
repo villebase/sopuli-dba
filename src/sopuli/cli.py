@@ -4164,28 +4164,36 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     failure. Exit 5 when no store can list.
 
     **Every store in `vaults:` is opened**, so one this run cannot log in to
-    fails the run, as on `lock status`. One that does not answer is named in
-    W056 instead, because a token store does not connect until the listing. A
-    survey that left a declared store out would report it as clean.
-    `--vault NAME` (#1015) is how to leave
-    one out: only the named entries are opened, and the summary and
-    `orphans.listed` say which stores were read. A path a binding names is
-    still declared in every store, a selected one included.
+    fails the run, as on `lock status`. A store with token auth is not
+    contacted until the listing, so one that does not answer is named in W056
+    instead. Any other auth method logs in when the store is opened. A survey
+    that left a declared store out would report it as clean.
+
+    `--vault NAME` (#1015) is how to leave one out: only the named entries are
+    opened, and the summary and `orphans.listed` say which were read. A store
+    two entries name is opened through the one named first, so its login is
+    the one the operator chose. A path a binding names is still declared in
+    every store, a selected one included.
     """
     document = run.document
     config = run.config
     refuse_unknown_vaults(config, vaults)
-    # Entries that name one store are surveyed once, under the first name.
-    # Naming either entry selects that store.
+    # Entries that name one store are surveyed once: under the first name by
+    # default, and through the first entry named for it under --vault.
     names = orphan_aliases(config.vaults)
-    surveyed = {names[name] for name in vaults} if vaults else set(names.values())
+    through: dict[str, str] = {}
     if vaults:
+        for name in vaults:
+            through.setdefault(names[name], name)
         document.selection = {"vaults": list(vaults)}
+    else:
+        through = {store: store for store in names.values()}
     region = reset_region(config)
     if region is not None:
-        region = replace(region, store=names.get(region.store, region.store))
+        store = names.get(region.store, region.store)
+        region = replace(region, store=through.get(store, store))
     stores = _stores_for(
-        surveyed,
+        set(through.values()),
         config,
         token_file=run.vault_token_file,
         cache=run.stores,

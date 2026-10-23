@@ -747,7 +747,7 @@
           "items": {
             "type": "string"
           },
-          "description": "The stores whose paths were listed and read, by the first `vaults:` name of each store. With `--vault`, only the selected ones (issue #1015). A store that could not list is not here; `SOPULI-W005` or `SOPULI-W056` names it. Additive in 1.58."
+          "description": "The stores whose paths were listed and read, by the `vaults:` entry each was opened through: the first name of each store, or under `--vault` the first one named for it. With `--vault`, only the selected ones (issue #1015). A store that could not list is not here; `SOPULI-W005` or `SOPULI-W056` names it. Additive in 1.58."
         },
         "found": {
           "type": "array",

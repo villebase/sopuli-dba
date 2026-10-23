@@ -572,15 +572,40 @@ def test_a_declared_path_is_declared_in_a_selected_store(
 
 
 def test_naming_either_entry_for_one_store_selects_it(
-    write_config: Callable[[str], Path], with_records: Records
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """It is opened through the entry named, whose login the operator can use."""
     stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
     stores["vault-dev-ci"] = stores["vault-dev"]  # type: ignore[index]
+    opened = _opened(monkeypatch)
     result = run(write_config(TWO_NAMES), "--vault", "vault-dev-ci", "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert json.loads(result.output)["orphans"]["listed"] == ["vault-dev"]
-    assert [entry["path"] for entry in found(result)] == ["acme/alpha/db"]
+    assert opened == ["vault-dev-ci"]
+    assert json.loads(result.output)["orphans"]["listed"] == ["vault-dev-ci"]
+    assert [(entry["vault"], entry["path"]) for entry in found(result)] == [
+        ("vault-dev-ci", "acme/alpha/db")
+    ]
+
+
+def test_naming_both_entries_for_one_store_lists_it_once(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    stores["vault-dev-ci"] = stores["vault-dev"]  # type: ignore[index]
+    opened = _opened(monkeypatch)
+    result = run(
+        write_config(TWO_NAMES),
+        "--vault",
+        "vault-dev-ci",
+        "--vault",
+        "vault-dev",
+        "--output",
+        "json",
+    )
+
+    assert opened == ["vault-dev-ci"]
+    assert len(found(result)) == 1
 
 
 def test_a_vault_the_config_does_not_declare_is_refused(

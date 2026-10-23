@@ -1234,9 +1234,9 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
   that has not expired is held at the secret path, for the lock and for its
   secret, because somebody may be rotating it.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
-- **`listed` names the stores whose paths were read**, by the first `vaults:`
-  name of each store, so an empty `found` says what it covers. A store that
-  could not list is not in it. From run schema 1.58.
+- **`listed` names the stores whose paths were read**, by the entry each was
+  opened through, so an empty `found` says what it covers. A store that could
+  not list is not in it. From run schema 1.58.
 - **A record may be another config's**, from an estate that shares the mount.
   That is why the verb prints the command and does not run it.
 
@@ -1248,19 +1248,27 @@ the survey goes on. A store that refuses the listing, or does not answer, is
 named in `SOPULI-W056` too, and the rest of it is not read. A store
 with no `list` capability is named in `SOPULI-W005`, and a path the tool
 refuses is named in `SOPULI-W053`. The run exits 0 when it could look. When no
-store can list, it exits 5 with category `capability`, because an empty report
-would read as a clean estate. Every store in `vaults:` is opened, so one the run
-cannot log in to fails the run, as on `lock status`: exit 9 when its login
-material is not set, and exit 6 when the store refuses it.
+store surveyed has the `list` capability, it exits 5 with category
+`capability`, because an empty report would read as a clean estate. When every
+store surveyed failed its listing, the run exits 0, with `listed` empty and
+`SOPULI-W056` for each.
+
+Every store in `vaults:` is opened, so one the run cannot log in to fails the
+run, as on `lock status`: exit 9 when its login material is not set, and exit 6
+when the store refuses it. A store with `method: token` is not contacted until
+the listing, so one that does not answer is named in `SOPULI-W056`. Any other
+method logs in when the store is opened, so a store that does not answer fails
+the run.
 
 `--vault NAME`, repeatable, surveys only the named entries
 ([#1015](https://github.com/villebase/sopuli-dba/issues/1015)). The others are
-not opened, so a store the run cannot log in to can be left out on purpose. A name
-`vaults:` does not declare is refused with exit 2, as an unknown `--target` is.
-Naming either of two entries for one store selects that store. A path a binding
+not opened, so a store the run cannot log in to can be left out on purpose. A
+name `vaults:` does not declare is refused with exit 2, as an unknown `--target`
+is. Naming either of two entries for one store selects that store, and it is
+opened through the entry named first, with that entry's login. A path a binding
 names is still declared in every store, a selected one included.
 `invocation.selection.vaults` records the names as given, and `listed` the
-stores that were read.
+entries that were read.
 
 ### `targets`, emitted by `doctor`
 

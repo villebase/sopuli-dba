@@ -260,10 +260,13 @@ def classify(
     Raises ``ValueError`` in mixed mode when neither is given: a caller that
     forgot the parameter would otherwise turn every ``True`` into unknown quietly.
     """
-    mixed = mode is not None and mode.upper() != "TRUE"
+    mixed = is_mixed(mode)
     if mixed and trail is None and trail_unread is None:
         raise ValueError("mixed audit mode needs AUDIT_TRAIL, or why it was not read")
     none = mixed and trail is not None and trail.strip().upper() == "NONE"
+    # Where the parameter was not read, the reason goes into every mixed-mode
+    # detail: it names the grant that would let the check tell.
+    unread_trail = trail_unread if mixed and trail is None else None
     covered: dict[str, list[str]] = {action: [] for action in ACTIONS}
     doubts: dict[str, list[str]] = {action: [] for action in ACTIONS}
     for policy in sorted({one.policy for one in enablements}):
@@ -280,8 +283,8 @@ def classify(
         detail = "; ".join(f"{action} by {', '.join(covered[action])}" for action in ACTIONS)
         if none:
             return AuditCoverage(audited=None, detail=f"{detail}, but {TRAIL_NONE}")
-        if mixed and trail is None:
-            return AuditCoverage(audited=None, detail=f"{detail}, but {trail_unread}")
+        if unread_trail is not None:
+            return AuditCoverage(audited=None, detail=f"{detail}, but {unread_trail}")
         return AuditCoverage(audited=True, detail=detail)
 
     # **An action that nothing covers or might cover decides the answer**, whatever
@@ -296,6 +299,8 @@ def classify(
             # Not `false`: what was measured on two releases is not assumed of
             # the rest (#1004). TRAIL_NONE says so.
             return AuditCoverage(audited=None, detail=f"{nothing}, and {TRAIL_NONE}")
+        if unread_trail is not None:
+            return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}; {unread_trail}")
         if mixed:
             return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}")
         return AuditCoverage(audited=False, detail=nothing)
@@ -311,7 +316,18 @@ def classify(
             parts.append(f"{action} might be recorded: {reasons}")
     if none:
         parts.append(TRAIL_NONE)
+    elif unread_trail is not None:
+        parts.append(unread_trail)
     return AuditCoverage(audited=None, detail="; ".join(parts))
+
+
+def is_mixed(mode: str | None) -> bool:
+    """Whether ``V$OPTION``'s ``Unified Auditing`` value is mixed mode.
+
+    ``None`` is a release with no unified auditing, which is neither. The one rule
+    :func:`coverage_of` and :func:`classify` both use.
+    """
+    return mode is not None and mode.strip().upper() != "TRUE"
 
 
 def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
@@ -328,7 +344,7 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
         mode = str(row[0]) if row and row[0] else None
         if mode is None:
             return AuditCoverage(audited=None, detail=NO_UNIFIED)
-        trail, trail_unread = _audit_trail(cursor) if mode.upper() != "TRUE" else (None, None)
+        trail, trail_unread = _audit_trail(cursor) if is_mixed(mode) else (None, None)
         reading = POLICY_VIEWS
         cursor.execute(ENABLED_QUERY)
         enabled = [
@@ -415,8 +431,10 @@ def _audit_trail(cursor: Cursor) -> tuple[str | None, str | None]:
             first = f"{diagnosis.code}: {first}" if first else diagnosis.code
         reason = TRAIL_UNREADABLE if diagnosis.code in UNREADABLE_CODES else TRAIL_FAILED
         return None, reason.format(error=first or "no code")
-    if not row or row[0] is None:
+    if not row:
         return None, TRAIL_FAILED.format(error="no row")
+    if row[0] is None:
+        return None, TRAIL_FAILED.format(error="the value is NULL")
     return str(row[0]), None
 
 

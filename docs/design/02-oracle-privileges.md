@@ -606,14 +606,17 @@ GRANT SELECT ON SYS.V_$PARAMETER TO sopuli_svc;                   -- or c##sopul
 
 A database in pure unified mode, such as 26ai, does not need the third grant,
 because the check does not read `AUDIT_TRAIL` there. In mixed mode without it,
-the service account gets `ORA-00942` on `V$PARAMETER` (measured on 21.3.0.0.0
-and 18.4.0.0.0). The reset then records `audited: unknown` where the policies
+the service account gets `ORA-00942` on `V$PARAMETER` (measured by hand on
+21.3.0.0.0 and 18.4.0.0.0, on 2026-10-23). The reset then records `audited: unknown` where the policies
 cover both actions, and the detail names the grant. The tool cannot rule out
 `AUDIT_TRAIL = NONE`, under which those policies record nothing (§5).
 
 For a common service account, run the grants as `SYS` in `CDB$ROOT` with
 `CONTAINER=ALL`. The probe measured that a common account granted this way reads
-both views in a PDB.
+both views in a PDB. For `V$PARAMETER` it was measured by hand on 21.3.0.0.0 and
+18.4.0.0.0, on 2026-10-23: a common account holding only `CREATE SESSION` gets
+`ORA-00942` in XEPDB1, and after the grant in `CDB$ROOT` with `CONTAINER=ALL` it
+reads `AUDIT_TRAIL` there.
 
 **Do not grant the `AUDIT_VIEWER` role instead.** It holds the same two grants,
 and much more: on 26ai 23.26.2.0.0 it holds 34 object grants, including `READ` on

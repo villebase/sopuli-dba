@@ -21,6 +21,7 @@ from sopuli.driver.oracle.audit import (
     COMMON_QUERY,
     ENABLED_QUERY,
     EXCEPT_USER,
+    MIXED,
     MODE_QUERY,
     OPTIONS_QUERY,
     STANDARD_ACTION,
@@ -512,6 +513,24 @@ def test_an_unread_audit_trail_in_mixed_mode_turns_a_true_into_unknown() -> None
     assert found.detail == "LOGON by P; ALTER USER by P, but the reason"
 
 
+def test_an_unread_audit_trail_is_said_for_a_gap_and_beside_a_doubt() -> None:
+    """Whatever decides the `unknown`, the detail names why the parameter was
+    not read, so the operator learns about the grant on the first run."""
+    gap = classify("FALSE", [], [], PERSON, trail_unread="the reason")
+    doubt = classify(
+        "FALSE",
+        [enabled("COND")],
+        both("COND", condition="x = 1"),
+        PERSON,
+        trail_unread="the reason",
+    )
+
+    assert gap.audited is None
+    assert gap.detail.endswith(f", but {MIXED}; the reason")
+    assert doubt.audited is None
+    assert doubt.detail.endswith("; the reason")
+
+
 def test_mixed_mode_without_audit_trail_or_a_reason_is_a_caller_error() -> None:
     """A caller that forgot the parameter would otherwise make every `true`
     unknown, quietly."""
@@ -759,6 +778,18 @@ def test_a_failed_audit_trail_read_names_no_grant() -> None:
         found.detail
     )
     assert "GRANT" not in found.detail
+
+
+@pytest.mark.parametrize(
+    ("row", "said"), [(None, "no row"), ((None,), "the value is NULL")], ids=["no row", "null"]
+)
+def test_an_audit_trail_with_no_value_says_which(row: Any, said: str) -> None:
+    cursor = Cursor({**_covered("FALSE"), TRAIL_QUERY: row})
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is None
+    assert f"reading AUDIT_TRAIL failed ({said})" in found.detail
 
 
 def test_an_unreadable_audit_trail_keeps_the_first_line_once() -> None:

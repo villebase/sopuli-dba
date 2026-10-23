@@ -33,6 +33,7 @@ from sopuli.diagnostics import (
     GUARDRAIL_PASS_AHEAD,
     GUARDRAIL_UNCHECKED,
     PROMOTION_SKIPPED,
+    ROTATION_UNCONFIRMED,
     WARNINGS,
     guardrail_pass_ahead,
 )
@@ -1181,6 +1182,34 @@ def test_rotate_reports_the_skip_too(
     assert result.exit_code == ExitCode.PARTIAL
     codes = [one.get("code") for one in document(result)["diagnostics"]]
     assert PROMOTION_SKIPPED in codes
+
+
+def test_rotate_reads_back_only_the_accounts_it_promoted(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1000. The skipped account keeps its staged password in `pending` while
+    its sibling moves to `current`, so step 8 must not compare it with
+    `current`."""
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=NOTHING_STAGED,
+    )
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(CONFIG)), "--confirm"]
+        + ["--output", "json"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert ROTATION_UNCONFIRMED not in codes
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert "acme_web_user" in held.data["pending"]
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] != LIVE
 
 
 def test_the_reason_names_every_check_that_refused(

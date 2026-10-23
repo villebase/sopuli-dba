@@ -144,6 +144,7 @@ from sopuli.diagnostics import (
     promotion_failed,
     promotion_skipped,
     promotion_withheld,
+    refusing_targets,
     reset_journal_unread,
     reset_record_unwritten,
     rollback_reuse,
@@ -6506,18 +6507,19 @@ def creds_apply(
         reuse_ahead = rollback_reuse(foreseen)
         document.diagnostics.extend(reuse_ahead)
         repair_notes.extend(one.message for one in reuse_ahead)
+        if preflight.refusal(findings) is not None:
+            return _refuse_preflight(
+                findings, document, header=_header(plan, sources), notes=repair_notes
+            )
         # The guardrail pass's answer, from the accounts the survey read (#988).
-        # Not under `--force`, where the real run does not ask: it waives every
+        # After the refusal: a run the survey stops never reaches the pass. Not
+        # under `--force`, where the real run does not ask: it waives every
         # check that could refuse an application account.
         skipped_ahead = (
             [] if force else _guardrail_pass_ahead(sources, read, declared=_declared_accounts(run))
         )
         document.diagnostics.extend(skipped_ahead)
         repair_notes.extend(one.message for one in skipped_ahead)
-        if preflight.refusal(findings) is not None:
-            return _refuse_preflight(
-                findings, document, header=_header(plan, sources), notes=repair_notes
-            )
         # A survey that passed with a check missing says so here as well as in
         # `diagnostics[]` (decision #606). A refusal has already printed them in its
         # table.
@@ -7274,15 +7276,20 @@ def _guardrail_pass_ahead(
     as the pass leaves it to the run.
     """
     shared = _shared_credentials(sources)
-    return [
-        guardrail_pass_ahead(
-            str(credential[0]),
-            shared[credential][0].account,
-            [(target, guardrails_reason(review)) for target, review in refusing.items()],
-            [binding.target for binding in shared[credential]],
+    notices: list[Diagnostic] = []
+    for credential, refusing in _refusals(shared, states, declared=declared).items():
+        bound = {binding.target: binding.account for binding in shared[credential]}
+        notices.append(
+            guardrail_pass_ahead(
+                str(credential[0]),
+                [
+                    (target, bound[target], guardrails_reason(review))
+                    for target, review in refusing.items()
+                ],
+                list(bound),
+            )
         )
-        for credential, refusing in _refusals(shared, states, declared=declared).items()
-    ]
+    return notices
 
 
 def _refusals(
@@ -7516,10 +7523,8 @@ def _refused_row(
         detail = guardrails_reason(own, named=named)
     else:
         state = apply_states.SKIPPED
-        # Each reason in brackets after its target: one target's reasons are
-        # already joined by "; ".
-        where = ", ".join(
-            f"{name} ({guardrails_reason(review)})" for name, review in refusing.items()
+        where = refusing_targets(
+            [(name, guardrails_reason(review)) for name, review in refusing.items()]
         )
         detail = f"a guardrail refuses this credential on {where}, so no target was changed"
     _left_alone(binding.account, binding.target, state, detail)

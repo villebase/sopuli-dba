@@ -34,6 +34,7 @@ from sopuli.diagnostics import (
     GUARDRAIL_UNCHECKED,
     PROMOTION_SKIPPED,
     WARNINGS,
+    guardrail_pass_ahead,
 )
 from sopuli.driver.protocol import (
     PASS,
@@ -503,11 +504,53 @@ def test_a_dry_run_preflight_says_which_credential_the_pass_would_skip(
     assert found[0]["target"] == "appdb-beta"
     assert found[0]["message"] == (
         "vault-prod:apps/acme/db: a guardrail refuses acme_web_user on appdb-beta "
-        "(the account holds DBA), so the run would change it on none of appdb-alpha, "
-        "appdb-beta"
+        "(the account holds DBA), so the run would change the credential on none of "
+        "appdb-alpha, appdb-beta"
     )
     # One connection per target, the survey's own: the forecast opens none.
     assert len(harness["sessions"]) == 2
+
+
+def test_a_survey_that_refuses_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real run stops at the survey and never reaches the pass, so the
+    dry run does not forecast what the pass would do."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {"ACME_WEB_USER": ordinary("ACME_WEB_USER")},
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, "ACME_BATCH_USER is missing on appdb-alpha"
+    assert ahead(result) == []
+
+
+def test_the_forecast_names_the_account_refused_on_each_target() -> None:
+    """A credential's place can be bound to a different account on each target.
+    The account named is the one refused, and `account` is set only when the
+    refusals share one."""
+    one = guardrail_pass_ahead(
+        "vault-prod:apps/acme/db",
+        [("appdb-beta", "acme_beta_user", "the account holds DBA")],
+        ["appdb-alpha", "appdb-beta"],
+    )
+    two = guardrail_pass_ahead(
+        "vault-prod:apps/acme/db",
+        [
+            ("appdb-alpha", "acme_alpha_user", "the account holds DBA"),
+            ("appdb-beta", "acme_beta_user", "the account holds DBA"),
+        ],
+        ["appdb-alpha", "appdb-beta"],
+    )
+
+    assert one.account == "acme_beta_user"
+    assert "refuses acme_beta_user on appdb-beta" in one.message
+    assert two.account is None
+    assert "refuses acme_alpha_user, acme_beta_user on appdb-alpha" in two.message
 
 
 def test_a_forecast_refused_on_two_targets_keeps_each_reason_with_its_target(
@@ -566,7 +609,9 @@ def test_the_forecast_is_printed_too(
     result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert "so the run would change it on none of appdb-alpha, appdb-beta" in result.output
+    assert "so the run would change the credential on none of appdb-alpha, appdb-beta" in (
+        result.output
+    )
 
 
 def test_a_plain_dry_run_connects_to_nothing_and_forecasts_nothing(

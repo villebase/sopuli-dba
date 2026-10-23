@@ -1487,28 +1487,38 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
     )
 
 
+def refusing_targets(refusing: Sequence[tuple[str, str]]) -> str:
+    """(target, reason) pairs as ``target (reason), target (reason)``.
+
+    Each reason is in brackets after its target, because one target's reasons
+    are already joined by ``; ``. Shared by `SOPULI-W055` and the guardrail
+    pass's `SKIPPED` detail, so the forecast and the run word it alike.
+    """
+    return ", ".join(f"{target} ({reason})" for target, reason in refusing)
+
+
 def guardrail_pass_ahead(
     document: str,
-    account: str,
-    refusing: Sequence[tuple[str, str]],
+    refusing: Sequence[tuple[str, str, str]],
     targets: Sequence[str],
 ) -> Diagnostic:
     """One credential the real run's guardrail pass would skip everywhere (#988).
 
-    ``refusing`` is (target, reason) for each target whose guardrails refuse the
-    account, and ``targets`` is every target the credential is bound to, in the
-    run's order. Each reason is in brackets after its target, because one
-    target's reasons are already joined by ``; ``.
+    ``refusing`` is (target, account, reason) for each target whose guardrails
+    refuse the account bound there, and ``targets`` is every target the
+    credential is bound to, in the run's order. The account is the refused one,
+    which is the bound one on that target.
     """
-    where = ", ".join(f"{target} ({reason})" for target, reason in refusing)
+    accounts = list(dict.fromkeys(account for _, account, _ in refusing))
+    where = refusing_targets([(target, reason) for target, _, reason in refusing])
     return Diagnostic(
         level="warning",
         code=GUARDRAIL_PASS_AHEAD,
         target=refusing[0][0] if len(refusing) == 1 else None,
-        account=account,
+        account=accounts[0] if len(accounts) == 1 else None,
         message=(
-            f"{document}: a guardrail refuses {account} on {where}, so the run would change "
-            f"it on none of {', '.join(targets)}"
+            f"{document}: a guardrail refuses {', '.join(accounts)} on {where}, so the run "
+            f"would change the credential on none of {', '.join(targets)}"
         ),
     )
 

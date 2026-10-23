@@ -184,7 +184,9 @@
 --        only the rows written when the image was built (4 on 21.3, 5 on 18.4,
 --        the latest 30-SEP-24). An ALTER USER and a logon made under an
 --        enabled ALTER USER, LOGON policy add none, also after
---        DBMS_AUDIT_MGMT.FLUSH_UNIFIED_AUDIT_TRAIL. Why is not measured (#1006)
+--        DBMS_AUDIT_MGMT.FLUSH_UNIFIED_AUDIT_TRAIL. The images ship
+--        AUDIT_TRAIL = NONE, which in mixed mode stops unified records too
+--        (15_mixed_mode_trail_probe.sql)
 --   AC6  (21.3) as on 26ai: the common policy reads BY USER ALL USERS from the
 --        PDB, COMMON and INHERITED YES
 --   AC7  (21.3) as on 26ai: the common account reads both views in the PDB

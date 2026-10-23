@@ -1271,11 +1271,13 @@ on 12.1 and later), traditional auditing might record the action, so the value
 is `unknown`. The XE images of 21.3.0.0.0 and 18.4.0.0.0 run in mixed mode, and
 both enable `ORA_SECURECONFIG` from the start. The check then answers `unknown`,
 because nothing covers `LOGON`, and `true` once a policy covers it. Both answers
-come from the policy views. On those images the trail itself recorded nothing at
-run time, so whether a `true` there matches what the database records is not
-established ([#1006](https://github.com/villebase/sopuli-dba/issues/1006)).
-Whether mixed mode with `AUDIT_TRAIL = NONE`, as on those images, should count
-as unified-only is open ([#1004](https://github.com/villebase/sopuli-dba/issues/1004)).
+come from the policy views. The images ship `AUDIT_TRAIL = NONE`, and on both
+releases that stops unified records as well: under an enabled `ACTIONS LOGON`
+policy a logon leaves no row, and under `AUDIT_TRAIL = DB` it leaves one
+(`15_mixed_mode_trail_probe.sql`). The policy view shows the policy enabled
+either way, so there the check answers `true` while the database records
+nothing. What the check should answer in mixed mode under `AUDIT_TRAIL = NONE`
+is open ([#1004](https://github.com/villebase/sopuli-dba/issues/1004)).
 11.2 has no unified auditing, so the value is `unknown` there too; that is not
 measured. [measurements](../measurements.md) lists the releases the probe has
 run on.

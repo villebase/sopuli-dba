@@ -2916,3 +2916,26 @@ the register.
     store interface, a new capability and a mutation audit event, and an answer
     to why `lock break` never deletes a lock record.
   - Documentation alone. The operator would have to find the old paths by hand.
+
+## #1009
+
+- **Decided:** 2026-10-23, #1009
+- **Question:** An account the guardrails skip, such as one that holds `DBA`,
+  keeps its `pending` when its siblings are promoted. `creds rotate` then
+  refused over that `pending` (#769), so no account in the document could be
+  rotated, and neither command the hint named got out of it.
+- **Decision:** `creds rotate` does not stage an account its guardrails would
+  skip. Step 3's reads decide it, as they decide the guardrail pass (#998). The
+  `pending` refusal moves after step 3 and counts only the accounts the run
+  stages, so a `pending` a skipped account already has is left as it is and
+  refuses nothing. Under `--force` the account is staged and counted, as before.
+  `creds generate` is unchanged.
+- **Why:** the refusal protects a `pending` from being drawn over, and a
+  rotation that does not stage the account does not draw over it. That clears
+  a `pending` left by `generate` too.
+- **Rejected:**
+  - Leaving out skipped accounts in `creds generate` as well. It connects to no
+    database, and `generate --offline` needs none, so it cannot tell that an
+    account holds `DBA`.
+  - Keeping the refusal for a skipped account's `pending`, with a hint that
+    names the ways out. The document would still not rotate.

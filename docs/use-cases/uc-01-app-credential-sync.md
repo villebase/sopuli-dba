@@ -1755,14 +1755,25 @@ way would draw a password, put it on part of the estate, and stop at case 7 on
 every run. To rotate part of an estate at a time, run `creds generate`, then
 `creds apply` per target, then a final `apply` to promote.
 
-**A rotation over a staged `pending` is refused before the pre-flight**
-(decided in #769). Where an account being rotated already has a `pending`, the
-run exits 8, names the accounts, and points to `creds apply`. The reason is
-§4's: some run may be putting that password on a database now, and step 4 would
-draw over it. `rotate` has no flag to go ahead; `creds generate
---overwrite-pending` discards the `pending` for an operator who means to. The
-check reads the documents under the lock. Only a run that took the lock over can
-stage between that read and step 4's write. The fence check before the write
+**An account the guardrails would skip is not staged** (decided in #1009). Step
+3's reads decide it, as they decide the guardrail pass (#998), so step 4 draws no
+password that nothing would apply. The account's row is `SKIPPED` on every
+target, with the reason, and its siblings rotate. A `pending` it already has,
+such as one `creds generate` staged and `apply` skipped, is left as it is: step 4
+does not draw over it, so it does not refuse the run. `status` still shows it.
+Under `--force` the account is staged like any other, and the next paragraph
+applies to it.
+
+**A rotation over a staged `pending` is refused after the pre-flight**
+(decided in #769). Where an account being staged already has a `pending`, the
+run exits 8, names the accounts, and points to `creds apply`. Nothing has been
+staged or changed by then. A run the pre-flight refuses stops there, so it
+reports the pre-flight's refusal and not this one. The reason is §4's: some run
+may be putting that password on a database now, and step 4 would draw over it.
+`rotate` has no flag to go ahead; `creds generate --overwrite-pending` discards
+the `pending` for an operator who means to. The check reads the documents under
+the lock. Only a run that took the lock over can stage between that read and
+step 4's write. The fence check before the write
 stops this run if the takeover came first. If it came between the fence check
 and the write, the write reads the document first, finds the `pending`, and
 fails that document with a message that points to `apply`. If it came after

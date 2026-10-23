@@ -7256,8 +7256,16 @@ def _apply_estate(
     requested: str | None = None,
     ask_first: bool = True,
     surveyed: Mapping[tuple[str, str], UserState] | None = None,
+    decided: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
+
+    ``decided`` is a guardrail decision the caller already made from the
+    survey, over every credential and not only the shared ones. `creds rotate`
+    makes it before staging, so that it stages nothing the guardrails would skip
+    (#1009). It is added to the pass's answer, and its credentials are turned
+    away on every target. The pass still runs, so a shared account the survey
+    did not read is still read for itself.
 
     ``ask_first`` runs :func:`_refused_somewhere`'s guardrail pass before the
     first change (#872). The redraw's re-apply passes ``False``: its first round
@@ -7330,6 +7338,8 @@ def _apply_estate(
                 manager.renew()
         except LockStolenError as stolen:
             return [], stolen
+    for credential, reviews in (decided or {}).items():
+        refused.setdefault(credential, {}).update(reviews)
     applied: list[_Applied] = []
     for position, (name, work) in enumerate(grouped.items()):
         try:
@@ -7348,6 +7358,7 @@ def _apply_estate(
                 force=force,
                 requested=requested,
                 refused=refused,
+                everywhere=set(decided or ()),
                 unreachable=unreachable.get(name),
                 out=applied,
             )
@@ -7389,20 +7400,25 @@ def _shared_among(promoted: Iterable[Binding]) -> dict[Credential, list[Binding]
     """Of bindings a promotion follows, the credentials bound to more than one target.
 
     :func:`_shared_credentials` reads which bindings those are from the staged
-    sources. A rotation preview has staged nothing, so it passes every binding it
-    would rotate (#997): each one will have a `pending` that a promotion follows.
+    sources. A rotation preview has staged nothing, so it passes every binding
+    due (#997). The pass asks the same reads the run's staging decision asks
+    (#1009), so a credential it would skip is skipped in both.
     """
-    bindings: dict[Credential, list[Binding]] = {}
-    for binding in promoted:
-        credential = _credential(binding)
-        if credential is None:
-            continue
-        bindings.setdefault(credential, []).append(binding)
     return {
         credential: shared
-        for credential, shared in bindings.items()
+        for credential, shared in _by_credential(promoted).items()
         if len({binding.target for binding in shared}) > 1
     }
+
+
+def _by_credential(bindings: Iterable[Binding]) -> dict[Credential, list[Binding]]:
+    """Bindings grouped by :func:`_credential`, leaving out those with no ref."""
+    grouped: dict[Credential, list[Binding]] = {}
+    for binding in bindings:
+        credential = _credential(binding)
+        if credential is not None:
+            grouped.setdefault(credential, []).append(binding)
+    return grouped
 
 
 def _guardrail_pass_ahead(
@@ -7461,6 +7477,41 @@ def _refusals(
             if not review.permitted:
                 refused.setdefault(credential, {})[binding.target] = review
     return refused
+
+
+def _skipped_ahead(
+    rotating: Iterable[Binding],
+    states: Mapping[tuple[str, str], UserState],
+    *,
+    declared: frozenset[str],
+) -> dict[Credential, dict[str, guardrails.Review]]:
+    """Every credential a rotation's guardrails would skip, before it stages (#1009).
+
+    :func:`_refusals` over every credential, not only the shared ones the pass
+    asks about: an account bound to one target is skipped by the check at the
+    point of change, and staging it would leave a `pending` nothing applies.
+    """
+    return _refusals(_by_credential(rotating), states, declared=declared)
+
+
+def _to_stage(
+    rotating: Sequence[Binding],
+    documents: Mapping[LockKey, Any],
+    states: Mapping[tuple[str, str], UserState],
+    *,
+    run: Invocation,
+    force: bool,
+) -> tuple[list[Binding], dict[Credential, dict[str, guardrails.Review]]]:
+    """What a rotation stages, and what it skips, from step 3's reads (#1009).
+
+    One function for the run and its preview, so the preview decides as the run
+    does. Refuses over a `pending` among what it stages (#769). Under `--force`
+    nothing is skipped.
+    """
+    skipped = {} if force else _skipped_ahead(rotating, states, declared=_declared_accounts(run))
+    drawn = [binding for binding in rotating if _credential(binding) not in skipped]
+    _refuse_staged_rotation(drawn, documents)
+    return drawn, skipped
 
 
 def _refused_somewhere(
@@ -7554,6 +7605,7 @@ def _apply_target(
     force: bool = False,
     requested: str | None = None,
     refused: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
+    everywhere: Collection[Credential] = (),
     unreachable: BaseException | None = None,
     out: list[_Applied],
 ) -> None:
@@ -7567,9 +7619,13 @@ def _apply_target(
 
     ``refused`` is :func:`_refused_somewhere`'s answer. A credential in it is
     changed on no target: see :func:`_refused_row` and ``held`` in
-    :func:`_apply_one`. ``unreachable`` is the error the pass met connecting to
-    this target, if it did. It is reported on the rows as a connection error
-    here would be, rather than waiting out the same timeout a second time.
+    :func:`_apply_one`. A credential in ``everywhere`` is turned away on every
+    target without asking the database: `creds rotate` staged nothing for it
+    (#1009), so on a target that does not refuse it there is nothing to apply
+    but `current`, and a rotation is not a repair. ``unreachable`` is the error
+    the pass met connecting to this target, if it did. It is reported on the
+    rows as a connection error here would be, rather than waiting out the same
+    timeout a second time.
     """
     run.emitter().event(run.document, "target.started", target=target.name)
     started = time.monotonic()
@@ -7605,7 +7661,7 @@ def _apply_target(
         for binding, source in work:
             password = _credential(binding)
             refusing = None if refused is None or password is None else refused.get(password)
-            if refusing and binding.target in refusing:
+            if refusing and (password in everywhere or binding.target in refusing):
                 turned_away = _refused_row(binding, source, refusing, selection=selection)
                 out.append(turned_away)
                 _account_events(turned_away, run)
@@ -10321,11 +10377,18 @@ def creds_rotate(
     naming them. To roll out part of an estate at a time, use `creds generate`
     and then `creds apply` per target.
 
-    **A rotation over a staged `pending` is refused** too, before the
-    pre-flight, naming the accounts. Some run may be putting that password on a
-    database now, and drawing over it would leave the database with a password
-    the vault has nowhere. `creds apply` applies and promotes what is staged;
-    `creds generate --overwrite-pending` discards it.
+    **A rotation over a staged `pending` is refused** too, after the pre-flight
+    and before anything is staged, naming the accounts. Some run may be putting
+    that password on a database now, and drawing over it would leave the
+    database with a password the vault has nowhere. `creds apply` applies and
+    promotes what is staged; `creds generate --overwrite-pending` discards it.
+
+    **An account the guardrails would skip is not staged** (#1009). The
+    pre-flight's reads decide it, as the guardrail pass decides it, so the
+    rotation draws no password that nothing would apply. A `pending` such an
+    account already has is not drawn over, so it does not refuse the run: the
+    rotation leaves it as it is and rotates the other accounts. Under `--force`
+    the account is staged, and its `pending` refuses, as any other's does.
 
     **`--finish-rollover` runs at the end of the run, not per target.** That is
     what makes it different from `--strategy direct`, which closes each window as
@@ -10582,7 +10645,8 @@ def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[Lock
     A staged `pending` is a password some run may be putting on a database at
     this moment: an `apply` that took over an expired lock, say. Drawing over it
     would leave that database holding a password the vault has nowhere, so the
-    run stops before step 3 and names the accounts.
+    run stops before step 4 and names the accounts. ``rotating`` is what the run
+    would stage: an account the guardrails would skip is not in it (#1009).
 
     **The documents are the ones read under the lock**, so only a run that took
     the lock over can stage between this read and step 4's write. The fence
@@ -10714,7 +10778,6 @@ def _rotate_estate(
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
-    _refuse_staged_rotation(rotating, documents)
     _refuse_narrow_rotation(rotating, documents, run)
 
     # Step 3, and unconditional. Every account about to be rotated, rather than
@@ -10731,10 +10794,15 @@ def _rotate_estate(
     # notes.
     into.caveats = caveat_notes(findings)
 
+    # From step 3's reads (#1009): a credential the guardrails would skip is not
+    # staged, so a `pending` it already has is not drawn over and does not
+    # refuse the run. Not under `--force`, which waives them.
+    drawn, skipped = _to_stage(rotating, documents, surveyed, run=run, force=force)
+
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
     writes = staging.group(
         staging.draw_once(
-            rotating,
+            drawn,
             lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
         )
     )
@@ -10777,9 +10845,10 @@ def _rotate_estate(
     documents = _read_documents(keys, stores, run=run)
     sources = _sources(rotating, documents, stage=None)
 
-    # Steps 5 and 6. The guardrail pass decides from step 3's reads (#998).
-    # Staging writes only the vault, and the check at the point of change asks
-    # the database again.
+    # Steps 5 and 6. The guardrail pass is the decision above, from step 3's
+    # reads (#998, #1009), and a skipped credential's row says so. Staging
+    # writes only the vault, and the check at the point of change asks the
+    # database again.
     into.applied, into.stolen = _apply_estate(
         sources,
         run,
@@ -10790,6 +10859,7 @@ def _rotate_estate(
         selection=selection,
         force=force,
         surveyed=surveyed,
+        decided=None if force else skipped,
     )
     if into.stolen is not None:
         return None
@@ -10867,9 +10937,11 @@ def _read_back(
     deliberately left alone -- checking either would report a disagreement
     against a value the run never claimed to have put there.
 
-    **A row a guardrail skipped is not read back** (#1000). Its staged password
-    stays in `pending` while its siblings move to `current`, so comparing it with
-    `current` would report a disagreement the vault never made. Every other row
+    **A row a guardrail skipped is not read back** (#1000). The rotation staged
+    nothing for it (#1009), and the promotion moves only its siblings, so it was
+    never meant to change `current`: a `pending` left for it by `creds generate`
+    stays where it is. Comparing it with `current` would report a disagreement
+    the vault never made. Every other row
     is compared: a sibling applied from `current` checks that the promotion's
     write left that value alone.
 
@@ -11143,9 +11215,9 @@ def _preview_rotation(
 
     **It forecasts the guardrail pass** as `apply --dry-run --preflight` does
     (#997): each credential the real run would skip on every target is
-    `SOPULI-W055`, asked of the accounts the survey read. The run stages a
-    `pending` for every binding due before its pass asks, so all of them count.
-    Not under `--force`, where the run does not ask.
+    `SOPULI-W055`, asked of the accounts the survey read. Every binding due
+    counts, because the run decides what to stage from the same reads. Not under
+    `--force`, where the run does not ask.
 
     **No `results`.** The plan and the selection table already say what would
     happen, at the grain it would happen at, and a second vocabulary for "would
@@ -11160,7 +11232,6 @@ def _preview_rotation(
         document.finish(ExitCode.SUCCESS, Summary(total=len(selections)))
         return _nothing_due(plan, selections, max_age_days)
     # A refusal under `--dry-run` is still a refusal, as the pre-flight's is.
-    _refuse_staged_rotation(rotating, documents)
     _refuse_narrow_rotation(rotating, documents, run)
 
     read: dict[tuple[str, str], UserState] = {}
@@ -11168,6 +11239,9 @@ def _preview_rotation(
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
         return _refuse_preflight(findings, document, header=header)
+    # The run's own decision, from the same reads (#1009): a credential the
+    # guardrails would skip is not staged, so its `pending` refuses nothing.
+    _to_stage(rotating, documents, read, run=run, force=force)
     # After the refusal, as in `apply`: a run the survey stops never reaches the
     # pass.
     skipped_ahead = (

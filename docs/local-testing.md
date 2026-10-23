@@ -915,9 +915,28 @@ acme_priv_user   free-pdb  SKIPPED          the account holds DBA
   free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
-Exit 0. The tool skips the account and does the rest of the job. Name the account
-on the command line, and the same refusal fails the run, because you asked for
-exactly that account:
+Exit 0. The tool skips the account and does the rest of the job. Its staged
+password stays in `pending`. `creds rotate` skips it too, stages nothing for it,
+and rotates the others:
+
+```
+$ sopuli --config priv.yaml creds rotate --confirm
+...
+ACCOUNT          TARGET    STATE            DETAIL
+acme_app_user    free-pdb  IN_SYNC          changed and verified by login
+acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so the previous password authenticates until it closes
+acme_priv_user   free-pdb  SKIPPED          the account holds DBA
+
+2 changed, 1 promoted to `current`, 1 not confirmed
+
+rotation: staged 1 document, promoted 1 document
+
+1 note:
+  free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
+```
+
+Name the account on the command line, and the same refusal fails the run,
+because you asked for exactly that account:
 
 ```
 $ sopuli --config priv.yaml creds apply --account acme_priv_user

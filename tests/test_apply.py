@@ -726,6 +726,24 @@ def test_a_first_rotation_writes_no_previous() -> None:
     assert "previous" not in apply.promotion_patch([entry], at=NOW, by="svc@host")
 
 
+def test_replacing_a_current_no_target_confirmed_clears_its_targets() -> None:
+    """`generate --promote --overwrite-current` (#975). The `targets` beside the
+    old value name the databases that confirmed it, not the new one."""
+    entry = apply.Promotable(binding(), Secret("new"), Secret("old"), "app-standard", ())
+
+    patch = apply.promotion_patch([entry], at=NOW, by="svc@host")
+
+    assert patch["targets"]["acme_web_user"] is REMOVE
+
+
+def test_seeding_a_current_writes_no_targets() -> None:
+    """A seeded account has no `targets` to clear, and clearing would add an
+    empty container to a document that had none."""
+    entry = apply.Promotable(binding(), Secret("new"), None, "app-standard", ())
+
+    assert "targets" not in apply.promotion_patch([entry], at=NOW, by="svc@host")
+
+
 def test_two_accounts_sharing_a_document_promote_in_one_patch() -> None:
     """Q7's default layout. Each account's stamps sit beside its own value, and
     every sibling is absent rather than rewritten."""

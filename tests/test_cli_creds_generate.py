@@ -1678,6 +1678,28 @@ def test_the_authorised_overwrite_moves_the_old_value_into_previous(
     assert found.data[CONTAINER]["acme_web_user"] != "the-live-one"
 
 
+def test_the_authorised_overwrite_clears_the_targets_of_the_old_value(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """`targets` named the databases that confirmed the replaced value. No
+    database has the new one, so the document must not say any did (#975)."""
+    store.write(
+        PATH,
+        {
+            CONTAINER: {"acme_web_user": "the-live-one"},
+            "targets": {"acme_web_user": ["appdb-dev-alpha"]},
+        },
+        cas=0,
+    )
+
+    result = run(runner, write_config(CONFIG), "--promote", "--overwrite-current")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    found = store.read(PATH)
+    assert found is not None
+    assert found.data["targets"] == {}
+
+
 def test_replacing_a_current_is_warned_about_per_account(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

@@ -674,6 +674,13 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
             patches.append(layout.patch("policy", entry.policy))
         if entry.targets:
             patches.append(layout.patch("targets", list(entry.targets)))
+        elif entry.replaces is not None:
+            # No target confirmed this value (`generate --promote
+            # --overwrite-current`), and `targets` names the ones that confirmed
+            # the value it replaces. Cleared, so the document never says a
+            # database confirmed a password it has not seen (#975). A seeded
+            # account has no `targets` to clear, so its document keeps its shape.
+            patches.append(layout.patch("targets", REMOVE))
     return merge(*patches)
 
 

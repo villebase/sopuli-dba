@@ -44,6 +44,7 @@ import pytest
 
 from oracle_harness import Environment, current_container, execute, service_account_grants
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.driver.oracle.audit import MODE_QUERY, TRAIL_NONE, TRAIL_QUERY
 from sopuli.driver.oracle.privileges import (
     PASSWORD_FILE_PRIVILEGES,
     REQUIRED_PRIVILEGES,
@@ -462,11 +463,13 @@ def test_an_install_without_the_grant_still_describes_accounts(
 # H10. `02-oracle-privileges.md` §2's optional grant and §5's three answers,
 # asked as the service account, because the grant is the account's.
 
-#: §2's optional grant for the audit check: `READ` on the two policy views.
-AUDIT_GRANTS = (
+#: §2's optional grants for the audit check: `READ` on the two policy views, and
+#: `SELECT` on `V$PARAMETER`, which the check reads in mixed mode only (#1004).
+POLICY_VIEW_GRANTS = (
     f"grant READ ON SYS.AUDIT_UNIFIED_ENABLED_POLICIES to {ACCOUNT}",
     f"grant READ ON SYS.AUDIT_UNIFIED_POLICIES to {ACCOUNT}",
 )
+AUDIT_GRANTS = (*POLICY_VIEW_GRANTS, f"grant SELECT ON SYS.V_$PARAMETER to {ACCOUNT}")
 
 #: The person whose reset would be checked. The policies here are enabled for
 #: every user, so the name only has to be one.
@@ -482,6 +485,37 @@ def audit_reader(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
     """§2's account with the optional grant for the audit check taken."""
     with _installed(sysdba, live_oracle, *AUDIT_GRANTS) as opened:
         yield opened
+
+
+def _audit_mode(sysdba: Any) -> tuple[bool, bool]:
+    """Whether this database is in mixed mode, and whether it is in mixed mode
+    with `AUDIT_TRAIL = NONE`, read as `SYS`.
+
+    The second is where §5's covered answer is `unknown`, not `true` (#1004): the
+    XE images of 21.3.0.0.0 and 18.4.0.0.0 ship it, and 26ai is pure unified. A
+    test reads the database's own state rather than its release, as the `false`
+    test below does with the check's own answer.
+    """
+    with sysdba.cursor() as cursor:
+        cursor.execute(MODE_QUERY)
+        row = cursor.fetchone()
+        mixed = row is not None and str(row[0]).upper() != "TRUE"
+        if not mixed:
+            return False, False
+        cursor.execute(TRAIL_QUERY)
+        trail = cursor.fetchone()
+    return True, trail is not None and str(trail[0]).strip().upper() == "NONE"
+
+
+def _covered(found: Any, records_nothing: bool) -> str:
+    """The answer for policies that cover both actions, checked, and its
+    `ACTION by POLICY` part."""
+    if records_nothing:
+        assert found.audited is None, found.detail
+        assert found.detail.endswith(f", but {TRAIL_NONE}"), found.detail
+        return str(found.detail).removesuffix(f", but {TRAIL_NONE}")
+    assert found.audited is True, found.detail
+    return str(found.detail)
 
 
 @contextlib.contextmanager
@@ -510,14 +544,40 @@ def test_without_the_grant_the_answer_is_unknown_and_names_it(service_account: A
 def test_a_policy_recording_both_routes_for_every_user_is_true(
     audit_reader: Any, sysdba: Any
 ) -> None:
-    """The positive case, with the grant: the answer names the policy for both
-    actions."""
+    """The positive case, with the grants: the answer names the policy for both
+    actions. `true`, except in mixed mode under `AUDIT_TRAIL = NONE`, where it is
+    `unknown` and says so (#1004)."""
+    _, records_nothing = _audit_mode(sysdba)
     with _policy(sysdba, "logon, alter user"):
         found = audit_reader.audit_coverage(PERSON)
 
-    assert found.audited is True, found.detail
-    assert f"LOGON by {POLICY.upper()}" in found.detail
-    assert f"ALTER USER by {POLICY.upper()}" in found.detail
+    covered = _covered(found, records_nothing)
+    assert f"LOGON by {POLICY.upper()}" in covered
+    assert f"ALTER USER by {POLICY.upper()}" in covered
+
+
+@pytest.fixture
+def policy_view_reader(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
+    """§2's account with the two policy-view grants and not `V$PARAMETER`."""
+    with _installed(sysdba, live_oracle, *POLICY_VIEW_GRANTS) as opened:
+        yield opened
+
+
+def test_mixed_mode_without_the_parameter_grant_is_unknown_and_names_it(
+    policy_view_reader: Any, sysdba: Any
+) -> None:
+    """Measured on 21.3.0.0.0 and 18.4.0.0.0: without the grant the account gets
+    `ORA-00942` on `V$PARAMETER`. The check cannot rule out `NONE`, so covered
+    is `unknown`, and the detail names the grant."""
+    mixed, _ = _audit_mode(sysdba)
+    if not mixed:
+        pytest.skip("pure unified mode: the check does not read AUDIT_TRAIL")
+    with _policy(sysdba, "logon, alter user"):
+        found = policy_view_reader.audit_coverage(PERSON)
+
+    assert found.audited is None, found.detail
+    assert "AUDIT_TRAIL is not readable (ORA-00942" in found.detail
+    assert "GRANT SELECT ON SYS.V_$PARAMETER" in found.detail
 
 
 def test_nothing_recording_logons_is_false_on_a_unified_only_database(
@@ -560,10 +620,12 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
 ) -> None:
     """#839, as `13_audit_coverage_probe.sql` AC9a measured it: a logon policy
     created `CONTAINER = ALL` in the root and enabled `BY` the common person,
-    with an every-user `ALTER USER` policy in the PDB, is `true`."""
+    with an every-user `ALTER USER` policy in the PDB, is `true`, or `unknown`
+    in mixed mode under `AUDIT_TRAIL = NONE` (#1004)."""
     here = current_container(sysdba)
     if here in ("NON-CDB", "CDB$ROOT"):
         pytest.skip(f"the DSN's container is {here}; this test needs a PDB")
+    _, records_nothing = _audit_mode(sysdba)
 
     execute(sysdba, "alter session set container = CDB$ROOT")
     try:
@@ -588,11 +650,11 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
         with contextlib.suppress(Exception):
             execute(sysdba, f"alter session set container = {here}")
 
-    assert found.audited is True, found.detail
+    covered = _covered(found, records_nothing)
     # `ALTER USER` may be covered by a policy the database enables itself as
     # well: XE 18.4.0.0.0 and 21.3.0.0.0 enable ORA_SECURECONFIG, which records
     # it. `LOGON` is covered by the common policy alone.
-    logon, alter_user = found.detail.split("; ")
+    logon, alter_user = covered.split("; ")
     assert logon == f"LOGON by {COMMON_POLICY.upper()}", found.detail
     assert alter_user.startswith("ALTER USER by "), found.detail
     assert POLICY.upper() in alter_user.removeprefix("ALTER USER by ").split(", "), found.detail

@@ -2867,3 +2867,24 @@ the register.
 - **Rejected:**
   - Leaving rotate out. A rotation preview would then pass while the rotation
     changed a shared credential on no target.
+
+## #1004
+
+- **Decided:** 2026-10-23, #1004
+- **Question:** In mixed audit mode with `AUDIT_TRAIL = NONE`, what should a
+  reset's `audited` check answer? #1006 measured that there an enabled unified
+  policy records nothing, on 21.3.0.0.0 and 18.4.0.0.0, while the policy views
+  show it enabled. The check, which reads the views, answered `true`.
+- **Decision:** The check reads `AUDIT_TRAIL` from `V$PARAMETER`, in mixed
+  mode only. Under `NONE` the answer is `unknown`, never `true`, with a detail
+  that names the parameter. Where the parameter cannot be read, a `true` is
+  `unknown` too, with a detail that names the grant. The grant,
+  `SELECT ON SYS.V_$PARAMETER`, joins the optional audit grants in
+  02-oracle-privileges.md §2. The values are unchanged, so no schema bump.
+- **Why:** it removes a `true` that the database does not back, without
+  claiming a `false` that rests on two measured releases.
+- **Rejected:**
+  - `false` under `NONE`. It matches what was measured, but 12.2.0.1.0 and
+    19.3.0.0.0 are untried.
+  - Leaving it. The wrong `true` would stay on every mixed-mode database with
+    `AUDIT_TRAIL = NONE`, the 19.3 maintainer image among them.

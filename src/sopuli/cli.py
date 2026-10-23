@@ -9189,7 +9189,16 @@ def _promote_documents(
     """
     promotions: dict[LockKey, _Promotion] = {}
     for key, records in _by_document(applied).items():
-        owing = [record for record in records if _owes_promotion(record)]
+        # A skipped row never owes the write itself: the skip kept in the group
+        # is there to hold the document back, and promoting its stage would be
+        # the breach of invariant 7 it exists to stop.
+        owing = [
+            record
+            for record in records
+            if record.source is not None
+            and apply_states.promotes(record.source.stage)
+            and record.outcome.state != apply_states.SKIPPED
+        ]
         if not owing:
             promotions[key] = _Promotion(None, "the vault already holds what was applied")
             continue
@@ -9234,21 +9243,6 @@ def _promote_documents(
         promotions[key] = _write_promotion(key, owing, documents[key], stores[key.store])
         _promotion_event(key, promotions[key], run)
     return promotions, None
-
-
-def _owes_promotion(record: _Applied) -> bool:
-    """Whether a promotion of this row's document moves this row's account.
-
-    A skipped row never owes the write itself: the skip kept in the group is
-    there to hold the document back, and promoting its stage would be the breach
-    of invariant 7 it exists to stop. Step 8 of `creds rotate` reads back the
-    same rows, and no others (#1000).
-    """
-    return (
-        record.source is not None
-        and apply_states.promotes(record.source.stage)
-        and record.outcome.state != apply_states.SKIPPED
-    )
 
 
 def _skipped_pairs(records: Sequence[_Applied]) -> tuple[tuple[str, str], ...]:
@@ -10776,10 +10770,11 @@ def _read_back(
     deliberately left alone -- checking either would report a disagreement
     against a value the run never claimed to have put there.
 
-    **And only the rows the promotion moved** (:func:`_owes_promotion`). An
-    account a guardrail skipped keeps its staged password in `pending` while its
-    siblings move to `current`, so comparing it with `current` would report a
-    disagreement the vault never made (#1000).
+    **A row a guardrail skipped is not read back** (#1000). Its staged password
+    stays in `pending` while its siblings move to `current`, so comparing it with
+    `current` would report a disagreement the vault never made. Every other row
+    is compared: a sibling applied from `current` checks that the promotion's
+    write left that value alone.
 
     Returns the accounts that disagreed, for the report, and the documents they
     are in, for `--finish-rollover`. A document missing from ``documents``,
@@ -10795,9 +10790,10 @@ def _read_back(
             continue
         key = _lock_key(record.binding)
         promotion = promotions.get(key)
-        if promotion is None or promotion.version is None or not _owes_promotion(record):
+        if promotion is None or promotion.version is None or record.source is None:
             continue
-        assert record.source is not None  # `_owes_promotion` checked it
+        if record.outcome.state == apply_states.SKIPPED:
+            continue
         entry = (record.binding, record.source.value, _data_at(key, documents))
         by_key.setdefault(key, []).append(entry)
     entries = [entry for one in by_key.values() for entry in one]

@@ -1436,6 +1436,11 @@ def test_a_skipped_sibling_does_not_keep_a_window_open(
     assert ROTATION_UNCONFIRMED not in codes
     assert ROLLOVER_LEFT_OPEN not in codes
     assert finished(harness) == ["ACME_WEB_USER", "ACME_WEB_USER"]
+    for target in ("appdb-alpha", "appdb-beta"):
+        body = stored(harness["store"], f"apps/acme/{target}")
+        # Invariant 7: the skipped account was not promoted along with its sibling.
+        assert body["DB_CREDENTIALS"]["acme_priv_user"] == LIVE
+        assert body["DB_CREDENTIALS"]["acme_web_user"] != LIVE
 
 
 def test_a_window_left_open_is_a_warning_in_the_document(

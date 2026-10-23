@@ -1182,7 +1182,7 @@ def test_rotate_reports_the_skip_too(
     assert PROMOTION_SKIPPED in codes
 
 
-def test_rotate_reads_back_only_the_accounts_it_promoted(
+def test_rotate_does_not_read_back_a_skipped_account(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """#1000. The skipped account keeps its staged password in `pending` while
@@ -1207,6 +1207,8 @@ def test_rotate_reads_back_only_the_accounts_it_promoted(
     held = harness["store"].read("apps/acme/db")
     assert held is not None
     assert "acme_web_user" in held.data["pending"]
+    # Invariant 7: the skipped account was not promoted along with its sibling.
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
     assert held.data["DB_CREDENTIALS"]["acme_batch_user"] != LIVE
 
 

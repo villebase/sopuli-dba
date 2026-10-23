@@ -13,15 +13,13 @@ from __future__ import annotations
 
 import contextlib
 import json
-import sys
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from conftest import PASSWORD, USER
-from fault_harness import ACCOUNT, CONFIG, SECRET, TARGET, Estate
+from fault_harness import ACCOUNT, SECRET, Estate
 from sopuli.diagnostics import ROTATION_UNCONFIRMED
 from sopuli.exit_codes import ExitCode
 
@@ -53,28 +51,10 @@ def privileged(fault_estate: Estate) -> Iterator[str]:
             connection.close()
 
 
-def two_accounts(estate: Estate, addr: str) -> Path:
-    """The harness's config, with both accounts in the one document."""
-    path = estate.tmp_path / "two-accounts.yaml"
-    path.write_text(
-        CONFIG.format(
-            locking="",
-            addr=addr,
-            mount=estate.mount,
-            targets=TARGET.format(name="free-pdb", dsn=estate.dsn, user=estate.user),
-            account=f"{ACCOUNT}, {PRIVILEGED}",
-        ),
-        encoding="utf-8",
-    )
-    if sys.platform != "win32":
-        path.chmod(0o600)
-    return path
-
-
 def test_a_skipped_account_is_not_a_read_back_disagreement(
     fault_estate: Estate, vault_stack: Any, privileged: str
 ) -> None:
-    config = two_accounts(fault_estate, vault_stack.addr)
+    config = fault_estate.config(vault_stack.addr, accounts=(ACCOUNT, privileged))
 
     rotated = fault_estate.sopuli(config, "creds", "rotate", "--confirm")
 

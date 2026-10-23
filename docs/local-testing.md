@@ -3,8 +3,8 @@
 This guide sets up the local test stack and runs the usual commands against it.
 You see each command succeed, and a few of them refuse on purpose.
 
-Every sample is pasted from a real run of sopuli 0.78.0 (main at caf2645) on
-2026-10-23, on Windows 11, with Instant Client 23.26.3.0.0 and the `tier1`
+Every sample is pasted from a real run of main at caf2645, after the 0.78.0
+release, on 2026-10-23, on Windows 11, with Instant Client 23.26.3.0.0 and the `tier1`
 container stack (Oracle 26ai Free and Vault).
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
@@ -1015,6 +1015,10 @@ $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
 1.56 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
+
+`acme_batch_user` is `ROLLOVER_ACTIVE` because the `apply` in §10 opened its
+rollover window. It is `IN_SYNC` once the window closes, after an hour or after
+`creds finish-rollover`.
 
 No field holds a password. Every exit code except 2 produces a document.
 

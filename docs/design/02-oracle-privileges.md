@@ -1071,12 +1071,13 @@ written only as a comment in a script does not run.
 
 **Run the extensions with auditing enabled again.** The main probe's cleanup
 drops `SOPULI_PROBE_POL` and issues `NOAUDIT USER`. Run straight afterwards, the
-extensions record nothing, and their masking result proves nothing. 21.3.0.0.0
-XE makes this harder to see than 26ai does. On 26ai nothing is enabled, and the
-trail is visibly empty. The 21.3 image enables the Oracle-supplied
-`ORA_SECURECONFIG` policy, which covers `ALTER USER`. It ships
-`AUDIT_TRAIL = NONE`, which records nothing at all (§5). Once `AUDIT_TRAIL` is
-changed, the trail looks populated anyway, by a policy you did not mean to test.
+extensions record nothing, and their masking result proves nothing. On 26ai
+nothing is enabled, and the trail is visibly empty. The XE images of 21.3.0.0.0
+and 18.4.0.0.0 ship `AUDIT_TRAIL = NONE`, which stops unified records there
+(§5), so as shipped their trail stays empty too. Once `AUDIT_TRAIL` is changed,
+the Oracle-supplied `ORA_SECURECONFIG` policy, which the images enable and which
+covers `ALTER USER`, makes the trail look populated anyway, by a policy you did
+not mean to test.
 
 ---
 
@@ -1277,9 +1278,9 @@ releases that stops unified records as well. A logon under an enabled
 `ACTIONS LOGON` policy, and an `ALTER USER` under an enabled
 `ACTIONS ALTER USER` policy, leave no row. Under `AUDIT_TRAIL = DB` each leaves
 one (`15_mixed_mode_trail_probe.sql`). The policy view shows the policies
-enabled either way, so there the check answers `true` while the database
-records nothing. What the check should answer in mixed mode under `AUDIT_TRAIL = NONE`
-is open ([#1004](https://github.com/villebase/sopuli-dba/issues/1004)).
+enabled either way, so there the check answers `true` while the unified trail
+records neither action. What the check should answer in mixed mode under
+`AUDIT_TRAIL = NONE` is not decided (open: #1004).
 11.2 has no unified auditing, so the value is `unknown` there too; that is not
 measured. [measurements](../measurements.md) lists the releases the probe has
 run on.

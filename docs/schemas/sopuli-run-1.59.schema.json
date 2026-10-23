@@ -751,7 +751,7 @@
           "items": {
             "type": "string"
           },
-          "description": "The stores whose paths were listed and read, by the `vaults:` entry each was opened through: the first name of each store, or under `--vault` the first one named for it. With `--vault`, only the selected ones (issue #1015). A store that could not list is not here; `SOPULI-W005` or `SOPULI-W056` names it. Additive in 1.58."
+          "description": "The stores whose paths were listed and read, by the `vaults:` entry each was opened through: the first name of each store, or under `--vault` the first one named for it. With `--vault`, only the selected ones (issue #1015). A store that could not list is not here; `SOPULI-W005` or `SOPULI-W056` names it. Under `--prefix`, a store whose secret listing worked and whose lock listing was refused is here, and `SOPULI-W056` names the lock listing. Additive in 1.58."
         },
         "prefix": {
           "type": [
@@ -759,6 +759,14 @@
             "null"
           ],
           "description": "The secret path the survey was limited to, normalised, or null for every path (issue #1016). Only paths under it, and lock records under `locks/<prefix>`, were listed and read. Additive in 1.59."
+        },
+        "listed_paths": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "How many paths the listings of the stores in `listed` returned (issue #1016). 0 with a `prefix` means nothing is stored under it, which a mistyped prefix also gives, and is not a clean survey of it. Null where a listing failed, so the count is not the whole answer. Additive in 1.59."
         },
         "found": {
           "type": "array",

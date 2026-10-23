@@ -23,10 +23,14 @@ def build_section(survey: Survey, commands: Sequence[str | None]) -> dict[str, A
     an empty array is the finding. ``listed`` names the stores whose paths
     were read, so an empty ``found`` says what it covers (#1015), and
     ``prefix`` the secret path the survey was limited to, or ``null`` (#1016).
+    ``listed_paths`` is how many paths those listings returned, so a prefix
+    with nothing under it is not read as a clean survey of it, in JSON as in
+    the text; ``null`` where a listing failed.
     """
     return {
         "listed": list(survey.listed),
         "prefix": survey.prefix,
+        "listed_paths": survey.seen,
         "found": [
             _entry(orphan, command)
             for orphan, command in zip(survey.orphans, commands, strict=True)
@@ -78,7 +82,7 @@ def render(
         lines.extend(["", "no vault in `vaults:`"])
     elif not vaults:
         lines.extend(["", "no vault could be listed"])
-    elif survey.prefix is not None and not survey.seen:
+    elif survey.prefix is not None and survey.seen == 0:
         # Not "no orphans": nothing was there to look at, which a mistyped
         # prefix would also give.
         lines.extend(["", f"nothing is stored in {where}"])

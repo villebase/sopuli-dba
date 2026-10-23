@@ -367,7 +367,7 @@ def test_no_store_listed_is_a_failure(
     assert document["exit_code"] == ExitCode.FAILURE
     assert document["error"]["category"] == "vault"
     assert "vault-dev, vault-old" in document["error"]["message"]
-    assert document["orphans"] == {"listed": [], "prefix": None, "found": []}
+    assert document["orphans"] == {"listed": [], "prefix": None, "listed_paths": 0, "found": []}
     assert [entry["code"] for entry in document["diagnostics"]] == [ORPHANS_UNREAD] * 2
 
     text = run(config)
@@ -834,20 +834,83 @@ def test_a_refused_lock_listing_keeps_the_secrets(
     document = json.loads(result.output)
     assert [entry["path"] for entry in found(result)] == ["acme/alpha/db"]
     assert document["orphans"]["listed"] == ["vault-dev"]
+    assert document["orphans"]["listed_paths"] is None
     [warning] = [one for one in document["diagnostics"] if one.get("code") == ORPHANS_UNREAD]
-    assert "listing locks/acme: permission denied" in warning["message"]
+    assert warning["message"] == (
+        "could not list 'locks/acme' in store 'vault-dev', so a lock record under it "
+        "would not appear: permission denied"
+    )
+
+
+def test_a_refused_lock_listing_does_not_hide_a_store_that_stops(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W056 says both: the lock listing, and the secret reads cut short."""
+    stores = with_records(
+        ("vault-dev", "acme/alpha/db", PROMOTED), ("vault-dev", "acme/beta/db", PROMOTED)
+    )
+    store = stores["vault-dev"]
+    listing = store.list
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        if prefix.startswith("locks/"):
+            raise StoreError("permission denied")
+        return listing(prefix)
+
+    def read(path: str) -> Stored | None:
+        raise StoreError("Vault is sealed")
+
+    monkeypatch.setattr(store, "list", list_)
+    monkeypatch.setattr(store, "read", read)
+    result = run(
+        write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme", "--output", "json"
+    )
+
+    [warning] = [
+        one for one in json.loads(result.output)["diagnostics"] if one.get("code") == ORPHANS_UNREAD
+    ]
+    assert "stopped reading store 'vault-dev'" in warning["message"]
+    assert "Vault is sealed" in warning["message"]
+    assert "could not list 'locks/acme'" in warning["message"]
 
 
 def test_a_prefix_with_nothing_under_it_says_so(
     write_config: Callable[[str], Path], with_records: Records
 ) -> None:
-    """A mistyped prefix lists nothing, which is not a clean survey of it."""
+    """A mistyped prefix lists nothing, which is not a clean survey of it, in
+    the text and in the document."""
     with_records(("vault-dev", "acme/alpha/db", PROMOTED))
-    result = run(write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme/alhpa")
+    config = write_config(CONFIG)
+    result = run(config, "--vault", "vault-dev", "--prefix", "acme/alhpa")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "nothing is stored in 1 vault (vault-dev) under acme/alhpa/" in result.output
     assert "no orphans" not in result.output
+    document = json.loads(
+        run(config, "--vault", "vault-dev", "--prefix", "acme/alhpa", "--output", "json").output
+    )
+    assert document["orphans"]["listed_paths"] == 0
+
+
+def test_a_refused_lock_listing_is_not_nothing_stored(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The secret is gone and its lock record may not be: the lock records
+    were never looked at, so the run does not say nothing is stored."""
+    stores = with_records(("vault-dev", "locks/acme/alpha/db", released()))
+    store = stores["vault-dev"]
+    listing = store.list
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        if prefix.startswith("locks/"):
+            raise StoreError("permission denied")
+        return listing(prefix)
+
+    monkeypatch.setattr(store, "list", list_)
+    result = run(write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme")
+
+    assert "nothing is stored" not in result.output
+    assert "no orphans in 1 vault (vault-dev) under acme/" in result.output
 
 
 @pytest.mark.parametrize(

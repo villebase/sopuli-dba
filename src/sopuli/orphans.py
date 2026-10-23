@@ -115,11 +115,15 @@ class Unread:
 
     ``path`` is a document the store refused this run. ``None`` means the store
     stopped answering, at ``reason``, and the rest of it was not looked at.
+    ``listing`` marks ``path`` as a subtree the store would not list instead:
+    under ``--prefix``, the lock records' (#1016). The rest of the store was
+    still surveyed.
     """
 
     store: str
     path: str | None
     reason: str
+    listing: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,9 +139,10 @@ class Survey:
     #: The secret path the survey was limited to, normalised; ``None`` for the
     #: whole of each store (#1016).
     prefix: str | None = None
-    #: How many paths the listings returned, so a prefix that matched nothing
-    #: is not reported as a clean survey of it.
-    seen: int = 0
+    #: How many paths the listings of the stores in ``listed`` returned, so a
+    #: prefix that matched nothing is not reported as a clean survey of it.
+    #: ``None`` where a listing failed, so the count is not the whole answer.
+    seen: int | None = 0
 
     def held(self) -> frozenset[LockKey]:
         """The keys a live lock stands on.
@@ -234,7 +239,7 @@ def find(
     unlistable: list[str] = []
     skipped: list[SkippedPath] = []
     unread: list[Unread] = []
-    seen = 0
+    seen: int | None = 0
     for name, store in sorted(stores.items()):
         if LIST not in store.supports():
             unlistable.append(name)
@@ -251,10 +256,10 @@ def find(
             try:
                 paths = (*paths, *store.list(locks_at))
             except StoreError as error:
-                unread.append(
-                    Unread(store=name, path=None, reason=f"listing {locks_at}: {error.message}")
-                )
-        seen += len(paths)
+                unread.append(Unread(store=name, path=locks_at, reason=error.message, listing=True))
+                seen = None
+        if seen is not None:
+            seen += len(paths)
         listed.append(name)
         in_region = region if region is not None and region.store == name else None
         locks, bad = _locks(name, store, paths, declared, region=in_region)

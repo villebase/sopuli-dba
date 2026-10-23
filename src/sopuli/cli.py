@@ -4220,11 +4220,10 @@ def vault_orphans(vaults: tuple[str, ...], prefix: str | None, run: Invocation) 
     if region is not None:
         store = names.get(region.store, region.store)
         region = replace(region, store=through.get(store, store))
-        claimed = normalise_path(region.prefix)
         if (
             under is not None
             and region.store in through.values()
-            and (under == claimed or under.startswith(f"{claimed}/"))
+            and (under == region.prefix or region.covers(LockKey(store=region.store, path=under)))
         ):
             # Every path there would be skipped, and the run would read as a
             # clean survey of it.

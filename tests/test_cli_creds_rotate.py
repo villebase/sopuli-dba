@@ -508,8 +508,9 @@ def test_a_rotation_over_a_staged_pending_is_refused(
 ) -> None:
     """#769: an `apply` may be putting that `pending` on a database right now,
     and drawing over it would leave the database with a password the vault has
-    nowhere. Refused before the pre-flight, and under `--dry-run` too, as the
-    other plan-time refusals are."""
+    nowhere. Refused before anything is staged or changed, and under `--dry-run`
+    too, as the other plan-time refusals are. After the pre-flight, whose reads
+    say which accounts the guardrails would skip (#1009)."""
     harness = estate(documents=_staged_already())
     before = harness["store"].read("apps/acme/appdb-alpha").version
 
@@ -522,7 +523,7 @@ def test_a_rotation_over_a_staged_pending_is_refused(
     assert "sopuli creds apply" in hint
     assert "creds generate --overwrite-pending" in hint
     assert harness["store"].read("apps/acme/appdb-alpha").version == before
-    assert harness["sessions"] == [], "refused before the pre-flight connected"
+    assert all(session.attempts == [] for session in harness["sessions"])
 
 
 def test_a_pending_that_is_not_text_is_refused_as_well(

@@ -1182,12 +1182,16 @@ def test_rotate_reports_the_skip_too(
     assert PROMOTION_SKIPPED in codes
 
 
-def test_rotate_does_not_read_back_a_skipped_account(
+def left_over() -> dict[str, Any]:
+    """A guarded account's `pending` left by `creds generate`, which `apply` skips."""
+    return {**NOTHING_STAGED, "pending": {"acme_web_user": STAGED}}
+
+
+def test_rotate_does_not_stage_an_account_the_guardrails_skip(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """#1000. The skipped account keeps its staged password in `pending` while
-    its sibling moves to `current`, so step 8 must not compare it with
-    `current`."""
+    """#1009. A `pending` nothing would apply is not drawn, so none is left
+    behind to refuse the next rotation."""
     harness = estate(
         {
             "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
@@ -1202,14 +1206,85 @@ def test_rotate_does_not_read_back_a_skipped_account(
     )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    codes = [one.get("code") for one in document(result)["diagnostics"]]
-    assert ROTATION_UNCONFIRMED not in codes
+    assert states(result)["acme_web_user"] == SKIPPED
     held = harness["store"].read("apps/acme/db")
     assert held is not None
-    assert "acme_web_user" in held.data["pending"]
+    assert "acme_web_user" not in held.data.get("pending", {})
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] != LIVE
+    assert changed(harness) == ["ACME_BATCH_USER"]
+
+
+def test_a_skipped_accounts_pending_does_not_refuse_the_rotation(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1009. The rotation does not draw over it, so it has nothing to refuse
+    for. The `pending` is left as it was, and its sibling rotates. #1000: step 8
+    does not compare the skipped account with `current`."""
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=left_over(),
+    )
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(CONFIG)), "--confirm"]
+        + ["--output", "json"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert ROTATION_UNCONFIRMED not in codes
+    assert states(result)["acme_web_user"] == SKIPPED
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
     # Invariant 7: the skipped account was not promoted along with its sibling.
     assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
     assert held.data["DB_CREDENTIALS"]["acme_batch_user"] != LIVE
+
+
+def test_under_force_a_skipped_accounts_pending_still_refuses(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--force` waives the guardrails, so the account is staged and the
+    rotation would draw over its `pending` (#769)."""
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=left_over(),
+    )
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(CONFIG)), "--confirm", "--force"],
+    )
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.ABORTED
+    assert str(result.exception).startswith("acme_web_user already has a `pending` staged")
+    assert changed(harness) == []
+
+
+def test_a_dry_run_does_not_refuse_over_a_skipped_accounts_pending(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The preview decides from the same reads as the run (#1009)."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=left_over(),
+    )
+    result = runner.invoke(
+        cli, ["creds", "rotate", "--config", str(write_config(CONFIG)), "--dry-run"]
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "nothing was rotated (--dry-run)" in result.output
 
 
 def test_the_reason_names_every_check_that_refused(

@@ -6559,6 +6559,7 @@ def creds_apply(
             withheld = _withheld(left_out)
             document.diagnostics.extend(withheld)
             repair_notes.extend(one.message for one in withheld)
+            surveyed: dict[tuple[str, str], UserState] = {}
             findings = _preflight(
                 _surveyable(sources),
                 run,
@@ -6567,6 +6568,7 @@ def creds_apply(
                 full=preflight_all,
                 rollbacks=_rolling_back(sources),
                 reuse=foreseen,
+                states=surveyed,
             )
             document.diagnostics.extend(_preflight_diagnostics(findings))
             reuse_ahead = rollback_reuse(foreseen)
@@ -6591,6 +6593,9 @@ def creds_apply(
                 selection=selection,
                 force=force,
                 requested=source_stage,
+                # Only after a full survey, which read every account the pass
+                # asks about. `--strategy` alone reads none.
+                surveyed=surveyed if preflight_all else None,
             )
             if stolen is None:
                 # §6.4's redraw, between the estate pass and the promotion. After,
@@ -7149,6 +7154,7 @@ def _apply_estate(
     force: bool = False,
     requested: str | None = None,
     ask_first: bool = True,
+    surveyed: Mapping[tuple[str, str], UserState] | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
 
@@ -7157,6 +7163,14 @@ def _apply_estate(
     has already changed some targets, and the restage has written the new
     password over the one they hold, so skipping them now would leave them with
     a password the vault no longer stores anywhere.
+
+    ``surveyed`` is what a full pre-flight read under this run's lock, by
+    (target, account). Given it, the pass decides from those reads and opens no
+    session of its own (#998). A survey that let the run through has read every
+    account the pass asks about: under `--preflight`, a target it could not
+    reach, an account it could not read and an account that is not there each
+    refuse the run. The check at the point of change still runs, and
+    `SOPULI-W050` still covers a refusal that appears after the survey.
 
     Grouped the way `check` groups and for the same reason: a target with six
     accounts in it is one login for this tool rather than six, and six would be
@@ -7187,7 +7201,9 @@ def _apply_estate(
     declared = _declared_accounts(run)
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     unreachable: dict[str, BaseException] = {}
-    if ask_first and not force:
+    if ask_first and not force and surveyed is not None:
+        refused = _refusals(_shared_credentials(sources), surveyed, declared=declared)
+    elif ask_first and not force:
         # Not under `--force`: it waives every check that can refuse an
         # application account here, so the pass could find nothing.
         try:
@@ -10574,7 +10590,8 @@ def _rotate_estate(
     # Step 3, and unconditional. Every account about to be rotated, rather than
     # only those the vault already holds something for: there is no `pending`
     # yet, and a first rotation has no `current` either.
-    findings = _preflight(rotating, run, config, strategy=strategy, full=True)
+    surveyed: dict[tuple[str, str], UserState] = {}
+    findings = _preflight(rotating, run, config, strategy=strategy, full=True, states=surveyed)
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
         return _refuse_preflight(
@@ -10630,7 +10647,9 @@ def _rotate_estate(
     documents = _read_documents(keys, stores, run=run)
     sources = _sources(rotating, documents, stage=None)
 
-    # Steps 5 and 6.
+    # Steps 5 and 6. The guardrail pass decides from step 3's reads (#998).
+    # Staging writes only the vault, and the check at the point of change asks
+    # the database again.
     into.applied, into.stolen = _apply_estate(
         sources,
         run,
@@ -10640,6 +10659,7 @@ def _rotate_estate(
         strategy=strategy,
         selection=selection,
         force=force,
+        surveyed=surveyed,
     )
     if into.stolen is not None:
         return None

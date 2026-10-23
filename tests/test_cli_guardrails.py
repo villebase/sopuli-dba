@@ -529,6 +529,58 @@ def test_a_survey_that_refuses_forecasts_nothing(
     assert ahead(result) == []
 
 
+def test_a_preflight_run_decides_the_pass_from_the_survey(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#998. Under `--preflight` the survey has read every shared account under
+    the lock, so the pass opens no session of its own: one for the survey and
+    one for the run, per target. Its answer is the same."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "ACME_WEB_USER" not in changed(harness)
+    rows = {(one["account"], one["target"]): one["state"] for one in document(result)["results"]}
+    assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
+    assert rows[("acme_web_user", "appdb-beta")] == SKIPPED
+    assert len(harness["sessions"]) == 4, "without the survey's reads the pass opens two more"
+
+
+def test_a_refusal_after_the_survey_is_still_caught_at_the_change(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The survey's reads are older than the pass's would have been. The check
+    at the point of change still asks, so a grant made after the survey holds
+    the promotion back with `SOPULI-W050`, as it does without `--preflight`."""
+    harness = granted_during_run(estate)
+    result = run(runner, write_config(TWO_TARGETS), "--preflight", "--output", "json")
+
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["pending"]["acme_web_user"] == STAGED
+    assert result.exit_code == ExitCode.PARTIAL
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert PROMOTION_SKIPPED in codes
+
+
+def test_rotate_decides_the_pass_from_its_survey(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`rotate` always surveys (step 3), so its pass never opens a session of
+    its own: two for the survey and two for the run."""
+    harness = estate({}, by_target=DBA_ON_BETA, document=NOTHING_STAGED)
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(TWO_TARGETS)), "--confirm"]
+        + ["--output", "json"],
+    )
+
+    assert "ACME_WEB_USER" not in changed(harness), result.output
+    rows = {(one["account"], one["target"]): one["state"] for one in document(result)["results"]}
+    assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
+    assert len(harness["sessions"]) == 4
+
+
 def test_the_forecast_names_the_account_refused_on_each_target() -> None:
     """A credential's place can be bound to a different account on each target.
     The account named is the one refused, and `account` is set only when the

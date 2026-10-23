@@ -2826,3 +2826,24 @@ the register.
     every target a shared credential is bound to.
   - Leaving it. The real run's `SKIPPED` rows already say which target refused
     and why, but only after the run has started.
+
+## #998
+
+- **Decided:** 2026-10-23, #998
+- **Question:** A real `creds apply --preflight` surveyed each account and then
+  #872's guardrail pass opened a second session per target to read the same
+  accounts again, under the same lock. Should the pass decide from the
+  survey's reads instead?
+- **Decision:** Yes, wherever a full survey ran: `creds apply --preflight` and
+  every `creds rotate`. The pass applies the same rule (`_refusals`) to the
+  survey's reads and opens no session. Without `--preflight`, or with
+  `--strategy` alone, it reads as before. Output does not change, so no schema
+  bump. UC-1 §5 states the rule.
+- **Why:** the second read cost one login per target, so one more entry in
+  each database's audit trail, and lease time, for an answer the run already
+  held. A survey that lets the run through has read every account the pass asks
+  about. Its reads are a moment older, but the check at the point of change
+  still asks the database, and `SOPULI-W050` covers a refusal found only there.
+- **Rejected:** keeping the second read for a fresher answer. Being fresher
+  than the survey protects nothing that the point-of-change check does not
+  already protect.

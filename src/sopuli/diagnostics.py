@@ -1374,14 +1374,17 @@ def unread_for_orphans(unread: Sequence[Unread]) -> list[Diagnostic]:
 
     One entry per store, for :func:`reset_journal_unread`'s reason: one token
     refused on a hundred paths is one finding. A store that stopped answering
-    is said first, because then the rest of it was not looked at.
+    is said first, because then the rest of it was not looked at. A lock
+    listing refused under ``--prefix`` (#1016) is said next: the rest of that
+    store was surveyed.
     """
     by_store: dict[str, list[Unread]] = {}
     for one in unread:
         by_store.setdefault(one.store, []).append(one)
     diagnostics = []
     for store, failed in sorted(by_store.items()):
-        refused = [one for one in failed if one.path is not None]
+        refused = [one for one in failed if one.path is not None and not one.listing]
+        unlisted = [one for one in failed if one.listing]
         stopped = next((one for one in failed if one.path is None), None)
         parts = []
         if stopped is not None:
@@ -1389,6 +1392,11 @@ def unread_for_orphans(unread: Sequence[Unread]) -> list[Diagnostic]:
                 f"stopped reading store {store!r}, so an orphan in the rest of it would "
                 f"not appear: {stopped.reason}"
             )
+        parts.extend(
+            f"could not list {one.path!r} in store {store!r}, so a lock record under it "
+            f"would not appear: {one.reason}"
+            for one in unlisted
+        )
         if refused:
             count = "1 document" if len(refused) == 1 else f"{len(refused)} documents"
             parts.append(

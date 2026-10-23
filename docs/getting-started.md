@@ -721,10 +721,12 @@ They may be another config's. Check each one before you delete it (getting-start
 It lists a document only if the document has a field this tool writes, `origin`
 or `rotated_at`. So another team's secrets in the same mount are not listed.
 But it has to read each document to see that, and each read is in the vault's
-audit log, under your token. A document your token may not read is counted in
-a warning. A path that any application in the config names is never listed, in
-any vault. So if you moved an application to another vault and kept the path,
-the old record is not listed, and you remove it by hand.
+audit log, under your token. If you know where the old records are, give that
+folder with `--prefix`, for example `--prefix acme/acme`, and only the paths
+under it and their lock records are read. A document your token may not read
+is counted in a warning. A path that any application in the config names is
+never listed, in any vault. So if you moved an application to another vault
+and kept the path, the old record is not listed, and you remove it by hand.
 
 If the command cannot log in to one vault in `vaults:`, it fails. It also fails
 if it listed no vault: with exit 1 when a listing failed, and with exit 5 when

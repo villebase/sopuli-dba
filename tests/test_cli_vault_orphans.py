@@ -367,7 +367,7 @@ def test_no_store_listed_is_a_failure(
     assert document["exit_code"] == ExitCode.FAILURE
     assert document["error"]["category"] == "vault"
     assert "vault-dev, vault-old" in document["error"]["message"]
-    assert document["orphans"] == {"listed": [], "found": []}
+    assert document["orphans"] == {"listed": [], "prefix": None, "listed_paths": 0, "found": []}
     assert [entry["code"] for entry in document["diagnostics"]] == [ORPHANS_UNREAD] * 2
 
     text = run(config)
@@ -703,6 +703,240 @@ def test_a_vault_the_config_does_not_declare_is_refused(
     assert isinstance(result.exception, ArgumentError)
     assert "not declared in the configuration: `vault-prod`" in str(result.exception)
     assert "vault-dev, vault-old" in (result.exception.hint or "")
+    assert opened == []
+
+
+def _asked(monkeypatch: pytest.MonkeyPatch, store: SecretStore) -> dict[str, list[str]]:
+    """Record what ``store`` is asked to list and to read."""
+    asked: dict[str, list[str]] = {"list": [], "read": []}
+    listing, reading = store.list, store.read
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        asked["list"].append(prefix)
+        return listing(prefix)
+
+    def read(path: str) -> Stored | None:
+        asked["read"].append(path)
+        return reading(path)
+
+    monkeypatch.setattr(store, "list", list_)
+    monkeypatch.setattr(store, "read", read)
+    return asked
+
+
+def test_prefix_lists_and_reads_only_under_it(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """#1016: the documents outside the prefix are neither listed nor read, so
+    they are not in the store's audit log."""
+    stores = with_records(
+        ("vault-dev", "acme/alpha/db", PROMOTED),
+        ("vault-dev", "locks/acme/alpha/db", released()),
+        ("vault-dev", "other/team/db", PROMOTED),
+        ("vault-dev", "locks/other/team/db", released()),
+    )
+    asked = _asked(monkeypatch, stores["vault-dev"])
+    config = write_config(CONFIG)
+    result = run(config, "--vault", "vault-dev", "--prefix", "acme", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.output)
+    validator.validate(document)
+    assert [entry["path"] for entry in found(result)] == ["acme/alpha/db", "locks/acme/alpha/db"]
+    assert asked["list"] == ["acme", "locks/acme"]
+    assert all(path.startswith(("acme/", "locks/acme/")) for path in asked["read"]), asked["read"]
+    assert document["orphans"]["prefix"] == "acme"
+    assert document["invocation"]["selection"] == {"vaults": ["vault-dev"], "prefix": "acme"}
+    text = run(config, "--vault", "vault-dev", "--prefix", "acme").output
+    assert "2 orphans in 1 vault (vault-dev) under acme/:" in text
+
+
+def test_without_a_prefix_the_section_says_so(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    with_records()
+    document = json.loads(run(write_config(CONFIG), "--output", "json").output)
+
+    assert document["orphans"]["prefix"] is None
+    assert "selection" not in document["invocation"]
+
+
+def test_the_prefix_is_normalised_and_recorded_as_given(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    result = run(write_config(CONFIG), "--prefix", "/acme//alpha/", "--output", "json")
+
+    document = json.loads(result.output)
+    assert document["orphans"]["prefix"] == "acme/alpha"
+    assert document["invocation"]["selection"] == {"prefix": "/acme//alpha/"}
+    assert [entry["path"] for entry in found(result)] == ["acme/alpha/db"]
+
+
+def test_the_prefix_is_a_folder(write_config: Callable[[str], Path], with_records: Records) -> None:
+    """A document at exactly the prefix is not under it, as `vault kv list`
+    would not show it."""
+    with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    result = run(write_config(CONFIG), "--prefix", "acme/alpha/db", "--output", "json")
+
+    assert found(result) == []
+
+
+def test_reset_records_under_the_prefix_are_still_left_out(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """The orphan beside them shows the prefix listed the subtree."""
+    with_records(
+        ("vault-dev", "sopuli/personal-resets/appdb-alpha/acme_dev_alice", PROMOTED),
+        ("vault-dev", "sopuli/old/db", PROMOTED),
+    )
+    result = run(write_config(RESETS), "--prefix", "sopuli", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert [entry["path"] for entry in found(result)] == ["sopuli/old/db"]
+
+
+@pytest.mark.parametrize("given", ["sopuli/personal-resets", "sopuli/personal-resets/appdb"])
+def test_a_prefix_inside_the_reset_records_prefix_is_refused(
+    given: str, write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """Every path there is left out, so the run would read as a clean survey."""
+    with_records()
+    result = run(write_config(RESETS), "--prefix", given)
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "under the `reset_records:` prefix" in result.output
+
+
+def test_a_refused_lock_listing_keeps_the_secrets(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A token that may list the secrets and not their lock records still has
+    its secrets surveyed, and W056 says which listing failed."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    store = stores["vault-dev"]
+    listing = store.list
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        if prefix.startswith("locks/"):
+            raise StoreError("permission denied")
+        return listing(prefix)
+
+    monkeypatch.setattr(store, "list", list_)
+    result = run(
+        write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.output)
+    assert [entry["path"] for entry in found(result)] == ["acme/alpha/db"]
+    assert document["orphans"]["listed"] == ["vault-dev"]
+    assert document["orphans"]["listed_paths"] is None
+    [warning] = [one for one in document["diagnostics"] if one.get("code") == ORPHANS_UNREAD]
+    assert warning["message"] == (
+        "could not list 'locks/acme' in store 'vault-dev', so a lock record under it "
+        "would not appear: permission denied"
+    )
+
+
+def test_a_refused_lock_listing_does_not_hide_a_store_that_stops(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W056 says both: the lock listing, and the secret reads cut short."""
+    stores = with_records(
+        ("vault-dev", "acme/alpha/db", PROMOTED), ("vault-dev", "acme/beta/db", PROMOTED)
+    )
+    store = stores["vault-dev"]
+    listing = store.list
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        if prefix.startswith("locks/"):
+            raise StoreError("permission denied")
+        return listing(prefix)
+
+    def read(path: str) -> Stored | None:
+        raise StoreError("Vault is sealed")
+
+    monkeypatch.setattr(store, "list", list_)
+    monkeypatch.setattr(store, "read", read)
+    result = run(
+        write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme", "--output", "json"
+    )
+
+    [warning] = [
+        one for one in json.loads(result.output)["diagnostics"] if one.get("code") == ORPHANS_UNREAD
+    ]
+    assert "stopped reading store 'vault-dev'" in warning["message"]
+    assert "Vault is sealed" in warning["message"]
+    assert "could not list 'locks/acme'" in warning["message"]
+
+
+def test_a_prefix_with_nothing_under_it_says_so(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """A mistyped prefix lists nothing, which is not a clean survey of it, in
+    the text and in the document."""
+    with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    config = write_config(CONFIG)
+    result = run(config, "--vault", "vault-dev", "--prefix", "acme/alhpa")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "nothing is stored in 1 vault (vault-dev) under acme/alhpa/" in result.output
+    assert "no orphans" not in result.output
+    document = json.loads(
+        run(config, "--vault", "vault-dev", "--prefix", "acme/alhpa", "--output", "json").output
+    )
+    assert document["orphans"]["listed_paths"] == 0
+
+
+def test_a_refused_lock_listing_is_not_nothing_stored(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The secret is gone and its lock record may not be: the lock records
+    were never looked at, so the run does not say nothing is stored."""
+    stores = with_records(("vault-dev", "locks/acme/alpha/db", released()))
+    store = stores["vault-dev"]
+    listing = store.list
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        if prefix.startswith("locks/"):
+            raise StoreError("permission denied")
+        return listing(prefix)
+
+    monkeypatch.setattr(store, "list", list_)
+    result = run(write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme")
+
+    assert "nothing is stored" not in result.output
+    assert "no orphans in 1 vault (vault-dev) under acme/" in result.output
+
+
+@pytest.mark.parametrize(
+    ("given", "says"),
+    [
+        ("acme/../locks", "'..'"),
+        ("locks/acme", "under `locks/`"),
+        ("locks", "under `locks/`"),
+        ("/", "names no path"),
+        ("acme/al?pha", "'?'"),
+    ],
+)
+def test_a_prefix_the_tool_cannot_address_is_refused(
+    given: str,
+    says: str,
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exit 2 with no document (J7), before any store is opened."""
+    with_records()
+    opened = _opened(monkeypatch)
+    result = run(write_config(CONFIG), "--prefix", given)
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert says in result.output
     assert opened == []
 
 

@@ -206,7 +206,7 @@ jobs:
     #
     # 3.13 rather than the floor: Linux 3.11 already fails first on anything
     # version-specific, so the Windows cell is better spent on what people install.
-    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }}${{ matrix.shuffle && ', shuffled' || '' }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
@@ -221,6 +221,11 @@ jobs:
         include:
           - os: windows-latest
             python-version: "3.13"
+          # The one shuffled cell (#510, `04-testing.md` §3). Every other cell
+          # runs in the fixed order `addopts` sets.
+          - os: ubuntu-latest
+            python-version: "3.13"
+            shuffle: true
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -248,7 +253,19 @@ jobs:
         run: mypy
 
       - name: pytest
+        if: ${{ !matrix.shuffle }}
         run: pytest
+
+      # The seed is the run's id, so re-running a red job runs the same order
+      # again instead of hiding the failure behind a new one. `-q` hides
+      # pytest-randomly's own seed line, so the step prints it.
+      - name: pytest, shuffled
+        if: ${{ matrix.shuffle }}
+        env:
+          SEED: ${{ github.run_id }}
+        run: |
+          echo "shuffled with seed $SEED; reproduce with: pytest -p randomly --randomly-seed=$SEED"
+          pytest -p randomly --randomly-seed="$SEED"
 
       # "main is always green -- tests pass, *and the tool works*". A broken
       # console-script entry point or a missing package in the wheel passes every

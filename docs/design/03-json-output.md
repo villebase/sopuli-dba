@@ -1195,9 +1195,13 @@ declares, and reports two kinds of record:
   `lock status` finds it.
 
 Paths under the `reset_records:` prefix are not reported: they are this
-estate's. A binding whose store the file leaves to `SOPULI_VAULT` or a
-profile's `vault:` declares its path in every store, because a rotation run may
-pick either. The verb deletes nothing. This is from the tier-1 stack, after the
+estate's. **A path any binding names is declared in every store.** Two
+`vaults:` entries can name one store in ways no comparison catches, such as
+`127.0.0.1` and `localhost`, and a binding whose store comes from
+`SOPULI_VAULT` or a profile may be written to any of them. The cost is one
+case: an application moved to another store at the same path leaves a record
+that is not reported. Entries with the same address, namespace, mount and KV
+version are listed once, under the first name. The verb deletes nothing. This is from the tier-1 stack, after the
 application's path moved from `acme/acme/dev` to `acme/dev/acme`:
 
 ```json
@@ -1222,7 +1226,8 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
   counter, so the first acquisition there could never succeed again. On KV v1
   it is `vault kv delete`. It names the store's address, and its namespace where
   it has one, so it reaches the store the config names whatever `VAULT_ADDR`
-  the shell holds. It is quoted for a POSIX shell. It is `null` while a lock
+  the shell holds. Credentials in the address are shown as `***`, as
+  `config show` shows them. It is quoted for a POSIX shell. It is `null` while a lock
   that has not expired is held at the secret path, for the lock and for its
   secret, because somebody may be rotating it.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
@@ -1233,9 +1238,13 @@ Reading a document's shape reads its values. Only the root keys are looked at,
 and nothing from the document is reported except its version. Each read of an
 undeclared document is in the store's audit log, under this run's token. A
 document the store would not let the run read is counted in `SOPULI-W056`, and
-the survey goes on. A store with no `list` capability is named in
-`SOPULI-W005`, and a path the tool refuses is named in `SOPULI-W053`. The run
-exits 0 when it could look.
+the survey goes on. A store that refuses the listing, or stops answering part
+way, is named in `SOPULI-W056` too, and the rest of it is not read. A store
+with no `list` capability is named in `SOPULI-W005`, and a path the tool
+refuses is named in `SOPULI-W053`. The run exits 0 when it could look. When no
+store can list, it exits 5 with category `capability`, because an empty report
+would read as a clean estate. Every store in `vaults:` is opened, so one the run
+cannot reach or log in to fails the run, as on `lock status`.
 
 ### `targets`, emitted by `doctor`
 
@@ -2087,7 +2096,7 @@ not contract and may improve.
 | `SOPULI-W053` | `lock status` listed a lock record at a path the tool refuses in every store path, one holding `?`, `%`, a backslash or a control character, or a `.` or `..` segment, so the record is not in `found[]` (#886). Only a record written by hand can have such a path (#858), and the tool can neither read nor break it. One entry for each path, naming the store and the path. Remove the record with the vault's own tools if nothing uses it. A code of its own rather than `SOPULI-W005`, because the store could list. `vault orphans` raises it too, from run schema 1.57 (#999), for a secret path like that: it could not read the record to tell whether this tool wrote it |
 | `SOPULI-W054` | `account list` could not open or read the reset journal that `reset_records:` declares, so `RESET_AT` is empty and `results[].reset_at` is absent on the rows it could not answer for (#929). An empty `RESET_AT` there does not mean that nobody reset them. Raised for a refused or missing token, for a store that cannot be reached, for a record with no `reset_at` string, and for a name that is not one path segment, which has no record path. One entry for the run, naming the store, the number of rows (an account on one target each), and the first error with the store's hint, last. The store is opened at most once per run. After a failure other than a refusal, nothing more is read from it, because the next read would wait out the same timeout; a refusal is about one path, since a token's policy is per path. The text output prints it under the table. The listing still succeeds, for UC-2 §3.4's reason. A journal with no record for an account is not this code. A code of its own rather than `SOPULI-W023`, because a declared store failed |
 | `SOPULI-W055` | A dry run found a credential, bound to more than one target, that a guardrail refuses on at least one of them. Raised by `creds apply --dry-run --preflight` (#988), and by `creds rotate --dry-run` from run schema 1.55 and event schema 1.16 (#997). The real run asks every target before the first change and changes that credential on none (UC-1 §5), so this says the run's `SKIPPED` rows before the run starts. **One per credential**, naming the document, the account refused on each refusing target, that target's reasons, and every target the credential is bound to. `target` is set when one target refuses, and `account` when the refusals name one account. Not raised when the survey itself refuses the run, because the real run would stop there. It is asked of the accounts the survey already read, so it opens no connection of its own, and an account the survey could not read is left out. Not raised under `--force`, where the run does not ask. `apply` raises it only under `--preflight`, because its plain dry run opens no connection. `rotate`'s dry run always surveys, and every credential due counts, because the rotation stages a `pending` for each one before the pass asks. A refused credential's `pending` then stays staged, and the next `creds rotate` refuses until `creds apply` or `creds generate --overwrite-pending` deals with it. A forecast, like `SOPULI-W028` under `--preflight`, not a check the survey could not make, so it is not one of the survey's findings. **Printed as well as serialised** |
-| `SOPULI-W056` | `vault orphans` listed documents the store would not let it read, so it cannot say whether this tool wrote them (#999). On a shared mount that is usually another team's path. **One per store**, with the count, the first path and the store's message. The survey goes on: everything reported is accurate, and an orphan among these would not appear. From run schema 1.57 |
+| `SOPULI-W056` | `vault orphans` listed documents the store would not let it read, so it cannot say whether this tool wrote them (#999). On a shared mount that is usually another team's path. Raised too for a store that refused the listing or stopped answering part way, sealed or timed out, and then the rest of that store was not read. **One per store**, with the count, the first path and the store's message. The survey goes on: everything reported is accurate, and an orphan among these would not appear. From run schema 1.57 |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.

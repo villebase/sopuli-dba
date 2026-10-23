@@ -273,7 +273,7 @@ def test_a_document_the_store_will_not_let_it_read_is_a_warning(
 
     def refuse(path: str, *, version: int | None = None) -> Stored | None:
         if path == "other/team/db":
-            raise StoreError("permission denied")
+            raise RefusedError("permission denied")
         return read(path, version=version)
 
     monkeypatch.setattr(store, "read", refuse)
@@ -286,6 +286,128 @@ def test_a_document_the_store_will_not_let_it_read_is_a_warning(
     [warning] = document["diagnostics"]
     assert warning["code"] == ORPHANS_UNREAD
     assert "'other/team/db': permission denied" in warning["message"]
+
+
+class RefusedError(StoreError):
+    """A 403, as the HashiCorp backend reports one."""
+
+    category = "authorization"
+
+
+def test_a_store_that_stops_answering_is_not_read_to_the_end(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A seal or a timeout is the store's, and every later read would wait it out."""
+    stores = with_records(
+        ("vault-dev", "a/first", PROMOTED),
+        ("vault-dev", "b/second", PROMOTED),
+    )
+    store = stores["vault-dev"]
+    reads: list[str] = []
+
+    def sealed(path: str, *, version: int | None = None) -> Stored | None:
+        reads.append(path)
+        raise StoreError("Vault is sealed")
+
+    monkeypatch.setattr(store, "read", sealed)
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert reads == ["a/first"]
+    [warning] = json.loads(result.output)["diagnostics"]
+    assert warning["code"] == ORPHANS_UNREAD
+    assert "stopped reading store 'vault-dev'" in warning["message"]
+    assert "Vault is sealed" in warning["message"]
+
+
+def test_a_listing_the_store_refuses_is_a_warning(
+    write_config: Callable[[str], Path],
+    with_records: Records,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stores = with_records(
+        ("vault-dev", "acme/alpha/db", PROMOTED),
+        ("vault-old", "acme/alpha/db", PROMOTED),
+    )
+
+    def refused(prefix: str) -> tuple[str, ...]:
+        raise RefusedError("permission denied")
+
+    monkeypatch.setattr(stores["vault-dev"], "list", refused)
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert [entry["vault"] for entry in found(result)] == ["vault-old"]
+    [warning] = json.loads(result.output)["diagnostics"]
+    assert "stopped reading store 'vault-dev'" in warning["message"]
+
+
+#: `CONFIG` with a second entry for `vault-dev`'s server and mount, as an estate
+#: with one entry per auth method has.
+TWO_NAMES = CONFIG.replace(
+    "  vault-old:\n",
+    """  vault-dev-ci:
+    type: hashicorp
+    addr: https://VAULT-DEV.example.com:8200/
+    mount: kv
+    auth: { method: approle, role_id: { env: ROLE_ID }, secret_id: { env: SECRET_ID } }
+  vault-old:
+""",
+)
+
+
+def test_two_entries_for_one_store_are_one_store(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """A binding through either name declares the path for both. Surveyed as two,
+    the live document would be reported in the other one, with a delete command."""
+    stores = with_records(("vault-dev", "acme/db/alpha", PROMOTED))
+    stores["vault-dev-ci"] = stores["vault-dev"]  # type: ignore[index]
+    result = run(write_config(TWO_NAMES), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert found(result) == []
+    assert "in 2 vaults (vault-dev, vault-old)" in run(write_config(TWO_NAMES)).output
+
+
+def test_a_declared_path_is_declared_in_every_store(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """Two entries can name one store in ways no comparison catches, such as
+    127.0.0.1 and localhost. A declared path is never reported in another store."""
+    with_records(
+        ("vault-old", "acme/db/alpha", PROMOTED),
+        ("vault-old", "locks/acme/db/alpha", released()),
+    )
+    result = run(write_config(CONFIG), "--output", "json")
+
+    assert found(result) == []
+
+
+def test_two_spellings_of_one_lock_are_two_records(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    with_records(
+        ("vault-dev", "locks/acme/alpha/db", released()),
+        ("vault-dev", "locks/acme//alpha/db", held()),
+    )
+    result = run(write_config(CONFIG), "--output", "json")
+
+    entries = {entry["path"]: entry for entry in found(result)}
+    assert set(entries) == {"locks/acme/alpha/db", "locks/acme//alpha/db"}
+    assert entries["locks/acme//alpha/db"]["lock"]["held"] is True
+    assert entries["locks/acme/alpha/db"]["lock"]["held"] is False
+
+
+def test_credentials_in_the_address_are_masked() -> None:
+    vault = Vault(name="v", type="hashicorp", addr="https://svc:pw@vault.example.com", mount="kv")
+    command = delete_command(vault, "a/b")
+
+    assert command is not None
+    assert "pw" not in command
+    assert "-address=https://***@vault.example.com" in command
 
 
 def test_a_lock_is_named_by_the_path_the_store_listed(
@@ -395,19 +517,33 @@ def test_it_writes_nothing(write_config: Callable[[str], Path], with_records: Re
 
 
 def test_a_store_that_cannot_be_listed_warns(
-    write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
+    write_config: Callable[[str], Path], with_records: Records
 ) -> None:
-    _install(monkeypatch, frozenset({CAS}))()
-    result = run(write_config(CONFIG), "--output", "json")
+    stores = with_records()
+    stores["vault-old"] = MemoryStore(capabilities=frozenset({CAS}))  # type: ignore[index]
+    config = write_config(CONFIG)
+    result = run(config, "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS
     [warning] = json.loads(result.output)["diagnostics"]
     assert warning["code"] == UNLISTABLE_STORE
-    assert "no orphan in them would appear" in warning["message"]
+    assert "could not list store 'vault-old'" in warning["message"]
 
-    text = run(write_config(CONFIG)).output
-    assert "no vault could be listed" in text
-    assert "no orphans" not in text, "a store it could not list is not counted as surveyed"
+    text = run(config).output
+    assert "no orphans in 1 vault (vault-dev)" in text, "an unlisted store is not counted"
+
+
+def test_no_store_that_can_list_is_a_capability_refusal(
+    write_config: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty report would read as a clean estate (invariant 4)."""
+    _install(monkeypatch, frozenset({CAS}))()
+    result = run(write_config(CONFIG), "--output", "json")
+
+    document = json.loads(result.output)
+    assert document["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY
+    assert document["error"]["category"] == "capability"
+    assert "orphans" not in document
 
 
 def test_a_secret_path_the_tool_refuses_is_named_in_a_warning(

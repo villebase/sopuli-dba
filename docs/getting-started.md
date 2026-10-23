@@ -722,7 +722,9 @@ It lists a document only if the document has a field this tool writes, `origin`
 or `rotated_at`. So another team's secrets in the same mount are not listed.
 But it has to read each document to see that, and each read is in the vault's
 audit log, under your token. A document your token may not read is counted in
-a warning.
+a warning. A path that any application in the config names is never listed, in
+any vault. So if you moved an application to another vault and kept the path,
+the old record is not listed, and you remove it by hand.
 
 A document that another sopuli config manages has those fields too. Before you
 delete anything, check each record:

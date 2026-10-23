@@ -222,6 +222,7 @@ from sopuli.material import strip_one_newline
 from sopuli.notify import Facts as NotifyFacts
 from sopuli.notify import registry as notify_registry
 from sopuli.notify import render as render_notification
+from sopuli.orphans import aliases as orphan_aliases
 from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
@@ -4152,20 +4153,28 @@ def vault_orphans(run: Invocation) -> str:
     why the delete is left to the operator.
 
     Exit 0 when it could look, as `lock status`. An orphan is a finding, not a
-    failure.
+    failure. Exit 5 when no store can list.
+
+    **Every store in `vaults:` is opened**, so one this run cannot reach or log
+    in to fails the run, as on `lock status`. A survey that left a declared
+    store out would report it as clean.
     """
     document = run.document
     config = run.config
+    # Entries that name one store are surveyed once, under the first name.
+    names = orphan_aliases(config.vaults)
     region = reset_region(config)
+    if region is not None:
+        region = replace(region, store=names.get(region.store, region.store))
     stores = _stores_for(
-        {vault.name for vault in config.vaults},
+        set(names.values()),
         config,
         token_file=run.vault_token_file,
         cache=run.stores,
     )
-    # The bindings as loaded, not completed from this run's SOPULI_VAULT or
-    # profile: `declared_by` counts an unfixed binding's path in every store.
-    found = find_orphans(orphans_declared_by(config.bindings), stores=stores, region=region)
+    # Every binding's path, declared in every store: `sopuli.orphans` says why.
+    declared = orphans_declared_by(config.bindings)
+    found = find_orphans(declared, stores=stores, region=region)
     deletes = orphan_commands(found, config.vaults)
 
     narrowed = [

@@ -705,9 +705,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ORPHANS_UNREAD: (
             "`vault orphans` listed documents it was not allowed to read, so it cannot say "
             "whether this tool wrote them. On a shared mount that is usually another "
-            "team's path. One entry per store, with the count, the first path, and the "
-            "store's message. Everything reported is accurate; a record among these would "
-            "not appear."
+            "team's path. Or a store stopped answering part way, sealed or timed out, or "
+            "refused a listing, and the rest of it was not looked at. One entry per store, "
+            "with the count, the first path, and the store's message. Everything reported "
+            "is accurate; a record among these would not appear."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1372,24 +1373,30 @@ def unread_for_orphans(unread: Sequence[Unread]) -> list[Diagnostic]:
     """`SOPULI-W056`: documents `vault orphans` listed and could not read (#999).
 
     One entry per store, for :func:`reset_journal_unread`'s reason: one token
-    refused on a hundred paths is one finding.
+    refused on a hundred paths is one finding. A store that stopped answering
+    is said first, because then the rest of it was not looked at.
     """
     by_store: dict[str, list[Unread]] = {}
     for one in unread:
         by_store.setdefault(one.store, []).append(one)
     diagnostics = []
     for store, failed in sorted(by_store.items()):
-        first = failed[0]
-        count = "1 document" if len(failed) == 1 else f"{len(failed)} documents"
-        diagnostics.append(
-            Diagnostic(
-                level="warning",
-                code=ORPHANS_UNREAD,
-                message=(
-                    f"could not read {count} in store {store!r}, so an orphan among them "
-                    f"would not appear. The first was {first.path!r}: {first.reason}"
-                ),
+        refused = [one for one in failed if one.path is not None]
+        stopped = next((one for one in failed if one.path is None), None)
+        parts = []
+        if stopped is not None:
+            parts.append(
+                f"stopped reading store {store!r}, so an orphan in the rest of it would "
+                f"not appear: {stopped.reason}"
             )
+        if refused:
+            count = "1 document" if len(refused) == 1 else f"{len(refused)} documents"
+            parts.append(
+                f"could not read {count} in store {store!r}, so an orphan among them "
+                f"would not appear. The first was {refused[0].path!r}: {refused[0].reason}"
+            )
+        diagnostics.append(
+            Diagnostic(level="warning", code=ORPHANS_UNREAD, message=". ".join(parts))
         )
     return diagnostics
 

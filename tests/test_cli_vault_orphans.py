@@ -332,11 +332,7 @@ def test_a_listing_the_store_refuses_is_a_warning(
         ("vault-dev", "acme/alpha/db", PROMOTED),
         ("vault-old", "acme/alpha/db", PROMOTED),
     )
-
-    def refused(prefix: str) -> tuple[str, ...]:
-        raise RefusedError("permission denied")
-
-    monkeypatch.setattr(stores["vault-dev"], "list", refused)
+    _refuse_listing(stores["vault-dev"], monkeypatch)
     result = run(write_config(CONFIG), "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS
@@ -417,6 +413,18 @@ def test_the_one_selected_store_failing_its_listing_is_a_failure(
     result = run(write_config(CONFIG), "--vault", "vault-old", "--output", "json")
 
     assert result.exit_code == ExitCode.FAILURE
+    document = json.loads(result.output)
+    assert document["error"]["message"].endswith(": vault-old")
+    assert document["orphans"]["listed"] == []
+
+
+def test_a_config_with_no_vault_says_so(write_config: Callable[[str], Path]) -> None:
+    """Nothing is declared, so nothing failed, and the text does not say a listing failed."""
+    config = write_config("version: 1\nvaults: {}\n")
+    result = run(config)
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "no vault in `vaults:`" in result.output
 
 
 #: `CONFIG` with a second entry for `vault-dev`'s server and mount, as an estate

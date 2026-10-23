@@ -4215,12 +4215,13 @@ def vault_orphans(vaults: tuple[str, ...], run: Invocation) -> str:
     exit_code = ExitCode.SUCCESS
     if stores and not found.listed:
         # Every store failed its listing, so the run looked nowhere (#1018).
-        # `find` has already raised when none could list at all (exit 5).
-        failed = sorted({unread.store for unread in found.unread if unread.path is None})
+        # `find` has already raised when none could list at all (exit 5). With
+        # nothing listed, every unread entry is a failed listing.
+        failed = sorted({unread.store for unread in found.unread})
         document.error = Error(
             category="vault",
             message=f"no store this run surveys could be listed: {', '.join(failed)}",
-            hint="each store's SOPULI-W056 gives its reason",
+            hint="each store's warning gives its reason",
         )
         exit_code = ExitCode.FAILURE
     document.finish(exit_code, Summary(total=count, ok=count, changed=0, failed=0))

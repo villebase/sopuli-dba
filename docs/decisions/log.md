@@ -2804,3 +2804,25 @@ the register.
   - Keeping #870's behaviour. W050 names the remedy and a rollover profile can
     cover the window, but the passing targets stay ahead of `current` until
     someone acts, and without a rollover profile their readers are locked out.
+
+## #988
+
+- **Decided:** 2026-10-23, #988
+- **Question:** Should `creds apply --dry-run` say which credentials #872's
+  guardrail pass would skip on every target? A dry run never ran the pass, so
+  it did not say that a credential refused on one target would be changed on
+  none.
+- **Decision:** Only under `--preflight`. The survey already reads each account,
+  so the pass's question is asked of what it read, and each credential the run
+  would skip everywhere is `SOPULI-W055`. Not under `--force`, where the real run
+  does not ask. A new code, so run schema 1.54 and event schema 1.15. UC-1 §5
+  states the rule.
+- **Why:** `--preflight` is where an operator asks what the databases will
+  say, and it already connects, so the forecast costs no connection. A plain
+  `--dry-run` opens none without `--preflight` or `--strategy`, and keeping that
+  is worth more than the forecast.
+- **Rejected:**
+  - Running the pass in every dry run. A plain dry run would then connect to
+    every target a shared credential is bound to.
+  - Leaving it. The real run's `SKIPPED` rows already say which target refused
+    and why, but only after the run has started.

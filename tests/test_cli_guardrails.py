@@ -30,14 +30,17 @@ from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
     CHANGED_NOT_PROMOTED,
+    GUARDRAIL_PASS_AHEAD,
     GUARDRAIL_UNCHECKED,
     PROMOTION_SKIPPED,
     WARNINGS,
+    guardrail_pass_ahead,
 )
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
     Credential,
+    DriverError,
     PrivilegeAudit,
     Scope,
     UserState,
@@ -473,12 +476,191 @@ def test_an_account_refused_on_one_of_its_targets_is_changed_on_none(
     alpha = rows[("acme_web_user", "appdb-alpha")]
     assert alpha["state"] == SKIPPED
     assert alpha["actions"][0]["detail"] == (
-        "a guardrail refuses this credential on appdb-beta, so no target was changed "
-        "(appdb-beta: the account holds DBA)"
+        "a guardrail refuses this credential on appdb-beta (the account holds DBA), "
+        "so no target was changed"
     )
     assert rows[("acme_web_user", "appdb-beta")]["state"] == SKIPPED
     codes = [one.get("code") for one in document(result)["diagnostics"]]
     assert PROMOTION_SKIPPED not in codes
+
+
+def ahead(result: Result) -> list[dict[str, Any]]:
+    return [one for one in diagnostics(result) if one.get("code") == GUARDRAIL_PASS_AHEAD]
+
+
+def test_a_dry_run_preflight_says_which_credential_the_pass_would_skip(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#988. `--dry-run --preflight` asks the pass's question of the accounts the
+    survey read, and says what the real run's `SKIPPED` rows would."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert changed(harness) == []
+    found = ahead(result)
+    assert len(found) == 1, diagnostics(result)
+    assert found[0]["account"] == "acme_web_user"
+    assert found[0]["target"] == "appdb-beta"
+    assert found[0]["message"] == (
+        "vault-prod:apps/acme/db: a guardrail refuses acme_web_user on appdb-beta "
+        "(the account holds DBA), so the run would change the credential on none of "
+        "appdb-alpha, appdb-beta"
+    )
+    # One connection per target, the survey's own: the forecast opens none.
+    assert len(harness["sessions"]) == 2
+
+
+def test_a_survey_that_refuses_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real run stops at the survey and never reaches the pass, so the
+    dry run does not forecast what the pass would do."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {"ACME_WEB_USER": ordinary("ACME_WEB_USER")},
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, "ACME_BATCH_USER is missing on appdb-alpha"
+    assert ahead(result) == []
+
+
+def test_the_forecast_names_the_account_refused_on_each_target() -> None:
+    """A credential's place can be bound to a different account on each target.
+    The account named is the one refused, and `account` is set only when the
+    refusals share one."""
+    one = guardrail_pass_ahead(
+        "vault-prod:apps/acme/db",
+        [("appdb-beta", "acme_beta_user", "the account holds DBA")],
+        ["appdb-alpha", "appdb-beta"],
+    )
+    two = guardrail_pass_ahead(
+        "vault-prod:apps/acme/db",
+        [
+            ("appdb-alpha", "acme_alpha_user", "the account holds DBA"),
+            ("appdb-beta", "acme_beta_user", "the account holds DBA"),
+        ],
+        ["appdb-alpha", "appdb-beta"],
+    )
+
+    assert one.account == "acme_beta_user"
+    assert "refuses acme_beta_user on appdb-beta" in one.message
+    assert two.account is None
+    assert "refuses acme_alpha_user, acme_beta_user on appdb-alpha" in two.message
+
+
+def test_a_forecast_refused_on_two_targets_keeps_each_reason_with_its_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`target` is absent where more than one target refuses, because it takes
+    one value. A target with two reasons keeps both inside its brackets, so the
+    message does not mix up whose reason is whose."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": account(
+                    "ACME_WEB_USER", vendor_maintained=True, roles=frozenset({"DBA"})
+                ),
+                "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+            },
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    (found,) = ahead(result)
+    assert "target" not in found
+    message = found["message"]
+    alpha = message.index("appdb-alpha (")
+    beta = message.index("appdb-beta (")
+    assert "; " in message[alpha:beta], "both of appdb-alpha's reasons, before appdb-beta's"
+    assert "DBA" in message[beta:]
+
+
+def test_an_account_the_survey_could_not_read_is_not_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The survey reports an unread account as its own finding, and the pass
+    leaves it to the run, so the forecast does not guess at it."""
+
+    class Unreadable(FakeSession):
+        def describe_user(self, account: str) -> UserState | None:
+            if account.upper() == "ACME_WEB_USER" and "DBA" in self.users[account.upper()].roles:
+                raise DriverError("ORA-00942: table or view does not exist", code="ORA-00942")
+            return super().describe_user(account)
+
+    estate({}, by_target=DBA_ON_BETA, session=Unreadable)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, "the survey refuses over the unread account"
+    assert ahead(result) == []
+
+
+def test_the_forecast_is_printed_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "so the run would change the credential on none of appdb-alpha, appdb-beta" in (
+        result.output
+    )
+
+
+def test_a_plain_dry_run_connects_to_nothing_and_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The decision on #988: only `--preflight`, which already connects."""
+    harness = estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["sessions"] == []
+    assert ahead(result) == []
+
+
+def test_a_forced_dry_run_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real run skips the pass under `--force`, so the forecast does too."""
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(
+        runner,
+        write_config(TWO_TARGETS),
+        "--dry-run",
+        "--preflight",
+        "--force",
+        "--output",
+        "json",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
+
+
+def test_a_credential_on_one_target_is_not_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass asks only about a credential on more than one target; the
+    refusal on one target is the run's own row, which the plan does not
+    forecast either."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--dry-run", "--preflight", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
 
 
 def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(

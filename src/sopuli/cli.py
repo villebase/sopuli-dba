@@ -7169,8 +7169,10 @@ def _apply_estate(
     session of its own (#998). A survey that let the run through has read every
     account the pass asks about: under `--preflight`, a target it could not
     reach, an account it could not read and an account that is not there each
-    refuse the run. The check at the point of change still runs, and
-    `SOPULI-W050` still covers a refusal that appears after the survey.
+    refuse the run. Should an account the pass asks about still be missing from
+    ``surveyed``, the pass reads for itself. The check at the point of change
+    still runs, and `SOPULI-W050` still covers a refusal that appears after the
+    survey.
 
     Grouped the way `check` groups and for the same reason: a target with six
     accounts in it is one login for this tool rather than six, and six would be

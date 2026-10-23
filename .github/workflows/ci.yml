@@ -218,6 +218,10 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        # `shuffle` is an axis of its own so that the include below adds a cell.
+        # An include that only matched `os` and `python-version` would merge into
+        # the existing Linux 3.13 cell, and no cell would run 3.13 in a fixed order.
+        shuffle: [false]
         include:
           - os: windows-latest
             python-version: "3.13"
@@ -445,10 +449,10 @@ jobs:
   # reports `skipped`, which branch protection accepts -- that much holds for
   # `lint`, whose context is called `lint` either way. **It does not hold for a
   # matrix.** Measured on a prose-only pull request against this branch (#379):
-  # a skipped matrix job never expands, so instead of six contexts named
+  # a skipped matrix job never expands, so instead of seven contexts named
   # `test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named
-  # `test (${{ matrix.os }}, py${{ matrix.python-version }})` -- the literal
-  # expression. Requiring the cell names would therefore leave six contexts that
+  # with the literal expression in the job's `name:`. Requiring the cell names
+  # would therefore leave seven contexts that
   # were never created, pending forever, which is the whole failure #375 set out
   # to avoid, moved one step along.
   #

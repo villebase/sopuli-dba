@@ -159,10 +159,10 @@ reports `skipped`, which protection accepts, while a whole workflow skipped by
 `paths-ignore` never creates its contexts at all and a required one stays pending
 forever. That is why `ci.yml` has no `paths-ignore` and `tier1.yml` still does.
 
-But **a skipped matrix job never expands.** Instead of six contexts named
-`test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named
-`test (${{ matrix.os }}, py${{ matrix.python-version }})` — the literal
-expression. Requiring the cell names would leave six contexts that were never
+But **a skipped matrix job never expands.** Instead of seven contexts named
+`test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named with
+the literal expression in the job's `name:`. Requiring the cell names would
+leave seven contexts that were never
 created, which is the original trap one step along. `ci ok` has a fixed name,
 runs on every pull request under `if: always()`, and fails if any lane reports
 anything but `success` or `skipped`.

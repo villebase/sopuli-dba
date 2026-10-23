@@ -277,6 +277,11 @@ order. It is not your change, unless your change added that test or the state it
 leaks. Pass the seed to reproduce it, and file an issue that names the seed and
 the tests.
 
+The shuffled cell is part of the `test` job, so `ci ok` fails with it and the
+pull request cannot merge. A re-run fails again, because the seed is the same.
+The next push gets a new run id and so a new seed. That seed may pass, but the
+order dependency is still there until its issue is fixed.
+
 ---
 
 ## 4. Tiers

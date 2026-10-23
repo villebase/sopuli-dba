@@ -3,8 +3,9 @@
 This guide sets up the local test stack and runs the usual commands against it.
 You see each command succeed, and a few of them refuse on purpose.
 
-Every sample is pasted from a real run on Windows 11, with Instant Client
-23.26.3.0.0 and the `tier1` container stack (Oracle 26ai Free and Vault).
+Every sample is pasted from a real run of sopuli 0.78.0 (main at caf2645) on
+2026-10-23, on Windows 11, with Instant Client 23.26.3.0.0 and the `tier1`
+container stack (Oracle 26ai Free and Vault).
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
@@ -59,7 +60,7 @@ Check the install:
 
 ```
 $ sopuli --version
-sopuli, version 0.69.0
+sopuli, version 0.78.0
 ```
 
 `sopuli --version` reports the version recorded when the editable install was
@@ -275,6 +276,7 @@ settings
   output                      = text                   [built-in default]
   safety.dry_run              = false                  [built-in default]
   safety.readonly             = false                  [built-in default]
+  safety.require_encryption   = false                  [built-in default]
   vault                       = vault-dev              [defaults.vault]
   vaults.vault-dev.addr       = http://127.0.0.1:8200  [vaults.vault-dev.addr]
   vaults.vault-dev.kv_version = 2                      [vaults.vault-dev.kv_version]
@@ -292,9 +294,9 @@ config: sopuli.yaml
 policy: standard    length 24, alnum_safe, first_char alpha, require digit 1, lower 1, special 1, upper 1
 
 #  CHARS  BYTES  CLASSES
-1  24     -      u8 l11 d4 s1
-2  24     -      u6 l9 d2 s7
-3  24     -      u10 l8 d4 s2
+1  24     -      u5 l7 d9 s3
+2  24     -      u10 l10 d2 s2
+3  24     -      u10 l12 d1 s1
 
 3 samples, all compliant. Not stored anywhere; pass --reveal to print them.
 ```
@@ -367,7 +369,7 @@ install
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
-  vault-dev  hashicorp  ok      yes   -787ms
+  vault-dev  hashicorp  ok      yes   -886ms
 
 client
   tns_admin         (unset)
@@ -486,8 +488,8 @@ SECRET                   TARGETS   ACCOUNTS
 vault-dev:acme/dev/acme  free-pdb  acme_app_user, acme_batch_user
 
 ACCOUNT          TARGET    STATE         VAULT_V  AGE  DB_PW_CHANGED  PROFILE          ROLLOVER
-acme_app_user    free-pdb  UNVERIFIABLE  -        -    2026-10-05     DEFAULT          not configured
-acme_batch_user  free-pdb  UNVERIFIABLE  -        -    2026-10-05     SOPULI_ROLLOVER  60m configured
+acme_app_user    free-pdb  UNVERIFIABLE  -        -    2026-10-23     DEFAULT          not configured
+acme_batch_user  free-pdb  UNVERIFIABLE  -        -    2026-10-23     SOPULI_ROLLOVER  60m configured
 
 2 accounts, nothing to act on
 ```
@@ -695,8 +697,8 @@ them:
 ```
 $ sopuli --config sopuli.yaml account list
 ACCOUNT         TARGET    DECLARED BY  STATUS  DB_PW_CHANGED  RESET_AT
-ACME_DEV_ALICE  free-pdb  names        OPEN    2026-10-05     -
-ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-05     -
+ACME_DEV_ALICE  free-pdb  names        OPEN    2026-10-23     -
+ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-23     -
 
 2 declared accounts, 2 on the selected targets
 ```
@@ -716,6 +718,10 @@ Plan: 1 account x 1 target = 1 account   [dev]
 
 ACCOUNT         TARGET    INTENT        SECRET
 acme_dev_alice  free-pdb  password_set  -
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT         TARGET    INTENT        SECRET
+acme_dev_alice  free-pdb  password_set  -
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
 acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
@@ -730,10 +736,14 @@ hand this to acme_dev_alice for free-pdb; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-10-09T21:41:42.871880Z, and the first unwrap is the
+It stops working at 2026-10-23T08:29:54.669686Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ```
+
+The plan appears twice. The first copy goes to stderr before anything changes,
+so a run that fails part way still shows what it was about to touch. The second
+is part of the result on stdout.
 
 `SECRET` is `-`, because no vault document holds a personal password. Add
 `--dry-run` to see the plan without resetting.
@@ -743,7 +753,7 @@ The person unwraps the token once:
 ```
 $ vault unwrap -format=json <TOKEN>
 {
-  "request_id": "888f02b2-7a7a-4db1-ed78-715c5f62d726",
+  "request_id": "afd1393d-f78e-e748-c877-01791f9ba871",
   "lease_id": "",
   "lease_duration": 0,
   "renewable": false,
@@ -775,8 +785,8 @@ The reset is recorded under `reset_records:`, and `list` shows when:
 ```
 $ sopuli --config sopuli.yaml account list
 ACCOUNT         TARGET    DECLARED BY  STATUS  DB_PW_CHANGED  RESET_AT
-ACME_DEV_ALICE  free-pdb  names        OPEN    2026-10-05     2026-10-05T15:57:59.559643Z
-ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-05     -
+ACME_DEV_ALICE  free-pdb  names        OPEN    2026-10-23     2026-10-23T08:14:54.701090Z
+ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-23     -
 
 2 declared accounts, 2 on the selected targets
 ```
@@ -834,10 +844,6 @@ The prompt comes after the password is set, and the password prints as soon as
 you answer `y`, before the result. Answer `n` and the account keeps a password
 nobody has seen; reset it again to fix that. On several targets, a password you
 have already seen stays valid when you answer `n` on a later one.
-
-The plan appears twice. The first copy goes to stderr before anything changes,
-so a run that fails part way still shows what it was about to touch. The second
-is part of the result on stdout.
 
 ### `account expire-password`
 
@@ -942,7 +948,7 @@ held lock, write one by hand. Save this as `held.json`, with an `expires_at` in
 the future:
 
 ```json
-{"state":"held","command":"creds rotate","correlation_id":"11111111-2222-3333-4444-555555555555","acquired_at":"2026-10-05T12:00:00.000000Z","expires_at":"2026-10-06T23:59:00.000000Z","holder":{"host":"beta.example.com","os_user":"someone-else","pid":1234}}
+{"state":"held","command":"creds rotate","correlation_id":"11111111-2222-3333-4444-555555555555","acquired_at":"2026-10-23T12:00:00.000000Z","expires_at":"2026-10-24T23:59:00.000000Z","holder":{"host":"beta.example.com","os_user":"someone-else","pid":1234}}
 ```
 
 The write must name the lock path's current version. Read it, then write:
@@ -960,11 +966,11 @@ config: sopuli.yaml
 mode:   cas
 
 LOCK                     STATE  HOLDER                        COMMAND       SINCE                 EXPIRES
-vault-dev:acme/dev/acme  held   someone-else@beta.example...  creds rotate  2026-10-05T12:00:00Z  2026-10-06T23:59:00Z
+vault-dev:acme/dev/acme  held   someone-else@beta.example...  creds rotate  2026-10-23T12:00:00Z  2026-10-24T23:59:00Z
 
 personal-account resets, under the prefix this config declares:
 LOCK                                                      STATE     HOLDER              COMMAND           SINCE                        EXPIRES
-vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  op@ws1.example.com  account reset...  2026-10-05T15:57:59.277759Z  2026-10-05T16:12:59.277759Z
+vault-dev:sopuli/personal-resets/free-pdb/acme_dev_alice  released  op@ws1.example.com  account reset...  2026-10-23T08:14:54.002965Z  2026-10-23T08:29:54.002965Z
 
 1 of 1 declared lock paths held; 1 reset lock under the declared prefix (0 held)
 ```
@@ -1007,7 +1013,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.56 0 {'total': 2, 'ok': 2, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 2}}
+1.56 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 No field holds a password. Every exit code except 2 produces a document.
@@ -1018,9 +1024,9 @@ it. The last event carries the summary and the exit code:
 
 ```
 $ sopuli --config sopuli.yaml creds check --output jsonl
-{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-23T07:26:11.695406Z","correlation_id":"057cdf3b-919f-475d-bf79-42f2ce3320fd","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-23T08:16:05.779447Z","correlation_id":"b9c4c2c5-b738-4847-a5ed-cc6f7e947b2b","data":{"command":"creds.check","dry_run":false}}
 ...
-{"schema_version":"1.17","event":"run.finished","seq":6,"ts":"2026-10-23T07:26:12.478747Z","correlation_id":"057cdf3b-919f-475d-bf79-42f2ce3320fd","data":{"summary":{"total":2,"ok":2,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":2}},"exit_code":0}}
+{"schema_version":"1.17","event":"run.finished","seq":6,"ts":"2026-10-23T08:16:06.695012Z","correlation_id":"b9c4c2c5-b738-4847-a5ed-cc6f7e947b2b","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
 ```
 
 Other commands refuse it:

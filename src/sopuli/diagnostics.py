@@ -51,8 +51,9 @@ from sopuli.driver.protocol import UNKNOWN as ENCRYPTION_UNKNOWN_METHOD
 from sopuli.install_shape import INSTALLED, Component, InstallShape
 from sopuli.lock.inspect import SkippedPath
 from sopuli.lock.keys import LockKey
-from sopuli.lock.manager import LockableStore, LockManager, Unguarded
+from sopuli.lock.manager import LOCK_PREFIX, LockableStore, LockManager, Unguarded
 from sopuli.lock.record import LockRecord
+from sopuli.orphans import Unread
 from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
@@ -531,6 +532,10 @@ RESET_JOURNAL_UNREAD = "SOPULI-W054"
 #: could not make.
 GUARDRAIL_PASS_AHEAD = "SOPULI-W055"
 
+#: `vault orphans` listed documents it could not read, so it cannot say whether
+#: they are orphans (#999).
+ORPHANS_UNREAD = "SOPULI-W056"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -663,7 +668,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A store in this survey has no `list` capability, so `lock status` reported "
             "only the paths this configuration declares. A lock record left at a path the "
             "file no longer names would not appear -- in that store. Everything reported "
-            "is accurate; the survey is narrower than it looks."
+            "is accurate; the survey is narrower than it looks. On `vault orphans`, no "
+            "orphan in that store would appear."
         ),
         UNADDRESSABLE_LOCK_PATH: (
             "`lock status` listed a lock record at a path the tool refuses in every store "
@@ -671,7 +677,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "`..` segment. The record is not in the report. Only a record written by hand "
             "can have such a path, and the tool can neither read nor break it. The message "
             "names the store and the path. Remove the record with the vault's own tools if "
-            "nothing uses it."
+            "nothing uses it. `vault orphans` skips a secret path like that too, because it "
+            "cannot read the record to tell whether this tool wrote it."
         ),
         RESET_JOURNAL_UNREAD: (
             "`account list` could not open or read the reset journal that `reset_records:` "
@@ -694,6 +701,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "opens no connection; `rotate`'s dry run always surveys. A rotation stages a "
             "`pending` for the refused credential before the pass asks, and leaves it "
             "staged."
+        ),
+        ORPHANS_UNREAD: (
+            "`vault orphans` listed documents it was not allowed to read, so it cannot say "
+            "whether this tool wrote them. On a shared mount that is usually another "
+            "team's path. Or a store stopped answering part way, sealed or timed out, or "
+            "refused a listing, and the rest of it was not looked at. One entry per store, "
+            "with the count, the first path, and the store's message. Everything reported "
+            "is accurate; a record among these would not appear."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1333,6 +1348,59 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
     ]
 
 
+def unlistable_for_orphans(names: Sequence[str]) -> list[Diagnostic]:
+    """`SOPULI-W005` on `vault orphans` (#999): stores it could not look in at all.
+
+    The same code as :func:`unlistable_stores`, because it is the same missing
+    capability. The message differs because `vault orphans` has no declared
+    paths to fall back on: in such a store it found nothing.
+    """
+    if not names:
+        return []
+    return [
+        Diagnostic(
+            level="warning",
+            code=UNLISTABLE_STORE,
+            message=(
+                f"could not list {_names(sorted(names))}: no orphan in "
+                f"{'it' if len(names) == 1 else 'them'} would appear"
+            ),
+        )
+    ]
+
+
+def unread_for_orphans(unread: Sequence[Unread]) -> list[Diagnostic]:
+    """`SOPULI-W056`: documents `vault orphans` listed and could not read (#999).
+
+    One entry per store, for :func:`reset_journal_unread`'s reason: one token
+    refused on a hundred paths is one finding. A store that stopped answering
+    is said first, because then the rest of it was not looked at.
+    """
+    by_store: dict[str, list[Unread]] = {}
+    for one in unread:
+        by_store.setdefault(one.store, []).append(one)
+    diagnostics = []
+    for store, failed in sorted(by_store.items()):
+        refused = [one for one in failed if one.path is not None]
+        stopped = next((one for one in failed if one.path is None), None)
+        parts = []
+        if stopped is not None:
+            parts.append(
+                f"stopped reading store {store!r}, so an orphan in the rest of it would "
+                f"not appear: {stopped.reason}"
+            )
+        if refused:
+            count = "1 document" if len(refused) == 1 else f"{len(refused)} documents"
+            parts.append(
+                f"could not read {count} in store {store!r}, so an orphan among them "
+                f"would not appear. The first was {refused[0].path!r}: {refused[0].reason}"
+            )
+        diagnostics.append(
+            Diagnostic(level="warning", code=ORPHANS_UNREAD, message=". ".join(parts))
+        )
+    return diagnostics
+
+
 def reset_journal_unread(store: str, rows: int, reason: str) -> Diagnostic:
     """Say why `account list`'s ``RESET_AT`` is empty where the journal failed (#929).
 
@@ -1370,6 +1438,10 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
     refusal. It names the path a second way, without the ``locks/`` prefix, and
     its hint is for somebody writing a config, not for somebody removing a
     record.
+
+    `vault orphans` (#999) also skips a secret path like that, outside
+    ``locks/``. Its message says the tool could not read the record to tell
+    whether it is one of its own.
     """
     return [
         Diagnostic(
@@ -1380,6 +1452,10 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
                 f"holds a character or a segment this tool refuses in every store path, "
                 f"so it can neither read nor break the record. Remove it with the vault's "
                 f"own tools if nothing uses it"
+                if one.path.startswith(f"{LOCK_PREFIX}/")
+                else f"skipped the record at {one.path!r} in store {one.store!r}: its path "
+                f"holds a character or a segment this tool refuses in every store path, "
+                f"so it could not read the record to tell whether this tool wrote it"
             ),
         )
         for one in skipped

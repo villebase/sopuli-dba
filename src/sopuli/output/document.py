@@ -27,7 +27,7 @@ from typing import Any, Literal
 # `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.56"
+SCHEMA_VERSION = "1.57"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -391,6 +391,9 @@ class RunDocument:
     #: Absent *means* something here rather than merely omitting something -- no
     #: lock was needed, which is every ``check``, ``status`` and ``--dry-run``.
     lock: dict[str, Any] | None = None
+    #: The ``orphans`` section, emitted by ``vault orphans`` (#999).
+    #: :mod:`sopuli.output.orphans_view` owns the shape.
+    orphans: dict[str, Any] | None = None
     #: ``invocation.options`` -- the settings that changed behaviour, each with
     #: the layer it came from. Emitted only when there are any: on a run with no
     #: flags and no ``SOPULI_*`` variables the answer is "nothing overrode
@@ -547,6 +550,8 @@ class RunDocument:
             document["plan"] = self.plan
         if self.lock is not None:
             document["lock"] = self.lock
+        if self.orphans is not None:
+            document["orphans"] = self.orphans
         if self.results is not None:
             document["results"] = self.results
         if self.targets is not None:

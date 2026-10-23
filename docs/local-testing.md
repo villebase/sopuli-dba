@@ -33,10 +33,12 @@ sopuli target list          sopuli creds check            sopuli account reset-p
 sopuli policy sample        sopuli creds rotate           sopuli account expire-password
 sopuli lock status          sopuli creds status           sopuli doctor
 sopuli lock break           sopuli creds finish-rollover  sopuli about
+sopuli vault orphans
 ```
 
 The `creds` commands manage application credentials (UC-1). The `account`
-commands manage personal accounts (UC-2).
+commands manage personal accounts (UC-2). `vault orphans` lists vault records
+the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the service account, run the SQL
 in `sql/oracle/` by hand. The only store backend is `hashicorp`; `doctor` lists
@@ -1095,3 +1097,26 @@ vault kv metadata delete -mount=kv locks/sopuli/personal-resets/free-pdb/acme_de
 
 `vault kv list -mount=kv` then answers `No value found at kv/metadata`. Finally,
 delete `sopuli.yaml`, `priv.yaml`, `held.json` and the two SQL files.
+
+`vault orphans` prints the first two commands for you. It lists the records the
+tool wrote at paths the config does not declare. Copy `sopuli.yaml` to
+`noapps.yaml`, delete its `applications:` entry, and run it before the deletes:
+
+```
+$ sopuli --config noapps.yaml vault orphans
+config: noapps.yaml
+
+VAULT      PATH                 KIND    LOCK
+vault-dev  acme/dev/acme        secret  -
+vault-dev  locks/acme/dev/acme  lock    released
+
+2 orphans in 1 vault (vault-dev): records that look like this tool's, at paths no binding in this config declares
+
+They may be another config's. Check each one before you delete it (getting-started.md, "Moving a secret path"). To delete them:
+
+  vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv acme/dev/acme
+  vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv locks/acme/dev/acme
+```
+
+The reset record and its lock are not listed, because they are under the
+`reset_records:` prefix the config still declares.

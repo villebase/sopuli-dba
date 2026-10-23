@@ -149,7 +149,9 @@ from sopuli.diagnostics import (
     reset_record_unwritten,
     rollback_reuse,
     unaddressable_lock_paths,
+    unlistable_for_orphans,
     unlistable_stores,
+    unread_for_orphans,
     vault_diagnostics,
     wallet_diagnostics,
     worse_encryption,
@@ -220,6 +222,10 @@ from sopuli.material import strip_one_newline
 from sopuli.notify import Facts as NotifyFacts
 from sopuli.notify import registry as notify_registry
 from sopuli.notify import render as render_notification
+from sopuli.orphans import aliases as orphan_aliases
+from sopuli.orphans import commands as orphan_commands
+from sopuli.orphans import declared_by as orphans_declared_by
+from sopuli.orphans import find as find_orphans
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -280,6 +286,8 @@ from sopuli.output.lock_view import (
     render_status,
 )
 from sopuli.output.notices import render_notices
+from sopuli.output.orphans_view import build_section as build_orphans_section
+from sopuli.output.orphans_view import render as render_orphans
 from sopuli.output.plan_view import render_plan
 from sopuli.output.policy_view import build_section as build_policy_section
 from sopuli.output.policy_view import describe_all, render_samples
@@ -4120,6 +4128,69 @@ def _confirm_break(
         f"take this lock from {describe_holder(outcome.record)}?",
         abort=True,
         err=True,
+    )
+
+
+@cli.group("vault")
+def vault_group() -> None:
+    """Look at what the stores hold beyond what the config declares."""
+
+
+@vault_group.command("orphans")
+@global_options
+def vault_orphans(run: Invocation) -> str:
+    """List vault records this tool wrote that no binding declares (#999).
+
+    An application moved to a new secret path leaves its old document and that
+    document's lock record behind. This lists both kinds, in every store
+    `vaults:` declares, and prints the command that deletes each one. **It
+    deletes nothing.** :mod:`sopuli.orphans` says what counts as this tool's
+    record.
+
+    Every store is surveyed, not only the ones a binding names: a store the
+    config stopped using is where a moved estate's old records are most likely
+    to be. A record may belong to another config that shares the mount, which is
+    why the delete is left to the operator.
+
+    Exit 0 when it could look, as `lock status`. An orphan is a finding, not a
+    failure. Exit 5 when no store can list.
+
+    **Every store in `vaults:` is opened**, so one this run cannot reach or log
+    in to fails the run, as on `lock status`. A survey that left a declared
+    store out would report it as clean.
+    """
+    document = run.document
+    config = run.config
+    # Entries that name one store are surveyed once, under the first name.
+    names = orphan_aliases(config.vaults)
+    region = reset_region(config)
+    if region is not None:
+        region = replace(region, store=names.get(region.store, region.store))
+    stores = _stores_for(
+        set(names.values()),
+        config,
+        token_file=run.vault_token_file,
+        cache=run.stores,
+    )
+    # Every binding's path, declared in every store: `sopuli.orphans` says why.
+    declared = orphans_declared_by(config.bindings)
+    found = find_orphans(declared, stores=stores, region=region)
+    deletes = orphan_commands(found, config.vaults)
+
+    narrowed = [
+        *unlistable_for_orphans(found.unlistable),
+        *unaddressable_lock_paths(found.skipped),
+        *unread_for_orphans(found.unread),
+    ]
+    document.diagnostics.extend(narrowed)
+    document.orphans = build_orphans_section(found, deletes)
+    count = len(found.orphans)
+    document.finish(ExitCode.SUCCESS, Summary(total=count, ok=count, changed=0, failed=0))
+    return render_orphans(
+        run.sources,
+        found,
+        deletes,
+        warnings=[diagnostic.message for diagnostic in narrowed],
     )
 
 

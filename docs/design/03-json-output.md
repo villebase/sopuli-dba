@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.56.schema.json`](../schemas/sopuli-run-1.56.schema.json),
+Schemas: [`../schemas/sopuli-run-1.57.schema.json`](../schemas/sopuli-run-1.57.schema.json),
 [`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -425,6 +425,7 @@ This sketch shows the run document's shape:
   policy     { name, length, charset, first_char, require, limit, samples[] },
   plan       { units[], shared_secrets[], confirmation_required, blast_radius },
   lock       { mode, held[], found[], broken, denied },
+  orphans    { found[] },
   results    [ { account, target, scope, secret, state, delivered, handover,
                  audited, audited_detail,
                  account_status, changed, actions[], verification, rollover,
@@ -1178,6 +1179,53 @@ says the same in words.
 An unexpired lock is **not** in this array. It is `denied`, on exit 7, with the
 holder named. It is the same object and the same wording as a rotation that lost
 the same lock, because it answers the same question for the same person.
+
+### `orphans`, emitted by `vault orphans`
+
+`sopuli vault orphans` lists records that this tool wrote and that no binding
+declares ([#999](../decisions/log.md#999)). They are left behind when an
+application's secret path changes in the config. It reads every store `vaults:`
+declares, and reports two kinds of record:
+
+- `secret`: a document whose root holds `origin` or `rotated_at`, at a path no
+  binding names. `creds generate` writes `origin`, and every promotion writes
+  `rotated_at`, so a document without either is not this tool's and is not
+  reported;
+- `lock`: a lock record under `locks/` at a path no binding names, as
+  `lock status` finds it.
+
+Paths under the `reset_records:` prefix are not reported: they are this
+estate's. The verb deletes nothing. This is from the tier-1 stack, after the
+application's path moved from `acme/acme/dev` to `acme/dev/acme`:
+
+```json
+"orphans": {
+  "found": [ { "vault": "vault-dev", "path": "acme/acme/dev", "kind": "secret",
+               "version": 2, "lock": null,
+               "delete_command": "vault kv metadata delete -mount=kv acme/acme/dev" },
+             { "vault": "vault-dev", "path": "locks/acme/acme/dev", "kind": "lock",
+               "version": 6,
+               "lock": { "state": "released", "held": false, "expired": false },
+               "delete_command": "vault kv metadata delete -mount=kv locks/acme/acme/dev" } ]
+}
+```
+
+- **`path` is the path in the store**, the one a delete takes. A lock record's
+  starts with `locks/`, unlike `lock.found[].path`, which names the secret path.
+- **`delete_command` is `vault kv metadata delete`** on KV v2. A plain
+  `vault kv delete` keeps the metadata, and on a lock path it keeps the version
+  counter, so the first acquisition there could never succeed again. On KV v1
+  it is `vault kv delete`. It is `null` while a lock that has not expired is
+  held at the secret path, for the lock and for its secret, because somebody may
+  be rotating it.
+- **`found` is emitted empty**, as `lock.found` is on `lock status`.
+- **A record may be another config's**, from an estate that shares the mount.
+  That is why the verb prints the command and does not run it.
+
+Reading a document's shape reads its values. Only the root keys are looked at,
+and nothing from the document is reported except its version. A store with no
+`list` capability is named in `SOPULI-W005`, and a path the tool refuses is
+named in `SOPULI-W053`. The run exits 0 when it could look.
 
 ### `targets`, emitted by `doctor`
 
@@ -1978,7 +2026,7 @@ not contract and may improve.
 | `SOPULI-W002` | A lock was taken from its holder: automatically, because it was past its expiry and `locking.break_expired` allows that, or on purpose by `sopuli lock break`. The previous holder is fenced, so its next check fails, but it may have applied changes before then |
 | `SOPULI-W003` | A `vaults:` entry names a backend this machine cannot serve. The config is valid and the install is incomplete (ADR-006, E4). What that means depends on the command: `config validate` warns and exits 0, `doctor` reports an `error` and exits 9 (E6), and any command that resolves the store to a client fails: with `SOPULI-20001` where the client is not installed, and with `SOPULI-20005` where this build has no module for the `type` |
 | `SOPULI-W004` | A store in this run is `tls.verify: false`, so its certificate is not checked, and anything on the network path can read every secret that crosses it. The setting is under P3's safety ratchet, so no layer can weaken it further, but nothing in the run undoes it either (ADR-005) |
-| `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record at a path the file no longer names would not appear, in that store. Everything reported is accurate; the survey is narrower than it looks |
+| `SOPULI-W005` | A store in this survey has no `list` capability, so `lock status` reported only the paths the configuration declares. A record at a path the file no longer names would not appear, in that store. Everything reported is accurate; the survey is narrower than it looks. `vault orphans` raises it too, from run schema 1.57 (#999): there no orphan in that store would appear |
 | `SOPULI-W006` | A `targets:` entry names a driver this machine cannot serve. Each command weighs it as it weighs `SOPULI-W003`. They are two codes on purpose: one code for "some backend is missing" would not tell a store the tool cannot reach from a database it cannot reach, and those are different outages. Emitted once per driver *type*, not once per target, because an estate generates targets by the dozen from one `target_sets:` entry |
 | `SOPULI-W007` | The estate uses `auth: external`, and this machine has no auto-login wallet that this process can read. The connection will fail as an Oracle *login* error, which is the most misleading way for a file-permission problem to appear, so this says why in advance. It is a warning, not a verdict: the target's own reachability decides the run |
 | `SOPULI-W008` | A wallet file in this run's `TNS_ADMIN` can be read by somebody other than its owner (P4). An auto-login wallet is a credential: whoever can read it can authenticate as the account it holds. `doctor` warns and never fails, for the reason P5 gives for over-granted accounts |
@@ -2026,7 +2074,7 @@ not contract and may improve.
 | `SOPULI-W050` | A secret document was not promoted, because a guardrail skipped one of its accounts on one target and the account confirmed on another, with a `pending` (or, on a rollback, a `previous`) to promote (#852). The guardrails read each database, so one account can hold `DBA` on one target only. The run asks every target before the first change and skips a refused credential everywhere (#872), so this is raised only when a guardrail's answer changed during the run, from run schema 1.52 and event schema 1.13. The skipped target still holds the old password, so promoting would break invariant 7. `pending` stays and the run exits 4. Raised only when every other target confirmed: a failure is reported as the reason first. It has its own code for `SOPULI-W011`'s reason: the same run again skips the same pair, so the text output prints no `repair with:` line when this is all that held the run back. The remedy is to clear what the guardrail reported on that target and run the same command again. The message names each skipped pair, and says that `--force` overrides the guardrail and waives the guardrails for every account the run selects. It spells out no command, because the right one depends on the verb, the run's options and which accounts a `--force` should reach |
 | `SOPULI-W051` | `VAULT_ADDR` gives a store a different address from the `addr` the file declares for it, so the run authenticates to and writes to the variable's address (#865). P3 puts the variable above the file, and the warning does not change that (`01-configuration.md` §6). Raised on every command that loads the file. The message names both addresses and where each comes from, with any `user:password@` shown as `***@`. Not raised when the two name the same server (scheme and host compared without case, a missing port taken as the scheme's default, a trailing `/` ignored), or when the file declares no `addr` for the store. `SOPULI_VAULT_ADDR` and `--vault-addr` are not warned about, because they were set for this tool |
 | `SOPULI-W052` | `VAULT_NAMESPACE` gives a store a different namespace from the `namespace` the file declares for it, so the run logs in and writes in the variable's namespace (#892). A file that declares no `namespace` means the root namespace, so a namespace from the variable warns there too. P3 puts the variable above the file, and the warning does not change that (`01-configuration.md` §6). Raised on every command that loads the file. The message names both namespaces and where each comes from. Not raised when the two differ only in `/` at either end. A code of its own rather than `SOPULI-W051`, whose meaning is the address |
-| `SOPULI-W053` | `lock status` listed a lock record at a path the tool refuses in every store path, one holding `?`, `%`, a backslash or a control character, or a `.` or `..` segment, so the record is not in `found[]` (#886). Only a record written by hand can have such a path (#858), and the tool can neither read nor break it. One entry for each path, naming the store and the path. Remove the record with the vault's own tools if nothing uses it. A code of its own rather than `SOPULI-W005`, because the store could list |
+| `SOPULI-W053` | `lock status` listed a lock record at a path the tool refuses in every store path, one holding `?`, `%`, a backslash or a control character, or a `.` or `..` segment, so the record is not in `found[]` (#886). Only a record written by hand can have such a path (#858), and the tool can neither read nor break it. One entry for each path, naming the store and the path. Remove the record with the vault's own tools if nothing uses it. A code of its own rather than `SOPULI-W005`, because the store could list. `vault orphans` raises it too, from run schema 1.57 (#999), for a secret path like that: it could not read the record to tell whether this tool wrote it |
 | `SOPULI-W054` | `account list` could not open or read the reset journal that `reset_records:` declares, so `RESET_AT` is empty and `results[].reset_at` is absent on the rows it could not answer for (#929). An empty `RESET_AT` there does not mean that nobody reset them. Raised for a refused or missing token, for a store that cannot be reached, for a record with no `reset_at` string, and for a name that is not one path segment, which has no record path. One entry for the run, naming the store, the number of rows (an account on one target each), and the first error with the store's hint, last. The store is opened at most once per run. After a failure other than a refusal, nothing more is read from it, because the next read would wait out the same timeout; a refusal is about one path, since a token's policy is per path. The text output prints it under the table. The listing still succeeds, for UC-2 §3.4's reason. A journal with no record for an account is not this code. A code of its own rather than `SOPULI-W023`, because a declared store failed |
 | `SOPULI-W055` | A dry run found a credential, bound to more than one target, that a guardrail refuses on at least one of them. Raised by `creds apply --dry-run --preflight` (#988), and by `creds rotate --dry-run` from run schema 1.55 and event schema 1.16 (#997). The real run asks every target before the first change and changes that credential on none (UC-1 §5), so this says the run's `SKIPPED` rows before the run starts. **One per credential**, naming the document, the account refused on each refusing target, that target's reasons, and every target the credential is bound to. `target` is set when one target refuses, and `account` when the refusals name one account. Not raised when the survey itself refuses the run, because the real run would stop there. It is asked of the accounts the survey already read, so it opens no connection of its own, and an account the survey could not read is left out. Not raised under `--force`, where the run does not ask. `apply` raises it only under `--preflight`, because its plain dry run opens no connection. `rotate`'s dry run always surveys, and every credential due counts, because the rotation stages a `pending` for each one before the pass asks. A refused credential's `pending` then stays staged, and the next `creds rotate` refuses until `creds apply` or `creds generate --overwrite-pending` deals with it. A forecast, like `SOPULI-W028` under `--preflight`, not a check the survey could not make, so it is not one of the survey's findings. **Printed as well as serialised** |
 

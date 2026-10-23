@@ -51,7 +51,7 @@ from sopuli.driver.protocol import UNKNOWN as ENCRYPTION_UNKNOWN_METHOD
 from sopuli.install_shape import INSTALLED, Component, InstallShape
 from sopuli.lock.inspect import SkippedPath
 from sopuli.lock.keys import LockKey
-from sopuli.lock.manager import LockableStore, LockManager, Unguarded
+from sopuli.lock.manager import LOCK_PREFIX, LockableStore, LockManager, Unguarded
 from sopuli.lock.record import LockRecord
 from sopuli.output.document import Diagnostic, DiagnosticLevel
 from sopuli.store.protocol import OK
@@ -663,7 +663,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A store in this survey has no `list` capability, so `lock status` reported "
             "only the paths this configuration declares. A lock record left at a path the "
             "file no longer names would not appear -- in that store. Everything reported "
-            "is accurate; the survey is narrower than it looks."
+            "is accurate; the survey is narrower than it looks. On `vault orphans`, no "
+            "orphan in that store would appear."
         ),
         UNADDRESSABLE_LOCK_PATH: (
             "`lock status` listed a lock record at a path the tool refuses in every store "
@@ -671,7 +672,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "`..` segment. The record is not in the report. Only a record written by hand "
             "can have such a path, and the tool can neither read nor break it. The message "
             "names the store and the path. Remove the record with the vault's own tools if "
-            "nothing uses it."
+            "nothing uses it. `vault orphans` skips a secret path like that too, because it "
+            "cannot read the record to tell whether this tool wrote it."
         ),
         RESET_JOURNAL_UNREAD: (
             "`account list` could not open or read the reset journal that `reset_records:` "
@@ -1333,6 +1335,27 @@ def unlistable_stores(names: Sequence[str]) -> list[Diagnostic]:
     ]
 
 
+def unlistable_for_orphans(names: Sequence[str]) -> list[Diagnostic]:
+    """`SOPULI-W005` on `vault orphans` (#999): stores it could not look in at all.
+
+    The same code as :func:`unlistable_stores`, because it is the same missing
+    capability. The message differs because `vault orphans` has no declared
+    paths to fall back on: in such a store it found nothing.
+    """
+    if not names:
+        return []
+    return [
+        Diagnostic(
+            level="warning",
+            code=UNLISTABLE_STORE,
+            message=(
+                f"could not list {_names(sorted(names))}: no orphan in "
+                f"{'it' if len(names) == 1 else 'them'} would appear"
+            ),
+        )
+    ]
+
+
 def reset_journal_unread(store: str, rows: int, reason: str) -> Diagnostic:
     """Say why `account list`'s ``RESET_AT`` is empty where the journal failed (#929).
 
@@ -1370,6 +1393,10 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
     refusal. It names the path a second way, without the ``locks/`` prefix, and
     its hint is for somebody writing a config, not for somebody removing a
     record.
+
+    `vault orphans` (#999) also skips a secret path like that, outside
+    ``locks/``. Its message says the tool could not read the record to tell
+    whether it is one of its own.
     """
     return [
         Diagnostic(
@@ -1380,6 +1407,10 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
                 f"holds a character or a segment this tool refuses in every store path, "
                 f"so it can neither read nor break the record. Remove it with the vault's "
                 f"own tools if nothing uses it"
+                if one.path.startswith(f"{LOCK_PREFIX}/")
+                else f"skipped the record at {one.path!r} in store {one.store!r}: its path "
+                f"holds a character or a segment this tool refuses in every store path, "
+                f"so it could not read the record to tell whether this tool wrote it"
             ),
         )
         for one in skipped

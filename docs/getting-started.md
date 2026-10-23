@@ -691,7 +691,65 @@ it on the database and then promotes it — and that is the next document.
 
 ---
 
-## 8. Where to go next
+## 8. Moving a secret path
+
+Sooner or later you will change where an application's password lives, for
+example by editing its `secret_template`. The next `creds generate` and
+`creds apply` write to the new path. The old document stays in the vault, and
+so does its lock record, under `locks/`. The tool never touches a path the
+config does not declare, so nothing removes them.
+
+`vault orphans` lists them. It reads every store in `vaults:`, and changes
+nothing. Here the path moved from `acme/acme/dev` to `acme/dev/acme`:
+
+```
+$ sopuli --config sopuli.yaml vault orphans
+config: sopuli.yaml
+
+VAULT      PATH                 KIND    LOCK
+vault-dev  acme/acme/dev        secret  -
+vault-dev  locks/acme/acme/dev  lock    released
+
+2 orphans in 1 vault (vault-dev): records that look like this tool's, at paths no binding in this config declares
+
+They may be another config's. Check each one before you delete it (getting-started.md, "Moving a secret path"). To delete them:
+
+  vault kv metadata delete -mount=kv acme/acme/dev
+  vault kv metadata delete -mount=kv locks/acme/acme/dev
+```
+
+It lists a document only if the document has a field this tool writes, `origin`
+or `rotated_at`. So another team's secrets in the same mount are not listed.
+But a document that another sopuli config manages has those fields too. Before
+you delete anything, check each record:
+
+1. The new path has `current` for every account. `sopuli creds check` says so.
+2. Nothing else still reads the old path, such as an External Secrets Operator
+   or the application's own settings.
+3. No other sopuli config declares the old path. If one does, the record is not
+   an orphan.
+4. The old document holds no fields this tool did not write. Read it with
+   `vault kv get`.
+5. The lock is not held. `vault orphans` prints no command for a path whose lock
+   is held, and `sopuli lock status` says who holds it.
+
+Then run the commands it printed. `vault kv metadata delete` removes the record
+and all its versions. Do not use `vault kv delete` on a KV v2 mount. It keeps the
+metadata, and on a lock path the next lock there could never be taken. Your
+token needs the `delete` capability on `<mount>/metadata/<path>`.
+
+Run it again to see that they are gone:
+
+```
+$ sopuli --config sopuli.yaml vault orphans
+config: sopuli.yaml
+
+no orphans in 1 vault (vault-dev)
+```
+
+---
+
+## 9. Where to go next
 
 | Read this | For |
 |---|---|

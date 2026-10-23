@@ -584,9 +584,7 @@ def test_rotate_decides_the_pass_from_its_survey(
     assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
     assert rows[("acme_web_user", "appdb-beta")] == SKIPPED
     assert len(harness["sessions"]) == 4
-    # Exit 4 today: step 8's read-back reports `SOPULI-W012` for the skipped
-    # account (#1000). The fix for that turns this into exit 0.
-    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
 def refused_missing_batch_user(result: Result) -> bool:

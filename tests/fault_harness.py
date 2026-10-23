@@ -40,7 +40,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -315,8 +315,14 @@ class Estate:
     more_targets: tuple[tuple[str, str], ...] = ()
     _configs: itertools.count[int] = field(default_factory=itertools.count)
 
-    def config(self, addr: str, *, break_expired: bool = False) -> Path:
-        """A config whose vault is at ``addr``: Vault itself, or a gate in front of it."""
+    def config(
+        self, addr: str, *, break_expired: bool = False, accounts: Sequence[str] = (ACCOUNT,)
+    ) -> Path:
+        """A config whose vault is at ``addr``: Vault itself, or a gate in front of it.
+
+        ``accounts`` are the `acme` application's, all in the one document. A
+        test that adds one creates it on the database.
+        """
         path = self.tmp_path / f"sopuli-{next(self._configs)}.yaml"
         targets = "".join(
             TARGET.format(name=name, dsn=dsn, user=self.user)
@@ -328,7 +334,7 @@ class Estate:
                 addr=addr,
                 mount=self.mount,
                 targets=targets,
-                account=ACCOUNT,
+                account=", ".join(accounts),
             ),
             encoding="utf-8",
         )

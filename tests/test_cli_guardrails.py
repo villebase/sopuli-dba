@@ -33,6 +33,7 @@ from sopuli.diagnostics import (
     GUARDRAIL_PASS_AHEAD,
     GUARDRAIL_UNCHECKED,
     PROMOTION_SKIPPED,
+    ROTATION_UNCONFIRMED,
     WARNINGS,
     guardrail_pass_ahead,
 )
@@ -583,9 +584,7 @@ def test_rotate_decides_the_pass_from_its_survey(
     assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
     assert rows[("acme_web_user", "appdb-beta")] == SKIPPED
     assert len(harness["sessions"]) == 4
-    # Exit 4 today: step 8's read-back reports `SOPULI-W012` for the skipped
-    # account (#1000). The fix for that turns this into exit 0.
-    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
 def refused_missing_batch_user(result: Result) -> bool:
@@ -1181,6 +1180,36 @@ def test_rotate_reports_the_skip_too(
     assert result.exit_code == ExitCode.PARTIAL
     codes = [one.get("code") for one in document(result)["diagnostics"]]
     assert PROMOTION_SKIPPED in codes
+
+
+def test_rotate_does_not_read_back_a_skipped_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1000. The skipped account keeps its staged password in `pending` while
+    its sibling moves to `current`, so step 8 must not compare it with
+    `current`."""
+    harness = estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=NOTHING_STAGED,
+    )
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(CONFIG)), "--confirm"]
+        + ["--output", "json"],
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    codes = [one.get("code") for one in document(result)["diagnostics"]]
+    assert ROTATION_UNCONFIRMED not in codes
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert "acme_web_user" in held.data["pending"]
+    # Invariant 7: the skipped account was not promoted along with its sibling.
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    assert held.data["DB_CREDENTIALS"]["acme_batch_user"] != LIVE
 
 
 def test_the_reason_names_every_check_that_refused(

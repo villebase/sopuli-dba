@@ -10770,6 +10770,12 @@ def _read_back(
     deliberately left alone -- checking either would report a disagreement
     against a value the run never claimed to have put there.
 
+    **A row a guardrail skipped is not read back** (#1000). Its staged password
+    stays in `pending` while its siblings move to `current`, so comparing it with
+    `current` would report a disagreement the vault never made. Every other row
+    is compared: a sibling applied from `current` checks that the promotion's
+    write left that value alone.
+
     Returns the accounts that disagreed, for the report, and the documents they
     are in, for `--finish-rollover`. A document missing from ``documents``,
     because its read failed, disagrees. One account on two targets has two
@@ -10785,6 +10791,8 @@ def _read_back(
         key = _lock_key(record.binding)
         promotion = promotions.get(key)
         if promotion is None or promotion.version is None or record.source is None:
+            continue
+        if record.outcome.state == apply_states.SKIPPED:
             continue
         entry = (record.binding, record.source.value, _data_at(key, documents))
         by_key.setdefault(key, []).append(entry)

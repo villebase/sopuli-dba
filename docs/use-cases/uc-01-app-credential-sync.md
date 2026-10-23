@@ -2059,7 +2059,10 @@ looks for a store that acknowledged a write and then served something else, whic
 is what a read replica behind its primary does. Only reading the object back can
 find that. Only documents this run promoted are read back. A document nobody
 staged into was never written, and one whose targets did not all confirm was
-left alone on purpose, and one whose promotion failed is row 7, not row 8. A
+left alone on purpose, and one whose promotion failed is row 7, not row 8.
+Within a promoted document, an account a guardrail skipped is not compared. Its
+staged password stays in `pending` while the others move to `current`, so it is
+not a disagreement (#1000). A
 document that no longer holds the stage counts as a disagreement: "the vault has
 not got it" and "the vault has the wrong one" are the same fact to the
 application about to fetch it. A read-back that fails counts as one too, because

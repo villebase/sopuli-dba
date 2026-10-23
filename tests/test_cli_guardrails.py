@@ -525,7 +525,8 @@ def test_a_survey_that_refuses_forecasts_nothing(
     )
     result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
 
-    assert result.exit_code == ExitCode.FAILURE, "ACME_BATCH_USER is missing on appdb-alpha"
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert refused_missing_batch_user(result)
     assert ahead(result) == []
 
 
@@ -585,6 +586,18 @@ def test_rotate_decides_the_pass_from_its_survey(
     # Exit 4 today: step 8's read-back reports `SOPULI-W012` for the skipped
     # account (#1000). The fix for that turns this into exit 0.
     assert result.exit_code == ExitCode.PARTIAL, result.output
+
+
+def refused_missing_batch_user(result: Result) -> bool:
+    """Whether the survey refused the run because `acme_batch_user` is missing on
+    `appdb-alpha`, rather than for some other reason that also exits 1."""
+    return any(
+        one["level"] == "error"
+        and one.get("target") == "appdb-alpha"
+        and one.get("account") == "acme_batch_user"
+        and "no such user" in one["message"]
+        for one in diagnostics(result)
+    )
 
 
 def test_the_forecast_names_the_account_refused_on_each_target() -> None:
@@ -1552,18 +1565,25 @@ def test_the_rotation_preview_and_the_rotation_agree(
 ) -> None:
     """The credential the preview names is the one the real rotation skips on
     every target."""
-    estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    harness = estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
     config = write_config(TWO_TARGETS)
     preview = rotate(runner, config, "--dry-run", "--output", "json")
     real = rotate(runner, config, "--confirm", "--output", "json")
 
     (found,) = ahead(preview)
-    skipped = {
-        entry["target"]
+    rows = {
+        (entry["account"], entry["target"]): entry["state"]
         for entry in document(real)["results"]
-        if entry.get("account") == found["account"] and entry.get("state") == SKIPPED
+        if "target" in entry
     }
-    assert skipped == {"appdb-alpha", "appdb-beta"}, document(real)["results"]
+    # The forecast credential is skipped everywhere, and the one it does not
+    # name is still rotated: a run that skipped everything would also pass the
+    # first half.
+    assert rows[(found["account"], "appdb-alpha")] == SKIPPED, rows
+    assert rows[(found["account"], "appdb-beta")] == SKIPPED, rows
+    assert rows[("acme_batch_user", "appdb-alpha")] != SKIPPED, rows
+    assert rows[("acme_batch_user", "appdb-beta")] != SKIPPED, rows
+    assert {"ACME_BATCH_USER"} <= set(changed(harness)), rows
 
 
 def test_a_rotation_preview_prints_the_forecast(
@@ -1603,7 +1623,8 @@ def test_a_rotation_preview_the_survey_refuses_forecasts_nothing(
     )
     result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
 
-    assert result.exit_code == ExitCode.FAILURE, "ACME_BATCH_USER is missing on appdb-alpha"
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert refused_missing_batch_user(result)
     assert ahead(result) == []
 
 

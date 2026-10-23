@@ -683,16 +683,17 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "reset that account through this tool."
         ),
         GUARDRAIL_PASS_AHEAD: (
-            "A `creds apply --dry-run --preflight` found a credential bound to more than "
-            "one target that a guardrail refuses on at least one of them. The real run "
-            "asks every target before the first change and then changes that credential "
-            "on none of them, so this is the run's `SKIPPED` rows said before it starts. "
-            "One entry per credential, naming the document, the account, each refusing "
-            "target with its reason, and the targets it would be left alone on. Not raised "
-            "under `--force`, which waives the checks the pass asks, or without "
-            "`--preflight`, so that a plain dry run opens no connection. A "
-            "`creds rotate --dry-run` raises it too: its survey always runs, and every "
-            "credential due counts, because the rotation would stage and promote it."
+            "A `creds apply --dry-run --preflight` or a `creds rotate --dry-run` found a "
+            "credential bound to more than one target that a guardrail refuses on at least "
+            "one of them. The real run asks every target before the first change and then "
+            "changes that credential on none of them, so this is the run's `SKIPPED` rows "
+            "said before it starts. One entry per credential, naming the document, the "
+            "account, each refusing target with its reason, and the targets it would be "
+            "left alone on. Not raised under `--force`, which waives the checks the pass "
+            "asks. `apply` raises it only under `--preflight`, so that its plain dry run "
+            "opens no connection; `rotate`'s dry run always surveys. A rotation stages a "
+            "`pending` for the refused credential before the pass asks, and leaves it "
+            "staged."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

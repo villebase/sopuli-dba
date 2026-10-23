@@ -626,9 +626,11 @@ plain `--dry-run` opens no connection and does not say it, and nor does
 [#988](../decisions/log.md#988).
 
 **`creds rotate --dry-run` says it too.** Its survey always runs, so it needs no
-`--preflight`. Nothing is staged yet, but the rotation would stage a `pending`
-for every credential due and then promote it, so each one counts. The other
-rules are `apply`'s. Reasons: [#997](../decisions/log.md#997).
+`--preflight`. Nothing is staged yet, but the rotation stages a `pending` for
+every credential due before the pass asks, so each one counts. The other rules
+are `apply`'s. A refused credential's `pending` stays staged after the run, so
+the next `creds rotate` refuses until `creds apply` or `creds generate
+--overwrite-pending` deals with it. Reasons: [#997](../decisions/log.md#997).
 
 A guardrail skip counts against the promotion only where the promotion would
 move past it: the account has a `pending` to promote, or a `previous` on a

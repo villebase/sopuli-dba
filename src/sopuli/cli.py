@@ -11038,9 +11038,9 @@ def _preview_rotation(
 
     **It forecasts the guardrail pass** as `apply --dry-run --preflight` does
     (#997): each credential the real run would skip on every target is
-    `SOPULI-W055`, asked of the accounts the survey read. Every binding due is
-    one the run would stage a `pending` for and then promote, so all of them
-    count. Not under `--force`, where the run does not ask.
+    `SOPULI-W055`, asked of the accounts the survey read. The run stages a
+    `pending` for every binding due before its pass asks, so all of them count.
+    Not under `--force`, where the run does not ask.
 
     **No `results`.** The plan and the selection table already say what would
     happen, at the grain it would happen at, and a second vocabulary for "would

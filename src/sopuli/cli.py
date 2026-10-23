@@ -7201,18 +7201,29 @@ def _apply_estate(
     declared = _declared_accounts(run)
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     unreachable: dict[str, BaseException] = {}
-    if ask_first and not force and surveyed is not None:
-        refused = _refusals(_shared_credentials(sources), surveyed, declared=declared)
-    elif ask_first and not force:
+    if ask_first and not force:
         # Not under `--force`: it waives every check that can refuse an
         # application account here, so the pass could find nothing.
+        shared = _shared_credentials(sources)
         try:
-            refused, unreachable, connected = _refused_somewhere(
-                sources, by_target, run, config, declared=declared, renew=manager.renew
-            )
+            if surveyed is not None and all(
+                (binding.target, binding.account) in surveyed
+                for bindings in shared.values()
+                for binding in bindings
+            ):
+                # Every account the pass asks about, read by the survey (#998).
+                # One it did not read sends the pass to read for itself rather
+                # than refuse nothing on it.
+                refused = _refusals(shared, surveyed, declared=declared)
+                connected = bool(shared)
+            else:
+                refused, unreachable, connected = _refused_somewhere(
+                    sources, by_target, run, config, declared=declared, renew=manager.renew
+                )
             if connected:
-                # The pass sits between taking the lock and the first change,
-                # and an estate of slow targets could spend the lease on it.
+                # Between taking the lock and the first change sits the survey or
+                # the pass, and an estate of slow targets could spend the lease on
+                # either. The first target's boundary does not renew.
                 manager.renew()
         except LockStolenError as stolen:
             return [], stolen

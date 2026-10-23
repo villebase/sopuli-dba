@@ -561,6 +561,8 @@ def test_a_refusal_after_the_survey_is_still_caught_at_the_change(
     assert result.exit_code == ExitCode.PARTIAL
     codes = [one.get("code") for one in document(result)["diagnostics"]]
     assert PROMOTION_SKIPPED in codes
+    # And it was the survey's reads the pass decided from: no session of its own.
+    assert len(harness["sessions"]) == 4
 
 
 def test_rotate_decides_the_pass_from_its_survey(
@@ -578,7 +580,11 @@ def test_rotate_decides_the_pass_from_its_survey(
     assert "ACME_WEB_USER" not in changed(harness), result.output
     rows = {(one["account"], one["target"]): one["state"] for one in document(result)["results"]}
     assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED
+    assert rows[("acme_web_user", "appdb-beta")] == SKIPPED
     assert len(harness["sessions"]) == 4
+    # Exit 4 today: step 8's read-back reports `SOPULI-W012` for the skipped
+    # account (#1000). The fix for that turns this into exit 0.
+    assert result.exit_code == ExitCode.PARTIAL, result.output
 
 
 def test_the_forecast_names_the_account_refused_on_each_target() -> None:

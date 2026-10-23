@@ -99,7 +99,10 @@ all = [
 ]
 
 dev = [
-  "pytest>=8.0",
+  # 8.1 is the first release where `-p randomly` undoes `-p no:randomly`.
+  "pytest>=8.1",
+  # Off by default (`addopts`); one CI cell runs the suite shuffled (#510).
+  "pytest-randomly>=3.15",
   "jsonschema>=4.20",
   "types-jsonschema>=4.20",
   "types-pyyaml>=6.0",
@@ -128,7 +131,10 @@ include = ["/src/sopuli", "/tests", "/pyproject.toml", "/README.md", "/LICENSE",
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# `-p no:randomly` keeps the order fixed, locally and in every CI cell but the
+# shuffled one. `pytest -p randomly --randomly-seed=<n>` runs one seed's order
+# (`04-testing.md` §3, #510).
+addopts = "-q -p no:randomly"
 # Click deprecates an API one major release before it removes it, and
 # `click>=8.1` has no upper bound. Failing on the deprecation keeps the suite
 # ahead of the removal (#951). Matched on the message, because a

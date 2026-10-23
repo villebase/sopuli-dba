@@ -258,6 +258,30 @@ So there are two rules:
 - A test whose subject is **what one call did** asserts on that call: it patches
   the import machinery, and the failure names the function.
 
+**One CI cell runs the suite in a shuffled order** (#510). That is how a test
+that breaks these rules is found. `pytest-randomly` is in the `dev` extra, and
+`addopts` turns it off with `-p no:randomly`. So a local run, and every other CI
+cell, uses the same fixed order every time. The shuffled cell is
+`test (ubuntu-latest, py3.13, shuffled)`. Its seed is the workflow run's id, and
+the step prints it before the tests start:
+
+```
+shuffled with seed <n>; reproduce with: pytest -p randomly --randomly-seed=<n>
+```
+
+That command runs the same order on your machine. Re-running the job uses the
+same seed, so a re-run reproduces a failure instead of hiding it.
+
+If the shuffled cell is red and every other cell is green, a test depends on the
+order. It is not your change, unless your change added that test or the state it
+leaks. Pass the seed to reproduce it, and file an issue that names the seed and
+the tests.
+
+The shuffled cell is part of the `test` job, so `ci ok` fails with it and the
+pull request cannot merge. A re-run fails again, because the seed is the same.
+The next push gets a new run id and so a new seed. That seed may pass, but the
+order dependency is still there until its issue is fixed.
+
 ---
 
 ## 4. Tiers

@@ -1517,6 +1517,113 @@ def test_rotate_takes_force_as_well(
     assert "ACME_WEB_USER" in changed(harness)
 
 
+def rotate(runner: CliRunner, config: Path, *args: str) -> Result:
+    return runner.invoke(cli, ["creds", "rotate", "--config", str(config), *args])
+
+
+def test_a_rotation_preview_says_which_credential_the_pass_would_skip(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#997. Nothing is staged yet, but every credential due will have a `pending`
+    that a promotion follows, so the preview asks the pass's question of each
+    one the survey read."""
+    harness = estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert changed(harness) == []
+    (found,) = ahead(result)
+    assert found["account"] == "acme_web_user"
+    assert found["target"] == "appdb-beta"
+    assert found["message"] == (
+        "vault-prod:apps/acme/db: a guardrail refuses acme_web_user on appdb-beta "
+        "(the account holds DBA), so the run would change the credential on none of "
+        "appdb-alpha, appdb-beta"
+    )
+    # The survey's connections only: the forecast opens none of its own.
+    assert len(harness["sessions"]) == 2
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data == NOTHING_STAGED
+
+
+def test_the_rotation_preview_and_the_rotation_agree(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The credential the preview names is the one the real rotation skips on
+    every target."""
+    estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    config = write_config(TWO_TARGETS)
+    preview = rotate(runner, config, "--dry-run", "--output", "json")
+    real = rotate(runner, config, "--confirm", "--output", "json")
+
+    (found,) = ahead(preview)
+    skipped = {
+        entry["target"]
+        for entry in document(real)["results"]
+        if entry.get("account") == found["account"] and entry.get("state") == SKIPPED
+    }
+    assert skipped == {"appdb-alpha", "appdb-beta"}, document(real)["results"]
+
+
+def test_a_rotation_preview_prints_the_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "so the run would change the credential on none of appdb-alpha, appdb-beta" in (
+        result.output
+    )
+
+
+def test_a_forced_rotation_preview_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real rotation skips the pass under `--force`, so the preview does too."""
+    estate({}, document=NOTHING_STAGED, by_target=DBA_ON_BETA)
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--force", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
+
+
+def test_a_rotation_preview_the_survey_refuses_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The real rotation stops at the survey and never reaches the pass."""
+    estate(
+        {},
+        document=NOTHING_STAGED,
+        by_target={
+            "appdb-alpha": {"ACME_WEB_USER": ordinary("ACME_WEB_USER")},
+            "appdb-beta": DBA_ON_BETA["appdb-beta"],
+        },
+    )
+    result = rotate(runner, write_config(TWO_TARGETS), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, "ACME_BATCH_USER is missing on appdb-alpha"
+    assert ahead(result) == []
+
+
+def test_a_rotation_preview_of_a_credential_on_one_target_forecasts_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass asks only about a credential on more than one target."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document=NOTHING_STAGED,
+    )
+    result = rotate(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert ahead(result) == []
+
+
 # ------------------------------------------------- the check that could not run ---
 #
 # §4's third answer. `V$PWFILE_USERS` is outside §2's grant set on purpose, so

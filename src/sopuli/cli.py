@@ -6516,7 +6516,11 @@ def creds_apply(
         # under `--force`, where the real run does not ask: it waives every
         # check that could refuse an application account.
         skipped_ahead = (
-            [] if force else _guardrail_pass_ahead(sources, read, declared=_declared_accounts(run))
+            []
+            if force
+            else _guardrail_pass_ahead(
+                _shared_credentials(sources), read, declared=_declared_accounts(run)
+            )
         )
         document.diagnostics.extend(skipped_ahead)
         repair_notes.extend(one.message for one in skipped_ahead)
@@ -7277,10 +7281,24 @@ def _shared_credentials(
     forecasts the same set (#988): bound to more than one target, and followed
     by a promotion.
     """
+    return _shared_among(
+        binding
+        for binding, source in sources
+        if source is not None and apply_states.promotes(source.stage)
+    )
+
+
+def _shared_among(promoted: Iterable[Binding]) -> dict[Credential, list[Binding]]:
+    """Of bindings a promotion follows, the credentials bound to more than one target.
+
+    :func:`_shared_credentials` reads which bindings those are from the staged
+    sources. A rotation preview has staged nothing, so it passes every binding it
+    would rotate (#997): each one will have a `pending` that a promotion follows.
+    """
     bindings: dict[Credential, list[Binding]] = {}
-    for binding, source in sources:
+    for binding in promoted:
         credential = _credential(binding)
-        if credential is None or source is None or not apply_states.promotes(source.stage):
+        if credential is None:
             continue
         bindings.setdefault(credential, []).append(binding)
     return {
@@ -7291,20 +7309,21 @@ def _shared_credentials(
 
 
 def _guardrail_pass_ahead(
-    sources: Sequence[tuple[Binding, Source | None]],
+    shared: Mapping[Credential, Sequence[Binding]],
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
 ) -> list[Diagnostic]:
     """What the real run's guardrail pass would skip, as `SOPULI-W055` (#988).
 
-    ``states`` is what the pre-flight read with `describe_user`, by (target,
-    account), so this costs no connection of its own. The answer is
-    :func:`_refused_somewhere`'s: the same credentials, the same
+    ``shared`` is the credentials the pass would ask about, from
+    :func:`_shared_credentials` for `apply` and :func:`_shared_among` for a
+    rotation preview (#997). ``states`` is what the pre-flight read with
+    `describe_user`, by (target, account), so this costs no connection of its
+    own. The answer is :func:`_refused_somewhere`'s: the same
     :func:`guardrails.review`. An account the survey could not read is left out,
     as the pass leaves it to the run.
     """
-    shared = _shared_credentials(sources)
     notices: list[Diagnostic] = []
     for credential, refusing in _refusals(shared, states, declared=declared).items():
         bound = {binding.target: binding.account for binding in shared[credential]}
@@ -10280,6 +10299,7 @@ def creds_rotate(
             documents=_read_documents(keys, stores, run=run),
             strategy=strategy,
             max_age_days=max_age_days,
+            force=force,
         )
 
     # Step 1, and it happens before the lock rather than under it: a prompt
@@ -11006,6 +11026,7 @@ def _preview_rotation(
     documents: Mapping[LockKey, Any],
     strategy: str | None,
     max_age_days: int | None,
+    force: bool,
 ) -> str:
     """`--dry-run`: the plan, what is due, and whether the estate would take it.
 
@@ -11014,6 +11035,12 @@ def _preview_rotation(
     "show me what this would do, and tell me whether it would work" is the
     question somebody previewing a rotation is actually asking. A refusal under
     `--dry-run` is still a refusal: the estate would not have taken this.
+
+    **It forecasts the guardrail pass** as `apply --dry-run --preflight` does
+    (#997): each credential the real run would skip on every target is
+    `SOPULI-W055`, asked of the accounts the survey read. Every binding due is
+    one the run would stage a `pending` for and then promote, so all of them
+    count. Not under `--force`, where the run does not ask.
 
     **No `results`.** The plan and the selection table already say what would
     happen, at the grain it would happen at, and a second vocabulary for "would
@@ -11031,16 +11058,28 @@ def _preview_rotation(
     _refuse_staged_rotation(rotating, documents)
     _refuse_narrow_rotation(rotating, documents, run)
 
-    findings = _preflight(rotating, run, config, strategy=strategy, full=True)
+    read: dict[tuple[str, str], UserState] = {}
+    findings = _preflight(rotating, run, config, strategy=strategy, full=True, states=read)
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
         return _refuse_preflight(findings, document, header=header)
+    # After the refusal, as in `apply`: a run the survey stops never reaches the
+    # pass.
+    skipped_ahead = (
+        []
+        if force
+        else _guardrail_pass_ahead(_shared_among(rotating), read, declared=_declared_accounts(run))
+    )
+    document.diagnostics.extend(skipped_ahead)
 
     document.finish(ExitCode.SUCCESS, Summary(total=len(rotating)))
     # Decision #606: a survey that passed with a check missing says so in the text
     # too.
     return "\n".join(
-        [f"{header}\n\nnothing was rotated (--dry-run)", *render_notices(caveat_notes(findings))]
+        [
+            f"{header}\n\nnothing was rotated (--dry-run)",
+            *render_notices(caveat_notes(findings) + [one.message for one in skipped_ahead]),
+        ]
     )
 
 

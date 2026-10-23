@@ -811,6 +811,44 @@ def test_an_unreadable_audit_trail_keeps_the_first_line_once() -> None:
     assert "Help:" not in found.detail
 
 
+def _with_help(first: str) -> RuntimeError:
+    """A server error in the shape 21.3.0.0.0 sends: code first, help link below."""
+    code = first.split(":", 1)[0]
+    return RuntimeError(f"{first}\nHelp: https://docs.oracle.com/error-help/db/{code.lower()}/")
+
+
+def _one_line_once(detail: str, code: str) -> None:
+    assert detail.count(code) == 1, detail
+    assert "\n" not in detail
+    assert "Help:" not in detail
+
+
+def test_an_unreadable_common_column_keeps_the_first_line_once() -> None:
+    cursor = Cursor({}, fail={COMMON_QUERY: _with_help("ORA-00942: table or view does not exist")})
+
+    common, error = _is_common(cursor, COMMON_PERSON)
+
+    assert common is False
+    assert error == "ORA-00942: table or view does not exist"
+
+
+@pytest.mark.parametrize(
+    ("first", "said"),
+    [
+        ('ORA-00904: "ENABLED_OPTION": invalid identifier', "do not have"),
+        ("ORA-00600: internal error code", "failed with ORA-00600: internal error code"),
+    ],
+)
+def test_a_failed_policy_view_read_keeps_the_first_line_once(first: str, said: str) -> None:
+    cursor = Cursor({MODE_QUERY: ("TRUE",)}, fail={ENABLED_QUERY: _with_help(first)})
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is None
+    assert said in found.detail
+    _one_line_once(found.detail, first.split(":", 1)[0])
+
+
 def test_no_unified_auditing_row_asks_nothing_else() -> None:
     """11.2 has no `Unified Auditing` row, and no policy views to read."""
     cursor = Cursor({MODE_QUERY: None})

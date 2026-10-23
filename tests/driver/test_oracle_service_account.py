@@ -578,6 +578,9 @@ def test_mixed_mode_without_the_parameter_grant_is_unknown_and_names_it(
     assert found.audited is None, found.detail
     assert "AUDIT_TRAIL is not readable (ORA-00942" in found.detail
     assert "GRANT SELECT ON SYS.V_$PARAMETER" in found.detail
+    # The server's own message: its code once, and not its help link (#1011).
+    assert found.detail.count("ORA-00942") == 1, found.detail
+    assert "\n" not in found.detail
 
 
 def test_nothing_recording_logons_is_false_on_a_unified_only_database(

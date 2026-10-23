@@ -716,7 +716,17 @@ def test_a_connection_that_cannot_open_a_cursor_is_unknown_and_not_raised() -> N
     found = session.audit_coverage(PERSON)
 
     assert found.audited is None
-    assert "DPI-1080" in found.detail
+    assert found.detail == (
+        "the audit check could not use the connection: DPI-1080: connection was closed by ORA-03113"
+    )
+
+
+def test_a_failure_with_no_code_reads_as_a_sentence() -> None:
+    cursor = Cursor({MODE_QUERY: ("TRUE",)}, fail={ENABLED_QUERY: RuntimeError("closed")})
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.detail == "reading the audit policy views failed: closed"
 
 
 def _covered(mode: str) -> dict[str, Any]:
@@ -809,6 +819,44 @@ def test_an_unreadable_audit_trail_keeps_the_first_line_once() -> None:
     )
     assert found.detail.count("ORA-00942") == 1
     assert "Help:" not in found.detail
+
+
+def _with_help(first: str) -> RuntimeError:
+    """A server error in the shape 21.3.0.0.0 sends: code first, help link below."""
+    code = first.split(":", 1)[0]
+    return RuntimeError(f"{first}\nHelp: https://docs.oracle.com/error-help/db/{code.lower()}/")
+
+
+def _one_line_once(detail: str, code: str) -> None:
+    assert detail.count(code) == 1, detail
+    assert "\n" not in detail
+    assert "Help:" not in detail
+
+
+def test_an_unreadable_common_column_keeps_the_first_line_once() -> None:
+    cursor = Cursor({}, fail={COMMON_QUERY: _with_help("ORA-00942: table or view does not exist")})
+
+    common, error = _is_common(cursor, COMMON_PERSON)
+
+    assert common is False
+    assert error == "ORA-00942: table or view does not exist"
+
+
+@pytest.mark.parametrize(
+    ("first", "said"),
+    [
+        ('ORA-00904: "ENABLED_OPTION": invalid identifier', "do not have"),
+        ("ORA-00600: internal error code", "failed: ORA-00600: internal error code"),
+    ],
+)
+def test_a_failed_policy_view_read_keeps_the_first_line_once(first: str, said: str) -> None:
+    cursor = Cursor({MODE_QUERY: ("TRUE",)}, fail={ENABLED_QUERY: _with_help(first)})
+
+    found = coverage_of(cursor, PERSON)
+
+    assert found.audited is None
+    assert said in found.detail
+    _one_line_once(found.detail, first.split(":", 1)[0])
 
 
 def test_no_unified_auditing_row_asks_nothing_else() -> None:

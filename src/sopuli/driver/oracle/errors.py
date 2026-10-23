@@ -399,6 +399,21 @@ class Diagnosis:
         """
         return self.kind in (PASSWORD_REJECTED, PASSWORD_REUSED)
 
+    @property
+    def first_line(self) -> str:
+        """The message's first line, with the code once, for a one-line detail.
+
+        The server's message starts with its code, and on 21.3.0.0.0 Oracle's
+        help link follows on a line of its own. A per-target error keeps the
+        first line too (``cli._as_error``). A message that does not start with
+        the code gets it in front, and a failure with neither is ``"no code"``.
+        """
+        lines = self.message.strip().splitlines()
+        first = lines[0].strip() if lines else ""
+        if self.code and not first.startswith(self.code):
+            first = f"{self.code}: {first}" if first else self.code
+        return first or "no code"
+
     def as_error(self) -> DriverError:
         """This diagnosis as something to raise, when the caller decides it is.
 

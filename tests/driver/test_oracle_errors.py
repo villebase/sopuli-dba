@@ -571,3 +571,23 @@ def test_an_exception_with_no_args_at_all_still_diagnoses() -> None:
 
     assert found.kind == UNKNOWN
     assert found.code == ""
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "first"),
+    [
+        # Measured on 21.3.0.0.0: code first, Oracle's help link on a line below.
+        (
+            "ORA-00942",
+            "ORA-00942: table or view does not exist\n"
+            "Help: https://docs.oracle.com/error-help/db/ora-00942/",
+            "ORA-00942: table or view does not exist",
+        ),
+        ("ORA-00942", "table or view does not exist", "ORA-00942: table or view does not exist"),
+        ("ORA-00942", "", "ORA-00942"),
+        ("", "connection was closed", "connection was closed"),
+        ("", "", "no code"),
+    ],
+)
+def test_the_first_line_says_the_code_once(code: str, message: str, first: str) -> None:
+    assert classify(code, message).first_line == first

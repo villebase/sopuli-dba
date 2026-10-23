@@ -30,6 +30,7 @@ from sopuli.driver.oracle.capabilities import (
     application_of,
     assert_scope,
     container_of,
+    encryption_of,
     observe,
     probe,
     read,
@@ -185,6 +186,28 @@ def test_a_failed_probe_names_the_statement_that_failed() -> None:
 
     assert raised.value.hint is not None
     assert "select banana" in raised.value.hint
+
+
+#: The shape 21.3.0.0.0 sends: the code first, Oracle's help link on a line below.
+WITH_HELP = "ORA-00600: internal error code\nHelp: https://docs.oracle.com/error-help/db/ora-00600/"
+
+
+def test_a_failed_probe_says_the_servers_first_line_once() -> None:
+    with pytest.raises(ProbeError) as raised:
+        read(_Cursor({"select 1": RuntimeError(WITH_HELP)}), "select 1")
+
+    assert raised.value.message == "a capability probe failed: ORA-00600: internal error code"
+
+
+class _FailingCursor:
+    def execute(self, statement: str, parameters: Any = None, /) -> None:
+        raise RuntimeError(WITH_HELP)
+
+
+def test_a_failed_encryption_read_says_the_servers_first_line_once() -> None:
+    found = encryption_of(_FailingCursor())  # type: ignore[arg-type]
+
+    assert found.hint == "reading the network protocol failed: ORA-00600: internal error code"
 
 
 def test_a_failed_probe_is_not_confused_with_an_absent_capability() -> None:

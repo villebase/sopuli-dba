@@ -385,13 +385,11 @@ def coverage_of(cursor: Cursor, account: str) -> AuditCoverage:
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
         if reading == POLICY_VIEWS and diagnosis.code == NO_COLUMN:
-            return AuditCoverage(audited=None, detail=f"{OTHER_COLUMNS}: {diagnosis.message}")
+            return AuditCoverage(audited=None, detail=f"{OTHER_COLUMNS}: {diagnosis.first_line}")
         if reading == POLICY_VIEWS and diagnosis.code in UNREADABLE_CODES:
             return AuditCoverage(audited=None, detail=UNREADABLE)
         return AuditCoverage(
-            audited=None,
-            detail=f"reading {reading} failed with {diagnosis.code or 'no code'}: "
-            f"{diagnosis.message}",
+            audited=None, detail=f"reading {reading} failed: {diagnosis.first_line}"
         )
 
 
@@ -406,8 +404,7 @@ def _is_common(cursor: Cursor, account: str) -> tuple[bool, str | None]:
         cursor.execute(COMMON_QUERY, {"name": account})
         row = cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
-        diagnosis = from_error(error)
-        return False, f"{diagnosis.code or 'no code'}: {diagnosis.message}"
+        return False, from_error(error).first_line
     return bool(row) and is_yes(row[0]), None
 
 
@@ -417,20 +414,15 @@ def _audit_trail(cursor: Cursor) -> tuple[str | None, str | None]:
     The default install grants no read of ``V$PARAMETER``, so this fails with
     ``ORA-00942`` unless §2's optional grant was taken (measured on 21.3.0.0.0 and
     18.4.0.0.0). Only a code in :data:`UNREADABLE_CODES` names the grant. The
-    server's message is kept: its first line, which starts with the code, as a
-    per-target error keeps it. The lines after it are Oracle's help link.
+    server's message is kept, by its first line.
     """
     try:
         cursor.execute(TRAIL_QUERY)
         row = cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         diagnosis = from_error(error)
-        lines = diagnosis.message.splitlines()
-        first = lines[0] if lines else ""
-        if diagnosis.code and not first.startswith(diagnosis.code):
-            first = f"{diagnosis.code}: {first}" if first else diagnosis.code
         reason = TRAIL_UNREADABLE if diagnosis.code in UNREADABLE_CODES else TRAIL_FAILED
-        return None, reason.format(error=first or "no code")
+        return None, reason.format(error=diagnosis.first_line)
     if not row:
         return None, TRAIL_FAILED.format(error="no row")
     if row[0] is None:

@@ -78,6 +78,10 @@ def render(
         lines.extend(["", "no vault in `vaults:`"])
     elif not vaults:
         lines.extend(["", "no vault could be listed"])
+    elif survey.prefix is not None and not survey.seen:
+        # Not "no orphans": nothing was there to look at, which a mistyped
+        # prefix would also give.
+        lines.extend(["", f"nothing is stored in {where}"])
     elif not survey.orphans:
         lines.extend(["", f"no orphans in {where}"])
     else:

@@ -788,13 +788,66 @@ def test_the_prefix_is_a_folder(write_config: Callable[[str], Path], with_record
 def test_reset_records_under_the_prefix_are_still_left_out(
     write_config: Callable[[str], Path], with_records: Records
 ) -> None:
+    """The orphan beside them shows the prefix listed the subtree."""
     with_records(
         ("vault-dev", "sopuli/personal-resets/appdb-alpha/acme_dev_alice", PROMOTED),
+        ("vault-dev", "sopuli/old/db", PROMOTED),
     )
     result = run(write_config(RESETS), "--prefix", "sopuli", "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert found(result) == []
+    assert [entry["path"] for entry in found(result)] == ["sopuli/old/db"]
+
+
+@pytest.mark.parametrize("given", ["sopuli/personal-resets", "sopuli/personal-resets/appdb"])
+def test_a_prefix_inside_the_reset_records_prefix_is_refused(
+    given: str, write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """Every path there is left out, so the run would read as a clean survey."""
+    with_records()
+    result = run(write_config(RESETS), "--prefix", given)
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "under the `reset_records:` prefix" in result.output
+
+
+def test_a_refused_lock_listing_keeps_the_secrets(
+    write_config: Callable[[str], Path], with_records: Records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A token that may list the secrets and not their lock records still has
+    its secrets surveyed, and W056 says which listing failed."""
+    stores = with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    store = stores["vault-dev"]
+    listing = store.list
+
+    def list_(prefix: str) -> tuple[str, ...]:
+        if prefix.startswith("locks/"):
+            raise StoreError("permission denied")
+        return listing(prefix)
+
+    monkeypatch.setattr(store, "list", list_)
+    result = run(
+        write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.output)
+    assert [entry["path"] for entry in found(result)] == ["acme/alpha/db"]
+    assert document["orphans"]["listed"] == ["vault-dev"]
+    [warning] = [one for one in document["diagnostics"] if one.get("code") == ORPHANS_UNREAD]
+    assert "listing locks/acme: permission denied" in warning["message"]
+
+
+def test_a_prefix_with_nothing_under_it_says_so(
+    write_config: Callable[[str], Path], with_records: Records
+) -> None:
+    """A mistyped prefix lists nothing, which is not a clean survey of it."""
+    with_records(("vault-dev", "acme/alpha/db", PROMOTED))
+    result = run(write_config(CONFIG), "--vault", "vault-dev", "--prefix", "acme/alhpa")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "nothing is stored in 1 vault (vault-dev) under acme/alhpa/" in result.output
+    assert "no orphans" not in result.output
 
 
 @pytest.mark.parametrize(

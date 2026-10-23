@@ -55,7 +55,7 @@ from sopuli.config.vault_layers import _same_address, _shown
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.inspect import LockState, ResetRegion, SkippedPath, secret_path, survey
 from sopuli.lock.keys import LockKey, lock_key, normalise_path
-from sopuli.lock.manager import LOCK_PREFIX
+from sopuli.lock.manager import LOCK_PREFIX, lock_path
 from sopuli.payload import ORIGIN, ROTATED_AT
 from sopuli.store.protocol import CAS, LIST, SecretStore, StoreError, bounded_prefix
 
@@ -135,6 +135,9 @@ class Survey:
     #: The secret path the survey was limited to, normalised; ``None`` for the
     #: whole of each store (#1016).
     prefix: str | None = None
+    #: How many paths the listings returned, so a prefix that matched nothing
+    #: is not reported as a clean survey of it.
+    seen: int = 0
 
     def held(self) -> frozenset[LockKey]:
         """The keys a live lock stands on.
@@ -231,19 +234,27 @@ def find(
     unlistable: list[str] = []
     skipped: list[SkippedPath] = []
     unread: list[Unread] = []
+    seen = 0
     for name, store in sorted(stores.items()):
         if LIST not in store.supports():
             unlistable.append(name)
             continue
         try:
-            paths = (
-                store.list("")
-                if prefix is None
-                else (*store.list(prefix), *store.list(f"{LOCK_PREFIX}/{prefix}"))
-            )
+            paths: tuple[str, ...] = store.list("" if prefix is None else prefix)
         except StoreError as error:
             unread.append(Unread(store=name, path=None, reason=error.message))
             continue
+        if prefix is not None:
+            # A listing of its own, so a token that may list the secrets and not
+            # their lock records still has its secrets surveyed.
+            locks_at = lock_path(LockKey(store=name, path=prefix))
+            try:
+                paths = (*paths, *store.list(locks_at))
+            except StoreError as error:
+                unread.append(
+                    Unread(store=name, path=None, reason=f"listing {locks_at}: {error.message}")
+                )
+        seen += len(paths)
         listed.append(name)
         in_region = region if region is not None and region.store == name else None
         locks, bad = _locks(name, store, paths, declared, region=in_region)
@@ -266,6 +277,7 @@ def find(
         skipped=tuple(skipped),
         unread=tuple(unread),
         prefix=prefix,
+        seen=seen,
     )
 
 
@@ -278,7 +290,10 @@ def survey_prefix(given: str) -> str:
     lock records are found through their secret's path, and a prefix there
     would list ``locks/locks/...``.
     """
-    path = normalise_path(given)
+    try:
+        path = normalise_path(given)
+    except ValueError as error:
+        raise ValueError(f"--prefix: {error}") from error
     if not path:
         raise ValueError("--prefix names no path; leave it out to survey every path")
     if path == LOCK_PREFIX or path.startswith(f"{LOCK_PREFIX}/"):

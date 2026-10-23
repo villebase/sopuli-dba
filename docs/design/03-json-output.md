@@ -1282,14 +1282,17 @@ entries that were read.
 under `locks/PATH`, in each store surveyed
 ([#1016](https://github.com/villebase/sopuli-dba/issues/1016)). The store lists
 those two subtrees in place of the whole mount, so the documents outside them
-are not listed or read, and do not appear in the store's audit log. PATH is a
-folder: a document at exactly PATH is not under it. It is checked as a lock key
-is: `.` and `..` segments, and the characters a store path refuses, exit 2. So
-does a PATH under `locks/`, because lock records are found through their secret
-path. The `reset_records:` prefix is still left out. The summary line says
-`under PATH/`, `orphans.prefix` holds the normalised path, and
-`invocation.selection.prefix` the one given, so `no orphans` is not read as a
-statement about the whole store.
+are not listed or read, and do not appear in the store's audit log. A lock
+listing the store refuses is named in `SOPULI-W056`, and the secrets already
+listed are still surveyed. PATH is a folder: a document at exactly PATH is not
+under it. It is checked as a lock key is: `.` and `..` segments, and the
+characters a store path refuses, exit 2. So does a PATH under `locks/`, because
+lock records are found through their secret path, and a PATH inside the
+`reset_records:` prefix of a store surveyed, because every path there is left
+out. The summary line says `under PATH/`, `orphans.prefix` holds the normalised
+path, and `invocation.selection.prefix` the one given, so `no orphans` is not
+read as a statement about the whole store. Where nothing at all is stored under
+PATH, as a mistyped one gives, the line says `nothing is stored in ...` instead.
 
 ### `targets`, emitted by `doctor`
 

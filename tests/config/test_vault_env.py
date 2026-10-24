@@ -25,6 +25,7 @@ import pytest
 
 from sopuli.config.codes import (
     THIRD_PARTY_ADDR_OVERRIDES,
+    THIRD_PARTY_ADDR_USERINFO,
     THIRD_PARTY_NAMESPACE_OVERRIDES,
     THIRD_PARTY_VARIABLE_UNAPPLIED,
 )
@@ -445,39 +446,144 @@ def test_another_port_is_another_address() -> None:
     assert len(overrides(config)) == 1
 
 
-@pytest.mark.parametrize(
-    ("address", "shown"),
+#: Each spelling of a user name and password, and the address without them. A
+#: `/`, `?` or `#` in the password ends the authority for `urlsplit`, and the
+#: last one cannot be parsed at all, so a parser would miss each of them.
+USERINFO = pytest.mark.parametrize(
+    ("address", "kept"),
     [
-        ("https://ops:s3cret@proxy.example.com:8200", "https://***@proxy.example.com:8200"),
-        ("https://ops:s3/cret@proxy.example.com", "https://***@proxy.example.com"),
-        ("https://ops:s3?cret@proxy.example.com", "https://***@proxy.example.com"),
-        ("https://ops:s3#cret@proxy.example.com", "https://***@proxy.example.com"),
-        ("https://ops:s3cret@[proxy", "https://***@[proxy"),
+        ("https://ops:s3cret@proxy.example.com:8200", "https://proxy.example.com:8200"),
+        ("https://ops:s3/cret@proxy.example.com", "https://proxy.example.com"),
+        ("https://ops:s3?cret@proxy.example.com", "https://proxy.example.com"),
+        ("https://ops:s3#cret@proxy.example.com", "https://proxy.example.com"),
+        ("https://ops:s3cret@[proxy", "https://[proxy"),
     ],
     ids=["plain", "slash", "query", "hash", "unparseable"],
 )
-def test_credentials_in_an_address_are_not_repeated_in_the_warning(
-    address: str, shown: str
-) -> None:
-    """The warning reaches every run's output, so userinfo is masked. A `/`, `?`
-    or `#` in the password, or an address `urlsplit` cannot parse, still masks."""
-    [warning] = overrides(loaded({"VAULT_ADDR": address}, {"addr": DECLARED}))
-
-    assert "s3" not in warning.message
-    assert "ops" not in warning.message
-    assert shown in warning.message
 
 
-def test_credentials_in_an_address_with_no_scheme_are_masked_for_a_file_store() -> None:
-    """A `file` store's `addr` is a path, so the plain-HTTP rule does not
-    refuse it, and the warning's no-scheme masking is still what protects it."""
-    [warning] = overrides(
-        loaded({"VAULT_ADDR": "ops:s3cret@proxy.example.com"}, {"type": "file", "addr": DECLARED})
+def userinfo_warnings(config: Config) -> list[Any]:
+    return [one for one in config.warnings if one.code == THIRD_PARTY_ADDR_USERINFO]
+
+
+@USERINFO
+def test_vault_addr_with_a_user_name_and_password_is_cut_and_warns(address: str, kept: str) -> None:
+    """#891: the variable is another tool's, so the run goes on without the
+    credential and says so. Neither warning repeats it."""
+    config = loaded({"VAULT_ADDR": address}, {"addr": DECLARED})
+
+    assert config.vaults[0].addr == kept
+    [warning] = userinfo_warnings(config)
+    assert warning.message == (
+        "VAULT_ADDR holds a user name or password, before an `@`, and this run dropped "
+        f"it: the address it gives vault {STORE!r} is {kept}"
+    )
+    [override] = overrides(config)
+    for one in (warning, override):
+        assert "s3" not in one.message + one.hint
+        assert "ops" not in one.message + one.hint
+    assert kept in override.message
+
+
+def test_vault_addr_is_cut_when_it_loses_too() -> None:
+    """The resolved setting keeps the layers that lost, so the variable's address is cut
+    even when another layer wins."""
+    config = loaded(
+        {"VAULT_ADDR": "https://ops:s3cret@proxy.example.com", "SOPULI_VAULT_ADDR": ACTIVE_ADDR}
     )
 
-    assert "s3" not in warning.message
-    assert "ops" not in warning.message
-    assert "***@proxy.example.com" in warning.message
+    [store] = config.vaults
+    assert store.addr == ACTIVE_ADDR
+    [answer] = [resolved for key, resolved in store.settings if key == "addr"]
+    assert [one.value for one in answer.contributions] == [
+        ACTIVE_ADDR,
+        "https://proxy.example.com",
+    ]
+    assert len(userinfo_warnings(config)) == 1
+
+
+def test_vault_addr_with_no_scheme_is_cut_for_a_file_store() -> None:
+    """A `file` store's `addr` is a path, so the plain-HTTP rule does not
+    refuse it. The cut is what keeps the credential out of the output."""
+    config = loaded(
+        {"VAULT_ADDR": "ops:s3cret@proxy.example.com"}, {"type": "file", "addr": DECLARED}
+    )
+
+    assert config.vaults[0].addr == "proxy.example.com"
+    assert len(userinfo_warnings(config)) == 1
+    assert all("s3" not in one.message for one in config.warnings)
+
+
+def test_an_address_with_no_at_sign_is_not_warned_about() -> None:
+    assert userinfo_warnings(loaded({"VAULT_ADDR": THIRDPARTY_ADDR}, {"addr": DECLARED})) == []
+
+
+def load_with_addr_in(where: str, address: str) -> Config:
+    """A load with ``address`` written at ``where``, one of the layers below."""
+    if where == f"vaults.{STORE}.addr":
+        return loaded({}, {"addr": address})
+    if where == f"defaults.vaults.{STORE}.addr":
+        return loaded({}, defaults={"vaults": {STORE: {"addr": address}}})
+    return loaded({where: address})
+
+
+@USERINFO
+@pytest.mark.parametrize(
+    "where",
+    [f"vaults.{STORE}.addr", f"defaults.vaults.{STORE}.addr", "SOPULI_VAULT_ADDR", NAMED],
+    ids=["file", "defaults", "sopuli-variable", "named-variable"],
+)
+def test_a_user_name_and_password_in_any_other_layer_is_refused(
+    address: str, kept: str, where: str
+) -> None:
+    """#891: these were written for this tool, so the load refuses them. The
+    refusal names the layer and not the address."""
+    with pytest.raises(ConfigError) as caught:
+        load_with_addr_in(where, address)
+
+    rendered = str(caught.value)
+    assert f"vault {STORE!r}: the address {where} gives holds a user name or password" in rendered
+    assert "s3" not in rendered
+    assert "ops" not in rendered
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_user_name_and_password_in_a_profile_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                {"addr": DECLARED},
+                profiles={"ci": {"vaults": {STORE: {"addr": "https://ops:s3cret@proxy"}}}},
+            ),
+            profile="ci",
+        )
+
+    assert f"the address profiles.ci.vaults.{STORE}.addr gives" in str(caught.value)
+    assert "s3cret" not in str(caught.value)
+
+
+def test_a_user_name_and_password_in_the_flag_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(document({"addr": DECLARED}), vault_addr="https://ops:s3cret@proxy")
+
+    assert "the address --vault-addr gives holds a user name or password" in str(caught.value)
+    assert "s3cret" not in str(caught.value)
+
+
+def test_a_layer_that_lost_is_refused_too() -> None:
+    """The file is wrong whichever layer wins, and the resolved setting keeps its value."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(document({"addr": "https://ops:s3cret@proxy"}), vault_addr=ACTIVE_ADDR)
+
+    assert f"the address vaults.{STORE}.addr gives" in str(caught.value)
+
+
+def test_an_at_sign_in_a_file_stores_path_is_refused() -> None:
+    """The check does not parse the address, so it cannot tell a path from a
+    URL with no scheme. A path with no `@` is untouched."""
+    with pytest.raises(ConfigError):
+        loaded({}, {"type": "file", "addr": "/srv/team@ops/secrets"})
+    assert merged({}, {"type": "file", "addr": "/srv/secrets"}).addr == "/srv/secrets"
 
 
 def test_credentials_in_an_address_with_no_scheme_are_not_repeated_in_the_refusal() -> None:

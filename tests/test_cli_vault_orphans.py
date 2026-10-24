@@ -484,15 +484,6 @@ def test_two_spellings_of_one_lock_are_two_records(
     assert entries["locks/acme/alpha/db"]["lock"]["held"] is False
 
 
-def test_credentials_in_the_address_are_masked() -> None:
-    vault = Vault(name="v", type="hashicorp", addr="https://svc:pw@vault.example.com", mount="kv")
-    command = delete_command(vault, "a/b")
-
-    assert command is not None
-    assert "pw" not in command
-    assert "-address=https://***@vault.example.com" in command
-
-
 def test_a_lock_is_named_by_the_path_the_store_listed(
     write_config: Callable[[str], Path], with_records: Records
 ) -> None:

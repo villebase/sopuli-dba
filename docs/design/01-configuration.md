@@ -795,6 +795,24 @@ plain HTTP inside its own network has to add TLS first.
 `delivery.notify.webhook.url` follows the same rule (§1). Reasons:
 [#856](../decisions/log.md#856).
 
+#### A user name or password in the address — refused
+
+An address may not hold a user name or password, as in
+`https://ops:token@proxy.example.com`. Vault does not read credentials from its
+address, so one there is a proxy credential or a mistake, and `config show`
+prints the address. A proxy that needs a credential reads it from `HTTPS_PROXY`.
+
+The check finds everything before the last `@`, after the scheme, so a password
+that holds `/`, `?` or `#` is found too. It applies to every store type, so a
+`file` store's path may not hold an `@` either. It is made when the file is
+read, on every layer, including one that lost, because the resolved setting
+keeps every layer's value. An
+`addr` from the file, a profile, `defaults.vaults`, `SOPULI_VAULT_ADDR`,
+`SOPULI_VAULT__<STORE>__ADDR` or `--vault-addr` is refused, and the message
+names the layer, not the address. `VAULT_ADDR` is another tool's variable, so
+the run drops its user name and password, keeps the rest of the address, and
+warns with `SOPULI-W057` (§6). Reasons: [#891](../decisions/log.md#891).
+
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
 entry would be exactly the top-level vendor bias P1 forbids.
@@ -2099,6 +2117,10 @@ with `SOPULI-W051`. The message names both addresses. A shell often keeps
 `VAULT_ADDR` from other work, and the run would otherwise send its auth material
 to that address with nothing said. `SOPULI_VAULT_ADDR` and `--vault-addr` do not
 warn: they were set for this tool.
+
+Where `VAULT_ADDR` holds a user name or password before an `@`, the run drops
+them, keeps the rest of the address, and warns with `SOPULI-W057`. The same in
+`SOPULI_VAULT_ADDR` or `--vault-addr` is refused (§3a).
 
 `VAULT_NAMESPACE` over a different `namespace` in the file warns in the same way,
 with `SOPULI-W052`, because it sends the login and the writes to another

@@ -69,6 +69,7 @@ from urllib.parse import urlsplit
 from sopuli.config.codes import (
     RELAXATION_DEFEATED,
     THIRD_PARTY_ADDR_OVERRIDES,
+    THIRD_PARTY_ADDR_USERINFO,
     THIRD_PARTY_NAMESPACE_OVERRIDES,
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
@@ -163,6 +164,9 @@ def apply_vault_layers(
         }
         for key, contributions in from_cli.get(vault.name, {}).items():
             supplied.setdefault(key, contributions)
+        if "addr" in supplied:
+            supplied["addr"], dropped = _drop_userinfo(vault.name, supplied["addr"])
+            warnings.extend(dropped)
         one, found = _merge(vault, by_name.get(vault.name, []), supplied)
         merged.append(one)
         warnings.extend(found)
@@ -192,6 +196,92 @@ def _refuse_inert_merge_patch(vault: Vault, values: Mapping[str, Any]) -> None:
             at=at,
             hint="KV v1 has no merge patch, so every write is already read-modify-write",
         )
+
+
+#: What to do instead of a user name or password in ``addr``, for the refusal and
+#: for ``SOPULI-W057``.
+USERINFO_HINT = (
+    "Vault does not read credentials from its address. Remove everything from `://` "
+    "to the `@`. A proxy that needs a credential reads it from HTTPS_PROXY"
+)
+
+
+def _without_userinfo(address: str) -> str | None:
+    """``address`` without what comes before its last ``@``, or ``None`` if it has none.
+
+    That part is the user name and password of a URL (#891).
+
+    **Not parsed, so it fails closed.** ``urlsplit`` ends the authority at the
+    first ``/``, ``?`` or ``#``, so a password holding one would leave the
+    ``@`` outside the part it finds, and an address it cannot parse would hide
+    the part entirely. Cutting at the last ``@`` after the scheme finds the
+    credential in every spelling. An ``@`` in a path counts too, so a ``file``
+    store's path may not hold one.
+    """
+    scheme, separator, rest = address.partition("://")
+    if not separator:
+        scheme, rest = "", address
+    if "@" not in rest:
+        return None
+    return f"{scheme}{separator}{rest.rpartition('@')[2]}"
+
+
+def _refuse_userinfo(vault: Vault, answer: Resolved | None) -> None:
+    """No address this tool was given may hold a user name or password (#891).
+
+    Vault does not authenticate through the address, so one there is a proxy
+    credential or a mistake, and ``config show``, ``--explain`` and the
+    messages that name an address would print it. Every contribution is
+    checked, not only the one that won, because the resolved setting keeps
+    every layer's value, and an output may show the ones that lost.
+    ``VAULT_ADDR`` arrives here already cut by :func:`_drop_userinfo`.
+
+    The message names the layer and never the address.
+    """
+    if answer is None:
+        return
+    for one in answer.contributions:
+        if _without_userinfo(str(one.value)) is not None:
+            raise ConfigError(
+                f"vault {vault.name!r}: the address {one.location} gives holds a user "
+                f"name or password, before an `@`",
+                at=ROOT,
+                hint=USERINFO_HINT,
+            )
+
+
+def _drop_userinfo(
+    name: str, contributions: Sequence[Contribution]
+) -> tuple[list[Contribution], list[ConfigWarning]]:
+    """``VAULT_ADDR`` without its user name and password, and a warning if it had one.
+
+    The other layers are refused by :func:`_refuse_userinfo`. This one is another
+    tool's variable, and §6 does not fail a run over it, so the run goes on
+    with the rest of the address and says so with ``SOPULI-W057``. Cut whether
+    or not the variable wins, because the resolved setting keeps every layer's
+    value, and an output may show the ones that lost.
+    """
+    kept = []
+    warnings = []
+    for one in contributions:
+        cut = None if one.layer is not Layer.ENV_THIRDPARTY else _without_userinfo(str(one.value))
+        if cut is None:
+            kept.append(one)
+            continue
+        kept.append(replace(one, value=cut))
+        warnings.append(
+            ConfigWarning(
+                message=(
+                    f"{one.location} holds a user name or password, before an `@`, and this "
+                    f"run dropped it: the address it gives vault {name!r} is {cut}"
+                ),
+                # No `at`: the message names the variable.
+                at="",
+                hint=USERINFO_HINT,
+                code=THIRD_PARTY_ADDR_USERINFO,
+            )
+        )
+    return kept, warnings
 
 
 def _refuse_plain_http(vault: Vault, answer: Resolved | None) -> None:
@@ -246,6 +336,7 @@ def _merge(
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
     _refuse_inert_merge_patch(vault, values)
+    _refuse_userinfo(vault, settings.get("addr"))
     _refuse_plain_http(vault, settings.get("addr"))
     for overridden in (
         _addr_overridden(vault.name, settings.get("addr")),
@@ -296,9 +387,9 @@ def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None
     Nothing to say when the file declares no ``addr`` for the store, or the
     two name the same server: see :func:`_same_address`.
 
-    **Userinfo is masked** in the message by :func:`_shown`. The warning reaches
-    every run's output, and an address such as ``https://user:token@proxy``
-    carries a credential.
+    Neither address holds a user name or password by now:
+    :func:`_drop_userinfo` cut the variable's, and :func:`_refuse_userinfo`
+    refused the file's.
     """
     if answer is None or answer.layer is not Layer.ENV_THIRDPARTY:
         return None
@@ -307,8 +398,8 @@ def _addr_overridden(name: str, answer: Resolved | None) -> ConfigWarning | None
         return None
     return ConfigWarning(
         message=(
-            f"{answer.detail} sets the address of vault {name!r} to {_shown(answer.value)}, "
-            f"not {_shown(declared.value)}, which {declared.detail} declares"
+            f"{answer.detail} sets the address of vault {name!r} to {answer.value}, "
+            f"not {declared.value}, which {declared.detail} declares"
         ),
         # No `at`: the message names both locations already.
         at="",
@@ -395,24 +486,6 @@ def _same_address(first: str, second: str) -> bool:
         and ports[0] == ports[1]
         and one.path.rstrip("/") == two.path.rstrip("/")
     )
-
-
-def _shown(address: str) -> str:
-    """``address`` with everything before its last ``@`` shown as ``***``.
-
-    **Not parsed, so it fails closed.** ``urlsplit`` ends the authority at the
-    first ``/``, ``?`` or ``#``, so a password holding one would leave the
-    ``@`` outside the part it masks, and an address it cannot parse would be
-    returned whole. Cutting at the last ``@`` after the scheme masks the
-    credential in every spelling. An ``@`` in the path masks the host too,
-    which hides more than it needs to and never less.
-    """
-    scheme, separator, rest = address.partition("://")
-    if not separator:
-        scheme, rest = "", address
-    if "@" not in rest:
-        return address
-    return f"{scheme}{separator}***@{rest.rpartition('@')[2]}"
 
 
 def _merge_tls(

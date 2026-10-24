@@ -25,19 +25,24 @@
 -- count, so the difference between two counts is what was recorded between
 -- them.
 --
--- AUDIT_TRAIL is static. To measure both settings, run the file, then as
--- SYSDBA `alter system set audit_trail = DB scope = spfile`, restart the
--- database, and run it again. Set it back the same way.
+-- AUDIT_TRAIL is static. To measure another setting, as SYSDBA
+-- `alter system set audit_trail = DB scope = spfile`, restart the database,
+-- and run the file again. Set it back to NONE the same way.
 --
 -- This MEASURES and decides nothing. What the check answers under
--- AUDIT_TRAIL = NONE is #1004.
+-- AUDIT_TRAIL = NONE is #1004, and under the other settings #1013.
 --
 -- STATUS: run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim) and 18c XE
 -- 18.4.0.0.0 (gvenzl/oracle-xe:18-slim), XEPDB1, as SYSTEM, on 2026-10-23
 -- (#1006). Twice under AUDIT_TRAIL = NONE, as the images ship, and twice
 -- under AUDIT_TRAIL = DB, each setting from a restarted database. Exit 0
 -- every time, and the same differences between the counts in every run of a
--- setting. Untried on every other release.
+-- setting. On 2026-10-24 (#1013), on the same releases, twice under each of
+-- AUDIT_TRAIL = DB, EXTENDED, OS, XML and XML, EXTENDED, each setting from a
+-- restarted database. Those runs set svc to //localhost:1521/XEPDB1 in a copy
+-- of the file, and changed nothing else. Exit 0 every time, with the same
+-- differences between the counts in every run. Untried on every other
+-- release.
 --
 -- Once, on 18.4 under NONE, SQL*Plus printed nothing after MT1's policy read
 -- and did not return, and V$SESSION showed no session of its own. It was
@@ -57,10 +62,14 @@
 --        one row naming MT_ALTER on 21.3 and none on 18.4: there that row
 --        names ORA_SECURECONFIG, which the session had disabled. On 18.4 a
 --        session keeps the policies enabled when it logged on
+--        AUDIT_TRAIL = DB, EXTENDED, OS, XML and XML, EXTENDED: as under DB,
+--        on both releases, row for row
 --
 --   So in mixed mode on these releases, AUDIT_TRAIL = NONE stops these
 --   unified records too, while AUDIT_UNIFIED_ENABLED_POLICIES shows the
---   policies enabled. Of the audit parameters, the image's install script
+--   policies enabled. Under each other setting measured, the policies record
+--   both actions, in UNIFIED_AUDIT_TRAIL, whichever trail AUDIT_TRAIL names.
+--   Of the audit parameters, the image's install script
 --   (/opt/oracle/install.*.sh) sets only AUDIT_TRAIL and AUDIT_SYS_OPERATIONS,
 --   and these runs changed only AUDIT_TRAIL.
 --
@@ -68,9 +77,10 @@
 -- policies, and plants a known password. Disables ORA_SECURECONFIG for MT2
 -- and enables it again for every user, as the XE images ship it; a run
 -- stopped in MT2 leaves it disabled. Under AUDIT_TRAIL = NONE a run leaves
--- nothing in UNIFIED_AUDIT_TRAIL. Under DB it leaves the logon and the
--- ALTER USER rows, and the rows ORA_SECURECONFIG writes for the setup and the
--- teardown: CREATE and DROP USER, the policy statements, AUDIT and NOAUDIT.
+-- nothing in UNIFIED_AUDIT_TRAIL. Under each other setting it leaves the
+-- logon and the ALTER USER rows, and the rows ORA_SECURECONFIG writes for the
+-- setup and the teardown: CREATE and DROP USER, the policy statements, AUDIT
+-- and NOAUDIT.
 --------------------------------------------------------------------------------
 define svc      = XEPDB1
 define sys_conn = system/sopuli-test

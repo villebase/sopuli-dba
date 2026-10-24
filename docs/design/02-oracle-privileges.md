@@ -1288,8 +1288,9 @@ images of 21.3.0.0.0 and 18.4.0.0.0 run in mixed mode, enable
 `ORA_SECURECONFIG` from the start, and ship `AUDIT_TRAIL = NONE`. On both
 releases `NONE` stops unified records as well. A logon under an enabled
 `ACTIONS LOGON` policy, and an `ALTER USER` under an enabled
-`ACTIONS ALTER USER` policy, leave no row. Under `AUDIT_TRAIL = DB` each leaves
-one (`15_mixed_mode_trail_probe.sql`). The policy view shows the policies
+`ACTIONS ALTER USER` policy, leave no row. Under `AUDIT_TRAIL = DB`,
+`DB, EXTENDED`, `OS`, `XML` and `XML, EXTENDED` each leaves one in
+`UNIFIED_AUDIT_TRAIL` (`15_mixed_mode_trail_probe.sql`). The policy view shows the policies
 enabled either way. So in mixed mode the check reads `AUDIT_TRAIL`, and under
 `NONE` the value is `unknown` where the policies cover both actions, with a
 detail that names the parameter. It is not `false` either, because only two

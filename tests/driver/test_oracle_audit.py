@@ -26,8 +26,10 @@ from sopuli.driver.oracle.audit import (
     OPTIONS_QUERY,
     STANDARD_ACTION,
     SYSTEM_PRIVILEGE,
+    TRAIL_MEASURED,
     TRAIL_NONE,
     TRAIL_QUERY,
+    TRAIL_UNMEASURED,
     UNREADABLE,
     Enablement,
     Option,
@@ -131,10 +133,66 @@ def test_a_covering_policy_settles_an_action_whatever_the_others_say() -> None:
 
 
 def test_mixed_mode_does_not_stop_a_true() -> None:
-    """Traditional auditing can only add records, so covered is covered, while
-    `AUDIT_TRAIL` is not `NONE`."""
+    """Traditional auditing can only add records, so covered is covered, under a
+    measured `AUDIT_TRAIL` setting."""
     assert answer([enabled("P")], both("P"), mode="FALSE", trail="DB").audited is True
     assert answer([enabled("P")], both("P"), mode="FALSE", trail="DB, EXTENDED").audited is True
+
+
+@pytest.mark.parametrize(
+    "trail", [*sorted(TRAIL_MEASURED), "os", " XML ", "db,extended", "XML ,  EXTENDED"]
+)
+def test_mixed_mode_keeps_a_true_under_each_measured_setting(trail: str) -> None:
+    """Measured (#1013): under each of these an enabled policy records both
+    actions, on 21.3.0.0.0 and 18.4.0.0.0. A space or the case does not change
+    the setting."""
+    found = answer([enabled("P")], both("P"), mode="FALSE", trail=trail)
+
+    assert found.audited is True
+    assert found.detail == "LOGON by P; ALTER USER by P"
+
+
+def test_the_allow_list_is_the_five_settings_measured() -> None:
+    """Written out by hand from `15_mixed_mode_trail_probe.sql`'s RESULTS, so a
+    change to the list is a change to this test too. The test does not read the
+    probe's prose."""
+    assert {"DB", "DB, EXTENDED", "OS", "XML", "XML, EXTENDED"} == TRAIL_MEASURED
+
+
+@pytest.mark.parametrize(
+    ("trail", "value"), [("TRUE", "TRUE"), ("false", "FALSE"), ("DB,X", "DB, X")]
+)
+def test_mixed_mode_with_an_unmeasured_setting_turns_a_true_into_unknown(
+    trail: str, value: str
+) -> None:
+    """Decided (#1013): only a measured setting keeps `true`. The detail names
+    the setting, in the spelling the check compared."""
+    found = answer([enabled("P")], both("P"), mode="FALSE", trail=trail)
+
+    assert found.audited is None
+    unmeasured = TRAIL_UNMEASURED.format(value=value)
+    assert found.detail == f"LOGON by P; ALTER USER by P, but {unmeasured}"
+
+
+def test_mixed_mode_with_an_unmeasured_setting_says_so_for_a_gap() -> None:
+    """A gap is unknown in mixed mode anyway. The setting joins the reason."""
+    found = answer([], [], mode="FALSE", trail="TRUE")
+
+    assert found.audited is None
+    nothing = f"no enabled policy records LOGON or ALTER USER for {PERSON}"
+    unmeasured = TRAIL_UNMEASURED.format(value="TRUE")
+    assert found.detail == f"{nothing}, but {MIXED}; {unmeasured}"
+
+
+def test_mixed_mode_with_an_unmeasured_setting_says_so_beside_a_doubt() -> None:
+    found = answer([enabled("COND")], both("COND", condition="x = 1"), mode="FALSE", trail="TRUE")
+
+    assert found.audited is None
+    assert found.detail.endswith(TRAIL_UNMEASURED.format(value="TRUE"))
+
+
+def test_pure_unified_mode_ignores_an_unmeasured_setting() -> None:
+    assert answer([enabled("P")], both("P"), mode="TRUE", trail="TRUE").audited is True
 
 
 # ---------------------------------------------------------- does not cover ---
@@ -755,6 +813,12 @@ def test_mixed_mode_reads_audit_trail() -> None:
     found = coverage_of(cursor, PERSON)
     assert found.audited is None
     assert TRAIL_NONE in found.detail
+    cursor.answers[TRAIL_QUERY] = ("XML, EXTENDED",)
+    assert coverage_of(cursor, PERSON).audited is True
+    cursor.answers[TRAIL_QUERY] = ("TRUE",)
+    found = coverage_of(cursor, PERSON)
+    assert found.audited is None
+    assert TRAIL_UNMEASURED.format(value="TRUE") in found.detail
 
 
 def test_an_unreadable_audit_trail_keeps_the_servers_code() -> None:

@@ -121,6 +121,14 @@ TRAIL_NONE = (
     "unified policies were measured to record nothing on 21.3.0.0.0 and 18.4.0.0.0, "
     "and other releases are not measured"
 )
+#: The settings under which enabled unified policies were measured to record, in
+#: mixed mode, on 21.3.0.0.0 and 18.4.0.0.0 (``15_mixed_mode_trail_probe.sql``).
+#: Any other value is unknown, not ``True`` (#1013).
+TRAIL_MEASURED = frozenset({"DB", "DB, EXTENDED", "OS", "XML", "XML, EXTENDED"})
+TRAIL_UNMEASURED = (
+    "the database is in mixed audit mode with AUDIT_TRAIL = {value}, a setting "
+    "under which enabled unified policies were not measured"
+)
 #: Why ``AUDIT_TRAIL`` was not read. A missing grant names it; any other failure
 #: keeps the server's code and names no grant, which would not fix it.
 TRAIL_UNREADABLE = (
@@ -255,7 +263,8 @@ def classify(
     ``AUDIT_TRAIL``, which matters in mixed mode only. There one of ``trail`` and
     ``trail_unread`` is given: ``trail_unread`` says, for the detail, why the
     parameter was not read, and a ``True`` then becomes unknown, because the tool
-    cannot rule out ``NONE``.
+    cannot rule out ``NONE``. A setting outside :data:`TRAIL_MEASURED` makes a
+    ``True`` unknown too, and the detail names it.
 
     Raises ``ValueError`` in mixed mode when neither is given: a caller that
     forgot the parameter would otherwise turn every ``True`` into unknown quietly.
@@ -263,10 +272,13 @@ def classify(
     mixed = is_mixed(mode)
     if mixed and trail is None and trail_unread is None:
         raise ValueError("mixed audit mode needs AUDIT_TRAIL, or why it was not read")
-    none = mixed and trail is not None and trail.strip().upper() == "NONE"
-    # Where the parameter was not read, the reason goes into every mixed-mode
-    # detail: it names the grant that would let the check tell.
-    unread_trail = trail_unread if mixed and trail is None else None
+    setting = _setting(trail) if mixed and trail is not None else None
+    none = setting == "NONE"
+    # Where the parameter was not read, or holds a setting not measured, the
+    # reason goes into every mixed-mode detail, as for a doubt about a policy.
+    trail_doubt = trail_unread if mixed and trail is None else None
+    if setting is not None and not none and setting not in TRAIL_MEASURED:
+        trail_doubt = TRAIL_UNMEASURED.format(value=setting)
     covered: dict[str, list[str]] = {action: [] for action in ACTIONS}
     doubts: dict[str, list[str]] = {action: [] for action in ACTIONS}
     for policy in sorted({one.policy for one in enablements}):
@@ -283,8 +295,8 @@ def classify(
         detail = "; ".join(f"{action} by {', '.join(covered[action])}" for action in ACTIONS)
         if none:
             return AuditCoverage(audited=None, detail=f"{detail}, but {TRAIL_NONE}")
-        if unread_trail is not None:
-            return AuditCoverage(audited=None, detail=f"{detail}, but {unread_trail}")
+        if trail_doubt is not None:
+            return AuditCoverage(audited=None, detail=f"{detail}, but {trail_doubt}")
         return AuditCoverage(audited=True, detail=detail)
 
     # **An action that nothing covers or might cover decides the answer**, whatever
@@ -299,8 +311,8 @@ def classify(
             # Not `false`: what was measured on two releases is not assumed of
             # the rest (#1004). TRAIL_NONE says so.
             return AuditCoverage(audited=None, detail=f"{nothing}, and {TRAIL_NONE}")
-        if unread_trail is not None:
-            return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}; {unread_trail}")
+        if trail_doubt is not None:
+            return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}; {trail_doubt}")
         if mixed:
             return AuditCoverage(audited=None, detail=f"{nothing}, but {MIXED}")
         return AuditCoverage(audited=False, detail=nothing)
@@ -316,8 +328,8 @@ def classify(
             parts.append(f"{action} might be recorded: {reasons}")
     if none:
         parts.append(TRAIL_NONE)
-    elif unread_trail is not None:
-        parts.append(unread_trail)
+    elif trail_doubt is not None:
+        parts.append(trail_doubt)
     return AuditCoverage(audited=None, detail="; ".join(parts))
 
 
@@ -406,6 +418,15 @@ def _is_common(cursor: Cursor, account: str) -> tuple[bool, str | None]:
     except Exception as error:  # noqa: BLE001 -- mapped on the next line, code kept
         return False, from_error(error).first_line
     return bool(row) and is_yes(row[0]), None
+
+
+def _setting(trail: str) -> str:
+    """``AUDIT_TRAIL`` in one spelling: upper case, with ``", "`` between parts.
+
+    ``V$PARAMETER`` prints ``DB, EXTENDED``. The spelling is fixed here, so that a
+    space more or less does not turn a measured setting into an unmeasured one.
+    """
+    return ", ".join(part.strip() for part in trail.upper().split(","))
 
 
 def _audit_trail(cursor: Cursor) -> tuple[str | None, str | None]:

@@ -80,16 +80,17 @@ multitenant database that means a run in the PDB, not only in the root.
 are three values:
 
 - `true`: enabled audit policies record the person's logons, and every user's
-  `ALTER USER`. In mixed audit mode it also needs `AUDIT_TRAIL` to be other than
-  `NONE`, because under `NONE` the policies were measured to record nothing.
+  `ALTER USER`. In mixed audit mode it also needs `AUDIT_TRAIL` to be a setting
+  under which the policies were measured to record: `DB`, `DB, EXTENDED`, `OS`,
+  `XML` or `XML, EXTENDED`. Under `NONE` they were measured to record nothing.
 - `false`: the database uses unified auditing only, and for one of the two, no
   enabled policy records it or might record it.
 - `unknown`: the tool could not tell. The result says why. For example, the
   service account cannot read the audit policies, traditional auditing might
-  also be in use, the database is in mixed mode with `AUDIT_TRAIL = NONE`, or a
-  policy might record the action but has a condition the tool does not
-  evaluate. The tool never gives `false` for a fact it could not
-  read.
+  also be in use, the database is in mixed mode with `AUDIT_TRAIL = NONE` or
+  another setting that is not measured, or a policy might record the action but
+  has a condition the tool does not evaluate. The tool never gives `false` for a
+  fact it could not read.
 
 `ALTER USER` must be recorded for every user, not only for the person, because
 the DBA issues it. A policy enabled for a list of users records the statements

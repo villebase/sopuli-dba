@@ -53,6 +53,11 @@
 -- times on 2026-10-17, from a container with no other policy enabled: exit 0
 -- and the same rows each time, and AC0 to AC7 as on 2026-10-15.
 --
+-- Run again on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest) on
+-- 2026-10-24 (#1014), once, this file as it stands, by EZConnect: exit 0 in
+-- 24 seconds, and AC0 to AC10 as in the 23.26.2.0.0 results below, counts
+-- included.
+--
 -- Also run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim) and 18c XE
 -- 18.4.0.0.0 (gvenzl/oracle-xe:18-slim), XEPDB1 and CDB$ROOT, on 2026-10-23
 -- (#820), once each, from a copy with svc = XEPDB1 and cdb = XE. 21.3: exit 0.

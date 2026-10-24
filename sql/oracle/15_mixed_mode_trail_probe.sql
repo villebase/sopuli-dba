@@ -37,17 +37,20 @@
 -- (#1006). Twice under AUDIT_TRAIL = NONE, as the images ship, and twice
 -- under AUDIT_TRAIL = DB, each setting from a restarted database. Exit 0
 -- every time, and the same differences between the counts in every run of a
--- setting. Untried on every other release.
+-- setting. Run again on 21.3.0.0.0 under NONE on 2026-10-24 (#1014), once,
+-- by EZConnect: exit 0, with the same differences. Untried on every other
+-- release.
 --
 -- Once, on 18.4 under NONE, SQL*Plus printed nothing after MT1's policy read
 -- and did not return, and V$SESSION showed no session of its own. It was
--- stopped, and that run is not counted. The cause is the connect string
--- (#1014). It was then the alias XEPDB1, and the image's sqlnet.ora tries
+-- stopped, and that run is not counted. The likely cause is the connect
+-- string (#1014), but that run was not captured, so it is not shown. The
+-- probe then connected to the alias XEPDB1, and the image's sqlnet.ora tries
 -- EZCONNECT before TNSNAMES, so each connect first asked DNS for a host named
 -- XEPDB1. On 2026-10-24 Docker Desktop's DNS took about 8 seconds to answer
--- that no such host exists, and a connect by alias took about 24 seconds. The
--- probe now connects by EZConnect, and run that way on 21.3.0.0.0 under NONE
--- it exits 0 with the same differences.
+-- that no such host exists, and a connect by alias took about 24 seconds,
+-- against 0.5 by EZConnect. A slower answer looks like a hang. The probe now
+-- connects by EZConnect.
 --
 --
 -- RESULTS -- 21.3.0.0.0 and 18.4.0.0.0, XEPDB1, 2026-10-23
@@ -78,8 +81,6 @@
 -- ALTER USER rows, and the rows ORA_SECURECONFIG writes for the setup and the
 -- teardown: CREATE and DROP USER, the policy statements, AUDIT and NOAUDIT.
 --------------------------------------------------------------------------------
--- EZConnect, not a TNS alias: the gvenzl images' sqlnet.ora tries EZCONNECT
--- first, so an alias costs a DNS lookup on every CONNECT (#1014).
 define svc      = //localhost:1521/XEPDB1
 define sys_conn = system/sopuli-test
 

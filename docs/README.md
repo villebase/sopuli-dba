@@ -157,7 +157,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | D3 | 00 | Implementation language | decided | Python, `python-oracledb` in thick mode | |
 | D4 | 00 | Config format | decided | YAML; JSON is accepted because it is valid YAML | |
 | D5 | 00 | macOS tier | decided | best effort, untested, no macOS CI | |
-| D6 | 00 | Plugin model for drivers and stores | decided | in-tree until a second driver exists | |
+| D6 | 00 | Plugin model for drivers and stores | decided | in-tree, also with a second driver | #1030 |
 | D7 | 00 | Minimum Oracle version | decided | 11.2 stays in scope | |
 | D8 | 00 | CLI framework | decided | click | |
 | D9 | 00 | Dependency layering | decided | vendor clients are install extras | #130 |

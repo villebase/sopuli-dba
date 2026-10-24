@@ -81,11 +81,23 @@ client is a structured error and not a traceback.
 
 **The driver is an object, and `connect` takes only the target and the
 credential.** The driver holds what belongs to the run: the environment, the
-correlation id, the timeouts, and where Instant Client is. `connect` takes what
-belongs to the target. A module function with extra keyword arguments would not
-match `Driver`, and a caller written against `Driver` would get a `TypeError`.
-`tests/driver/test_oracle_connect.py` asserts `isinstance(driver, Driver)`, so
-the two stay the same.
+correlation id, the timeouts, and the config's `runtime` block, where it finds
+its client. `connect` takes what belongs to the target. A module function with
+extra keyword arguments would not match `Driver`, and a caller written against
+`Driver` would get a `TypeError`. `tests/driver/test_oracle_connect.py` asserts
+`isinstance(driver, Driver)`, so the two stay the same.
+
+**A command gets a driver from the registry, and never names a driver class.**
+The run's half is one `DriverContext` in `sopuli/driver/protocol.py`. The module
+the registry names for a `type:` exports `build_driver(context)`, which turns the
+context into its own driver: the Oracle driver reads
+`runtime.oracle.client_lib_dir` there. A command calls
+`sopuli.driver.registry.driver_for(target, context)`. So building a second
+driver's driver adds no code to the commands. Some Oracle code is still reached
+from outside the driver: `tests/test_driver_seam.py` lists the Oracle modules
+that code outside the driver imports, so that list can only get shorter, and
+`doctor`'s client report loads the Oracle module by its path. The test also
+fails if a module outside the Oracle driver names `OracleDriver`.
 
 The Oracle driver also follows these rules:
 
@@ -977,7 +989,7 @@ is somebody typing, the other is a deployed file that a scheduler runs.
 | D3 | Implementation language | Python with python-oracledb in thick mode, on every target (P4, *Why thick mode*). Reasons: [D3](../decisions/log.md#d3) | decided |
 | D4 | Config format | YAML only; JSON accepted since it is valid YAML. Reasons: [D4](../decisions/log.md#d4) | decided |
 | D5 | macOS tier | Best-effort and untested: portable code, no support claim, no macOS CI (P4). Reasons: [D5](../decisions/log.md#d5) | decided |
-| D6 | Plugin model for drivers/stores | in-tree first; entry-point plugin API only after a second driver exists. Reasons: [D6](../decisions/log.md#d6) | decided |
+| D6 | Plugin model for drivers/stores | in-tree; an entry-point plugin API only when someone wants to ship a driver outside this repo. Reasons: [D6](../decisions/log.md#d6) | decided |
 | D7 | Minimum Oracle version | 11.2 stays in scope. Reasons: [D7](../decisions/log.md#d7) | decided |
 | D8 | CLI framework | click. See `../decisions/adr-002-cli-framework.md`. Reasons: [D8](../decisions/log.md#d8) | decided |
 | D9 | Dependency layering | Vendor clients are install extras, and base opens no sockets. See `../decisions/adr-006-optional-dependencies.md`. Reasons: [D9](../decisions/log.md#d9) | decided |

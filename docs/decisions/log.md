@@ -92,17 +92,28 @@ the register.
 
 ## D6
 
-- **Decided:** 2026-08-08
+- **Decided:** 2026-10-24, #1030
 - **Question:** How are drivers and stores added: in the tree, or through a
   plugin API?
-- **Decision:** In the tree. An entry-point plugin API comes only after a second
-  database driver exists.
-- **Why:** The decision ties the plugin API to a second driver, so the API is
-  designed against two implementations rather than one. Install extras (D9)
-  control which dependencies are installed, not which modules exist, so they do
-  not change this.
+- **Decision:** In the tree, also with a second driver. An entry-point plugin
+  API comes only when someone wants to ship a driver outside this repo.
+- **Why:** First decided on 2026-08-08, as "in the tree until a second driver
+  exists". Reviewed when the PostgreSQL driver was planned, and kept. A plugin
+  API makes the driver interface a public contract. Writing
+  the PostgreSQL driver will change that interface, because finding where
+  Oracle's shape leaked into it is part of the work. Under a plugin API, each
+  of those changes would break drivers outside the repo, and would need a
+  version rule between the tool and each driver. Nobody outside the project
+  writes a driver, so that cost buys nothing yet. Install extras (D9) already
+  keep a driver's client out of an install that does not use it, and they
+  control which dependencies are installed, not which modules exist. A
+  target's `type:` reads the same either way, so a plugin API can be added
+  later without changing any config.
 - **Rejected:**
-  - A plugin API now: it would be designed against a single driver.
+  - A plugin API before a second driver: it would be designed against a single
+    driver.
+  - A plugin API with the second driver: the interface is still changing, and
+    each change would break drivers outside the repo.
 
 ## D7
 

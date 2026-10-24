@@ -26,16 +26,14 @@
 -- with what condition, is #459 / #496.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM, 2026-10-01 -- seven times, the last two this file exactly as it
--- stands (via /nolog, exit 0 both times). C1 and PX1..PX4 identical in all
+-- as SYSTEM, 2026-10-01 -- seven times, the last two this file as it then
+-- stood, connecting by the alias FREEPDB1 (via /nolog, exit 0 both times). C1 and PX1..PX4 identical in all
 -- seven. PX5 and PX6 as reported are from the last two: in runs 1 and 2 the
 -- audit queries were not scoped to the run and read earlier runs' rows (the
 -- &t0/&t1 bounds are the fix), and in runs 1 to 5 PX5 was read BEFORE the
 -- revoke, so it could not speak for it (review on #589; it now follows PX4).
 -- One further attempt stalled at PX6 and was stopped; its objects were gone
--- when checked. The probe then connected by the alias FREEPDB1, so the likely
--- cause is the slow DNS lookup an alias costs (#1014), but that run was not
--- captured.
+-- when checked.
 --
 -- Run again on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest), as SYSTEM,
 -- on 2026-10-24 (#1014), once, this file as it stands, by EZConnect: exit 0

@@ -16,8 +16,9 @@ the releases a script's header names are the same releases the *Scripts* table
 below lists for it. A Python probe with no rows of its own, whose header names the
 SQL script of the same name, may name only releases that the SQL script's rows
 list. A release a header writes after "Instant Client" is the client the probe
-ran with, and is not compared. When you run a script on a new release, update
-both.
+ran with, and is not compared. The *Release* column of the tables below always
+names the database a result was measured on, never the client. When you run a
+script on a new release, update both.
 
 The tier-1 suite in CI is not a measurement here. It pulls the moving
 `gvenzl/oracle-free:latest` image, so a green CI run does not show which

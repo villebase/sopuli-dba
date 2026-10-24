@@ -74,12 +74,11 @@ def _rows() -> tuple[tuple[str, ...], ...]:
     return tuple(rows)
 
 
-def _releases_section(text: str) -> tuple[dict[str, str], str]:
-    """The *Releases* table, as each release and its description, and the text below it."""
+def _releases_section(text: str) -> tuple[set[str], str]:
+    """The releases the *Releases* table lists, and the text below it."""
     _, rest = text.split("## Releases\n", 1)
     table, below = rest.split("\n## ", 1)
-    rows = re.finditer(r"^\| `([^`]+)` \|(.*)$", table, re.MULTILINE)
-    return {row.group(1): row.group(2) for row in rows}, below
+    return set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE)), below
 
 
 def _released(text: str) -> set[str]:
@@ -220,7 +219,6 @@ def test_the_matrix_names_only_scripts_that_exist() -> None:
 
 def test_every_release_used_is_in_the_releases_table() -> None:
     requires_repo(MATRIX)
-    table, below = _releases_section(MATRIX.read_text(encoding="utf-8"))
-    listed = set(table)
+    listed, below = _releases_section(MATRIX.read_text(encoding="utf-8"))
     used = _released(below)
     assert used <= listed, f"releases with no row in ## Releases: {sorted(used - listed)}"

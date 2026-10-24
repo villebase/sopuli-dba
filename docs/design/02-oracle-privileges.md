@@ -1290,9 +1290,9 @@ releases `NONE` stops unified records as well. A logon under an enabled
 `ACTIONS LOGON` policy, and an `ALTER USER` under an enabled
 `ACTIONS ALTER USER` policy, leave no row. Under `AUDIT_TRAIL = DB`,
 `DB, EXTENDED`, `OS`, `XML` and `XML, EXTENDED` each leaves one in
-`UNIFIED_AUDIT_TRAIL` (`15_mixed_mode_trail_probe.sql`). The policy view shows the policies
-enabled either way. So in mixed mode the check reads `AUDIT_TRAIL`, and under
-`NONE` the value is `unknown` where the policies cover both actions, with a
+`UNIFIED_AUDIT_TRAIL` (`15_mixed_mode_trail_probe.sql`). The policy view shows
+the policies enabled under every setting. So in mixed mode the check reads
+`AUDIT_TRAIL`, and under `NONE` the value is `unknown` where the policies cover both actions, with a
 detail that names the parameter. It is not `false` either, because only two
 releases are measured: decided in
 [#1004](../decisions/log.md#1004). Where `AUDIT_TRAIL` cannot be

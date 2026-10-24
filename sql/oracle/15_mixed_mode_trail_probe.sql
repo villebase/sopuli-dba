@@ -40,7 +40,8 @@
 -- setting. On 2026-10-24 (#1013), on the same releases, twice under each of
 -- AUDIT_TRAIL = DB, EXTENDED, OS, XML and XML, EXTENDED, each setting from a
 -- restarted database. Those runs set svc to //localhost:1521/XEPDB1 in a copy
--- of the file, and changed nothing else. Exit 0 every time, with the same
+-- of the file, and changed nothing else: a connect by the alias waits about
+-- 24 s on Docker Desktop's DNS (#1014). Exit 0 every time, with the same
 -- differences between the counts in every run. Untried on every other
 -- release.
 --
@@ -49,11 +50,11 @@
 -- stopped, and that run is not counted.
 --
 --
--- RESULTS -- 21.3.0.0.0 and 18.4.0.0.0, XEPDB1, 2026-10-23
+-- RESULTS -- 21.3.0.0.0 and 18.4.0.0.0, XEPDB1, 2026-10-23 and 2026-10-24
 --
 --   MT0  Unified Auditing = FALSE: mixed mode, on both releases
---   MT1, MT2 each policy reads in AUDIT_UNIFIED_ENABLED_POLICIES under both
---        settings: MT_LOGON BY USER MT_PERSON, MT_ALTER BY USER SYSTEM.
+--   MT1, MT2 each policy reads in AUDIT_UNIFIED_ENABLED_POLICIES under every
+--        setting: MT_LOGON BY USER MT_PERSON, MT_ALTER BY USER SYSTEM.
 --        AUDIT_TRAIL = NONE: every count equals the one before it. The logon
 --        and both ALTER USER statements leave no row
 --        AUDIT_TRAIL = DB: the logon leaves one row that names MT_LOGON, on
@@ -89,7 +90,7 @@ set lines 160 pages 200 feedback off verify off
 whenever sqlerror exit failure
 connect &sys_conn@&svc
 col parameter for a20
-col value for a8
+col value for a16
 col name for a12
 col policy_name for a16
 col enabled_option for a16

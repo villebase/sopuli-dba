@@ -2868,6 +2868,25 @@ the register.
   - Leaving rotate out. A rotation preview would then pass while the rotation
     changed a shared credential on no target.
 
+## #1013
+
+- **Decided:** 2026-10-24, #1013
+- **Question:** In mixed audit mode, which `AUDIT_TRAIL` values keep the
+  `audited` check's `true`? #1004 made `NONE` give `unknown`, and every other
+  value kept `true`, measured or not.
+- **Decision:** An allow-list. `DB`, `DB, EXTENDED`, `OS`, `XML` and
+  `XML, EXTENDED` keep `true`. #1025 measured that under each of them an
+  enabled unified policy records a logon and an `ALTER USER`, on 21.3.0.0.0
+  and 18.4.0.0.0. Under any other value the answer is `unknown`, and the
+  detail names the value. The check compares the value in upper case, with
+  `, ` between its parts. The values are unchanged, so no schema bump.
+- **Why:** where the answer is unknown, the code refuses rather than guesses. A
+  value nobody has measured, such as an old spelling, is not taken as one that
+  records. The measurement left no documented setting that loses a `true`.
+- **Rejected:**
+  - Only `NONE` gives `unknown` (option 1). It answers `true` for any value the
+    tool does not expect.
+
 ## #1004
 
 - **Decided:** 2026-10-23, #1004

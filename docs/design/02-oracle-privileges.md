@@ -1292,12 +1292,15 @@ releases `NONE` stops unified records as well. A logon under an enabled
 `DB, EXTENDED`, `OS`, `XML` and `XML, EXTENDED` each leaves one in
 `UNIFIED_AUDIT_TRAIL` (`15_mixed_mode_trail_probe.sql`). The policy view shows
 the policies enabled under every setting. So in mixed mode the check reads
-`AUDIT_TRAIL`, and under `NONE` the value is `unknown` where the policies cover both actions, with a
-detail that names the parameter. It is not `false` either, because only two
-releases are measured: decided in
-[#1004](../decisions/log.md#1004). Where `AUDIT_TRAIL` cannot be
-read, the value is `unknown` for the same reason, and the detail names §2's
-grant. In pure unified mode the parameter does not apply, and it is not read.
+`AUDIT_TRAIL`, and under `NONE` the value is `unknown` where the policies cover
+both actions, with a detail that names the parameter. It is not `false` either,
+because only two releases are measured: decided in
+[#1004](../decisions/log.md#1004). Only the five measured settings keep a
+`true`. Under any other value the answer is `unknown`, and the detail names the
+value: decided in [#1013](../decisions/log.md#1013). The check compares the
+value in upper case, with `, ` between its parts. Where `AUDIT_TRAIL` cannot be
+read, the value is `unknown` too, because the tool cannot rule out `NONE`, and
+the detail names §2's grant. In pure unified mode the parameter does not apply, and it is not read.
 
 11.2 has no unified auditing, so the value is `unknown` there too; that is not
 measured. [measurements](../measurements.md) lists the releases the probe has

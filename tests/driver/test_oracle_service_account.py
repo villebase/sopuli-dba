@@ -44,7 +44,13 @@ import pytest
 
 from oracle_harness import Environment, current_container, execute, service_account_grants
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
-from sopuli.driver.oracle.audit import MODE_QUERY, TRAIL_NONE, TRAIL_QUERY
+from sopuli.driver.oracle.audit import (
+    MODE_QUERY,
+    TRAIL_MEASURED,
+    TRAIL_NONE,
+    TRAIL_QUERY,
+    TRAIL_UNMEASURED,
+)
 from sopuli.driver.oracle.privileges import (
     PASSWORD_FILE_PRIVILEGES,
     REQUIRED_PRIVILEGES,
@@ -487,33 +493,40 @@ def audit_reader(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
         yield opened
 
 
-def _audit_mode(sysdba: Any) -> tuple[bool, bool]:
-    """Whether this database is in mixed mode, and whether it is in mixed mode
-    with `AUDIT_TRAIL = NONE`, read as `SYS`.
+def _audit_mode(sysdba: Any) -> tuple[bool, str | None]:
+    """Whether this database is in mixed mode, read as `SYS`, and the reason its
+    covered answer is `unknown`, or `None` where it is `true`.
 
-    The second is where §5's covered answer is `unknown`, not `true` (#1004): the
-    XE images of 21.3.0.0.0 and 18.4.0.0.0 ship it, and 26ai is pure unified. A
-    test reads the database's own state rather than its release, as the `false`
-    test below does with the check's own answer.
+    In mixed mode §5's covered answer is `unknown` under `AUDIT_TRAIL = NONE`
+    (#1004), which the XE images of 21.3.0.0.0 and 18.4.0.0.0 ship, and under a
+    setting that is not measured (#1013). 26ai is pure unified. A test reads the
+    database's own state rather than its release, as the `false` test below does
+    with the check's own answer.
     """
     with sysdba.cursor() as cursor:
         cursor.execute(MODE_QUERY)
         row = cursor.fetchone()
         mixed = row is not None and str(row[0]).upper() != "TRUE"
         if not mixed:
-            return False, False
+            return False, None
         cursor.execute(TRAIL_QUERY)
         trail = cursor.fetchone()
-    return True, trail is not None and str(trail[0]).strip().upper() == "NONE"
+    assert trail is not None, "SYS reads AUDIT_TRAIL"
+    setting = ", ".join(part.strip() for part in str(trail[0]).upper().split(","))
+    if setting == "NONE":
+        return True, TRAIL_NONE
+    if setting not in TRAIL_MEASURED:
+        return True, TRAIL_UNMEASURED.format(value=setting)
+    return True, None
 
 
-def _covered(found: Any, records_nothing: bool) -> str:
+def _covered(found: Any, doubt: str | None) -> str:
     """The answer for policies that cover both actions, checked, and its
     `ACTION by POLICY` part."""
-    if records_nothing:
+    if doubt is not None:
         assert found.audited is None, found.detail
-        assert found.detail.endswith(f", but {TRAIL_NONE}"), found.detail
-        return str(found.detail).removesuffix(f", but {TRAIL_NONE}")
+        assert found.detail.endswith(f", but {doubt}"), found.detail
+        return str(found.detail).removesuffix(f", but {doubt}")
     assert found.audited is True, found.detail
     return str(found.detail)
 
@@ -545,13 +558,13 @@ def test_a_policy_recording_both_routes_for_every_user_is_true(
     audit_reader: Any, sysdba: Any
 ) -> None:
     """The positive case, with the grants: the answer names the policy for both
-    actions. `true`, except in mixed mode under `AUDIT_TRAIL = NONE`, where it is
-    `unknown` and says so (#1004)."""
-    _, records_nothing = _audit_mode(sysdba)
+    actions. `true`, except in mixed mode under `AUDIT_TRAIL = NONE` or a setting
+    that is not measured, where it is `unknown` and says so (#1004, #1013)."""
+    _, doubt = _audit_mode(sysdba)
     with _policy(sysdba, "logon, alter user"):
         found = audit_reader.audit_coverage(PERSON)
 
-    covered = _covered(found, records_nothing)
+    covered = _covered(found, doubt)
     assert f"LOGON by {POLICY.upper()}" in covered
     assert f"ALTER USER by {POLICY.upper()}" in covered
 
@@ -628,7 +641,7 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
     here = current_container(sysdba)
     if here in ("NON-CDB", "CDB$ROOT"):
         pytest.skip(f"the DSN's container is {here}; this test needs a PDB")
-    _, records_nothing = _audit_mode(sysdba)
+    _, doubt = _audit_mode(sysdba)
 
     execute(sysdba, "alter session set container = CDB$ROOT")
     try:
@@ -653,7 +666,7 @@ def test_a_common_logon_policy_covers_a_common_persons_logon(
         with contextlib.suppress(Exception):
             execute(sysdba, f"alter session set container = {here}")
 
-    covered = _covered(found, records_nothing)
+    covered = _covered(found, doubt)
     # `ALTER USER` may be covered by a policy the database enables itself as
     # well: XE 18.4.0.0.0 and 21.3.0.0.0 enable ORA_SECURECONFIG, which records
     # it. `LOGON` is covered by the common policy alone.

@@ -23,6 +23,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -93,6 +94,13 @@ class Transport:
         ordinary JSON body and a default that had to be overridden each time is
         the wrong default.
 
+        Each segment of ``path`` is percent-encoded, so a character that means
+        something in a URL is sent as part of the name. An Oracle common user's
+        name starts with ``C##``, and httpx would read the ``#`` as the start of
+        a fragment and send nothing after it: every ``C##`` account's reset
+        record would be one document (#884). Vault decodes the path before it
+        routes it, so the document is stored under its real name.
+
         **Non-2xx is data here, not an exception.** ``sys/health`` answers 429
         for a standby, 473 for a performance standby, 501 for uninitialised and
         503 for sealed, all by design (ADR-005) -- a client that raised on
@@ -108,7 +116,7 @@ class Transport:
         try:
             response = self._client.request(
                 method,
-                f"/v1/{path}",
+                f"/v1/{url_path(path)}",
                 json=json,
                 params=params,
                 headers=headers,
@@ -162,6 +170,14 @@ class Transport:
 
     def close(self) -> None:
         self._client.close()
+
+
+def url_path(path: str) -> str:
+    """``path`` with each segment percent-encoded, and the ``/`` between them kept.
+
+    A trailing ``/``, which a ``LIST`` sends, is kept too.
+    """
+    return "/".join(quote(segment, safe="") for segment in path.split("/"))
 
 
 def _log(started: float, method: str, path: str, outcome: str) -> None:

@@ -33,8 +33,15 @@
 -- &t0/&t1 bounds are the fix), and in runs 1 to 5 PX5 was read BEFORE the
 -- revoke, so it could not speak for it (review on #589; it now follows PX4).
 -- One further attempt stalled at PX6 and was stopped; its objects were gone
--- when checked. Untried on every other release. 11.2 has no unified audit,
--- so PX5 and PX6 do not apply there as written.
+-- when checked. The probe then connected by the alias FREEPDB1, so the likely
+-- cause is the slow DNS lookup an alias costs (#1014), but that run was not
+-- captured.
+--
+-- Run again on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest), as SYSTEM,
+-- on 2026-10-24 (#1014), once, this file as it stands, by EZConnect: exit 0
+-- in 2 seconds, and C1 and PX1..PX6 as in the results below. Untried on every
+-- other release. 11.2 has no unified audit, so PX5 and PX6 do not apply there
+-- as written.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, as SYSTEM, 2026-10-01

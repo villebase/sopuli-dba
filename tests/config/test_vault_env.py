@@ -446,17 +446,17 @@ def test_another_port_is_another_address() -> None:
     assert len(overrides(config)) == 1
 
 
-#: Each spelling of a user name and password, and the address without them. A
-#: `/`, `?` or `#` in the password ends the authority for `urlsplit`, and the
-#: last one cannot be parsed at all, so a parser would miss each of them.
+#: Each spelling of a user name and password. A `/`, `?` or `#` in the
+#: password ends the authority for `urlsplit`, and the last one cannot be
+#: parsed at all, so a parser would miss each of them.
 USERINFO = pytest.mark.parametrize(
-    ("address", "kept"),
+    "address",
     [
-        ("https://ops:s3cret@proxy.example.com:8200", "https://proxy.example.com:8200"),
-        ("https://ops:s3/cret@proxy.example.com", "https://proxy.example.com"),
-        ("https://ops:s3?cret@proxy.example.com", "https://proxy.example.com"),
-        ("https://ops:s3#cret@proxy.example.com", "https://proxy.example.com"),
-        ("https://ops:s3cret@[proxy", "https://[proxy"),
+        "https://ops:s3cret@proxy.example.com:8200",
+        "https://ops:s3/cret@proxy.example.com",
+        "https://ops:s3?cret@proxy.example.com",
+        "https://ops:s3#cret@proxy.example.com",
+        "https://ops:s3cret@[proxy",
     ],
     ids=["plain", "slash", "query", "hash", "unparseable"],
 )
@@ -466,11 +466,11 @@ def userinfo_warnings(config: Config) -> list[Any]:
     return [one for one in config.warnings if one.code == THIRD_PARTY_ADDR_USERINFO]
 
 
-@USERINFO
-def test_vault_addr_with_a_user_name_and_password_is_cut_and_warns(address: str, kept: str) -> None:
+def test_vault_addr_with_a_user_name_and_password_is_cut_and_warns() -> None:
     """#891: the variable is another tool's, so the run goes on without the
     credential and says so. Neither warning repeats it."""
-    config = loaded({"VAULT_ADDR": address}, {"addr": DECLARED})
+    kept = "https://proxy.example.com:8200"
+    config = loaded({"VAULT_ADDR": "https://ops:s3cret@proxy.example.com:8200"}, {"addr": DECLARED})
 
     assert config.vaults[0].addr == kept
     [warning] = userinfo_warnings(config)
@@ -483,6 +483,47 @@ def test_vault_addr_with_a_user_name_and_password_is_cut_and_warns(address: str,
         assert "s3" not in one.message + one.hint
         assert "ops" not in one.message + one.hint
     assert kept in override.message
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "https://ops:s3/cret@proxy.example.com",
+        "https://ops:s3?cret@proxy.example.com",
+        "https://ops:s3#cret@proxy.example.com",
+        "https://ops:s3cret@[proxy",
+        "https://vault.example.com/ui/@other.example.net",
+        "https://vault.example.com:8200?x=a@other",
+        "https://ops:s3@cret@proxy.example.com",
+        "https://ops:s3cret@",
+        "ops:s3cret@proxy.example.com",
+    ],
+    ids=[
+        "slash",
+        "query",
+        "hash",
+        "unparseable",
+        "at-in-path",
+        "at-in-query",
+        "two-at-signs",
+        "no-host",
+        "no-scheme",
+    ],
+)
+def test_vault_addr_whose_at_sign_may_be_something_else_is_not_applied(address: str) -> None:
+    """The cut address is the one the run connects to, so a guess could send
+    the token to another host. Where the `@` may not end a plain user name and
+    password, the variable is not applied, and the file's address stands."""
+    config = loaded({"VAULT_ADDR": address}, {"addr": DECLARED})
+
+    assert config.vaults[0].addr == DECLARED
+    assert overrides(config) == []
+    [warning] = userinfo_warnings(config)
+    assert warning.message == (
+        "VAULT_ADDR holds an `@` that may not end a user name and password, so this run "
+        f"did not apply it to vault {STORE!r}"
+    )
+    assert "s3" not in warning.message + warning.hint
 
 
 def test_vault_addr_is_cut_when_it_loses_too() -> None:
@@ -502,14 +543,17 @@ def test_vault_addr_is_cut_when_it_loses_too() -> None:
     assert len(userinfo_warnings(config)) == 1
 
 
-def test_vault_addr_with_no_scheme_is_cut_for_a_file_store() -> None:
+@pytest.mark.parametrize(
+    "address",
+    ["ops:s3cret@proxy.example.com", "/srv/team@ops/secrets", r"C:\Users\a@b\vault"],
+    ids=["no-scheme", "posix-path", "windows-path"],
+)
+def test_vault_addr_with_no_scheme_is_not_applied_to_a_file_store(address: str) -> None:
     """A `file` store's `addr` is a path, so the plain-HTTP rule does not
-    refuse it. The cut is what keeps the credential out of the output."""
-    config = loaded(
-        {"VAULT_ADDR": "ops:s3cret@proxy.example.com"}, {"type": "file", "addr": DECLARED}
-    )
+    refuse it. Cutting a path at its `@` would give another directory."""
+    config = loaded({"VAULT_ADDR": address}, {"type": "file", "addr": "/srv/secrets"})
 
-    assert config.vaults[0].addr == "proxy.example.com"
+    assert config.vaults[0].addr == "/srv/secrets"
     assert len(userinfo_warnings(config)) == 1
     assert all("s3" not in one.message for one in config.warnings)
 
@@ -533,9 +577,7 @@ def load_with_addr_in(where: str, address: str) -> Config:
     [f"vaults.{STORE}.addr", f"defaults.vaults.{STORE}.addr", "SOPULI_VAULT_ADDR", NAMED],
     ids=["file", "defaults", "sopuli-variable", "named-variable"],
 )
-def test_a_user_name_and_password_in_any_other_layer_is_refused(
-    address: str, kept: str, where: str
-) -> None:
+def test_a_user_name_and_password_in_any_other_layer_is_refused(address: str, where: str) -> None:
     """#891: these were written for this tool, so the load refuses them. The
     refusal names the layer and not the address."""
     with pytest.raises(ConfigError) as caught:
@@ -586,16 +628,15 @@ def test_an_at_sign_in_a_file_stores_path_is_refused() -> None:
     assert merged({}, {"type": "file", "addr": "/srv/secrets"}).addr == "/srv/secrets"
 
 
-def test_credentials_in_an_address_with_no_scheme_are_not_repeated_in_the_refusal() -> None:
-    """An address with no scheme is not `https://`, so the load refuses it
-    before any warning. The refusal names the layer, not the address."""
+def test_an_address_with_no_scheme_is_refused_without_repeating_it() -> None:
+    """An address with no scheme is not `https://`, so the load refuses it. The
+    refusal names the layer, not the address."""
     with pytest.raises(ConfigError) as caught:
-        loaded({"VAULT_ADDR": "ops:s3cret@proxy.example.com"}, {"addr": DECLARED})
+        loaded({"VAULT_ADDR": "proxy.example.com"}, {"addr": DECLARED})
 
     rendered = str(caught.value)
     assert "the address VAULT_ADDR gives must use https://, and this one uses no scheme" in rendered
-    assert "s3cret" not in rendered
-    assert "ops" not in rendered
+    assert "proxy.example.com" not in rendered
 
 
 def test_vault_addr_over_a_defaults_addr_names_the_defaults_key() -> None:

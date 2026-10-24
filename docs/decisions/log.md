@@ -3025,9 +3025,13 @@ the register.
   entry, in `SOPULI_VAULT_ADDR`, in `SOPULI_VAULT__<STORE>__ADDR` and in
   `--vault-addr`, when the file is read. For `VAULT_ADDR`, drop the user name
   and password, keep the rest of the address, and warn with `SOPULI-W057`.
-  The check finds everything before the last `@`, after the scheme, so a
-  password holding `/`, `?` or `#` is found too. It applies to every store
-  type.
+  The refusal is of any `@` after the scheme, so a password holding `/`, `?`
+  or `#` is found too. It applies to every store type. `VAULT_ADDR` is cut only
+  where its one `@` ends the host part of a URL with a host after it.
+  Otherwise the variable is not applied, with the same warning, because the
+  cut address is the one the run connects to: cutting
+  `https://vault.example.com/ui/@other.example.net` at the `@` would send the
+  token to `other.example.net`. This was found in review (PR #1029).
 - **Why:** Vault does not authenticate through the address, so a credential
   there is a proxy credential or a mistake. Refusing it removes the case, so
   no output has to remember to mask it. `VAULT_ADDR` belongs to another tool,

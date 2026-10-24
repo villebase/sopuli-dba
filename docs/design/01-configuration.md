@@ -810,8 +810,11 @@ keeps every layer's value. An
 `addr` from the file, a profile, `defaults.vaults`, `SOPULI_VAULT_ADDR`,
 `SOPULI_VAULT__<STORE>__ADDR` or `--vault-addr` is refused, and the message
 names the layer, not the address. `VAULT_ADDR` is another tool's variable, so
-the run drops its user name and password, keeps the rest of the address, and
-warns with `SOPULI-W057` (§6). Reasons: [#891](../decisions/log.md#891).
+it warns with `SOPULI-W057` instead (§6). Where its one `@` ends the host part
+of a URL with a host after it, the run drops the user name and password and
+keeps the rest of the address. Otherwise the `@` may be part of a path, a query
+or another host, and cutting there could send the token somewhere else, so the
+variable is not applied. Reasons: [#891](../decisions/log.md#891).
 
 Only `type` is required. A file backend has no address, and P2 puts per-backend
 validation behind the store interface, so demanding a HashiCorp shape of every
@@ -2118,8 +2121,9 @@ with `SOPULI-W051`. The message names both addresses. A shell often keeps
 to that address with nothing said. `SOPULI_VAULT_ADDR` and `--vault-addr` do not
 warn: they were set for this tool.
 
-Where `VAULT_ADDR` holds a user name or password before an `@`, the run drops
-them, keeps the rest of the address, and warns with `SOPULI-W057`. The same in
+Where `VAULT_ADDR` holds an `@`, the run warns with `SOPULI-W057`. It drops a
+plain user name and password and keeps the rest of the address, and it does
+not apply the variable where the `@` may be something else. An `@` in
 `SOPULI_VAULT_ADDR` or `--vault-addr` is refused (§3a).
 
 `VAULT_NAMESPACE` over a different `namespace` in the file warns in the same way,

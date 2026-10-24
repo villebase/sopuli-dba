@@ -49,8 +49,8 @@ from typing import Any
 
 from sopuli.config.model import Binding, Vault
 
-# The address helpers `config show` and SOPULI-W051 use, so a masked address and
-# "the same server" mean the same here as there.
+# The address comparison SOPULI-W051 uses, so "the same server" means the same
+# here as there.
 from sopuli.config.vault_layers import _same_address
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.inspect import LockState, ResetRegion, SkippedPath, secret_path, survey

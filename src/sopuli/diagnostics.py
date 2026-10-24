@@ -888,9 +888,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "names both namespaces. A shell often keeps `VAULT_NAMESPACE` from other work."
         ),
         THIRD_PARTY_ADDR_USERINFO: (
-            "`VAULT_ADDR` holds a user name or password before an `@`, and this run dropped "
-            "it and kept the rest of the address. Vault does not read credentials from its "
-            "address. The file, `SOPULI_VAULT_ADDR` and `--vault-addr` are refused for the "
+            "`VAULT_ADDR` holds an `@`. Where it plainly ends a user name and password, this "
+            "run dropped them and kept the rest of the address; otherwise it did not apply "
+            "the variable, because a cut there could name another host. Vault does not read "
+            "credentials from its address. The file, `SOPULI_VAULT_ADDR` and `--vault-addr` "
+            "are refused for the "
             "same thing; the third-party variable only warns, because it may belong to "
             "something else on this machine."
         ),

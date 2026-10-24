@@ -201,29 +201,46 @@ def _refuse_inert_merge_patch(vault: Vault, values: Mapping[str, Any]) -> None:
 #: What to do instead of a user name or password in ``addr``, for the refusal and
 #: for ``SOPULI-W057``.
 USERINFO_HINT = (
-    "Vault does not read credentials from its address. Remove everything from `://` "
-    "to the `@`. A proxy that needs a credential reads it from HTTPS_PROXY"
+    "Vault does not read credentials from its address, so write the address with no "
+    "`@` in it. A proxy that needs a credential reads it from HTTPS_PROXY. A `file` "
+    "store's path may not hold an `@` either"
 )
 
 
-def _without_userinfo(address: str) -> str | None:
-    """``address`` without what comes before its last ``@``, or ``None`` if it has none.
+def _holds_at(address: str) -> bool:
+    """Whether ``address`` holds an ``@`` after its scheme (#891).
 
-    That part is the user name and password of a URL (#891).
-
-    **Not parsed, so it fails closed.** ``urlsplit`` ends the authority at the
-    first ``/``, ``?`` or ``#``, so a password holding one would leave the
-    ``@`` outside the part it finds, and an address it cannot parse would hide
-    the part entirely. Cutting at the last ``@`` after the scheme finds the
-    credential in every spelling. An ``@`` in a path counts too, so a ``file``
-    store's path may not hold one.
+    An ``@`` there may end a user name and password. **Not parsed, so it fails
+    closed.** ``urlsplit`` ends the authority at the first ``/``, ``?`` or
+    ``#``, so a password holding one would put the ``@`` outside the part it
+    finds, and an address it cannot parse would hide the part entirely. An
+    ``@`` in a path counts too, so a ``file`` store's path may not hold one.
     """
-    scheme, separator, rest = address.partition("://")
-    if not separator:
-        scheme, rest = "", address
-    if "@" not in rest:
+    _, separator, rest = address.partition("://")
+    return "@" in (rest if separator else address)
+
+
+def _without_userinfo(address: str) -> str | None:
+    """``address`` without its user name and password, where that is all its ``@`` can be.
+
+    Here the result is the address the run connects to, so a guess could send
+    the token to another host: cutting
+    ``https://vault.example.com/ui/@other.example.net`` at its ``@`` gives
+    ``https://other.example.net``. So the cut is made only where the address
+    has one ``@``, ``urlsplit`` puts it in the authority, and a host follows
+    it. Otherwise ``None``, and the caller does not use the address.
+    """
+    if address.count("@") != 1:
         return None
-    return f"{scheme}{separator}{rest.rpartition('@')[2]}"
+    try:
+        parts = urlsplit(address)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if "@" not in parts.netloc or not host:
+        return None
+    scheme, _, rest = address.partition("://")
+    return f"{scheme}://{rest.partition('@')[2]}"
 
 
 def _refuse_userinfo(vault: Vault, answer: Resolved | None) -> None:
@@ -234,14 +251,14 @@ def _refuse_userinfo(vault: Vault, answer: Resolved | None) -> None:
     messages that name an address would print it. Every contribution is
     checked, not only the one that won, because the resolved setting keeps
     every layer's value, and an output may show the ones that lost.
-    ``VAULT_ADDR`` arrives here already cut by :func:`_drop_userinfo`.
+    ``VAULT_ADDR`` arrives here already handled by :func:`_drop_userinfo`.
 
     The message names the layer and never the address.
     """
     if answer is None:
         return
     for one in answer.contributions:
-        if _without_userinfo(str(one.value)) is not None:
+        if _holds_at(str(one.value)):
             raise ConfigError(
                 f"vault {vault.name!r}: the address {one.location} gives holds a user "
                 f"name or password, before an `@`",
@@ -253,28 +270,38 @@ def _refuse_userinfo(vault: Vault, answer: Resolved | None) -> None:
 def _drop_userinfo(
     name: str, contributions: Sequence[Contribution]
 ) -> tuple[list[Contribution], list[ConfigWarning]]:
-    """``VAULT_ADDR`` without its user name and password, and a warning if it had one.
+    """``VAULT_ADDR`` without its user name and password, and a warning if it had an ``@``.
 
     The other layers are refused by :func:`_refuse_userinfo`. This one is another
     tool's variable, and §6 does not fail a run over it, so the run goes on
-    with the rest of the address and says so with ``SOPULI-W057``. Cut whether
-    or not the variable wins, because the resolved setting keeps every layer's
-    value, and an output may show the ones that lost.
+    and says so with ``SOPULI-W057``. Where :func:`_without_userinfo` finds a
+    plain user name and password, the run uses the rest of the address. Where
+    it cannot tell what the ``@`` ends, the variable is not applied at all, as
+    when it has no store to apply to. Handled whether or not the variable wins,
+    because the resolved setting keeps every layer's value, and an output may
+    show the ones that lost.
     """
     kept = []
     warnings = []
     for one in contributions:
-        cut = None if one.layer is not Layer.ENV_THIRDPARTY else _without_userinfo(str(one.value))
-        if cut is None:
+        if one.layer is not Layer.ENV_THIRDPARTY or not _holds_at(str(one.value)):
             kept.append(one)
             continue
-        kept.append(replace(one, value=cut))
+        cut = _without_userinfo(str(one.value))
+        if cut is None:
+            message = (
+                f"{one.location} holds an `@` that may not end a user name and password, "
+                f"so this run did not apply it to vault {name!r}"
+            )
+        else:
+            kept.append(replace(one, value=cut))
+            message = (
+                f"{one.location} holds a user name or password, before an `@`, and this "
+                f"run dropped it: the address it gives vault {name!r} is {cut}"
+            )
         warnings.append(
             ConfigWarning(
-                message=(
-                    f"{one.location} holds a user name or password, before an `@`, and this "
-                    f"run dropped it: the address it gives vault {name!r} is {cut}"
-                ),
+                message=message,
                 # No `at`: the message names the variable.
                 at="",
                 hint=USERINFO_HINT,

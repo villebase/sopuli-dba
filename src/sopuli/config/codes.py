@@ -59,8 +59,9 @@ THIRD_PARTY_ADDR_OVERRIDES = "SOPULI-W051"
 #: address.
 THIRD_PARTY_NAMESPACE_OVERRIDES = "SOPULI-W052"
 
-#: ``VAULT_ADDR`` holds a user name or password before an ``@``, and the run
-#: dropped it (#891). The file, a profile, ``SOPULI_VAULT_ADDR`` and
+#: ``VAULT_ADDR`` holds an ``@`` (#891). The run dropped a plain user name and
+#: password, or did not apply the variable where the ``@`` may be something
+#: else. The file, a profile, ``SOPULI_VAULT_ADDR`` and
 #: ``--vault-addr`` are refused for the same thing. The third-party variable
 #: only warns, because §6 does not fail a run over another tool's variable.
 THIRD_PARTY_ADDR_USERINFO = "SOPULI-W057"

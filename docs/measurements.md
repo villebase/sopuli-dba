@@ -15,8 +15,10 @@ Python probe's header is its docstring. `tests/test_measurements.py` checks that
 the releases a script's header names are the same releases the *Scripts* table
 below lists for it. A Python probe with no rows of its own, whose header names the
 SQL script of the same name, may name only releases that the SQL script's rows
-list. A release that the *Releases* table marks "Not a database" is not compared.
-When you run a script on a new release, update both.
+list. A release a header writes after "Instant Client" is the client the probe
+ran with, and is not compared. The *Release* column of the tables below always
+names the database a result was measured on, never the client. When you run a
+script on a new release, update both.
 
 The tier-1 suite in CI is not a measurement here. It pulls the moving
 `gvenzl/oracle-free:latest` image, so a green CI run does not show which
@@ -28,7 +30,7 @@ release it ran on. The suite has no rows in this file.
 |---|---|
 | `23.26.2.0.0` | 26ai Free, the `gvenzl/oracle-free` container, as pulled for the runs below |
 | `23.26.3.3.0` | 26ai, an Autonomous Database (serverless) on OCI |
-| `23.26.3.0.0` | Instant Client for Windows. Not a database: the client for the wallet results below, where the client decides the outcome |
+| `23.26.3.0.0` | 26ai Free, the `gvenzl/oracle-free` container, as pulled on 2026-10-24. Also the number of the Instant Client for Windows that the wallet results below and `14_session_loss_probe.py` ran with. A header writes the client as "Instant Client 23.26.3.0.0" |
 | `21.3.0.0.0` | 21c XE, the `gvenzl/oracle-xe:21-slim` container |
 | `19.32.0.0.0` | 19c EE, an OCI Base Database Service DB system. A release update |
 | `19.24.0.0.0` | 19c EE High Performance. Checked by hand, once |
@@ -94,6 +96,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `09_reset_from_expired_probe.sql` | `19.3.0.0.0` | 2026-09-28 | #479 | No rollover; the script stops at section 0 |
 | `10_awr_snapshot_probe.sql` | `19.32.0.0.0` | 2026-10-01 | #581 | The wrapped literal (C3) reaches `DBA_HIST_SQLTEXT`. C1, C2 and C4 do not |
 | `11_proxy_connect_probe.sql` | `23.26.2.0.0` | 2026-10-01 | #459 | `ALTER USER` alone can grant `CONNECT THROUGH` and connect as the person. With no audit policy, nothing durable records it |
+| `11_proxy_connect_probe.sql` | `23.26.3.0.0` | 2026-10-24 | #1014 | As on 23.26.2.0.0, connecting by EZConnect |
 | `12_connection_encryption_probe.sql` | `23.26.2.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. `PUBLIC` reads the view; the account sees only its own SID |
 | `12_connection_encryption_probe.sql` | `21.3.0.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. `PUBLIC` reads the view; it shows the account two SIDs |
 | `12_connection_encryption_probe.sql` | `18.4.0.0.0` | 2026-10-09 | #697 | Plain, NNE and TLS. `PUBLIC` reads the view; it shows the account one or two SIDs |
@@ -102,6 +105,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `12_connection_encryption_probe.sql` | `11.2.0.2.0` | 2026-10-09 | #697 | Plain and NNE. The adapter row reads `Oracle Advanced Security: AES256 encryption service adapter`; the view shows the account three SIDs. TLS did not run: `ORA-29106` on the wallet |
 | `13_audit_coverage_probe.sql` | `23.26.2.0.0` | 2026-10-15 | #591 | Pure unified mode. A `BY` or `EXCEPT` list applies to the account that issues the statement, so a policy `BY` the person misses the DBA's `ALTER USER`. The account reads the policy views after `SYS` grants `READ`; `SYSTEM` cannot grant it. A common policy enabled in the root records nothing of local accounts' route, and records a common account's logon |
 | `13_audit_coverage_probe.sql` | `23.26.2.0.0` | 2026-10-17 | #812 | `01_audit_policy.sql`'s policies, created in the root with no `CONTAINER` clause, record nothing in a PDB, not even the service account's `ALTER USER`. Created `CONTAINER = ALL`, they record common accounts in every container and no local account. Created in the PDB, they record every account's `ALTER USER` there. The logon policy records only the service account's failed logons, so no placement records a proxy logon. A common account reset in the root is recorded there. A common and a PDB policy may have one name |
+| `13_audit_coverage_probe.sql` | `23.26.3.0.0` | 2026-10-24 | #1014 | As on 23.26.2.0.0, AC0 to AC10, counts included, connecting by EZConnect |
 | `13_audit_coverage_probe.sql` | `21.3.0.0.0` | 2026-10-23 | #820 | Mixed mode, `AUDIT_TRAIL = NONE`, and `ORA_SECURECONFIG` and `ORA_LOGON_FAILURES` enabled from the start. The two policy views have the columns and rows the check reads, as on 26ai. The trail records nothing at run time, also under an enabled policy and after a flush: it holds only the image's build rows. `AUDIT_TRAIL = NONE` is the cause (`15_mixed_mode_trail_probe.sql`) |
 | `13_audit_coverage_probe.sql` | `18.4.0.0.0` | 2026-10-23 | #820 | As 21.3 through AC3: mixed mode, and the views have the columns the check reads, beside `USER_NAME` and `ENABLED_OPT`. Stops in AC4: the trail has no `EVENT_TIMESTAMP_UTC`. As on 21.3, the trail holds only the image's build rows, for the same cause |
 | `14_session_loss_probe.py` | `23.26.2.0.0` | 2026-10-17 | #775 | Thick mode, Instant Client `23.26.3.0.0`, python-oracledb 26.0.0. A session lost to a PDB closed `IMMEDIATE` or to a CDB shutdown (`IMMEDIATE` or `ABORT`) raises `DPY-4011`, with `ORA-03113` inside its message. A logon while the CDB starts gets `ORA-12528` in NOMOUNT and `ORA-01033` in MOUNT, and `ORA-12514` to a PDB service throughout. `ORA-00028`, `ORA-03135`, `ORA-01034` and `ORA-01089` were not produced |

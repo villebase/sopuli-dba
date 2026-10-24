@@ -42,12 +42,20 @@
 -- restarted database. Those runs set svc to //localhost:1521/XEPDB1 in a copy
 -- of the file, and changed nothing else: a connect by the alias waits about
 -- 24 s on Docker Desktop's DNS (#1014). Exit 0 every time, with the same
--- differences between the counts in every run. Untried on every other
--- release.
+-- differences between the counts in every run. Run again on 21.3.0.0.0 under
+-- NONE on 2026-10-24 (#1014), once, by EZConnect: exit 0, with the same
+-- differences. Untried on every other release.
 --
 -- Once, on 18.4 under NONE, SQL*Plus printed nothing after MT1's policy read
 -- and did not return, and V$SESSION showed no session of its own. It was
--- stopped, and that run is not counted.
+-- stopped, and that run is not counted. A possible cause is the connect
+-- string (#1014), but that run was not captured, so it is not shown. The
+-- probe then connected to the alias XEPDB1, and the image's sqlnet.ora tries
+-- EZCONNECT before TNSNAMES, so each connect first asked DNS for a host named
+-- XEPDB1. On 2026-10-24 Docker Desktop's DNS took about 8 seconds to answer
+-- that no such host exists, and a connect by alias took about 24 seconds,
+-- against 0.5 by EZConnect. An answer much slower than that once would look
+-- like a hang. The probe now connects by EZConnect.
 --
 --
 -- RESULTS -- 21.3.0.0.0 and 18.4.0.0.0, XEPDB1, 2026-10-23 and 2026-10-24
@@ -83,7 +91,7 @@
 -- setup and the teardown: CREATE and DROP USER, the policy statements, AUDIT
 -- and NOAUDIT.
 --------------------------------------------------------------------------------
-define svc      = XEPDB1
+define svc      = //localhost:1521/XEPDB1
 define sys_conn = system/sopuli-test
 
 set lines 160 pages 200 feedback off verify off

@@ -49,13 +49,21 @@
 -- were run fourteen times on 2026-10-15 while the file grew, and AC3 to AC5
 -- were identical in the twelve runs that reached them. One of those runs
 -- started from the state a run stopped in AC4a leaves behind, AC_ALL enabled
--- BY the person, with the same result. The file as it stands was run three
--- times on 2026-10-17, from a container with no other policy enabled: exit 0
+-- BY the person, with the same result. The file as it then stood, connecting
+-- by the aliases FREEPDB1 and FREE, was run three times on 2026-10-17, from a
+-- container with no other policy enabled: exit 0
 -- and the same rows each time, and AC0 to AC7 as on 2026-10-15.
+--
+-- Run again on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest) on
+-- 2026-10-24 (#1014), once, this file as it stands, by EZConnect: exit 0 in
+-- 24 seconds, and AC0 to AC10 as in the 23.26.2.0.0 results below, counts
+-- included.
 --
 -- Also run on 21c XE 21.3.0.0.0 (gvenzl/oracle-xe:21-slim) and 18c XE
 -- 18.4.0.0.0 (gvenzl/oracle-xe:18-slim), XEPDB1 and CDB$ROOT, on 2026-10-23
--- (#820), once each, from a copy with svc = XEPDB1 and cdb = XE. 21.3: exit 0.
+-- (#820), once each, from a copy that connected by the aliases XEPDB1 and
+-- XE. A copy for these images now sets svc = //localhost:1521/XEPDB1 and
+-- cdb = //localhost:1521/XE. 21.3: exit 0.
 -- 18.4: exit 1 in AC4, which reads UNIFIED_AUDIT_TRAIL.EVENT_TIMESTAMP_UTC,
 -- a column 18.4 does not have, so AC4 to AC10 did not run there. Untried on
 -- every other release. 11.2 has neither unified auditing nor containers, so
@@ -231,10 +239,12 @@
 -- and leaves rows in UNIFIED_AUDIT_TRAIL. While AC5 runs, ACTIONS ALL audits
 -- every user.
 --------------------------------------------------------------------------------
-define svc      = FREEPDB1
+-- EZConnect, not a TNS alias: the gvenzl images' sqlnet.ora tries EZCONNECT
+-- first, so an alias costs a DNS lookup on every CONNECT (#1014).
+define svc      = //localhost:1521/FREEPDB1
 define sys_conn = system/sopuli-test
 define sysdba   = sys/sopuli-test
-define cdb      = FREE
+define cdb      = //localhost:1521/FREE
 
 set lines 220 pages 200 feedback off verify off
 whenever sqlerror exit failure

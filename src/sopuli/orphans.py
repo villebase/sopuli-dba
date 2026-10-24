@@ -49,9 +49,9 @@ from typing import Any
 
 from sopuli.config.model import Binding, Vault
 
-# The address helpers `config show` and SOPULI-W051 use, so a masked address and
-# "the same server" mean the same here as there.
-from sopuli.config.vault_layers import _same_address, _shown
+# The address comparison SOPULI-W051 uses, so "the same server" means the same
+# here as there.
+from sopuli.config.vault_layers import _same_address
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.inspect import LockState, ResetRegion, SkippedPath, secret_path, survey
 from sopuli.lock.keys import LockKey, lock_key, normalise_path
@@ -428,8 +428,8 @@ def delete_command(vault: Vault, path: str) -> str | None:
     so a first acquisition at version 0 can never succeed there again.
 
     It names the address, so it reaches the store the config names whatever
-    ``VAULT_ADDR`` the shell holds. Credentials in the address are shown as
-    ``***``, as ``config show`` shows them. It is quoted for a POSIX shell.
+    ``VAULT_ADDR`` the shell holds. The address holds no user name or password,
+    because the loader refuses one (#891). It is quoted for a POSIX shell.
 
     ``None`` for a backend this build has no command for.
     """
@@ -441,7 +441,7 @@ def delete_command(vault: Vault, path: str) -> str | None:
         else ["vault", "kv", "delete"]
     )
     if vault.addr is not None:
-        words.append(f"-address={_shown(vault.addr)}")
+        words.append(f"-address={vault.addr}")
     if vault.namespace is not None:
         words.append(f"-namespace={vault.namespace}")
     words.extend([f"-mount={_mount(vault)}", path])

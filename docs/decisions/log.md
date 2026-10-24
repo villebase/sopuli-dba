@@ -3013,3 +3013,34 @@ the register.
     account it belongs to.
   - Report the old path as a leftover in `lock status` and the reset path. It
     costs code for a state that exists only once, during the upgrade.
+
+## #891
+
+- **Decided:** 2026-10-24, #891
+- **Question:** a vault address can hold a user name and password, as in
+  `https://ops:token@proxy.example.com`. `config show` and `--explain` print
+  the address as written, and `SOPULI-W051` masked it only in its own message.
+  Should the tool refuse such an address, or mask it wherever one is shown?
+- **Decision:** Refuse it in `vaults.*.addr`, in a profile or `defaults:`
+  entry, in `SOPULI_VAULT_ADDR`, in `SOPULI_VAULT__<STORE>__ADDR` and in
+  `--vault-addr`, when the file is read. For `VAULT_ADDR`, drop the user name
+  and password, keep the rest of the address, and warn with `SOPULI-W057`.
+  The refusal is of any `@` after the scheme, so a password holding `/`, `?`
+  or `#` is found too. It applies to every store type. `VAULT_ADDR` is cut only
+  where its one `@` ends the host part of a URL with a host after it.
+  Otherwise the variable is not applied, with the same warning, because the
+  cut address is the one the run connects to: cutting
+  `https://vault.example.com/ui/@other.example.net` at the `@` would send the
+  token to `other.example.net`. This was found in review (PR #1029).
+- **Why:** Vault does not authenticate through the address, so a credential
+  there is a proxy credential or a mistake. Refusing it removes the case, so
+  no output has to remember to mask it. `VAULT_ADDR` belongs to another tool,
+  and `01-configuration.md` §6 does not fail a run over another tool's
+  variable. A proxy that needs a credential reads it from `HTTPS_PROXY`.
+- **Rejected:**
+  - Masking the user name and password in one shared renderer, used by every
+    output that names an address. It keeps proxy credentials in the address
+    working, but every new output would have to use the renderer, and
+    invariant 2 puts redaction at the serialiser, not at each call site.
+  - Refusing `VAULT_ADDR` too. The variable may belong to something else on
+    the machine.

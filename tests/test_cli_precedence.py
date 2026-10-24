@@ -467,6 +467,68 @@ def test_it_is_refused_where_no_store_is_the_default(
     assert "--vault-addr names no store" in str(result.exception)
 
 
+# -------------------------------------- a user name or password in an address ---
+#
+# #891. The rules are asserted in `tests/config/test_vault_env.py`; what these
+# add is that no output of a real command repeats the credential.
+
+ADDR_WITH_CREDENTIAL = "https://ops:s3cret@proxy.example.com"
+
+
+@pytest.mark.parametrize("explain", [[], ["--explain"]], ids=["show", "explain"])
+def test_vault_addr_with_a_credential_is_shown_without_it(
+    runner: CliRunner,
+    vault_config: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    explain: list[str],
+) -> None:
+    """The text output prints the address, SOPULI-W051 and SOPULI-W057."""
+    monkeypatch.setenv("VAULT_ADDR", ADDR_WITH_CREDENTIAL)
+    result = runner.invoke(cli, [*vault_config, *explain])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "s3cret" not in result.output
+    assert "ops:" not in result.output
+    assert "VAULT_ADDR holds a user name or password" in result.output
+    assert "VAULT_ADDR sets the address of vault 'vault-dev' to https://proxy.example.com" in (
+        result.output
+    )
+
+
+def test_vault_addr_with_a_credential_is_left_out_of_the_document(
+    runner: CliRunner, vault_config: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VAULT_ADDR", ADDR_WITH_CREDENTIAL)
+    result = runner.invoke(cli, [*vault_config, "--output", "json"])
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "s3cret" not in result.output
+    document = json.loads(result.output)
+    Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8"))).validate(document)
+    codes = {one.get("code") for one in document["diagnostics"]}
+    assert {"SOPULI-W051", "SOPULI-W057"} <= codes
+
+
+@pytest.mark.parametrize("variable", ["SOPULI_VAULT_ADDR", None], ids=["variable", "flag"])
+def test_this_tools_own_address_with_a_credential_is_refused(
+    runner: CliRunner,
+    vault_config: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str | None,
+) -> None:
+    flag = []
+    if variable is None:
+        flag = ["--vault-addr", ADDR_WITH_CREDENTIAL]
+    else:
+        monkeypatch.setenv(variable, ADDR_WITH_CREDENTIAL)
+    result = runner.invoke(cli, [*vault_config, *flag])
+
+    assert isinstance(result.exception, ConfigError)
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "holds a user name or password" in str(result.exception)
+    assert "s3cret" not in str(result.exception)
+
+
 def test_a_source_cannot_wire_a_setting_by_producing_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

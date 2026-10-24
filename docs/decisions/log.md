@@ -2881,8 +2881,9 @@ the register.
   detail names the value. The check compares the value in upper case, with
   `, ` between its parts. The values are unchanged, so no schema bump.
 - **Why:** where the answer is unknown, the code refuses rather than guesses. A
-  value nobody has measured, such as an old spelling, is not taken as one that
-  records. The measurement left no documented setting that loses a `true`.
+  value nobody has measured is not taken as one that records. The measurement
+  left no documented setting that loses a `true`: 21.3.0.0.0 refuses every
+  other value with `ORA-00096`, so the list costs nothing there.
 - **Rejected:**
   - Only `NONE` gives `unknown` (option 1). It answers `true` for any value the
     tool does not expect.

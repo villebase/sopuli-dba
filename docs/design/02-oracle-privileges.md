@@ -1298,7 +1298,10 @@ because only two releases are measured: decided in
 [#1004](../decisions/log.md#1004). Only the five measured settings keep a
 `true`. Under any other value the answer is `unknown`, and the detail names the
 value: decided in [#1013](../decisions/log.md#1013). The check compares the
-value in upper case, with `, ` between its parts. Where `AUDIT_TRAIL` cannot be
+value in upper case, with `, ` between its parts. 21.3.0.0.0 accepts no other
+value: `ALTER SYSTEM` refuses `TRUE`, `OS, EXTENDED` and `EXTENDED` with
+`ORA-00096` (measured by hand, on 2026-10-24). So there the `unknown` cannot
+occur, and it guards a release that accepts a value nobody has measured. Where `AUDIT_TRAIL` cannot be
 read, the value is `unknown` too, because the tool cannot rule out `NONE`, and
 the detail names §2's grant. In pure unified mode the parameter does not apply, and it is not read.
 

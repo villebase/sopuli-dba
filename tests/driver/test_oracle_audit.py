@@ -133,8 +133,8 @@ def test_a_covering_policy_settles_an_action_whatever_the_others_say() -> None:
 
 
 def test_mixed_mode_does_not_stop_a_true() -> None:
-    """Traditional auditing can only add records, so covered is covered, while
-    `AUDIT_TRAIL` is not `NONE`."""
+    """Traditional auditing can only add records, so covered is covered, under a
+    measured `AUDIT_TRAIL` setting."""
     assert answer([enabled("P")], both("P"), mode="FALSE", trail="DB").audited is True
     assert answer([enabled("P")], both("P"), mode="FALSE", trail="DB, EXTENDED").audited is True
 
@@ -152,7 +152,10 @@ def test_mixed_mode_keeps_a_true_under_each_measured_setting(trail: str) -> None
     assert found.detail == "LOGON by P; ALTER USER by P"
 
 
-def test_the_measured_settings_are_the_ones_probe_15_ran() -> None:
+def test_the_allow_list_is_the_five_settings_measured() -> None:
+    """Written out by hand from `15_mixed_mode_trail_probe.sql`'s RESULTS, so a
+    change to the list is a change to this test too. The test does not read the
+    probe's prose."""
     assert {"DB", "DB, EXTENDED", "OS", "XML", "XML, EXTENDED"} == TRAIL_MEASURED
 
 

@@ -46,7 +46,6 @@ from oracle_harness import Environment, current_container, execute, service_acco
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.driver.oracle.audit import (
     MODE_QUERY,
-    TRAIL_MEASURED,
     TRAIL_NONE,
     TRAIL_QUERY,
     TRAIL_UNMEASURED,
@@ -493,6 +492,11 @@ def audit_reader(sysdba: Any, live_oracle: Environment) -> Iterator[Any]:
         yield opened
 
 
+#: The measured `AUDIT_TRAIL` settings as `V$PARAMETER` printed them on 21.3.0.0.0
+#: and 18.4.0.0.0 (#1013).
+PRINTED_MEASURED = {"DB", "DB, EXTENDED", "OS", "XML", "XML, EXTENDED"}
+
+
 def _audit_mode(sysdba: Any) -> tuple[bool, str | None]:
     """Whether this database is in mixed mode, read as `SYS`, and the reason its
     covered answer is `unknown`, or `None` where it is `true`.
@@ -501,7 +505,8 @@ def _audit_mode(sysdba: Any) -> tuple[bool, str | None]:
     (#1004), which the XE images of 21.3.0.0.0 and 18.4.0.0.0 ship, and under a
     setting that is not measured (#1013). 26ai is pure unified. A test reads the
     database's own state rather than its release, as the `false` test below does
-    with the check's own answer.
+    with the check's own answer. The value is compared as `V$PARAMETER` prints
+    it, with no normalising, so the expectation does not share the check's code.
     """
     with sysdba.cursor() as cursor:
         cursor.execute(MODE_QUERY)
@@ -512,11 +517,11 @@ def _audit_mode(sysdba: Any) -> tuple[bool, str | None]:
         cursor.execute(TRAIL_QUERY)
         trail = cursor.fetchone()
     assert trail is not None, "SYS reads AUDIT_TRAIL"
-    setting = ", ".join(part.strip() for part in str(trail[0]).upper().split(","))
-    if setting == "NONE":
+    printed = str(trail[0])
+    if printed == "NONE":
         return True, TRAIL_NONE
-    if setting not in TRAIL_MEASURED:
-        return True, TRAIL_UNMEASURED.format(value=setting)
+    if printed not in PRINTED_MEASURED:
+        return True, TRAIL_UNMEASURED.format(value=printed)
     return True, None
 
 

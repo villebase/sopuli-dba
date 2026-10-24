@@ -47,7 +47,13 @@
 --
 -- Once, on 18.4 under NONE, SQL*Plus printed nothing after MT1's policy read
 -- and did not return, and V$SESSION showed no session of its own. It was
--- stopped, and that run is not counted.
+-- stopped, and that run is not counted. The cause is the connect string
+-- (#1014). It was then the alias XEPDB1, and the image's sqlnet.ora tries
+-- EZCONNECT before TNSNAMES, so each connect first asked DNS for a host named
+-- XEPDB1. On 2026-10-24 Docker Desktop's DNS took about 8 seconds to answer
+-- that no such host exists, and a connect by alias took about 24 seconds. The
+-- probe now connects by EZConnect, and run that way on 21.3.0.0.0 under NONE
+-- it exits 0 with the same differences.
 --
 --
 -- RESULTS -- 21.3.0.0.0 and 18.4.0.0.0, XEPDB1, 2026-10-23 and 2026-10-24
@@ -83,7 +89,9 @@
 -- setup and the teardown: CREATE and DROP USER, the policy statements, AUDIT
 -- and NOAUDIT.
 --------------------------------------------------------------------------------
-define svc      = XEPDB1
+-- EZConnect, not a TNS alias: the gvenzl images' sqlnet.ora tries EZCONNECT
+-- first, so an alias costs a DNS lookup on every CONNECT (#1014).
+define svc      = //localhost:1521/XEPDB1
 define sys_conn = system/sopuli-test
 
 set lines 160 pages 200 feedback off verify off

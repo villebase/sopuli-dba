@@ -90,7 +90,9 @@
 -- THROWAWAY DATABASES ONLY. Creates and drops three accounts and an audit
 -- policy, plants known passwords, and leaves rows in UNIFIED_AUDIT_TRAIL.
 --------------------------------------------------------------------------------
-define svc      = FREEPDB1
+-- EZConnect, not a TNS alias: the gvenzl images' sqlnet.ora tries EZCONNECT
+-- first, so an alias costs a DNS lookup on every CONNECT (#1014).
+define svc      = //localhost:1521/FREEPDB1
 define sys_conn = system/sopuli-test
 
 set lines 220 pages 200 feedback off verify off

@@ -231,10 +231,12 @@
 -- and leaves rows in UNIFIED_AUDIT_TRAIL. While AC5 runs, ACTIONS ALL audits
 -- every user.
 --------------------------------------------------------------------------------
-define svc      = FREEPDB1
+-- EZConnect, not a TNS alias: the gvenzl images' sqlnet.ora tries EZCONNECT
+-- first, so an alias costs a DNS lookup on every CONNECT (#1014).
+define svc      = //localhost:1521/FREEPDB1
 define sys_conn = system/sopuli-test
 define sysdba   = sys/sopuli-test
-define cdb      = FREE
+define cdb      = //localhost:1521/FREE
 
 set lines 220 pages 200 feedback off verify off
 whenever sqlerror exit failure

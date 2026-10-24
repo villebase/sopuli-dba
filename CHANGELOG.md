@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.80.0](https://github.com/villebase/sopuli-dba/compare/v0.79.0...v0.80.0) (2026-10-24)
+
+
+### Features
+
+* **audit:** keep a mixed-mode true only under a measured AUDIT_TRAIL ([#1013](https://github.com/villebase/sopuli-dba/issues/1013)) ([#1026](https://github.com/villebase/sopuli-dba/issues/1026)) ([71f36cb](https://github.com/villebase/sopuli-dba/commit/71f36cb7e703901e385fa39d47409ae0f415e5ef))
+* **config:** refuse a user name or password in a vault address ([#891](https://github.com/villebase/sopuli-dba/issues/891)) ([#1029](https://github.com/villebase/sopuli-dba/issues/1029)) ([8bcc81d](https://github.com/villebase/sopuli-dba/commit/8bcc81d22645f8c394f2eae8c4b009631da70516))
+
+
+### Bug Fixes
+
+* **probes:** connect by EZConnect, not a TNS alias, in probes 11, 13 and 15 ([#1014](https://github.com/villebase/sopuli-dba/issues/1014)) ([#1024](https://github.com/villebase/sopuli-dba/issues/1024)) ([7d1f527](https://github.com/villebase/sopuli-dba/commit/7d1f527eec8e8afebc74c99e86994e3289c1bbd4))
+* **vault:** percent-encode each path segment so a C## account's reset record is its own ([#884](https://github.com/villebase/sopuli-dba/issues/884)) ([#1028](https://github.com/villebase/sopuli-dba/issues/1028)) ([c35f123](https://github.com/villebase/sopuli-dba/commit/c35f1235414ad78ad58b37b3b4c971bb6ef8a128))
+
 ## [0.79.0](https://github.com/villebase/sopuli-dba/compare/v0.78.0...v0.79.0) (2026-10-23)
 
 

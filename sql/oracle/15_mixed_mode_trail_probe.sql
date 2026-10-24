@@ -48,14 +48,14 @@
 --
 -- Once, on 18.4 under NONE, SQL*Plus printed nothing after MT1's policy read
 -- and did not return, and V$SESSION showed no session of its own. It was
--- stopped, and that run is not counted. The likely cause is the connect
+-- stopped, and that run is not counted. A possible cause is the connect
 -- string (#1014), but that run was not captured, so it is not shown. The
 -- probe then connected to the alias XEPDB1, and the image's sqlnet.ora tries
 -- EZCONNECT before TNSNAMES, so each connect first asked DNS for a host named
 -- XEPDB1. On 2026-10-24 Docker Desktop's DNS took about 8 seconds to answer
 -- that no such host exists, and a connect by alias took about 24 seconds,
--- against 0.5 by EZConnect. A slower answer looks like a hang. The probe now
--- connects by EZConnect.
+-- against 0.5 by EZConnect. An answer much slower than that once would look
+-- like a hang. The probe now connects by EZConnect.
 --
 --
 -- RESULTS -- 21.3.0.0.0 and 18.4.0.0.0, XEPDB1, 2026-10-23 and 2026-10-24

@@ -14,7 +14,9 @@ things in the two places.
 
 from __future__ import annotations
 
+import ast
 import builtins
+import importlib.util
 import json
 import os
 import subprocess
@@ -26,7 +28,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from sopuli.config.model import Config, ExpandedTarget, Target
+from sopuli.config.model import Config, ExpandedTarget, Runtime, Target
 from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
 from sopuli.driver.protocol import DriverContext
@@ -196,7 +198,7 @@ def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         "sopuli.driver.registry.resolve", lambda target: SimpleNamespace(build_driver=build_driver)
     )
-    context = DriverContext(env={}, correlation_id="run-id")
+    context = DriverContext(env={}, correlation_id="run-id", runtime=Runtime())
 
     assert driver_for(target(), context) is built
     assert seen == [context]
@@ -211,7 +213,31 @@ def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatc
     )
 
     with pytest.raises(DriverNotInstalledError):
-        driver_for(target(), DriverContext(env={}, correlation_id="run-id"))
+        driver_for(target(), DriverContext(env={}, correlation_id="run-id", runtime=Runtime()))
+
+
+def _defines(module: str, name: str) -> bool:
+    """Whether ``module``'s source defines a top-level function ``name``,
+    read from the file so that the vendor client is never imported."""
+    spec = importlib.util.find_spec(module)
+    assert spec is not None, f"{module} not found"
+    assert spec.origin is not None, f"{module} has no source file"
+    tree = ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
+    return any(isinstance(node, ast.FunctionDef) and node.name == name for node in tree.body)
+
+
+@pytest.mark.parametrize("type_name", sorted(DRIVERS))
+def test_every_registered_driver_module_exports_build_driver(type_name: str) -> None:
+    """`driver_for` calls `build_driver` on the module. A driver added to
+    `DRIVERS` without it would raise a bare `AttributeError` inside a per-target
+    handler, and every target of that type would be reported as unreachable.
+    Read from the source, so the check runs on tier 0 with no client installed."""
+    assert _defines(DRIVERS[type_name].module, "build_driver")
+
+
+def test_the_build_driver_check_can_fail() -> None:
+    """The check above is only worth something if it can say no."""
+    assert not _defines("sopuli.driver.registry", "build_driver")
 
 
 def test_the_three_way_reading_is_the_one_the_stores_use() -> None:

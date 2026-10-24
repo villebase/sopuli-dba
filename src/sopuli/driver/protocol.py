@@ -1366,20 +1366,25 @@ class Timeouts:
 class DriverContext:
     """What a driver is built from: everything that belongs to the **run**.
 
-    P1 splits a driver's inputs in two. This half is set once per run: which
-    environment, which correlation id, which budgets, and the config's
-    ``runtime`` block, where a driver finds its client on this machine.
+    P1 splits a driver's inputs in two. This half is the same for every target
+    of a run: which environment, which correlation id, which budgets, and the
+    config's ``runtime`` block, where a driver finds its client on this machine.
     :meth:`Driver.connect` takes the other half, which belongs to the target.
 
     Each driver module the registry names exports ``build_driver(context)``,
     which reads what it needs from here. So the CLI never names a vendor's
     driver class, and a second driver adds no code to the CLI.
+
+    **``runtime`` has no default.** A caller that left it out would still
+    type-check, and the Oracle driver would then look for Instant Client
+    without ``runtime.oracle.client_lib_dir``. ``timeouts`` keeps its default,
+    because :class:`Timeouts` holds the documented built-ins.
     """
 
     env: Mapping[str, str]
     correlation_id: str
+    runtime: Runtime
     timeouts: Timeouts = field(default_factory=Timeouts)
-    runtime: Runtime = field(default_factory=Runtime)
 
 
 def require_capability(

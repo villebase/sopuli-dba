@@ -8,7 +8,7 @@ ones have their own suites, and this file is about *the command* -- what it
 plans, what it reads, what the document says, and what it exits with.
 
 The seams are :func:`sopuli.store.registry.connect` and
-:func:`sopuli.driver.registry.resolve`, patched where ``sopuli.cli`` imported
+:func:`sopuli.driver.registry.driver_for`, patched where ``sopuli.cli`` imported
 them. Patching the definitions would leave the already-imported references in
 place and quietly test nothing.
 """

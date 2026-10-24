@@ -21,6 +21,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "sopuli"
 ORACLE_PACKAGE = "sopuli.driver.oracle"
 
@@ -62,20 +64,50 @@ def _names(identifier: str) -> set[str]:
     return found
 
 
-def _oracle_imports() -> set[tuple[str, str]]:
+def _in_oracle(name: str) -> bool:
+    return name == ORACLE_PACKAGE or name.startswith(ORACLE_PACKAGE + ".")
+
+
+def _base(module: str, node: ast.ImportFrom) -> str:
+    """The absolute module an ``ImportFrom`` names, a relative one resolved
+    against ``module``'s own package."""
+    if node.level == 0:
+        return node.module or ""
+    package = ["sopuli", *module.removesuffix(".py").split("/")][:-1]
+    if module.endswith("__init__.py"):
+        package = ["sopuli", *module.split("/")[:-1]]
+    package = package[: len(package) - (node.level - 1)]
+    return ".".join([*package, *([node.module] if node.module else [])])
+
+
+def _oracle_imports_in(module: str, tree: ast.Module) -> set[str]:
+    """The Oracle modules ``tree`` imports, each named as the module it reads
+    from: ``from sopuli.driver.oracle.errors import X`` counts as
+    ``sopuli.driver.oracle.errors``, and ``from sopuli.driver import oracle`` as
+    ``sopuli.driver.oracle``."""
     found = set()
-    for module, tree in _outside_the_oracle_driver().items():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module is not None:
-                imported = [node.module]
-            elif isinstance(node, ast.Import):
-                imported = [alias.name for alias in node.names]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found |= {alias.name for alias in node.names if _in_oracle(alias.name)}
+        elif isinstance(node, ast.ImportFrom):
+            base = _base(module, node)
+            if _in_oracle(base):
+                found.add(base)
             else:
-                continue
-            for name in imported:
-                if name == ORACLE_PACKAGE or name.startswith(ORACLE_PACKAGE + "."):
-                    found.add((module, name))
+                found |= {
+                    f"{base}.{alias.name}"
+                    for alias in node.names
+                    if _in_oracle(f"{base}.{alias.name}")
+                }
     return found
+
+
+def _oracle_imports() -> set[tuple[str, str]]:
+    return {
+        (module, name)
+        for module, tree in _outside_the_oracle_driver().items()
+        for name in _oracle_imports_in(module, tree)
+    }
 
 
 def test_no_module_outside_the_driver_names_the_oracle_driver_class() -> None:
@@ -90,3 +122,24 @@ def test_the_cli_has_no_resolve_driver_left_to_patch() -> None:
 
 def test_oracle_imports_outside_the_driver_only_shrink() -> None:
     assert _oracle_imports() == KNOWN_ORACLE_IMPORTS
+
+
+@pytest.mark.parametrize(
+    ("module", "source", "found"),
+    [
+        ("apply.py", "from sopuli.driver import oracle", "sopuli.driver.oracle"),
+        ("output/view.py", "from ..driver.oracle import errors", "sopuli.driver.oracle"),
+        ("driver/registry.py", "from .oracle.session import x", "sopuli.driver.oracle.session"),
+        ("driver/registry.py", "from . import oracle", "sopuli.driver.oracle"),
+    ],
+)
+def test_an_import_spelled_another_way_still_counts(module: str, source: str, found: str) -> None:
+    """The import forms a refactor is likely to write: the package imported from
+    its parent, and a relative import."""
+    assert _oracle_imports_in(module, ast.parse(source)) == {found}
+
+
+def test_an_import_of_something_else_does_not_count() -> None:
+    tree = ast.parse("from sopuli.driver import protocol\nfrom . import registry")
+
+    assert _oracle_imports_in("driver/x.py", tree) == set()

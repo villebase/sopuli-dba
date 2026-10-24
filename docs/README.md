@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
-| — | — | What happens to reset records and locks written at a path truncated at `#` | open | | #884 |
 | — | — | Refuse or mask userinfo in a vault address | open | | #891 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the

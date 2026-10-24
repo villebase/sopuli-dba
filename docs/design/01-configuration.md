@@ -2360,18 +2360,22 @@ rule below.
 
 A path may not hold a `.` or `..` segment ([#344](../decisions/log.md#344)), and
 it may not hold `?`, `%`, a backslash or a control character (C0, DEL or C1).
-The HashiCorp backends put the path into the URL as written. A `?` starts a
-query, so `apps/acme?x/db` would read `apps/acme`. A `%` lets `%2e%2e` reach the
-server as a `..` that the segment check never saw. Both rules apply to a vault's
-`mount`, to an auth `mount`, and to `reset_records.prefix`, because each goes
-into a URL too: `mount: kv/../sys` would reach `sys/`. A mount and a prefix may
-not hold `#` either, since everything after it is dropped as a URL fragment; a
-ref's path cannot hold one, because `#` starts its field. They are refused rather
-than percent-encoded, so the operator learns at load time, and the refusal names
-the key it was read from. `normalise_path` refuses them again, for a path that
-arrives from the command line, such as `lock break`. `lock status` skips a
-listed lock record whose path it refuses, with a debug line: only a record
-written by hand can have one, and the tool could not read or break it.
+In a URL a `?` starts a query, so `apps/acme?x/db` would read `apps/acme`, and
+a `%` lets `%2e%2e` reach the server as a `..` that the segment check never saw.
+Both rules apply to a vault's `mount`, to an auth `mount`, and to
+`reset_records.prefix`, because each goes into a URL too: `mount: kv/../sys`
+would reach `sys/`. A mount and a prefix may not hold `#` either, since in a URL
+it starts a fragment; a ref's path cannot hold one, because `#` starts its
+field. The HashiCorp backends also percent-encode each segment of a path, so
+none of these characters changes which document they address. The characters
+are refused all the same, so the operator learns at load time, and the refusal
+names the key it was read from. `normalise_path` refuses them again, except
+`#`, for a path that arrives from the command line, such as `lock break`.
+`lock status` skips a listed lock record whose path it refuses, with a debug
+line: only a record written by hand can have one, and the tool could not read or
+break it. A reset-record path may hold `#`: an Oracle common user's name starts
+with `C##`, so its record is at `<prefix>/<target>/c##<name>`, and the encoding
+sends it whole.
 
 Only `version` and `stage` are qualifiers, and only one may appear — a pinned
 version and a stage select the same secret two different ways and nothing says

@@ -296,6 +296,70 @@ def test_a_body_httpx_cannot_encode_is_reported_by_its_error_type() -> None:
     assert "EXAMPLE" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    ("path", "sent"),
+    [
+        ("kv/data/resets/t/c##jdoe", b"/v1/kv/data/resets/t/c%23%23jdoe"),
+        ("kv/metadata/resets/t/", b"/v1/kv/metadata/resets/t/"),
+        ("kv/data/a?b/50%", b"/v1/kv/data/a%3Fb/50%25"),
+    ],
+    ids=["common-user", "list-keeps-trailing-slash", "query-and-percent"],
+)
+def test_each_path_segment_is_sent_as_a_name(path: str, sent: bytes) -> None:
+    """A `#` would otherwise start a URL fragment, and every `C##` account's
+    reset record would be one document (#884)."""
+    seen: list[bytes] = []
+
+    def answer(request: Any) -> Any:
+        seen.append(request.url.raw_path)
+        return httpx.Response(204)
+
+    transport = Transport(
+        httpx.Client(base_url="https://vault.example.com", transport=httpx.MockTransport(answer))
+    )
+
+    transport.request("GET", path)
+
+    assert seen == [sent]
+
+
+def test_a_kv2_walk_reads_each_common_users_record_by_its_own_name() -> None:
+    """The keys a LIST returns go back out encoded, so two `C##` records are two
+    documents (#884)."""
+    from sopuli.store.hashicorp.kv2 import Kv2Store
+
+    listings = {
+        b"/v1/kv/metadata/resets/": ["t/"],
+        b"/v1/kv/metadata/resets/t/": ["c##alice", "c##bob"],
+    }
+    seen: list[tuple[str, bytes]] = []
+
+    def answer(request: Any) -> Any:
+        seen.append((request.method, request.url.raw_path))
+        if request.method == "LIST":
+            return httpx.Response(200, json={"data": {"keys": listings[request.url.raw_path]}})
+        return httpx.Response(
+            200, json={"data": {"data": {}, "metadata": {"version": 1, "deletion_time": ""}}}
+        )
+
+    store = Kv2Store(
+        transport=Transport(
+            httpx.Client(
+                base_url="https://vault.example.com", transport=httpx.MockTransport(answer)
+            )
+        ),
+        mount="kv",
+    )
+
+    for path in store.list("resets/"):
+        store.read(path)
+
+    assert seen[-2:] == [
+        ("GET", b"/v1/kv/data/resets/t/c%23%23alice"),
+        ("GET", b"/v1/kv/data/resets/t/c%23%23bob"),
+    ]
+
+
 def test_redirects_are_not_followed() -> None:
     """Vault redirects to the active node, and following it silently would send
     this token somewhere the config never named."""

@@ -58,25 +58,25 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 #: here for that same reason.
 TRAVERSAL = frozenset({".", ".."})
 
-#: Characters a store path or mount may not hold (#858). The HashiCorp backends
-#: put the path into the URL as written. A ``?`` starts a query, so the rest of
-#: the path is dropped. A ``%`` lets ``%2e%2e`` reach the server as a ``..`` that
-#: the traversal check never saw. A backslash or a control character has no
-#: use in a vault path. They are refused rather than percent-encoded, as
-#: ``TRAVERSAL`` is: the operator learns at load time, with a location, that
-#: the path does not say what they meant, and no real estate needs them.
+#: Characters a store path or mount may not hold (#858). In a URL a ``?`` starts
+#: a query and a ``%`` an escape, so ``%2e%2e`` can reach a server as a ``..``
+#: that the traversal check never saw. A backslash or a control character has
+#: no use in a vault path. The HashiCorp transport percent-encodes each segment
+#: (#884), so on that backend none of them changes which document a request
+#: addresses. They are refused all the same, as ``TRAVERSAL`` is: the operator
+#: learns at load time, with a location, that the path is not a plain name, no
+#: real estate needs them, and a backend that put a path into a URL as written
+#: would not be safe from them.
 UNSAFE_PATH_CHARACTERS = frozenset("?%\\")
 
 UNSAFE_PATH_HINT = (
     "a store path or mount may not hold `?`, `%`, a backslash or a control "
-    "character: the path goes into the store's URL as written, and these change "
-    "which document it addresses"
+    "character: write it as plain names separated by `/`"
 )
 
 CONFIG_PATH_HINT = (
     "a store path, prefix or mount may not hold `?`, `#`, `%`, a backslash or a "
-    "control character: it goes into the store's URL as written, and these change "
-    "which document it addresses"
+    "control character: write it as plain names separated by `/`"
 )
 
 
@@ -101,11 +101,13 @@ def reject_unaddressable_path(text: str, *, what: str, at: KeyPath, traversal_hi
 
     Two rules, for every store path or mount a file names: no ``.`` or ``..``
     segment (decision #344), and none of the characters
-    :func:`unsafe_path_characters` finds, nor ``#``. httpx drops everything
-    after a ``#`` as a URL fragment. A ref's path cannot hold one, because the
-    ref grammar splits on it, but a prefix or a mount could. ``#`` is checked
-    here and not in :func:`normalise_path`, because that function also builds
-    reset-record paths, and an Oracle ``C##`` account name holds two.
+    :func:`unsafe_path_characters` finds, nor ``#``, which in a URL starts a
+    fragment. A ref's path cannot hold a ``#``, because the ref grammar splits
+    on it, but a prefix or a mount could. ``#`` is checked here and not in
+    :func:`normalise_path`, because that function also builds reset-record
+    paths, and an Oracle ``C##`` account name holds two. The HashiCorp
+    transport percent-encodes each segment, so such a path is sent whole
+    (#884).
 
     ``what`` names the value in the message, such as ``secret ref 'apps/x'``.
     ``traversal_hint`` says what a relative segment would do at this site, which

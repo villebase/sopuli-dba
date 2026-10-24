@@ -2984,3 +2984,32 @@ the register.
     every store down at once, would still report a clean estate.
   - Exit with the first store's own category. With several stores the
     categories can differ, and the first is no more the reason than the rest.
+
+## #884
+
+- **Decided:** 2026-10-24, #884
+- **Question:** The HashiCorp transport sent a path as written, and httpx drops
+  everything after a `#` as a URL fragment. So every Oracle common user (`C##`)
+  on a target shared one reset record and one lock, at `<prefix>/<target>/c`.
+  Once each path segment is percent-encoded, a `C##` account's record is at
+  `<prefix>/<target>/c##<name>`. What happens to the records and locks already
+  at the old path?
+- **Decision:** Accept the loss. The tool neither moves the old records nor
+  says what they are. A reset of a `C##` account after the upgrade does not
+  find the record an earlier release wrote, and takes its lock at the new
+  path. `lock status` still lists a lock left at the old path, as the lock of
+  an account `c`, and `lock break` can break it. The old path is also the path
+  of an account named `C`, whose reset reads and locks the old record as its
+  own.
+- **Why:** the records are a journal, not a source of truth, and the vault keeps
+  the old document for anyone who reads it by hand. A migration cannot be done
+  reliably, because the one old record mixed every `C##` account on the
+  target, and it does not say which account wrote it last. The cost accepted:
+  while one operator runs an earlier release and another this one, they lock a
+  `C##` account at two paths, so two resets of it are not kept apart. Every
+  operator who resets `C##` accounts upgrades together.
+- **Rejected:**
+  - Migrate the old records to the new paths. The old record cannot say which
+    account it belongs to.
+  - Report the old path as a leftover in `lock status` and the reset path. It
+    costs code for a state that exists only once, during the upgrade.

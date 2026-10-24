@@ -26,15 +26,20 @@
 -- with what condition, is #459 / #496.
 --
 -- STATUS: run on 26ai Free 23.26.2.0.0 (gvenzl/oracle-free:latest), FREEPDB1,
--- as SYSTEM, 2026-10-01 -- seven times, the last two this file exactly as it
--- stands (via /nolog, exit 0 both times). C1 and PX1..PX4 identical in all
+-- as SYSTEM, 2026-10-01 -- seven times, the last two this file as it then
+-- stood, connecting by the alias FREEPDB1 (via /nolog, exit 0 both times). C1 and PX1..PX4 identical in all
 -- seven. PX5 and PX6 as reported are from the last two: in runs 1 and 2 the
 -- audit queries were not scoped to the run and read earlier runs' rows (the
 -- &t0/&t1 bounds are the fix), and in runs 1 to 5 PX5 was read BEFORE the
 -- revoke, so it could not speak for it (review on #589; it now follows PX4).
 -- One further attempt stalled at PX6 and was stopped; its objects were gone
--- when checked. Untried on every other release. 11.2 has no unified audit,
--- so PX5 and PX6 do not apply there as written.
+-- when checked.
+--
+-- Run again on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest), as SYSTEM,
+-- on 2026-10-24 (#1014), once, this file as it stands, by EZConnect: exit 0
+-- in 2 seconds, and C1 and PX1..PX6 as in the results below. Untried on every
+-- other release. 11.2 has no unified audit, so PX5 and PX6 do not apply there
+-- as written.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, as SYSTEM, 2026-10-01
@@ -90,7 +95,9 @@
 -- THROWAWAY DATABASES ONLY. Creates and drops three accounts and an audit
 -- policy, plants known passwords, and leaves rows in UNIFIED_AUDIT_TRAIL.
 --------------------------------------------------------------------------------
-define svc      = FREEPDB1
+-- EZConnect, not a TNS alias: the gvenzl images' sqlnet.ora tries EZCONNECT
+-- first, so an alias costs a DNS lookup on every CONNECT (#1014).
+define svc      = //localhost:1521/FREEPDB1
 define sys_conn = system/sopuli-test
 
 set lines 220 pages 200 feedback off verify off

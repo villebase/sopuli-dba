@@ -10,9 +10,10 @@ not the other fails here.
 A release is written in full, five numbers: `19.32.0.0.0`, not `19c`. A SQL
 script's header is the comment block at the top, up to its first line that is
 not a comment. A Python probe's header is its module docstring, read with `ast`
-so that the probe, which imports `oracledb`, is not imported. A release that the
-*Releases* table marks "Not a database", such as an Instant Client, is not
-compared.
+so that the probe, which imports `oracledb`, is not imported. A release a header
+writes after "Instant Client" is the client the probe ran with, and is not
+compared. The same number may be a database elsewhere: Oracle Free 23.26.3.0.0
+and Instant Client 23.26.3.0.0 are two products.
 
 A Python probe with rows of its own is checked like a SQL script. A probe with
 no rows whose header names the SQL script of the same name reads that script's
@@ -39,8 +40,9 @@ SCRIPTS = ROOT / "sql" / "oracle"
 RELEASE = re.compile(r"\b\d{2}\.\d{1,2}\.\d\.\d\.\d\b")
 #: The marker on the line before the *Scripts* table.
 MARKER = "<!-- measurements: scripts -->"
-#: What the *Releases* table says of a release that is a client.
-NOT_A_DATABASE = "Not a database"
+#: A client release in a header, such as `Instant Client 23.26.3.0.0`. The words
+#: may wrap onto a new line, behind a SQL comment's `--`.
+CLIENT = re.compile(r"Instant(?:\s|--)+Client(?:\s|--)+`?" + RELEASE.pattern + "`?")
 #: Every script and probe whose header is checked.
 PROBES = sorted([*SCRIPTS.glob("*.sql"), *SCRIPTS.glob("*.py")])
 
@@ -72,26 +74,20 @@ def _rows() -> tuple[tuple[str, ...], ...]:
     return tuple(rows)
 
 
-def _releases_section(text: str) -> tuple[dict[str, str], str]:
-    """The *Releases* table, as each release and its description, and the text below it."""
+def _releases_section(text: str) -> tuple[set[str], str]:
+    """The releases the *Releases* table lists, and the text below it."""
     _, rest = text.split("## Releases\n", 1)
     table, below = rest.split("\n## ", 1)
-    rows = re.finditer(r"^\| `([^`]+)` \|(.*)$", table, re.MULTILINE)
-    return {row.group(1): row.group(2) for row in rows}, below
-
-
-def _clients_in(releases: dict[str, str]) -> frozenset[str]:
-    """The releases that a *Releases* table marks as a client, not a database."""
-    return frozenset(release for release, about in releases.items() if NOT_A_DATABASE in about)
-
-
-@functools.cache
-def _clients() -> frozenset[str]:
-    return _clients_in(_releases_section(MATRIX.read_text(encoding="utf-8"))[0])
+    return set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE)), below
 
 
 def _released(text: str) -> set[str]:
     return set(RELEASE.findall(text))
+
+
+def _databases(header: str) -> set[str]:
+    """The releases a header names, without the Instant Client it ran with."""
+    return _released(CLIENT.sub("", header))
 
 
 def _matrix() -> dict[str, set[str]]:
@@ -102,9 +98,7 @@ def _matrix() -> dict[str, set[str]]:
     return found
 
 
-def _disagreement(
-    name: str, header: str, matrix: dict[str, set[str]], clients: frozenset[str]
-) -> str | None:
+def _disagreement(name: str, header: str, matrix: dict[str, set[str]]) -> str | None:
     """How a script's header and the matrix disagree, or ``None`` if they agree.
 
     A Python probe with no rows of its own, whose header names a SQL script with
@@ -112,17 +106,17 @@ def _disagreement(
     script's rows list. Every other script must name the same releases as its
     rows.
     """
-    in_header = _released(header) - clients
+    in_header = _databases(header)
     companion = name.removesuffix(".py") + ".sql"
     if name.endswith(".py") and name not in matrix and companion in header:
-        ran = matrix.get(companion, set()) - clients
+        ran = matrix.get(companion, set())
         if in_header <= ran:
             return None
         return (
             f"{name} reads the output of {companion}, and names "
             f"{sorted(in_header - ran)} that {MATRIX.name} does not list for it."
         )
-    in_matrix = matrix.get(name, set()) - clients
+    in_matrix = matrix.get(name, set())
     if in_header == in_matrix:
         return None
     return (
@@ -150,29 +144,25 @@ def test_every_row_names_one_release_and_a_date() -> None:
 @pytest.mark.parametrize("script", PROBES, ids=lambda p: p.name)
 def test_a_script_header_and_the_matrix_name_the_same_releases(script: Path) -> None:
     requires_repo(MATRIX)
-    problem = _disagreement(script.name, _header(script), _matrix(), _clients())
+    problem = _disagreement(script.name, _header(script), _matrix())
     assert problem is None, problem
 
 
-RELEASES = """\
-## Releases
-
-| Release | Product, and where it ran |
-|---|---|
-| `23.26.2.0.0` | 26ai Free, a container |
-| `23.26.3.0.0` | Instant Client for Windows. Not a database: the client |
-
-## Scripts
-"""
-
-
-def test_a_release_marked_not_a_database_is_a_client() -> None:
-    releases, _ = _releases_section(RELEASES)
-    assert _clients_in(releases) == {"23.26.3.0.0"}
+@pytest.mark.parametrize(
+    ("header", "databases"),
+    [
+        ("run on 23.26.2.0.0, with Instant Client 23.26.3.0.0", {"23.26.2.0.0"}),
+        ("with Instant\nClient 23.26.3.0.0 for Windows", set()),
+        ("-- with Instant\n-- Client `23.26.3.0.0`", set()),
+        ("run on 23.26.3.0.0, with Instant Client 23.26.3.0.0", {"23.26.3.0.0"}),
+    ],
+    ids=["client-dropped", "wrapped", "sql-comment-and-backticks", "database-at-the-same-number"],
+)
+def test_a_client_is_told_from_a_database_by_its_words(header: str, databases: set[str]) -> None:
+    assert _databases(header) == databases
 
 
 MATRIX_06 = {"06_x.sql": {"19.3.0.0.0", "21.3.0.0.0"}, "07_x.sql": {"23.26.3.0.0"}}
-CLIENTS = frozenset({"23.26.3.0.0"})
 
 
 @pytest.mark.parametrize(
@@ -186,7 +176,8 @@ CLIENTS = frozenset({"23.26.3.0.0"})
         ("06_x.py", "reads 06_x.sql's output, from 18.4.0.0.0", False),
         ("06_x.py", "its own run on 19.3.0.0.0, with Instant Client `23.26.3.0.0`", False),
         ("06_x.py", "names no script and no release", True),
-        ("07_x.sql", "client 23.26.3.0.0 only", True),
+        ("07_x.sql", "run on Free 23.26.3.0.0, with Instant Client 23.26.3.0.0", True),
+        ("07_x.sql", "with Instant Client 23.26.3.0.0 only", False),
     ],
     ids=[
         "own-rows-missing",
@@ -197,14 +188,15 @@ CLIENTS = frozenset({"23.26.3.0.0"})
         "companion-names-another",
         "same-name-but-not-a-companion",
         "no-rows-no-releases",
-        "a-client-in-the-release-column",
+        "a-database-at-a-clients-number",
+        "only-the-client-named",
     ],
 )
 def test_the_comparison(name: str, header: str, agrees: bool) -> None:
     """Each rule, on made-up headers, so a rule that always passes fails here.
 
-    An Instant Client release is never compared, however it is written."""
-    assert (_disagreement(name, header, MATRIX_06, CLIENTS) is None) is agrees
+    A release written after "Instant Client" is never compared."""
+    assert (_disagreement(name, header, MATRIX_06) is None) is agrees
 
 
 def test_a_byte_order_mark_is_not_part_of_the_header(tmp_path: Path) -> None:
@@ -227,7 +219,6 @@ def test_the_matrix_names_only_scripts_that_exist() -> None:
 
 def test_every_release_used_is_in_the_releases_table() -> None:
     requires_repo(MATRIX)
-    table, below = _releases_section(MATRIX.read_text(encoding="utf-8"))
-    listed = set(table)
+    listed, below = _releases_section(MATRIX.read_text(encoding="utf-8"))
     used = _released(below)
     assert used <= listed, f"releases with no row in ## Releases: {sorted(used - listed)}"

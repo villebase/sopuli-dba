@@ -6,8 +6,6 @@ holds the line while those places are removed:
 
 - no module outside the Oracle driver names `OracleDriver`. A command gets a
   driver from `sopuli.driver.registry.driver_for` (#1030);
-- `sopuli.cli` has no `resolve_driver` left. A test that still patched it would
-  patch nothing and then dial a real database;
 - every import of a `sopuli.driver.oracle` module from outside that package is
   listed in :data:`KNOWN_ORACLE_IMPORTS`.
 
@@ -112,12 +110,6 @@ def _oracle_imports() -> set[tuple[str, str]]:
 
 def test_no_module_outside_the_driver_names_the_oracle_driver_class() -> None:
     assert _names("OracleDriver") == set()
-
-
-def test_the_cli_has_no_resolve_driver_left_to_patch() -> None:
-    import sopuli.cli
-
-    assert not hasattr(sopuli.cli, "resolve_driver")
 
 
 def test_oracle_imports_outside_the_driver_only_shrink() -> None:

@@ -216,28 +216,50 @@ def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatc
         driver_for(target(), DriverContext(env={}, correlation_id="run-id", runtime=Runtime()))
 
 
-def _defines(module: str, name: str) -> bool:
-    """Whether ``module``'s source defines a top-level function ``name``,
-    read from the file so that the vendor client is never imported."""
+def _source(module: str) -> ast.Module:
+    """``module``'s source, read from the file so that the vendor client is
+    never imported."""
     spec = importlib.util.find_spec(module)
     assert spec is not None, f"{module} not found"
     assert spec.origin is not None, f"{module} has no source file"
-    tree = ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
-    return any(isinstance(node, ast.FunctionDef) and node.name == name for node in tree.body)
+    return ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
+
+
+def _exports_build_driver(tree: ast.Module) -> bool:
+    """Whether ``tree`` defines a top-level ``build_driver`` that takes the
+    context and nothing else, which is how `driver_for` calls it."""
+    return any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "build_driver"
+        and len(node.args.posonlyargs) + len(node.args.args) == 1
+        and not node.args.kwonlyargs
+        for node in tree.body
+    )
 
 
 @pytest.mark.parametrize("type_name", sorted(DRIVERS))
 def test_every_registered_driver_module_exports_build_driver(type_name: str) -> None:
-    """`driver_for` calls `build_driver` on the module. A driver added to
-    `DRIVERS` without it would raise a bare `AttributeError` inside a per-target
-    handler, and every target of that type would be reported as unreachable.
-    Read from the source, so the check runs on tier 0 with no client installed."""
-    assert _defines(DRIVERS[type_name].module, "build_driver")
+    """`driver_for` calls `build_driver(context)` on the module. A driver added
+    to `DRIVERS` without it, or with another signature, would raise inside a
+    per-target handler, and every target of that type would be reported as
+    unreachable. Read from the source, so the check runs on tier 0 with no
+    client installed."""
+    assert _exports_build_driver(_source(DRIVERS[type_name].module))
 
 
-def test_the_build_driver_check_can_fail() -> None:
-    """The check above is only worth something if it can say no."""
-    assert not _defines("sopuli.driver.registry", "build_driver")
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def connect(context): ...",
+        "def build_driver(): ...",
+        "def build_driver(context, extra): ...",
+        "def build_driver(context, *, extra): ...",
+    ],
+)
+def test_the_build_driver_check_can_fail(source: str) -> None:
+    """The check above is only worth something if it can say no: to a module
+    without the factory, and to one whose factory `driver_for` cannot call."""
+    assert not _exports_build_driver(ast.parse(source))
 
 
 def test_the_three_way_reading_is_the_one_the_stores_use() -> None:

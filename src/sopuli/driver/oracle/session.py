@@ -65,7 +65,6 @@ from sopuli.driver.oracle.capabilities import (
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     CLIENT_UNUSABLE,
-    Timeouts,
     connect_arguments,
     missing_client,
 )
@@ -127,10 +126,12 @@ from sopuli.driver.protocol import (
     AuditCoverage,
     ChangeResult,
     Credential,
+    DriverContext,
     DriverError,
     PartialAccountChangeError,
     PrivilegeAudit,
     Scope,
+    Timeouts,
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
@@ -1570,7 +1571,7 @@ class OracleDriver:
     correlation_id: str
     timeouts: Timeouts = field(default_factory=Timeouts)
     #: ``runtime.oracle.client_lib_dir`` from the file, outranked by §6's
-    #: variable. Resolved by the caller, which is the one holding a `Config`.
+    #: variable. :func:`build_driver` reads it from the run's ``DriverContext``.
     client_lib_dir: str | None = None
 
     def connect(self, target: ExpandedTarget, credential: Credential) -> OracleSession:
@@ -1630,6 +1631,21 @@ class OracleDriver:
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )
+
+
+def build_driver(context: DriverContext) -> OracleDriver:
+    """The registry's way in: an :class:`OracleDriver` for this run.
+
+    The only place the run's context becomes Oracle's own arguments, so the
+    command never names this class. ``runtime.oracle.client_lib_dir`` is read
+    here; §6's variable still outranks it, in :func:`initialise`.
+    """
+    return OracleDriver(
+        env=context.env,
+        correlation_id=context.correlation_id,
+        timeouts=context.timeouts,
+        client_lib_dir=context.runtime.oracle.client_lib_dir,
+    )
 
 
 def _who(credential: Credential) -> str:

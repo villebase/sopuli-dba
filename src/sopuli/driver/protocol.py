@@ -64,13 +64,15 @@ of them read ``SYS.USER$``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from sopuli.config.model import ExpandedTarget
+from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
+from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 
 # ------------------------------------------------------------- capabilities ---
 #
@@ -1330,6 +1332,54 @@ class Driver(Protocol):
         :class:`DriverError` for anything else that stopped the connection.
         """
         ...
+
+
+@dataclass(frozen=True)
+class Timeouts:
+    """The two budgets, resolved, so that neither is a driver default.
+
+    Together rather than as two loose integers because they are asymmetric in a
+    way a caller has to be told about once -- a connection that times out has
+    applied nothing, and a call that times out cannot say what it applied. Both
+    numbers and the reasoning live in :mod:`sopuli.settings.registry`, which is
+    where their built-ins are; the defaults here exist so that a caller with no
+    resolved settings still gets the documented behaviour rather than the
+    driver's own.
+
+    Here rather than in a driver because the budgets belong to the run. Every
+    driver receives the same two numbers and turns them into its own client's
+    settings.
+    """
+
+    connect_s: int = DEFAULT_CONNECT_TIMEOUT_S
+    query_s: int = NO_QUERY_TIMEOUT
+
+    @property
+    def call_timeout_ms(self) -> int:
+        """The query budget in milliseconds, the unit the database clients take.
+        ``0`` disables it, which is what :data:`NO_QUERY_TIMEOUT` already means --
+        the units differ, the meaning does not."""
+        return self.query_s * 1000
+
+
+@dataclass(frozen=True)
+class DriverContext:
+    """What a driver is built from: everything that belongs to the **run**.
+
+    P1 splits a driver's inputs in two. This half is set once per run: which
+    environment, which correlation id, which budgets, and the config's
+    ``runtime`` block, where a driver finds its client on this machine.
+    :meth:`Driver.connect` takes the other half, which belongs to the target.
+
+    Each driver module the registry names exports ``build_driver(context)``,
+    which reads what it needs from here. So the CLI never names a vendor's
+    driver class, and a second driver adds no code to the CLI.
+    """
+
+    env: Mapping[str, str]
+    correlation_id: str
+    timeouts: Timeouts = field(default_factory=Timeouts)
+    runtime: Runtime = field(default_factory=Runtime)
 
 
 def require_capability(

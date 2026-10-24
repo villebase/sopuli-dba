@@ -21,6 +21,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NoReturn
 
 import pytest
@@ -28,6 +29,7 @@ import pytest
 from sopuli.config.model import Config, ExpandedTarget, Target
 from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
+from sopuli.driver.protocol import DriverContext
 from sopuli.driver.registry import (
     DRIVER_NOT_IMPLEMENTED,
     DRIVER_NOT_INSTALLED,
@@ -35,6 +37,7 @@ from sopuli.driver.registry import (
     DatabaseDriver,
     DriverNotImplementedError,
     DriverNotInstalledError,
+    driver_for,
     installed,
     resolve,
 )
@@ -178,6 +181,37 @@ def test_a_bad_import_inside_the_driver_is_ours_and_is_re_raised(
 
     with pytest.raises(ModuleNotFoundError):
         resolve(target())
+
+
+def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run's context reaches the driver module untouched, and what the
+    module builds is what the caller gets."""
+    seen: list[DriverContext] = []
+    built = object()
+
+    def build_driver(context: DriverContext) -> object:
+        seen.append(context)
+        return built
+
+    monkeypatch.setattr(
+        "sopuli.driver.registry.resolve", lambda target: SimpleNamespace(build_driver=build_driver)
+    )
+    context = DriverContext(env={}, correlation_id="run-id")
+
+    assert driver_for(target(), context) is built
+    assert seen == [context]
+
+
+def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The structured error `resolve` raises is the one the caller sees, so a
+    missing client is still exit 9 with the install line, not a traceback."""
+    monkeypatch.setattr(
+        "sopuli.driver.registry.resolve",
+        _raising(DriverNotInstalledError("not installed", hint="install it")),
+    )
+
+    with pytest.raises(DriverNotInstalledError):
+        driver_for(target(), DriverContext(env={}, correlation_id="run-id"))
 
 
 def test_the_three_way_reading_is_the_one_the_stores_use() -> None:

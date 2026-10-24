@@ -37,6 +37,7 @@ from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Target
+from sopuli.driver.protocol import Driver, DriverContext
 from sopuli.extras import (
     MISSING_CLIENT,
     MISSING_MODULE,
@@ -109,9 +110,10 @@ class DatabaseDriver:
 #: traceback rule 2 exists to prevent.
 #:
 #: One entry, and that is not a placeholder for a table that wants filling. D6
-#: keeps drivers in-tree until there is a second one, and P1's intended order
+#: keeps drivers in the tree, a second one included, and P1's intended order
 #: after Oracle -- PostgreSQL, SQL Server, MySQL -- is a roadmap rather than a
-#: promise this dict should pre-announce.
+#: promise this dict should pre-announce. A driver joins this dict in the PR
+#: that adds its module.
 DRIVERS: dict[str, DatabaseDriver] = {
     "oracle": DatabaseDriver(
         # The module that *connects*, not the package above it. The whole
@@ -178,8 +180,8 @@ def installed(driver: DatabaseDriver) -> bool:
 def resolve(target: Target) -> ModuleType:
     """Import the module serving ``target``'s ``type:``, or say why it cannot.
 
-    Returns the module, which exposes ``connect(target, credential, *, env,
-    correlation_id, timeouts)``.
+    Returns the module, which exports ``build_driver(context)``. A caller that
+    wants a driver uses :func:`driver_for`.
     """
     driver = DRIVERS[target.type]
     try:
@@ -199,3 +201,14 @@ def resolve(target: Target) -> ModuleType:
                 hint="this is not something to install -- the driver is not written yet",
             ) from exc
         raise
+
+
+def driver_for(target: Target, context: DriverContext) -> Driver:
+    """The driver for ``target``'s ``type:``, built for this run.
+
+    The one way a command gets a driver, so a command never names a vendor's
+    driver class (P1). Every error :func:`resolve` raises reaches the caller
+    unchanged.
+    """
+    driver: Driver = resolve(target).build_driver(context)
+    return driver

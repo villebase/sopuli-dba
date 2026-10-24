@@ -395,7 +395,7 @@ def test_the_text_says_where_it_looked_and_why_there(tmp_path: Path) -> None:
     assert "sqlnet.ora WALLET_LOCATION" in text
 
 
-def _refuse_to_connect(target: Any) -> Any:
+def _refuse_to_connect(target: Any, context: Any) -> Any:
     """Stand in for the driver, so `doctor` reports unreachable without dialling.
 
     `_examine` catches anything this raises and turns it into a not-connected
@@ -439,12 +439,12 @@ def test_doctor_reports_the_wallet_and_does_not_fail_over_it(
     keeps this tier 0. An external target has a credential by definition, so
     `doctor` would otherwise really dial `ORDERS_DEV` -- 46 seconds of DNS and TCP
     timeouts in a tier that is supposed to finish in under sixty for all of it,
-    and I/O in the tier defined by having none. Refusing at `resolve_driver`
+    and I/O in the tier defined by having none. Refusing at `driver_for`
     produces the same unreachable entry by a route that touches no network, and
     the wallet survey -- which is the subject -- runs before it either way.
     """
     monkeypatch.setenv("TNS_ADMIN", str(tmp_path / "empty"))
-    monkeypatch.setattr("sopuli.cli.resolve_driver", _refuse_to_connect)
+    monkeypatch.setattr("sopuli.cli.driver_for", _refuse_to_connect)
     config = write_config(EXTERNAL_TARGET)
 
     result = _doctor(runner, config)

@@ -18,13 +18,11 @@ a per-platform hint rather than a bare ``DPI-1047`` traceback.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from typing import Any
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import ExpandedTarget
-from sopuli.driver.protocol import Credential
-from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
+from sopuli.driver.protocol import Credential, Timeouts
 
 #: §6's variable: where Instant Client lives, when it is not somewhere the
 #: platform's loader already looks. Passed to ``init_oracle_client(lib_dir=...)``.
@@ -61,30 +59,6 @@ class ClientError(ConfigError):
     """
 
     code = CLIENT_NOT_LOADED
-
-
-@dataclass(frozen=True)
-class Timeouts:
-    """The two budgets, resolved, so that neither is a driver default.
-
-    Together rather than as two loose integers because they are asymmetric in a
-    way a caller has to be told about once -- a connection that times out has
-    applied nothing, and a call that times out cannot say what it applied. Both
-    numbers and the reasoning live in :mod:`sopuli.settings.registry`, which is
-    where their built-ins are; the defaults here exist so that a caller with no
-    resolved settings still gets the documented behaviour rather than the
-    driver's own.
-    """
-
-    connect_s: int = DEFAULT_CONNECT_TIMEOUT_S
-    query_s: int = NO_QUERY_TIMEOUT
-
-    @property
-    def call_timeout_ms(self) -> int:
-        """``Connection.call_timeout``, which python-oracledb takes in
-        milliseconds. ``0`` disables it, which is what :data:`NO_QUERY_TIMEOUT`
-        already means -- the units differ, the meaning does not."""
-        return self.query_s * 1000
 
 
 def client_hint(platform: str = sys.platform) -> str:

@@ -169,16 +169,13 @@ def runner() -> CliRunner:
 def estate(monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
     def install() -> None:
         class FakeDriver:
-            def __init__(self, **_: Any) -> None:
+            def __init__(self, context: Any) -> None:
                 pass
 
             def connect(self, target: Any, credential: Credential) -> FakeSession:
                 return FakeSession()
 
-        class FakeModule:
-            OracleDriver = FakeDriver
-
-        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
 
     return install
 

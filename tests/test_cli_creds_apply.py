@@ -63,6 +63,7 @@ from sopuli.driver.protocol import (
     AttributeChange,
     ChangeResult,
     Credential,
+    DriverContext,
     DriverError,
     Encryption,
     PrivilegeAudit,
@@ -613,12 +614,12 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
             return store
 
         class FakeDriver:
-            def __init__(self, **kwargs: Any) -> None:
+            def __init__(self, context: DriverContext) -> None:
                 # Recorded so a test can assert what the *command* handed the
                 # driver (decision #360). The session fake below cannot see it:
                 # `timeouts` is settled at construction and never reaches a
                 # statement.
-                harness.setdefault("driver_kwargs", []).append(kwargs)
+                harness.setdefault("driver_contexts", []).append(context)
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
                 if connect_error is not None:
@@ -643,11 +644,8 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 sessions.append(session)
                 return session
 
-        class FakeModule:
-            OracleDriver = FakeDriver
-
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
-        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
         monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, **_: _credential())
         return harness
 
@@ -2102,7 +2100,7 @@ def test_both_database_budgets_reach_the_driver(
     )
 
     assert result.exit_code == ExitCode.SUCCESS
-    timeouts = harness["driver_kwargs"][0]["timeouts"]
+    timeouts = harness["driver_contexts"][0].timeouts
     assert (timeouts.connect_s, timeouts.query_s) == (90, 600)
     assert timeouts.call_timeout_ms == 600_000
 
@@ -2124,7 +2122,7 @@ def test_an_unset_query_budget_stays_unbounded(
 
     run(runner, write_config(CONFIG), "--select", "tenant=alpha")
 
-    timeouts = harness["driver_kwargs"][0]["timeouts"]
+    timeouts = harness["driver_contexts"][0].timeouts
     assert timeouts.query_s == NO_QUERY_TIMEOUT
     assert timeouts.call_timeout_ms == 0
     assert timeouts.connect_s == DEFAULT_CONNECT_TIMEOUT_S

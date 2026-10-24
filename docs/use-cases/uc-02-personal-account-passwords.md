@@ -542,7 +542,12 @@ rules apply:
   percent-encode each path segment, so the `#` reaches the vault as part of the
   name. Releases up to 0.79.0 sent nothing after the first `#`, so they wrote
   the record and lock of every `C##` account on a target at
-  `<prefix>/<target>/c`. The tool no longer reads that path ([#884](../decisions/log.md#884)).
+  `<prefix>/<target>/c`. A reset of a `C##` account no longer reads that path.
+  It is also the path of an account named `C`, so a reset of `C` reads and
+  locks the old record as its own. `lock status` lists a lock left there as the
+  lock of an account `c`, and `lock break` can break it. Operators who reset
+  `C##` accounts upgrade together, because two releases lock one account at two
+  paths ([#884](../decisions/log.md#884)).
 
 **The record is written after the database confirms and after delivery** (§6.4).
 On the seen path, "after delivery" is as late as possible: the value is composed

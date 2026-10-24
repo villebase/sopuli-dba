@@ -185,9 +185,10 @@ def _log(started: float, method: str, path: str, outcome: str) -> None:
 
     Never a body, a header or the query string. A body holds a secret on a write
     and on a login, and a header holds the token. A path names where a secret is
-    kept, which is not a secret: it is what the config says.
+    kept, which is not a secret: it is what the config says. It is logged as it
+    was sent, encoded, so the line can be pasted into another HTTP client.
     """
-    LOG.debug("%s /v1/%s: %s in %.3fs", method, path, outcome, time.monotonic() - started)
+    LOG.debug("%s /v1/%s: %s in %.3fs", method, url_path(path), outcome, time.monotonic() - started)
 
 
 def _decode(response: httpx.Response) -> Any:

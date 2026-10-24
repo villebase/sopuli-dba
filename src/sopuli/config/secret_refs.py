@@ -62,21 +62,21 @@ TRAVERSAL = frozenset({".", ".."})
 #: a query and a ``%`` an escape, so ``%2e%2e`` can reach a server as a ``..``
 #: that the traversal check never saw. A backslash or a control character has
 #: no use in a vault path. The HashiCorp transport percent-encodes each segment
-#: (#884), so there none of them changes which document a request addresses.
-#: They are refused all the same, as ``TRAVERSAL`` is: the operator learns at
-#: load time, with a location, that the path is not a plain name, no real
-#: estate needs them, and a backend that put a path into a URL as written would
-#: not be safe from them.
+#: (#884), so on that backend none of them changes which document a request
+#: addresses. They are refused all the same, as ``TRAVERSAL`` is: the operator
+#: learns at load time, with a location, that the path is not a plain name, no
+#: real estate needs them, and a backend that put a path into a URL as written
+#: would not be safe from them.
 UNSAFE_PATH_CHARACTERS = frozenset("?%\\")
 
 UNSAFE_PATH_HINT = (
     "a store path or mount may not hold `?`, `%`, a backslash or a control "
-    "character: in a URL these change which document a path addresses"
+    "character: write it as plain names separated by `/`"
 )
 
 CONFIG_PATH_HINT = (
     "a store path, prefix or mount may not hold `?`, `#`, `%`, a backslash or a "
-    "control character: in a URL these change which document a path addresses"
+    "control character: write it as plain names separated by `/`"
 )
 
 

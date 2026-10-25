@@ -114,7 +114,7 @@ the rule that `CREATEROLE` needs `ADMIN OPTION`. A server whose
 `pg_auth_members` has `set_option` is one that requires `ADMIN OPTION`. On
 every release measured, 13.23 to 18.6, the column and the rule go together:
 the column is absent on 13.23, 14.24 and 15.19, and present on 16.15, 17.11
-and 18.6. A managed service or a fork is not measured. (open: #1047)
+and 18.6. A managed service or a fork is not measured.
 
 ### 2.3 `pg_hba.conf`
 
@@ -148,17 +148,22 @@ measurement.
 `sopuli doctor --check-privileges` reports what the tool account holds. It
 warns and never fails ([P5](../decisions/log.md#p5)). It reads only catalogs
 that every role can read, so the audit needs no grant of its own.
-(open: #1047)
 
 | Reported as | What it reads |
 |---|---|
 | held or missing | `CREATEROLE` on the tool account, from `pg_roles.rolcreaterole` |
-| held or missing | `ADMIN OPTION` on each managed role, from `pg_auth_members.admin_option`, where the server requires it (§2.2) |
-| over-granted | each row of §3 that the tool account holds |
-| not checked | a row of §3 that this server cannot answer |
+| held or missing | `ADMIN OPTION` on each managed role, from `pg_has_role(…, 'USAGE WITH ADMIN OPTION')`, where the server requires it (§2.2) |
+| over-granted | `SUPERUSER`, `REPLICATION` and `BYPASSRLS`, from `pg_roles` |
+| over-granted | §3's built-in roles, held through any chain of grants in `pg_auth_members`. From 16 the chain follows only grants with `INHERIT` or `SET`, because a grant with neither gives the member nothing of the role |
+| over-granted | a managed role whose privileges the tool account uses, from `pg_has_role(…, 'USAGE')`, or that it can `SET ROLE` to, from `pg_has_role(…, 'SET')`. Before 16, every member can `SET ROLE`, so it reads `'MEMBER'` |
 
-A managed role that does not exist is reported, and is not an error here. The
-tool does not create roles.
+Each over-granted managed role comes with the statement that removes the
+over-grant. A managed role that does not exist is reported as missing, and is
+not an error here. The tool does not create roles.
+
+`pg_has_role` answers true for every role when the tool account is a
+superuser. The built-in roles are read from `pg_auth_members` instead, so a
+superuser is not reported as a member of all of them.
 
 ---
 
@@ -178,7 +183,7 @@ tool does not create roles.
 
 `doctor --check-privileges` names anything on this list that the tool account
 holds. Over-granting is the usual result of fixing a permissions problem in a
-hurry. The tool notices it and says so. (open: #1047)
+hurry. The tool notices it and says so.
 
 ---
 

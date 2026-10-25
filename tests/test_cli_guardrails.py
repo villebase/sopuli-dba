@@ -116,7 +116,7 @@ class FakeSession:
     def scope(self) -> Scope:
         return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=frozenset())
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         return PrivilegeAudit()
 
     def describe_user(self, account: str) -> UserState | None:

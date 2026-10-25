@@ -399,7 +399,7 @@ class FakeSession:
             encryption=self.encryption,
         )
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What `--preflight` reads, and what `doctor --check-privileges` does.
 
         An `Exception` in `audit` stands for the view a service account is not

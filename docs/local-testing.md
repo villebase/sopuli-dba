@@ -42,8 +42,8 @@ the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the service account, run the SQL
 in `sql/oracle/` by hand. The only store backend is `hashicorp`; `doctor` lists
-the others as `not_implemented`. The PostgreSQL driver connects to a cluster and
-reports it (§7), and does nothing more yet.
+the others as `not_implemented`. The PostgreSQL driver connects to a cluster,
+reports it and audits the tool account (§7), and does nothing more yet.
 
 ---
 
@@ -448,11 +448,24 @@ and the run exits 1.
 
 ### A PostgreSQL cluster
 
-The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, user `postgres`,
+The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
 password `sopuli-test`. `doctor` connects to it and reports what it found. The
 other commands refuse a PostgreSQL target with `SOPULI-20006`, except
-`creds generate`, which uses the policy's limits for it. Save
-this as `postgres.yaml`:
+`creds generate`, which uses the policy's limits for it.
+
+The tool connects as an ordinary role with `CREATEROLE`
+([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
+Create it as the superuser, and choose its password at the prompt:
+
+```
+$ docker exec -it sopuli-test-postgres-1 psql -U postgres
+postgres=# SET password_encryption = 'scram-sha-256';
+postgres=# CREATE ROLE sopuli_admin LOGIN CREATEROLE;
+postgres=# \password sopuli_admin
+```
+
+Export that password as `SOPULI_DB_ADMIN_PASSWORD`, and save this as
+`postgres.yaml`:
 
 ```yaml
 version: 1
@@ -461,7 +474,7 @@ targets:
     type: postgresql
     environment: dev
     dsn: "127.0.0.1:5432"
-    admin: { username: postgres, auth: { method: env } }
+    admin: { username: sopuli_admin, auth: { method: env } }
     postgres: { sslmode: disable }
 ```
 
@@ -486,6 +499,22 @@ pg-dev  yes        cluster  -          READ WRITE  0             none
 ```
 
 `libpq` is the one psycopg loaded. `require_auth` needs libpq 16 or later.
+
+`doctor --check-privileges` also reports what the tool account holds and should
+not. With `GRANT pg_monitor TO sopuli_admin`, it prints:
+
+```
+$ sopuli --config postgres.yaml doctor --check-privileges
+...
+TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+pg-dev  yes        cluster  -          READ WRITE  0             none
+  pg-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
+  pg-dev: over-granted, and the tool needs none of it: pg_read_all_stats
+...
+```
+
+`pg_monitor` includes `pg_read_all_stats`, which shows other sessions' statement
+text. `REVOKE pg_monitor FROM sopuli_admin` clears the line.
 
 ---
 

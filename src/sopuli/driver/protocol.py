@@ -538,7 +538,8 @@ class PrivilegeAudit:
     #: called every correct install partial would teach a reader to skip the
     #: line. Those rows go to ``unaudited`` and bring a ``remedies`` entry.
     unreadable: tuple[str, ...] = ()
-    #: What a site could do to shrink ``unaudited``, in the product's own words.
+    #: What a site could do to shrink ``unaudited`` or ``over_granted``, in the
+    #: product's own words.
     #:
     #: Empty where nothing would help, which is the ordinary meaning of a row
     #: being unauditable. The strings are the driver's because a ``GRANT``
@@ -986,11 +987,15 @@ class Session(Protocol):
         """
         ...
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What the tool's own account holds beyond what it needs.
 
         Only ``doctor --check-privileges`` asks. It reports and never refuses:
         over-granting warns (P5).
+
+        ``accounts`` is every account the config declares on this target. A
+        driver whose grants are per account audits each one. One whose grant
+        reaches every account, as Oracle's ``ALTER USER`` does, ignores it.
         """
         ...
 

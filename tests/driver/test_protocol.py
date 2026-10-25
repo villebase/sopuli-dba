@@ -270,7 +270,7 @@ class _Session:
     def byte_limit(self) -> ByteLimit:
         return ByteLimit(max_bytes=128, encoding="utf-8")
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         return PrivilegeAudit()
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:

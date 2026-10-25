@@ -106,7 +106,7 @@ class FakeSession:
             encryption=self.encryption,
         )
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         return PrivilegeAudit()
 
     def describe_user(self, account: str) -> UserState | None:

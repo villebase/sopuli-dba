@@ -42,6 +42,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "sopuli"
 #: location is most of the argument for each site.
 PERMITTED = {
     "driver/oracle/client.py": "the driver call -- invariant 2's second exception",
+    "driver/postgres/connection.py": "the driver call, for PostgreSQL",
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
     "output/reset_view.py": (
         "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"

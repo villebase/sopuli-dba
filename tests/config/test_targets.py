@@ -144,13 +144,16 @@ def test_the_scope_vocabulary_is_the_run_documents_own() -> None:
     declared scope and an observed one are comparable without a translation table --
     and the error when they disagree can name both in one sentence. ``unknown`` is
     the one value a file may not claim: it is what the driver reports when it could
-    not tell, which is not something a config can assert.
+    not tell, which is not something a config can assert. ``cluster`` is
+    PostgreSQL's, where a file asserts no scope.
     """
     schema = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))
     observed = schema["$defs"]["scope"]["properties"]["type"]["enum"]
 
-    assert list(ORACLE_SCOPES) == [value for value in observed if value != "unknown"]
-    assert "unknown" in observed, "the run document dropped the value this test excludes"
+    unasserted = ("unknown", "cluster")
+    assert list(ORACLE_SCOPES) == [value for value in observed if value not in unasserted]
+    for value in unasserted:
+        assert value in observed, f"the run document dropped {value!r}, which this test excludes"
 
 
 def test_a_misspelled_scope_is_refused() -> None:

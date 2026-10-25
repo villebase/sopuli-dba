@@ -499,8 +499,8 @@ class TargetOracle:
     """
 
     #: One of :data:`~sopuli.config.targets.ORACLE_SCOPES`, which is the run
-    #: document's own ``scope.type`` vocabulary minus ``unknown``: the same word on
-    #: both sides means a mismatch needs no translation to report.
+    #: document's own ``scope.type`` vocabulary minus ``unknown`` and ``cluster``:
+    #: the same word on both sides means a mismatch needs no translation to report.
     scope: str | None = None
     container: str | None = None
 

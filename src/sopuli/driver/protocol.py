@@ -145,11 +145,16 @@ CAPABILITIES = frozenset(
 # ------------------------------------------------------------------ scopes ---
 
 #: What the driver found the connection to be. The run document has typed this
-#: since it was written, and ``config/targets.py`` accepts the same words minus
-#: :data:`UNKNOWN` -- so the word a file *asserts* and the word the tool
+#: since it was written. ``config/targets.py`` accepts the Oracle words as
+#: ``oracle.scope`` -- so the word a file *asserts* and the word the tool
 #: *reports* are the same word, and a mismatch between them needs no translation
-#: to explain (``01-configuration.md`` §3a).
-SCOPE_TYPES = ("non_cdb", "cdb_root", "pdb", "app_root", "app_pdb", "unknown")
+#: to explain (``01-configuration.md`` §3a). :data:`CLUSTER` is PostgreSQL's,
+#: and a file never asserts it: a PostgreSQL target is always the cluster.
+SCOPE_TYPES = ("non_cdb", "cdb_root", "pdb", "app_root", "app_pdb", "cluster", "unknown")
+
+#: A PostgreSQL cluster. Every role belongs to the whole cluster, so there is no
+#: container.
+CLUSTER = "cluster"
 
 #: Observation-only, and the one scope a config file may never claim. A driver
 #: that cannot tell says so; a file that said so would be asserting nothing.

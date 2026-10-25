@@ -7,8 +7,11 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 
 **What this build does.** It connects, labels the session with the run's
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
-its encryption. Every other operation refuses with ``SOPULI-20006``, after a
-mutating one has refused a read-only session first. The driver sends no DDL.
+its encryption. Only `doctor` gets this far: the registry entry is
+``scope_only``, so every other command refuses the target with ``SOPULI-20006``
+before it connects. The methods past the scope are a second line behind that:
+they refuse with ``SOPULI-20006``, after a mutating one has refused a read-only
+session first. The driver sends no DDL.
 """
 
 from __future__ import annotations
@@ -93,6 +96,11 @@ class PostgresSession:
         unmapped rather than reported as a lost connection.
         """
         if self._scope is None:
+            if self.connection is None:
+                raise DriverError(
+                    f'the session to target "{self.target.name}" is closed',
+                    hint="this is a fault in sopuli: a closed session was used again",
+                )
             try:
                 with self.connection.cursor() as cursor:
                     self._scope = observe(cursor)
@@ -123,6 +131,11 @@ class PostgresSession:
 
     def byte_limit(self) -> ByteLimit:
         raise self._not_written("size a password")
+
+    def password_constraints(self, account: str) -> None:
+        """Not on the protocol: ``creds generate`` asks it of a driver that
+        has it, and would read a missing method as no answer."""
+        raise self._not_written("read a role's password rules")
 
     def privileges(self) -> PrivilegeAudit:
         raise self._not_written("audit the tool's privileges")

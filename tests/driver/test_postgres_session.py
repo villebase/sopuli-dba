@@ -169,6 +169,14 @@ def test_a_client_side_error_is_not_read_as_a_lost_connection() -> None:
         _failing_session(error).scope()
 
 
+def test_a_closed_session_refuses_with_a_message() -> None:
+    session = _session()
+    session.close()
+
+    with pytest.raises(DriverError, match="is closed"):
+        session.scope()
+
+
 def test_close_is_safe_twice() -> None:
     session = _session()
     connection = session.connection

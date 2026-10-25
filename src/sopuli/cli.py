@@ -1053,7 +1053,7 @@ def _examine(
     try:
         # Getting in, which is what `reachable` reports.
         try:
-            session = _open_session(target, run, config)
+            session = _open_session(target, run, config, scope_only=True)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return build_target(
                 target,
@@ -8497,15 +8497,20 @@ def _admin_notices(run: Invocation) -> list[str]:
     return [one.message for one in run.document.diagnostics if one.code == LOW_ASSURANCE_ADMIN]
 
 
-def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> Session:
+def _open_session(
+    target: ExpandedTarget, run: Invocation, config: Config, *, scope_only: bool = False
+) -> Session:
     """One connection to one target, with the admin credential P2 resolves.
 
     Extracted because two passes need it: the pre-flight that refuses a strategy
     the estate cannot honour, and the run that applies. Identical in both, which
     is the point -- a pre-flight that connected differently would be clearing a
     different thing from the one that runs.
+
+    ``scope_only`` is `doctor`'s, which only asks what the target is; see
+    :func:`~sopuli.driver.registry.driver_for`.
     """
-    driver = driver_for(target.target, _driver_context(run, config))
+    driver = driver_for(target.target, _driver_context(run, config), scope_only=scope_only)
     credential = _admin_credential(target, run, config)
     return driver.connect(target, credential.credential)
 

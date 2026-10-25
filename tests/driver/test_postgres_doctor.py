@@ -90,7 +90,8 @@ def test_doctor_prints_the_postgresql_client_lines(
     assert "  psycopg" in result.output
     assert "  libpq" in result.output
     assert "  require_auth" in result.output
-    assert "cluster" in result.output
+    row = next(line for line in result.output.splitlines() if line.startswith("tier1-postgres "))
+    assert row.split()[1:5] == ["yes", "cluster", "-", "READ"]
 
 
 def test_a_wrong_admin_password_is_28p01_with_the_hint(

@@ -203,6 +203,33 @@ def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPa
     assert seen == [context]
 
 
+def test_a_scope_only_driver_is_refused_before_it_is_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every command but `doctor` is refused with SOPULI-20006 before any
+    credential is resolved or socket opened, so its per-target handler reports
+    it and the run carries on (#1040)."""
+    monkeypatch.setattr("sopuli.driver.registry.resolve", _raising(AssertionError("built")))
+    context = DriverContext(env={}, correlation_id="run-id", runtime=Runtime())
+
+    with pytest.raises(DriverNotImplementedError) as refused:
+        driver_for(target("pg-dev", "postgresql"), context)
+
+    assert refused.value.code == DRIVER_NOT_IMPLEMENTED
+    assert "`doctor`" in refused.value.message
+
+
+def test_doctor_gets_a_scope_only_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    built = object()
+    monkeypatch.setattr(
+        "sopuli.driver.registry.resolve",
+        lambda target: SimpleNamespace(build_driver=lambda context: built),
+    )
+    context = DriverContext(env={}, correlation_id="run-id", runtime=Runtime())
+
+    assert driver_for(target("pg-dev", "postgresql"), context, scope_only=True) is built
+
+
 def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:
     """The structured error `resolve` raises is the one the caller sees, so a
     missing client is still exit 9 with the install line, not a traceback."""
@@ -244,9 +271,9 @@ UNWRITTEN: frozenset[str] = frozenset()
 WRITTEN = sorted(set(DRIVERS) - UNWRITTEN)
 
 
-def test_an_unwritten_driver_has_no_module_yet() -> None:
-    for type_name in UNWRITTEN:
-        assert status_of(DRIVERS[type_name]) == NOT_IMPLEMENTED, type_name
+@pytest.mark.parametrize("type_name", sorted(UNWRITTEN))
+def test_an_unwritten_driver_has_no_module_yet(type_name: str) -> None:
+    assert status_of(DRIVERS[type_name]) == NOT_IMPLEMENTED
 
 
 @pytest.mark.parametrize("type_name", WRITTEN)

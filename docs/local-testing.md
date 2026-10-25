@@ -449,8 +449,9 @@ and the run exits 1.
 ### A PostgreSQL cluster
 
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, user `postgres`,
-password `sopuli-test`. The PostgreSQL driver connects and reports what it
-found. The other commands refuse a PostgreSQL target with `SOPULI-20006`. Save
+password `sopuli-test`. `doctor` connects to it and reports what it found. The
+other commands refuse a PostgreSQL target with `SOPULI-20006`, except
+`creds generate`, which uses the policy's limits for it. Save
 this as `postgres.yaml`:
 
 ```yaml

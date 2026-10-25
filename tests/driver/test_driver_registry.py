@@ -84,7 +84,7 @@ CLIENT_MISSING = DatabaseDriver(
 )
 
 #: No module in this build, and an extra all the same: the state of a type the
-#: config accepts before its driver is written, as ``postgresql`` is today.
+#: config accepts before its driver is written, as ``postgresql`` was.
 NO_MODULE = DatabaseDriver(
     module="sopuli.driver.nowhere", extra="oracle", provides=frozenset({"no_such_client"})
 )
@@ -150,10 +150,13 @@ def test_an_uninstalled_driver_is_the_whole_contract(monkeypatch: pytest.MonkeyP
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
-def test_a_driver_this_build_does_not_have_never_says_pip() -> None:
+def test_a_driver_this_build_does_not_have_never_says_pip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Nothing the operator installs fixes it, so the message must not carry an
-    install line. The real ``postgresql`` entry, whose module is not written
-    yet."""
+    install line."""
+    monkeypatch.setitem(DRIVERS, "postgresql", NO_MODULE)
+
     with pytest.raises(DriverNotImplementedError) as refused:
         resolve(target(type_name="postgresql"))
 
@@ -236,14 +239,14 @@ def _exports_build_driver(tree: ast.Module) -> bool:
 #: Types the config accepts whose driver module is not written yet. Each
 #: resolves to `DriverNotImplementedError`, and the test below fails once its
 #: module exists, so the entry leaves this set in the PR that writes it.
-UNWRITTEN = frozenset({"postgresql"})
+UNWRITTEN: frozenset[str] = frozenset()
 
 WRITTEN = sorted(set(DRIVERS) - UNWRITTEN)
 
 
-@pytest.mark.parametrize("type_name", sorted(UNWRITTEN))
-def test_an_unwritten_driver_has_no_module_yet(type_name: str) -> None:
-    assert status_of(DRIVERS[type_name]) == NOT_IMPLEMENTED
+def test_an_unwritten_driver_has_no_module_yet() -> None:
+    for type_name in UNWRITTEN:
+        assert status_of(DRIVERS[type_name]) == NOT_IMPLEMENTED, type_name
 
 
 @pytest.mark.parametrize("type_name", WRITTEN)

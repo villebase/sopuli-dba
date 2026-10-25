@@ -136,11 +136,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         provides=frozenset({"oracledb"}),
         password_limit="30 below 23, 128 from 23",
     ),
-    # No module yet: the config can declare a cluster before the driver can
-    # connect to one. `session` is the module that will import psycopg, for the
-    # reason the Oracle entry names `session`. The package beside it holds only
-    # tier-0 modules, so it exists and `find_spec` answers for the module.
-    # `psycopg` is the module the `postgres` extra installs.
+    # The module that imports psycopg, for the reason the Oracle entry names
+    # `session`. `psycopg` is the module the `postgres` extra installs.
     "postgresql": DatabaseDriver(
         module="sopuli.driver.postgres.session",
         extra="postgres",
@@ -168,8 +165,6 @@ class DriverNotImplementedError(ConfigError):
     the same ``ModuleNotFoundError`` and completely different problems. Nothing
     the operator installs fixes this one, so it must never carry an install
     line.
-
-    A ``postgresql`` target raises it until that driver's module exists.
 
     It has a code because the configuration is right and there is nothing to
     install, so a consumer must tell it from the ``config`` errors that a change

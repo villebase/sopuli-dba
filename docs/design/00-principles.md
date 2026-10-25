@@ -149,6 +149,9 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `account_lock_state` | Read and set lock state | yes |
 | `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set |
 
+A PostgreSQL session reports none of these yet: its driver connects and reports
+the scope, and does nothing a capability names.
+
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.
 
@@ -229,8 +232,9 @@ targets:
 `python-oracledb` exists only to reach Oracle, so it comes with
 `sopuli-dba[oracle]`. psycopg comes with `sopuli-dba[postgres]`.
 `sopuli/driver/registry.py` implements this. The config accepts
-`type: postgresql`, and until its driver module is written, a command that
-connects to one is refused with `SOPULI-20006`. The driver registry and the store
+`type: postgresql`. Its driver connects to the cluster and reports the scope,
+`cluster`, and every operation past that is refused with `SOPULI-20006` until it
+is written. The driver registry and the store
 registry share `sopuli/extras.py`, which finds a module without importing it and
 reads a `ModuleNotFoundError` three ways. That logic is subtle, so it has one
 copy. The error messages stay separate: a store is named by `vaults:` and a
@@ -410,7 +414,7 @@ These commands install the base and each extra:
 ```
 pip install sopuli-dba                 # config, selection, schema — no network client
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
-pip install "sopuli-dba[postgres]"     # + psycopg, for PostgreSQL; the driver is not written yet
+pip install "sopuli-dba[postgres]"     # + psycopg, for PostgreSQL; the driver connects and reports only
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel

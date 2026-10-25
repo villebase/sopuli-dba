@@ -41,9 +41,10 @@ def _observe(
     *,
     recovery: bool = False,
     read_only: str = "off",
-    ssl: tuple[Any, ...] | None = (True, "TLSv1.3"),
+    ssl: tuple[Any, ...] | None = (True,),
+    version: str = "16.15",
 ) -> Scope:
-    return observe(_Cursor(("16.15", recovery, read_only), ssl))
+    return observe(_Cursor((version, recovery, read_only), ssl))
 
 
 def test_a_primary_is_a_read_write_cluster() -> None:
@@ -54,6 +55,10 @@ def test_a_primary_is_a_read_write_cluster() -> None:
     assert scope.db_version == "16.15"
     assert scope.open_mode == READ_WRITE
     assert scope.read_write is True
+
+
+def test_a_packaged_builds_suffix_is_not_the_version() -> None:
+    assert _observe(version="16.4 (Debian 16.4-1.pgdg120+1)").db_version == "16.4"
 
 
 def test_no_capability_is_reported() -> None:
@@ -80,7 +85,7 @@ def test_a_tls_session_is_tls() -> None:
 
 
 def test_a_plain_session_is_none_with_a_hint() -> None:
-    encryption = _observe(ssl=(False, None)).encryption
+    encryption = _observe(ssl=(False,)).encryption
 
     assert encryption.method == "none"
     assert "sslmode" in str(encryption.hint)

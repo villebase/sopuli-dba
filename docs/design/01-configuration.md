@@ -1408,7 +1408,7 @@ spells them:
 | `app_pdb` | an application PDB |
 
 That is `scope.type` from the run schema (`docs/README.md` links the current
-one), minus `unknown`. Adopting the vocabulary the run document has typed since
+one), minus `unknown` and PostgreSQL's `cluster`. Adopting the vocabulary the run document has typed since
 it was written means the word a file *asserts* and the word the tool *reports*
 are the same word, so a mismatch between them needs no translation to explain. `unknown` is
 observation-only: something the driver may find, never something a file can claim.

@@ -35,9 +35,10 @@ SESSION_FACTS = (
 )
 
 #: The session's own row. ``pg_stat_ssl`` shows every role its own backend.
-SSL_ROW = "select ssl, version from pg_stat_ssl where pid = pg_backend_pid()"
+SSL_ROW = "select ssl from pg_stat_ssl where pid = pg_backend_pid()"
 
-#: The connection reaches the server over TCP: `dsn:` is always host:port.
+#: The connection reaches the server over TCP: `dsn:` is always host:port, and
+#: the config refuses a socket directory as the host.
 TCP = "tcp"
 
 UNENCRYPTED_HINT = (
@@ -76,6 +77,9 @@ def observe(cursor: Cursor) -> Scope:
     and where ``default_transaction_read_only`` is on. The second can be set for
     one role or one database, and a write then fails with ``25006`` as on a
     standby.
+
+    ``db_version`` is the first word of ``server_version``. A packaged build
+    adds its own after it, such as ``16.4 (Debian 16.4-1.pgdg120+1)``.
     """
     cursor.execute(SESSION_FACTS)
     version, in_recovery, read_only = cursor.fetchone()
@@ -91,7 +95,7 @@ def observe(cursor: Cursor) -> Scope:
 
     return Scope(
         type=CLUSTER,
-        db_version=str(version),
+        db_version=str(version).split()[0],
         open_mode=open_mode,
         read_write=open_mode == READ_WRITE,
         encryption=encryption,

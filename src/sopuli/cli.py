@@ -1049,12 +1049,10 @@ def _client_report(config: Config) -> dict[str, Any]:
     return report
 
 
-def _declared_on(config: Config, target: str) -> tuple[str, ...]:
-    """Every account the config declares on ``target``, for a driver whose
-    grants are per account."""
-    return tuple(
-        sorted({binding.account for binding in config.bindings if binding.target == target})
-    )
+def _declared_on(bindings: Iterable[Binding], target: str) -> tuple[str, ...]:
+    """Each account ``bindings`` bind on ``target``, once, in the order they are
+    declared."""
+    return tuple(dict.fromkeys(binding.account for binding in bindings if binding.target == target))
 
 
 def _examine(
@@ -1085,7 +1083,7 @@ def _examine(
         try:
             scope = session.scope()
             if privileges:
-                audit = session.privileges(accounts=_declared_on(config, target.name))
+                audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than
                 # added beside it, because `scope.over_granted` is where the run
                 # schema puts this, and two places for one fact are two things
@@ -5733,9 +5731,7 @@ def _profile_readings(
     means by absent.
     """
     found: list[tuple[str, AccountConstraints]] = []
-    for account in dict.fromkeys(
-        binding.account for binding in bindings if binding.target == target
-    ):
+    for account in _declared_on(bindings, target):
         try:
             one = session.password_constraints(account)
         except Exception:  # noqa: BLE001 -- reporting only; see the docstring
@@ -8762,7 +8758,7 @@ def _preflight_target(
         )
 
     try:
-        audit = session.privileges(accounts=_declared_on(config, target.name))
+        audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
         missing_privileges = tuple(audit.missing)
         privileges_hint = audit.hint
     except Exception as error:  # noqa: BLE001 -- likewise

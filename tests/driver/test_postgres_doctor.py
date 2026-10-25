@@ -20,6 +20,7 @@ from click.testing import CliRunner
 
 from sopuli.cli import cli
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetPostgres
+from sopuli.driver.postgres.privileges import GRANT_OPTIONS_ROW
 from sopuli.driver.protocol import Credential, DriverContext
 from sopuli.secrets import Secret
 
@@ -118,9 +119,22 @@ def tool_account(live_postgres: Any) -> Iterator[tuple[str, str, str]]:
     try:
         yield tool, password, managed
     finally:
-        with _superuser(live_postgres) as admin, suppress(psycopg.Error):
-            admin.execute(f'drop role "{managed}"')
-            admin.execute(f'drop role "{tool}"')
+        with _superuser(live_postgres) as admin:
+            for role in (managed, tool):
+                with suppress(psycopg.Error):
+                    admin.execute(f'drop role "{role}"')
+
+
+@pytest.fixture
+def grant_options(live_postgres: Any) -> None:
+    """Skip unless grants carry INHERIT and SET options, the capability these
+    tests' grants and findings depend on (``02-postgres-privileges.md`` §2.2)."""
+    with _superuser(live_postgres) as admin:
+        (present,) = admin.execute(GRANT_OPTIONS_ROW).fetchone()
+    if not present:
+        pytest.skip(
+            "capability absent: grants with INHERIT and SET options (pg_auth_members.set_option)"
+        )
 
 
 def _superuser(live_postgres: Any) -> Any:
@@ -156,10 +170,11 @@ def _audit_as(live_postgres: Any, user: str, password: str, accounts: tuple[str,
         session.close()
 
 
+@pytest.mark.usefixtures("grant_options")
 def test_a_role_without_admin_option_is_missing_and_with_it_held(
     live_postgres: Any, tool_account: tuple[str, str, str]
 ) -> None:
-    """The stack runs 16, which requires ADMIN OPTION (§2.2)."""
+    """A server whose grants carry options requires ADMIN OPTION (§2.2)."""
     tool, password, managed = tool_account
 
     before = _audit_as(live_postgres, tool, password, (managed,))
@@ -173,6 +188,7 @@ def test_a_role_without_admin_option_is_missing_and_with_it_held(
     assert after.over_granted == ()
 
 
+@pytest.mark.usefixtures("grant_options")
 def test_a_grant_that_inherits_and_a_built_in_role_are_over_granted(
     live_postgres: Any, tool_account: tuple[str, str, str]
 ) -> None:
@@ -183,13 +199,37 @@ def test_a_grant_that_inherits_and_a_built_in_role_are_over_granted(
 
     found = _audit_as(live_postgres, tool, password, (managed, "acme_absent_user"))
 
-    assert {
+    assert found.over_granted == (
         f"INHERIT TRUE ON {managed}",
         f"SET TRUE ON {managed}",
+        "pg_monitor",
         "pg_read_all_stats",
-    } <= set(found.over_granted)
-    assert found.missing == ("role acme_absent_user, which does not exist",)
-    assert "pg_monitor" in found.roles
+    )
+    assert found.missing == ("ADMIN OPTION ON acme_absent_user",)
+    assert found.remedies[0].startswith(f'GRANT "{managed}" TO "{tool}" WITH INHERIT FALSE')
+    assert "acme_absent_user does not exist" in found.remedies[1]
+
+
+@pytest.mark.usefixtures("grant_options")
+def test_a_managed_role_reached_through_another_role_says_so(
+    live_postgres: Any, tool_account: tuple[str, str, str]
+) -> None:
+    tool, password, managed = tool_account
+    ops = f"{managed}_ops"
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'grant "{managed}" to "{tool}" with admin option, inherit false, set false')
+        admin.execute(f'create role "{ops}"')
+        admin.execute(f'grant "{managed}" to "{ops}"')
+        admin.execute(f'grant "{ops}" to "{tool}"')
+    try:
+        found = _audit_as(live_postgres, tool, password, (managed,))
+    finally:
+        with _superuser(live_postgres) as admin:
+            admin.execute(f'drop role "{ops}"')
+
+    assert found.over_granted == (f"INHERIT TRUE ON {managed}", f"SET TRUE ON {managed}")
+    assert "through another role" in found.remedies[0]
+    assert ops in found.roles
 
 
 def test_doctor_prints_the_postgresql_client_lines(

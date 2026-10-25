@@ -509,7 +509,7 @@ $ sopuli --config postgres.yaml doctor --check-privileges
 TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
 pg-dev  yes        cluster  -          READ WRITE  0             none
   pg-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
-  pg-dev: over-granted, and the tool needs none of it: pg_read_all_stats
+  pg-dev: over-granted, and the tool needs none of it: pg_monitor, pg_read_all_stats
 ...
 ```
 

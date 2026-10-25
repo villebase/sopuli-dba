@@ -154,16 +154,22 @@ that every role can read, so the audit needs no grant of its own.
 | held or missing | `CREATEROLE` on the tool account, from `pg_roles.rolcreaterole` |
 | held or missing | `ADMIN OPTION` on each managed role, from `pg_has_role(…, 'USAGE WITH ADMIN OPTION')`, where the server requires it (§2.2) |
 | over-granted | `SUPERUSER`, `REPLICATION` and `BYPASSRLS`, from `pg_roles` |
-| over-granted | §3's built-in roles, held through any chain of grants in `pg_auth_members`. From 16 the chain follows only grants with `INHERIT` or `SET`, because a grant with neither gives the member nothing of the role |
+| over-granted | §3's built-in roles, held through any chain of grants in `pg_auth_members`. From 16 a role counts only where some chain to it has `INHERIT` or `SET` on every grant, because a grant with neither gives the member nothing of the role |
 | over-granted | a managed role whose privileges the tool account uses, from `pg_has_role(…, 'USAGE')`, or that it can `SET ROLE` to, from `pg_has_role(…, 'SET')`. Before 16, every member can `SET ROLE`, so it reads `'MEMBER'` |
 
+The report lists every role the tool account holds, through any chain, usable
+or not.
+
 Each over-granted managed role comes with the statement that removes the
-over-grant. A managed role that does not exist is reported as missing, and is
-not an error here. The tool does not create roles.
+over-grant, with the names quoted. Where the role reaches the tool account
+through another role, changing the direct grant would not remove it, so the
+report says so instead and names no statement. A managed role that does not
+exist is reported, and is not an error here. The tool does not create roles.
 
 `pg_has_role` answers true for every role when the tool account is a
-superuser. The built-in roles are read from `pg_auth_members` instead, so a
-superuser is not reported as a member of all of them.
+superuser. So the built-in roles are read from `pg_auth_members` instead, and a
+superuser's managed roles are not reported one by one: its `SUPERUSER` finding
+covers them.
 
 ---
 

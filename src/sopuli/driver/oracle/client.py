@@ -216,3 +216,11 @@ def describes_unreachable_server(code: str | None) -> bool:
     interoperability matrix when it is true, and says nothing when it is not.
     """
     return code == UNSUPPORTED_SERVER
+
+
+#: What `doctor` prints beside a target :func:`describes_unreachable_server`
+#: matches. "The client line above" is `doctor`'s own report of this client.
+TOO_NEW_WARNING = (
+    "this looks like the Instant Client being newer than the server; "
+    "see the client line above for what it reaches"
+)

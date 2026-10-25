@@ -302,3 +302,78 @@ def test_build_driver_passes_the_run_and_the_client_directory(session_module: An
     assert driver.timeouts == Timeouts(connect_s=90, query_s=600)
     assert driver.client_lib_dir == "/opt/instantclient"
     assert isinstance(driver, Driver)
+
+
+def test_the_client_report_names_the_client_and_what_it_reaches(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`doctor`'s client lines, which the driver writes so the CLI does not."""
+    from sopuli.config.model import OracleRuntime, Runtime
+
+    started: list[str | None] = []
+    monkeypatch.setattr(session_module, "initialise", lambda **kw: started.append(kw["lib_dir"]))
+    monkeypatch.setattr(session_module.oracledb, "clientversion", lambda: (23, 5, 0, 0, 0))
+
+    report = session_module.client_report(
+        env={"TNS_ADMIN": "/etc/tns"},
+        runtime=Runtime(oracle=OracleRuntime(client_lib_dir="/opt/instantclient")),
+    )
+
+    assert started == ["/opt/instantclient"]
+    assert report == {
+        "tns_admin": "/etc/tns",
+        "client_lib_dir": "/opt/instantclient",
+        "instant_client": "23.5.0.0.0",
+        "reaches": "19.1 and later",
+    }
+
+
+def test_a_client_that_will_not_load_is_reported_not_raised(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`doctor` must survive its own subject being broken."""
+    from sopuli.config.model import Runtime
+
+    def broken(**_: Any) -> None:
+        raise RuntimeError("DPI-1047: Cannot locate a 64-bit Oracle Client library\nmore")
+
+    monkeypatch.setattr(session_module, "initialise", broken)
+
+    report = session_module.client_report(env={}, runtime=Runtime())
+
+    assert report == {
+        "tns_admin": "(unset)",
+        "instant_client": "not loaded",
+        "detail": "DPI-1047: Cannot locate a 64-bit Oracle Client library",
+    }
+
+
+@pytest.mark.parametrize(
+    ("message", "warns"),
+    [
+        ("ORA-03134: Connections to this server version are no longer supported.", True),
+        ("ORA-12541: Cannot connect. No listener at host 192.0.2.10", False),
+    ],
+)
+def test_a_client_too_new_for_the_server_says_so_on_the_error(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch, message: str, warns: bool
+) -> None:
+    """`doctor` prints the sentence beside the failed target, and reads it from
+    the error rather than asking the Oracle driver which codes mean it."""
+    import oracledb
+
+    def refuse(**_: Any) -> Any:
+        raise oracledb.DatabaseError(message)
+
+    monkeypatch.setattr(session_module, "initialise", lambda **_: None)
+    monkeypatch.setattr(session_module, "connect_arguments", lambda *_, **__: {})
+    monkeypatch.setattr(oracledb, "connect", refuse)
+
+    with pytest.raises(DriverError) as raised:
+        driver(session_module).connect(target("localhost:1521/NOWHERE"), credential())
+
+    if warns:
+        assert raised.value.reach_warning is not None
+        assert "Instant Client being newer than the server" in raised.value.reach_warning
+    else:
+        assert raised.value.reach_warning is None

@@ -262,6 +262,39 @@ def test_the_build_driver_check_can_fail(source: str) -> None:
     assert not _exports_build_driver(ast.parse(source))
 
 
+def _exports_client_report(tree: ast.Module) -> bool:
+    """Whether ``tree`` defines a top-level ``client_report`` that takes exactly
+    the keywords ``env`` and ``runtime``, which is how `doctor` calls it."""
+    return any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "client_report"
+        and not node.args.posonlyargs
+        and not node.args.args
+        and {arg.arg for arg in node.args.kwonlyargs} == {"env", "runtime"}
+        for node in tree.body
+    )
+
+
+@pytest.mark.parametrize("type_name", sorted(DRIVERS))
+def test_every_registered_driver_module_exports_client_report(type_name: str) -> None:
+    """`doctor` asks each configured driver's module for its client lines. A
+    driver without the hook would end `doctor` with a traceback, the one
+    command that must survive a broken machine."""
+    assert _exports_client_report(_source(DRIVERS[type_name].module))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def client_version(): ...",
+        "def client_report(env, runtime): ...",
+        "def client_report(*, env): ...",
+    ],
+)
+def test_the_client_report_check_can_fail(source: str) -> None:
+    assert not _exports_client_report(ast.parse(source))
+
+
 def test_the_three_way_reading_is_the_one_the_stores_use() -> None:
     """The mechanism is shared (`sopuli/extras.py`) precisely because it is
     subtle: three different failures arrive as one exception and only one of

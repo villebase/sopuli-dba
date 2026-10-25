@@ -18,6 +18,7 @@ from sopuli.cli import cli, help_with
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.driver.oracle import limits
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
+from sopuli.driver.registry import DRIVERS
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "sopuli"
@@ -31,7 +32,13 @@ def _help(*command: str) -> str:
 
 
 def test_max_bytes_help_states_the_rule_max_bytes_applies() -> None:
-    assert f"({limits.describe_max_bytes()})" in _help("policy", "sample")
+    assert f"(oracle: {limits.describe_max_bytes()})" in _help("policy", "sample")
+
+
+def test_the_registry_states_the_rule_max_bytes_applies() -> None:
+    """The help reads the registry, which must not import a driver, so its
+    literal is pinned to the driver's rule here."""
+    assert DRIVERS["oracle"].password_limit == limits.describe_max_bytes()
 
 
 def test_the_rule_in_words_follows_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:

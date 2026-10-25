@@ -76,14 +76,12 @@ says ``EXPIRED(GRACE)`` in both shapes and needs no login
 from __future__ import annotations
 
 from sopuli.driver.protocol import (
+    DEFAULT_MARGIN,
     FAIL,
     PASS,
     SKIPPED,
     UNAVAILABLE,
 )
-
-#: UC-1 §7 mitigation 2's default. Two attempts of headroom left untouched.
-DEFAULT_MARGIN = 2
 
 #: What ``FAILED_LOGIN_ATTEMPTS`` says when there is no lockout to guard against.
 UNLIMITED = "UNLIMITED"

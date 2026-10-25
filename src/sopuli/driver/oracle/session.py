@@ -40,7 +40,7 @@ from typing import Any
 
 import oracledb
 
-from sopuli.config.model import ExpandedTarget
+from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.accounts import (
     accounts_with_profile,
@@ -65,8 +65,11 @@ from sopuli.driver.oracle.capabilities import (
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     CLIENT_UNUSABLE,
+    TOO_NEW_WARNING,
     connect_arguments,
+    describes_unreachable_server,
     missing_client,
+    reach_floor,
 )
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
@@ -1603,7 +1606,10 @@ class OracleDriver:
                 failure.code or "no code",
                 time.monotonic() - started,
             )
-            raise failure.as_error() from error
+            raised = failure.as_error()
+            if describes_unreachable_server(failure.code):
+                raised.reach_warning = TOO_NEW_WARNING
+            raise raised from error
         LOG.debug(
             "connect to %s as %s in %.3fs",
             target.name,
@@ -1685,3 +1691,36 @@ def client_version() -> tuple[int, ...]:
     anybody waits on a connection that cannot succeed.
     """
     return tuple(oracledb.clientversion())
+
+
+def client_report(*, env: Mapping[str, str], runtime: Runtime) -> dict[str, Any]:
+    """`doctor`'s client lines: what this machine can reach, before any target is
+    tried.
+
+    P4 wants this answered *without* a database: a 23.x client reaches 19c and
+    later, so a configured 11.2 target is out of reach and saying so beats
+    letting somebody wait for a connection that cannot succeed.
+
+    A missing Instant Client is the ordinary case on a fresh machine and is
+    reported rather than raised -- `doctor` exists to be run when things are
+    wrong, so it is the one command that must survive its own subject being
+    broken.
+    """
+    report: dict[str, Any] = {"tns_admin": env.get("TNS_ADMIN") or "(unset)"}
+    lib_dir = runtime.oracle.client_lib_dir
+    if lib_dir:
+        report["client_lib_dir"] = lib_dir
+
+    try:
+        initialise(env=env, lib_dir=lib_dir)
+        version = client_version()
+    except Exception as error:  # noqa: BLE001 -- a broken client is the finding
+        LOG.debug("client report from %s", type(error).__name__, exc_info=error)
+        report["instant_client"] = "not loaded"
+        report["detail"] = str(error).splitlines()[0]
+        return report
+
+    report["instant_client"] = ".".join(str(part) for part in version)
+    floor = reach_floor(version)
+    report["reaches"] = f"{floor[0]}.{floor[1]} and later" if floor else "(no interoperability row)"
+    return report

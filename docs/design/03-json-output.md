@@ -1448,7 +1448,8 @@ On a PostgreSQL target both are empty, because the audit reads only catalogs
 that every role can read (`02-postgres-privileges.md` §2.4). `held` and
 `missing` name `CREATEROLE` and, where the server requires it, `ADMIN OPTION
 ON <role>` for each role the config declares there. A declared role the cluster
-does not have gets a caveat line. A managed role whose privileges the tool
+does not have is in neither list, because no grant fixes it, and gets a caveat
+line. A managed role whose privileges the tool
 account can use is in `over_granted`, and a caveat line gives the statement
 that removes it.
 

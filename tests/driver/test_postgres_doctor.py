@@ -205,9 +205,9 @@ def test_a_grant_that_inherits_and_a_built_in_role_are_over_granted(
         "pg_monitor",
         "pg_read_all_stats",
     )
-    assert found.missing == ("ADMIN OPTION ON acme_absent_user",)
+    assert found.missing == ()
     assert found.remedies[0].startswith(f'GRANT "{managed}" TO "{tool}" WITH INHERIT FALSE')
-    assert "acme_absent_user does not exist" in found.remedies[1]
+    assert found.remedies[1].startswith("acme_absent_user does not exist")
 
 
 @pytest.mark.usefixtures("grant_options")
@@ -228,8 +228,38 @@ def test_a_managed_role_reached_through_another_role_says_so(
             admin.execute(f'drop role "{ops}"')
 
     assert found.over_granted == (f"INHERIT TRUE ON {managed}", f"SET TRUE ON {managed}")
-    assert "through another role" in found.remedies[0]
+    (remedy,) = found.remedies
+    assert remedy.startswith(f"the tool account reaches {managed} through another role")
     assert ops in found.roles
+
+
+@pytest.mark.usefixtures("grant_options")
+def test_a_chain_of_one_inherit_and_one_set_grant_gives_nothing(
+    live_postgres: Any, tool_account: tuple[str, str, str]
+) -> None:
+    """Privileges pass down INHERIT grants and SET ROLE down SET grants, so a
+    chain of one of each gives the tool neither."""
+    tool, password, _ = tool_account
+    mid = f"{tool}_mid"
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'create role "{mid}"')
+        admin.execute(f'grant "{mid}" to "{tool}" with inherit true, set false')
+        admin.execute(f'grant pg_read_server_files to "{mid}" with inherit false, set true')
+    try:
+        found = _audit_as(live_postgres, tool, password, ())
+        with _superuser(live_postgres) as admin:
+            (usable,) = admin.execute(
+                "select pg_has_role(%s, 'pg_read_server_files', 'USAGE') "
+                "or pg_has_role(%s, 'pg_read_server_files', 'SET')",
+                (tool, tool),
+            ).fetchone()
+    finally:
+        with _superuser(live_postgres) as admin:
+            admin.execute(f'drop role "{mid}"')
+
+    assert usable is False, "the server agrees the chain gives nothing"
+    assert "pg_read_server_files" not in found.over_granted
+    assert "pg_read_server_files" in found.roles
 
 
 def test_doctor_prints_the_postgresql_client_lines(

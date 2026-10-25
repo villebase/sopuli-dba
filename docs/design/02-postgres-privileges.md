@@ -154,17 +154,24 @@ that every role can read, so the audit needs no grant of its own.
 | held or missing | `CREATEROLE` on the tool account, from `pg_roles.rolcreaterole` |
 | held or missing | `ADMIN OPTION` on each managed role, from `pg_has_role(…, 'USAGE WITH ADMIN OPTION')`, where the server requires it (§2.2) |
 | over-granted | `SUPERUSER`, `REPLICATION` and `BYPASSRLS`, from `pg_roles` |
-| over-granted | §3's built-in roles, held through any chain of grants in `pg_auth_members`. From 16 a role counts only where some chain to it has `INHERIT` or `SET` on every grant, because a grant with neither gives the member nothing of the role |
+| over-granted | §3's built-in roles, held through any chain of grants in `pg_auth_members`. From 16 a role counts only where some chain to it has `INHERIT` on every grant, or `SET` on every grant. A role's privileges pass only down `INHERIT` grants and `SET ROLE` reaches only down `SET` grants, so a chain of one of each gives neither |
 | over-granted | a managed role whose privileges the tool account uses, from `pg_has_role(…, 'USAGE')`, or that it can `SET ROLE` to, from `pg_has_role(…, 'SET')`. Before 16, every member can `SET ROLE`, so it reads `'MEMBER'` |
 
 The report lists every role the tool account holds, through any chain, usable
 or not.
 
+A managed role is matched to the config's account name as written, and then by
+`upper()`, as the config compares names. The report uses the cluster's
+spelling.
+
 Each over-granted managed role comes with the statement that removes the
-over-grant, with the names quoted. Where the role reaches the tool account
-through another role, changing the direct grant would not remove it, so the
-report says so instead and names no statement. A managed role that does not
-exist is reported, and is not an error here. The tool does not create roles.
+over-grant, with the names quoted. From 16 that statement is a `GRANT` with
+the new options. It changes the grant made by the role that runs it, so it is
+run as the role that made the grant. Where the role also reaches the tool
+account through another role, a statement about the direct grant would not
+remove that path, so the report says so. A managed role that does not exist
+gets a line that says so. It is not missing, since no grant fixes it, and it
+is not an error here. The tool does not create roles.
 
 `pg_has_role` answers true for every role when the tool account is a
 superuser. So the built-in roles are read from `pg_auth_members` instead, and a

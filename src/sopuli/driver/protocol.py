@@ -538,8 +538,8 @@ class PrivilegeAudit:
     #: called every correct install partial would teach a reader to skip the
     #: line. Those rows go to ``unaudited`` and bring a ``remedies`` entry.
     unreadable: tuple[str, ...] = ()
-    #: What a site could do to shrink ``unaudited`` or ``over_granted``, in the
-    #: product's own words.
+    #: What a site could do to shrink ``unaudited`` or ``over_granted``, or about
+    #: a declared account the audit found no role for, in the product's own words.
     #:
     #: Empty where nothing would help, which is the ordinary meaning of a row
     #: being unauditable. The strings are the driver's because a ``GRANT``
@@ -993,8 +993,9 @@ class Session(Protocol):
         Only ``doctor --check-privileges`` asks. It reports and never refuses:
         over-granting warns (P5).
 
-        ``accounts`` is every account the config declares on this target. A
-        driver whose grants are per account audits each one. One whose grant
+        ``accounts`` is the accounts on this target the caller asks about:
+        `doctor` passes every one the config declares, and the pre-flight the
+        ones it surveys. A driver whose grants are per account audits each one. One whose grant
         reaches every account, as Oracle's ``ALTER USER`` does, ignores it.
         """
         ...

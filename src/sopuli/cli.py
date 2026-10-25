@@ -8758,7 +8758,9 @@ def _preflight_target(
         )
 
     try:
-        audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
+        # The accounts this run surveys, not every one declared: a grant missing
+        # for an account the selectors left out does not block this run.
+        audit = session.privileges(accounts=_declared_on(bindings, target.name))
         missing_privileges = tuple(audit.missing)
         privileges_hint = audit.hint
     except Exception as error:  # noqa: BLE001 -- likewise

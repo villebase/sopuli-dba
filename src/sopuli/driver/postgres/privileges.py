@@ -61,36 +61,40 @@ GRANT_OPTIONS_ROW = (
 ME = "(select oid from pg_roles where rolname = current_user)"
 
 #: Every role the tool account is a member of, through any chain of grants, and
-#: whether any chain to it gives the tool something of the role. ``union``
-#: rather than ``union all`` ends the walk: a role is reached at most twice,
-#: once usable and once not. ``{edge}`` is :data:`USABLE_EDGE` or ``true``.
+#: whether some chain gives the tool something of the role. A role's privileges
+#: pass down a chain whose every grant has ``INHERIT``, and ``SET ROLE`` reaches
+#: down a chain whose every grant has ``SET``, so the two are carried
+#: separately: a chain of one of each gives neither. ``union`` rather than
+#: ``union all`` ends the walk, since each role has at most four rows.
+#: ``{inherit}`` and ``{set}`` are the grant's columns, or ``true`` before 16,
+#: where every member can ``SET ROLE``.
 MEMBERSHIPS = (
-    "with recursive held(oid, usable) as ("
-    f"select m.roleid, {{edge}} from pg_auth_members m where m.member = {ME} "
+    "with recursive held(oid, inherits, sets) as ("
+    f"select m.roleid, {{inherit}}, {{set}} from pg_auth_members m where m.member = {ME} "
     "union "
-    "select m.roleid, h.usable and {edge} from pg_auth_members m "
+    "select m.roleid, h.inherits and {inherit}, h.sets and {set} from pg_auth_members m "
     "join held h on m.member = h.oid"
-    ") select r.rolname, bool_or(held.usable) from pg_roles r "
+    ") select r.rolname, bool_or(held.inherits or held.sets) from pg_roles r "
     "join held on r.oid = held.oid group by r.rolname"
 )
+GRANT_COLUMNS = {"inherit": "m.inherit_option", "set": "m.set_option"}
+NO_GRANT_COLUMNS = {"inherit": "true", "set": "true"}
 
-#: Where grants carry options, a grant with ``INHERIT FALSE`` and ``SET FALSE``
-#: gives the member nothing of the role, so a role reached only through it is
-#: held and not usable. Before 16 every grant is usable.
-USABLE_EDGE = "(m.inherit_option or m.set_option)"
-
-#: What the tool account can do with each managed role that exists, and whether
-#: a grant straight to the tool account is what gives it. The mode is a
-#: parameter: ``SET`` where grants carry the option, and ``MEMBER`` before,
-#: where every member can ``SET ROLE``. ``{direct}`` is :data:`DIRECT_USABLE` or
-#: :data:`DIRECT_MEMBER`.
+#: What the tool account can do with each managed role that exists, and how it
+#: reaches it: by a grant straight to the tool account that gives it something
+#: (``{direct}``, :data:`DIRECT_USABLE` or :data:`DIRECT_MEMBER`), and through
+#: another role it is a member of (the last column). The mode is a parameter:
+#: ``SET`` where grants carry the option, and ``MEMBER`` before. Names are
+#: compared by ``upper()``, as the config compares account names.
 MANAGED_ROLES = (
     "select r.rolname, "
     "pg_has_role(current_user, r.oid, 'USAGE WITH ADMIN OPTION'), "
     "pg_has_role(current_user, r.oid, 'USAGE'), "
     "pg_has_role(current_user, r.oid, %s), "
-    "{direct} "
-    "from pg_roles r where r.rolname = any(%s)"
+    "{direct}, "
+    f"exists (select 1 from pg_auth_members m where m.member = {ME} "
+    "and m.roleid <> r.oid and pg_has_role(m.roleid, r.oid, 'MEMBER')) "
+    "from pg_roles r where upper(r.rolname) = any(%s)"
 )
 DIRECT_USABLE = (
     "coalesce((select bool_or(m.inherit_option or m.set_option) from pg_auth_members m "
@@ -132,14 +136,16 @@ class Cursor(Protocol):
 
 @dataclass(frozen=True)
 class ManagedRole:
-    """What the tool account can do with one managed role, from ``pg_has_role``,
-    and whether a grant straight to the tool account gives it (``direct``)."""
+    """What the tool account can do with one managed role, from ``pg_has_role``.
+    ``direct``: a grant straight to the tool account gives it something.
+    ``indirect``: the tool account also reaches it through another role."""
 
     name: str
     admin: bool
     inherits: bool
     can_set: bool
     direct: bool = True
+    indirect: bool = False
 
 
 def classify(
@@ -156,7 +162,11 @@ def classify(
     ``attributes`` holds the role attributes that are true, spelled as
     ``ALTER ROLE`` spells them. ``memberships`` is every role held, and whether
     the tool can use it. ``accounts`` is every role the config declares on this
-    target, and ``managed`` the ones of them that exist.
+    target, and ``managed`` the ones of them that exist. A name matches as
+    written first, and by ``upper()`` after; findings use the cluster's spelling.
+
+    A declared role the cluster lacks is in neither ``held`` nor ``missing``:
+    no grant fixes it. A remedies line says so.
     """
     found = {name for name in FORBIDDEN_ATTRIBUTES if name in attributes}
     found |= {name for name in FORBIDDEN_ROLES if memberships.get(name)}
@@ -164,24 +174,26 @@ def classify(
     missing = [] if held else [CREATEROLE]
     remedies: list[str] = []
 
-    by_name = {role.name: role for role in managed}
+    exact = {role.name: role for role in managed}
+    folded: dict[str, ManagedRole] = {}
+    for one in managed:
+        folded.setdefault(one.name.upper(), one)
     for account in accounts:
-        role = by_name.get(account)
+        role = exact.get(account) or folded.get(account.upper())
         if role is None:
-            if grant_options:
-                missing.append(f"ADMIN OPTION ON {account}")
             remedies.append(
-                f"{account} does not exist on this cluster, and the tool does not create roles"
+                f"{account} does not exist on this cluster: create it, or remove it from "
+                "the config. The tool does not create roles"
             )
             continue
         if grant_options:
-            (held if role.admin else missing).append(f"ADMIN OPTION ON {account}")
+            (held if role.admin else missing).append(f"ADMIN OPTION ON {role.name}")
         if SUPERUSER in attributes:
             continue
-        over = _over_granted(account, role, grant_options=grant_options)
+        over = _over_granted(role, grant_options=grant_options)
         if over:
             found |= set(over)
-            remedies.append(_remedy(account, user, role, grant_options=grant_options))
+            remedies.extend(_remedies(role, user, grant_options=grant_options))
 
     return PrivilegeAudit(
         over_granted=tuple(sorted(found)),
@@ -193,37 +205,49 @@ def classify(
     )
 
 
-def _over_granted(account: str, role: ManagedRole, *, grant_options: bool) -> list[str]:
+def _over_granted(role: ManagedRole, *, grant_options: bool) -> list[str]:
     """What the tool can do with one managed role beyond changing its password."""
     if not grant_options:
-        return [f"MEMBER OF {account}"] if role.can_set else []
+        return [f"MEMBER OF {role.name}"] if role.can_set else []
     found = []
     if role.inherits:
-        found.append(f"INHERIT TRUE ON {account}")
+        found.append(f"INHERIT TRUE ON {role.name}")
     if role.can_set:
-        found.append(f"SET TRUE ON {account}")
+        found.append(f"SET TRUE ON {role.name}")
     return found
 
 
-def _remedy(account: str, user: str, role: ManagedRole, *, grant_options: bool) -> str:
-    """The statement that removes one managed role's over-grant, or where to look
-    when the role arrives through another role."""
-    if not role.direct:
-        return (
-            f"the tool account reaches {account} through another role it is a member "
-            "of: revoke that membership. `privileges.roles` in --output json lists "
+def _remedies(role: ManagedRole, user: str, *, grant_options: bool) -> list[str]:
+    """What removes one managed role's over-grant: a statement for the grant
+    made straight to the tool account, and a pointer for a path through another
+    role, which a statement about the direct grant would leave in place."""
+    lines = []
+    name, tool = _identifier(role.name), _identifier(user)
+    if role.direct and grant_options:
+        keeps = (
+            "keeps the ADMIN OPTION and gives the tool none of the role's privileges"
+            if role.admin
+            else "gives the tool the ADMIN OPTION it needs and none of the role's privileges"
+        )
+        options = (
+            "INHERIT FALSE, SET FALSE" if role.admin else "ADMIN OPTION, INHERIT FALSE, SET FALSE"
+        )
+        lines.append(
+            f"GRANT {name} TO {tool} WITH {options} {keeps}. Run it as the role that made "
+            "the grant, or it adds a second grant beside the first"
+        )
+    elif role.direct:
+        lines.append(
+            f"REVOKE {name} FROM {tool}: CREATEROLE alone changes its password on this server"
+        )
+    if role.indirect or not role.direct:
+        also = "also " if role.direct else ""
+        lines.append(
+            f"the tool account {also}reaches {role.name} through another role it is a "
+            "member of: revoke that membership. `privileges.roles` in --output json lists "
             "every role it holds"
         )
-    if grant_options:
-        return (
-            f"GRANT {_identifier(account)} TO {_identifier(user)} WITH INHERIT FALSE, "
-            "SET FALSE keeps the ADMIN OPTION and gives the tool none of the role's "
-            "privileges"
-        )
-    return (
-        f"REVOKE {_identifier(account)} FROM {_identifier(user)}: CREATEROLE alone "
-        "changes its password on this server"
-    )
+    return lines
 
 
 def _identifier(name: str) -> str:
@@ -242,12 +266,13 @@ def audit(cursor: Cursor, accounts: Sequence[str]) -> PrivilegeAudit:
     attributes = frozenset(name for name, value in zip(ATTRIBUTES, flags, strict=True) if value)
     cursor.execute(GRANT_OPTIONS_ROW)
     grant_options = bool(cursor.fetchone()[0])
-    cursor.execute(MEMBERSHIPS.format(edge=USABLE_EDGE if grant_options else "true"))
+    cursor.execute(MEMBERSHIPS.format(**(GRANT_COLUMNS if grant_options else NO_GRANT_COLUMNS)))
     memberships = {str(name): bool(usable) for name, usable in cursor.fetchall()}
     managed: list[ManagedRole] = []
     if accounts:
         query = MANAGED_ROLES.format(direct=DIRECT_USABLE if grant_options else DIRECT_MEMBER)
-        cursor.execute(query, ("SET" if grant_options else "MEMBER", list(accounts)))
+        mode = "SET" if grant_options else "MEMBER"
+        cursor.execute(query, (mode, [account.upper() for account in accounts]))
         managed = [ManagedRole(str(name), *map(bool, rest)) for name, *rest in cursor.fetchall()]
     return classify(
         user=str(user),

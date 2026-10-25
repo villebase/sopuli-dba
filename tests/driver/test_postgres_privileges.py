@@ -7,11 +7,12 @@ from typing import Any
 from sopuli.driver.postgres.privileges import (
     DIRECT_MEMBER,
     DIRECT_USABLE,
+    GRANT_COLUMNS,
     GRANT_OPTIONS_ROW,
     MANAGED_ROLES,
     MEMBERSHIPS,
+    NO_GRANT_COLUMNS,
     SELF_ROW,
-    USABLE_EDGE,
     ManagedRole,
     audit,
     classify,
@@ -62,7 +63,35 @@ def test_a_grant_that_inherits_or_sets_is_over_granted_with_its_remedy() -> None
 
     assert found.over_granted == (f"INHERIT TRUE ON {WEB}", f"SET TRUE ON {WEB}")
     (remedy,) = found.remedies
-    assert remedy.startswith(f'GRANT "{WEB}" TO "{USER}" WITH INHERIT FALSE, SET FALSE ')
+    assert remedy.startswith(
+        f'GRANT "{WEB}" TO "{USER}" WITH INHERIT FALSE, SET FALSE keeps the ADMIN OPTION'
+    )
+    assert "Run it as the role that made the grant" in remedy
+
+
+def test_without_admin_option_the_remedy_grants_it_too() -> None:
+    found = _classify(managed=(ManagedRole(WEB, False, True, False),))
+
+    assert found.remedies[0].startswith(
+        f'GRANT "{WEB}" TO "{USER}" WITH ADMIN OPTION, INHERIT FALSE, SET FALSE gives the '
+        "tool the ADMIN OPTION it needs"
+    )
+
+
+def test_a_direct_grant_and_a_path_through_another_role_get_both_remedies() -> None:
+    found = _classify(managed=(ManagedRole(WEB, True, False, True, indirect=True),))
+
+    statement, path = found.remedies
+    assert statement.startswith(f'GRANT "{WEB}"')
+    assert path.startswith(f"the tool account also reaches {WEB} through another role")
+
+
+def test_a_name_matches_by_upper_and_findings_use_the_clusters_spelling() -> None:
+    """The config compares account names by upper(), as invariant 5 says."""
+    found = _classify(accounts=("ACME_WEB_USER",), managed=(ManagedRole(WEB, False, True, False),))
+
+    assert found.missing == (f"ADMIN OPTION ON {WEB}",)
+    assert found.over_granted == (f"INHERIT TRUE ON {WEB}",)
 
 
 def test_a_remedy_quotes_the_names_it_puts_in_a_statement() -> None:
@@ -83,8 +112,9 @@ def test_a_role_reached_through_another_role_names_no_statement() -> None:
     found = _classify(managed=(ManagedRole(WEB, True, True, True, direct=False),))
 
     assert found.over_granted == (f"INHERIT TRUE ON {WEB}", f"SET TRUE ON {WEB}")
-    assert "through another role" in found.remedies[0]
-    assert "GRANT" not in found.remedies[0]
+    (remedy,) = found.remedies
+    assert remedy.startswith(f"the tool account reaches {WEB} through another role")
+    assert "GRANT" not in remedy
 
 
 def test_before_16_createrole_alone_is_the_install() -> None:
@@ -103,12 +133,14 @@ def test_before_16_any_membership_in_a_managed_role_is_over_granted() -> None:
     assert found.remedies[0].startswith(f'REVOKE "{WEB}" FROM "{USER}": CREATEROLE alone')
 
 
-def test_a_declared_role_the_cluster_lacks_is_reported_and_not_an_error() -> None:
+def test_a_declared_role_the_cluster_lacks_is_a_remedy_and_not_missing() -> None:
+    """No grant fixes a role that does not exist, so it is not a missing grant."""
     found = _classify(accounts=(WEB, "acme_batch_user"))
 
-    assert found.missing == ("ADMIN OPTION ON acme_batch_user",)
+    assert found.missing == ()
     assert found.remedies == (
-        "acme_batch_user does not exist on this cluster, and the tool does not create roles",
+        "acme_batch_user does not exist on this cluster: create it, or remove it from the "
+        "config. The tool does not create roles",
     )
 
 
@@ -171,7 +203,7 @@ class _Cursor:
 
     def fetchall(self) -> Any:
         if self.sent[-1][1] is not None:
-            return [(WEB, True, False, False, False)]
+            return [(WEB, True, False, False, False, False)]
         return [("pg_signal_backend", True), (WEB, False)]
 
 
@@ -183,10 +215,10 @@ def test_the_audit_reads_the_catalog_and_classifies_it() -> None:
     assert [query for query, _ in cursor.sent] == [
         SELF_ROW,
         GRANT_OPTIONS_ROW,
-        MEMBERSHIPS.format(edge=USABLE_EDGE),
+        MEMBERSHIPS.format(**GRANT_COLUMNS),
         MANAGED_ROLES.format(direct=DIRECT_USABLE),
     ]
-    assert cursor.sent[-1][1] == ("SET", [WEB])
+    assert cursor.sent[-1][1] == ("SET", [WEB.upper()])
     assert found.held == (f"ADMIN OPTION ON {WEB}", "CREATEROLE")
     assert found.over_granted == ("pg_signal_backend",)
     assert found.roles == (WEB, "pg_signal_backend")
@@ -197,8 +229,11 @@ def test_before_16_the_walk_follows_every_grant_and_asks_for_membership() -> Non
 
     audit(cursor, (WEB,))
 
-    assert cursor.sent[2][0] == MEMBERSHIPS.format(edge="true")
-    assert cursor.sent[-1] == (MANAGED_ROLES.format(direct=DIRECT_MEMBER), ("MEMBER", [WEB]))
+    assert cursor.sent[2][0] == MEMBERSHIPS.format(**NO_GRANT_COLUMNS)
+    assert cursor.sent[-1] == (
+        MANAGED_ROLES.format(direct=DIRECT_MEMBER),
+        ("MEMBER", [WEB.upper()]),
+    )
 
 
 def test_with_no_declared_account_the_roles_are_not_read() -> None:

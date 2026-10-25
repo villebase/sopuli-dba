@@ -30,9 +30,9 @@ import psycopg
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres.client import client_lines
 from sopuli.driver.postgres.connection import connect_arguments
-from sopuli.driver.postgres.errors import from_error
+from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
 from sopuli.driver.postgres.privileges import audit
-from sopuli.driver.postgres.scope import observe
+from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe
 from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     VERIFY_LOGIN,
@@ -90,15 +90,18 @@ class PostgresSession:
     target: ExpandedTarget
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: Why :meth:`cluster_identity` found no answer, or ``None``.
+    identity_caveat: str | None = field(default=None, init=False)
 
     def scope(self) -> Scope:
         """What this session is: a cluster, read-write or not, and its encryption.
 
-        Probed on the first call and cached for the session (invariant 3).
+        Probed on the first call and cached for the session (invariant 3). A
+        superuser is refused here, with ``SOPULI-20007``.
         """
         if self._scope is None:
             with self._cursor() as cursor:
-                self._scope = observe(cursor)
+                self._scope = observe(cursor, target=self.target.name)
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a cluster, %s %s, encryption %s",
@@ -108,6 +111,27 @@ class PostgresSession:
                     self._scope.encryption.method,
                 )
         return self._scope
+
+    def cluster_identity(self) -> str | None:
+        """The cluster's ``system_identifier``, which the CLI uses to refuse two
+        targets that are one cluster. A primary and its standbys share it.
+
+        ``None`` where the session may not run ``pg_control_system()``, with the
+        reason in :attr:`identity_caveat`. Any role can run it by default, so
+        this is a site that revoked it. Not knowing is not a finding.
+        """
+        try:
+            with self._cursor() as cursor:
+                cursor.execute(SYSTEM_IDENTIFIER)
+                return str(cursor.fetchone()[0])
+        except DriverError as error:
+            if error.code != INSUFFICIENT_PRIVILEGE:
+                raise
+            self.identity_caveat = (
+                "cannot read system_identifier, so the tool cannot tell whether another "
+                f"target is the same cluster: {error.message}"
+            )
+            return None
 
     @contextmanager
     def _cursor(self) -> Iterator[Any]:

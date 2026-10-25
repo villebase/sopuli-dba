@@ -1065,6 +1065,11 @@ def _examine(
         # Getting in, which is what `reachable` reports.
         try:
             session = _open_session(target, run, config, scope_only=True)
+        except OneClusterError as error:
+            # Reached, and refused because another target already is this cluster.
+            return build_target(
+                target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
+            )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return build_target(
                 target,
@@ -1078,7 +1083,8 @@ def _examine(
         # a dictionary view this account cannot read, or a probe that could not
         # be answered. Reporting that as unreachable would send somebody to the
         # listener over a grant, so the two are separate.
-        warnings: tuple[str, ...] = ()
+        caveat = getattr(session, "identity_caveat", None)
+        warnings: tuple[str, ...] = (caveat,) if caveat else ()
         audit = None
         try:
             scope = session.scope()
@@ -1093,7 +1099,7 @@ def _examine(
                 # whatever it managed to look at. `caveats()` is what stops
                 # `over_granted: []` meaning both "nothing is over-granted" and
                 # "the view that would have said so was refused".
-                warnings = audit.caveats()
+                warnings += audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             return build_target(
                 target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
@@ -8518,12 +8524,50 @@ def _open_session(
 
     ``scope_only`` is `doctor`'s, which only asks what the target is; see
     :func:`~sopuli.driver.registry.require_full_driver`.
+
+    A session to a cluster another target of this run already reached is
+    closed and refused (:func:`_claim_cluster`).
     """
     if not scope_only:
         require_full_driver(target.target)
     driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
-    return driver.connect(target, credential.credential)
+    session = driver.connect(target, credential.credential)
+    try:
+        _claim_cluster(session, target.name, run)
+    except BaseException:
+        with suppress(Exception):
+            session.close()
+        raise
+    return session
+
+
+class OneClusterError(ConfigError):
+    """Two targets are one cluster. Refused as a name declared twice is, and
+    for its reason: one set of roles would be changed under two names."""
+
+
+def _claim_cluster(session: Session, target: str, run: Invocation) -> None:
+    """Record which target reached this session's cluster, and refuse a second.
+
+    Asked of a driver whose session has ``cluster_identity``, which only the
+    PostgreSQL driver has. A session that cannot read its identity claims
+    nothing: not knowing is not a finding, and the session says why.
+    """
+    identify = getattr(session, "cluster_identity", None)
+    identity = identify() if identify is not None else None
+    if identity is None:
+        return
+    first = run.clusters.setdefault(identity, target)
+    if first != target:
+        raise OneClusterError(
+            f'targets "{first}" and "{target}" are one PostgreSQL cluster '
+            f"(system_identifier {identity})",
+            hint=(
+                "declare each cluster once. A primary and its standbys share their "
+                "roles, so one target covers them all"
+            ),
+        )
 
 
 def _driver_context(run: Invocation, config: Config) -> DriverContext:

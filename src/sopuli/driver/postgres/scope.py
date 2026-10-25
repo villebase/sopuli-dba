@@ -1,8 +1,14 @@
 """What a PostgreSQL session finds when it looks at itself. Tier 0.
 
-Two reads, both open to any role that can log in: the session's settings and
-recovery state, and its own row in ``pg_stat_ssl``. Nothing here branches on
-the server's version (invariant 3); the version is read only to report it.
+Two reads, both open to any role that can log in: the session's settings,
+recovery state and role, and its own row in ``pg_stat_ssl``. Nothing here
+branches on the server's version (invariant 3); the version is read only to
+report it.
+
+**A superuser is refused here**, in the first read every command makes, so no
+command acts as one. ``02-postgres-privileges.md`` §1 has the reason. This is
+the PostgreSQL form of the Oracle rule that the tool never connects ``AS
+SYSDBA``.
 
 **No capability is reported.** Each one in P1's table names something a driver
 does on this target, and this build of the PostgreSQL driver does none of them
@@ -22,6 +28,10 @@ from sopuli.driver.protocol import (
     Encryption,
     Scope,
 )
+from sopuli.exit_codes import ExitCode
+
+#: ``error.code`` for a tool account that is a superuser.
+SUPERUSER_REFUSED = "SOPULI-20007"
 
 #: ``scope.open_mode``, in the words P1 uses for an Oracle database, and a third
 #: for a standby, in PostgreSQL's own word for it.
@@ -31,11 +41,16 @@ IN_RECOVERY = "IN RECOVERY"
 
 SESSION_FACTS = (
     "select current_setting('server_version'), pg_is_in_recovery(), "
-    "current_setting('default_transaction_read_only')"
+    "current_setting('default_transaction_read_only'), current_user, "
+    "(select rolsuper from pg_roles where rolname = current_user)"
 )
 
 #: The session's own row. ``pg_stat_ssl`` shows every role its own backend.
 SSL_ROW = "select ssl from pg_stat_ssl where pid = pg_backend_pid()"
+
+#: The cluster's identity. ``EXECUTE`` on the function is granted to ``PUBLIC``
+#: by default (``pg-system-identifier`` in ``docs/README.md``).
+SYSTEM_IDENTIFIER = "select system_identifier from pg_control_system()"
 
 #: The connection reaches the server over TCP: `dsn:` is always host:port, and
 #: the config refuses a socket directory as the host.
@@ -69,9 +84,32 @@ def encryption_of(row: Any) -> Encryption:
     return Encryption(method=ENCRYPTION_NONE, protocol=TCP, hint=UNENCRYPTED_HINT)
 
 
-def observe(cursor: Cursor) -> Scope:
+class SuperuserError(DriverError):
+    """The target's admin is a superuser, and the tool connects only as an
+    ordinary role.
+
+    ``config``, exit 9: the fix is in the config, which names another role.
+    """
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, target: str, user: str) -> None:
+        super().__init__(
+            f'target "{target}" connects as "{user}", a superuser, and sopuli does '
+            "not run as a superuser",
+            hint=(
+                "point the target's admin at a role with CREATEROLE that is not a "
+                "superuser; 02-postgres-privileges.md section 2 has its grants"
+            ),
+            code=SUPERUSER_REFUSED,
+        )
+
+
+def observe(cursor: Cursor, *, target: str) -> Scope:
     """This session's scope: a cluster, whether it takes writes, and how it is
-    encrypted.
+    encrypted. Raises :class:`SuperuserError` for a superuser, before the
+    second read.
 
     ``read_write`` is false on a standby, where ``pg_is_in_recovery()`` is true,
     and where ``default_transaction_read_only`` is on. The second can be set for
@@ -82,7 +120,9 @@ def observe(cursor: Cursor) -> Scope:
     adds its own after it, such as ``16.4 (Debian 16.4-1.pgdg120+1)``.
     """
     cursor.execute(SESSION_FACTS)
-    version, in_recovery, read_only = cursor.fetchone()
+    version, in_recovery, read_only, user, superuser = cursor.fetchone()
+    if superuser:
+        raise SuperuserError(target, str(user))
     if in_recovery:
         open_mode = IN_RECOVERY
     elif read_only == "on":

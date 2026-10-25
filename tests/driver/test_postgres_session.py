@@ -35,8 +35,9 @@ scope_module = pytest.importorskip("sopuli.driver.postgres.scope")
 class _Cursor:
     def __init__(self, recovery: bool) -> None:
         self._rows = {
-            scope_module.SESSION_FACTS: ("16.15", recovery, "off"),
+            scope_module.SESSION_FACTS: ("16.15", recovery, "off", "sopuli_admin", False),
             scope_module.SSL_ROW: (False,),
+            scope_module.SYSTEM_IDENTIFIER: (7426912345678901234,),
         }
         self._last = ""
 
@@ -182,6 +183,37 @@ def test_a_closed_session_refuses_with_a_message(read: Any) -> None:
 
     with pytest.raises(DriverError, match="is closed"):
         read(session)
+
+
+def test_the_cluster_identity_is_the_system_identifier_as_text() -> None:
+    session = _session()
+
+    assert session.cluster_identity() == "7426912345678901234"
+    assert session.identity_caveat is None
+
+
+def test_an_identity_the_site_revoked_is_a_caveat_and_not_an_error() -> None:
+    import psycopg
+
+    error = psycopg.errors.InsufficientPrivilege("permission denied for function pg_control_system")
+    session = _failing_session(error)
+
+    assert session.cluster_identity() is None
+    assert session.identity_caveat == (
+        "cannot read system_identifier, so the tool cannot tell whether another target "
+        "is the same cluster: 42501: permission denied for function pg_control_system"
+    )
+
+
+def test_any_other_failure_to_read_the_identity_is_raised() -> None:
+    import psycopg
+
+    with pytest.raises(DriverError) as caught:
+        _failing_session(
+            psycopg.OperationalError("server closed the connection")
+        ).cluster_identity()
+
+    assert caught.value.code == "08006"
 
 
 def test_close_is_safe_twice() -> None:

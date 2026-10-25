@@ -59,8 +59,8 @@ class Product:
 #: A full Oracle release, such as `19.32.0.0.0` or `11.2.0.2.0`.
 _ORACLE_RELEASE = r"\b\d{2}\.\d{1,2}\.\d\.\d\.\d\b"
 #: A PostgreSQL release, such as `16.15` or `18.6`. Not part of a longer number,
-#: so `3.13.12` and `19.3.0.0.0` hold none.
-_POSTGRES_RELEASE = r"(?<![\d.])\d{2}\.\d{1,2}(?![\d.])"
+#: so `3.13.12` and `19.3.0.0.0` hold none. A full stop after it ends a sentence.
+_POSTGRES_RELEASE = r"(?<![\d.])\d{2}\.\d{1,2}(?!\d|\.\d)"
 
 ORACLE = Product(
     name="oracle",
@@ -209,6 +209,7 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(
         (POSTGRES, "-- psql and\n-- libpq `18.6`, on 18.6", {"18.6"}),
         (POSTGRES, "Python 3.13.12, psycopg 3.3.6, on 2026-10-25", set()),
         (POSTGRES, "Oracle 19.3.0.0.0 is not a PostgreSQL release", set()),
+        (POSTGRES, "As on 13.23. Run on 17.11.", {"13.23", "17.11"}),
     ],
     ids=[
         "client-dropped",
@@ -219,6 +220,7 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(
         "libpq-wrapped-at-the-same-number",
         "longer-numbers-are-not-releases",
         "an-oracle-release-is-not-one",
+        "a-release-that-ends-a-sentence",
     ],
 )
 def test_a_client_is_told_from_a_database_by_its_words(
@@ -288,6 +290,8 @@ def test_the_matrix_names_only_scripts_that_exist(product: Product) -> None:
 def test_every_release_used_is_in_the_releases_table(product: Product) -> None:
     requires_repo(MATRIX)
     listed, below = _releases_section(product, MATRIX.read_text(encoding="utf-8"))
-    used = _databases(product, below)
+    # Clients too: a release written after "Instant Client" or "libpq" needs its
+    # own row, which says what product it is.
+    used = _released(product, below)
     missing = sorted(used - listed)
     assert not missing, f"releases with no row in {product.releases_heading}: {missing}"

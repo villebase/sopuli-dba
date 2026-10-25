@@ -15,11 +15,12 @@
 --
 -- STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13
 -- to postgres:18 images of test/compose.yaml profile postgres-matrix, as the
--- superuser postgres, on 2026-10-25 (#1032). Once on each release from a new
--- data directory, exit 0. An earlier version of the file granted and revoked
--- EXECUTE on 13.23, 16.15 and 18.6, which left an explicit ACL. Those three
--- were then started from new data directories, and the earlier runs are not
--- counted.
+-- superuser postgres, on 2026-10-25 (#1032). Three times on each release,
+-- exit 0, the same result each time. The read runs under ON_ERROR_STOP, so
+-- exit 0 means it succeeded. An earlier version of the file granted and
+-- revoked EXECUTE on 13.23, 16.15 and 18.6, which left an explicit ACL. Those
+-- three were then started from new data directories, and the earlier runs are
+-- not counted.
 --
 -- RESULTS -- the same on all six releases
 --
@@ -50,10 +51,10 @@ SELECT proacl IS NULL AS default_acl, proacl
 
 \echo SI2 a role with no grants and no membership:
 SELECT has_function_privilege('sopuli_probe_plain', 'pg_control_system()', 'EXECUTE') AS can_execute;
+-- Under ON_ERROR_STOP, so exit 0 means the role read it. A refusal stops the
+-- script with its error and exit 3, and leaves sopuli_probe_plain behind.
 SET ROLE sopuli_probe_plain;
-\set ON_ERROR_STOP 0
 SELECT current_user, system_identifier IS NOT NULL AS read FROM pg_control_system();
-\set ON_ERROR_STOP 1
 RESET ROLE;
 
 DROP ROLE sopuli_probe_plain;

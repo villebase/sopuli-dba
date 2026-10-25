@@ -152,7 +152,8 @@ A PostgreSQL release is two numbers, such as `16.15`. Name it in full, never
 "16": a minor release can change what a major release does. The scripts are in
 `sql/postgres/`, and `tests/test_measurements.py` checks their headers against
 the table below in the same way. A release a header writes after "libpq" is the
-client the probe ran with, and is not compared.
+client the probe ran with, and is not compared. It still needs a row in the
+table, which says it is a libpq.
 
 | Release | Product, and where it ran |
 |---|---|
@@ -161,7 +162,11 @@ client the probe ran with, and is not compared.
 | `15.19` | The `postgres:15` image, the same profile, as pulled on 2026-10-25 |
 | `16.15` | The `postgres:16` image, the same profile, as pulled on 2026-10-25 |
 | `17.11` | The `postgres:17` image, the same profile, as pulled on 2026-10-25 |
-| `18.6` | The `postgres:18` image, the same profile, as pulled on 2026-10-25 |
+| `18.6` | The `postgres:18` image, the same profile, as pulled on 2026-10-25. Also the number of the libpq that the `postgres:18` image's psql and psycopg 3.3.6's Linux wheels bundle. A header writes the client as "libpq 18.6" |
+| `18.4` | libpq only: the one psycopg 3.3.6's Windows wheel bundles. No server ran it |
+| `17.6` | libpq only: the one psycopg 3.2.13's Linux wheel bundles |
+| `16.3` | libpq only: the one psycopg 3.1.20's Linux wheel bundles |
+| `16.0` | libpq only: the one psycopg 3.1.12's Linux wheel bundles |
 
 Not measured: every other minor release, and every managed service.
 

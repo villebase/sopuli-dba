@@ -21,8 +21,10 @@
 --
 -- STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13
 -- to postgres:18 images of test/compose.yaml profile postgres-matrix, as the
--- superuser postgres, on 2026-10-25 (#1032). Twice on each release, exit 0,
--- and the same result every time.
+-- superuser postgres, on 2026-10-25 (#1032). Four times on each release, exit
+-- 0, and the same result every time. The last two runs wait 2 s before they
+-- read the log, because the logging collector writes it in its own process.
+-- The first two read it at once and found every line too.
 --
 -- RESULTS -- the same on all six releases
 --
@@ -104,6 +106,9 @@ SELECT state, query
 SELECT dblink_disconnect('sopuli_probe') AS disconnected;
 
 -- ---------------------------------------------------------------- results --
+-- The logging collector writes the file in its own process, after the backend
+-- hands it a line. Give it time to write PT3's lines before reading them back.
+SELECT pg_sleep(2) IS NULL AS waited;
 \echo PT1-PT3 server log, lines this run wrote that hold a password or a verifier:
 SELECT line
   FROM regexp_split_to_table(

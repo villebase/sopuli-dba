@@ -41,6 +41,7 @@ from sopuli.driver.registry import (
     DriverNotInstalledError,
     driver_for,
     installed,
+    require_full_driver,
     resolve,
 )
 from sopuli.exit_codes import ExitCode
@@ -203,31 +204,19 @@ def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPa
     assert seen == [context]
 
 
-def test_a_scope_only_driver_is_refused_before_it_is_built(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_scope_only_driver_is_refused_for_a_full_command() -> None:
     """Every command but `doctor` is refused with SOPULI-20006 before any
     credential is resolved or socket opened, so its per-target handler reports
     it and the run carries on (#1040)."""
-    monkeypatch.setattr("sopuli.driver.registry.resolve", _raising(AssertionError("built")))
-    context = DriverContext(env={}, correlation_id="run-id", runtime=Runtime())
-
     with pytest.raises(DriverNotImplementedError) as refused:
-        driver_for(target("pg-dev", "postgresql"), context)
+        require_full_driver(target("pg-dev", "postgresql"))
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
     assert "`doctor`" in refused.value.message
 
 
-def test_doctor_gets_a_scope_only_driver(monkeypatch: pytest.MonkeyPatch) -> None:
-    built = object()
-    monkeypatch.setattr(
-        "sopuli.driver.registry.resolve",
-        lambda target: SimpleNamespace(build_driver=lambda context: built),
-    )
-    context = DriverContext(env={}, correlation_id="run-id", runtime=Runtime())
-
-    assert driver_for(target("pg-dev", "postgresql"), context, scope_only=True) is built
+def test_a_full_driver_is_not_refused() -> None:
+    require_full_driver(target())
 
 
 def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:

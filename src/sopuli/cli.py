@@ -185,7 +185,7 @@ from sopuli.driver.protocol import (
     UserState,
     VerifyResult,
 )
-from sopuli.driver.registry import DRIVERS, driver_for, installed
+from sopuli.driver.registry import DRIVERS, driver_for, installed, require_full_driver
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -8508,9 +8508,11 @@ def _open_session(
     different thing from the one that runs.
 
     ``scope_only`` is `doctor`'s, which only asks what the target is; see
-    :func:`~sopuli.driver.registry.driver_for`.
+    :func:`~sopuli.driver.registry.require_full_driver`.
     """
-    driver = driver_for(target.target, _driver_context(run, config), scope_only=scope_only)
+    if not scope_only:
+        require_full_driver(target.target)
+    driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
     return driver.connect(target, credential.credential)
 

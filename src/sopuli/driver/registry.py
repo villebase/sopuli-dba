@@ -89,8 +89,7 @@ class DatabaseDriver:
     #: driver's own rule.
     password_limit: str | None = None
     #: The driver connects and reports the scope, and does nothing more yet.
-    #: Only `doctor` asks for a driver like that; every other command is refused
-    #: with ``SOPULI-20006`` before it resolves a credential or connects.
+    #: :func:`require_full_driver` refuses it for every command but `doctor`.
     scope_only: bool = False
 
     @property
@@ -215,20 +214,14 @@ def resolve(target: Target) -> ModuleType:
         raise
 
 
-def driver_for(target: Target, context: DriverContext, *, scope_only: bool = False) -> Driver:
-    """The driver for ``target``'s ``type:``, built for this run.
+def require_full_driver(target: Target) -> None:
+    """Refuse a :attr:`DatabaseDriver.scope_only` driver, with ``SOPULI-20006``.
 
-    The one way a command gets a driver, so a command never names a vendor's
-    driver class (P1). Every error :func:`resolve` raises reaches the caller
-    unchanged.
-
-    ``scope_only`` is `doctor`'s: it only asks what the target is. Any other
-    caller of a :attr:`DatabaseDriver.scope_only` driver is refused here with
-    ``SOPULI-20006``, before a credential is resolved or a socket opened, so a
-    command over several targets reports that target's error and carries on.
+    Every command but `doctor` calls this before it resolves a credential or
+    opens a socket, so a command over several targets reports that target's
+    error and carries on. `doctor` only asks what the target is, and skips it.
     """
-    entry = DRIVERS[target.type]
-    if entry.scope_only and not scope_only:
+    if DRIVERS[target.type].scope_only:
         raise DriverNotImplementedError(
             f'target "{target.name}" declares type "{target.type}", and this build '
             f"can only report what such a target is (`doctor`) yet",
@@ -237,5 +230,14 @@ def driver_for(target: Target, context: DriverContext, *, scope_only: bool = Fal
                 "the target, and the rest of it is not written yet"
             ),
         )
+
+
+def driver_for(target: Target, context: DriverContext) -> Driver:
+    """The driver for ``target``'s ``type:``, built for this run.
+
+    The one way a command gets a driver, so a command never names a vendor's
+    driver class (P1). Every error :func:`resolve` raises reaches the caller
+    unchanged.
+    """
     driver: Driver = resolve(target).build_driver(context)
     return driver

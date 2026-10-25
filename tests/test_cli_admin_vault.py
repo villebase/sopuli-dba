@@ -177,18 +177,15 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Callable[..., dict[str, Any]]:
             return store
 
         class FakeDriver:
-            def __init__(self, **_: Any) -> None:
+            def __init__(self, context: Any) -> None:
                 pass
 
             def connect(self, target: Any, credential: Credential) -> FakeSession:
                 seen.append(credential)
                 return FakeSession()
 
-        class FakeModule:
-            OracleDriver = FakeDriver
-
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
-        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
         # `doctor`'s `vaults` section surveys every declared store over the real
         # client, which needs a token this tier has not got -- and an unreachable
         # store is exit 1, which would mask the target result under test. That
@@ -433,17 +430,14 @@ def test_one_store_serving_both_halves_is_opened_once(
         return store
 
     class FakeDriver:
-        def __init__(self, **_: Any) -> None:
+        def __init__(self, context: Any) -> None:
             pass
 
         def connect(self, target: Any, credential: Credential) -> FakeSession:
             return FakeSession()
 
-    class FakeModule:
-        OracleDriver = FakeDriver
-
     monkeypatch.setattr("sopuli.cli.connect", fake_connect)
-    monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
     config = write_config(
         VAULT_ADMIN
         + """applications:
@@ -481,19 +475,16 @@ def _surveyed(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> dict[st
         return store
 
     class FakeDriver:
-        def __init__(self, **_: Any) -> None:
+        def __init__(self, context: Any) -> None:
             pass
 
         def connect(self, target: Any, credential: Credential) -> FakeSession:
             seen.append(credential)
             return FakeSession()
 
-    class FakeModule:
-        OracleDriver = FakeDriver
-
     monkeypatch.setattr("sopuli.cli.connect", fake_connect)
     monkeypatch.setattr("sopuli.store.survey.connect", fake_connect)
-    monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
     return {"opened": opened, "seen": seen}
 
 

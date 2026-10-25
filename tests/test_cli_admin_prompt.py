@@ -155,17 +155,14 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Callable[..., list[Credential]]:
         seen: list[Credential] = []
 
         class FakeDriver:
-            def __init__(self, **_: Any) -> None:
+            def __init__(self, context: Any) -> None:
                 pass
 
             def connect(self, target: Any, credential: Credential) -> FakeSession:
                 seen.append(credential)
                 return FakeSession()
 
-        class FakeModule:
-            OracleDriver = FakeDriver
-
-        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
         return seen
 
     return install
@@ -419,18 +416,15 @@ def creds_estate(monkeypatch: pytest.MonkeyPatch) -> Callable[[], list[Credentia
             return store
 
         class FakeDriver:
-            def __init__(self, **_: Any) -> None:
+            def __init__(self, context: Any) -> None:
                 pass
 
             def connect(self, target: Any, credential: Credential) -> CredsSession:
                 seen.append(credential)
                 return CredsSession()
 
-        class FakeModule:
-            OracleDriver = FakeDriver
-
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
-        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
         return seen
 
     return install

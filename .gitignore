@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local planning notes: designs, plans and their working files. They stay on
+# the maintainer's machine.
+.superpowers/
+docs/superpowers/

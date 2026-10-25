@@ -108,7 +108,7 @@ DEFAULT_CONNECT_TIMEOUT_S = 30
 #: reasoning wants to live: this module imports nothing from ``sopuli`` on
 #: purpose -- it sits below :mod:`sopuli.config`, which imports it -- and a
 #: constant reaching up into the driver layer made a cycle out of a number. One
-#: definition, and :mod:`sopuli.driver.oracle.client` reads it from here.
+#: definition, and :class:`sopuli.driver.protocol.Timeouts` reads it from here.
 NO_QUERY_TIMEOUT = 0
 
 

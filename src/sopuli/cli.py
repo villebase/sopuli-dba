@@ -158,11 +158,7 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
-from sopuli.driver.oracle.client import (
-    Timeouts,
-    describes_unreachable_server,
-    reach_floor,
-)
+from sopuli.driver.oracle.client import describes_unreachable_server, reach_floor
 from sopuli.driver.oracle.limits import describe_max_bytes
 from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
@@ -181,15 +177,16 @@ from sopuli.driver.protocol import (
     AccountChange,
     AttributeChange,
     AuditCoverage,
+    DriverContext,
     DriverError,
     Encryption,
     PartialAccountChangeError,
+    Timeouts,
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
-from sopuli.driver.registry import DRIVERS
-from sopuli.driver.registry import resolve as resolve_driver
+from sopuli.driver.registry import DRIVERS, driver_for
 from sopuli.exit_codes import ExitCode
 from sopuli.generate import Candidate, DocumentWrite
 from sopuli.install_shape import Component
@@ -4872,15 +4869,7 @@ def _refuse_uncomparable(
         session = None
         try:
             try:
-                module = resolve_driver(target.target)
-                credential = _admin_credential(target, run, config)
-                driver = module.OracleDriver(
-                    env=os.environ,
-                    correlation_id=run.document.correlation_id,
-                    timeouts=_timeouts(run),
-                    client_lib_dir=config.runtime.oracle.client_lib_dir,
-                )
-                session = driver.connect(target, credential.credential)
+                session = _open_session(target, run, config)
             except Exception:  # noqa: BLE001 -- the run reports it, per target
                 continue
             for binding in bindings:
@@ -4935,15 +4924,7 @@ def _check_target(
     session = None
     try:
         try:
-            module = resolve_driver(target.target)
-            credential = _admin_credential(target, run, config)
-            driver = module.OracleDriver(
-                env=os.environ,
-                correlation_id=run.document.correlation_id,
-                timeouts=_timeouts(run),
-                client_lib_dir=config.runtime.oracle.client_lib_dir,
-            )
-            session = driver.connect(target, credential.credential)
+            session = _open_session(target, run, config)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return _unreachable(bindings, error, results, duration=_elapsed(started))
 
@@ -8509,15 +8490,19 @@ def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> An
     is the point -- a pre-flight that connected differently would be clearing a
     different thing from the one that runs.
     """
-    module = resolve_driver(target.target)
+    driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
-    driver = module.OracleDriver(
+    return driver.connect(target, credential.credential)
+
+
+def _driver_context(run: Invocation, config: Config) -> DriverContext:
+    """What every driver this run builds is built from (P1's run half)."""
+    return DriverContext(
         env=os.environ,
         correlation_id=run.document.correlation_id,
         timeouts=_timeouts(run),
-        client_lib_dir=config.runtime.oracle.client_lib_dir,
+        runtime=config.runtime,
     )
-    return driver.connect(target, credential.credential)
 
 
 def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, config: Config) -> None:

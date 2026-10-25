@@ -218,7 +218,7 @@ def test_the_resolved_query_timeout_reaches_the_connection(
     regression that stopped assigning `call_timeout` altogether would have
     passed everything — which is what review pointed out.
     """
-    from sopuli.driver.oracle.client import Timeouts
+    from sopuli.driver.protocol import Timeouts
 
     connection = FakeConnection()
     driving = connected(session_module, monkeypatch, connection)
@@ -276,3 +276,29 @@ def test_the_identifier_is_bound_and_never_interpolated(
     [(procedure, arguments)] = connection.opened_cursor.calls
     assert procedure == "dbms_session.set_identifier"
     assert arguments == [CORRELATION_ID]
+
+
+def test_build_driver_passes_the_run_and_the_client_directory(session_module: Any) -> None:
+    """The registry's way in carries everything the CLI used to pass by hand.
+
+    `runtime.oracle.client_lib_dir` above all: it is the one value that comes
+    from the config rather than from the run, and a factory that dropped it
+    would leave a site whose Instant Client is off the loader's path unable to
+    connect, with nothing in the config to say why.
+    """
+    from sopuli.config.model import OracleRuntime, Runtime
+    from sopuli.driver.protocol import DriverContext, Timeouts
+
+    context = DriverContext(
+        env={"A": "1"},
+        correlation_id=CORRELATION_ID,
+        timeouts=Timeouts(connect_s=90, query_s=600),
+        runtime=Runtime(oracle=OracleRuntime(client_lib_dir="/opt/instantclient")),
+    )
+
+    driver = session_module.build_driver(context)
+
+    assert (driver.env, driver.correlation_id) == ({"A": "1"}, CORRELATION_ID)
+    assert driver.timeouts == Timeouts(connect_s=90, query_s=600)
+    assert driver.client_lib_dir == "/opt/instantclient"
+    assert isinstance(driver, Driver)

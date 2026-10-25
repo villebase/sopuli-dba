@@ -32,9 +32,9 @@ from oracle_harness import (
     sys_password,
 )
 from repo_files import FROM_SDIST, reason, repo_relative
-from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
+from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Runtime, Target
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import Credential, DriverContext
 from sopuli.secrets import Secret
 from sopuli.store.registry import BACKENDS
 
@@ -578,11 +578,14 @@ def session_module() -> Any:
 def session(live_oracle: Environment, session_module: Any) -> Iterator[Any]:
     """A driver session on the tier-1 database as :data:`USER`, closed afterwards.
 
-    Opened through the tool's own driver, so a test that sets up accounts with
-    it goes through the same connect path a command does. A test that needs to
-    log in as another account opens that session itself.
+    Opened through the tool's own driver, built by the module's `build_driver`
+    as a command's is, so a test that sets up accounts with it goes through the
+    same build and connect path a command does. A test that needs to log in as
+    another account opens that session itself.
     """
-    driver = session_module.OracleDriver(env=os.environ, correlation_id=SESSION_CORRELATION_ID)
+    driver = session_module.build_driver(
+        DriverContext(env=os.environ, correlation_id=SESSION_CORRELATION_ID, runtime=Runtime())
+    )
     opened = driver.connect(
         ExpandedTarget(
             target=Target(

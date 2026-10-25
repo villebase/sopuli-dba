@@ -8,7 +8,7 @@ ones have their own suites, and this file is about *the command* -- what it
 plans, what it reads, what the document says, and what it exits with.
 
 The seams are :func:`sopuli.store.registry.connect` and
-:func:`sopuli.driver.registry.resolve`, patched where ``sopuli.cli`` imported
+:func:`sopuli.driver.registry.driver_for`, patched where ``sopuli.cli`` imported
 them. Patching the definitions would leave the already-imported references in
 place and quietly test nothing.
 """
@@ -178,7 +178,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
             return store
 
         class FakeDriver:
-            def __init__(self, **_: Any) -> None:
+            def __init__(self, context: Any) -> None:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
@@ -194,11 +194,8 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 sessions.append(session)
                 return session
 
-        class FakeModule:
-            OracleDriver = FakeDriver
-
         monkeypatch.setattr("sopuli.cli.connect", fake_connect)
-        monkeypatch.setattr("sopuli.cli.resolve_driver", lambda target: FakeModule)
+        monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
         monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, **_: _credential())
         return {"store": store, "sessions": sessions}
 

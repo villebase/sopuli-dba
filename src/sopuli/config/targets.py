@@ -53,8 +53,8 @@ TARGET_KEYS = (
 )
 
 #: The driver selector (P1). Only Oracle is implemented, and D6 keeps drivers
-#: in-tree until there is a second one, so `type: postgresql` names a driver that
-#: does not exist. Refusing it here is invariant 4 applied to config: a target the
+#: in the tree, so `type: postgresql` names a driver that does not exist yet.
+#: Refusing it here is invariant 4 applied to config: a target the
 #: tool cannot drive should fail while the file is being written, not at the
 #: first connection.
 TARGET_TYPES = ("oracle",)

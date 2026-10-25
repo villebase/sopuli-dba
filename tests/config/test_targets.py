@@ -105,9 +105,8 @@ def test_the_driver_type_is_not_defaulted_to_oracle() -> None:
 
 
 def test_a_driver_that_does_not_exist_yet_is_refused() -> None:
-    """D6 keeps drivers in-tree until there is a second one. A target the tool
-    cannot drive should fail while the file is being written -- invariant 4
-    applied to config."""
+    """Only Oracle has a driver so far. A target the tool cannot drive should
+    fail while the file is being written -- invariant 4 applied to config."""
     with pytest.raises(ConfigError) as caught:
         build_targets(document({**CDB_ROOT, "type": "postgresql"}))
 

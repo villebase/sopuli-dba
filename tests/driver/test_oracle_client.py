@@ -25,12 +25,11 @@ from sopuli.driver.oracle.client import (
     CLIENT_NOT_LOADED,
     NO_CLIENT,
     ClientError,
-    Timeouts,
     client_hint,
     connect_arguments,
     missing_client,
 )
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import Credential, Timeouts
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT, SETTINGS

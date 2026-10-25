@@ -14,20 +14,24 @@ things in the two places.
 
 from __future__ import annotations
 
+import ast
 import builtins
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NoReturn
 
 import pytest
 
-from sopuli.config.model import Config, ExpandedTarget, Target
+from sopuli.config.model import Config, ExpandedTarget, Runtime, Target
 from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
+from sopuli.driver.protocol import DriverContext
 from sopuli.driver.registry import (
     DRIVER_NOT_IMPLEMENTED,
     DRIVER_NOT_INSTALLED,
@@ -35,6 +39,7 @@ from sopuli.driver.registry import (
     DatabaseDriver,
     DriverNotImplementedError,
     DriverNotInstalledError,
+    driver_for,
     installed,
     resolve,
 )
@@ -178,6 +183,83 @@ def test_a_bad_import_inside_the_driver_is_ours_and_is_re_raised(
 
     with pytest.raises(ModuleNotFoundError):
         resolve(target())
+
+
+def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run's context reaches the driver module untouched, and what the
+    module builds is what the caller gets."""
+    seen: list[DriverContext] = []
+    built = object()
+
+    def build_driver(context: DriverContext) -> object:
+        seen.append(context)
+        return built
+
+    monkeypatch.setattr(
+        "sopuli.driver.registry.resolve", lambda target: SimpleNamespace(build_driver=build_driver)
+    )
+    context = DriverContext(env={}, correlation_id="run-id", runtime=Runtime())
+
+    assert driver_for(target(), context) is built
+    assert seen == [context]
+
+
+def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The structured error `resolve` raises is the one the caller sees, so a
+    missing client is still exit 9 with the install line, not a traceback."""
+    monkeypatch.setattr(
+        "sopuli.driver.registry.resolve",
+        _raising(DriverNotInstalledError("not installed", hint="install it")),
+    )
+
+    with pytest.raises(DriverNotInstalledError):
+        driver_for(target(), DriverContext(env={}, correlation_id="run-id", runtime=Runtime()))
+
+
+def _source(module: str) -> ast.Module:
+    """``module``'s source, read from the file so that the vendor client is
+    never imported."""
+    spec = importlib.util.find_spec(module)
+    assert spec is not None, f"{module} not found"
+    assert spec.origin is not None, f"{module} has no source file"
+    return ast.parse(Path(spec.origin).read_text(encoding="utf-8"))
+
+
+def _exports_build_driver(tree: ast.Module) -> bool:
+    """Whether ``tree`` defines a top-level ``build_driver`` that takes the
+    context and nothing else, which is how `driver_for` calls it."""
+    return any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "build_driver"
+        and len(node.args.posonlyargs) + len(node.args.args) == 1
+        and not node.args.kwonlyargs
+        for node in tree.body
+    )
+
+
+@pytest.mark.parametrize("type_name", sorted(DRIVERS))
+def test_every_registered_driver_module_exports_build_driver(type_name: str) -> None:
+    """`driver_for` calls `build_driver(context)` on the module. A driver added
+    to `DRIVERS` without it, or with another signature, would raise inside a
+    per-target handler, and every target of that type would be reported as
+    unreachable. Read from the source, so the check runs on tier 0 with no
+    client installed."""
+    assert _exports_build_driver(_source(DRIVERS[type_name].module))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def connect(context): ...",
+        "def build_driver(): ...",
+        "def build_driver(context, extra): ...",
+        "def build_driver(context, *, extra): ...",
+    ],
+)
+def test_the_build_driver_check_can_fail(source: str) -> None:
+    """The check above is only worth something if it can say no: to a module
+    without the factory, and to one whose factory `driver_for` cannot call."""
+    assert not _exports_build_driver(ast.parse(source))
 
 
 def test_the_three_way_reading_is_the_one_the_stores_use() -> None:

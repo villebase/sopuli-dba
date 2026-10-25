@@ -473,6 +473,18 @@ such as "from 16", means the one release of it that was measured.
   `PGconn.encrypt_password`. So `require_auth` depends on the libpq a wheel
   bundles, and `psycopg.pq.version()` reports the libpq a process loaded.
   `sql/postgres/05_psycopg_libpq_probe.py` measures it.
+- `verified` `pg-connect-sqlstate` (#1040) — **Does a failed PostgreSQL login
+  reach the client with its SQLSTATE?**
+  No. With psycopg 3.3.6 and libpq 18.4 on Windows, against 13.23, 14.24,
+  15.19, 16.15, 17.11 and 18.6, `sqlstate` is `None` for every failed login.
+  The server's `FATAL:` text is the same on all six: `password authentication
+  failed for user`, `role "…" is not permitted to log in` and
+  `database "…" does not exist`. A role that does not exist reads as a wrong
+  password, because the server does not say which. So
+  `src/sopuli/driver/postgres/errors.py` reads that text for `28P01`, `28000`
+  and `3D000`, and reports any other failed connection as `08001`. The text is
+  English, the server's default `lc_messages`. Measured by hand, with no probe
+  script. A missing `pg_hba.conf` line was not measured.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
   Not run: there is no macOS host. Linux arm64 is not run either. Nothing is

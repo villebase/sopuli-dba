@@ -591,3 +591,14 @@ def test_an_exception_with_no_args_at_all_still_diagnoses() -> None:
 )
 def test_the_first_line_says_the_code_once(code: str, message: str, first: str) -> None:
     assert classify(code, message).first_line == first
+
+
+@pytest.mark.parametrize(("code", "warns"), [("ORA-03134", True), ("ORA-12541", False)])
+def test_a_client_too_new_for_the_server_is_said_wherever_it_is_raised(
+    code: str, warns: bool
+) -> None:
+    """On the classified error, so every path that raises one carries it, not
+    only `connect`."""
+    raised = classify(code, "the connection failed").as_error()
+
+    assert (raised.reach_warning is not None) is warns

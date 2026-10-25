@@ -44,12 +44,34 @@ def test_each_configured_driver_writes_its_own_lines(monkeypatch: pytest.MonkeyP
     }
 
 
-def test_a_driver_that_is_not_configured_is_not_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_installed_driver_is_asked_with_no_target_of_its_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client lines work with nothing else set up: before the first target
+    is written, and when a selector leaves no target of the type."""
     _driver_module(monkeypatch, "fake_one", {"one_client": "1.0"})
     monkeypatch.setattr(
         cli_module,
         "DRIVERS",
-        {"one": DatabaseDriver(module="fake_one"), "two": DatabaseDriver(module="not_imported")},
+        {"one": DatabaseDriver(module="fake_one", provides=frozenset({"json"}))},
+    )
+
+    assert cli_module._client_report(_config()) == {"one_client": "1.0"}
+
+
+def test_a_driver_neither_installed_nor_configured_is_not_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _driver_module(monkeypatch, "fake_one", {"one_client": "1.0"})
+    monkeypatch.setattr(
+        cli_module,
+        "DRIVERS",
+        {
+            "one": DatabaseDriver(module="fake_one"),
+            "two": DatabaseDriver(
+                module="not_imported", provides=frozenset({"sopuli_no_such_client"})
+            ),
+        },
     )
 
     assert cli_module._client_report(_config("one")) == {"one_client": "1.0"}
@@ -59,14 +81,37 @@ def test_a_driver_that_will_not_import_is_reported_not_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The install section already names the missing extra; this line says the
-    client report could not be written, and why."""
+    client report could not be written, and why. The detail is keyed by the
+    driver, so a second driver's lines cannot overwrite it."""
     monkeypatch.setattr(
         cli_module, "DRIVERS", {"one": DatabaseDriver(module="sopuli_no_such_module")}
     )
 
     report = cli_module._client_report(_config("one"))
 
-    assert report == {"one": "not loaded", "detail": "No module named 'sopuli_no_such_module'"}
+    assert report == {
+        "one": "not loaded",
+        "one_detail": "No module named 'sopuli_no_such_module'",
+    }
+
+
+def test_a_client_report_that_raises_is_reported_not_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`doctor` must survive a broken driver as it survives a broken client."""
+    module = ModuleType("fake_broken")
+
+    def broken(*, env: Any, runtime: Any) -> dict[str, Any]:
+        raise OSError("the library would not open\nsecond line")
+
+    module.client_report = broken  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fake_broken", module)
+    monkeypatch.setattr(cli_module, "DRIVERS", {"one": DatabaseDriver(module="fake_broken")})
+
+    assert cli_module._client_report(_config("one")) == {
+        "one": "no report",
+        "one_detail": "the library would not open",
+    }
 
 
 def test_a_failed_target_carries_the_drivers_reach_sentence() -> None:

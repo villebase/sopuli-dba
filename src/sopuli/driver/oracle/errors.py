@@ -48,6 +48,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from sopuli.driver.oracle.client import TOO_NEW_WARNING, describes_unreachable_server
 from sopuli.driver.protocol import AuthenticationError, DriverError
 from sopuli.exit_codes import ExitCode
 
@@ -421,12 +422,20 @@ class Diagnosis:
         :class:`~sopuli.driver.protocol.AuthenticationError` so that a caller
         which wants ``except AuthenticationError`` has one; everything else is a
         :class:`MappedError` carrying this row's own category and exit code.
+
+        A code that says the client is too new for the server sets
+        ``reach_warning`` here, so every path that raises it carries it.
         """
+        raised: DriverError
         if self.category == AuthenticationError.category:
-            return AuthenticationError(
+            raised = AuthenticationError(
                 self.message, hint=self.hint, code=self.code, retryable=self.retryable
             )
-        return MappedError(self)
+        else:
+            raised = MappedError(self)
+        if describes_unreachable_server(self.code):
+            raised.reach_warning = TOO_NEW_WARNING
+        return raised
 
 
 class MappedError(DriverError):

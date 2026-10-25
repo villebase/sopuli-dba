@@ -65,9 +65,7 @@ from sopuli.driver.oracle.capabilities import (
 from sopuli.driver.oracle.client import (
     CLIENT_LIB_DIR_ENV,
     CLIENT_UNUSABLE,
-    TOO_NEW_WARNING,
     connect_arguments,
-    describes_unreachable_server,
     missing_client,
     reach_floor,
 )
@@ -1606,10 +1604,7 @@ class OracleDriver:
                 failure.code or "no code",
                 time.monotonic() - started,
             )
-            raised = failure.as_error()
-            if describes_unreachable_server(failure.code):
-                raised.reach_warning = TOO_NEW_WARNING
-            raise raised from error
+            raise failure.as_error() from error
         LOG.debug(
             "connect to %s as %s in %.3fs",
             target.name,

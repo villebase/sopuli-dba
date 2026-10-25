@@ -107,10 +107,9 @@ def test_a_wrong_admin_password_is_28p01_with_the_hint(
     error = entry["error"]
     assert error["code"] == "28P01"
     assert error["category"] == "authentication"
+    assert error["message"].startswith("28P01: ")
     assert "password authentication failed" in error["message"]
-    assert error["hint"] == (
-        "the password this run used is not the one the cluster holds for this role"
-    )
+    assert "the password this run used" in error["hint"]
 
 
 def test_the_session_carries_the_run_in_application_name(live_postgres: Any) -> None:

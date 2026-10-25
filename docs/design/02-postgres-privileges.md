@@ -33,7 +33,11 @@ What `CREATEROLE` reaches depends on the release. The
 §*Verify before implementing* has the measurement.
 
 - **On 13 to 15**, `CREATEROLE` alone changes the password of every role that
-  is not a superuser. There is nothing narrower to grant.
+  is not a superuser. There is nothing narrower to grant. It can also grant
+  itself any role that is not a superuser, the built-in roles of §3 included:
+  on 15.19 a `CREATEROLE` role granted itself `pg_execute_server_program`. So
+  on these releases the tool account is close to a superuser, and its password
+  needs the same care.
 - **From 16**, `CREATEROLE` also needs `ADMIN OPTION` on the role. So the grant
   of §2.2 limits the tool account to the roles it is granted, and the server
   refuses any other with SQLSTATE `42501`.
@@ -47,11 +51,23 @@ time, for the roles a DBA granted. On 13 to 15 only the tool enforces it.
 
 ### 2.1 The tool account
 
-This statement creates the tool account. Run it as a superuser.
+These psql commands create the tool account and set its password. Run them as
+a superuser.
 
 ```sql
-CREATE ROLE sopuli_admin LOGIN CREATEROLE PASSWORD 'choose-a-password';
+SET password_encryption = 'scram-sha-256';
+CREATE ROLE sopuli_admin LOGIN CREATEROLE;
+\password sopuli_admin
 ```
+
+`\password` asks for the password and sends only a SCRAM verifier that libpq
+computes on the client, so the password never reaches the server (§5). libpq
+chooses the algorithm from the session's `password_encryption`. The `SET` is
+what makes it SCRAM on a server set to `md5`, as the `postgres:13` image is.
+Without it the verifier is md5, and the `scram-sha-256` line of §2.3 refuses
+the login. On 13.23, with `password_encryption = md5`, libpq's call gave an
+md5 verifier before the `SET` and a SCRAM one after it, and the role then
+logged in with `require_auth=scram-sha-256`.
 
 The target's `admin.username` names this role
 ([`01-configuration.md`](01-configuration.md) §*`postgres:` on a target*). Give
@@ -95,8 +111,10 @@ lacks.
 (invariant 3). The `INHERIT` and `SET` options are columns of
 `pg_auth_members`, `inherit_option` and `set_option`. They arrived in 16 with
 the rule that `CREATEROLE` needs `ADMIN OPTION`. A server whose
-`pg_auth_members` has `set_option` is one that requires `ADMIN OPTION`.
-(open: #1047)
+`pg_auth_members` has `set_option` is one that requires `ADMIN OPTION`. On
+every release measured, 13.23 to 18.6, the column and the rule go together:
+the column is absent on 13.23, 14.24 and 15.19, and present on 16.15, 17.11
+and 18.6. A managed service or a fork is not measured. (open: #1047)
 
 ### 2.3 `pg_hba.conf`
 
@@ -119,11 +137,11 @@ hostssl  postgres  acme_web_user  192.0.2.10/32  scram-sha-256
 `disable`.
 
 Use `scram-sha-256`, not `password` or `md5`. With `password`, the client sends
-the password itself to log in. A line that says `md5` uses SCRAM for a role
-whose stored verifier is SCRAM, which is what the tool writes; the
-`pg-md5-line-scram` entry in [`../README.md`](../README.md) §*Verify before
-implementing* has the measurement. An application whose client speaks only md5
-then cannot log in as that role.
+the password itself to log in. A line that says `md5` still accepts a role
+whose stored verifier is md5, so it does not make the login SCRAM. For a role
+whose verifier is SCRAM it uses SCRAM; the `pg-md5-line-scram` entry in
+[`../README.md`](../README.md) §*Verify before implementing* has the
+measurement.
 
 ### 2.4 What `doctor --check-privileges` reads
 
@@ -148,12 +166,13 @@ tool does not create roles.
 
 | Not granted | Why |
 |---|---|
-| `SUPERUSER` | it can do anything on the cluster, and read every stored verifier. The tool refuses to run as a superuser (§1) |
+| `SUPERUSER` | it can do anything on the cluster, and read every stored verifier. The tool refuses to run as a superuser (§1) (open: #1047) |
 | `REPLICATION` | it can copy the whole cluster through streaming replication, and no operation of the tool needs it |
 | `BYPASSRLS` | it ignores every row-level security policy, and no operation of the tool reads table data |
 | `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files` | they run programs and read or write files on the database server, as the server's operating system user |
 | `pg_read_all_data`, `pg_write_all_data` | they read or write every table in every database |
 | `pg_signal_backend` | it can cancel or end other sessions |
+| `pg_read_all_stats`, and `pg_monitor`, which includes it | it shows every session's statement text in `pg_stat_activity` and `pg_stat_statements`, and §5 says that text can hold a password |
 | a membership in a managed role with `INHERIT TRUE` or `SET TRUE` | the tool account gets the role's privileges, or can act as the role. From 16, grant `INHERIT FALSE, SET FALSE` (§2.2) |
 | any membership in a managed role, on 13 to 15 | it is not needed there, and it cannot be granted without `SET` (§2.2) |
 
@@ -203,7 +222,6 @@ The driver sends no `ALTER ROLE` in this build.
 | File | Purpose |
 |---|---|
 | `sql/postgres/01_password_text_probe.sql` | what the server log, `pg_stat_statements` and `pg_stat_activity` keep of `ALTER ROLE … PASSWORD` (§5) |
-| `sql/postgres/02_system_identifier_probe.sql` | whether a role with no grants can read `system_identifier` |
 | `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password (§1, §2.2) |
 | `sql/postgres/04_md5_line_scram_verifier_probe.py` | whether a SCRAM verifier logs in through a `pg_hba.conf` line that says `md5` (§2.3) |
 | `sql/postgres/05_psycopg_libpq_probe.py` | which libpq each psycopg wheel bundles, and whether it accepts `require_auth` |

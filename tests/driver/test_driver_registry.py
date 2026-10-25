@@ -45,7 +45,7 @@ from sopuli.driver.registry import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_CLIENT, MISSING_MODULE, install_hint, missing_kind
-from sopuli.install_shape import survey
+from sopuli.install_shape import NOT_IMPLEMENTED, status_of, survey
 from sopuli.output.document import Diagnostic
 
 ORACLE = DRIVERS["oracle"]
@@ -83,9 +83,8 @@ CLIENT_MISSING = DatabaseDriver(
     module="sopuli.driver.oracle.session", extra="oracle", provides=frozenset({"no_such_client"})
 )
 
-#: No module in this build, and an extra all the same. Unreachable from the real
-#: table -- ``DRIVERS`` has one entry and its module exists -- and the state the
-#: day somebody adds a type to ``TARGET_TYPES`` before writing its driver.
+#: No module in this build, and an extra all the same: the state of a type the
+#: config accepts before its driver is written, as ``postgresql`` is today.
 NO_MODULE = DatabaseDriver(
     module="sopuli.driver.nowhere", extra="oracle", provides=frozenset({"no_such_client"})
 )
@@ -151,17 +150,14 @@ def test_an_uninstalled_driver_is_the_whole_contract(monkeypatch: pytest.MonkeyP
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
-def test_a_driver_this_build_does_not_have_never_says_pip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_driver_this_build_does_not_have_never_says_pip() -> None:
     """Nothing the operator installs fixes it, so the message must not carry an
-    install line. Unreachable today and written now, because the moment it
-    becomes reachable is the moment somebody adds a type to ``TARGET_TYPES``."""
-    monkeypatch.setitem(DRIVERS, "postgresql", DatabaseDriver(module="sopuli.driver.postgresql"))
-
+    install line. The real ``postgresql`` entry, whose module is not written
+    yet."""
     with pytest.raises(DriverNotImplementedError) as refused:
         resolve(target(type_name="postgresql"))
 
+    assert "this build has no postgresql driver yet" in str(refused.value)
     assert "pip install" not in str(refused.value)
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED == "SOPULI-20006"
 
@@ -237,7 +233,20 @@ def _exports_build_driver(tree: ast.Module) -> bool:
     )
 
 
-@pytest.mark.parametrize("type_name", sorted(DRIVERS))
+#: Types the config accepts whose driver module is not written yet. Each
+#: resolves to `DriverNotImplementedError`, and the test below fails once its
+#: module exists, so the entry leaves this set in the PR that writes it.
+UNWRITTEN = frozenset({"postgresql"})
+
+WRITTEN = sorted(set(DRIVERS) - UNWRITTEN)
+
+
+@pytest.mark.parametrize("type_name", sorted(UNWRITTEN))
+def test_an_unwritten_driver_has_no_module_yet(type_name: str) -> None:
+    assert status_of(DRIVERS[type_name]) == NOT_IMPLEMENTED
+
+
+@pytest.mark.parametrize("type_name", WRITTEN)
 def test_every_registered_driver_module_exports_build_driver(type_name: str) -> None:
     """`driver_for` calls `build_driver(context)` on the module. A driver added
     to `DRIVERS` without it, or with another signature, would raise inside a
@@ -275,7 +284,7 @@ def _exports_client_report(tree: ast.Module) -> bool:
     )
 
 
-@pytest.mark.parametrize("type_name", sorted(DRIVERS))
+@pytest.mark.parametrize("type_name", WRITTEN)
 def test_every_registered_driver_module_exports_client_report(type_name: str) -> None:
     """`doctor` asks each configured driver's module for its client lines. A
     driver without the hook would end `doctor` with a traceback, the one
@@ -352,13 +361,8 @@ def test_one_target_is_named_rather_than_counted() -> None:
 
 
 def test_an_unwritten_driver_is_not_sent_to_pip() -> None:
-    """A driver with no module is not sent to `pip`.
-
-    Unreachable from the real table -- ``DRIVERS`` has one entry and its module
-    exists -- and asserted anyway, because the day somebody adds ``postgresql``
-    to ``TARGET_TYPES`` before writing the driver is the day this would otherwise
-    start telling them to `pip install` a driver that is not written.
-    """
+    """A driver with no module is not sent to `pip`, however much its extra
+    suggests otherwise: installing ``psycopg`` does not write the driver."""
     (found,) = warnings(NO_MODULE)
 
     assert found.level == "warning"

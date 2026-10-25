@@ -114,11 +114,10 @@ class DatabaseDriver:
 #: would fail at connect time with a ``KeyError``, which is precisely the
 #: traceback rule 2 exists to prevent.
 #:
-#: One entry, and that is not a placeholder for a table that wants filling. D6
-#: keeps drivers in the tree, a second one included, and P1's intended order
-#: after Oracle -- PostgreSQL, SQL Server, MySQL -- is a roadmap rather than a
-#: promise this dict should pre-announce. A driver joins this dict in the PR
-#: that adds its module.
+#: D6 keeps drivers in the tree. A type joins this dict in the PR that lets the
+#: config declare it, which may come before its module: until the module exists
+#: the type resolves to :class:`DriverNotImplementedError`, and `doctor` reports
+#: it as ``not_implemented``, as it does a store backend with no module.
 DRIVERS: dict[str, DatabaseDriver] = {
     "oracle": DatabaseDriver(
         # The module that *connects*, not the package above it. The whole
@@ -136,6 +135,15 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # name resolves to nothing at all.
         provides=frozenset({"oracledb"}),
         password_limit="30 below 23, 128 from 23",
+    ),
+    # No module yet: the config can declare a cluster before the driver can
+    # connect to one. The package, not a module inside it, because the first
+    # missing name is the one an import reports and `find_spec` can answer.
+    # `psycopg` is the module the `postgres` extra installs.
+    "postgresql": DatabaseDriver(
+        module="sopuli.driver.postgres",
+        extra="postgres",
+        provides=frozenset({"psycopg"}),
     ),
 }
 
@@ -160,11 +168,7 @@ class DriverNotImplementedError(ConfigError):
     the operator installs fixes this one, so it must never carry an install
     line.
 
-    Unreachable today, since ``oracle`` is the only type the config layer
-    accepts and its module exists. It is written now because the moment it
-    becomes reachable is the moment somebody adds ``postgresql`` to
-    ``TARGET_TYPES`` -- and discovering then that the failure path is a
-    ``KeyError`` is discovering it in the worst way.
+    A ``postgresql`` target raises it until that driver's module exists.
 
     It has a code because the configuration is right and there is nothing to
     install, so a consumer must tell it from the ``config`` errors that a change

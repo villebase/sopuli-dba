@@ -46,6 +46,7 @@ from sopuli.config.model import (
     as_dict,
 )
 from sopuli.config.password_keys import PasswordKey, declared_password_key
+from sopuli.config.products import refuse_a_container_clause
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import (
     FIELD_SEPARATOR,
@@ -430,6 +431,7 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
 
     for expanded in select(config, application.targets):
         patches = _patches_for(application, expanded)
+        refuse_a_container_clause(expanded, application, patches, at=at)
         ref, where = _ref_for(application, patches, at=at)
         vault = _effective(application.vault, patches, key="vault")
         policy = _effective(application.policy, patches, key="policy")

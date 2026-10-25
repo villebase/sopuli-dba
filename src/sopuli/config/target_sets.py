@@ -42,11 +42,19 @@ from sopuli.config.model import (
     ForEach,
     InnerDimension,
     Pairs,
+    PostgresPatch,
     TargetPatch,
     TargetSet,
 )
 from sopuli.config.safety import read_safety
-from sopuli.config.targets import TARGET_KEYS, TARGET_TYPES, read_admin, read_oracle, read_target
+from sopuli.config.targets import (
+    TARGET_KEYS,
+    TARGET_TYPES,
+    read_admin,
+    read_oracle,
+    read_postgres,
+    read_target,
+)
 
 TARGET_SET_KEYS = (*TARGET_KEYS, "for_each", "overrides")
 
@@ -256,6 +264,11 @@ def _build_patch(raw: Any, *, at: KeyPath) -> TargetPatch:
         admin=read_admin(patch.get("admin"), at=at.key("admin")),
         oracle=(
             None if "oracle" not in patch else read_oracle(patch["oracle"], at=at.key("oracle"))
+        ),
+        postgres=(
+            None
+            if "postgres" not in patch
+            else PostgresPatch(**read_postgres(patch["postgres"], at=at.key("postgres")))
         ),
         labels=_patch_labels(patch, at=at),
         safety=read_safety(patch, at=at),

@@ -20,6 +20,7 @@ two views, discriminated by ``resolved``, and is pinned by the run schema,
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
@@ -27,9 +28,10 @@ from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
-from sopuli.config.model import Pairs, Safety, Vault
+from sopuli.config.model import Pairs, Safety, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
+from sopuli.config.targets import POSTGRESQL
 from sopuli.output.document import Option
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
@@ -865,12 +867,24 @@ def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str
         "vault": target.vault,
         "scope": target.oracle.scope,
         "container": target.oracle.container,
+        "postgres": _postgres_json(target),
         "labels": as_dict(target.labels),
         "safety": _target_safety_json(expanded),
         "target_set": expanded.target_set,
         "overridden": expanded.overridden,
         "managed": target.name in bound,
     }
+
+
+def _postgres_json(target: Target) -> dict[str, Any] | None:
+    """How the run connects to a PostgreSQL target, with the defaults filled in.
+
+    Resolved, like the rest of this view: a target that wrote no block still
+    connects with ``verify-full``, and the page says so.
+    """
+    if target.type != POSTGRESQL:
+        return None
+    return dataclasses.asdict(target.postgres_settings)
 
 
 def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:

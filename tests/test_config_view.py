@@ -275,6 +275,30 @@ def test_an_unmanaged_target_says_so(config: Config) -> None:
 
     assert root["managed"] is False
     assert root["target_set"] is None
+    assert root["postgres"] is None
+
+
+def test_a_postgresql_target_shows_how_the_run_will_connect() -> None:
+    """The defaults are filled in, so the TLS mode the run uses is on the page
+    even where the file wrote no `postgres:` block."""
+    document = {
+        "version": 1,
+        "targets": [
+            {"name": "pg-dev", "type": "postgresql", "dsn": "pg-dev.example.com:5432"},
+            {
+                "name": "pg-qa",
+                "type": "postgresql",
+                "dsn": "pg-qa.example.com:5432",
+                "postgres": {"sslmode": "verify-ca", "sslrootcert": "/etc/sopuli/ca.pem"},
+            },
+        ],
+    }
+    section = build_section(PATHS, build_config(document), document, resolved=True)
+
+    assert [target["postgres"] for target in section["targets"]] == [
+        {"database": "postgres", "sslmode": "verify-full", "sslrootcert": None},
+        {"database": "postgres", "sslmode": "verify-ca", "sslrootcert": "/etc/sopuli/ca.pem"},
+    ]
 
 
 def test_a_binding_carries_the_ref_as_written(config: Config) -> None:

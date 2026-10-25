@@ -40,10 +40,12 @@ from sopuli.config.model import (
     DimensionValue,
     ExpandedTarget,
     Pairs,
+    PostgresPatch,
     Safety,
     Target,
     TargetOracle,
     TargetPatch,
+    TargetPostgres,
     TargetSet,
 )
 from sopuli.config.secret_refs import parse_secret_ref
@@ -223,9 +225,9 @@ def _expand(target_set: TargetSet) -> list[ExpandedTarget]:
 def _render_target(template: Target, combination: _Combination, *, at: KeyPath) -> Target:
     """The template with every placeholder resolved.
 
-    ``type``, ``oracle.scope`` and ``admin.auth.method`` are absent from this
-    because they are closed sets: :mod:`sopuli.config.targets` reads them through
-    :func:`~sopuli.config.fields.choice`, so a ``{placeholder}`` in one was
+    ``type``, ``oracle.scope``, ``postgres.sslmode`` and ``admin.auth.method``
+    are absent from this because they are closed sets: :mod:`sopuli.config.targets`
+    reads them through :func:`~sopuli.config.fields.choice`, so a ``{placeholder}`` in one was
     already refused when the set was built. Every other string field is
     rendered, including label keys and the addresses inside ``admin.auth`` -- a
     field that expansion skipped would keep its braces and reach a connection
@@ -241,6 +243,7 @@ def _render_target(template: Target, combination: _Combination, *, at: KeyPath) 
         vault=_maybe(template.vault, variables, at=at.key("vault")),
         admin=_render_admin(template.admin, variables, at=at.key("admin")),
         oracle=_render_oracle(template.oracle, variables, at=at.key("oracle")),
+        postgres=_render_postgres(template.postgres, variables, at=at.key("postgres")),
         labels=_render_labels(template.labels, combination, at=at.key("labels")),
         safety=_render_safety(template.safety, variables, at=at.key("safety")),
     )
@@ -289,6 +292,19 @@ def _render_oracle(oracle: TargetOracle, variables: dict[str, str], *, at: KeyPa
     return TargetOracle(
         scope=oracle.scope,
         container=_maybe(oracle.container, variables, at=at.key("container")),
+    )
+
+
+def _render_postgres(
+    postgres: TargetPostgres | None, variables: dict[str, str], *, at: KeyPath
+) -> TargetPostgres | None:
+    """``sslmode`` is a closed set, so like ``oracle.scope`` it is not rendered."""
+    if postgres is None:
+        return None
+    return TargetPostgres(
+        database=_substitute(postgres.database, variables, at=at.key("database")),
+        sslmode=postgres.sslmode,
+        sslrootcert=_maybe(postgres.sslrootcert, variables, at=at.key("sslrootcert")),
     )
 
 
@@ -415,6 +431,7 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         "vault": patch.vault is not None,
         "admin": patch.admin is not None,
         "oracle": patch.oracle is not None,
+        "postgres": patch.postgres is not None,
         "labels": bool(patch.labels),
         "safety": patch.safety is not None,
     }
@@ -474,6 +491,7 @@ def _patch_target(
         ),
         admin=_patch_admin(target.admin, patch.admin, variables, at=at.key("admin")),
         oracle=_patch_oracle(target.oracle, patch.oracle, variables, at=at.key("oracle")),
+        postgres=_patch_postgres(target.postgres, patch.postgres, variables, at=at.key("postgres")),
         labels=_patch_labels(target.labels, patch.labels, variables, at=at.key("labels")),
         safety=_patch_safety(target.safety, patch.safety, variables, at=at.key("safety")),
     )
@@ -522,6 +540,27 @@ def _patch_oracle(
     return TargetOracle(
         scope=current.scope if patch.scope is None else patch.scope,
         container=current.container if container is None else container,
+    )
+
+
+def _patch_postgres(
+    current: TargetPostgres | None,
+    patch: PostgresPatch | None,
+    variables: dict[str, str],
+    *,
+    at: KeyPath,
+) -> TargetPostgres | None:
+    """Key by key, like ``oracle:``. A patch over a target with no block starts
+    from the defaults, which is what that target already meant."""
+    if patch is None:
+        return current
+    base = current if current is not None else TargetPostgres()
+    database = _maybe(patch.database, variables, at=at.key("database"))
+    sslrootcert = _maybe(patch.sslrootcert, variables, at=at.key("sslrootcert"))
+    return TargetPostgres(
+        database=base.database if database is None else database,
+        sslmode=base.sslmode if patch.sslmode is None else patch.sslmode,
+        sslrootcert=base.sslrootcert if sslrootcert is None else sslrootcert,
     )
 
 

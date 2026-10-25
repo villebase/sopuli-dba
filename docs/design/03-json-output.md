@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.60.schema.json`](../schemas/sopuli-run-1.60.schema.json),
+Schemas: [`../schemas/sopuli-run-1.61.schema.json`](../schemas/sopuli-run-1.61.schema.json),
 [`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -514,6 +514,12 @@ setting's name, so a later sub-block needs no change to the view or the schema.
 `allowed_methods` is never an empty array: two layers with no method in common
 are refused at plan time (`01-configuration.md` §9), so the tool never produces
 an empty list.
+
+**`config.targets[].postgres` is how the run connects to a PostgreSQL target**:
+`database`, `sslmode` and `sslrootcert`, with the defaults filled in where the
+file wrote no key, and after any `overrides:` entry. A target that wrote no
+block still connects with `verify-full`, and the document says so. It is null
+on every other type. From run schema 1.61.
 
 A binding's `secret` is the ref **as written**, a string that round-trips
 (`01-configuration.md` §7), so it matches the config file by eye. The structured
@@ -2224,7 +2230,7 @@ records its highest number too.
 | `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape again (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`. Only a run that has something to send reaches it. `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
 | `SOPULI-20004` | `config` | 9 | Oracle Instant Client cannot be used, and thick mode needs it (D3): it was not found (`DPI-1047`), it is older than the driver needs (`DPI-1050`), or its version is not supported (`DPI-1072`). The message keeps the driver's own diagnosis, and the hint says how to install the client on this platform. Installing a working client fixes it, or pointing `runtime.oracle.client_lib_dir` or `SOPULI_ORACLE_CLIENT_LIB_DIR` at one that is installed. A target whose credential resolved no username or password is also refused before connecting, and has no code, because the file or a variable fixes it |
 | `SOPULI-20005` | `config` | 9 | A `vaults:` entry names a `type` that `01-configuration.md` §3a accepts and this build has no module for. Neither editing the file nor installing anything fixes it, so the message never carries an install line |
-| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. No run reaches it today, because `oracle` is the only target type |
+| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. A `postgresql` target reaches it until that driver is written. In a run over several targets it is that target's error, and the others carry on |
 
 **The category is `config`, not `capability`** (ADR-006, E5). `capability` names
 what a *target* cannot do: a property of the database at the other end, which

@@ -61,6 +61,14 @@ oracle = [
   # nothing at all. Keep the prose name in prose.
   "oracledb>=2.0",
 ]
+postgres = [
+  # psycopg 3 with its binary wheels, which bundle libpq, so there is no client
+  # library to install beside it. 3.1.12 is the oldest release measured whose
+  # Linux wheel bundles libpq 16, the first that accepts `require_auth`
+  # (docs/measurements.md, #1032). Which libpq a wheel bundles follows when it
+  # was built, so a floor alone does not promise it.
+  "psycopg[binary]>=3.1.12",
+]
 hashicorp = [
   # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than
   # `requests` for explicit default timeouts and a real SSLContext, and here
@@ -95,7 +103,7 @@ notify = [
 # everything. It is deliberately not what README recommends -- an install line
 # that reads `sopuli[all]` undoes the split for every reader who copies it.
 all = [
-  "sopuli-dba[oracle,hashicorp,oci,notify]",
+  "sopuli-dba[oracle,postgres,hashicorp,oci,notify]",
 ]
 
 dev = [

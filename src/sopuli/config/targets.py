@@ -36,7 +36,7 @@ from sopuli.config.fields import (
     required_string,
     sequence,
 )
-from sopuli.config.model import AdminAuth, AdminCredential, Target, TargetOracle
+from sopuli.config.model import AdminAuth, AdminCredential, Target, TargetOracle, TargetPostgres
 from sopuli.config.safety import read_safety
 from sopuli.config.secret_refs import parse_secret_ref
 
@@ -48,16 +48,19 @@ TARGET_KEYS = (
     "vault",
     "admin",
     "oracle",
+    "postgres",
     "labels",
     "safety",
 )
 
-#: The driver selector (P1). Only Oracle is implemented, and D6 keeps drivers
-#: in the tree, so `type: postgresql` names a driver that does not exist yet.
-#: Refusing it here is invariant 4 applied to config: a target the
-#: tool cannot drive should fail while the file is being written, not at the
-#: first connection.
-TARGET_TYPES = ("oracle",)
+ORACLE = "oracle"
+POSTGRESQL = "postgresql"
+
+#: The driver selector (P1). Any other value is refused here, which is
+#: invariant 4 applied to config: a target the tool cannot drive should fail
+#: while the file is being written, not at the first connection. A PostgreSQL
+#: target is the cluster, not one database in it.
+TARGET_TYPES = (ORACLE, POSTGRESQL)
 
 ADMIN_KEYS = ("username", "auth")
 
@@ -99,6 +102,13 @@ ORACLE_KEYS = ("scope", "container")
 #: may find, never something a file can claim.
 ORACLE_SCOPES = ("non_cdb", "cdb_root", "pdb", "app_root", "app_pdb")
 
+POSTGRES_KEYS = ("database", "sslmode", "sslrootcert")
+
+#: libpq's own `sslmode` values, in its order from weakest to strongest. The
+#: weak ones are accepted because `require_encryption` is the rule that refuses
+#: a password over an unencrypted connection, for every product.
+POSTGRES_SSLMODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
+
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:
     """Read ``targets:`` -- the explicitly listed endpoints (§2)."""
@@ -132,11 +142,21 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             at=at.key("type"),
             noun="target type",
         ),
-        dsn=required_string(entry, "dsn", at=at, hint="host:port/service, or a TNS alias"),
+        dsn=required_string(
+            entry,
+            "dsn",
+            at=at,
+            hint="Oracle: host:port/service, or a TNS alias; PostgreSQL: host:port",
+        ),
         environment=optional_string(entry, "environment", at=at),
         vault=optional_string(entry, "vault", at=at),
         admin=read_admin(entry.get("admin"), at=at.key("admin")),
         oracle=read_oracle(entry.get("oracle"), at=at.key("oracle")),
+        postgres=(
+            None
+            if "postgres" not in entry
+            else TargetPostgres(**read_postgres(entry["postgres"], at=at.key("postgres")))
+        ),
         labels=() if "labels" not in entry else pairs(entry["labels"], at=at.key("labels")),
         safety=read_safety(entry, at=at),
     )
@@ -239,6 +259,27 @@ def read_oracle(raw: Any, *, at: KeyPath) -> TargetOracle:
         ),
         container=optional_string(options, "container", at=at),
     )
+
+
+def read_postgres(raw: Any, *, at: KeyPath) -> dict[str, str]:
+    """``postgres:`` on a target -- the keys it writes, and nothing else.
+
+    Returned as the written keys rather than a
+    :class:`~sopuli.config.model.TargetPostgres`, because an ``overrides:`` patch
+    builds a :class:`~sopuli.config.model.PostgresPatch` from the same keys,
+    and there an unwritten key must not become a default. Whether the block is
+    allowed on this target's ``type`` is decided after expansion
+    (:mod:`sopuli.config.products`), since an override may change the type.
+    """
+    options = mapping(raw, at=at)
+    reject_unknown_keys(options, allowed=POSTGRES_KEYS, at=at)
+    _reject_empty(options, at=at, block_name="postgres")
+
+    written = {key: optional_string(options, key, at=at) for key in POSTGRES_KEYS}
+    sslmode = written["sslmode"]
+    if sslmode is not None:
+        choice(sslmode, allowed=POSTGRES_SSLMODES, at=at.key("sslmode"), noun="sslmode")
+    return {key: value for key, value in written.items() if value is not None}
 
 
 def _reject_empty(block: dict[str, Any], *, at: KeyPath, block_name: str) -> None:

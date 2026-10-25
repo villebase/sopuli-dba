@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.3.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -388,7 +388,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.3.schema.json
 version: 1
 
 runtime:
@@ -1106,12 +1106,13 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1). Only `oracle` exists; a target the tool cannot drive is refused while the file is being written, not at the first connection |
-| `dsn` | **required** — `host:port/service`, or a TNS alias |
+| `type` | **required** — the driver selector (P1): `oracle` or `postgresql`. Any other value is refused while the file is being written, not at the first connection. The PostgreSQL driver is not written yet, so a command that connects to a `postgresql` target is refused with `SOPULI-20006` |
+| `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
 | `admin` | `{ username, auth }` — the credential that reaches the database. There is no password field, and there will not be one (P2). See below |
-| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. Both are assertions about the database rather than settings on it, and both are optional. See below |
+| `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. Both are assertions about the database rather than settings on it, and both are optional. Only on an Oracle target. See below |
+| `postgres` | `{ database, sslmode, sslrootcert }` — how the tool connects to a PostgreSQL cluster. Only on a PostgreSQL target. See below |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
 | `safety` | a `safety:` block (§9) |
 
@@ -1119,7 +1120,7 @@ A block that is present and empty — `oracle: {}`, `admin: {}` — is an error.
 Absent and empty mean the same thing to the tool, so the difference between them
 is a sentence somebody started and did not finish.
 
-`type`, `oracle.scope` and `admin.auth.method` are closed sets. A free string
+`type`, `oracle.scope`, `postgres.sslmode` and `admin.auth.method` are closed sets. A free string
 there means `scope: cdb-root` loads happily and the tool then operates in a
 different container from the one that was meant — and this file is the whitelist
 (invariant 5). Widening a set is a one-line change once the reference names the
@@ -1457,6 +1458,54 @@ cdb_root` beside `container: CDB$ROOT` is redundant but not contradictory, so th
 connect-time comparison decides it rather than the schema. `container_clause: ALL`
 keeps its own guardrail (UC-1 §6.2) and belongs to an application, not here.
 
+### `postgres:` on a target — how to connect to a cluster
+
+A PostgreSQL target is the **cluster**, not one database in it. Every role
+belongs to the whole cluster, so there is no scope to assert and no container.
+
+```yaml
+targets:
+  - name: pg-prod
+    type: postgresql
+    dsn: pg-prod.example.com:5432
+    environment: prod
+    postgres:
+      sslrootcert: /etc/sopuli/pg-prod-ca.pem
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `database` | `postgres` | the database to connect through. It is only the way in |
+| `sslmode` | `verify-full` | libpq's `sslmode`: `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full` |
+| `sslrootcert` | none | the CA file that issued the server certificate. A Kubernetes operator usually issues it from a CA of its own. Only with `sslmode: verify-ca` or `verify-full`: libpq ignores the file below `require`, and under `require` it turns the mode into `verify-ca` without saying so |
+
+These are settings, not assertions. The block is optional, and a target
+without one connects with the defaults. `sslmode` accepts the weak values,
+because `require_encryption` (§9) is the rule that refuses a password over an
+unencrypted connection, for every product.
+
+**The `dsn` is `host:port` and nothing else.** The host is a name, an IPv4
+address, or an IPv6 address in brackets, such as `[2001:db8::10]:5432`. A
+connection URI (`postgresql://…`) and a keyword string (`host=… port=…`) are
+refused, because both can carry a password, the reason a vault address may not
+hold one. The message does not repeat what was written.
+
+**Each product's keys stay on its own targets.** These are refused, each
+naming the target and the key:
+
+- an `oracle:` block on a PostgreSQL target, and a `postgres:` block on an
+  Oracle target;
+- `admin.auth: external` on a PostgreSQL target, because external
+  authentication is an Oracle wallet;
+- an application's `oracle: container_clause`, or an override's, where it
+  binds to a PostgreSQL target.
+
+They are checked once the estate is expanded, since an `overrides:` patch can
+change a generated target's `type` or add a block. A patch cannot remove a
+block its template writes, so a target set whose template writes `oracle:` can
+generate only Oracle targets. Put each product's targets in a target set of
+its own.
+
 ### `groups:` — a mapping of name to selection
 
 | Key | Meaning |
@@ -1788,8 +1837,8 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 | | |
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
-| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
-| **Not substituted in** | `type`, `oracle.scope`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
+| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
+| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
 
@@ -3087,7 +3136,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.2.schema.json`](../schemas/sopuli-config-3.2.schema.json),
+[`docs/schemas/sopuli-config-3.3.schema.json`](../schemas/sopuli-config-3.3.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3098,7 +3147,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.2.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.3.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3136,6 +3185,10 @@ match instead:
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
+| `oracle:` only on an Oracle target, and `postgres:` only on a PostgreSQL target | yes |
+| a PostgreSQL target has a `host:port` `dsn` and no `admin.auth: external` | yes |
+| `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
+| an application's `oracle: container_clause` may not bind to a PostgreSQL target | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
@@ -3172,7 +3225,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.3.schema.json
 version: 1
 ```
 
@@ -3183,7 +3236,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.2.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.3.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -3377,10 +3430,23 @@ notices until a rotation.
   rotation (invariant 4). `admin.auth: vault` with no `secret:` is the same rule:
   there is no default admin path, and guessing at one is how a run authenticates as
   something nobody chose
-- `admin.auth: external` on a target whose `dsn` is not a TNS alias → error.
-  External auth connects as `/@alias` and the wallet is keyed on that alias, so an
-  EZConnect string fails as an *authentication* error, which is the most
-  misleading way for a config mistake to surface
+- `admin.auth: external` on a PostgreSQL target → error, because external
+  authentication is an Oracle wallet
+- `admin.auth: external` on an Oracle target whose `dsn` is not a TNS alias →
+  error. External auth connects as `/@alias` and the wallet is keyed on that
+  alias, so an EZConnect string fails as an *authentication* error, which is the
+  most misleading way for a config mistake to surface
+- an `oracle:` block on a PostgreSQL target, or a `postgres:` block on an Oracle
+  target → error naming the target. Either would load and do nothing. Checked
+  after expansion, because an override can change a generated target's `type`
+- a PostgreSQL `dsn` that is not `host:port` → error. A connection URI or a
+  keyword string can carry a password, and the message does not repeat the value
+- `postgres.sslrootcert` with an `sslmode` other than `verify-ca` or
+  `verify-full` → error. libpq ignores the file below `require`, and under
+  `require` it turns the mode into `verify-ca` without saying so
+- an application's or an override's `oracle: container_clause` on an
+  application that binds to a PostgreSQL target → error. A PostgreSQL role
+  belongs to the whole cluster, so there is no container
 - `admin.auth: external` beside a `username:` → error rather than the username
   being ignored. The wallet decides who connects, and a file that appears to name
   the connecting account while the wallet names another is worth stopping for

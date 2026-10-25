@@ -187,6 +187,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import DRIVERS, driver_for, installed
 from sopuli.exit_codes import ExitCode
+from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
 from sopuli.install_shape import Component
 from sopuli.install_shape import survey as install_survey
@@ -1009,7 +1010,9 @@ def _client_report(config: Config) -> dict[str, Any]:
 
     A driver that will not import, or whose report raises, is reported rather
     than raised: `doctor` is the command that must survive its own subject being
-    broken, and the install section already names an extra that is missing.
+    broken, and the install section already names an extra that is missing. A
+    driver this build has no module for writes nothing here: the install section
+    reports it as ``not_implemented``.
     """
     declared = {expanded.target.type for expanded in config.expanded_targets}
     report: dict[str, Any] = {}
@@ -1022,6 +1025,13 @@ def _client_report(config: Config) -> dict[str, Any]:
             module = importlib.import_module(driver.module)
         except ImportError as error:
             FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
+            if isinstance(error, ModuleNotFoundError) and (
+                missing_kind(
+                    error, module=driver.module, provides=driver.provides, extra=driver.extra
+                )
+                == MISSING_MODULE
+            ):
+                continue
             report[kind] = "not loaded"
             report[f"{kind}_detail"] = str(error).splitlines()[0]
             continue
@@ -4515,7 +4525,7 @@ def config_validate(
 
     **Validated by the loader, not by the published schema.** The two are not
     equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-3.2.schema.json`` is structural, deliberately
+    ``docs/schemas/sopuli-config-3.3.schema.json`` is structural, deliberately
     leaves the cross-key rules out (``01-configuration.md`` section 9b), and
     ``jsonschema`` is a development dependency that must not become a runtime
     one. The schema is the editor's fast local check; this is the complete one.

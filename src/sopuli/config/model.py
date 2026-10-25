@@ -506,6 +506,34 @@ class TargetOracle:
 
 
 @dataclass(frozen=True)
+class TargetPostgres:
+    """``postgres:`` on a target -- how the tool connects to a PostgreSQL cluster.
+
+    These are settings, not assertions. The target is the cluster, and every role
+    is cluster-wide, so ``database`` is only the way in. ``Target.postgres`` is
+    ``None`` where the file wrote no block, and ``Target.postgres_settings``
+    reads the defaults for that, so they are written once, here.
+    """
+
+    database: str = "postgres"
+    #: One of :data:`~sopuli.config.targets.POSTGRES_SSLMODES`, libpq's own values.
+    sslmode: str = "verify-full"
+    #: The CA file that issued the server certificate. A Kubernetes operator
+    #: usually issues it from a CA of its own.
+    sslrootcert: str | None = None
+
+
+@dataclass(frozen=True)
+class PostgresPatch:
+    """``postgres:`` in an ``overrides:`` patch. ``None`` is a key it does not
+    change, which :class:`TargetPostgres`'s defaults could not say."""
+
+    database: str | None = None
+    sslmode: str | None = None
+    sslrootcert: str | None = None
+
+
+@dataclass(frozen=True)
 class Target:
     """One database endpoint.
 
@@ -523,8 +551,15 @@ class Target:
     vault: str | None = None
     admin: AdminCredential | None = None
     oracle: TargetOracle = field(default_factory=TargetOracle)
+    postgres: TargetPostgres | None = None
     labels: Pairs = ()
     safety: Safety | None = None
+
+    @property
+    def postgres_settings(self) -> TargetPostgres:
+        """How to connect to this PostgreSQL target: the block the file wrote,
+        or the defaults where it wrote none."""
+        return self.postgres if self.postgres is not None else TargetPostgres()
 
 
 @dataclass(frozen=True)
@@ -543,6 +578,7 @@ class TargetPatch:
     vault: str | None = None
     admin: AdminCredential | None = None
     oracle: TargetOracle | None = None
+    postgres: PostgresPatch | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 

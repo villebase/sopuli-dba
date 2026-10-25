@@ -42,6 +42,7 @@ def test_a_target_with_no_block_connects_with_the_defaults() -> None:
         "dbname": "postgres",
         "user": "sopuli_admin",
         "sslmode": "verify-full",
+        "gssencmode": "disable",
         "application_name": f"sopuli {RUN}",
         "connect_timeout": Timeouts().connect_s,
         "password": PASSWORD,

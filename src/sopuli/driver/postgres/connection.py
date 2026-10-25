@@ -56,7 +56,13 @@ def connect_arguments(
     applies, or ``PGOPTIONS`` where the shell sets it. The tool imposes none by
     default, for the reason :data:`~sopuli.settings.registry.NO_QUERY_TIMEOUT`
     gives. libpq reads its environment for any parameter left out here; the
-    host, the port, the role, the password and ``sslmode`` are always sent.
+    host, the port, the role, the password, ``sslmode`` and ``gssencmode`` are
+    always sent.
+
+    ``gssencmode`` is ``disable``. libpq's default, ``prefer``, uses GSSAPI
+    encryption wherever a Kerberos ticket is at hand. That skips TLS, so the
+    certificate check that ``sslmode`` asks for never runs, and the scope reads
+    TLS only.
 
     A credential with no username or no password is refused. Without one,
     libpq would take the operating-system user, ``PGPASSWORD`` or
@@ -78,6 +84,7 @@ def connect_arguments(
         "dbname": block.database,
         "user": credential.username,
         "sslmode": block.sslmode,
+        "gssencmode": "disable",
         "application_name": application_name(correlation_id),
         "connect_timeout": timeouts.connect_s,
     }

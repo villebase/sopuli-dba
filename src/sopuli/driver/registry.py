@@ -137,11 +137,12 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit="30 below 23, 128 from 23",
     ),
     # No module yet: the config can declare a cluster before the driver can
-    # connect to one. The package, not a module inside it, because the first
-    # missing name is the one an import reports and `find_spec` can answer.
+    # connect to one. `session` is the module that will import psycopg, for the
+    # reason the Oracle entry names `session`. The package beside it holds only
+    # tier-0 modules, so it exists and `find_spec` answers for the module.
     # `psycopg` is the module the `postgres` extra installs.
     "postgresql": DatabaseDriver(
-        module="sopuli.driver.postgres",
+        module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
     ),

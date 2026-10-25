@@ -76,8 +76,30 @@ def test_a_wrong_password_is_recovered_from_the_message() -> None:
     assert isinstance(error, AuthenticationError)
     assert error.code == "28P01"
     assert error.exit_code == ExitCode.AUTH_FAILURE
-    assert error.message == WRONG_PASSWORD
+    assert error.message == f"28P01: {WRONG_PASSWORD}"
     assert error.hint == "the password this run used is not the one the cluster holds for this role"
+
+
+@pytest.mark.parametrize("code", ["28P01", "3D000", "08001"])
+def test_a_raised_error_leads_with_its_code(code: str) -> None:
+    """A PostgreSQL message never contains its SQLSTATE, so every view that
+    prints the message would otherwise print no code."""
+    error = classify(code, "the server's message").as_error()
+
+    assert error.message == f"{code}: the server's message"
+
+
+@pytest.mark.parametrize(
+    "method", ["LDAP", "PAM", "RADIUS", "certificate", "Peer", "Ident", "GSSAPI"]
+)
+def test_another_methods_failed_login_is_28000(method: str) -> None:
+    """Only the password methods fail with 28P01; the server sends 28000 for
+    the rest. Each is still an authentication failure, exit 6."""
+    message = f'FATAL:  {method} authentication failed for user "acme_app_user"'
+
+    diagnosis = from_error(_PsycopgError(message), connecting=True)
+
+    assert (diagnosis.code, diagnosis.exit_code) == ("28000", ExitCode.AUTH_FAILURE)
 
 
 def test_a_missing_hba_line_is_recovered_from_the_message() -> None:
@@ -111,13 +133,17 @@ def test_a_failed_connection_with_no_server_message_is_08001() -> None:
     assert diagnosis.category == "connectivity"
 
 
-def test_an_unverified_server_certificate_names_sslrootcert() -> None:
-    """The default `verify-full` with no CA file, as libpq on Windows reports it."""
-    message = (
+@pytest.mark.parametrize(
+    "message",
+    [
+        # The default `verify-full` with no CA file, as libpq on Windows reports it.
         'connection failed: connection to server at "127.0.0.1", port 5633 failed: root '
-        'certificate file "C:\\Users\\dba\\AppData\\Roaming/postgresql/root.crt" does not exist'
-    )
-
+        'certificate file "C:\\Users\\dba\\AppData\\Roaming/postgresql/root.crt" does not exist',
+        # The same, for an account with no home directory, such as a service.
+        "connection failed: could not get home directory to locate root certificate file",
+    ],
+)
+def test_an_unverified_server_certificate_names_sslrootcert(message: str) -> None:
     diagnosis = from_error(_PsycopgError(message), connecting=True)
 
     assert diagnosis.code == "08001"

@@ -248,29 +248,6 @@ def test_the_report_gives_a_failures_hint_under_its_message() -> None:
     )
 
 
-def test_a_code_the_message_does_not_start_with_leads_the_line() -> None:
-    """A SQLSTATE never appears in a PostgreSQL message, so the line adds it."""
-    text = render(
-        [
-            build_target(
-                _target(),
-                connected=False,
-                error=Error(
-                    category="authentication",
-                    message='FATAL:  password authentication failed for user "postgres"',
-                    code="28P01",
-                ),
-            )
-        ],
-        client={},
-    )
-
-    assert (
-        '  orders-pdb: 28P01: FATAL:  password authentication failed for user "postgres"'
-        in text.splitlines()
-    )
-
-
 def test_a_hint_two_targets_share_is_printed_once() -> None:
     refused = Error(category="config", message="not set", hint="set the variable")
     text = render(

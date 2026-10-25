@@ -216,17 +216,6 @@ def _asserted(target: ExpandedTarget, scope: Scope) -> dict[str, Any] | None:
     }
 
 
-def _error_line(error: dict[str, Any]) -> str:
-    """The message, with the code in front where the message does not start with
-    it. An ``ORA-`` message starts with its code, and a SQLSTATE never appears
-    in a PostgreSQL message."""
-    message = str(error.get("message", ""))
-    code = error.get("code")
-    if not code or message.startswith(code):
-        return message
-    return f"{code}: {message}"
-
-
 def _reachable(reachable: bool) -> Cell | str:
     """``no`` is coloured and ``yes`` is not, which is the rule this table wants.
 
@@ -282,7 +271,7 @@ def render(entries: list[dict[str, Any]], *, client: dict[str, Any]) -> str:
     for entry in entries:
         error = entry.get("error")
         if error:
-            lines.append(f"  {entry['target']}: {_error_line(error)}")
+            lines.append(f"  {entry['target']}: {error.get('message', '')}")
             # The server's message says what failed and the hint says what to do,
             # so a reader who runs `doctor` to find out why gets both.
             # Each hint once, under the first target that raised it: twenty

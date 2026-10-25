@@ -636,6 +636,17 @@ someone adds a subclass.
 `target_capability`. That is invariant 4's distinct exit code, and the field a
 consumer branches on, so it does not have to parse the name out of the message.
 
+**A PostgreSQL error's `code` is its SQLSTATE**, and `message` is the server's
+message with that code in front, because a PostgreSQL message never contains
+its own code. `28P01`, a wrong password, and `28000`, a login the server refused
+for another reason, are `authentication`, exit 6. `3D000`, a database that does
+not exist, is `config`, exit 9. Any other code in class `08` is `connectivity`,
+and any other code is `database`. libpq reports a failed connection with no
+SQLSTATE, so the driver reads the server's English message for `28P01`, `28000`
+and `3D000`. It reports any other failed connection as `08001`, and a failure
+on an open session as `08006`. `docs/README.md`, `pg-connect-sqlstate`, has
+what was measured.
+
 **`retryable` reports that the same call may succeed later.** It is not an
 instruction to retry, and sopuli itself never retries on it. The driver sets it
 only for a vendor code it has a row for: `true` for a listener that is down

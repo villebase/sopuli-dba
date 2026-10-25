@@ -2,7 +2,8 @@
 
 The PostgreSQL side of :mod:`sopuli.driver.oracle.errors`: an error carries the
 SQLSTATE where the Oracle driver puts the ``ORA-`` code, with a category and a
-hint, and keeps the message as it came. Nothing here raises; the caller decides.
+hint. The message is the server's, with the code put in front of it. Nothing
+here raises; the caller decides.
 
 **A failed connection has no SQLSTATE.** The server sends one, but libpq reports
 a connection failure as a message only, and psycopg's ``sqlstate`` is ``None``
@@ -53,9 +54,9 @@ RULES: dict[str, _Rule] = {
         "authentication",
         exit_code=ExitCode.AUTH_FAILURE,
         hint=(
-            "the server refused the login before any password was checked: pg_hba.conf "
-            "has no line for this host, role and database, or the role cannot log in "
-            "(NOLOGIN)"
+            "the server refused the login. One of these: the method pg_hba.conf names "
+            "for this host, role and database failed, pg_hba.conf has no line for them, "
+            "the role does not exist, or the role cannot log in (NOLOGIN)"
         ),
     ),
     INSUFFICIENT_PRIVILEGE: _Rule(
@@ -83,12 +84,19 @@ RULES: dict[str, _Rule] = {
 #: The server's message for a failure libpq reports without a SQLSTATE, and the
 #: SQLSTATE the server sent with it. English, which is the server's default
 #: ``lc_messages``. A server that logs in another language reaches the
-#: ``08001`` row, which keeps its message. The first, third and fourth are
+#: ``08001`` row, which keeps its message. The first, fourth and fifth are
 #: measured on 13 to 18 (``docs/README.md``, ``pg-connect-sqlstate``). Under
 #: password authentication a role that does not exist reads as a wrong password,
 #: so the server sends its ``does not exist`` only where no password is asked.
+#:
+#: Only the password methods (``password``, ``md5``, ``scram-sha-256``) fail with
+#: ``28P01``. Every other method, such as ``ldap``, ``pam``, ``cert`` or
+#: ``peer``, fails with ``<method> authentication failed for user`` and
+#: ``28000``: that is how the server's ``auth_failed()`` chooses the code. Not
+#: measured: the stack has no LDAP or PAM.
 _CONNECT_MESSAGES = (
     (re.compile(r"password authentication failed for user"), WRONG_PASSWORD),
+    (re.compile(r"authentication failed for user"), LOGIN_REFUSED),
     (re.compile(r"no pg_hba\.conf entry for|pg_hba\.conf rejects connection"), LOGIN_REFUSED),
     (re.compile(r'role ".*" is not permitted to log in|role ".*" does not exist'), LOGIN_REFUSED),
     (re.compile(r'database ".*" does not exist'), INVALID_CATALOG),
@@ -99,6 +107,7 @@ _CONNECT_MESSAGES = (
 #: login.
 _CERTIFICATE = re.compile(
     r"root certificate file .* does not exist|certificate verify failed"
+    r"|could not get home directory to locate root certificate file"
     r"|server certificate for .* does not match host name"
 )
 CERTIFICATE_HINT = (
@@ -125,12 +134,21 @@ class Diagnosis:
         first = lines[0].strip() if lines else ""
         return f"{self.code}: {first}" if first else self.code
 
+    @property
+    def coded_message(self) -> str:
+        """The message with the code in front, as an ``ORA-`` message carries its
+        own. A PostgreSQL message never contains its SQLSTATE, so every view
+        that prints the message would otherwise print no code."""
+        message = self.message.strip()
+        return f"{self.code}: {message}" if message else self.code
+
     def as_error(self) -> DriverError:
-        """This diagnosis as something to raise. An authentication failure is an
+        """This diagnosis as something to raise, with :attr:`coded_message` as
+        its message. An authentication failure is an
         :class:`~sopuli.driver.protocol.AuthenticationError`, exit 6."""
         if self.category == AuthenticationError.category:
             return AuthenticationError(
-                self.message, hint=self.hint, code=self.code, retryable=self.retryable
+                self.coded_message, hint=self.hint, code=self.code, retryable=self.retryable
             )
         return MappedError(self)
 
@@ -141,7 +159,7 @@ class MappedError(DriverError):
 
     def __init__(self, diagnosis: Diagnosis) -> None:
         super().__init__(
-            diagnosis.message,
+            diagnosis.coded_message,
             hint=diagnosis.hint,
             code=diagnosis.code,
             retryable=diagnosis.retryable,
@@ -173,8 +191,11 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
 
     ``sqlstate`` is read where the server's reply carried one. A failed
     connection has none, so its code comes from :data:`_CONNECT_MESSAGES`, or is
-    ``08001``. On an open session, a failure with no SQLSTATE is the connection
-    going away, ``08006``.
+    ``08001``. On an open session, a failure with no SQLSTATE is read as the
+    connection going away, ``08006``. So a caller passes only what the server
+    or the connection raised: an error psycopg raises before it sends anything,
+    such as a wrong number of parameters, is a fault in this tool, and is not
+    mapped.
     """
     message = str(exc)
     code = getattr(exc, "sqlstate", None)

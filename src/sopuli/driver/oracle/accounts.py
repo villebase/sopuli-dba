@@ -116,6 +116,9 @@ from sopuli.driver.protocol import DriverError, UserState
 #: spells a role and how :attr:`UserState.roles` carries one.
 ADMIN_ROLES = frozenset({"DBA", "PDB_DBA", "CDB_DBA", "AUDIT_ADMIN"})
 
+#: :data:`ADMIN_ROLES` for a sentence, so a hint cannot name another list.
+_ADMIN_ROLES_IN_WORDS = ", ".join(sorted(ADMIN_ROLES)[:-1]) + f" or {sorted(ADMIN_ROLES)[-1]}"
+
 #: Guardrail 5's list, reported as :attr:`UserState.supplied_name` and consulted
 #: **only where check 2 could not answer** — that is, where
 #: :attr:`UserState.vendor_maintained` is ``None`` because the column does not
@@ -250,10 +253,10 @@ PROFILE_QUERY = (
 )
 
 #: Every role the account holds, **including the ones it holds through another
-#: role**. Guardrail 4 refuses ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
-#: ``AUDIT_ADMIN``, and a flat read of ``DBA_ROLE_PRIVS`` sees only direct
-#: grants -- so an account granted a site role that itself holds ``DBA`` would
-#: have been reported as holding nothing the guardrail cares about, and passed.
+#: role**. Guardrail 4 refuses the roles in :data:`ADMIN_ROLES`, and a flat read
+#: of ``DBA_ROLE_PRIVS`` sees only direct grants -- so an account granted a site
+#: role that itself holds ``DBA`` would have been reported as holding nothing the
+#: guardrail cares about, and passed.
 #:
 #: Measured on 26ai, which is how the hole was confirmed rather than argued:
 #: ``ACME_APP_ADMIN`` granted ``DBA``, then granted to an account, reads as
@@ -480,9 +483,9 @@ class RolesUnreadableError(DriverError):
     """``DBA_ROLE_PRIVS`` could not be read, so guardrail 4 has no input.
 
     **Raised rather than reported as "no roles"**, which is the entire reason
-    this class exists. Guardrail 4 refuses an account holding ``DBA``,
-    ``PDB_DBA``, ``CDB_DBA`` or ``AUDIT_ADMIN``; an empty set means *this account
-    holds none of them* and reads as a pass. A missing grant would therefore turn
+    this class exists. Guardrail 4 refuses an account holding a role in
+    :data:`ADMIN_ROLES`; an empty set means *this account holds none of them*
+    and reads as a pass. A missing grant would therefore turn
     a safety check into a silent success, which is the same failure shape as a
     capability probe that could not be answered reporting absent (decision #195) — and the
     reason `02-oracle-privileges.md` §2 grants the view.
@@ -896,9 +899,9 @@ def _roles(cursor: Cursor, name: str) -> frozenset[str]:
             code=diagnosis.code,
             retryable=diagnosis.retryable,
             hint=(
-                "guardrail 4 refuses an account holding DBA, PDB_DBA, CDB_DBA or "
-                "AUDIT_ADMIN, and cannot tell an account with none from a view it "
-                "cannot read: GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account"
+                f"guardrail 4 refuses an account holding {_ADMIN_ROLES_IN_WORDS}, and "
+                "cannot tell an account with none from a view it cannot read: "
+                "GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account"
             ),
         ) from error
 

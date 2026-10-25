@@ -702,6 +702,9 @@ def test_unreadable_roles_are_refused_rather_than_reported_as_none_held() -> Non
         describe(cursor, "acme_orders_user")
 
     assert "DBA_ROLE_PRIVS" in (raised.value.hint or "")
+    assert "AUDIT_ADMIN, CDB_DBA, DBA or PDB_DBA" in (raised.value.hint or ""), (
+        "the hint names the roles guardrail 4 refuses, from the list itself"
+    )
     assert raised.value.code == "ORA-00942", "the server's code is carried"
     assert "DBA_ROLE_PRIVS" in raised.value.message, "and so is its message"
 

@@ -7,6 +7,7 @@ declares, so a second driver adds its own lines without a change to `cli.py`.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
@@ -78,21 +79,43 @@ def test_a_driver_neither_installed_nor_configured_is_not_asked(
 
 
 def test_a_driver_that_will_not_import_is_reported_not_raised(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The install section already names the missing extra; this line says the
     client report could not be written, and why. The detail is keyed by the
     driver, so a second driver's lines cannot overwrite it."""
+    (tmp_path / "fake_needs_client.py").write_text("import sopuli_no_such_client\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setattr(
-        cli_module, "DRIVERS", {"one": DatabaseDriver(module="sopuli_no_such_module")}
+        cli_module,
+        "DRIVERS",
+        {
+            "one": DatabaseDriver(
+                module="fake_needs_client",
+                extra="one",
+                provides=frozenset({"sopuli_no_such_client"}),
+            )
+        },
     )
 
     report = cli_module._client_report(_config("one"))
 
     assert report == {
         "one": "not loaded",
-        "one_detail": "No module named 'sopuli_no_such_module'",
+        "one_detail": "No module named 'sopuli_no_such_client'",
     }
+
+
+def test_a_driver_this_build_has_no_module_for_writes_no_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install section reports it as `not_implemented` and the target's own
+    row says so; a client line would only repeat it, naming a Python module."""
+    monkeypatch.setattr(
+        cli_module, "DRIVERS", {"one": DatabaseDriver(module="sopuli_no_such_module")}
+    )
+
+    assert cli_module._client_report(_config("one")) == {}
 
 
 def test_a_client_report_that_raises_is_reported_not_raised(

@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.2.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.3.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.2"
+SCHEMA_VERSION = "3.3"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -540,11 +540,18 @@ def _material_ref() -> Schema:
 _TARGET_TYPES: dict[str, Schema] = {
     "name": STRING,
     "type": _enum(targets.TARGET_TYPES),
-    "dsn": {**STRING, "description": "host:port/service, or a TNS alias."},
+    "dsn": {
+        **STRING,
+        "description": (
+            "Oracle: host:port/service, or a TNS alias. PostgreSQL: host:port, never a "
+            "connection URI or a keyword string, which can carry a password."
+        ),
+    },
     "environment": STRING,
     "vault": {**STRING, "description": "The name of an entry in `vaults:`."},
     "admin": _ref("admin"),
     "oracle": _ref("target_oracle"),
+    "postgres": _ref("target_postgres"),
     "labels": _ref("labels"),
     "safety": _ref("safety"),
 }
@@ -624,6 +631,33 @@ def _target_oracle() -> Schema:
             "Which container the tool connects to. Not an application's `oracle:` "
             "block, which carries `container_clause` -- same key name, different "
             "meaning."
+        ),
+    )
+
+
+def _target_postgres() -> Schema:
+    return _object(
+        keys=targets.POSTGRES_KEYS,
+        types={
+            "database": {
+                **STRING,
+                "description": (
+                    "The database to connect through. Default `postgres`. The target is "
+                    "the whole cluster, so this is only the way in."
+                ),
+            },
+            "sslmode": {
+                **_enum(targets.POSTGRES_SSLMODES),
+                "description": "libpq's sslmode. Default `verify-full`.",
+            },
+            "sslrootcert": {
+                **STRING,
+                "description": "The CA file that issued the server certificate.",
+            },
+        },
+        min_properties=1,
+        description=(
+            "How the tool connects to a PostgreSQL cluster. Only on a `type: postgresql` target."
         ),
     )
 
@@ -1252,6 +1286,7 @@ def build_schema() -> Schema:
             "admin": _admin(),
             "admin_auth": _admin_auth(),
             "target_oracle": _target_oracle(),
+            "target_postgres": _target_postgres(),
             "target_set": _target_set(),
             "target_patch": _target_patch(),
             "for_each": _for_each(),

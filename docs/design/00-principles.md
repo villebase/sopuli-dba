@@ -227,8 +227,10 @@ targets:
 
 **A driver is an install extra**, by the same rule as a store.
 `python-oracledb` exists only to reach Oracle, so it comes with
-`sopuli-dba[oracle]`. PostgreSQL would come with `sopuli-dba[postgres]`.
-`sopuli/driver/registry.py` implements this. The driver registry and the store
+`sopuli-dba[oracle]`. psycopg comes with `sopuli-dba[postgres]`.
+`sopuli/driver/registry.py` implements this. The config accepts
+`type: postgresql`, and until its driver module is written, a command that
+connects to one is refused with `SOPULI-20006`. The driver registry and the store
 registry share `sopuli/extras.py`, which finds a module without importing it and
 reads a `ModuleNotFoundError` three ways. That logic is subtle, so it has one
 copy. The error messages stay separate: a store is named by `vaults:` and a
@@ -408,6 +410,7 @@ These commands install the base and each extra:
 ```
 pip install sopuli-dba                 # config, selection, schema — no network client
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
+pip install "sopuli-dba[postgres]"     # + psycopg, for PostgreSQL; the driver is not written yet
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
@@ -702,7 +705,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.2.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-3.3.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

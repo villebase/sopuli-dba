@@ -80,9 +80,9 @@ def test_the_template_is_read_by_the_same_code_as_an_explicit_target() -> None:
     target set silently cannot express something the estate can, so the two share
     a reader -- and therefore share their rules."""
     with pytest.raises(ConfigError) as caught:
-        build_target_sets(document(appdb={**APPDB, "type": "postgresql"}))
+        build_target_sets(document(appdb={**APPDB, "type": "mysql"}))
 
-    assert "unknown target type 'postgresql'" in str(caught.value)
+    assert "unknown target type 'mysql'" in str(caught.value)
 
 
 def test_a_set_must_declare_for_each() -> None:

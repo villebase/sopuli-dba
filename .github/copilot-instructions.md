@@ -9,6 +9,7 @@ document before changing behaviour:
 | --- | --- |
 | Configuration, targets, applications, SecretRefs, password policies | `docs/design/01-configuration.md` |
 | Oracle SQL or privileges | `docs/design/02-oracle-privileges.md` |
+| PostgreSQL SQL or privileges | `docs/design/02-postgres-privileges.md` |
 | CLI text, JSON, JSONL, or result shapes | `docs/design/03-json-output.md` |
 | Tests or the test stack | `docs/design/04-testing.md` |
 | Credential synchronization and rotation | `docs/use-cases/uc-01-app-credential-sync.md` |

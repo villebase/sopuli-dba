@@ -1484,6 +1484,11 @@ without one connects with the defaults. `sslmode` accepts the weak values,
 because `require_encryption` (§9) is the rule that refuses a password over an
 unencrypted connection, for every product.
 
+The target's `admin` is a role with `CREATEROLE` that is not a superuser.
+[`02-postgres-privileges.md`](02-postgres-privileges.md) has its grants, and
+§4 there says which roles not to declare: one whose password a Kubernetes
+operator owns is one of them.
+
 **The `dsn` is `host:port` and nothing else.** The host is a name, an IPv4
 address, or an IPv6 address in brackets, such as `[2001:db8::10]:5432`. A
 connection URI (`postgresql://…`) and a keyword string (`host=… port=…`) are

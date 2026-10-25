@@ -640,8 +640,8 @@ consumer branches on, so it does not have to parse the name out of the message.
 message with that code in front, because a PostgreSQL message never contains
 its own code. `28P01`, a wrong password, and `28000`, a login the server refused
 for another reason, are `authentication`, exit 6. `3D000`, a database that does
-not exist, is `config`, exit 9. Any other code in class `08` is `connectivity`,
-and any other code is `database`. libpq reports a failed connection with no
+not exist, is `config`, exit 9. Any other code in class `08`, or in `57P`, the
+server ending the session, is `connectivity`, and any other code is `database`. libpq reports a failed connection with no
 SQLSTATE, so the driver reads the server's English message for `28P01`, `28000`
 and `3D000`. It reports any other failed connection as `08001`, and a failure
 on an open session as `08006`. `docs/README.md`, `pg-connect-sqlstate`, has

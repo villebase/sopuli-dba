@@ -1,7 +1,8 @@
 """The SQLSTATE mapping. Tier 0: an exception is read by its attributes.
 
-The connection messages are psycopg 3.3.6's, from the tier-1 `postgres`
-service (16).
+`WRONG_PASSWORD` and the root-certificate message are psycopg 3.3.6's, from
+real runs against PostgreSQL 16. The others are the server's and libpq's text,
+written in the shape psycopg gives a failed connection, and not measured.
 """
 
 from __future__ import annotations
@@ -44,6 +45,8 @@ class _PsycopgError(Exception):
         ("3D000", "config", ExitCode.CONFIG_INVALID),
         ("08006", "connectivity", ExitCode.FAILURE),
         ("08P01", "connectivity", ExitCode.FAILURE),
+        ("57P01", "connectivity", ExitCode.FAILURE),
+        ("57014", "database", ExitCode.FAILURE),
         ("XX000", "database", ExitCode.FAILURE),
     ],
 )
@@ -77,7 +80,8 @@ def test_a_wrong_password_is_recovered_from_the_message() -> None:
     assert error.code == "28P01"
     assert error.exit_code == ExitCode.AUTH_FAILURE
     assert error.message == f"28P01: {WRONG_PASSWORD}"
-    assert error.hint == "the password this run used is not the one the cluster holds for this role"
+    assert "the password this run used" in str(error.hint)
+    assert "the role does not exist" in str(error.hint)
 
 
 @pytest.mark.parametrize("code", ["28P01", "3D000", "08001"])
@@ -100,6 +104,20 @@ def test_another_methods_failed_login_is_28000(method: str) -> None:
     diagnosis = from_error(_PsycopgError(message), connecting=True)
 
     assert (diagnosis.code, diagnosis.exit_code) == ("28000", ExitCode.AUTH_FAILURE)
+
+
+def test_the_first_attempts_reason_is_the_one_reported() -> None:
+    """A name that resolves to two addresses gives one message per attempt."""
+    message = (
+        "connection failed: Multiple connection attempts failed. All failures were:\n"
+        '- host: "localhost", port: 5432, hostaddr: "::1": connection failed: '
+        'FATAL:  no pg_hba.conf entry for host "::1", user "acme_app_user", '
+        'database "postgres", no encryption\n'
+        '- host: "localhost", port: 5432, hostaddr: "127.0.0.1": connection failed: '
+        'FATAL:  password authentication failed for user "acme_app_user"'
+    )
+
+    assert from_error(_PsycopgError(message), connecting=True).code == "28000"
 
 
 def test_a_missing_hba_line_is_recovered_from_the_message() -> None:

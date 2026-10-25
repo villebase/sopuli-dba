@@ -33,6 +33,12 @@ UNABLE_TO_CONNECT = "08001"
 #: ``connection_failure``.
 CONNECTION_FAILURE = "08006"
 
+#: Where an unnamed code is a lost or refused connection: class ``08``, and
+#: ``57P``, the server shutting down or ending the session (``57P01`` for
+#: ``pg_terminate_backend``). Not all of class ``57``: ``57014`` is a cancelled
+#: statement, such as one that ran past ``statement_timeout``.
+_CONNECTION_CLASSES = ("08", "57P")
+
 
 @dataclass(frozen=True)
 class _Rule:
@@ -48,7 +54,10 @@ RULES: dict[str, _Rule] = {
     WRONG_PASSWORD: _Rule(
         "authentication",
         exit_code=ExitCode.AUTH_FAILURE,
-        hint="the password this run used is not the one the cluster holds for this role",
+        hint=(
+            "the password this run used is not the one the cluster holds for this role, "
+            "or the role does not exist: the server gives both the same message"
+        ),
     ),
     LOGIN_REFUSED: _Rule(
         "authentication",
@@ -84,10 +93,16 @@ RULES: dict[str, _Rule] = {
 #: The server's message for a failure libpq reports without a SQLSTATE, and the
 #: SQLSTATE the server sent with it. English, which is the server's default
 #: ``lc_messages``. A server that logs in another language reaches the
-#: ``08001`` row, which keeps its message. The first, fourth and fifth are
-#: measured on 13 to 18 (``docs/README.md``, ``pg-connect-sqlstate``). Under
-#: password authentication a role that does not exist reads as a wrong password,
-#: so the server sends its ``does not exist`` only where no password is asked.
+#: ``08001`` row, which keeps its message. Measured on 13 to 18
+#: (``docs/README.md``, ``pg-connect-sqlstate``): ``password authentication
+#: failed``, ``is not permitted to log in`` and ``database "…" does not
+#: exist``. Under password authentication a role that does not exist reads as a
+#: wrong password, so the server sends ``role "…" does not exist`` only where no
+#: password is asked, such as ``trust`` or ``peer``. That message and the
+#: ``pg_hba.conf`` ones are the server's text, not measured.
+#:
+#: A message can hold several attempts, one per address the host name resolves
+#: to. The reason the first attempt failed with is the one reported.
 #:
 #: Only the password methods (``password``, ``md5``, ``scram-sha-256``) fail with
 #: ``28P01``. Every other method, such as ``ldap``, ``pam``, ``cert`` or
@@ -171,11 +186,11 @@ class MappedError(DriverError):
 
 def classify(code: str, message: str) -> Diagnosis:
     """What ``code`` means. A named row first, then the class: the first two
-    characters of a SQLSTATE. Class ``08`` is a connection failure, and any
-    other unnamed code is the database's."""
+    characters of a SQLSTATE. :data:`_CONNECTION_CLASSES` are a connection
+    failure, and any other unnamed code is the database's."""
     rule = RULES.get(code)
     if rule is None:
-        rule = _Rule("connectivity") if code.startswith("08") else _Rule("database")
+        rule = _Rule("connectivity") if code.startswith(_CONNECTION_CLASSES) else _Rule("database")
     return Diagnosis(
         code=code,
         category=rule.category,
@@ -203,9 +218,16 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
         return classify(str(code), message)
     if not connecting:
         return classify(CONNECTION_FAILURE, message)
-    for pattern, recovered in _CONNECT_MESSAGES:
-        if pattern.search(message):
-            return classify(recovered, message)
+    found = [
+        (match.start(), index, recovered)
+        for index, (pattern, recovered) in enumerate(_CONNECT_MESSAGES)
+        if (match := pattern.search(message))
+    ]
+    if found:
+        # The earliest in the message, which is the first attempt; at one
+        # place, the earlier row, so `password …` wins over `… authentication
+        # failed` when both match.
+        return classify(min(found)[2], message)
     diagnosis = classify(UNABLE_TO_CONNECT, message)
     if _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)

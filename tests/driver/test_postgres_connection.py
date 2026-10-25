@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget, Target, TargetPostgres
 from sopuli.driver.postgres.connection import (
     application_name,
@@ -66,11 +67,27 @@ def test_the_password_is_only_in_its_own_argument() -> None:
 
 
 @pytest.mark.parametrize(
+    ("credential", "message"),
+    [
+        (Credential(username=None, secret=Secret(PASSWORD)), "has no username"),
+        (Credential(username="sopuli_admin", secret=None), "resolved no password"),
+        (Credential(external=True), "has no username"),
+    ],
+)
+def test_a_credential_with_a_part_missing_is_refused(credential: Credential, message: str) -> None:
+    """libpq would otherwise fill the gap from the machine: the OS user,
+    `PGPASSWORD` or `~/.pgpass`."""
+    with pytest.raises(ConfigError, match=message):
+        connect_arguments(_target(), credential, correlation_id=RUN, timeouts=Timeouts())
+
+
+@pytest.mark.parametrize(
     ("dsn", "expected"),
     [
         ("pg-dev.example.com:5432", ("pg-dev.example.com", 5432)),
         ("192.0.2.10:6432", ("192.0.2.10", 6432)),
         ("[2001:db8::10]:5432", ("2001:db8::10", 5432)),
+        ("[fe80::10%eth0]:5432", ("fe80::10%eth0", 5432)),
     ],
 )
 def test_the_dsn_splits_into_host_and_port(dsn: str, expected: tuple[str, int]) -> None:

@@ -26,9 +26,15 @@ from sopuli.config.expansion import declared_at
 from sopuli.config.model import Application, Config, ExpandedTarget, Override, TargetOracle
 from sopuli.config.targets import EXTERNAL, ORACLE, POSTGRESQL
 
-#: `host:port`, where the host is a name, an IPv4 address or a bracketed IPv6
-#: address. The range of the port is checked after the match.
-_HOST_AND_PORT = re.compile(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):([0-9]{1,5})")
+#: One label of a host name (RFC 1123): letters, digits and inner hyphens.
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+
+#: `host:port`, where the host is a name or an IPv4 address (dot-separated
+#: labels, with an optional root dot) or a bracketed IPv6 address with an
+#: optional zone id. The range of the port is checked after the match.
+_HOST_AND_PORT = re.compile(
+    rf"(?:\[[0-9A-Fa-f:.]+(?:%[A-Za-z0-9._-]+)?\]|{_LABEL}(?:\.{_LABEL})*\.?):([0-9]{{1,5}})"
+)
 
 _DSN_HINT = (
     "write host:port, such as pg-dev.example.com:5432. The database goes in "
@@ -55,15 +61,16 @@ def check_products(config: Config) -> None:
                 at=declared_at(expanded, "postgres"),
                 hint=(
                     "drop `postgres:`, or set `type: postgresql` if this is a PostgreSQL "
-                    "cluster" + _one_set_per_product(expanded, "Oracle")
+                    "cluster" + _one_set_per_product(expanded, "postgres", "Oracle")
                 ),
             )
 
 
-def _one_set_per_product(expanded: ExpandedTarget, product: str) -> str:
+def _one_set_per_product(expanded: ExpandedTarget, block: str, product: str) -> str:
     """The way out for a target set whose template writes the other product's
-    block: an override can change `type` but cannot remove a block."""
-    if expanded.target_set is None:
+    block: an override can change `type` but cannot remove a block. A block the
+    override wrote is dropped from the override, which needs no extra words."""
+    if expanded.target_set is None or block in expanded.patched:
         return ""
     return (
         f". An override cannot remove a block its template writes, so put the "
@@ -80,7 +87,7 @@ def _check_postgresql(expanded: ExpandedTarget) -> None:
             at=declared_at(expanded, "oracle"),
             hint=(
                 "drop `oracle:`. A PostgreSQL target is the whole cluster, so there is "
-                "no container to assert" + _one_set_per_product(expanded, "PostgreSQL")
+                "no container to assert" + _one_set_per_product(expanded, "oracle", "PostgreSQL")
             ),
         )
     postgres = target.postgres
@@ -93,7 +100,11 @@ def _check_postgresql(expanded: ExpandedTarget) -> None:
             f"target {expanded.name!r} names a CA file under `sslmode: {postgres.sslmode}`, "
             f"which does not verify the server with it",
             at=declared_at(expanded, "postgres"),
-            hint="use `sslmode: verify-full` (the default) or `verify-ca`, or drop `sslrootcert`",
+            hint=(
+                "use `sslmode: verify-full` (the default) or `verify-ca`"
+                # An override cannot clear a key its template wrote.
+                + ("" if "postgres" in expanded.patched else ", or drop `sslrootcert`")
+            ),
         )
     auth = None if target.admin is None else target.admin.auth
     if auth is not None and auth.method == EXTERNAL:

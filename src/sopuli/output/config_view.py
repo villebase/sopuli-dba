@@ -20,6 +20,7 @@ two views, discriminated by ``resolved``, and is pinned by the run schema,
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
@@ -27,7 +28,7 @@ from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
-from sopuli.config.model import Pairs, Safety, Target, TargetPostgres, Vault
+from sopuli.config.model import Pairs, Safety, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import POSTGRESQL
@@ -883,12 +884,7 @@ def _postgres_json(target: Target) -> dict[str, Any] | None:
     """
     if target.type != POSTGRESQL:
         return None
-    block = target.postgres if target.postgres is not None else TargetPostgres()
-    return {
-        "database": block.database,
-        "sslmode": block.sslmode,
-        "sslrootcert": block.sslrootcert,
-    }
+    return dataclasses.asdict(target.postgres_settings)
 
 
 def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:

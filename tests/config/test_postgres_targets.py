@@ -130,7 +130,14 @@ def test_an_empty_postgres_block_is_refused() -> None:
 
 @pytest.mark.parametrize(
     "dsn",
-    ["pg-dev.example.com:5432", "192.0.2.10:5432", "[2001:db8::10]:6432", "pg:1"],
+    [
+        "pg-dev.example.com:5432",
+        "192.0.2.10:5432",
+        "[2001:db8::10]:6432",
+        "[fe80::1%eth0]:5432",
+        "pg:1",
+        "pg-dev.example.com.:5432",
+    ],
 )
 def test_a_host_and_port_is_accepted(dsn: str) -> None:
     assert cluster(dsn=dsn).dsn == dsn
@@ -169,6 +176,12 @@ def test_a_keyword_connection_string_is_refused_too() -> None:
         "pg-dev.example.com:5432/postgres",
         ":5432",
         "2001:db8::10:5432",
+        "-:5432",
+        ".:5432",
+        "..:5432",
+        "pg..example.com:5432",
+        "-pg.example.com:5432",
+        "[]:5432",
     ],
 )
 def test_anything_else_is_not_host_and_port(dsn: str) -> None:
@@ -272,6 +285,49 @@ def test_a_ca_file_patched_onto_a_weak_sslmode_is_refused_too() -> None:
 
     assert "'pg-qa'" in rendered
     assert "target_sets.pg.overrides.pg-qa.postgres" in rendered
+
+
+def test_an_override_that_weakens_the_mode_under_a_templates_ca_file_says_what_it_can_do() -> None:
+    """An override cannot clear a key, so the hint does not tell it to drop the
+    CA file its template wrote."""
+    rendered = refused(
+        {
+            "target_sets": {
+                "pg": {
+                    "name": "pg-{env}",
+                    "type": "postgresql",
+                    "dsn": "pg-{env}.example.com:5432",
+                    "postgres": {"sslrootcert": "/etc/ca.pem"},
+                    "for_each": {"env": {"dev": {}, "qa": {}}},
+                    "overrides": {"pg-qa": {"postgres": {"sslmode": "require"}}},
+                }
+            }
+        }
+    )
+
+    assert "target_sets.pg.overrides.pg-qa.postgres" in rendered
+    assert "drop `sslrootcert`" not in rendered
+    assert "verify-ca" in rendered
+
+
+def test_an_oracle_block_an_override_wrote_is_dropped_from_the_override() -> None:
+    """Only a block the template wrote needs a set of its own."""
+    rendered = refused(
+        {
+            "target_sets": {
+                "pg": {
+                    "name": "pg-{env}",
+                    "type": "postgresql",
+                    "dsn": "pg-{env}.example.com:5432",
+                    "for_each": {"env": {"dev": {}, "qa": {}}},
+                    "overrides": {"pg-qa": {"oracle": {"scope": "pdb"}}},
+                }
+            }
+        }
+    )
+
+    assert "target_sets.pg.overrides.pg-qa.oracle" in rendered
+    assert "a target set of their own" not in rendered
 
 
 def test_a_target_set_renders_the_postgres_block() -> None:

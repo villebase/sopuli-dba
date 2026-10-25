@@ -511,8 +511,8 @@ class TargetPostgres:
 
     These are settings, not assertions. The target is the cluster, and every role
     is cluster-wide, so ``database`` is only the way in. ``Target.postgres`` is
-    ``None`` where the file wrote no block, and a driver reads ``TargetPostgres()``
-    for that, so the defaults are written once, here.
+    ``None`` where the file wrote no block, and ``Target.postgres_settings``
+    reads the defaults for that, so they are written once, here.
     """
 
     database: str = "postgres"
@@ -554,6 +554,12 @@ class Target:
     postgres: TargetPostgres | None = None
     labels: Pairs = ()
     safety: Safety | None = None
+
+    @property
+    def postgres_settings(self) -> TargetPostgres:
+        """How to connect to this PostgreSQL target: the block the file wrote,
+        or the defaults where it wrote none."""
+        return self.postgres if self.postgres is not None else TargetPostgres()
 
 
 @dataclass(frozen=True)

@@ -9,9 +9,10 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
 its encryption. Only `doctor` gets this far: the registry entry is
 ``scope_only``, so every other command refuses the target with ``SOPULI-20006``
-before it connects. The methods past the scope are a second line behind that:
-they refuse with ``SOPULI-20006``, after a mutating one has refused a read-only
-session first. The driver sends no DDL.
+before it connects. The methods past the scope are a second line behind that,
+and refuse with ``SOPULI-20006`` without a round trip. A write that is written
+later checks :func:`~sopuli.driver.postgres.scope.require_read_write` first.
+The driver sends no DDL.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres.client import client_lines
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import from_error
-from sopuli.driver.postgres.scope import observe, require_read_write
+from sopuli.driver.postgres.scope import observe
 from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     VERIFY_LOGIN,
@@ -121,11 +122,6 @@ class PostgresSession:
     def _not_written(self, what: str) -> NotWrittenError:
         return NotWrittenError(self.target.name, what)
 
-    def _refuse_write(self, what: str) -> NotWrittenError:
-        """A write's refusal: a read-only session first, as before any write."""
-        require_read_write(self.scope(), target=self.target.name)
-        return self._not_written(what)
-
     def describe_user(self, account: str) -> UserState | None:
         raise self._not_written("read a role")
 
@@ -141,18 +137,18 @@ class PostgresSession:
         raise self._not_written("audit the tool's privileges")
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        raise self._refuse_write("set a password")
+        raise self._not_written("set a password")
 
     def suspend_account(self, account: str) -> AccountChange:
-        raise self._refuse_write("suspend a role")
+        raise self._not_written("suspend a role")
 
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
     ) -> tuple[AccountChange, ...]:
-        raise self._refuse_write("reset a password")
+        raise self._not_written("reset a password")
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
-        raise self._refuse_write("expire a password")
+        raise self._not_written("expire a password")
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""
@@ -166,7 +162,7 @@ class PostgresSession:
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
-        raise self._refuse_write("enforce a role's attributes")
+        raise self._not_written("enforce a role's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
         raise self._not_written("look up a profile")
@@ -199,13 +195,13 @@ class PostgresSession:
         require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        raise self._refuse_write("end a rollover window")
+        raise self._not_written("end a rollover window")
 
     def close(self) -> None:
-        """Let the connection go. Safe twice."""
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
+        """Let the connection go. Safe twice, also after a close that raised."""
+        connection, self.connection = self.connection, None
+        if connection is not None:
+            connection.close()
 
 
 @dataclass(frozen=True)

@@ -185,7 +185,13 @@ from sopuli.driver.protocol import (
     UserState,
     VerifyResult,
 )
-from sopuli.driver.registry import DRIVERS, driver_for, installed, require_full_driver
+from sopuli.driver.registry import (
+    DRIVER_NOT_IMPLEMENTED,
+    DRIVERS,
+    driver_for,
+    installed,
+    require_full_driver,
+)
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -1072,17 +1078,27 @@ def _examine(
         try:
             scope = session.scope()
             if privileges:
-                # Folded into the scope the entry already carries rather than
-                # added beside it, because `scope.over_granted` is where the run
-                # schema puts this, and two places for one fact are two things
-                # that can disagree.
-                audit = session.privileges()
-                scope = replace(scope, over_granted=audit.over_granted)
-                # The findings alone would be a report that reads as complete
-                # whatever it managed to look at. `caveats()` is what stops
-                # `over_granted: []` meaning both "nothing is over-granted" and
-                # "the view that would have said so was refused".
-                warnings = audit.caveats()
+                try:
+                    audit = session.privileges()
+                except DriverError as error:
+                    # A driver with no audit yet (`SOPULI-20006`) still reported
+                    # what the target is, so the entry keeps its scope and says
+                    # the audit was not made. Any other failure is the entry's.
+                    if error.code != DRIVER_NOT_IMPLEMENTED:
+                        raise
+                    warnings = (error.message,)
+                else:
+                    # Folded into the scope the entry already carries rather
+                    # than added beside it, because `scope.over_granted` is where
+                    # the run schema puts this, and two places for one fact are
+                    # two things that can disagree.
+                    scope = replace(scope, over_granted=audit.over_granted)
+                    # The findings alone would be a report that reads as
+                    # complete whatever it managed to look at. `caveats()` is
+                    # what stops `over_granted: []` meaning both "nothing is
+                    # over-granted" and "the view that would have said so was
+                    # refused".
+                    warnings = audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             return build_target(
                 target, connected=True, error=_finding(error), duration_ms=_elapsed(started)

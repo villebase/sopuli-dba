@@ -79,6 +79,24 @@ def test_doctor_reaches_the_cluster_and_reports_what_it_is(
     assert scope["encryption"]["protocol"] == "tcp"
 
 
+def test_a_privilege_audit_the_driver_lacks_keeps_the_scope(
+    runner: CliRunner, live_postgres: Any, tmp_path: Path
+) -> None:
+    """`--check-privileges` warns and never fails (P5), so a driver with no
+    audit yet still reports the cluster, and says the audit was not made."""
+    config = _config(tmp_path / "doctor.yaml", live_postgres.dsn, live_postgres.user)
+
+    result = runner.invoke(
+        cli, ["--config", str(config), "--output", "json", "doctor", "--check-privileges"]
+    )
+
+    assert result.exit_code == 0, result.output
+    (entry,) = json.loads(result.stdout)["targets"]
+    assert entry["scope"]["type"] == "cluster"
+    assert "error" not in entry or entry["error"] is None
+    assert any("audit the tool's privileges" in line for line in entry["warnings"])
+
+
 def test_doctor_prints_the_postgresql_client_lines(
     runner: CliRunner, live_postgres: Any, tmp_path: Path
 ) -> None:

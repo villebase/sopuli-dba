@@ -97,9 +97,14 @@ def test_an_operation_not_written_yet_is_sopuli_20006(call: Any) -> None:
     assert "pip" not in str(refused.value)
 
 
-def test_a_write_on_a_standby_is_refused_as_read_only_first() -> None:
-    with pytest.raises(scope_module.ReadOnlyTargetError):
-        _session(recovery=True).set_password("acme_app_user", Secret("x"))
+def test_a_write_refuses_without_reading_the_scope() -> None:
+    """Not written yet is the answer on a standby too, so no round trip."""
+    session = _session(recovery=True)
+
+    with pytest.raises(session_module.NotWrittenError):
+        session.set_password("acme_app_user", Secret("x"))
+
+    assert session._scope is None
 
 
 def test_rollover_is_an_absent_capability() -> None:

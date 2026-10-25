@@ -235,6 +235,43 @@ def test_an_override_that_makes_a_target_postgresql_is_checked_against_the_templ
 
     assert "'appdb-qa'" in rendered
     assert "target_sets.appdb.oracle" in rendered
+    # An override cannot remove a block the template writes, so the way out is
+    # a set per product, and the hint says so.
+    assert "a target set of their own" in rendered
+
+
+@pytest.mark.parametrize("sslmode", ["disable", "allow", "prefer", "require"])
+def test_a_ca_file_without_a_verifying_sslmode_is_refused(sslmode: str) -> None:
+    """libpq ignores the CA file below `require`, and under `require` it turns
+    the mode into `verify-ca` without saying so. Either way the file does not
+    do what it reads as."""
+    rendered = refused(
+        {"targets": [{**CLUSTER, "postgres": {"sslmode": sslmode, "sslrootcert": "/etc/ca.pem"}}]}
+    )
+
+    assert "sslrootcert" in rendered
+    assert sslmode in rendered
+    assert "targets[0].postgres" in rendered
+
+
+def test_a_ca_file_patched_onto_a_weak_sslmode_is_refused_too() -> None:
+    rendered = refused(
+        {
+            "target_sets": {
+                "pg": {
+                    "name": "pg-{env}",
+                    "type": "postgresql",
+                    "dsn": "pg-{env}.example.com:5432",
+                    "postgres": {"sslmode": "prefer"},
+                    "for_each": {"env": {"dev": {}, "qa": {}}},
+                    "overrides": {"pg-qa": {"postgres": {"sslrootcert": "/etc/ca.pem"}}},
+                }
+            }
+        }
+    )
+
+    assert "'pg-qa'" in rendered
+    assert "target_sets.pg.overrides.pg-qa.postgres" in rendered
 
 
 def test_a_target_set_renders_the_postgres_block() -> None:
@@ -279,7 +316,7 @@ def test_an_applications_container_clause_on_a_postgresql_target_is_refused() ->
 
     assert "container_clause" in rendered
     assert "'pg-dev'" in rendered
-    assert "applications[0].oracle" in rendered
+    assert "applications[0].oracle.container_clause" in rendered
 
 
 def test_an_override_that_sets_a_container_clause_is_named() -> None:
@@ -299,7 +336,7 @@ def test_an_override_that_sets_a_container_clause_is_named() -> None:
         }
     )
 
-    assert "applications[0].overrides[0].oracle" in rendered
+    assert "applications[0].overrides[0].oracle.container_clause" in rendered
 
 
 def test_a_container_clause_on_oracle_targets_beside_a_cluster_is_fine() -> None:

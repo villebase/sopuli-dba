@@ -1477,7 +1477,7 @@ targets:
 |---|---|---|
 | `database` | `postgres` | the database to connect through. It is only the way in |
 | `sslmode` | `verify-full` | libpq's `sslmode`: `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full` |
-| `sslrootcert` | none | the CA file that issued the server certificate. A Kubernetes operator usually issues it from a CA of its own |
+| `sslrootcert` | none | the CA file that issued the server certificate. A Kubernetes operator usually issues it from a CA of its own. Only with `sslmode: verify-ca` or `verify-full`: libpq ignores the file below `require`, and under `require` it turns the mode into `verify-ca` without saying so |
 
 These are settings, not assertions. The block is optional, and a target
 without one connects with the defaults. `sslmode` accepts the weak values,
@@ -1501,7 +1501,10 @@ naming the target and the key:
   binds to a PostgreSQL target.
 
 They are checked once the estate is expanded, since an `overrides:` patch can
-change a generated target's `type` or add a block.
+change a generated target's `type` or add a block. A patch cannot remove a
+block its template writes, so a target set whose template writes `oracle:` can
+generate only Oracle targets. Put each product's targets in a target set of
+its own.
 
 ### `groups:` — a mapping of name to selection
 
@@ -3182,8 +3185,10 @@ match instead:
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
-| `oracle:` only on an Oracle target, `postgres:` and `external` never on a PostgreSQL one's other side, and a PostgreSQL `dsn` is `host:port` | §3a |
-| an application's `oracle: container_clause` may not bind to a PostgreSQL target | §3a |
+| `oracle:` only on an Oracle target, and `postgres:` only on a PostgreSQL target | yes |
+| a PostgreSQL target has a `host:port` `dsn` and no `admin.auth: external` | yes |
+| `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
+| an application's `oracle: container_clause` may not bind to a PostgreSQL target | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
@@ -3425,10 +3430,23 @@ notices until a rotation.
   rotation (invariant 4). `admin.auth: vault` with no `secret:` is the same rule:
   there is no default admin path, and guessing at one is how a run authenticates as
   something nobody chose
-- `admin.auth: external` on a target whose `dsn` is not a TNS alias → error.
-  External auth connects as `/@alias` and the wallet is keyed on that alias, so an
-  EZConnect string fails as an *authentication* error, which is the most
-  misleading way for a config mistake to surface
+- `admin.auth: external` on a PostgreSQL target → error, because external
+  authentication is an Oracle wallet
+- `admin.auth: external` on an Oracle target whose `dsn` is not a TNS alias →
+  error. External auth connects as `/@alias` and the wallet is keyed on that
+  alias, so an EZConnect string fails as an *authentication* error, which is the
+  most misleading way for a config mistake to surface
+- an `oracle:` block on a PostgreSQL target, or a `postgres:` block on an Oracle
+  target → error naming the target. Either would load and do nothing. Checked
+  after expansion, because an override can change a generated target's `type`
+- a PostgreSQL `dsn` that is not `host:port` → error. A connection URI or a
+  keyword string can carry a password, and the message does not repeat the value
+- `postgres.sslrootcert` with an `sslmode` other than `verify-ca` or
+  `verify-full` → error. libpq ignores the file below `require`, and under
+  `require` it turns the mode into `verify-ca` without saying so
+- an application's or an override's `oracle: container_clause` on an
+  application that binds to a PostgreSQL target → error. A PostgreSQL role
+  belongs to the whole cluster, so there is no container
 - `admin.auth: external` beside a `username:` → error rather than the username
   being ignored. The wallet decides who connects, and a file that appears to name
   the connecting account while the wallet names another is worth stopping for

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.60.schema.json`](../schemas/sopuli-run-1.60.schema.json),
+Schemas: [`../schemas/sopuli-run-1.61.schema.json`](../schemas/sopuli-run-1.61.schema.json),
 [`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -514,6 +514,12 @@ setting's name, so a later sub-block needs no change to the view or the schema.
 `allowed_methods` is never an empty array: two layers with no method in common
 are refused at plan time (`01-configuration.md` §9), so the tool never produces
 an empty list.
+
+**`config.targets[].postgres` is how the run connects to a PostgreSQL target**:
+`database`, `sslmode` and `sslrootcert`, with the defaults filled in where the
+file wrote no key, and after any `overrides:` entry. A target that wrote no
+block still connects with `verify-full`, and the document says so. It is null
+on every other type. From run schema 1.61.
 
 A binding's `secret` is the ref **as written**, a string that round-trips
 (`01-configuration.md` §7), so it matches the config file by eye. The structured

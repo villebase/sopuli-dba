@@ -88,6 +88,9 @@ class DatabaseDriver:
     #: imported and must not import a driver; a tier-0 test pins it to the
     #: driver's own rule.
     password_limit: str | None = None
+    #: The driver connects and reports the scope, and does nothing more yet.
+    #: :func:`require_full_driver` refuses it for every command but `doctor`.
+    scope_only: bool = False
 
     @property
     def install_command(self) -> str:
@@ -136,15 +139,13 @@ DRIVERS: dict[str, DatabaseDriver] = {
         provides=frozenset({"oracledb"}),
         password_limit="30 below 23, 128 from 23",
     ),
-    # No module yet: the config can declare a cluster before the driver can
-    # connect to one. `session` is the module that will import psycopg, for the
-    # reason the Oracle entry names `session`. The package beside it holds only
-    # tier-0 modules, so it exists and `find_spec` answers for the module.
-    # `psycopg` is the module the `postgres` extra installs.
+    # The module that imports psycopg, for the reason the Oracle entry names
+    # `session`. `psycopg` is the module the `postgres` extra installs.
     "postgresql": DatabaseDriver(
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
+        scope_only=True,
     ),
 }
 
@@ -168,8 +169,6 @@ class DriverNotImplementedError(ConfigError):
     the same ``ModuleNotFoundError`` and completely different problems. Nothing
     the operator installs fixes this one, so it must never carry an install
     line.
-
-    A ``postgresql`` target raises it until that driver's module exists.
 
     It has a code because the configuration is right and there is nothing to
     install, so a consumer must tell it from the ``config`` errors that a change
@@ -213,6 +212,24 @@ def resolve(target: Target) -> ModuleType:
                 hint="this is not something to install -- the driver is not written yet",
             ) from exc
         raise
+
+
+def require_full_driver(target: Target) -> None:
+    """Refuse a :attr:`DatabaseDriver.scope_only` driver, with ``SOPULI-20006``.
+
+    Every command but `doctor` calls this before it resolves a credential or
+    opens a socket, so a command over several targets reports that target's
+    error and carries on. `doctor` only asks what the target is, and skips it.
+    """
+    if DRIVERS[target.type].scope_only:
+        raise DriverNotImplementedError(
+            f'target "{target.name}" declares type "{target.type}", and this build '
+            f"can only report what such a target is (`doctor`) yet",
+            hint=(
+                "this is not something to install -- the driver connects and reports "
+                "the target, and the rest of it is not written yet"
+            ),
+        )
 
 
 def driver_for(target: Target, context: DriverContext) -> Driver:

@@ -41,6 +41,7 @@ from sopuli.driver.registry import (
     DriverNotInstalledError,
     driver_for,
     installed,
+    require_full_driver,
     resolve,
 )
 from sopuli.exit_codes import ExitCode
@@ -84,7 +85,7 @@ CLIENT_MISSING = DatabaseDriver(
 )
 
 #: No module in this build, and an extra all the same: the state of a type the
-#: config accepts before its driver is written, as ``postgresql`` is today.
+#: config accepts before its driver is written, as ``postgresql`` was.
 NO_MODULE = DatabaseDriver(
     module="sopuli.driver.nowhere", extra="oracle", provides=frozenset({"no_such_client"})
 )
@@ -150,10 +151,13 @@ def test_an_uninstalled_driver_is_the_whole_contract(monkeypatch: pytest.MonkeyP
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
-def test_a_driver_this_build_does_not_have_never_says_pip() -> None:
+def test_a_driver_this_build_does_not_have_never_says_pip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Nothing the operator installs fixes it, so the message must not carry an
-    install line. The real ``postgresql`` entry, whose module is not written
-    yet."""
+    install line."""
+    monkeypatch.setitem(DRIVERS, "postgresql", NO_MODULE)
+
     with pytest.raises(DriverNotImplementedError) as refused:
         resolve(target(type_name="postgresql"))
 
@@ -200,6 +204,21 @@ def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPa
     assert seen == [context]
 
 
+def test_a_scope_only_driver_is_refused_for_a_full_command() -> None:
+    """Every command but `doctor` is refused with SOPULI-20006 before any
+    credential is resolved or socket opened, so its per-target handler reports
+    it and the run carries on (#1040)."""
+    with pytest.raises(DriverNotImplementedError) as refused:
+        require_full_driver(target("pg-dev", "postgresql"))
+
+    assert refused.value.code == DRIVER_NOT_IMPLEMENTED
+    assert "`doctor`" in refused.value.message
+
+
+def test_a_full_driver_is_not_refused() -> None:
+    require_full_driver(target())
+
+
 def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:
     """The structured error `resolve` raises is the one the caller sees, so a
     missing client is still exit 9 with the install line, not a traceback."""
@@ -236,7 +255,7 @@ def _exports_build_driver(tree: ast.Module) -> bool:
 #: Types the config accepts whose driver module is not written yet. Each
 #: resolves to `DriverNotImplementedError`, and the test below fails once its
 #: module exists, so the entry leaves this set in the PR that writes it.
-UNWRITTEN = frozenset({"postgresql"})
+UNWRITTEN: frozenset[str] = frozenset()
 
 WRITTEN = sorted(set(DRIVERS) - UNWRITTEN)
 

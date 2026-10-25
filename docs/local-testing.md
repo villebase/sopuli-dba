@@ -42,7 +42,8 @@ the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the service account, run the SQL
 in `sql/oracle/` by hand. The only store backend is `hashicorp`; `doctor` lists
-the others as `not_implemented`.
+the others as `not_implemented`. The PostgreSQL driver connects to a cluster and
+reports it (§7), and does nothing more yet.
 
 ---
 
@@ -362,21 +363,25 @@ Exit 1. Set it and run again:
 $ export SOPULI_DB_ADMIN_PASSWORD=sopuli-test
 $ sopuli --config sopuli.yaml doctor
 install
-  KIND     NAME       STATUS           CONFIGURED
-  backend  file       not_implemented  -
-  backend  hashicorp  installed        vault-dev
-  backend  keyring    not_implemented  -
-  backend  oci        not_implemented  -
-  driver   oracle     installed        1 target
+  KIND     NAME        STATUS           CONFIGURED
+  backend  file        not_implemented  -
+  backend  hashicorp   installed        vault-dev
+  backend  keyring     not_implemented  -
+  backend  oci         not_implemented  -
+  driver   oracle      installed        1 target
+  driver   postgresql  installed        -
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
-  vault-dev  hashicorp  ok      yes   -886ms
+  vault-dev  hashicorp  ok      yes   -78ms
 
 client
   tns_admin         (unset)
   instant_client    23.26.3.0.0
   reaches           19.1 and later
+  psycopg           3.3.6
+  libpq             18.4
+  require_auth      accepted
 
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
 free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
@@ -423,21 +428,10 @@ Run `doctor` and type `sopuli-test` at the prompt:
 ```
 $ sopuli --config prompt.yaml doctor
 password for SYSTEM on free-pdb:
-install
-  KIND     NAME       STATUS           CONFIGURED
-  backend  file       not_implemented  -
-  backend  hashicorp  installed        -
-  backend  keyring    not_implemented  -
-  backend  oci        not_implemented  -
-  driver   oracle     installed        1 target
-
+...
 vaults
 
-client
-  tns_admin         (unset)
-  instant_client    23.26.3.0.0
-  reaches           19.1 and later
-
+...
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
 free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
@@ -451,6 +445,47 @@ that connects to the target asks for the password again. With no console there
 is nobody to ask: the target is reported unreachable, with the message
 `asks for its admin password interactively, and there is nobody here to ask`,
 and the run exits 1.
+
+### A PostgreSQL cluster
+
+The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, user `postgres`,
+password `sopuli-test`. `doctor` connects to it and reports what it found. The
+other commands refuse a PostgreSQL target with `SOPULI-20006`, except
+`creds generate`, which uses the policy's limits for it. Save
+this as `postgres.yaml`:
+
+```yaml
+version: 1
+targets:
+  - name: pg-dev
+    type: postgresql
+    environment: dev
+    dsn: "127.0.0.1:5432"
+    admin: { username: postgres, auth: { method: env } }
+    postgres: { sslmode: disable }
+```
+
+The container has no TLS, so the target sets `sslmode: disable`. Without it the
+driver asks for `verify-full`. Run `doctor`:
+
+```
+$ sopuli --config postgres.yaml doctor
+...
+client
+  tns_admin         (unset)
+  instant_client    23.26.3.0.0
+  reaches           19.1 and later
+  psycopg           3.3.6
+  libpq             18.4
+  require_auth      accepted
+
+TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+pg-dev  yes        cluster  -          READ WRITE  0             none
+  pg-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
+...
+```
+
+`libpq` is the one psycopg loaded. `require_auth` needs libpq 16 or later.
 
 ---
 

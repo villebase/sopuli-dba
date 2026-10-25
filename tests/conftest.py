@@ -307,6 +307,60 @@ def private_mount(vault_stack: VaultStack, request: pytest.FixtureRequest) -> It
     client.delete(f"/v1/sys/mounts/{path}")
 
 
+# ------------------------------------------------------ tier 1: PostgreSQL ---
+#
+# The `postgres` service of `test/compose.yaml`, in the tier0 and tier1
+# profiles. A freely pullable image, so a missing one is a skip (§1).
+
+
+@dataclass(frozen=True)
+class PostgresStack:
+    """The running `postgres` service, and the superuser that reaches it."""
+
+    host: str
+    port: int
+    user: str
+    password: str
+
+    @property
+    def dsn(self) -> str:
+        """The target's `dsn:`, host:port."""
+        return f"{self.host}:{self.port}"
+
+
+@pytest.fixture(scope="session")
+def live_postgres() -> PostgresStack:
+    """A reachable PostgreSQL, or a skip saying which part was missing.
+
+    The port follows `SOPULI_TEST_POSTGRES_PORT`, as the compose file's does.
+    psycopg is imported here: it is an extra, and a base install must reach the
+    skip.
+    """
+    stack = PostgresStack(
+        host="127.0.0.1",
+        port=int(os.environ.get("SOPULI_TEST_POSTGRES_PORT", "5432")),
+        user="postgres",
+        password="sopuli-test",
+    )
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover -- reached only in a base install
+        _missing_environment("psycopg is not installed; `pip install -e '.[postgres]'`")
+    try:
+        psycopg.connect(
+            host=stack.host,
+            port=stack.port,
+            user=stack.user,
+            password=stack.password,
+            dbname="postgres",
+            sslmode="disable",
+            connect_timeout=5,
+        ).close()
+    except psycopg.Error as error:
+        _missing_environment(f"PostgreSQL not reachable at {stack.dsn}: {error}")
+    return stack
+
+
 # ---------------------------------------------------------- tier 1: Oracle ---
 #
 # The tier-1 Oracle fixture, and the markers that gate tests on capabilities.

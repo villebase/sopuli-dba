@@ -35,7 +35,7 @@ class _Cursor:
     def __init__(self, recovery: bool) -> None:
         self._rows = {
             scope_module.SESSION_FACTS: ("16.15", recovery, "off"),
-            scope_module.SSL_ROW: (False, None),
+            scope_module.SSL_ROW: (False,),
         }
         self._last = ""
 

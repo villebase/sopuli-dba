@@ -1495,7 +1495,8 @@ cluster by its `system_identifier`, from `pg_control_system()`. A primary and
 its standbys share it, which is right, because they share their roles too, so
 declare one target for them. The check compares only the targets the run
 connects to, and opens no connection to a target the selectors left out. The
-second target to reach a cluster is refused with exit 9, naming both targets.
+second target to reach a cluster is refused with `SOPULI-20008` and exit 9,
+naming both targets.
 `doctor` reports the refusal as that target's error. Any role can read the
 identifier by default (`pg-system-identifier` in
 [`../README.md`](../README.md) §*Verify before implementing*). Where a site

@@ -35,7 +35,7 @@ scope_module = pytest.importorskip("sopuli.driver.postgres.scope")
 class _Cursor:
     def __init__(self, recovery: bool) -> None:
         self._rows = {
-            scope_module.SESSION_FACTS: ("16.15", recovery, "off", "sopuli_admin", False),
+            scope_module.SESSION_FACTS: ("16.15", recovery, "off", "sopuli_admin", False, None),
             scope_module.SSL_ROW: (False,),
             scope_module.SYSTEM_IDENTIFIER: (7426912345678901234,),
         }

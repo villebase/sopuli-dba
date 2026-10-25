@@ -39,10 +39,17 @@ READ_WRITE = "READ WRITE"
 READ_ONLY = "READ ONLY"
 IN_RECOVERY = "IN RECOVERY"
 
+#: The last two columns are whether ``current_user`` is a superuser, and the
+#: first superuser role it is a member of, through any chain of grants. A
+#: member can ``SET ROLE`` to it, or holds its privileges, so it is refused as
+#: a superuser is. ``MEMBER`` counts a grant whatever its options, which
+#: refuses more rather than less.
 SESSION_FACTS = (
     "select current_setting('server_version'), pg_is_in_recovery(), "
     "current_setting('default_transaction_read_only'), current_user, "
-    "(select rolsuper from pg_roles where rolname = current_user)"
+    "(select rolsuper from pg_roles where rolname = current_user), "
+    "(select min(r.rolname) from pg_roles r where r.rolsuper "
+    "and r.rolname <> current_user and pg_has_role(current_user, r.oid, 'MEMBER'))"
 )
 
 #: The session's own row. ``pg_stat_ssl`` shows every role its own backend.
@@ -94,9 +101,10 @@ class SuperuserError(DriverError):
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
 
-    def __init__(self, target: str, user: str) -> None:
+    def __init__(self, target: str, user: str, *, through: str | None = None) -> None:
+        what = f'a member of the superuser role "{through}"' if through else "a superuser"
         super().__init__(
-            f'target "{target}" connects as "{user}", a superuser, and sopuli does '
+            f'target "{target}" connects as "{user}", {what}, and sopuli does '
             "not run as a superuser",
             hint=(
                 "point the target's admin at a role with CREATEROLE that is not a "
@@ -108,8 +116,8 @@ class SuperuserError(DriverError):
 
 def observe(cursor: Cursor, *, target: str) -> Scope:
     """This session's scope: a cluster, whether it takes writes, and how it is
-    encrypted. Raises :class:`SuperuserError` for a superuser, before the
-    second read.
+    encrypted. Raises :class:`SuperuserError` for a superuser, or a member of a
+    superuser role, before the second read.
 
     ``read_write`` is false on a standby, where ``pg_is_in_recovery()`` is true,
     and where ``default_transaction_read_only`` is on. The second can be set for
@@ -120,9 +128,11 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
     adds its own after it, such as ``16.4 (Debian 16.4-1.pgdg120+1)``.
     """
     cursor.execute(SESSION_FACTS)
-    version, in_recovery, read_only, user, superuser = cursor.fetchone()
+    version, in_recovery, read_only, user, superuser, superuser_role = cursor.fetchone()
     if superuser:
         raise SuperuserError(target, str(user))
+    if superuser_role is not None:
+        raise SuperuserError(target, str(user), through=str(superuser_role))
     if in_recovery:
         open_mode = IN_RECOVERY
     elif read_only == "on":

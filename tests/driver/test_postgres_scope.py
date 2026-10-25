@@ -47,12 +47,25 @@ def _observe(
     ssl: tuple[Any, ...] | None = (True,),
     version: str = "16.15",
 ) -> Scope:
-    facts = (version, recovery, read_only, "sopuli_admin", False)
+    facts = (version, recovery, read_only, "sopuli_admin", False, None)
     return observe(_Cursor(facts, ssl), target="pg-dev")
 
 
+def test_a_member_of_a_superuser_role_is_refused_as_a_superuser_is() -> None:
+    cursor = _Cursor(("16.15", False, "off", "sopuli_admin", False, "postgres"), (True,))
+
+    with pytest.raises(SuperuserError) as refused:
+        observe(cursor, target="pg-dev")
+
+    assert refused.value.code == SUPERUSER_REFUSED
+    assert refused.value.message == (
+        'target "pg-dev" connects as "sopuli_admin", a member of the superuser role '
+        '"postgres", and sopuli does not run as a superuser'
+    )
+
+
 def test_a_superuser_is_refused_before_the_second_read() -> None:
-    cursor = _Cursor(("16.15", False, "off", "postgres", True), (True,))
+    cursor = _Cursor(("16.15", False, "off", "postgres", True, None), (True,))
 
     with pytest.raises(SuperuserError) as refused:
         observe(cursor, target="pg-dev")

@@ -158,6 +158,7 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
+from sopuli.driver.clusters import ClusterIdentity, claim
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -1065,11 +1066,6 @@ def _examine(
         # Getting in, which is what `reachable` reports.
         try:
             session = _open_session(target, run, config, scope_only=True)
-        except OneClusterError as error:
-            # Reached, and refused because another target already is this cluster.
-            return build_target(
-                target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
-            )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return build_target(
                 target,
@@ -1082,12 +1078,16 @@ def _examine(
         # Finding out what it is, which can fail on a connection that is fine:
         # a dictionary view this account cannot read, or a probe that could not
         # be answered. Reporting that as unreachable would send somebody to the
-        # listener over a grant, so the two are separate.
-        caveat = getattr(session, "identity_caveat", None)
-        warnings: tuple[str, ...] = (caveat,) if caveat else ()
+        # listener over a grant, so the two are separate. The cluster is
+        # claimed here, after the scope, for the same reason: a refused or
+        # failed claim is about a target that answered.
+        warnings: tuple[str, ...] = ()
         audit = None
         try:
             scope = session.scope()
+            claim(session, target.name, run.clusters)
+            if isinstance(session, ClusterIdentity) and session.identity_caveat:
+                warnings += (session.identity_caveat,)
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than
@@ -8525,49 +8525,27 @@ def _open_session(
     ``scope_only`` is `doctor`'s, which only asks what the target is; see
     :func:`~sopuli.driver.registry.require_full_driver`.
 
-    A session to a cluster another target of this run already reached is
-    closed and refused (:func:`_claim_cluster`).
+    A session that can name its cluster (a PostgreSQL one) reads its scope
+    here, and is closed and refused if another target of this run already
+    reached that cluster (:func:`sopuli.driver.clusters.claim`). The scope comes
+    first, so a superuser is refused before anything else is asked. `doctor`
+    does both itself, so that a refusal is reported for a target it reached.
     """
     if not scope_only:
         require_full_driver(target.target)
     driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
     session = driver.connect(target, credential.credential)
+    if scope_only or not isinstance(session, ClusterIdentity):
+        return session
     try:
-        _claim_cluster(session, target.name, run)
+        session.scope()
+        claim(session, target.name, run.clusters)
     except BaseException:
         with suppress(Exception):
             session.close()
         raise
     return session
-
-
-class OneClusterError(ConfigError):
-    """Two targets are one cluster. Refused as a name declared twice is, and
-    for its reason: one set of roles would be changed under two names."""
-
-
-def _claim_cluster(session: Session, target: str, run: Invocation) -> None:
-    """Record which target reached this session's cluster, and refuse a second.
-
-    Asked of a driver whose session has ``cluster_identity``, which only the
-    PostgreSQL driver has. A session that cannot read its identity claims
-    nothing: not knowing is not a finding, and the session says why.
-    """
-    identify = getattr(session, "cluster_identity", None)
-    identity = identify() if identify is not None else None
-    if identity is None:
-        return
-    first = run.clusters.setdefault(identity, target)
-    if first != target:
-        raise OneClusterError(
-            f'targets "{first}" and "{target}" are one PostgreSQL cluster '
-            f"(system_identifier {identity})",
-            hint=(
-                "declare each cluster once. A primary and its standbys share their "
-                "roles, so one target covers them all"
-            ),
-        )
 
 
 def _driver_context(run: Invocation, config: Config) -> DriverContext:

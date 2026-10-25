@@ -314,7 +314,7 @@ class Invocation:
     #: is wrapped on the way out.
     stores: dict[str, SecretStore] = field(default_factory=dict)
     #: The target each cluster this run connected to was reached as, by the
-    #: cluster's identity. ``cli._claim_cluster`` fills it, and refuses a second
+    #: cluster's identity. :func:`sopuli.driver.clusters.claim` fills it, and refuses a second
     #: target with the same identity. Only the targets the run connects to are
     #: in it, so a selector that leaves a target out opens no connection to it.
     clusters: dict[str, str] = field(default_factory=dict)

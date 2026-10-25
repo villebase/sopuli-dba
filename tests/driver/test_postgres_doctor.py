@@ -103,6 +103,63 @@ def test_a_superuser_is_refused(
     assert '"postgres", a superuser' in entry["error"]["message"]
 
 
+def test_a_member_of_a_superuser_role_is_refused(
+    runner: CliRunner, live_postgres: Any, tool_account: tuple[str, str, str], tmp_path: Path
+) -> None:
+    """A member can SET ROLE to the superuser, so it is refused as one."""
+    tool = tool_account[0]
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'grant postgres to "{tool}"')
+    config = _config(tmp_path / "doctor.yaml", live_postgres.dsn, tool)
+
+    result = _doctor(runner, config, "--output", "json")
+
+    (entry,) = json.loads(result.stdout)["targets"]
+    assert entry["error"]["code"] == "SOPULI-20007"
+    assert 'a member of the superuser role "postgres"' in entry["error"]["message"]
+
+
+def test_a_refused_superuser_claims_no_cluster(
+    runner: CliRunner, live_postgres: Any, tool_account: tuple[str, str, str], tmp_path: Path
+) -> None:
+    """The superuser check comes before the cluster is read, so the ordinary
+    target after it is not refused as a second target on the cluster."""
+    path = tmp_path / "doctor.yaml"
+    target = """
+  - name: {name}
+    type: postgresql
+    dsn: "{dsn}"
+    environment: dev
+    postgres: {{ sslmode: disable }}
+    admin: {{ username: {user}, auth: {{ method: env, password_env: {env} }} }}"""
+    path.write_text(
+        "version: 1\ntargets:"
+        + target.format(
+            name="pg-as-postgres",
+            dsn=live_postgres.dsn,
+            user=live_postgres.user,
+            env="SOPULI_TEST_POSTGRES_SUPERUSER",
+        )
+        + target.format(
+            name="pg-tool", dsn=live_postgres.dsn, user=tool_account[0], env=PASSWORD_ENV
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if sys.platform != "win32":
+        path.chmod(0o600)
+
+    result = runner.invoke(
+        cli,
+        ["--config", str(path), "--output", "json", "doctor"],
+        env={"SOPULI_TEST_POSTGRES_SUPERUSER": live_postgres.password},
+    )
+
+    first, second = json.loads(result.stdout)["targets"]
+    assert first["error"]["code"] == "SOPULI-20007"
+    assert second.get("error") is None
+
+
 def test_check_privileges_audits_the_tool_account(
     runner: CliRunner, live_postgres: Any, tool_account: tuple[str, str, str], tmp_path: Path
 ) -> None:

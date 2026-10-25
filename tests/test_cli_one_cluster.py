@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from sopuli.cli import OneClusterError, _claim_cluster
+from sopuli.driver.clusters import ONE_CLUSTER, ClusterIdentity, OneClusterError, claim
 from sopuli.exit_codes import ExitCode
-from sopuli.invocation import Invocation
 
 
 class _Session:
     def __init__(self, identity: str | None) -> None:
         self.identity = identity
+        self.identity_caveat: str | None = None
 
     def cluster_identity(self) -> str | None:
         return self.identity
@@ -22,42 +22,55 @@ class _NoIdentity:
 
 
 def test_a_second_target_on_the_same_cluster_is_refused() -> None:
-    run = Invocation()
-    _claim_cluster(_Session("742"), "pg-primary", run)  # type: ignore[arg-type]
+    clusters: dict[str, str] = {}
+    claim(_Session("742"), "pg-primary", clusters)
 
     with pytest.raises(OneClusterError) as refused:
-        _claim_cluster(_Session("742"), "pg-standby", run)  # type: ignore[arg-type]
+        claim(_Session("742"), "pg-standby", clusters)
 
     assert refused.value.message == (
         'targets "pg-primary" and "pg-standby" are one PostgreSQL cluster (system_identifier 742)'
     )
+    assert refused.value.code == ONE_CLUSTER
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
     assert "declare each cluster once" in str(refused.value.hint)
 
 
 def test_the_same_target_reached_again_is_not_a_second_cluster() -> None:
     """A run opens one target more than once: a pre-flight, then the run."""
-    run = Invocation()
+    clusters: dict[str, str] = {}
 
-    _claim_cluster(_Session("742"), "pg-dev", run)  # type: ignore[arg-type]
-    _claim_cluster(_Session("742"), "pg-dev", run)  # type: ignore[arg-type]
+    claim(_Session("742"), "pg-dev", clusters)
+    claim(_Session("742"), "pg-dev", clusters)
 
-    assert run.clusters == {"742": "pg-dev"}
+    assert clusters == {"742": "pg-dev"}
 
 
 def test_two_clusters_are_two_targets() -> None:
-    run = Invocation()
+    clusters: dict[str, str] = {}
 
-    _claim_cluster(_Session("742"), "pg-alpha", run)  # type: ignore[arg-type]
-    _claim_cluster(_Session("913"), "pg-beta", run)  # type: ignore[arg-type]
+    claim(_Session("742"), "pg-alpha", clusters)
+    claim(_Session("913"), "pg-beta", clusters)
 
-    assert run.clusters == {"742": "pg-alpha", "913": "pg-beta"}
+    assert clusters == {"742": "pg-alpha", "913": "pg-beta"}
 
 
 @pytest.mark.parametrize("session", [_Session(None), _NoIdentity()])
 def test_a_session_with_no_identity_claims_nothing(session: object) -> None:
-    run = Invocation()
+    clusters: dict[str, str] = {}
 
-    _claim_cluster(session, "pg-dev", run)  # type: ignore[arg-type]
+    claim(session, "pg-dev", clusters)
 
-    assert run.clusters == {}
+    assert clusters == {}
+
+
+def test_the_postgresql_session_still_names_its_cluster() -> None:
+    """The check finds the method and attribute by name, so a rename would turn
+    the refusal off without a type error. This is what catches it."""
+    session_module = pytest.importorskip("sopuli.driver.postgres.session")
+    from sopuli.config.model import ExpandedTarget, Target
+
+    target = ExpandedTarget(target=Target(name="pg-dev", type="postgresql", dsn="h:5432"))
+    session = session_module.PostgresSession(connection=None, target=target)
+
+    assert isinstance(session, ClusterIdentity)

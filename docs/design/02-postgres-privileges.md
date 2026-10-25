@@ -27,10 +27,12 @@ operation of the tool needs that. This is the PostgreSQL form of the Oracle rule
 that the tool never connects `AS SYSDBA`.
 
 So the tool refuses a superuser. The first read of every session asks
-`pg_roles.rolsuper` for `current_user`. If it is true, the target is refused
-with `SOPULI-20007` ([`03-json-output.md`](03-json-output.md) §3) before
-anything else is asked of it. The login itself succeeds, so the refusal is
-the tool's and not the server's.
+`pg_roles.rolsuper` for `current_user`, and whether `current_user` is a member
+of a superuser role through any chain of grants. A member can `SET ROLE` to
+that role, so it is refused too. Either way the target is refused with
+`SOPULI-20007` ([`03-json-output.md`](03-json-output.md) §3) before anything
+else is asked of it. The login itself succeeds, so the refusal is the tool's
+and not the server's.
 
 ### What `CREATEROLE` reaches
 

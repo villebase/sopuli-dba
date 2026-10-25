@@ -83,6 +83,11 @@ class DatabaseDriver:
     #: Top-level module names ``pip install "sopuli-dba[<extra>]"`` makes
     #: importable.
     provides: frozenset[str] = frozenset()
+    #: The product's password byte limit in words, for `policy sample
+    #: --max-bytes`'s help. A literal, because the help is built when the CLI is
+    #: imported and must not import a driver; a tier-0 test pins it to the
+    #: driver's own rule.
+    password_limit: str | None = None
 
     @property
     def install_command(self) -> str:
@@ -130,6 +135,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # on PyPI and the module you import are both `oracledb`, and the other
         # name resolves to nothing at all.
         provides=frozenset({"oracledb"}),
+        password_limit="30 below 23, 128 from 23",
     ),
 }
 
@@ -180,8 +186,9 @@ def installed(driver: DatabaseDriver) -> bool:
 def resolve(target: Target) -> ModuleType:
     """Import the module serving ``target``'s ``type:``, or say why it cannot.
 
-    Returns the module, which exports ``build_driver(context)``. A caller that
-    wants a driver uses :func:`driver_for`.
+    Returns the module, which exports ``build_driver(context)`` and
+    ``client_report(env=, runtime=)``, `doctor`'s lines about this machine's
+    client. A caller that wants a driver uses :func:`driver_for`.
     """
     driver = DRIVERS[target.type]
     try:

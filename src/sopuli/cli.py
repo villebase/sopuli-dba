@@ -158,13 +158,11 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
-from sopuli.driver.oracle.client import describes_unreachable_server, reach_floor
-from sopuli.driver.oracle.limits import describe_max_bytes
-from sopuli.driver.oracle.verification import DEFAULT_MARGIN
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
+    DEFAULT_MARGIN,
     FAIL,
     PASS,
     PASSWORD_EXPIRE,
@@ -181,12 +179,13 @@ from sopuli.driver.protocol import (
     DriverError,
     Encryption,
     PartialAccountChangeError,
+    Session,
     Timeouts,
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
-from sopuli.driver.registry import DRIVERS, driver_for
+from sopuli.driver.registry import DRIVERS, driver_for, installed
 from sopuli.exit_codes import ExitCode
 from sopuli.generate import Candidate, DocumentWrite
 from sopuli.install_shape import Component
@@ -1003,36 +1002,35 @@ def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0
 def _client_report(config: Config) -> dict[str, Any]:
     """What this machine can reach, before any target is tried.
 
-    P4 wants this answered *without* a database: a 23.x client reaches 19c and
-    later, so a configured 11.2 target is out of reach and saying so beats
-    letting somebody wait for a connection that cannot succeed.
+    Each driver that is installed or that the config declares writes its own
+    lines, through the ``client_report(env=, runtime=)`` its registry module
+    exports, in :data:`DRIVERS` order. An installed driver is asked with no
+    target of its type, because these lines work with nothing else set up.
 
-    A missing Instant Client is the ordinary case on a fresh machine and is
-    reported rather than raised -- `doctor` exists to be run when things are
-    wrong, so it is the one command that must survive its own subject being
-    broken.
+    A driver that will not import, or whose report raises, is reported rather
+    than raised: `doctor` is the command that must survive its own subject being
+    broken, and the install section already names an extra that is missing.
     """
-    report: dict[str, Any] = {"tns_admin": os.environ.get("TNS_ADMIN") or "(unset)"}
-    lib_dir = config.runtime.oracle.client_lib_dir
-    if lib_dir:
-        report["client_lib_dir"] = lib_dir
-
-    try:
-        # Through the registry's own entry rather than a second copy of the
-        # module path: the whole value of resolving there is that one place
-        # knows which module pulls the client in.
-        module = importlib.import_module(DRIVERS["oracle"].module)
-        module.initialise(env=os.environ, lib_dir=lib_dir)
-        version = module.client_version()
-    except Exception as error:  # noqa: BLE001 -- a broken client is the finding
-        FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
-        report["instant_client"] = "not loaded"
-        report["detail"] = str(error).splitlines()[0]
-        return report
-
-    report["instant_client"] = ".".join(str(part) for part in version)
-    floor = reach_floor(version)
-    report["reaches"] = f"{floor[0]}.{floor[1]} and later" if floor else "(no interoperability row)"
+    declared = {expanded.target.type for expanded in config.expanded_targets}
+    report: dict[str, Any] = {}
+    for kind, driver in DRIVERS.items():
+        if kind not in declared and not installed(driver):
+            continue
+        try:
+            # Through the registry's own entry rather than a second copy of the
+            # module path: one place knows which module pulls the client in.
+            module = importlib.import_module(driver.module)
+        except ImportError as error:
+            FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
+            report[kind] = "not loaded"
+            report[f"{kind}_detail"] = str(error).splitlines()[0]
+            continue
+        try:
+            report.update(module.client_report(env=os.environ, runtime=config.runtime))
+        except Exception as error:  # noqa: BLE001 -- a broken driver is the finding
+            FINDINGS.debug("finding from %s", type(error).__name__, exc_info=error)
+            report[kind] = "no report"
+            report[f"{kind}_detail"] = str(error).splitlines()[0]
     return report
 
 
@@ -1171,13 +1169,20 @@ def _finding(error: Exception) -> Error:
 
 
 def _reach_warning(error: Exception) -> tuple[str, ...]:
-    """The interoperability sentence, only where the code says it applies."""
-    if describes_unreachable_server(getattr(error, "code", None)):
-        return (
-            "this looks like the Instant Client being newer than the server; "
-            "see the client line above for what it reaches",
-        )
-    return ()
+    """The driver's sentence about why the server could not be reached, if it
+    gave one (:attr:`~sopuli.driver.protocol.DriverError.reach_warning`)."""
+    warning = getattr(error, "reach_warning", None)
+    return (warning,) if warning else ()
+
+
+def _password_limits() -> str:
+    """Each product's password byte limit in words, from the registry, so the
+    help names no driver itself."""
+    return "; ".join(
+        f"{kind}: {driver.password_limit}"
+        for kind, driver in DRIVERS.items()
+        if driver.password_limit
+    )
 
 
 @cli.group("policy")
@@ -1197,7 +1202,7 @@ def policy_group() -> None:
 @click.option(
     "--max-bytes",
     type=click.IntRange(1, 4096),
-    help=f"Preview a target's byte limit ({describe_max_bytes()}).",
+    help=f"Preview a target's byte limit ({_password_limits()}).",
 )
 @click.option(
     "--encoding",
@@ -1600,7 +1605,7 @@ def _suspend_one(
             )
 
         if not change.changed:
-            _left_alone(account, target.name, suspend.LOCKED, change.detail)
+            _left_alone(account, target.name, suspend.LOCKED, change.detail or change.status)
         return _Suspended(
             account=account,
             target=target.name,
@@ -8482,7 +8487,7 @@ def _admin_notices(run: Invocation) -> list[str]:
     return [one.message for one in run.document.diagnostics if one.code == LOW_ASSURANCE_ADMIN]
 
 
-def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> Any:
+def _open_session(target: ExpandedTarget, run: Invocation, config: Config) -> Session:
     """One connection to one target, with the admin credential P2 resolves.
 
     Extracted because two passes need it: the pre-flight that refuses a strategy

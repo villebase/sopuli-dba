@@ -48,6 +48,7 @@ from sopuli.driver.protocol import (
     Driver,
     DriverError,
     Encryption,
+    PrivilegeAudit,
     Scope,
     Session,
     UnsupportedCapabilityError,
@@ -57,6 +58,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -261,6 +263,12 @@ class _Session:
         if account != self.known:
             return None
         return UserState(name=account.upper(), status="OPEN")
+
+    def byte_limit(self) -> ByteLimit:
+        return ByteLimit(max_bytes=128, encoding="utf-8")
+
+    def privileges(self) -> PrivilegeAudit:
+        return PrivilegeAudit()
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         return ChangeResult(changed=True)

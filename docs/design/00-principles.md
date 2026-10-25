@@ -27,6 +27,8 @@ Driver
 Session
   scope() -> Scope                              # what this connection is, and what it may do
   describe_user(account) -> UserState | None
+  byte_limit() -> ByteLimit                     # how long a password may be here
+  privileges() -> PrivilegeAudit                # doctor --check-privileges: reports, never refuses
   set_password(account, secret) -> ChangeResult
   suspend_account(account) -> AccountChange     # UC-2: lock an account on purpose
   reset_password(account, secret, expire, keep_rollover) -> AccountChange[]   # UC-2 §4.1
@@ -92,12 +94,19 @@ The run's half is one `DriverContext` in `sopuli/driver/protocol.py`. The module
 the registry names for a `type:` exports `build_driver(context)`, which turns the
 context into its own driver: the Oracle driver reads
 `runtime.oracle.client_lib_dir` there. A command calls
-`sopuli.driver.registry.driver_for(target, context)`. So building a second
-driver's driver adds no code to the commands. Some Oracle code is still reached
-from outside the driver: `tests/test_driver_seam.py` lists the Oracle modules
-that code outside the driver imports, so that list can only get shorter, and
-`doctor`'s client report loads the Oracle module by its path. The test also
-fails if a module outside the Oracle driver names `OracleDriver`.
+`sopuli.driver.registry.driver_for(target, context)`. So a second driver adds
+no code to the commands.
+
+**A command uses a session only through `Session`.** `_open_session` in
+`cli.py` returns `Session`, so mypy fails on a call to a member the protocol
+does not declare. The module the registry names also exports
+`client_report(env=, runtime=)`, which writes `doctor`'s lines about this
+machine's client, and a driver error carries its own `reach_warning` when the
+driver can tell why a server was out of reach. Some Oracle code is still
+reached from outside the driver: `tests/test_driver_seam.py` lists the Oracle
+modules that code outside the driver imports, so that list can only get
+shorter. The test also fails if a module outside the Oracle driver names
+`OracleDriver`.
 
 The Oracle driver also follows these rules:
 

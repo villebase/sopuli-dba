@@ -71,6 +71,7 @@ from typing import Protocol, runtime_checkable
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.exit_codes import ExitCode
+from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 
@@ -229,6 +230,11 @@ VERIFY_NONE = "none"
 #: doing another.
 VERIFY_METHODS = (VERIFY_LOGIN, VERIFY_HASH, VERIFY_BOTH, VERIFY_NONE)
 
+#: UC-1 §7 mitigation 2's default ``--lockout-margin``: two attempts of headroom
+#: left untouched. Here rather than in a driver because the verbs offer the
+#: option; a driver whose product has no lockout ignores it.
+DEFAULT_MARGIN = 2
+
 PASS = "pass"
 FAIL = "fail"
 SKIPPED = "skipped"
@@ -372,6 +378,13 @@ class DriverError(Exception):
     #: caller asks this to decide whether SOPULI-W031/W032 applies (#697),
     #: because only the driver knows which statement failed.
     password_sent = False
+
+    #: A sentence `doctor` prints beside a failed connection, when the driver can
+    #: tell why the server could not be reached and the reason is on this
+    #: machine: an Oracle client too new for the server, for one. ``None`` on the
+    #: class, and a driver sets it on the instance, so `doctor` asks the error and
+    #: never a driver's list of codes.
+    reach_warning: str | None = None
 
     def __init__(
         self,
@@ -941,6 +954,23 @@ class Session(Protocol):
         does not create accounts (Q8 -- provisioning belongs to its own use
         case), so a missing one is a state to report, not a failure to recover
         from.
+        """
+        ...
+
+    def byte_limit(self) -> ByteLimit:
+        """How long a password may be on this target, in the encoding the server
+        stores it in.
+
+        A command asks before it draws a password, so the draw fits the target
+        it is for. Cached per session.
+        """
+        ...
+
+    def privileges(self) -> PrivilegeAudit:
+        """What the tool's own account holds beyond what it needs.
+
+        Only ``doctor --check-privileges`` asks. It reports and never refuses:
+        over-granting warns (P5).
         """
         ...
 

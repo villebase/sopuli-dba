@@ -29,13 +29,14 @@ ORACLE_PACKAGE = "sopuli.driver.oracle"
 #: an import fails this test until its entry goes too, so the set can only
 #: shrink. Adding one is a new leak, and needs a reason in review.
 KNOWN_ORACLE_IMPORTS = {
-    ("cli.py", "sopuli.driver.oracle.client"),
-    ("cli.py", "sopuli.driver.oracle.limits"),
-    ("cli.py", "sopuli.driver.oracle.verification"),
+    # `doctor`'s wallet section. The run document's `wallet` field is Oracle's
+    # by schema, and the survey is offline: it reads no driver and returns None
+    # unless a target uses `auth: external`. A second product with a section of
+    # its own is when this becomes a per-driver hook (#1033).
     ("cli.py", "sopuli.driver.oracle.wallet"),
     ("diagnostics.py", "sopuli.driver.oracle.wallet"),
-    ("output/status_view.py", "sopuli.driver.oracle.rollover"),
     ("output/wallet_view.py", "sopuli.driver.oracle.wallet"),
+    ("output/status_view.py", "sopuli.driver.oracle.rollover"),
     ("preflight.py", "sopuli.driver.oracle.errors"),
     ("reset.py", "sopuli.driver.oracle.accounts"),
 }

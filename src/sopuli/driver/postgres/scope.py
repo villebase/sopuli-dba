@@ -39,17 +39,23 @@ READ_WRITE = "READ WRITE"
 READ_ONLY = "READ ONLY"
 IN_RECOVERY = "IN RECOVERY"
 
-#: The last two columns are whether ``current_user`` is a superuser, and the
-#: first superuser role it is a member of, through any chain of grants. A
-#: member can ``SET ROLE`` to it, or holds its privileges, so it is refused as
-#: a superuser is. ``MEMBER`` counts a grant whatever its options, which
-#: refuses more rather than less.
+#: The last three columns are the role that logged in (``session_user``),
+#: whether it or ``current_user`` is a superuser, and the first superuser role
+#: either is a member of, through any chain of grants. Both are asked because a
+#: role's ``SET role`` default makes ``current_user`` another role at login,
+#: and ``RESET ROLE`` takes the session back. A member can ``SET ROLE`` to a
+#: superuser role, or holds its privileges, so it is refused as a superuser is.
+#: ``MEMBER`` counts a grant whatever its options, which refuses more rather
+#: than less.
 SESSION_FACTS = (
     "select current_setting('server_version'), pg_is_in_recovery(), "
-    "current_setting('default_transaction_read_only'), current_user, "
-    "(select rolsuper from pg_roles where rolname = current_user), "
+    "current_setting('default_transaction_read_only'), session_user, "
+    "exists (select 1 from pg_roles where rolsuper "
+    "and rolname in (session_user, current_user)), "
     "(select min(r.rolname) from pg_roles r where r.rolsuper "
-    "and r.rolname <> current_user and pg_has_role(current_user, r.oid, 'MEMBER'))"
+    "and r.rolname not in (session_user, current_user) "
+    "and (pg_has_role(session_user, r.oid, 'MEMBER') "
+    "or pg_has_role(current_user, r.oid, 'MEMBER')))"
 )
 
 #: The session's own row. ``pg_stat_ssl`` shows every role its own backend.

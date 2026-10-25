@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from sopuli.config.errors import ConfigError
+from sopuli.driver.protocol import Scope, Session
 
 #: ``error.code`` for a second target on a cluster another target reached.
 ONE_CLUSTER = "SOPULI-20008"
@@ -38,6 +39,22 @@ class OneClusterError(ConfigError):
     for its reason: one set of roles would be changed under two names."""
 
     code = ONE_CLUSTER
+
+
+def scope_and_claim(
+    session: Session, target: str, clusters: dict[str, str]
+) -> tuple[Scope, tuple[str, ...]]:
+    """Read the session's scope, then claim its cluster: the one order both
+    `doctor` and the other commands use.
+
+    The scope comes first, so a PostgreSQL superuser is refused before the
+    cluster is read. Returns the scope and the caveat, if the session could not
+    read its identity.
+    """
+    scope = session.scope()
+    claim(session, target, clusters)
+    caveat = session.identity_caveat if isinstance(session, ClusterIdentity) else None
+    return scope, (caveat,) if caveat else ()
 
 
 def claim(session: object, target: str, clusters: dict[str, str]) -> None:

@@ -158,7 +158,7 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
-from sopuli.driver.clusters import ClusterIdentity, claim
+from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -1084,10 +1084,8 @@ def _examine(
         warnings: tuple[str, ...] = ()
         audit = None
         try:
-            scope = session.scope()
-            claim(session, target.name, run.clusters)
-            if isinstance(session, ClusterIdentity) and session.identity_caveat:
-                warnings += (session.identity_caveat,)
+            scope, caveats = scope_and_claim(session, target.name, run.clusters)
+            warnings += caveats
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than
@@ -1101,8 +1099,14 @@ def _examine(
                 # "the view that would have said so was refused".
                 warnings += audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
+            # With what was found before the failure: a skipped cluster check
+            # is still worth saying when the audit after it failed.
             return build_target(
-                target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
+                target,
+                connected=True,
+                error=_finding(error),
+                duration_ms=_elapsed(started),
+                warnings=warnings,
             )
     finally:
         if session is not None:
@@ -8539,8 +8543,7 @@ def _open_session(
     if scope_only or not isinstance(session, ClusterIdentity):
         return session
     try:
-        session.scope()
-        claim(session, target.name, run.clusters)
+        scope_and_claim(session, target.name, run.clusters)
     except BaseException:
         with suppress(Exception):
             session.close()

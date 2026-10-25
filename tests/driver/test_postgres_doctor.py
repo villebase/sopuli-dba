@@ -103,6 +103,43 @@ def test_a_superuser_is_refused(
     assert '"postgres", a superuser' in entry["error"]["message"]
 
 
+def test_a_superuser_login_whose_role_default_is_ordinary_is_refused(
+    live_postgres: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ALTER ROLE … SET role`` makes current_user ordinary at login, and
+    ``RESET ROLE`` takes it back, so the role that logged in is asked too."""
+    from psycopg import sql
+
+    suffix = uuid.uuid4().hex[:8]
+    login, ordinary, password = f"sopuli_su_{suffix}", f"sopuli_ro_{suffix}", uuid.uuid4().hex
+    with _superuser(live_postgres) as admin:
+        admin.execute(
+            sql.SQL("create role {} superuser login password {}").format(
+                sql.Identifier(login), sql.Literal(password)
+            )
+        )
+        admin.execute(f'create role "{ordinary}"')
+        admin.execute(f'grant "{ordinary}" to "{login}"')
+        admin.execute(f'alter role "{login}" set role = "{ordinary}"')
+    monkeypatch.setenv(PASSWORD_ENV, password)
+    try:
+        result = _doctor(
+            CliRunner(),
+            _config(tmp_path / "doctor.yaml", live_postgres.dsn, login),
+            "--output",
+            "json",
+        )
+    finally:
+        with _superuser(live_postgres) as admin:
+            for role in (login, ordinary):
+                with suppress(Exception):
+                    admin.execute(f'drop role "{role}"')
+
+    (entry,) = json.loads(result.stdout)["targets"]
+    assert entry["error"]["code"] == "SOPULI-20007"
+    assert f'connects as "{login}", a superuser' in entry["error"]["message"]
+
+
 def test_a_member_of_a_superuser_role_is_refused(
     runner: CliRunner, live_postgres: Any, tool_account: tuple[str, str, str], tmp_path: Path
 ) -> None:
@@ -193,6 +230,7 @@ def test_two_targets_on_one_cluster_are_refused(
     assert first.get("error") is None
     assert first["scope"]["type"] == "cluster"
     assert second["reachable"] is True
+    assert second["error"]["code"] == "SOPULI-20008"
     assert second["error"]["category"] == "config"
     assert second["error"]["message"].startswith(
         'targets "pg-primary" and "pg-again" are one PostgreSQL cluster (system_identifier '

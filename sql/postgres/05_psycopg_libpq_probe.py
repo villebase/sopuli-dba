@@ -20,8 +20,9 @@ postgres-matrix, on 2026-10-25 (#1032), once on each platform:
   - Linux x86_64 glibc, the python:3.13-slim image, psycopg 3.3.6;
   - Linux x86_64 musl, the python:3.13-alpine image, psycopg 3.3.6;
   - Linux x86_64 glibc, earlier psycopg releases: 3.2.13 in python:3.12-slim,
-    3.1.20 in python:3.12-slim and 3.1.12 in python:3.11-slim. 3.2.0 and 3.1.0
-    did not install in those images, and were not tried further.
+    3.1.20 in python:3.12-slim, 3.1.12 in python:3.11-slim, and 3.1.4 and
+    3.0.18 in python:3.10-slim. 3.2.0 and 3.1.0 did not install in those
+    images, and were not tried further.
 
 Not run on macOS or on Linux arm64.
 
@@ -29,16 +30,21 @@ RESULTS
 
   LP1  psycopg 3.3.6 is binary on each platform. On Windows it loads
        libpq 18.4, on Linux glibc and musl libpq 18.6. The earlier releases
-       load libpq 17.6 (3.2.13), libpq 16.3 (3.1.20) and libpq 16.0 (3.1.12).
-       Each loads the libpq it was built against
-  LP2  logs in, with every psycopg release and on every platform
+       load libpq 17.6 (3.2.13), libpq 16.3 (3.1.20), libpq 16.0 (3.1.12),
+       libpq 15.0 (3.1.4) and libpq 14.4 (3.0.18). Each loads the libpq it was
+       built against
+  LP2  logs in, with every psycopg release from 3.1.12 and on every platform.
+       3.1.4 and 3.0.18 refuse it in the client: ProgrammingError 'invalid
+       connection option "require_auth"'
   LP3  refused by the client, 'authentication method requirement "md5"
-       failed: server requested SASL authentication', on every one
+       failed: server requested SASL authentication', from 3.1.12. 3.1.4 and
+       3.0.18 give the LP2 error
   LP4  a SCRAM-SHA-256 verifier of 133 bytes, on every one
 
   So which libpq a wheel bundles follows when it was built, not the platform
-  alone. Every wheel measured has libpq 16 or later. The driver can read the
-  version at run time from psycopg.pq.version().
+  alone. A wheel with libpq 15 or older does not know require_auth, and says
+  so before it connects. psycopg.pq.version() reports the libpq a process
+  loaded.
 
 HOW TO RUN, against the matrix (test/README.md), in a virtual environment of
 its own:

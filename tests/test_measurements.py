@@ -119,6 +119,11 @@ def _releases_section(product: Product, text: str) -> tuple[set[str], str]:
     """The releases the product's *Releases* table lists, and the text below it."""
     _, rest = text.split(product.releases_heading + "\n", 1)
     table, below = rest.split("\n## ", 1)
+    # Up to the next product's part, so one product's text is not read as the
+    # other's.
+    for other in PRODUCTS:
+        if other is not product:
+            below = below.split(other.releases_heading + "\n", 1)[0]
     return set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE)), below
 
 

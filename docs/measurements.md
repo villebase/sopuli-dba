@@ -167,6 +167,8 @@ table, which says it is a libpq.
 | `17.6` | libpq only: the one psycopg 3.2.13's Linux wheel bundles |
 | `16.3` | libpq only: the one psycopg 3.1.20's Linux wheel bundles |
 | `16.0` | libpq only: the one psycopg 3.1.12's Linux wheel bundles |
+| `15.0` | libpq only: the one psycopg 3.1.4's Linux wheel bundles |
+| `14.4` | libpq only: the one psycopg 3.0.18's Linux wheel bundles |
 
 Not measured: every other minor release, and every managed service.
 
@@ -199,4 +201,4 @@ Not measured: every other minor release, and every managed service.
 | `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-25 | #1032 | As on 13.23. The server warns that md5 passwords are deprecated |
-| `05_psycopg_libpq_probe.py` | `18.6` | 2026-10-25 | #1032 | psycopg 3.3.6 loads libpq 18.4 on Windows AMD64 and libpq 18.6 on Linux x86_64, glibc and musl. 3.2.13, 3.1.20 and 3.1.12 load libpq 17.6, libpq 16.3 and libpq 16.0 on Linux. Each accepts `require_auth=scram-sha-256` and computes a SCRAM verifier. Not run on macOS (unverified: psycopg-libpq-macos) |
+| `05_psycopg_libpq_probe.py` | `18.6` | 2026-10-25 | #1032 | psycopg 3.3.6 loads libpq 18.4 on Windows AMD64 and libpq 18.6 on Linux x86_64, glibc and musl. 3.2.13, 3.1.20 and 3.1.12 load libpq 17.6, libpq 16.3 and libpq 16.0 on Linux, and accept `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 load libpq 15.0 and libpq 14.4, and refuse it in the client as an invalid connection option. Each computes a SCRAM verifier. Not run on macOS (unverified: psycopg-libpq-macos) |

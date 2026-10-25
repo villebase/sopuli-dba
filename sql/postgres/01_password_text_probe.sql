@@ -21,10 +21,11 @@
 --
 -- STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13
 -- to postgres:18 images of test/compose.yaml profile postgres-matrix, as the
--- superuser postgres, on 2026-10-25 (#1032). Four times on each release, exit
--- 0, and the same result every time. The last two runs wait 2 s before they
+-- superuser postgres, on 2026-10-25 (#1032). Six times on each release, exit
+-- 0, and the same result every time. The last four runs wait 2 s before they
 -- read the log, because the logging collector writes it in its own process.
--- The first two read it at once and found every line too.
+-- The first two read it at once and found every line too. On 16.15 it also
+-- ran once with pg_stat_statements created beforehand, and left it in place.
 --
 -- RESULTS -- the same on all six releases
 --
@@ -47,9 +48,13 @@
 --
 -- In a second clone the container name starts with its COMPOSE_PROJECT_NAME.
 --
--- THROWAWAY SERVERS ONLY. Creates and drops two roles, and creates and drops
--- the pg_stat_statements and dblink extensions in the database it runs in. The
--- test passwords it sends stay in the server log.
+-- It refuses to start on a server with no log file, such as the tier-0
+-- postgres service, which runs without the logging collector.
+--
+-- THROWAWAY SERVERS ONLY. Creates and drops two roles. It creates the
+-- pg_stat_statements and dblink extensions in the database it runs in, if they
+-- are absent, and drops only the ones it created. It resets
+-- pg_stat_statements. The test passwords it sends stay in the server log.
 --------------------------------------------------------------------------------
 \set ON_ERROR_STOP 1
 \pset footer off
@@ -59,6 +64,19 @@ SELECT current_setting('server_version') AS server_version,
        current_setting('log_min_error_statement') AS log_min_error_statement;
 
 -- ------------------------------------------------------------------ setup --
+-- Without the logging collector there is no file to read back, so stop before
+-- anything is created. The tier-0 postgres service runs without it.
+DO $$
+BEGIN
+  IF pg_current_logfile() IS NULL THEN
+    RAISE EXCEPTION 'no log file: run this on a postgres-matrix server';
+  END IF;
+END
+$$;
+
+-- Drop at the end only what this run created.
+SELECT NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements') AS create_pgss,
+       NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'dblink') AS create_dblink \gset
 DROP ROLE IF EXISTS sopuli_probe_pw;
 DROP ROLE IF EXISTS sopuli_probe_seed;
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
@@ -123,5 +141,9 @@ SELECT calls, query FROM pg_stat_statements WHERE query ILIKE 'ALTER ROLE%' ORDE
 -- ---------------------------------------------------------------- cleanup --
 DROP ROLE sopuli_probe_pw;
 DROP ROLE sopuli_probe_seed;
+\if :create_dblink
 DROP EXTENSION dblink;
+\endif
+\if :create_pgss
 DROP EXTENSION pg_stat_statements;
+\endif

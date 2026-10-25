@@ -466,12 +466,12 @@ such as "from 16", means the one release of it that was measured.
   `require_auth=scram-sha-256`?**
   It follows when the wheel was built. psycopg 3.3.6 bundles libpq 18 on
   Windows AMD64 and on Linux x86_64, glibc and musl. Earlier wheels bundle
-  earlier libpq: 3.2.13 has 17, and 3.1.20 and 3.1.12 have 16. Every wheel
-  measured accepts `require_auth=scram-sha-256` and computes a SCRAM verifier
-  with `PGconn.encrypt_password`. A wheel older than those measured may bundle
-  libpq 15, which has no `require_auth`. So a version floor on psycopg does not
-  settle the question, and `psycopg.pq.version()` reports the libpq a process
-  loaded.
+  earlier libpq: 3.2.13 has 17, 3.1.20 and 3.1.12 have 16, 3.1.4 has 15 and
+  3.0.18 has 14. From 3.1.12 every wheel measured accepts
+  `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 refuse it in the client, as
+  an invalid connection option. Every wheel computes a SCRAM verifier with
+  `PGconn.encrypt_password`. So `require_auth` depends on the libpq a wheel
+  bundles, and `psycopg.pq.version()` reports the libpq a process loaded.
   `sql/postgres/05_psycopg_libpq_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**

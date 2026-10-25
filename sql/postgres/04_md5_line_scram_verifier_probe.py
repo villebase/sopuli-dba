@@ -18,12 +18,13 @@ It MEASURES and decides nothing.
 
 STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-10-25
-(#1032). Twice, exit 0, the same result each time. Two earlier versions are not
-counted. The first sent its shell step with Windows line endings, so
+(#1032). Twice, exit 0, the same result each time. Three earlier versions are
+not counted. The first sent its shell step with Windows line endings, so
 pg_hba.conf was not changed. The second ran its shell steps as root, so the
 restored pg_hba.conf was root's and the server could not read it again. Its
 logins gave the results below, but it ignored failed steps, so its exit code
-showed nothing.
+showed nothing. The third did not wait for each reload to take effect, and
+did not check what the setup stored. It gave the results below too.
 
 RESULTS -- the same on all six releases
 
@@ -66,6 +67,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 
 #: The stack's project name, so a second clone's stack is the one probed.
 PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "sopuli-test")
@@ -132,10 +134,28 @@ def _login(server: int, role: str, require_auth: str) -> str:
     return _run(argv, env=env, measured=True).replace("\n", " | ")
 
 
+def _reload(version: int) -> None:
+    """Reload the configuration, and wait until the postmaster has done it.
+
+    pg_reload_conf() only signals the postmaster. A new session takes the
+    postmaster's pg_conf_load_time(), so the reload has taken effect for new
+    sessions, logins included, once a new session reads a later time.
+    """
+    before = _psql(version, "SELECT pg_conf_load_time();")
+    _psql(version, "SELECT pg_reload_conf();")
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if _psql(version, "SELECT pg_conf_load_time();") != before:
+            return
+        time.sleep(0.2)
+    raise StepError(f"server {version} did not reload its configuration within 10 s")
+
+
 def _setup(version: int) -> str:
+    _psql(version, "ALTER SYSTEM SET password_encryption = 'md5';")
+    _reload(version)
+    # A new session, so it starts with the reloaded password_encryption.
     sql = f"""
-ALTER SYSTEM SET password_encryption = 'md5';
-SELECT pg_reload_conf();
 DROP ROLE IF EXISTS {ROLES[0]};
 DROP ROLE IF EXISTS {ROLES[1]};
 DROP ROLE IF EXISTS sopuli_probe_seed;
@@ -157,11 +177,16 @@ cp "$PGDATA/pg_hba.conf" "$PGDATA/pg_hba.conf.sopuli-probe"
 sed -i '1i {HBA_LINE}' "$PGDATA/pg_hba.conf"
 """
     out = _psql(version, sql)
+    for expected in ("password_encryption=md5", f"{ROLES[1]} stored md5"):
+        if expected not in out:
+            raise StepError(f"the setup did not give {expected!r}:\n{out}")
     out += "\n" + _shell(version, hba)
+    _reload(version)
+    # pg_hba_file_rules parses the file on disk. _reload() has made sure the
+    # postmaster loaded that file, so this is also the rule a login meets.
     rule = _psql(
         version,
-        "SELECT pg_reload_conf();"
-        " SELECT 'first rule: ' || line_number || ' ' || type || ' '"
+        "SELECT 'first rule: ' || line_number || ' ' || type || ' '"
         " || array_to_string(user_name, ',') || ' ' || auth_method"
         " FROM pg_hba_file_rules ORDER BY line_number LIMIT 1;",
     )
@@ -171,23 +196,37 @@ sed -i '1i {HBA_LINE}' "$PGDATA/pg_hba.conf"
 
 
 def _restore(version: int) -> str:
-    """Undo the setup, or what an interrupted run left of it."""
-    out = _shell(
-        version,
-        'set -e\nif [ -e "$PGDATA/pg_hba.conf.sopuli-probe" ]; then\n'
-        '  mv "$PGDATA/pg_hba.conf.sopuli-probe" "$PGDATA/pg_hba.conf"\nfi\n',
-    )
-    out += "\n" + _psql(
-        version,
-        f"""
+    """Undo the setup, or what an interrupted run left of it.
+
+    Each step is tried even when one before it fails, so a failed pg_hba.conf
+    move does not leave password_encryption at md5.
+    """
+    steps = [
+        lambda: _psql(
+            version,
+            f"""
 ALTER SYSTEM RESET password_encryption;
-SELECT pg_reload_conf();
 DROP ROLE IF EXISTS {ROLES[0]};
 DROP ROLE IF EXISTS {ROLES[1]};
 DROP ROLE IF EXISTS sopuli_probe_seed;
 """,
-    )
-    return out.strip()
+        ),
+        lambda: _shell(
+            version,
+            'set -e\nif [ -e "$PGDATA/pg_hba.conf.sopuli-probe" ]; then\n'
+            '  mv "$PGDATA/pg_hba.conf.sopuli-probe" "$PGDATA/pg_hba.conf"\nfi\n',
+        ),
+        lambda: _reload(version),
+    ]
+    out, failed = [], []
+    for step in steps:
+        try:
+            out.append(step() or "")
+        except StepError as exc:
+            failed.append(str(exc))
+    if failed:
+        raise StepError(f"the restore of server {version} failed:\n" + "\n".join(failed))
+    return "\n".join(out).strip()
 
 
 def main() -> int:
@@ -204,8 +243,12 @@ def main() -> int:
                     for require_auth in ("", "md5", "scram-sha-256"):
                         result = _login(version, role, require_auth)
                         print(f"{role} require_auth={require_auth or '(unset)'}: {result}")
-            finally:
-                print(_restore(version))
+            except StepError as exc:
+                # Report the step that failed before the restore can fail too.
+                print(f"STOPPED on server {version}: {exc}", file=sys.stderr)
+                _restore(version)
+                return 1
+            print(_restore(version))
     except StepError as exc:
         print(f"STOPPED: {exc}", file=sys.stderr)
         return 1

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.61.schema.json`](../schemas/sopuli-run-1.61.schema.json),
+Schemas: [`../schemas/sopuli-run-1.62.schema.json`](../schemas/sopuli-run-1.62.schema.json),
 [`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1379,6 +1379,14 @@ alerts on an unencrypted connection should treat it as a finding of its own.
 `unknown`. It says what to do, or why the driver could not tell, in the
 product's own words.
 `02-oracle-privileges.md` §2 says how the Oracle driver reads the answer.
+
+**A PostgreSQL target's `scope.type` is `cluster`**, from run schema 1.62.
+`container` and `db_unique_name` are null. `open_mode` is `READ WRITE`,
+`READ ONLY` where `default_transaction_read_only` is on, or `IN RECOVERY` on a
+standby, and `read_write` is false for the last two. `capabilities` is empty,
+because the PostgreSQL driver does none of what a capability names yet. The
+encryption comes from the session's own row in `pg_stat_ssl`: `tls` or `none`,
+with `protocol` `tcp`. `error.code` is the SQLSTATE (§2, `error`).
 
 **`asserted` is absent when the target asserts nothing**, not present with
 `matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is

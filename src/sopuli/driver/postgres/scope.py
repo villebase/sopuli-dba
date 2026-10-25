@@ -1,0 +1,122 @@
+"""What a PostgreSQL session finds when it looks at itself. Tier 0.
+
+Two reads, both open to any role that can log in: the session's settings and
+recovery state, and its own row in ``pg_stat_ssl``. Nothing here branches on
+the server's version (invariant 3); the version is read only to report it.
+
+**No capability is reported.** Each one in P1's table names something a driver
+does on this target, and this build of the PostgreSQL driver does none of them
+yet. Connecting proves none of them either.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from sopuli.driver.protocol import (
+    CLUSTER,
+    ENCRYPTION_NONE,
+    ENCRYPTION_TLS,
+    UNKNOWN,
+    DriverError,
+    Encryption,
+    Scope,
+)
+
+#: ``scope.open_mode``, in the words P1 uses for an Oracle database, and a third
+#: for a standby, in PostgreSQL's own word for it.
+READ_WRITE = "READ WRITE"
+READ_ONLY = "READ ONLY"
+IN_RECOVERY = "IN RECOVERY"
+
+SESSION_FACTS = (
+    "select current_setting('server_version'), pg_is_in_recovery(), "
+    "current_setting('default_transaction_read_only')"
+)
+
+#: The session's own row. ``pg_stat_ssl`` shows every role its own backend.
+SSL_ROW = "select ssl, version from pg_stat_ssl where pid = pg_backend_pid()"
+
+#: The connection reaches the server over TCP: `dsn:` is always host:port.
+TCP = "tcp"
+
+UNENCRYPTED_HINT = (
+    "set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)"
+)
+NO_ROW_HINT = "pg_stat_ssl has no row for this session's backend"
+
+
+class Cursor(Protocol):
+    """The part of a psycopg cursor this module uses."""
+
+    def execute(self, query: Any, params: Any = None, /) -> Any: ...
+
+    def fetchone(self) -> Any: ...
+
+
+def encryption_of(row: Any) -> Encryption:
+    """The session's encryption, from its ``pg_stat_ssl`` row.
+
+    ``protocol`` is the transport, ``tcp``. TLS runs inside the TCP connection,
+    so there is no second transport name as Oracle's ``tcps``. ``algorithm`` is
+    for a product's own encryption, which PostgreSQL has none of.
+    """
+    if row is None:
+        return Encryption(method=UNKNOWN, protocol=TCP, hint=NO_ROW_HINT)
+    if row[0]:
+        return Encryption(method=ENCRYPTION_TLS, protocol=TCP)
+    return Encryption(method=ENCRYPTION_NONE, protocol=TCP, hint=UNENCRYPTED_HINT)
+
+
+def observe(cursor: Cursor) -> Scope:
+    """This session's scope: a cluster, whether it takes writes, and how it is
+    encrypted.
+
+    ``read_write`` is false on a standby, where ``pg_is_in_recovery()`` is true,
+    and where ``default_transaction_read_only`` is on. The second can be set for
+    one role or one database, and a write then fails with ``25006`` as on a
+    standby.
+    """
+    cursor.execute(SESSION_FACTS)
+    version, in_recovery, read_only = cursor.fetchone()
+    if in_recovery:
+        open_mode = IN_RECOVERY
+    elif read_only == "on":
+        open_mode = READ_ONLY
+    else:
+        open_mode = READ_WRITE
+
+    cursor.execute(SSL_ROW)
+    encryption = encryption_of(cursor.fetchone())
+
+    return Scope(
+        type=CLUSTER,
+        db_version=str(version),
+        open_mode=open_mode,
+        read_write=open_mode == READ_WRITE,
+        encryption=encryption,
+    )
+
+
+class ReadOnlyTargetError(DriverError):
+    """A write was about to start on a session that cannot take one.
+
+    The PostgreSQL :class:`sopuli.driver.oracle.capabilities.ReadOnlyTargetError`:
+    exit 1, category ``database``, raised before anything is sent.
+    """
+
+
+def require_read_write(scope: Scope, *, target: str) -> None:
+    """Refuse a write where :func:`observe` found the session read-only."""
+    if scope.read_write is not False:
+        return
+    if scope.open_mode == IN_RECOVERY:
+        hint = "this cluster is a standby; point the target at the primary"
+    else:
+        hint = (
+            "default_transaction_read_only is on for this role or database; "
+            "the tool's role needs it off"
+        )
+    raise ReadOnlyTargetError(
+        f'target "{target}" is {scope.open_mode} and cannot be written to', hint=hint
+    )

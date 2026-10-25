@@ -1,0 +1,113 @@
+"""What a PostgreSQL session reports about itself. Tier 0, on a scripted cursor."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from sopuli.driver.postgres.scope import (
+    IN_RECOVERY,
+    READ_ONLY,
+    READ_WRITE,
+    SESSION_FACTS,
+    SSL_ROW,
+    ReadOnlyTargetError,
+    observe,
+    require_read_write,
+)
+from sopuli.driver.protocol import CLUSTER, Scope
+
+
+class _Cursor:
+    """Answers each statement this module sends with one scripted row."""
+
+    def __init__(self, facts: tuple[Any, ...], ssl: tuple[Any, ...] | None) -> None:
+        self._rows = {SESSION_FACTS: facts, SSL_ROW: ssl}
+        self._last: str | None = None
+        self.sent: list[str] = []
+
+    def execute(self, query: Any, params: Any = None, /) -> None:
+        assert params is None, "the scope reads bind nothing"
+        self.sent.append(query)
+        self._last = query
+
+    def fetchone(self) -> Any:
+        assert self._last is not None
+        return self._rows[self._last]
+
+
+def _observe(
+    *,
+    recovery: bool = False,
+    read_only: str = "off",
+    ssl: tuple[Any, ...] | None = (True, "TLSv1.3"),
+) -> Scope:
+    return observe(_Cursor(("16.15", recovery, read_only), ssl))
+
+
+def test_a_primary_is_a_read_write_cluster() -> None:
+    scope = _observe()
+
+    assert scope.type == CLUSTER
+    assert scope.container is None
+    assert scope.db_version == "16.15"
+    assert scope.open_mode == READ_WRITE
+    assert scope.read_write is True
+
+
+def test_no_capability_is_reported() -> None:
+    assert _observe().capabilities == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("recovery", "read_only", "open_mode"),
+    [(True, "off", IN_RECOVERY), (True, "on", IN_RECOVERY), (False, "on", READ_ONLY)],
+)
+def test_a_standby_or_a_read_only_default_is_not_read_write(
+    recovery: bool, read_only: str, open_mode: str
+) -> None:
+    scope = _observe(recovery=recovery, read_only=read_only)
+
+    assert scope.open_mode == open_mode
+    assert scope.read_write is False
+
+
+def test_a_tls_session_is_tls() -> None:
+    encryption = _observe().encryption
+
+    assert (encryption.method, encryption.protocol, encryption.hint) == ("tls", "tcp", None)
+
+
+def test_a_plain_session_is_none_with_a_hint() -> None:
+    encryption = _observe(ssl=(False, None)).encryption
+
+    assert encryption.method == "none"
+    assert "sslmode" in str(encryption.hint)
+
+
+def test_a_missing_ssl_row_is_unknown_and_not_none() -> None:
+    encryption = _observe(ssl=None).encryption
+
+    assert encryption.method == "unknown"
+    assert encryption.hint
+
+
+def test_a_write_is_refused_on_a_standby() -> None:
+    with pytest.raises(ReadOnlyTargetError) as refused:
+        require_read_write(_observe(recovery=True), target="pg-dev")
+
+    assert 'target "pg-dev" is IN RECOVERY' in refused.value.message
+    assert "primary" in str(refused.value.hint)
+    assert refused.value.category == "database"
+
+
+def test_a_write_is_refused_under_a_read_only_default() -> None:
+    with pytest.raises(ReadOnlyTargetError) as refused:
+        require_read_write(_observe(read_only="on"), target="pg-dev")
+
+    assert "default_transaction_read_only" in str(refused.value.hint)
+
+
+def test_a_write_is_allowed_on_a_primary() -> None:
+    require_read_write(_observe(), target="pg-dev")

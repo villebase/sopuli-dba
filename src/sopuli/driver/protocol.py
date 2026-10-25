@@ -551,6 +551,9 @@ class PrivilegeAudit:
     #: than by spelling -- the partial-audit line first, because it changes how
     #: the rest is read -- and this follows that.
     remedies: tuple[str, ...] = ()
+    #: How to grant what ``missing`` lists, in the product's own words: the
+    #: pre-flight's hint. ``None`` where the driver has nothing to name.
+    hint: str | None = None
 
     def caveats(self) -> tuple[str, ...]:
         """What a reader has to know before trusting ``over_granted``.
@@ -751,11 +754,23 @@ class UserState:
     #: :func:`sopuli.strategy.opens_window` takes as *no*, the direction that
     #: cannot surprise anybody.
     rollover_enabled: bool | None = None
+    #: The rollover window the profile grants, in days, or ``None`` where it
+    #: could not be read. ``0.0`` is a window turned off. Converted by the driver
+    #: from :attr:`rollover_time`, which is a string in the product's own units,
+    #: so `creds status` can show it without parsing a vendor's spelling.
+    rollover_days: float | None = None
     vendor_maintained: bool | None = None
+    #: Whether the name is one the product supplies, by the driver's own list.
+    #: Guardrail 5 reads it only where :attr:`vendor_maintained` is ``None``: a
+    #: database that can describe its own accounts outranks a list.
+    supplied_name: bool = False
     password_file_member: bool | None = None
-    #: Roles held, upper-cased. Read by guardrail 4, which refuses an account
-    #: holding ``DBA``, ``PDB_DBA``, ``CDB_DBA`` or ``AUDIT_ADMIN``.
+    #: Roles held, upper-cased.
     roles: frozenset[str] = frozenset()
+    #: The roles in :attr:`roles` that the driver counts as administrative, which
+    #: guardrail 4 refuses. On Oracle, ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
+    #: ``AUDIT_ADMIN``.
+    admin_roles: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

@@ -14,9 +14,10 @@ inside the Oracle driver:
 the driver reports as vendor-maintained, or as holding administrative
 privileges" is a sentence about credentials, not about Oracle. So this module
 reads :class:`~sopuli.driver.protocol.UserState` and PostgreSQL later fills the
-same fields from `pg_roles` rather than reimplementing the reasoning. The one
-Oracle-shaped thing left is :data:`ORACLE_SUPPLIED`, and it is there for a
-version that cannot answer the neutral question at all.
+same fields from `pg_roles` rather than reimplementing the reasoning. Which
+roles count as administrative, and which names the product supplies, are the
+driver's lists: it reports them as ``admin_roles`` and ``supplied_name``, and
+this module holds no product's names.
 
 **It reviews; it does not decide.** Like :mod:`sopuli.driver.oracle.errors`,
 this returns a value. Whether a refusal stops the whole run or skips one unit
@@ -33,9 +34,10 @@ the command layer applies.
 3. **in the password file** — ``V$PWFILE_USERS``. The one check that routinely
    has no input: §2 does not grant that view, so on a correctly installed estate
    this answers neither yes nor no — see below.
-4. **holds an administrative role** — ``DBA``, ``PDB_DBA``, ``CDB_DBA``,
-   ``AUDIT_ADMIN``.
-5. **on a literal deny list**, for the version that has no answer to check 2.
+4. **holds an administrative role** — on Oracle ``DBA``, ``PDB_DBA``,
+   ``CDB_DBA``, ``AUDIT_ADMIN`` (:data:`sopuli.driver.oracle.accounts.ADMIN_ROLES`).
+5. **on a literal deny list**, for the version that has no answer to check 2
+   (:data:`sopuli.driver.oracle.accounts.ORACLE_SUPPLIED`).
 
 ### Refused, permitted, or *could not establish*
 
@@ -92,69 +94,6 @@ PRIVILEGED_ROLE = "privileged_role"
 
 #: §4 check 5.
 DENY_LIST = "deny_list"
-
-#: The roles check 4 refuses. Upper-cased, because that is how a database spells
-#: a role and how :attr:`UserState.roles` carries one.
-ADMIN_ROLES = frozenset({"DBA", "PDB_DBA", "CDB_DBA", "AUDIT_ADMIN"})
-
-#: Check 5's list, consulted **only where check 2 could not answer** — that is,
-#: where :attr:`UserState.vendor_maintained` is ``None`` because the column does
-#: not exist, which on Oracle means 11.2.
-#:
-#: Three things about it, because a list like this invites the wrong
-#: expectations:
-#:
-#: * **It is necessarily incomplete.** An Oracle install has dozens of supplied
-#:   accounts and they vary by installed option. This is the set that is
-#:   common to essentially every 11.2, not an inventory.
-#: * **Incompleteness is survivable and over-inclusion is cheap**, which is why
-#:   it errs long. A missing entry means a maintained account is not caught by
-#:   *this* check on one old version; a spurious entry means a refusal an
-#:   operator clears with `--force`, audited. Those costs are not symmetrical.
-#: * **It is a constant rather than a data file.** It is Oracle's list, not the
-#:   site's, so nothing about it is configurable — and a file would need a
-#:   schema, a loader and an error path for a fixed set of strings.
-#:
-#: Verifying it against the 11g XE image is a tier-2 test nobody has written
-#: (`04-testing.md` §2); until then it is reasoning, and it is labelled as such.
-ORACLE_SUPPLIED = frozenset(
-    {
-        "ANONYMOUS",
-        "APPQOSSYS",
-        "BI",
-        "CTXSYS",
-        "DBSNMP",
-        "DIP",
-        "EXFSYS",
-        "FLOWS_FILES",
-        "HR",
-        "IX",
-        "LBACSYS",
-        "MDDATA",
-        "MDSYS",
-        "OE",
-        "OLAPSYS",
-        "ORACLE_OCM",
-        "ORDDATA",
-        "ORDPLUGINS",
-        "ORDSYS",
-        "OUTLN",
-        "OWBSYS",
-        "PM",
-        "SCOTT",
-        "SH",
-        "SI_INFORMTN_SCHEMA",
-        "SPATIAL_CSW_ADMIN_USR",
-        "SPATIAL_WFS_ADMIN_USR",
-        "SYS",
-        "SYSMAN",
-        "SYSTEM",
-        "TSMSYS",
-        "WMSYS",
-        "XDB",
-        "XS$NULL",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -310,7 +249,7 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
         found.append(
             Refusal(VENDOR_MAINTAINED, name, "the database reports this account as its own")
         )
-    elif state.vendor_maintained is None and name.upper() in ORACLE_SUPPLIED:
+    elif state.vendor_maintained is None and state.supplied_name:
         # Check 5 runs only where check 2 had nothing to say. On a version that
         # answers, the answer wins -- a list maintained by us must not overrule
         # the database describing itself.
@@ -338,7 +277,7 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
             )
         )
 
-    held = sorted(ADMIN_ROLES & {role.upper() for role in state.roles})
+    held = sorted(state.admin_roles)
     if held:
         found.append(Refusal(PRIVILEGED_ROLE, name, f"the account holds {', '.join(held)}"))
 

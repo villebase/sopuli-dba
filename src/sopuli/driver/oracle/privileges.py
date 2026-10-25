@@ -61,7 +61,7 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.driver.oracle.capabilities import read
-from sopuli.driver.oracle.errors import from_error
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.protocol import PrivilegeAudit
 
 #: The one scope §2 grants ``V_$PDBS`` in, from
@@ -317,6 +317,7 @@ def classify(
         unaudited=tuple(sorted(set(unaudited))),
         unreadable=tuple(sorted(set(unreadable))),
         remedies=tuple(remedies),
+        hint=f"run the install script for this target's scope (`{INSTALL_SCRIPT}`)",
     )
 
 

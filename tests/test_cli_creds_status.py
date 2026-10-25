@@ -433,14 +433,25 @@ def test_the_rollover_column_tells_three_answers_apart(
     scheduling one."""
     estate(
         users={
-            "ACME_WEB_USER": account("ACME_WEB_USER", rollover_time="1", rollover_active=True),
-            "ACME_BATCH_USER": account("ACME_BATCH_USER", rollover_time="0"),
+            "ACME_WEB_USER": account("ACME_WEB_USER", rollover_days=1.0, rollover_active=True),
+            "ACME_BATCH_USER": account("ACME_BATCH_USER", rollover_days=0.0),
         }
     )
     result = run(runner, write_config(CONFIG))
 
     assert "window open" in result.output
     assert "not configured" in result.output
+
+
+def test_a_configured_quiet_window_shows_its_length(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The length comes from the driver in days, so this view parses no
+    product's spelling of the limit."""
+    estate(users={"ACME_WEB_USER": account("ACME_WEB_USER", rollover_days=1 / 24)})
+    result = run(runner, write_config(CONFIG))
+
+    assert "1h configured" in result.output
 
 
 # ------------------------------------------------------------ the failures ---

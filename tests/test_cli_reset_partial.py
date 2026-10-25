@@ -893,7 +893,7 @@ class HoldingDba(FakeSession):
     """An account that holds `DBA`, which check 2 refuses and `--force` waives."""
 
     def describe_user(self, account: str) -> UserState | None:
-        return UserState(name=account.upper(), status=self.status, roles=frozenset({"DBA"}))
+        return UserState(name=account.upper(), status=self.status, admin_roles=frozenset({"DBA"}))
 
 
 def test_a_forced_reset_that_fails_keeps_the_override_on_its_row(

@@ -108,8 +108,73 @@ from typing import Any
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.capabilities import Cursor, read
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
-from sopuli.driver.oracle.rollover import is_enabled, window_end
+from sopuli.driver.oracle.rollover import days, is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
+
+#: The roles guardrail 4 refuses (`02-oracle-privileges.md` §4), reported as
+#: :attr:`UserState.admin_roles`. Upper-cased, because that is how a database
+#: spells a role and how :attr:`UserState.roles` carries one.
+ADMIN_ROLES = frozenset({"DBA", "PDB_DBA", "CDB_DBA", "AUDIT_ADMIN"})
+
+#: Guardrail 5's list, reported as :attr:`UserState.supplied_name` and consulted
+#: **only where check 2 could not answer** — that is, where
+#: :attr:`UserState.vendor_maintained` is ``None`` because the column does not
+#: exist, which on Oracle means 11.2.
+#:
+#: Three things about it, because a list like this invites the wrong
+#: expectations:
+#:
+#: * **It is necessarily incomplete.** An Oracle install has dozens of supplied
+#:   accounts and they vary by installed option. This is the set that is
+#:   common to essentially every 11.2, not an inventory.
+#: * **Incompleteness is survivable and over-inclusion is cheap**, which is why
+#:   it errs long. A missing entry means a maintained account is not caught by
+#:   *this* check on one old version; a spurious entry means a refusal an
+#:   operator clears with `--force`, audited. Those costs are not symmetrical.
+#: * **It is a constant rather than a data file.** It is Oracle's list, not the
+#:   site's, so nothing about it is configurable — and a file would need a
+#:   schema, a loader and an error path for a fixed set of strings.
+#:
+#: Verifying it against the 11g XE image is a tier-2 test nobody has written
+#: (`04-testing.md` §2); until then it is reasoning, and it is labelled as such.
+ORACLE_SUPPLIED = frozenset(
+    {
+        "ANONYMOUS",
+        "APPQOSSYS",
+        "BI",
+        "CTXSYS",
+        "DBSNMP",
+        "DIP",
+        "EXFSYS",
+        "FLOWS_FILES",
+        "HR",
+        "IX",
+        "LBACSYS",
+        "MDDATA",
+        "MDSYS",
+        "OE",
+        "OLAPSYS",
+        "ORACLE_OCM",
+        "ORDDATA",
+        "ORDPLUGINS",
+        "ORDSYS",
+        "OUTLN",
+        "OWBSYS",
+        "PM",
+        "SCOTT",
+        "SH",
+        "SI_INFORMTN_SCHEMA",
+        "SPATIAL_CSW_ADMIN_USR",
+        "SPATIAL_WFS_ADMIN_USR",
+        "SYS",
+        "SYSMAN",
+        "SYSTEM",
+        "TSMSYS",
+        "WMSYS",
+        "XDB",
+        "XS$NULL",
+    }
+)
 
 #: The account, as the database spells it. ``PASSWORD_CHANGE_DATE`` is selected
 #: unconditionally: it exists on 21c and 26ai, and on 18c and 11.2 the query fails with
@@ -517,9 +582,11 @@ def describe(cursor: Cursor, account: str, *, user_dollar: bool = False) -> User
     state = login_state(cursor, account, user_dollar=user_dollar)
     if state is None:
         return None
+    roles = _roles(cursor, state.name)
     return replace(
         state,
-        roles=_roles(cursor, state.name),
+        roles=roles,
+        admin_roles=ADMIN_ROLES & roles,
         password_file_member=password_file_member(cursor, state.name),
     )
 
@@ -590,7 +657,9 @@ def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> U
             if IN_ROLLOVER in status
             else None
         ),
+        rollover_days=days(limits.get(PASSWORD_ROLLOVER_TIME)),
         vendor_maintained=_maintained(row),
+        supplied_name=name.upper() in ORACLE_SUPPLIED,
     )
 
 

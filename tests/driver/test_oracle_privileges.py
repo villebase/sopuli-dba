@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT
 from sopuli.driver.oracle.privileges import (
     FORBIDDEN_ROLES,
     NO_COMMON_COLUMN,
@@ -61,6 +62,12 @@ def audit_of(
 
 
 # ------------------------------------------------------------- staying quiet ---
+
+
+def test_the_audit_names_the_install_script_as_the_fix() -> None:
+    """The pre-flight's hint for missing grants, in Oracle's words, so the
+    shared pre-flight names no Oracle file."""
+    assert audit_of().hint == f"run the install script for this target's scope (`{INSTALL_SCRIPT}`)"
 
 
 def test_an_account_with_exactly_the_documented_grants_reports_nothing() -> None:

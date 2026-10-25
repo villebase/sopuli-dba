@@ -43,6 +43,14 @@ What each environment is, and what to know before using it:
   `docker compose --profile nne up -d vault-init`.
 - **emulators** (`lowkey-vault`, port 8443) is `nagyesta/lowkey-vault:7.3.112`.
   Once it is healthy, `https://127.0.0.1:8443/ping` answers `pong`.
+- **postgres-matrix** (`postgres-13` to `postgres-18`, ports 5413 to 5418) is
+  one server of each major release from 13 to 18, for the probes in
+  `sql/postgres/`. It preloads `pg_stat_statements` and writes the server log
+  to `log/postgresql.log` in the data directory, so `docker logs` shows only
+  the start of it. The `postgres:13` image ships with `password_encryption =
+  md5` and an `md5` line in `pg_hba.conf`. The others use `scram-sha-256`. Each
+  server keeps its data in an anonymous volume, which a recreate keeps. To start
+  one from a new data directory, add `--renew-anon-volumes` to `up`.
 
 CI starts tier 1 for each pull request, except one that changes only files
 that `.github/workflows/tier1.yml` lists under `paths-ignore`. Every other
@@ -61,6 +69,7 @@ docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
 docker compose --profile tier2 up -d      # + 21c/18c/11g XE, about 90 s once pulled
 docker compose --profile nne   up -d      # Vault + Oracle requiring NNE, on 1525
 docker compose --profile emulators up -d  # lowkey-vault, on 8443
+docker compose --profile postgres-matrix up -d  # PostgreSQL 13 to 18, on 5413 to 5418
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
 docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only; run its init.sh once, then healthy
@@ -145,9 +154,13 @@ fell back. `tests/test_compose_ports.py` checks the bindings.
 Everything else in the documentation uses the default names and ports: the
 `docker exec` commands, the Vault UI link below, the configuration samples in
 `docs/local-testing.md` and the run instructions in the headers of the scripts in
-`sql/oracle/`. In the second clone, change the name and the port in them. The
-tier2's Oracle services, `oracle-nne`, `lowkey-vault` and the maintainer-only
-services keep fixed ports, so only one clone can run each of them.
+`sql/oracle/` and `sql/postgres/`. In the second clone, change the name and the
+port in them. The tier2's Oracle services, `oracle-nne`, `lowkey-vault` and the
+maintainer-only services keep fixed ports, so only one clone can run each of
+them. The `postgres-matrix` services each take a port variable of their own,
+`SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT`, defaults 5413
+to 5418. The suite does not read them, so they are not among the four. A second
+clone that starts the matrix sets them too, for example to 5613 to 5618.
 
 Measured on 2026-10-14: a healthy tier1 stack uses about 2.5 GB of memory in
 its containers, and about 2.9 GB while the suite runs against it. Oracle Free is
@@ -157,6 +170,7 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 |---|---|---|
 | vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test` |
+| postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
 | oracle-free | 1521, or `SOPULI_TEST_ORACLE_PORT` | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
 | oracle-xe18 | 1523 | 18c XE — no rollover, a deliberate negative case |

@@ -9,6 +9,7 @@
 #   docker compose --profile tier2 up -d     # + older Oracle lines, ~90 s once pulled
 #   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525; see README.md
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
+#   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
 #   docker compose --profile oracle12c up -d # 12.2.0.1 EE, maintainer-only
@@ -33,9 +34,32 @@
 # COMPOSE_PROJECT_NAME and the three SOPULI_TEST_*_PORT variables in that clone's
 # environment; the suite reads the same four. The project name overrides `name:`
 # below. Without a project name of its own, a second clone's `up` recreates the
-# first clone's containers. See README.md.
+# first clone's containers. A second clone that starts postgres-matrix also sets
+# SOPULI_TEST_POSTGRES13_PORT to SOPULI_TEST_POSTGRES18_PORT, which the suite
+# does not read. See README.md.
 
 name: sopuli-test
+
+# The settings postgres-13 to postgres-18 share. Compose ignores a top-level
+# key that starts with `x-`.
+x-postgres-matrix: &postgres-matrix
+  profiles: [postgres-matrix]
+  command:
+    - postgres
+    - -c
+    - shared_preload_libraries=pg_stat_statements
+    - -c
+    - logging_collector=on
+    - -c
+    - log_filename=postgresql.log
+  environment:
+    POSTGRES_PASSWORD: sopuli-test
+    POSTGRES_DB: sopuli
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
 
 services:
 
@@ -101,6 +125,58 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # ------------------------------------------------------ postgres matrix ---
+  # PostgreSQL 13 to 18, for the probes in sql/postgres/ (#1032). Each major
+  # version has its own port variable, so a second clone can run the matrix
+  # beside the first. A moving tag, as postgres above: a probe's header records
+  # the release `SHOW server_version` read, never the tag.
+  #
+  # Two settings differ from postgres above, for probe 01: pg_stat_statements is
+  # preloaded, and the log goes to one file in the data directory, so that a
+  # superuser can read it back with pg_read_file(). `docker logs` therefore
+  # shows only the start of the log.
+  postgres-13:
+    <<: *postgres-matrix
+    image: postgres:13
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES13_PORT:-5413}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES13_PORT:-5413}:5432"
+
+  postgres-14:
+    <<: *postgres-matrix
+    image: postgres:14
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES14_PORT:-5414}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES14_PORT:-5414}:5432"
+
+  postgres-15:
+    <<: *postgres-matrix
+    image: postgres:15
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES15_PORT:-5415}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES15_PORT:-5415}:5432"
+
+  postgres-16:
+    <<: *postgres-matrix
+    image: postgres:16
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES16_PORT:-5416}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES16_PORT:-5416}:5432"
+
+  postgres-17:
+    <<: *postgres-matrix
+    image: postgres:17
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES17_PORT:-5417}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES17_PORT:-5417}:5432"
+
+  postgres-18:
+    <<: *postgres-matrix
+    image: postgres:18
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
+      - "[::1]:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
 
   # --------------------------------------------------------------- oracle ---
   # 23ai/26ai Free: CDB + PDB, common users, gradual password rollover.

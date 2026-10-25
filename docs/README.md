@@ -66,7 +66,7 @@ on which Oracle release, and what it showed.
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/` |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
@@ -416,6 +416,67 @@ These entries share a setup. The probe is
   the window on either signal, the profile's setting or an open window. That is
   correct whatever the answer on other releases, so nothing waits on this entry.
   Open: 19c and 21c.
+
+### PostgreSQL
+
+These entries are for the PostgreSQL driver for UC-1, which is not built. The
+probes are in `sql/postgres/`, and the matrix of releases 13 to 18 is the
+`postgres-matrix` profile of `test/compose.yaml`. A major release named here,
+such as "from 16", means the one release of it that was measured.
+[measurements.md](measurements.md) names each in full.
+
+- `verified` `pg-password-text` (#1032) — **What does PostgreSQL keep of the
+  text of `ALTER ROLE … PASSWORD`?**
+  The whole text, in every place measured, with a SCRAM verifier or a plaintext
+  password. With `log_statement = all` the server log keeps it, and
+  `pg_stat_statements` keeps it whatever `log_statement` says. Under the default
+  `log_statement = none`, the log still keeps the text of a statement that
+  fails, because `log_min_error_statement` is `error`. `pg_stat_activity` shows
+  an idle session's last statement, password included. So a password that
+  reaches the server in the statement is kept in clear. A verifier computed on
+  the client is kept too, and it still allows an offline guessing attack.
+  `sql/postgres/01_password_text_probe.sql` measures it.
+- `verified` `pg-system-identifier` (#1032) — **Can a role that is not a
+  superuser read `system_identifier` from `pg_control_system()`?**
+  Yes, with no grant and no `pg_monitor` membership. The function has the
+  default ACL, `EXECUTE` for `PUBLIC`. A site that revoked it is not measured.
+  `sql/postgres/02_system_identifier_probe.sql` measures it.
+- `verified` `pg-createrole-password` (#1032) — **What does a `CREATEROLE` role
+  need before it can change another role's password?**
+  On 13 to 15, `CREATEROLE`, and the role must not be a superuser. From 16 it
+  also needs `ADMIN OPTION` on the role. `GRANT … WITH ADMIN OPTION, INHERIT
+  FALSE, SET FALSE` is enough. The catalog shows the answer without trying the
+  change: `pg_roles.rolcreaterole`, the role's `rolsuper`, and
+  `pg_auth_members.admin_option`, which `pg_has_role(…, 'USAGE WITH ADMIN
+  OPTION')` agrees with. `CREATEROLE` with `ADMIN OPTION` is accepted on every
+  release measured. From 16, a role that creates another gets `ADMIN OPTION` on
+  it. A refusal is SQLSTATE `42501`.
+  `sql/postgres/03_createrole_password_probe.sql` measures it.
+- `verified` `pg-md5-line-scram` (#1032) — **Does a SCRAM verifier stored on a
+  server with `password_encryption = md5` log in through a `pg_hba.conf` line
+  that says `md5`?**
+  Yes, and the login uses SCRAM. A client that speaks only md5 cannot log in as
+  that role. `password_encryption` chooses only how the server hashes a
+  plaintext password, and a verifier is stored as sent. 18 warns that md5
+  passwords are deprecated. The `postgres:13` image ships with
+  `password_encryption = md5` and an `md5` line.
+  `sql/postgres/04_md5_line_scram_verifier_probe.py` measures it.
+- `verified` `psycopg-libpq` (#1032) — **Which libpq do psycopg's binary wheels
+  bundle on Windows and Linux, and does it accept
+  `require_auth=scram-sha-256`?**
+  It follows when the wheel was built. psycopg 3.3.6 bundles libpq 18 on
+  Windows AMD64 and on Linux x86_64, glibc and musl. Earlier wheels bundle
+  earlier libpq: 3.2.13 has 17, 3.1.20 and 3.1.12 have 16, 3.1.4 has 15 and
+  3.0.18 has 14. From 3.1.12 every wheel measured accepts
+  `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 refuse it in the client, as
+  an invalid connection option. Every wheel computes a SCRAM verifier with
+  `PGconn.encrypt_password`. So `require_auth` depends on the libpq a wheel
+  bundles, and `psycopg.pq.version()` reports the libpq a process loaded.
+  `sql/postgres/05_psycopg_libpq_probe.py` measures it.
+- `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
+  binary wheel bundle on macOS?**
+  Not run: there is no macOS host. Linux arm64 is not run either. Nothing is
+  built that depends on the answer.
 
 ### Vault
 

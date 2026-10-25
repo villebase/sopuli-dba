@@ -1,8 +1,9 @@
 # Measurements
 
-This file says what has been run on which Oracle release, when, and what it
-showed. It is the one place for that. Other documents link here instead of
-listing releases themselves.
+This file says what has been run on which Oracle or PostgreSQL release, when,
+and what it showed. It is the one place for that. Other documents link here
+instead of listing releases themselves. The PostgreSQL results are in
+[their own part](#postgresql-releases), after the Oracle ones.
 
 A result holds only for the release it names. Oracle's retention and auditing
 behaviour is not a documented guarantee, and it differs between releases: 11.2
@@ -144,3 +145,60 @@ not from a script in `sql/oracle/`.
 | Wallet failures over mutual TLS | `23.26.3.3.0` | 2026-09-28 | #472 | Missing, misplaced or unreadable: `ORA-28759`. Damaged: `ORA-28768`. Each took 64 s, because the alias sets `retry_count=20`. Instant Client 23.26.3.0.0, on Windows only |
 | The tool end to end | `23.26.3.3.0` | 2026-09-28 | #479 | Install, a rotation, a rollback and a rollover window, with a vault-held password. `docs/maintainer-environments.md` §6 has the setup |
 | The tool end to end | `19.32.0.0.0` | 2026-10-01 | #581 | As the least-privilege service account, including a rollover window. `docs/maintainer-environments.md` §5 has the setup and the run |
+
+## PostgreSQL releases
+
+A PostgreSQL release is two numbers, such as `16.15`. Name it in full, never
+"16": a minor release can change what a major release does. The scripts are in
+`sql/postgres/`, and `tests/test_measurements.py` checks their headers against
+the table below in the same way. A release a header writes after "libpq" is the
+client the probe ran with, and is not compared. It still needs a row in the
+table, which says it is a libpq.
+
+| Release | Product, and where it ran |
+|---|---|
+| `13.23` | The `postgres:13` image, `test/compose.yaml` profile `postgres-matrix`, as pulled on 2026-10-25 |
+| `14.24` | The `postgres:14` image, the same profile, as pulled on 2026-10-25 |
+| `15.19` | The `postgres:15` image, the same profile, as pulled on 2026-10-25 |
+| `16.15` | The `postgres:16` image, the same profile, as pulled on 2026-10-25 |
+| `17.11` | The `postgres:17` image, the same profile, as pulled on 2026-10-25 |
+| `18.6` | The `postgres:18` image, the same profile, as pulled on 2026-10-25. Also the number of the libpq that the `postgres:18` image's psql and psycopg 3.3.6's Linux wheels bundle. A header writes the client as "libpq 18.6" |
+| `18.4` | libpq only: the one psycopg 3.3.6's Windows wheel bundles. No server ran it |
+| `17.6` | libpq only: the one psycopg 3.2.13's Linux wheel bundles |
+| `16.3` | libpq only: the one psycopg 3.1.20's Linux wheel bundles |
+| `16.0` | libpq only: the one psycopg 3.1.12's Linux wheel bundles |
+| `15.0` | libpq only: the one psycopg 3.1.4's Linux wheel bundles |
+| `14.4` | libpq only: the one psycopg 3.0.18's Linux wheel bundles |
+
+Not measured: every other minor release, and every managed service.
+
+## PostgreSQL scripts
+
+<!-- measurements: postgres scripts -->
+| Script | Release | Date | Issue | Result |
+|---|---|---|---|---|
+| `01_password_text_probe.sql` | `13.23` | 2026-10-25 | #1032 | The server log and `pg_stat_statements` keep the `ALTER ROLE` text in full, verifier or plaintext. The log keeps a failed statement's text under the default `log_statement = none`. `pg_stat_activity` shows an idle session's last statement with its password |
+| `01_password_text_probe.sql` | `14.24` | 2026-10-25 | #1032 | As on 13.23 |
+| `01_password_text_probe.sql` | `15.19` | 2026-10-25 | #1032 | As on 13.23 |
+| `01_password_text_probe.sql` | `16.15` | 2026-10-25 | #1032 | As on 13.23 |
+| `01_password_text_probe.sql` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
+| `01_password_text_probe.sql` | `18.6` | 2026-10-25 | #1032 | As on 13.23 |
+| `02_system_identifier_probe.sql` | `13.23` | 2026-10-25 | #1032 | `pg_control_system()` has the default ACL, so a role with no grants reads `system_identifier` |
+| `02_system_identifier_probe.sql` | `14.24` | 2026-10-25 | #1032 | As on 13.23 |
+| `02_system_identifier_probe.sql` | `15.19` | 2026-10-25 | #1032 | As on 13.23 |
+| `02_system_identifier_probe.sql` | `16.15` | 2026-10-25 | #1032 | As on 13.23 |
+| `02_system_identifier_probe.sql` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
+| `02_system_identifier_probe.sql` | `18.6` | 2026-10-25 | #1032 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `13.23` | 2026-10-25 | #1032 | `CREATEROLE` alone changes another role's password, unless that role is a superuser. A role that creates another gets no membership in it |
+| `03_createrole_password_probe.sql` | `14.24` | 2026-10-25 | #1032 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `15.19` | 2026-10-25 | #1032 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `16.15` | 2026-10-25 | #1032 | `CREATEROLE` also needs `ADMIN OPTION` on the role, which works with `INHERIT FALSE, SET FALSE`. `pg_auth_members.admin_option` and `pg_has_role(…, 'USAGE WITH ADMIN OPTION')` show it. A role that creates another gets `ADMIN OPTION` on it |
+| `03_createrole_password_probe.sql` | `17.11` | 2026-10-25 | #1032 | As on 16.15 |
+| `03_createrole_password_probe.sql` | `18.6` | 2026-10-25 | #1032 | As on 16.15 |
+| `04_md5_line_scram_verifier_probe.py` | `13.23` | 2026-10-25 | #1032 | Under `password_encryption = md5`, a role given a SCRAM verifier logs in with SCRAM through a line that says `md5`. A client held to md5 is refused |
+| `04_md5_line_scram_verifier_probe.py` | `14.24` | 2026-10-25 | #1032 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `15.19` | 2026-10-25 | #1032 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-25 | #1032 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-25 | #1032 | As on 13.23. The server warns that md5 passwords are deprecated |
+| `05_psycopg_libpq_probe.py` | `18.6` | 2026-10-25 | #1032 | psycopg 3.3.6 loads libpq 18.4 on Windows AMD64 and libpq 18.6 on Linux x86_64, glibc and musl. 3.2.13, 3.1.20 and 3.1.12 load libpq 17.6, libpq 16.3 and libpq 16.0 on Linux, and accept `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 load libpq 15.0 and libpq 14.4, and refuse it in the client as an invalid connection option. Each computes a SCRAM verifier. Not run on macOS (unverified: psycopg-libpq-macos) |

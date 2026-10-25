@@ -19,6 +19,7 @@ from sopuli.driver.protocol import (
     AccountAttributes,
     Driver,
     DriverContext,
+    DriverError,
     Session,
     UnsupportedCapabilityError,
 )
@@ -117,6 +118,55 @@ def test_the_scope_is_probed_once() -> None:
     session = _session()
 
     assert session.scope() is session.scope()
+
+
+class _Failing(_Connection):
+    """A connection whose first statement raises ``error``."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    @contextmanager
+    def cursor(self) -> Iterator[_Cursor]:
+        raise self.error
+        yield _Cursor(False)  # pragma: no cover - makes this a generator
+
+
+def _failing_session(error: Exception) -> Any:
+    session = _session()
+    session.connection = _Failing(error)
+    return session
+
+
+@pytest.mark.parametrize(
+    ("raised", "code"),
+    [
+        ("OperationalError", "08006"),
+        ("InsufficientPrivilege", "42501"),
+    ],
+)
+def test_a_failed_scope_read_is_mapped(raised: str, code: str) -> None:
+    """A lost connection has no SQLSTATE; a server error has its own."""
+    import psycopg
+
+    error = getattr(psycopg.errors, raised)("the server's message")
+
+    with pytest.raises(DriverError) as caught:
+        _failing_session(error).scope()
+
+    assert caught.value.code == code
+    assert caught.value.message == f"{code}: the server's message"
+
+
+def test_a_client_side_error_is_not_read_as_a_lost_connection() -> None:
+    """psycopg raised it before sending anything, so it is this tool's fault."""
+    import psycopg
+
+    error = psycopg.ProgrammingError("the query has 1 placeholder but 0 parameters were passed")
+
+    with pytest.raises(psycopg.ProgrammingError):
+        _failing_session(error).scope()
 
 
 def test_close_is_safe_twice() -> None:

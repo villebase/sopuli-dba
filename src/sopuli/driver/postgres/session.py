@@ -88,12 +88,17 @@ class PostgresSession:
         """What this session is: a cluster, read-write or not, and its encryption.
 
         Probed on the first call and cached for the session (invariant 3).
+        An error psycopg raises before it sends anything has no SQLSTATE and is
+        not an ``OperationalError``. That is a fault in this tool, so it is left
+        unmapped rather than reported as a lost connection.
         """
         if self._scope is None:
             try:
                 with self.connection.cursor() as cursor:
                     self._scope = observe(cursor)
             except psycopg.Error as error:
+                if error.sqlstate is None and not isinstance(error, psycopg.OperationalError):
+                    raise
                 raise from_error(error).as_error() from error
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(

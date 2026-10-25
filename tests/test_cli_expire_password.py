@@ -85,6 +85,8 @@ class FakeSession:
             status=self.status,
             password_file_member=self.password_file_member,
             roles=self.roles,
+            # Every role a test gives this fake is one guardrail 4 refuses.
+            admin_roles=self.roles,
         )
 
     def byte_limit(self) -> None:

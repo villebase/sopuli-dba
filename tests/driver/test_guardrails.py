@@ -13,7 +13,6 @@ import pytest
 from sopuli.driver.guardrails import (
     DECLARED,
     DENY_LIST,
-    ORACLE_SUPPLIED,
     PASSWORD_FILE,
     PRIVILEGED_ROLE,
     VENDOR_MAINTAINED,
@@ -33,13 +32,17 @@ def account(
     vendor_maintained: bool | None = False,
     password_file_member: bool | None = False,
     roles: frozenset[str] = frozenset(),
+    admin_roles: frozenset[str] = frozenset(),
+    supplied_name: bool = False,
 ) -> UserState:
     return UserState(
         name=name,
         status="OPEN",
         vendor_maintained=vendor_maintained,
         password_file_member=password_file_member,
-        roles=roles,
+        roles=roles | admin_roles,
+        admin_roles=admin_roles,
+        supplied_name=supplied_name,
     )
 
 
@@ -83,7 +86,10 @@ def test_an_account_in_the_password_file_is_refused() -> None:
 
 
 def test_an_account_holding_an_administrative_role_is_refused() -> None:
-    refusals = review(account(roles=frozenset({"CONNECT", "DBA"})), declared=DECLARED_SET).refusals
+    """Which roles count is the driver's to say (`admin_roles`); the reason
+    names those and no other role the account holds."""
+    state = account(roles=frozenset({"CONNECT"}), admin_roles=frozenset({"DBA"}))
+    refusals = review(state, declared=DECLARED_SET).refusals
 
     assert [refusal.check for refusal in refusals] == [PRIVILEGED_ROLE]
     assert "DBA" in refusals[0].reason
@@ -94,7 +100,9 @@ def test_several_reasons_are_all_reported() -> None:
     """One refusal at a time would mean an operator clearing them one run at a
     time, which is four runs to find out the account was never declared."""
     assert checks(
-        account("SYS", vendor_maintained=True, password_file_member=True, roles=frozenset({"DBA"}))
+        account(
+            "SYS", vendor_maintained=True, password_file_member=True, admin_roles=frozenset({"DBA"})
+        )
     ) == {DECLARED, VENDOR_MAINTAINED, PASSWORD_FILE, PRIVILEGED_ROLE}
 
 
@@ -104,7 +112,14 @@ def test_several_reasons_are_all_reported() -> None:
 def test_the_deny_list_covers_the_version_that_cannot_answer() -> None:
     """`vendor_maintained is None` means the column does not exist -- 11.2 --
     and that must not read as "no"."""
-    assert checks(account("SYSTEM", vendor_maintained=None)) == {DECLARED, DENY_LIST}
+    assert checks(account("SYSTEM", vendor_maintained=None, supplied_name=True)) == {
+        DECLARED,
+        DENY_LIST,
+    }
+
+
+def test_a_name_the_product_does_not_supply_passes_check_5() -> None:
+    assert checks(account("ACME_WEB_USER", vendor_maintained=None)) == set()
 
 
 def test_the_database_describing_itself_beats_our_list() -> None:
@@ -114,8 +129,7 @@ def test_the_database_describing_itself_beats_our_list() -> None:
     whether an account is its own, a list maintained by us must not overrule it —
     otherwise the list becomes a second whitelist nobody agreed to.
     """
-    assert "SCOTT" in ORACLE_SUPPLIED
-    assert checks(account("SCOTT", vendor_maintained=False)) == {DECLARED}
+    assert checks(account("SCOTT", vendor_maintained=False, supplied_name=True)) == {DECLARED}
 
 
 def test_the_deny_list_is_not_consulted_where_the_flag_says_no() -> None:
@@ -143,7 +157,7 @@ def test_force_never_reaches_the_whitelist() -> None:
     "typo that happened to be forced past".
     """
     reviewed = review(
-        account("SYS", vendor_maintained=True, roles=frozenset({"DBA"})),
+        account("SYS", vendor_maintained=True, admin_roles=frozenset({"DBA"})),
         declared=DECLARED_SET,
         force=True,
     )
@@ -246,7 +260,7 @@ def test_a_caveat_rides_alongside_a_refusal_from_another_check() -> None:
     """The two are independent lists, and an account refused by check 4 with
     check 3 unreadable has both to report."""
     reviewed = review(
-        account(password_file_member=None, roles=frozenset({"DBA"})), declared=DECLARED_SET
+        account(password_file_member=None, admin_roles=frozenset({"DBA"})), declared=DECLARED_SET
     )
 
     assert [refusal.check for refusal in reviewed.refusals] == [PRIVILEGED_ROLE]

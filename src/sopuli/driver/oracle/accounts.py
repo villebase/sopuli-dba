@@ -108,8 +108,76 @@ from typing import Any
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.capabilities import Cursor, read
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
-from sopuli.driver.oracle.rollover import is_enabled, window_end
+from sopuli.driver.oracle.rollover import days, is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
+
+#: The roles guardrail 4 refuses (`02-oracle-privileges.md` §4), reported as
+#: :attr:`UserState.admin_roles`. Upper-cased, because that is how a database
+#: spells a role and how :attr:`UserState.roles` carries one.
+ADMIN_ROLES = frozenset({"DBA", "PDB_DBA", "CDB_DBA", "AUDIT_ADMIN"})
+
+#: :data:`ADMIN_ROLES` for a sentence, so a hint cannot name another list.
+_ADMIN_ROLES_IN_WORDS = ", ".join(sorted(ADMIN_ROLES)[:-1]) + f" or {sorted(ADMIN_ROLES)[-1]}"
+
+#: Guardrail 5's list, reported as :attr:`UserState.supplied_name` and consulted
+#: **only where check 2 could not answer** — that is, where
+#: :attr:`UserState.vendor_maintained` is ``None`` because the column does not
+#: exist, which on Oracle means 11.2.
+#:
+#: Three things about it, because a list like this invites the wrong
+#: expectations:
+#:
+#: * **It is necessarily incomplete.** An Oracle install has dozens of supplied
+#:   accounts and they vary by installed option. This is the set that is
+#:   common to essentially every 11.2, not an inventory.
+#: * **Incompleteness is survivable and over-inclusion is cheap**, which is why
+#:   it errs long. A missing entry means a maintained account is not caught by
+#:   *this* check on one old version; a spurious entry means a refusal an
+#:   operator clears with `--force`, audited. Those costs are not symmetrical.
+#: * **It is a constant rather than a data file.** It is Oracle's list, not the
+#:   site's, so nothing about it is configurable — and a file would need a
+#:   schema, a loader and an error path for a fixed set of strings.
+#:
+#: Verifying it against the 11g XE image is a tier-2 test nobody has written
+#: (`04-testing.md` §2); until then it is reasoning, and it is labelled as such.
+ORACLE_SUPPLIED = frozenset(
+    {
+        "ANONYMOUS",
+        "APPQOSSYS",
+        "BI",
+        "CTXSYS",
+        "DBSNMP",
+        "DIP",
+        "EXFSYS",
+        "FLOWS_FILES",
+        "HR",
+        "IX",
+        "LBACSYS",
+        "MDDATA",
+        "MDSYS",
+        "OE",
+        "OLAPSYS",
+        "ORACLE_OCM",
+        "ORDDATA",
+        "ORDPLUGINS",
+        "ORDSYS",
+        "OUTLN",
+        "OWBSYS",
+        "PM",
+        "SCOTT",
+        "SH",
+        "SI_INFORMTN_SCHEMA",
+        "SPATIAL_CSW_ADMIN_USR",
+        "SPATIAL_WFS_ADMIN_USR",
+        "SYS",
+        "SYSMAN",
+        "SYSTEM",
+        "TSMSYS",
+        "WMSYS",
+        "XDB",
+        "XS$NULL",
+    }
+)
 
 #: The account, as the database spells it. ``PASSWORD_CHANGE_DATE`` is selected
 #: unconditionally: it exists on 21c and 26ai, and on 18c and 11.2 the query fails with
@@ -185,10 +253,10 @@ PROFILE_QUERY = (
 )
 
 #: Every role the account holds, **including the ones it holds through another
-#: role**. Guardrail 4 refuses ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
-#: ``AUDIT_ADMIN``, and a flat read of ``DBA_ROLE_PRIVS`` sees only direct
-#: grants -- so an account granted a site role that itself holds ``DBA`` would
-#: have been reported as holding nothing the guardrail cares about, and passed.
+#: role**. Guardrail 4 refuses the roles in :data:`ADMIN_ROLES`, and a flat read
+#: of ``DBA_ROLE_PRIVS`` sees only direct grants -- so an account granted a site
+#: role that itself holds ``DBA`` would have been reported as holding nothing the
+#: guardrail cares about, and passed.
 #:
 #: Measured on 26ai, which is how the hole was confirmed rather than argued:
 #: ``ACME_APP_ADMIN`` granted ``DBA``, then granted to an account, reads as
@@ -415,9 +483,9 @@ class RolesUnreadableError(DriverError):
     """``DBA_ROLE_PRIVS`` could not be read, so guardrail 4 has no input.
 
     **Raised rather than reported as "no roles"**, which is the entire reason
-    this class exists. Guardrail 4 refuses an account holding ``DBA``,
-    ``PDB_DBA``, ``CDB_DBA`` or ``AUDIT_ADMIN``; an empty set means *this account
-    holds none of them* and reads as a pass. A missing grant would therefore turn
+    this class exists. Guardrail 4 refuses an account holding a role in
+    :data:`ADMIN_ROLES`; an empty set means *this account holds none of them*
+    and reads as a pass. A missing grant would therefore turn
     a safety check into a silent success, which is the same failure shape as a
     capability probe that could not be answered reporting absent (decision #195) — and the
     reason `02-oracle-privileges.md` §2 grants the view.
@@ -517,9 +585,11 @@ def describe(cursor: Cursor, account: str, *, user_dollar: bool = False) -> User
     state = login_state(cursor, account, user_dollar=user_dollar)
     if state is None:
         return None
+    roles = _roles(cursor, state.name)
     return replace(
         state,
-        roles=_roles(cursor, state.name),
+        roles=roles,
+        admin_roles=ADMIN_ROLES & roles,
         password_file_member=password_file_member(cursor, state.name),
     )
 
@@ -590,7 +660,9 @@ def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> U
             if IN_ROLLOVER in status
             else None
         ),
+        rollover_days=days(limits.get(PASSWORD_ROLLOVER_TIME)),
         vendor_maintained=_maintained(row),
+        supplied_name=name.upper() in ORACLE_SUPPLIED,
     )
 
 
@@ -827,9 +899,9 @@ def _roles(cursor: Cursor, name: str) -> frozenset[str]:
             code=diagnosis.code,
             retryable=diagnosis.retryable,
             hint=(
-                "guardrail 4 refuses an account holding DBA, PDB_DBA, CDB_DBA or "
-                "AUDIT_ADMIN, and cannot tell an account with none from a view it "
-                "cannot read: GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account"
+                f"guardrail 4 refuses an account holding {_ADMIN_ROLES_IN_WORDS}, and "
+                "cannot tell an account with none from a view it cannot read: "
+                "GRANT SELECT ON SYS.DBA_ROLE_PRIVS to the service account"
             ),
         ) from error
 

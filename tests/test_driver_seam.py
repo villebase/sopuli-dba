@@ -36,8 +36,6 @@ KNOWN_ORACLE_IMPORTS = {
     ("cli.py", "sopuli.driver.oracle.wallet"),
     ("diagnostics.py", "sopuli.driver.oracle.wallet"),
     ("output/wallet_view.py", "sopuli.driver.oracle.wallet"),
-    ("output/status_view.py", "sopuli.driver.oracle.rollover"),
-    ("preflight.py", "sopuli.driver.oracle.errors"),
     ("reset.py", "sopuli.driver.oracle.accounts"),
 }
 

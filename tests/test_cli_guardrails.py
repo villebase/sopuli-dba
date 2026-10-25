@@ -265,7 +265,7 @@ def test_an_account_holding_dba_is_not_touched(
     harness = estate(
         {
             "ACME_WEB_USER": account(
-                "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+                "ACME_WEB_USER", vendor_maintained=False, admin_roles=frozenset({"DBA"})
             ),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         }
@@ -285,7 +285,7 @@ def test_the_deny_list_covers_a_version_that_cannot_answer(
     `ORACLE_MAINTAINED` does not exist and `vendor_maintained` is `None`."""
     harness = estate(
         {
-            "SCOTT": account("SCOTT", vendor_maintained=None),
+            "SCOTT": account("SCOTT", vendor_maintained=None, supplied_name=True),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         },
         document={
@@ -307,7 +307,7 @@ def test_a_version_that_answers_overrules_the_deny_list(
     call an account `SCOTT`."""
     harness = estate(
         {
-            "SCOTT": account("SCOTT", vendor_maintained=False),
+            "SCOTT": account("SCOTT", vendor_maintained=False, supplied_name=True),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         },
         document={
@@ -418,7 +418,7 @@ DBA_ON_BETA = {
     },
     "appdb-beta": {
         "ACME_WEB_USER": account(
-            "ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"})
+            "ACME_WEB_USER", vendor_maintained=False, admin_roles=frozenset({"DBA"})
         ),
         "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
     },
@@ -631,7 +631,7 @@ def test_a_forecast_refused_on_two_targets_keeps_each_reason_with_its_target(
         by_target={
             "appdb-alpha": {
                 "ACME_WEB_USER": account(
-                    "ACME_WEB_USER", vendor_maintained=True, roles=frozenset({"DBA"})
+                    "ACME_WEB_USER", vendor_maintained=True, admin_roles=frozenset({"DBA"})
                 ),
                 "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
             },
@@ -658,7 +658,8 @@ def test_an_account_the_survey_could_not_read_is_not_forecast(
 
     class Unreadable(FakeSession):
         def describe_user(self, account: str) -> UserState | None:
-            if account.upper() == "ACME_WEB_USER" and "DBA" in self.users[account.upper()].roles:
+            web = self.users[account.upper()] if account.upper() == "ACME_WEB_USER" else None
+            if web is not None and "DBA" in web.admin_roles:
                 raise DriverError("ORA-00942: table or view does not exist", code="ORA-00942")
             return super().describe_user(account)
 
@@ -822,7 +823,7 @@ class AlphaHoldsTheStagedPassword(FakeSession):
 
     def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
         web = self.users.get("ACME_WEB_USER")
-        on_alpha = web is not None and "DBA" not in web.roles
+        on_alpha = web is not None and "DBA" not in web.admin_roles
         if on_alpha and account.upper() == "ACME_WEB_USER":
             self.attempts.append(account.upper())
             return VerifyResult(
@@ -932,7 +933,9 @@ def test_an_unreachable_target_is_not_tried_twice(
     result = run(runner, write_config(TWO_TARGETS), "--output", "json")
 
     on_beta = [
-        session for session in harness["sessions"] if "DBA" in session.users["ACME_WEB_USER"].roles
+        session
+        for session in harness["sessions"]
+        if "DBA" in session.users["ACME_WEB_USER"].admin_roles
     ]
     assert on_beta == []
     beta = [one for one in document(result)["results"] if one["target"] == "appdb-beta"]
@@ -990,7 +993,7 @@ def test_an_account_skipped_on_every_target_does_not_hold_its_neighbours_back(
 ) -> None:
     """The other half of `_by_document`'s rule: a permanently guarded account
     must not block promotion for every account sharing its document."""
-    guarded = account("ACME_WEB_USER", vendor_maintained=False, roles=frozenset({"DBA"}))
+    guarded = account("ACME_WEB_USER", vendor_maintained=False, admin_roles=frozenset({"DBA"}))
     harness = estate(
         {},
         by_target={
@@ -1029,7 +1032,7 @@ class FailsBatchUserOnBeta(FakeSession):
 
     def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
         web = self.users.get("ACME_WEB_USER")
-        on_beta = web is not None and "DBA" in web.roles
+        on_beta = web is not None and "DBA" in web.admin_roles
         if on_beta and account.upper() == "ACME_BATCH_USER":
             self.attempts.append(account.upper())
             return VerifyResult("login", "fail", latency_ms=9)
@@ -1191,7 +1194,7 @@ def test_rotate_does_not_stage_an_account_the_guardrails_skip(
     behind to refuse the next rotation."""
     harness = estate(
         {
-            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_WEB_USER": account("ACME_WEB_USER", admin_roles=frozenset({"DBA"})),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         },
         document=NOTHING_STAGED,
@@ -1220,7 +1223,7 @@ def test_a_skipped_accounts_pending_does_not_refuse_the_rotation(
     does not compare the skipped account with `current`."""
     harness = estate(
         {
-            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_WEB_USER": account("ACME_WEB_USER", admin_roles=frozenset({"DBA"})),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         },
         document=left_over(),
@@ -1250,7 +1253,7 @@ def test_under_force_a_skipped_accounts_pending_still_refuses(
     rotation would draw over its `pending` (#769)."""
     harness = estate(
         {
-            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_WEB_USER": account("ACME_WEB_USER", admin_roles=frozenset({"DBA"})),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         },
         document=left_over(),
@@ -1271,7 +1274,7 @@ def test_a_dry_run_does_not_refuse_over_a_skipped_accounts_pending(
     """The preview decides from the same reads as the run (#1009)."""
     estate(
         {
-            "ACME_WEB_USER": account("ACME_WEB_USER", roles=frozenset({"DBA"})),
+            "ACME_WEB_USER": account("ACME_WEB_USER", admin_roles=frozenset({"DBA"})),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         },
         document=left_over(),
@@ -1292,7 +1295,7 @@ def test_the_reason_names_every_check_that_refused(
     estate(
         {
             "ACME_WEB_USER": account(
-                "ACME_WEB_USER", vendor_maintained=True, roles=frozenset({"DBA"})
+                "ACME_WEB_USER", vendor_maintained=True, admin_roles=frozenset({"DBA"})
             ),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         }
@@ -1339,7 +1342,7 @@ def test_force_records_what_it_waived(
     estate(
         {
             "ACME_WEB_USER": account(
-                "ACME_WEB_USER", vendor_maintained=True, roles=frozenset({"DBA"})
+                "ACME_WEB_USER", vendor_maintained=True, admin_roles=frozenset({"DBA"})
             ),
             "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
         }

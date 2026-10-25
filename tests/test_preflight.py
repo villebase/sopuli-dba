@@ -115,6 +115,27 @@ def test_missing_privileges_are_one_finding_and_are_authorization() -> None:
     assert "GRANT ALTER USER, GRANT CREATE SESSION" in found.message
 
 
+def test_the_privileges_hint_is_the_drivers() -> None:
+    """How to grant what is missing is a fact about one product, so the driver
+    says it and this layer only carries it."""
+    (found,) = preflight.survey(
+        "appdb-alpha",
+        scope=scope(),
+        missing_privileges=["GRANT ALTER USER"],
+        privileges_hint="run the product's install script",
+    )
+
+    assert found.hint == "run the product's install script"
+
+
+def test_a_driver_that_gives_no_hint_still_gets_one() -> None:
+    (found,) = preflight.survey(
+        "appdb-alpha", scope=scope(), missing_privileges=["GRANT ALTER USER"]
+    )
+
+    assert found.hint == "grant what is missing to the service account"
+
+
 def test_a_missing_profile_names_the_account_that_wanted_it() -> None:
     """A missing profile is a pre-flight finding (decision #301), reported per
     account: two accounts on one target can sit under different policies, and a

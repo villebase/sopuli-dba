@@ -16,7 +16,9 @@ import pytest
 
 from sopuli.constraints import NAMED, NONE, UNKNOWN
 from sopuli.driver.oracle.accounts import (
+    ADMIN_ROLES,
     NAME_QUERY,
+    ORACLE_SUPPLIED,
     PROFILE_NAME_QUERY,
     PROFILE_QUERY,
     PTIME_QUERY,
@@ -79,6 +81,7 @@ def _ora(code: str, message: str = "") -> RuntimeError:
 
 def _cursor(
     *,
+    name: str = "ACME_ORDERS_USER",
     status: str = "OPEN",
     profile: str | None = "ACME_PROF",
     versions: str | None = "11G 12C",
@@ -92,7 +95,7 @@ def _cursor(
     return _Cursor(
         {
             USER_QUERY: (
-                "ACME_ORDERS_USER",
+                name,
                 status,
                 profile,
                 versions,
@@ -650,6 +653,38 @@ def test_an_account_holding_no_roles_reports_an_empty_set() -> None:
     assert state.roles == frozenset()
 
 
+def test_the_administrative_roles_are_the_ones_guardrail_4_refuses() -> None:
+    """The driver says which roles count, so the shared guardrail holds no
+    Oracle role names."""
+    state = describe(_cursor(roles=[("DBA",), ("CONNECT",), ("AUDIT_ADMIN",)]), "acme_orders_user")
+
+    assert state is not None
+    assert state.admin_roles == frozenset({"DBA", "AUDIT_ADMIN"})
+    assert frozenset({"DBA", "PDB_DBA", "CDB_DBA", "AUDIT_ADMIN"}) == ADMIN_ROLES
+
+
+@pytest.mark.parametrize(("name", "supplied"), [("SCOTT", True), ("ACME_ORDERS_USER", False)])
+def test_a_name_the_product_supplies_is_marked(name: str, supplied: bool) -> None:
+    """Guardrail 5's input. The list is Oracle's, so it lives in the driver."""
+    state = describe(_cursor(name=name), name)
+
+    assert state is not None
+    assert state.supplied_name is supplied
+    assert "SCOTT" in ORACLE_SUPPLIED
+
+
+@pytest.mark.parametrize(
+    ("limit", "days"), [("1", 1.0), ("3600", 1 / 24), ("0", 0.0), (None, None)]
+)
+def test_the_rollover_window_is_carried_in_days(limit: str | None, days: float | None) -> None:
+    """`creds status` shows it without parsing Oracle's spelling of the limit."""
+    limits = [("PASSWORD_ROLLOVER_TIME", limit)] if limit is not None else []
+    state = describe(_cursor(limits=limits), "acme_orders_user")
+
+    assert state is not None
+    assert state.rollover_days == days
+
+
 def test_unreadable_roles_are_refused_rather_than_reported_as_none_held() -> None:
     """The one that matters.
 
@@ -667,6 +702,9 @@ def test_unreadable_roles_are_refused_rather_than_reported_as_none_held() -> Non
         describe(cursor, "acme_orders_user")
 
     assert "DBA_ROLE_PRIVS" in (raised.value.hint or "")
+    assert "AUDIT_ADMIN, CDB_DBA, DBA or PDB_DBA" in (raised.value.hint or ""), (
+        "the hint names the roles guardrail 4 refuses, from the list itself"
+    )
     assert raised.value.code == "ORA-00942", "the server's code is carried"
     assert "DBA_ROLE_PRIVS" in raised.value.message, "and so is its message"
 

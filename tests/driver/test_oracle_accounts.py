@@ -27,7 +27,6 @@ import pytest
 
 from oracle_harness import Environment, decide_skip, execute
 from sopuli.check import grace_warning
-from sopuli.driver.guardrails import ADMIN_ROLES
 from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import OFFLINE_VERIFY, PASS, PASSWORD_ROLLOVER
 from sopuli.secrets import Secret
@@ -467,7 +466,7 @@ def test_a_pdb_local_account_granted_sysdba_appears_in_the_password_file(
         # The three checks that do not catch it, asserted alongside so the claim
         # above is measured rather than asserted in prose.
         assert state.vendor_maintained is False
-        assert not ADMIN_ROLES & state.roles
+        assert not state.admin_roles
     finally:
         execute(sysdba, f"revoke sysdba from {PWFILE_ACCOUNT}")
 

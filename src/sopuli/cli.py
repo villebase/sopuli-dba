@@ -8732,7 +8732,9 @@ def _preflight_target(
         )
 
     try:
-        missing_privileges = tuple(session.privileges().missing)
+        audit = session.privileges()
+        missing_privileges = tuple(audit.missing)
+        privileges_hint = audit.hint
     except Exception as error:  # noqa: BLE001 -- likewise
         # Reported and **not** blocking. The audit establishes nothing either
         # way when it cannot be read, and refusing over it would mean an estate
@@ -8740,6 +8742,7 @@ def _preflight_target(
         # staying silent would be the guard that is not running and does not say
         # so, which UC-1 §7 rules out for `check`'s LCOUNT guard by name.
         missing_privileges = ()
+        privileges_hint = None
         privilege_finding: tuple[Finding, ...] = (
             Finding(
                 target=target.name,
@@ -8860,6 +8863,7 @@ def _preflight_target(
             missing_accounts=missing_accounts,
             missing_profiles=missing_profiles,
             missing_privileges=missing_privileges,
+            privileges_hint=privileges_hint,
         )
         + tuple(unreadable)
         + privilege_finding

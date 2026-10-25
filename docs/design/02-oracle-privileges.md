@@ -807,6 +807,9 @@ the config does not declare would make the tool's own audit trail meaningless.
 
 `src/sopuli/driver/guardrails.py` implements the checks. It reviews; it does
 not decide, as the error mapping does. `creds apply` and `creds rotate` call it.
+It holds no Oracle names. The Oracle driver
+(`src/sopuli/driver/oracle/accounts.py`) holds the role list for check 4 and the
+deny list for check 5, and reports what they find on each account it describes.
 These rules apply:
 
 - **What a refusal does depends on how the account was selected.** The rule is

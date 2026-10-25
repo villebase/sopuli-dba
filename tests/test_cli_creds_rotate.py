@@ -1422,7 +1422,7 @@ def test_a_skipped_sibling_does_not_keep_a_window_open(
         },
         users={
             "ACME_WEB_USER": user(rollover_enabled=True),
-            "ACME_PRIV_USER": user("ACME_PRIV_USER", roles=frozenset({"DBA"})),
+            "ACME_PRIV_USER": user("ACME_PRIV_USER", admin_roles=frozenset({"DBA"})),
         },
         capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
     )

@@ -33,7 +33,6 @@ from sopuli.diagnostics import (
     PASSWORD_GRACE_PERIOD,
     ROTATION_OVERDUE,
 )
-from sopuli.driver.oracle.rollover import days as rollover_days
 from sopuli.driver.protocol import UserState
 from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.notices import render_notices, unknown_change_dates
@@ -359,15 +358,16 @@ def _rollover_cell(user: UserState | None) -> Cell | str:
         return Cell("-", Role.MUTED)
     if user.rollover_active:
         return Cell("window open", Role.NOTABLE)
-    configured = rollover_days(user.rollover_time)
+    configured = user.rollover_days
     if not configured:
         return Cell("not configured", Role.MUTED)
     return f"{_hours(configured)} configured"
 
 
 def _hours(days: float) -> str:
-    """A rollover limit as an operator would say it, from :func:`rollover_days`'s
-    days -- which a release reading the limit in seconds has been converted to."""
+    """A rollover limit as an operator would say it, from
+    :attr:`~sopuli.driver.protocol.UserState.rollover_days` -- which the driver
+    has already converted from whatever unit the product reads the limit in."""
     hours = days * 24
     if hours >= 24 and hours % 24 == 0:
         return f"{int(days)}d"

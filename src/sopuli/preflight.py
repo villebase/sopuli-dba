@@ -35,7 +35,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sopuli.driver.oracle.errors import INSTALL_SCRIPT
 from sopuli.driver.protocol import Scope
 
 #: §8's checks, in §8's order. Used as ``Finding.check``, which is what a
@@ -159,6 +158,7 @@ def survey(
     missing_accounts: Sequence[str] = (),
     missing_profiles: Sequence[tuple[str, str]] = (),
     missing_privileges: Sequence[str] = (),
+    privileges_hint: str | None = None,
 ) -> tuple[Finding, ...]:
     """Everything wrong with one reachable target, in §8's order.
 
@@ -257,7 +257,9 @@ def survey(
                 target=target,
                 check=PRIVILEGES,
                 message=(f"the service account is missing {', '.join(sorted(missing_privileges))}"),
-                hint=f"run the install script for this target's scope (`{INSTALL_SCRIPT}`)",
+                # The driver's words (`PrivilegeAudit.hint`), because how to
+                # grant what is missing is a fact about one product.
+                hint=privileges_hint or "grant what is missing to the service account",
                 category="authorization",
             )
         )

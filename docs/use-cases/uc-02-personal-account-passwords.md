@@ -308,7 +308,7 @@ resolved to a set would be a predicate widening what a mutating verb may touch.
 The target selectors narrow *where*, not *who*.
 
 The guardrails are the ones every mutating verb uses, so suspending `DBSNMP` is
-refused exactly as rotating it would be. `--force` waives checks 2 to 5 and never
+refused exactly as rotating it would be. `--force` waives checks 2 to 5 and 7 and never
 the whitelist. A refusal exits **0**: `SKIPPED` means the guardrails worked, and
 only an unreachable target sets exit 4. The action kind is `account_lock`. The
 run document carries `results[].account_status`, the state the database was in
@@ -918,7 +918,7 @@ The account checks in `02-oracle-privileges.md` §4 apply unchanged, and one of
 them conflicts with the scope of this use case. **Check 4 refuses any account
 holding `DBA`, `PDB_DBA`, `CDB_DBA` or `AUDIT_ADMIN`**, and DBA accounts are in
 scope (§1). So every reset of a DBA's personal account needs `--force`, which
-overrides checks 2 to 5 and is recorded in the audit event
+overrides checks 2 to 5 and 7 and is recorded in the audit event
 ([P3](../decisions/log.md#p3)).
 
 **Check 3 can have no answer.** Where the service account cannot read

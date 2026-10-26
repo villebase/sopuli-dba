@@ -296,12 +296,17 @@ ROLES_QUERY = (
 #: ``None``, and anything else raises.
 PWFILE_QUERY = "select count(*) from v$pwfile_users where username = :name"
 
-#: Who this session is, for guardrail 7: the tool's own account. ``SESSION_USER``
-#: rather than ``CURRENT_USER``, because the guardrail is about the account that
-#: logged in, whose password the next connection needs. It is the spelling
-#: ``DBA_USERS`` holds, so it compares exactly with ``UserState.name``. Needs no
+#: Who this session is, for guardrail 7: the account whose password the next
+#: connection needs. ``PROXY_USER`` where the tool logged on as a proxy
+#: (``sopuli_svc[acme_web_user]``): ``SESSION_USER`` is then the client account,
+#: which logged on with no password of its own. Otherwise ``SESSION_USER``, not
+#: ``CURRENT_USER``, which a definer's-rights call can move. The spelling is
+#: ``DBA_USERS``'s, so it compares exactly with ``UserState.name``. Needs no
 #: grant.
-SESSION_USER_QUERY = "select sys_context('USERENV', 'SESSION_USER') from dual"
+SESSION_USER_QUERY = (
+    "select nvl(sys_context('USERENV', 'PROXY_USER'), sys_context('USERENV', 'SESSION_USER')) "
+    "from dual"
+)
 
 #: Just the spelling, for the one caller that needs the name and nothing else.
 #:

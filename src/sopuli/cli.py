@@ -8329,14 +8329,15 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     reasons = "; ".join(refusal.reason for refusal in review.refusals)
     if not named:
         return reasons
-    overridable = all(refusal.overridable for refusal in review.refusals)
-    remedy = (
-        "pass --force to override, which is recorded"
-        if overridable
-        # Check 1, the one no flag reaches. Saying "--force" here would send an
-        # operator to a flag that is going to refuse them again.
-        else "declare it in `accounts:` first; no flag extends the whitelist"
-    )
+    checks = {refusal.check for refusal in review.refusals}
+    # Checks 1 and 6 are the ones no flag reaches. Saying "--force" there would
+    # send an operator to a flag that is going to refuse them again.
+    if guardrails.DECLARED in checks:
+        remedy = "declare it in `accounts:` first; no flag extends the whitelist"
+    elif guardrails.SUPERUSER in checks:
+        remedy = "a superuser's password is not one this tool changes; leave it out of the config"
+    else:
+        remedy = "pass --force to override, which is recorded"
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
 
 

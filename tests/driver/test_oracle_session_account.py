@@ -80,6 +80,15 @@ def test_the_session_user_is_read_once_per_session(session_module: Any, session:
     assert asked.count(session_module.SESSION_USER_QUERY) == 1
 
 
+def test_a_proxy_logon_marks_the_proxy_account(session_module: Any) -> None:
+    """Under `sopuli_svc[acme_web_user]` the session user is the client, which
+    logged on with no password of its own; the proxy's password is the one the
+    next connection needs, so the query prefers `PROXY_USER`."""
+    query = session_module.SESSION_USER_QUERY
+    assert query.index("PROXY_USER") < query.index("SESSION_USER")
+    assert "nvl(" in query
+
+
 def test_a_missing_account_asks_nothing_more(session_module: Any, session: Any) -> None:
     assert session.describe_user("missing") is None
     assert session_module.SESSION_USER_QUERY not in session.connection.opened.executed

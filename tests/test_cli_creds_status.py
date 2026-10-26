@@ -76,13 +76,20 @@ class FakeSession:
     file makes.
     """
 
-    def __init__(self, users: Mapping[str, UserState | None]) -> None:
+    def __init__(self, users: Mapping[str, UserState | None], *, rollover: bool = True) -> None:
         self.users = dict(users)
+        self.rollover = rollover
         self.attempts: list[str] = []
         self.closed = False
 
     def scope(self) -> Scope:
-        return Scope(type="pdb", container="ALPHA", read_write=True)
+        # A release with rollover, so ROLLOVER reads the profile's setting.
+        return Scope(
+            type="pdb",
+            container="ALPHA",
+            read_write=True,
+            capabilities=frozenset({"password_rollover"}) if self.rollover else frozenset(),
+        )
 
     def describe_user(self, account: str) -> UserState | None:
         return self.users.get(account.upper())
@@ -113,6 +120,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         document: dict[str, Any] | None = None,
         users: Mapping[str, UserState | None] | None = None,
         connect_error: Exception | None = None,
+        rollover: bool = True,
     ) -> dict[str, Any]:
         store = MemoryStore()
         store.write("apps/acme/db", document if document is not None else _rotated(), cas=0)
@@ -131,7 +139,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
             def connect(self, target: Any, credential: Any) -> FakeSession:
                 if connect_error is not None:
                     raise connect_error
-                session = FakeSession(users if users is not None else _both())
+                session = FakeSession(users if users is not None else _both(), rollover=rollover)
                 sessions.append(session)
                 return session
 
@@ -479,6 +487,18 @@ def test_a_configured_quiet_window_shows_its_length(
     result = run(runner, write_config(CONFIG))
 
     assert "1h configured" in result.output
+
+
+def test_a_target_with_no_rollover_says_so_rather_than_not_configured(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`password_rollover` absent, as on PostgreSQL (#1072): there is no setting
+    to configure, so the column must not suggest one."""
+    estate(rollover=False)
+    result = run(runner, write_config(CONFIG))
+
+    assert "not supported" in result.output
+    assert "not configured" not in result.output
 
 
 # ------------------------------------------------------------ the failures ---

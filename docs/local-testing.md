@@ -645,7 +645,7 @@ password profiles.
 
 `creds status` shows the vault's age for each password. PostgreSQL does not
 record when a password was changed, so `DB_PW_CHANGED` is empty and the run
-says why:
+says why. It has no rollover window, so `ROLLOVER` reads `not supported`:
 
 ```
 $ sopuli --config postgres.yaml creds status
@@ -660,8 +660,8 @@ SECRET                 TARGETS  ACCOUNTS
 vault-dev:acme/pg-dev  pg-dev   acme_app_user, acme_batch_user
 
 ACCOUNT          TARGET  STATE         VAULT_V  AGE  DB_PW_CHANGED  PROFILE  ROLLOVER
-acme_app_user    pg-dev  UNVERIFIABLE  4        0d   -              -        not configured
-acme_batch_user  pg-dev  UNVERIFIABLE  4        0d   -              -        not configured
+acme_app_user    pg-dev  UNVERIFIABLE  7        0d   -              -        not supported
+acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not supported
 
 2 accounts, nothing to act on
 

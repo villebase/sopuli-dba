@@ -260,7 +260,7 @@ def render_status_table(rows: Sequence[Row]) -> str:
                 _age(row),
                 _changed_at(row.user),
                 _profile(row.user),
-                _rollover_cell(row.user),
+                _rollover_cell(row.user, row.rollover_supported),
             ]
             for row in rows
         ],
@@ -347,15 +347,20 @@ def _profile(user: UserState | None) -> Cell | str:
     return user.profile
 
 
-def _rollover_cell(user: UserState | None) -> Cell | str:
+def _rollover_cell(user: UserState | None, supported: bool | None = None) -> Cell | str:
     """Whether a window can open here, and whether one is open now.
 
     Three answers rather than two, because "not configured" and "configured and
     quiet" are what decide whether a zero-downtime rotation is available at all
     -- which is the question §6.3 makes an operator ask before scheduling one.
+    A fourth where the target has no rollover at all (``password_rollover``
+    absent, #1072): "not configured" would send an operator to look for a
+    setting that does not exist.
     """
     if user is None:
         return Cell("-", Role.MUTED)
+    if supported is False:
+        return Cell("not supported", Role.MUTED)
     if user.rollover_active:
         return Cell("window open", Role.NOTABLE)
     configured = user.rollover_days

@@ -30,6 +30,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
     ENCRYPTION_TLS,
     PASS,
+    PASSWORD_ROLLOVER,
     PROFILE_MANAGEMENT,
     ChangeResult,
     Credential,
@@ -38,6 +39,7 @@ from sopuli.driver.protocol import (
     Scope,
     UserState,
     VerifyResult,
+    require_capability,
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
@@ -120,6 +122,12 @@ class FakeSession:
 
     def apply_attributes(self, account: str, attributes: Any) -> tuple[Any, ...]:
         return ()
+
+    def require_rollover(self, account: str) -> None:
+        """As every driver does: the capability first, before the account."""
+        require_capability(
+            self.scope(), PASSWORD_ROLLOVER, target="appdb-alpha", hint="the driver's hint"
+        )
 
     def close(self) -> None:
         return None
@@ -339,6 +347,42 @@ def test_no_attribute_asks_nothing_and_opens_no_extra_connection(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(harness["sessions"]) == 1
+
+
+# --------------------------------------------------- --strategy rollover ---
+
+
+def test_rollover_is_refused_when_no_declared_account_exists(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The target has no rollover at all, so the refusal does not wait for an
+    account to exist: it is the driver's own, made before any account is read,
+    and nothing is staged (#1072)."""
+    harness = estate(frozenset(), missing=True)
+    before = harness["store"].read("apps/acme/db").data
+    result = invoke(
+        runner, write_config(NEITHER), "creds", "rotate", "--strategy", "rollover", "--confirm"
+    )
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    error = json.loads(result.output)["error"]
+    assert error["target_capability"] == PASSWORD_ROLLOVER
+    assert error["hint"] == "the driver's hint"
+    assert harness["store"].read("apps/acme/db").data == before
+
+
+def test_rollover_is_asked_again_where_the_pre_flight_could_not_reach(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pre-flight passes over a target it could not reach. The run asks the
+    connection that would set the password, and refuses on the row."""
+    harness = estate(frozenset(), refuse_first=True)
+    result = invoke(runner, write_config(NEITHER), "creds", "apply", "--strategy", "rollover")
+
+    [row] = json.loads(result.output)["results"]
+    assert row["state"] == "ERROR"
+    assert "does not support password_rollover" in row["error"]["message"]
+    assert changed(harness) == []
 
 
 # ---------------------------------------------- a locked account's advice ---

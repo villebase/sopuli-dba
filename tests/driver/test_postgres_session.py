@@ -86,10 +86,15 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
 def test_a_role_has_no_password_rules_beyond_the_length() -> None:
     """No verify function and no reuse history on a plain server, so `creds
     generate` reports none, with no round trip (#1072)."""
+
+    class _Untouchable:
+        def cursor(self) -> Any:
+            raise AssertionError("password_constraints made a round trip")
+
     session = _session()
+    session.connection = _Untouchable()
 
     assert session.password_constraints("acme_app_user") is None
-    assert session._scope is None
 
 
 @pytest.mark.parametrize(

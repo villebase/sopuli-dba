@@ -156,12 +156,20 @@ DRIVERS: dict[str, DatabaseDriver] = {
         extra="postgres",
         provides=frozenset({"psycopg"}),
         password_limit="1024",
-        # `creds check`, by login (#1067); `creds apply`, which sets a password
-        # with a verifier computed on the client (#1060); and `creds rotate`,
-        # `creds generate` and `creds status`, whose modes PostgreSQL lacks are
-        # refused at plan time by capability (#1072).
+        # UC-1: `creds check`, by login (#1067); `creds apply`, which sets a
+        # password with a verifier computed on the client (#1060); and `creds
+        # rotate`, `generate`, `status` and `finish-rollover`, whose modes
+        # PostgreSQL lacks are refused at plan time by capability (#1072). A
+        # role never has a rollover window, so `finish-rollover` finds none.
         commands=frozenset(
-            {"creds.check", "creds.apply", "creds.rotate", "creds.generate", "creds.status"}
+            {
+                "creds.check",
+                "creds.apply",
+                "creds.rotate",
+                "creds.generate",
+                "creds.status",
+                "creds.finish-rollover",
+            }
         ),
     ),
 }

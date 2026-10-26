@@ -215,8 +215,8 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
     assert (
-        "can run only `doctor`, `creds apply`, `creds check`, `creds generate`, "
-        "`creds rotate`, `creds status` there yet"
+        "can run only `doctor`, `creds apply`, `creds check`, `creds finish-rollover`, "
+        "`creds generate`, `creds rotate`, `creds status` there yet"
     ) in refused.value.message
     assert "`account reset-password` is not written for it" in str(refused.value.hint)
 
@@ -245,7 +245,14 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
 def test_postgresql_is_written_for_uc1_and_nothing_else_yet() -> None:
     """Pinned so that adding a command is a deliberate, reviewed line."""
     assert DRIVERS["postgresql"].commands == frozenset(
-        {"creds.check", "creds.apply", "creds.rotate", "creds.generate", "creds.status"}
+        {
+            "creds.check",
+            "creds.apply",
+            "creds.rotate",
+            "creds.generate",
+            "creds.status",
+            "creds.finish-rollover",
+        }
     )
     assert DRIVERS["oracle"].commands is None
 

@@ -71,6 +71,6 @@ def test_the_postgresql_session_still_names_its_cluster() -> None:
     from sopuli.config.model import ExpandedTarget, Target
 
     target = ExpandedTarget(target=Target(name="pg-dev", type="postgresql", dsn="h:5432"))
-    session = session_module.PostgresSession(connection=None, target=target)
+    session = session_module.PostgresSession(connection=None, target=target, correlation_id="run")
 
     assert isinstance(session, ClusterIdentity)

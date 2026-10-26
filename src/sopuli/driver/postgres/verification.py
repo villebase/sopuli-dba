@@ -7,10 +7,13 @@ whatever the ``pg_hba.conf`` line says: a ``password`` line would have libpq
 send it in clear, and a ``trust`` line would let any password in, which would
 read as a match. libpq refuses either before it sends the password.
 
-A failed login is one of three things here:
+A failed login is one of four things here:
 
 * ``28P01``, a wrong password: :data:`~sopuli.driver.protocol.FAIL`, which is
   drift;
+* a refusal the server makes only after it accepted the password, such as no
+  ``CONNECT`` on the database: :data:`~sopuli.driver.protocol.PASS`, with the
+  refusal in the detail;
 * the server asked for another method than SCRAM, or ``28000``, a login
   refused for a reason other than the password, such as no ``pg_hba.conf``
   line for this host and role:
@@ -29,12 +32,19 @@ from __future__ import annotations
 import re
 
 from sopuli.driver.postgres.errors import (
+    INSUFFICIENT_PRIVILEGE,
     LOGIN_REFUSED,
+    TOO_MANY_CONNECTIONS,
     WRONG_PASSWORD,
     Diagnosis,
     first_reason_at,
 )
-from sopuli.driver.protocol import FAIL, UNAVAILABLE
+from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
+
+#: Refusals the server makes only after it has accepted the password: no
+#: CONNECT on the database, or the role at its CONNECTION LIMIT. The password
+#: matches, and the session still did not open.
+_AFTER_THE_PASSWORD = frozenset({INSUFFICIENT_PRIVILEGE, TOO_MANY_CONNECTIONS})
 
 #: The one method the tool logs in with as a managed role
 #: (``02-postgres-privileges.md`` §2.3).
@@ -80,6 +90,11 @@ def login_outcome(diagnosis: Diagnosis) -> tuple[str, str | None] | None:
         )
     if diagnosis.code == WRONG_PASSWORD:
         return FAIL, WRONG_PASSWORD_DETAIL
+    if diagnosis.code in _AFTER_THE_PASSWORD:
+        return PASS, (
+            f"the server accepted the password, and then refused the session: "
+            f"{diagnosis.first_line}"
+        )
     if diagnosis.code == LOGIN_REFUSED:
         return UNAVAILABLE, (
             f"{diagnosis.first_line}. The server refused the login for a reason "

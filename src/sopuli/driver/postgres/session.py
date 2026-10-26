@@ -107,8 +107,9 @@ class PostgresSession:
     connection: Any
     target: ExpandedTarget
     #: The run's, for the logins :meth:`verify_password` makes as a managed
-    #: role, which carry the same ``application_name`` and timeouts.
-    correlation_id: str = "sopuli"
+    #: role, which carry the same ``application_name`` and timeouts. No
+    #: default, so a session cannot be built that loses the run's id.
+    correlation_id: str
     timeouts: Timeouts = field(default_factory=Timeouts)
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
@@ -273,14 +274,6 @@ class PostgresSession:
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        role = self.describe_user(account)
-        if role is None:
-            return VerifyResult(
-                method=VERIFY_LOGIN,
-                result=UNAVAILABLE,
-                detail=f'there is no role "{account}" on this target',
-            )
-        account = role.name
         major, minor = libpq_release(pq.version())
         if major < REQUIRE_AUTH_FROM:
             raise DriverError(
@@ -288,6 +281,20 @@ class PostgresSession:
                 f'as "{account}" on target "{self.target.name}" with its password',
                 hint=f"install a psycopg wheel that bundles libpq {REQUIRE_AUTH_FROM} or later",
             )
+        role = self.describe_user(account)
+        # The server would answer each of these as a wrong password, or as a
+        # refusal no different from a missing pg_hba.conf line, so none is tried.
+        if role is None:
+            not_tried = f'there is no role "{account}" on this target'
+        elif role.locked:
+            not_tried = f"the role cannot log in ({role.status}); no login was attempted"
+        elif role.expired:
+            not_tried = "the role's VALID UNTIL has passed; no login was attempted"
+        else:
+            not_tried = None
+        if role is None or not_tried is not None:
+            return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=not_tried)
+        account = role.name
         arguments = connect_arguments(
             self.target,
             Credential(username=account, secret=secret),
@@ -299,19 +306,15 @@ class PostgresSession:
         try:
             connection = psycopg.connect(**arguments)
         except psycopg.Error as error:
+            latency = _ms(started)
             failure = from_error(error, connecting=True)
-            LOG.debug(
-                "login as %s failed with %s in %.3fs",
-                account,
-                failure.code,
-                time.monotonic() - started,
-            )
+            LOG.debug("login as %s failed with %s in %.3fs", account, failure.code, latency / 1000)
             outcome = login_outcome(failure)
             if outcome is None:
                 raise failure.as_error() from error
             result, detail = outcome
             return VerifyResult(
-                method=VERIFY_LOGIN, result=result, latency_ms=_ms(started), detail=detail
+                method=VERIFY_LOGIN, result=result, latency_ms=latency, detail=detail
             )
         latency = _ms(started)
         # The login has answered. A socket that drops as it closes does not

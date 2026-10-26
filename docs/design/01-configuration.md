@@ -410,20 +410,22 @@ vaults:
     addr: https://vault-dev.example.com
     mount: kv
     kv_version: 2
-    auth:
-      method: token        # --vault-token-file, $VAULT_TOKEN, ~/.vault-token
+    # One token for each store. Without `token:`, every store takes the same
+    # one, from --vault-token-file, $SOPULI_VAULT_TOKEN, $VAULT_TOKEN or
+    # ~/.vault-token (§3a).
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_DEV } }
   vault-test:
     type: hashicorp
     addr: https://vault-test.example.com
     mount: kv
     kv_version: 2
-    auth: { method: token }
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_TEST } }
   vault-prod:
     type: hashicorp
     addr: https://vault.example.com
     mount: kv
     kv_version: 2
-    auth: { method: token }
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_PROD } }
 
 # One explicit target: the CDB root, needed for common-user maintenance.
 targets:

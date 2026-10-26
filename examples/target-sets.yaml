@@ -17,6 +17,8 @@
 
 version: 1
 
+# Two vault servers, so each names the variable that holds its own token.
+# admin-credentials.yaml says why.
 vaults:
   vault-dev:
     type: hashicorp
@@ -24,14 +26,14 @@ vaults:
     mount: kv
     kv_version: 2
     non_production: true
-    auth: { method: token }
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_DEV } }
   vault-qa:
     type: hashicorp
     addr: https://vault-qa.example.com
     mount: kv
     kv_version: 2
     non_production: true
-    auth: { method: token }
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_QA } }
 
 target_sets:
   # The tenant databases. This one entry generates five targets:
@@ -51,8 +53,8 @@ target_sets:
     # The tool asks for this password once for every target this entry makes,
     # dev and qa alike. That is right only when C##SOPULI_SVC has one password
     # in both environments. If each has its own, write one entry for each
-    # environment, or read the password from a vault, as admin-credentials.yaml
-    # shows.
+    # environment, or read the password from a vault. admin-credentials.yaml
+    # shows how, and section 3a of the reference has the rules.
     admin: { username: C##SOPULI_SVC, auth: prompt }
     oracle: { scope: pdb, container: "{tenant}{env}" }
     for_each:

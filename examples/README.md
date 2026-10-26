@@ -9,6 +9,7 @@ commented for a reader who has not written one before.
 | [multiple-applications.yaml](multiple-applications.yaml) | the `applications:` shape, target groups, and per-application selection |
 | [safety-hardened.yaml](safety-hardened.yaml) | `confirm_environments`, `max_targets`, `readonly`, and profiles |
 | [target-sets.yaml](target-sets.yaml) | many pluggable databases from one `target_sets:` entry, a container root per environment, `overrides:`, and groups that keep an application off the roots |
+| [admin-credentials.yaml](admin-credentials.yaml) | the four places the password of the account the tool connects as can come from: a wallet, a vault, a prompt, or an environment variable |
 
 Check any of them before you use it. This opens no network connection:
 

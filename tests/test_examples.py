@@ -47,6 +47,7 @@ EXAMPLE_FILES = [
     "multiple-applications.yaml",
     "safety-hardened.yaml",
     "target-sets.yaml",
+    "admin-credentials.yaml",
 ]
 
 

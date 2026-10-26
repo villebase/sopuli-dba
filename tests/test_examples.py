@@ -49,6 +49,7 @@ EXAMPLE_FILES = [
     "target-sets.yaml",
     "admin-credentials.yaml",
     "personal-accounts.yaml",
+    "app-creds-and-personal-accounts.yaml",
 ]
 
 

@@ -116,6 +116,23 @@ def test_target_sets_example_generates_the_targets_its_comments_name(
     }
 
 
+def test_whole_estate_example_generates_the_targets_its_comments_count(
+    write_config: WriteConfig,
+) -> None:
+    """app-creds-and-personal-accounts.yaml counts its tenants per environment.
+
+    3 + 2 + 3 tenant databases and 3 roots make 11 targets; three `acme`
+    accounts on each tenant database and `C##MONITOR` on each root make 27
+    bindings.
+    """
+    source = EXAMPLES / "app-creds-and-personal-accounts.yaml"
+    path = write_config(source.read_text(encoding="utf-8"))
+
+    result = CliRunner().invoke(cli, ["--config", str(path), "config", "validate"])
+
+    assert "ok: 11 targets, 27 bindings" in result.output, result.output
+
+
 # ------------------------------------------- and the editor pointer is real ---
 
 

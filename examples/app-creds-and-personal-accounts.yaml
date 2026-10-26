@@ -43,6 +43,13 @@ vaults:
     mount: kv
     kv_version: 2
     auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_PROD } }
+  # The journal of personal-account resets. See `reset_records:` at the end.
+  vault-ops:
+    type: hashicorp
+    addr: https://vault-ops.example.com
+    mount: kv
+    kv_version: 2
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_OPS } }
 
 defaults:
   safety:
@@ -143,8 +150,11 @@ applications:
 # UC-2: personal accounts. Nothing holds these passwords as a master copy. A
 # DBA resets one when its owner needs it, and the tool hands it over.
 #
-# A name may not be in both lists. An account is either an application's or a
-# person's, never both.
+# Keep application accounts out of personal_accounts. A name written in both
+# places is refused when the file loads. A profile or role rule is checked
+# against the database, so the file cannot see that kind of overlap: give
+# ACME_DEVELOPER to people only, never to acme_web_user and the others.
+# `account list` warns (SOPULI-W042) if a rule admits an application account.
 # ---------------------------------------------------------------------------
 personal_accounts:
   - profile: ACME_DEVELOPER
@@ -157,13 +167,22 @@ personal_accounts:
 
 # The new password goes into the target's own vault behind a single-use
 # wrapping token: a prod reset wraps in vault-prod, a dev reset in vault-dev.
+# So the token of each of those vaults needs `update` on `sys/wrapping/wrap`.
 delivery:
   method: vault_wrapped
   vault_wrapped:
     ttl: 15m
 
-# One journal of resets for the whole estate. Records of every environment go
-# to the same store, under one record per target and account.
+# One journal of resets for the whole estate, in its own store. Each record is
+# at <prefix>/<target>/<account>, and the lock for a reset at the same path
+# under `locks/`.
+#
+# One store for every environment has a cost: every reset, dev and qa
+# included, needs SOPULI_VAULT_TOKEN_OPS, with read, write and list under both
+# paths, and no reset runs while vault-ops is down. A separate store keeps
+# that dependency off the production vault. To reset while vault-ops is down,
+# remove this block for the run: the reset then writes no record and takes no
+# lock.
 reset_records:
-  vault: vault-prod
+  vault: vault-ops
   prefix: sopuli/personal-resets

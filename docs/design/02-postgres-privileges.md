@@ -153,6 +153,26 @@ whose verifier is SCRAM it uses SCRAM; the `pg-md5-line-scram` entry in
 [`../README.md`](../README.md) §*Verify before implementing* has the
 measurement.
 
+**The tool logs in as a managed role with `require_auth=scram-sha-256`.** libpq
+then refuses, before it sends the password, a server that asks for any other
+method or that lets the role in without asking. So a `password` line cannot
+make it send the password in clear, and a `trust` line cannot make a wrong
+password look right. The login also uses the target's `sslmode` and timeouts.
+What each outcome means:
+
+- the login succeeds: the password matches;
+- `28P01`: the server refused the password. It gives the same answer for a
+  role whose stored verifier is md5, which no password opens through a
+  `scram-sha-256` line;
+- `28000`, or a server that did not use SCRAM: the login was refused for
+  another reason, such as no line for this host and role. That says nothing
+  about the password, and the run says which line to add;
+- a role that does not exist is reported before any login, because the server
+  would answer its login as a wrong password.
+
+`require_auth` needs libpq 16 or later. With an older libpq the tool refuses the
+login and sends nothing.
+
 ### 2.4 What `doctor --check-privileges` reads
 
 `sopuli doctor --check-privileges` reports what the tool account holds. It

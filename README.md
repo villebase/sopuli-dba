@@ -405,7 +405,7 @@ How this works in practice, and what it expects of contributors:
 | [docs/getting-started.md](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md) | install the tool, write your first config file, and run one command safely |
 | [docs/scenarios/rotate-and-sync.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/rotate-and-sync.md) | follow one password rotation from start to finish |
 | [docs/scenarios/kubernetes-eso.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
-| [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | three complete config files, commented, from smallest to safety-hardened |
+| [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | complete config files with comments, starting with the smallest one that works |
 | [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |
 | [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | run the usual commands by hand against the local test stack |
 | [CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md) | send a change |

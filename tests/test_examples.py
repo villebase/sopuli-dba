@@ -46,6 +46,7 @@ EXAMPLE_FILES = [
     "single-application.yaml",
     "multiple-applications.yaml",
     "safety-hardened.yaml",
+    "target-sets.yaml",
 ]
 
 

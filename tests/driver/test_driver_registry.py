@@ -214,8 +214,13 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
         require_command(target("pg-dev", "postgresql"), "creds.apply")
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
-    assert "can run only `doctor` there yet" in refused.value.message
+    assert "can run only `doctor`, `creds check` there yet" in refused.value.message
     assert "`creds apply` is not written for it" in str(refused.value.hint)
+
+
+def test_creds_check_is_let_through_on_postgresql() -> None:
+    """#1067: the driver verifies by login, so `creds check` runs there."""
+    require_command(target("pg-dev", "postgresql"), "creds.check")
 
 
 def test_a_driver_written_for_every_command_refuses_none() -> None:

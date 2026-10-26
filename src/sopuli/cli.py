@@ -158,6 +158,7 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
+from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -1077,11 +1078,14 @@ def _examine(
         # Finding out what it is, which can fail on a connection that is fine:
         # a dictionary view this account cannot read, or a probe that could not
         # be answered. Reporting that as unreachable would send somebody to the
-        # listener over a grant, so the two are separate.
+        # listener over a grant, so the two are separate. The cluster is
+        # claimed here, after the scope, for the same reason: a refused or
+        # failed claim is about a target that answered.
         warnings: tuple[str, ...] = ()
         audit = None
         try:
-            scope = session.scope()
+            scope, caveats = scope_and_claim(session, target.name, run.clusters)
+            warnings += caveats
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than
@@ -1093,10 +1097,16 @@ def _examine(
                 # whatever it managed to look at. `caveats()` is what stops
                 # `over_granted: []` meaning both "nothing is over-granted" and
                 # "the view that would have said so was refused".
-                warnings = audit.caveats()
+                warnings += audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
+            # With what was found before the failure: a skipped cluster check
+            # is still worth saying when the audit after it failed.
             return build_target(
-                target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
+                target,
+                connected=True,
+                error=_finding(error),
+                duration_ms=_elapsed(started),
+                warnings=warnings,
             )
     finally:
         if session is not None:
@@ -8518,12 +8528,27 @@ def _open_session(
 
     ``scope_only`` is `doctor`'s, which only asks what the target is; see
     :func:`~sopuli.driver.registry.require_full_driver`.
+
+    A session that can name its cluster (a PostgreSQL one) reads its scope
+    here, and is closed and refused if another target of this run already
+    reached that cluster (:func:`sopuli.driver.clusters.claim`). The scope comes
+    first, so a superuser is refused before anything else is asked. `doctor`
+    does both itself, so that a refusal is reported for a target it reached.
     """
     if not scope_only:
         require_full_driver(target.target)
     driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
-    return driver.connect(target, credential.credential)
+    session = driver.connect(target, credential.credential)
+    if scope_only or not isinstance(session, ClusterIdentity):
+        return session
+    try:
+        scope_and_claim(session, target.name, run.clusters)
+    except BaseException:
+        with suppress(Exception):
+            session.close()
+        raise
+    return session
 
 
 def _driver_context(run: Invocation, config: Config) -> DriverContext:

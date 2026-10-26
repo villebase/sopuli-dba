@@ -104,8 +104,9 @@ DIRECT_MEMBER = (
     f"exists (select 1 from pg_auth_members m where m.roleid = r.oid and m.member = {ME})"
 )
 
-#: §3's attributes. ``SUPERUSER`` is listed for a caller that reaches the audit
-#: as one: ``02-postgres-privileges.md`` §1 says the tool account never is.
+#: §3's attributes. ``SUPERUSER`` is listed for a caller that audits without
+#: the session's scope: :func:`~sopuli.driver.postgres.scope.observe` refuses a
+#: superuser first, so `doctor` never reaches the audit as one.
 FORBIDDEN_ATTRIBUTES = (SUPERUSER, "REPLICATION", "BYPASSRLS")
 
 #: §3's built-in roles. ``pg_monitor`` includes ``pg_read_all_stats``, so an

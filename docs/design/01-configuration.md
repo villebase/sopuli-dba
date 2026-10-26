@@ -1491,6 +1491,26 @@ The target's `admin` is a role with `CREATEROLE` that is not a superuser.
 §4 there says which roles not to declare: one whose password a Kubernetes
 operator owns is one of them.
 
+**Two targets that are one cluster are refused**, as a name declared twice is.
+One set of roles would then be changed under two names. The tool knows a
+cluster by its `system_identifier`, from `pg_control_system()`. A primary and
+its standbys share it, which is right, because they share their roles too, so
+declare one target for them. The check compares only the targets the run
+connects to, and opens no connection to a target the selectors left out. The
+second target to reach a cluster is refused with `SOPULI-20008`, a `config`
+error naming both targets, and is that target's error in the run. `doctor`
+reports it as the target's error and still exits 0, as for any target it
+reached and could not use.
+
+A cluster copied with `pg_basebackup`, or a standby promoted and split off,
+keeps the identifier of the cluster it came from, and has its own roles from
+then on. The tool cannot tell such a copy from a standby, so it refuses the
+second of the two as well. Any role can read the
+identifier by default (`pg-system-identifier` in
+[`../README.md`](../README.md) §*Verify before implementing*). Where a site
+revoked it, `doctor` says so in a warning and the target is not checked: not
+knowing is not a finding.
+
 **The `dsn` is `host:port` and nothing else.** The host is a name, an IPv4
 address, or an IPv6 address in brackets, such as `[2001:db8::10]:5432`. A
 connection URI (`postgresql://…`) and a keyword string (`host=… port=…`) are

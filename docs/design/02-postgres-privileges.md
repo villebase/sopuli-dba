@@ -24,7 +24,17 @@ a superuser.
 **The tool account is never a superuser.** A superuser can do anything on the
 cluster, including read every stored password verifier in `pg_authid`. No
 operation of the tool needs that. This is the PostgreSQL form of the Oracle rule
-that the tool never connects `AS SYSDBA`. (open: #1047)
+that the tool never connects `AS SYSDBA`.
+
+So the tool refuses a superuser. The first read of every session asks
+`pg_roles.rolsuper` for the role that logged in and for `current_user`, and
+whether either is a member of a superuser role through any chain of grants.
+Both are asked because a role's `SET role` default changes `current_user` at
+login, and `RESET ROLE` changes it back. A member can `SET ROLE` to
+that role, so it is refused too. Either way the target is refused with
+`SOPULI-20007` ([`03-json-output.md`](03-json-output.md) §3) before anything
+else is asked of it. The login itself succeeds, so the refusal is the tool's
+and not the server's.
 
 ### What `CREATEROLE` reaches
 
@@ -184,7 +194,7 @@ covers them.
 
 | Not granted | Why |
 |---|---|
-| `SUPERUSER` | it can do anything on the cluster, and read every stored verifier. The tool refuses to run as a superuser (§1) (open: #1047) |
+| `SUPERUSER` | it can do anything on the cluster, and read every stored verifier. The tool refuses to run as a superuser (§1) |
 | `REPLICATION` | it can copy the whole cluster through streaming replication, and no operation of the tool needs it |
 | `BYPASSRLS` | it ignores every row-level security policy, and no operation of the tool reads table data |
 | `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files` | they run programs and read or write files on the database server, as the server's operating system user |
@@ -240,6 +250,7 @@ The driver sends no `ALTER ROLE` in this build.
 | File | Purpose |
 |---|---|
 | `sql/postgres/01_password_text_probe.sql` | what the server log, `pg_stat_statements` and `pg_stat_activity` keep of `ALTER ROLE … PASSWORD` (§5) |
+| `sql/postgres/02_system_identifier_probe.sql` | whether a role with no grants can read `system_identifier`, which tells two targets on one cluster apart (`01-configuration.md` §*`postgres:` on a target*) |
 | `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password (§1, §2.2) |
 | `sql/postgres/04_md5_line_scram_verifier_probe.py` | whether a SCRAM verifier logs in through a `pg_hba.conf` line that says `md5` (§2.3) |
 | `sql/postgres/05_psycopg_libpq_probe.py` | which libpq each psycopg wheel bundles, and whether it accepts `require_auth` |

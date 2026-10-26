@@ -449,9 +449,10 @@ and the run exits 1.
 ### A PostgreSQL cluster
 
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
-password `sopuli-test`. `doctor` connects to it and reports what it found. The
-other commands refuse a PostgreSQL target with `SOPULI-20006`, except
-`creds generate`, which uses the policy's limits for it.
+password `sopuli-test`. `doctor` connects to it and reports what it found, and
+`creds check` checks a role's password by logging in as it. The other commands
+refuse a PostgreSQL target with `SOPULI-20006`, except `creds generate`, which
+uses the policy's limits for it.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
@@ -519,6 +520,23 @@ pg-dev  yes        cluster  -          READ WRITE  0             none
 
 `pg_monitor` includes `pg_read_all_stats`, which shows other sessions' statement
 text. `REVOKE pg_monitor FROM sopuli_admin` clears the line.
+
+To check a managed role, add the vault and an application to `postgres.yaml`,
+as §8 does for Oracle, and create the role with the vault's password as above.
+The stack's `pg_hba.conf` already has a `scram-sha-256` line for every role:
+
+```
+$ sopuli --config postgres.yaml creds check
+...
+ACCOUNT            TARGET  STATE         DETAIL
+acme_app_user      pg-dev  IN_SYNC       vault v2 verified by login
+acme_drift_user    pg-dev  DRIFT         vault v2 the server refused the password (28P01). It gives the same answer for a role whose stored verifier is md5, which no password opens through a scram-sha-256 line; `creds apply` stores a SCRAM verifier
+...
+```
+
+A wrong password exits 3. A role that `pg_hba.conf` does not let in is
+`UNVERIFIABLE`, and a `NOLOGIN` role is `LOCKED`. Use the default
+`--method login`: `hash` and `both` are refused on PostgreSQL.
 
 ---
 

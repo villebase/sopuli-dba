@@ -88,9 +88,13 @@ class DatabaseDriver:
     #: imported and must not import a driver; a tier-0 test pins it to the
     #: driver's own rule.
     password_limit: str | None = None
-    #: The driver connects and reports the scope, and does nothing more yet.
-    #: :func:`require_full_driver` refuses it for every command but `doctor`.
-    scope_only: bool = False
+    #: The commands this driver is written for, by the run document's command
+    #: name (``creds.apply``), or ``None`` for every command. `doctor` is never
+    #: listed and never refused: it asks only what the target is, which every
+    #: driver can answer. :func:`require_command` refuses any other command
+    #: not listed. A driver is built one command at a time, and this says how far
+    #: it has got.
+    commands: frozenset[str] | None = None
 
     @property
     def install_command(self) -> str:
@@ -145,7 +149,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
-        scope_only=True,
+        # Nothing past `doctor` yet (#1060, #1067 add to it).
+        commands=frozenset(),
     ),
 }
 
@@ -214,22 +219,27 @@ def resolve(target: Target) -> ModuleType:
         raise
 
 
-def require_full_driver(target: Target) -> None:
-    """Refuse a :attr:`DatabaseDriver.scope_only` driver, with ``SOPULI-20006``.
+def require_command(target: Target, command: str) -> None:
+    """Refuse ``command`` on a driver not written for it, with ``SOPULI-20006``.
 
-    Every command but `doctor` calls this before it resolves a credential or
-    opens a socket, so a command over several targets reports that target's
-    error and carries on. `doctor` only asks what the target is, and skips it.
+    ``command`` is the run document's name for it, such as ``creds.apply``
+    (:attr:`DatabaseDriver.commands`). Every command but `doctor` calls this
+    before it resolves a credential or opens a socket, so a command over
+    several targets reports that target's error and carries on. `doctor` only
+    asks what the target is, and skips it.
     """
-    if DRIVERS[target.type].scope_only:
-        raise DriverNotImplementedError(
-            f'target "{target.name}" declares type "{target.type}", and this build '
-            f"can only report what such a target is (`doctor`) yet",
-            hint=(
-                "this is not something to install -- the driver connects and reports "
-                "the target, and the rest of it is not written yet"
-            ),
-        )
+    supported = DRIVERS[target.type].commands
+    if supported is None or command in supported:
+        return
+    names = ", ".join(f"`{name.replace('.', ' ')}`" for name in ("doctor", *sorted(supported)))
+    raise DriverNotImplementedError(
+        f'target "{target.name}" declares type "{target.type}", and this build '
+        f"can run only {names} there yet",
+        hint=(
+            "this is not something to install -- the driver is written one command at "
+            f"a time, and `{command.replace('.', ' ')}` is not written for it yet"
+        ),
+    )
 
 
 def driver_for(target: Target, context: DriverContext) -> Driver:

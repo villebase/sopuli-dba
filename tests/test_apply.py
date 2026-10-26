@@ -338,6 +338,30 @@ def test_a_locked_account_outranks_the_rollback_gate() -> None:
     assert outcome.state == check.LOCKED
 
 
+def test_an_expired_account_is_applied_where_a_new_password_ends_the_expiry() -> None:
+    """Oracle's ORA-28001: setting the password clears it, so `apply` fixes it."""
+    expired = user(status="EXPIRED", expired=True)
+
+    assert apply.settled_before_acting(expired, source()) is None
+
+
+def test_an_expired_account_is_left_alone_where_a_new_password_does_not_end_it() -> None:
+    """PostgreSQL's `VALID UNTIL` expires the role, not its password. Setting
+    one would be repeated on every run and never confirmed, so it is `EXPIRED`
+    and no DDL."""
+    expired = user(status="EXPIRED", expired=True)
+
+    outcome = apply.settled_before_acting(expired, source(), expiry_cleared=False)
+
+    assert outcome is not None
+    assert outcome.state == check.EXPIRED
+    assert "does not end the expiry" in outcome.detail
+
+
+def test_an_account_that_is_not_expired_is_applied_either_way() -> None:
+    assert apply.settled_before_acting(user(), source(), expiry_cleared=False) is None
+
+
 def test_a_forward_apply_under_a_staged_pending_is_not_refused() -> None:
     """That is the ordinary rotation, and the `pending` is the point of it."""
     assert (

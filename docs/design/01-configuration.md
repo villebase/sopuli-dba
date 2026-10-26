@@ -1108,7 +1108,7 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle` or `postgresql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `postgresql` target and reports the cluster. Every other command refuses it with `SOPULI-20006`, before connecting |
+| `type` | **required** — the driver selector (P1): `oracle` or `postgresql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `postgresql` target and reports the cluster, `creds check` checks a role's password by logging in as it, and `creds apply` sets one with a verifier computed on the client. Every other command refuses it with `SOPULI-20006`, before connecting |
 | `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |

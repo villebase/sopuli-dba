@@ -166,6 +166,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
     DEFAULT_MARGIN,
+    EXPIRE_PASSWORD,
     FAIL,
     PASS,
     PASSWORD_EXPIRE,
@@ -8013,8 +8014,18 @@ def _apply_one(
         # for a locked account, so a failed scope read cannot turn a missing or
         # open account's row into an error.
         unlockable = user is None or not user.locked or session.scope().supports(ACCOUNT_LOCK_STATE)
+        # Whether a new password ends an expiry here. Read only for an expired
+        # account, for the same reason.
+        expiry_cleared = (
+            user is None or not user.expired or session.scope().supports(EXPIRE_PASSWORD)
+        )
         settled = apply_states.settled_before_acting(
-            user, source, requested=requested, unlock=attributes.unlock, unlockable=unlockable
+            user,
+            source,
+            requested=requested,
+            unlock=attributes.unlock,
+            unlockable=unlockable,
+            expiry_cleared=expiry_cleared,
         )
         if settled is not None:
             _left_alone(binding.account, binding.target, settled.state, settled.detail)
@@ -8082,7 +8093,11 @@ def _apply_one(
             # again without the unlock first: the attribute pass will not run, so
             # a locked account stays locked and is reported as that.
             locked = apply_states.settled_before_acting(
-                user, source, requested=requested, unlockable=unlockable
+                user,
+                source,
+                requested=requested,
+                unlockable=unlockable,
+                expiry_cleared=expiry_cleared,
             )
             if locked is not None:
                 _left_alone(binding.account, binding.target, locked.state, locked.detail)
@@ -8137,7 +8152,11 @@ def _apply_one(
             # state that pass left behind, and an account still locked here is one
             # whose password must not be changed after all.
             blocked = apply_states.settled_before_acting(
-                user, source, requested=requested, unlockable=unlockable
+                user,
+                source,
+                requested=requested,
+                unlockable=unlockable,
+                expiry_cleared=expiry_cleared,
             )
             if blocked is not None:
                 _left_alone(binding.account, binding.target, blocked.state, blocked.detail)

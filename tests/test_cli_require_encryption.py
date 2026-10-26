@@ -445,14 +445,10 @@ def test_a_mode_that_may_negotiate_tls_is_left_to_the_connection(
     runner: CliRunner,
     write_config: Callable[[str], Path],
     estate: Harness,
-    monkeypatch: pytest.MonkeyPatch,
     sslmode: str,
 ) -> None:
     """`allow` and `prefer` may still encrypt, so the config does not refuse
-    them, and the connection's reading decides. This build's PostgreSQL driver
-    only connects and reports (`doctor`), so the test lifts that refusal to
-    reach the reading a full driver gets."""
-    monkeypatch.setattr("sopuli.cli.require_command", lambda target, command: None)
+    them, and the connection's reading decides."""
     harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
     result = apply(runner, write_config(postgres(sslmode)), "--output", "json")
 
@@ -468,13 +464,15 @@ def test_a_mode_that_may_negotiate_tls_is_left_to_the_connection(
 def test_sslmode_disable_is_not_refused_with_the_setting_off(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """SOPULI-W058 says so, and the run goes on to the target's row."""
+    """SOPULI-W058 says so, and the run applies on both targets. The password
+    crossed an unencrypted connection to the PostgreSQL one, so SOPULI-W031
+    says that too."""
     harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
     config = postgres("disable").replace("  safety: { require_encryption: true }\n", "")
     result = apply(runner, write_config(config), "--output", "json")
 
-    assert exit_of(result) == ExitCode.PARTIAL, result.output
-    assert row_errors(result) == {"appdb-alpha": None, "appdb-beta": "SOPULI-20006"}
-    assert changed(harness) == ["ACME_WEB_USER"]
+    assert exit_of(result) == ExitCode.SUCCESS, result.output
+    assert row_errors(result) == {"appdb-alpha": None, "appdb-beta": None}
+    assert changed(harness) == ["ACME_WEB_USER", "ACME_WEB_USER"]
     codes = {one.get("code") for one in json.loads(result.output)["diagnostics"]}
-    assert "SOPULI-W058" in codes
+    assert {"SOPULI-W058", "SOPULI-W031"} <= codes

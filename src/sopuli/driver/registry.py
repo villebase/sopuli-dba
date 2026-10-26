@@ -156,8 +156,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         extra="postgres",
         provides=frozenset({"psycopg"}),
         password_limit="1024",
-        # `creds check`, by login (#1067).
-        commands=frozenset({"creds.check"}),
+        # `creds check`, by login (#1067), and `creds apply`, which sets a
+        # password with a verifier computed on the client (#1060).
+        commands=frozenset({"creds.check", "creds.apply"}),
     ),
 }
 

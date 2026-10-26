@@ -1,14 +1,14 @@
 # Example configurations
 
-Three complete config files, from the smallest one that works to one with the
-safety settings turned on. Each is commented for a reader who has not written one
-before.
+Complete config files, starting with the smallest one that works. Each is
+commented for a reader who has not written one before.
 
 | File | Shows |
 |---|---|
 | [single-application.yaml](single-application.yaml) | the smallest config that does something useful: one vault, one database, one account |
 | [multiple-applications.yaml](multiple-applications.yaml) | the `applications:` shape, target groups, and per-application selection |
 | [safety-hardened.yaml](safety-hardened.yaml) | `confirm_environments`, `max_targets`, `readonly`, and profiles |
+| [target-sets.yaml](target-sets.yaml) | many pluggable databases from one `target_sets:` entry, a container root per environment, `overrides:`, and groups that keep an application off the roots |
 
 Check any of them before you use it. This opens no network connection:
 
@@ -16,14 +16,15 @@ Check any of them before you use it. This opens no network connection:
 sopuli --config single-application.yaml config validate
 ```
 
-**All three are checked in CI** (`tests/test_examples.py`), so an example cannot
-silently drift out of date with the config layer.
+**All of them are checked in CI** (`tests/test_examples.py`), so an example
+cannot silently drift out of date with the config layer.
 
 **They point at addresses that are not yours.** The first two point at the
-project's own test containers (`127.0.0.1:1521/FREEPDB1`,
-`http://127.0.0.1:8200`); the third points at `example.com`, which is reserved
-for documentation and reaches nothing. Change the addresses, the account names
-and the vault paths before running anything against a real database.
+project's own test containers on `127.0.0.1`, port 1521 for the database and
+8200 for the vault. The others point at `example.com` and `192.0.2.0/24`, which
+are reserved for documentation and reach nothing. Change the addresses, the
+account names and the vault paths before running anything against a real
+database.
 
 ## The one thing that will stop you first
 

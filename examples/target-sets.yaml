@@ -1,0 +1,139 @@
+# One application on many pluggable databases, written once as a template
+# rather than once per database. Two environments, a tenant per database, and
+# the container root of each environment beside them.
+#
+# Read this one for `target_sets:`, `overrides:` and the groups that keep the
+# application off the container roots.
+#
+# Check it before you use it:
+#     sopuli --config target-sets.yaml config validate
+#
+# See what it generates:
+#     sopuli --config target-sets.yaml target list
+#
+# Full reference: ../docs/design/01-configuration.md (section 4)
+
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-3.3.schema.json
+
+version: 1
+
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com
+    mount: kv
+    kv_version: 2
+    non_production: true
+    auth: { method: token }
+  vault-qa:
+    type: hashicorp
+    addr: https://vault-qa.example.com
+    mount: kv
+    kv_version: 2
+    non_production: true
+    auth: { method: token }
+
+target_sets:
+  # The tenant databases. This one entry generates five targets:
+  # appdb-dev-alpha, appdb-dev-beta, appdb-dev-gamma, appdb-qa-alpha and
+  # appdb-qa-beta.
+  #
+  # `for_each` has one outer key, here `env`. Under each of its values, the
+  # variables are the words a `{placeholder}` can use. One variable may be a
+  # list, here `tenant`, and the set makes one target for each item in it. So
+  # dev and qa can have different tenants.
+  appdb:
+    type: oracle
+    name: "appdb-{env}-{tenant}"
+    dsn: "{host}:1521/{tenant}{env}.{db_domain}"
+    environment: "{env}"
+    vault: "{vault}"
+    # The tool asks for this password once for every target this entry makes,
+    # dev and qa alike. That is right only when C##SOPULI_SVC has one password
+    # in both environments. If each has its own, write one entry for each
+    # environment, or read the password from a vault (section 3a of the
+    # reference).
+    admin: { username: C##SOPULI_SVC, auth: prompt }
+    oracle: { scope: pdb, container: "{tenant}{env}" }
+    for_each:
+      env:
+        dev:
+          host: db-dev.example.com
+          db_domain: pdb.example.com
+          vault: vault-dev
+          tenant: [alpha, beta, gamma]
+        qa:
+          host: db-qa.example.com
+          db_domain: pdb.example.com
+          vault: vault-qa
+          tenant: [alpha, beta]
+
+    # A fix for one generated target, found by its name. Anything except the
+    # name can be changed here. This tenant was moved to another host.
+    overrides:
+      appdb-qa-beta:
+        dsn: "192.0.2.75:1521/betaqa.legacy.example.com"
+
+  # The container root of each environment. With no list under an environment,
+  # the set makes one target for it: appdb-dev-cdb and appdb-qa-cdb.
+  appdb-cdb:
+    type: oracle
+    name: "appdb-{env}-cdb"
+    dsn: "{host}:1521/{cdb_service}"
+    environment: "{env}"
+    vault: "{vault}"
+    # The same account as above, but written in a second entry, so a run that
+    # reaches both the tenant databases and the roots asks for it twice.
+    admin: { username: C##SOPULI_SVC, auth: prompt }
+    oracle: { scope: cdb_root }
+    for_each:
+      env:
+        dev:
+          host: db-dev.example.com
+          cdb_service: CDBDEV.example.com
+          vault: vault-dev
+        qa:
+          host: db-qa.example.com
+          cdb_service: CDBQA.example.com
+          vault: vault-qa
+
+# Every generated target has labels: `target_set` (the entry's name), and one
+# for each `for_each` key, here `env` and `tenant`. A container root has no
+# `tenant` label, because its entry has no tenant list. Groups and `--select`
+# choose targets by these labels. The applications below use two of these
+# groups. `dev-pdbs` is for the command line:
+#     sopuli --config target-sets.yaml creds check --group dev-pdbs
+groups:
+  tenant-pdbs: { match: { target_set: appdb } }
+  dev-pdbs:    { match: { target_set: appdb, env: dev } }
+  cdb-roots:   { match: { target_set: appdb-cdb } }
+
+policies:
+  app-standard:
+    password:
+      length: 24
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+
+# The application must name its targets. The single-application shape, with
+# `accounts:` at the top level, applies to every target, container roots
+# included. `{tenant}` has no value on a container root, so the file would not
+# load.
+applications:
+  - name: acme
+    targets: { group: tenant-pdbs }
+    accounts: [acme_web_user, acme_api_user]
+    # `{tenant}` comes from each target's labels, and `{account}` from the
+    # account. Each target's own `vault:` decides which store this is read from.
+    secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+    policy: app-standard
+
+  # A common user, which lives in the container root rather than in a tenant
+  # database. The ref has no store name, so on appdb-dev-cdb it is read from
+  # vault-dev and on appdb-qa-cdb from vault-qa.
+  - name: monitoring
+    targets: { group: cdb-roots }
+    accounts: ["C##MONITOR"]
+    secret: "ops/monitoring#password"
+    policy: app-standard

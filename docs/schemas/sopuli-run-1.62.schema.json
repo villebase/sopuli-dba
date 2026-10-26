@@ -1668,12 +1668,13 @@
             "properties": {
               "check": {
                 "type": "string",
-                "description": "Which section 4 check refused.",
+                "description": "Which section 4 check refused. `own_account` is check 7, the account the session is connected as (#1059).",
                 "enum": [
                   "vendor_maintained",
                   "password_file",
                   "privileged_role",
-                  "deny_list"
+                  "deny_list",
+                  "own_account"
                 ]
               },
               "reason": {

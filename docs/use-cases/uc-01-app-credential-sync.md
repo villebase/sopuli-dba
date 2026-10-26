@@ -502,7 +502,7 @@ sopuli creds apply --application acme
                    [--preflight]                          # survey every target before writing anything
                    [--repair FILE]                        # act only on a run's unconfirmed set
                    [--lockout-margin N]                   # default 2; see §7
-                   [--force]                              # waive account guardrails 2 to 5
+                   [--force]                              # waive account guardrails 2 to 5 and 7
 ```
 
 **Flow, per target**
@@ -557,8 +557,8 @@ These rules decide what `apply` does with each account:
   the same situation `UNVERIFIABLE`, because for `check` it is only a gap in a
   survey. `apply` cannot do what it was run to do.
 
-`--force` waives account guardrails 2 to 5 in `02-oracle-privileges.md` §4, and
-never check 1. The run document records each waiver in `results[].overridden`.
+`--force` waives account guardrails 2 to 5 and 7 in `02-oracle-privileges.md`
+§4, and never checks 1 and 6. The run document records each waiver in `results[].overridden`.
 `--lockout-margin` sets the lockout guard that §7 describes, for the logins
 `apply` makes.
 
@@ -1731,7 +1731,7 @@ sopuli creds rotate [--application acme]          # and the other selectors (§2
                     [--finish-rollover]   # end the window at the end of the run
                     [--confirm]           # proceed without asking
                     [--lockout-margin N]  # default 2; see §7
-                    [--force]             # waive account guardrails 2 to 5
+                    [--force]             # waive account guardrails 2 to 5 and 7
                     [--dry-run]
 ```
 

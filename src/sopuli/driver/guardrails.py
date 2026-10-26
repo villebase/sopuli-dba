@@ -38,6 +38,10 @@ the command layer applies.
    ``CDB_DBA``, ``AUDIT_ADMIN`` (:data:`sopuli.driver.oracle.accounts.ADMIN_ROLES`).
 5. **on a literal deny list**, for the version that has no answer to check 2
    (:data:`sopuli.driver.oracle.accounts.ORACLE_SUPPLIED`).
+6. **a superuser**, an account every privilege check passes. Only a PostgreSQL
+   driver reports one. Never waived, like check 1.
+7. **the tool's own account**, the one this session is connected as. Changing
+   it mid-run can lock the tool out of the targets still to come.
 
 ### Refused, permitted, or *could not establish*
 
@@ -52,7 +56,12 @@ settle it. "I looked and found nothing" and "I could not look" are answers a
 safety report must never merge, which is what
 :mod:`sopuli.driver.oracle.privileges` says one layer up about the same view.
 
-### `--force` overrides 2 to 5, and never 1
+### `--force` overrides 2 to 5 and 7, and never 1 or 6
+
+Check 6 is never waived because nothing could use the waiver: a tool account
+that is not a superuser cannot change a superuser's password, and one that is
+a superuser is refused when it connects. Check 7 is waived for the deliberate
+rotation of the tool's own password, which is ordinary work (#1059).
 
 This is decision P3 in ``docs/decisions/log.md``. `DBSNMP` is the case it exists
 for: rotating its password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a
@@ -95,6 +104,15 @@ PRIVILEGED_ROLE = "privileged_role"
 #: §4 check 5.
 DENY_LIST = "deny_list"
 
+#: Check 6. With check 1, the only one `--force` cannot reach.
+SUPERUSER = "superuser"
+
+#: Check 7.
+OWN_ACCOUNT = "own_account"
+
+#: The checks no flag waives.
+NEVER_WAIVED = frozenset({DECLARED, SUPERUSER})
+
 
 @dataclass(frozen=True)
 class Refusal:
@@ -113,11 +131,12 @@ class Refusal:
     def overridable(self) -> bool:
         """Whether `--force` can waive this one.
 
-        Everything except check 1. Acting on an account absent from the config
-        would make the tool's own audit trail meaningless, so no flag reaches it
-        (invariant 5).
+        Everything except checks 1 and 6. Acting on an account absent from the
+        config would make the tool's own audit trail meaningless, so no flag
+        reaches it (invariant 5). A superuser's password is one the tool cannot
+        change, so waiving check 6 would only move the refusal to the server.
         """
-        return self.check != DECLARED
+        return self.check not in NEVER_WAIVED
 
 
 @dataclass(frozen=True)
@@ -225,8 +244,8 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
     checks run on: config says which accounts may be touched, and the database
     says what they are.
 
-    ``force`` waives checks 2 to 5 and never check 1, and what it waives is
-    reported in :attr:`Review.overridden` rather than dropped.
+    ``force`` waives checks 2 to 5 and 7 and never 1 or 6, and what it waives
+    is reported in :attr:`Review.overridden` rather than dropped.
 
     **A check with no input is neither**, and that is the third answer:
     it lands in :attr:`Review.caveats`, refuses nothing, and survives ``force``
@@ -280,6 +299,19 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
     held = sorted(state.admin_roles)
     if held:
         found.append(Refusal(PRIVILEGED_ROLE, name, f"the account holds {', '.join(held)}"))
+
+    if state.superuser:
+        found.append(Refusal(SUPERUSER, name, "the account is a superuser"))
+
+    if state.session_account:
+        found.append(
+            Refusal(
+                OWN_ACCOUNT,
+                name,
+                "this is the account the tool is connected as; changing it can lock the "
+                "tool out of the targets it has not reached yet",
+            )
+        )
 
     if not force:
         return Review(account=name, refusals=tuple(found), caveats=tuple(caveats))

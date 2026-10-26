@@ -189,7 +189,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | C17 | 01 | P5's built-in confirmation against `01-configuration.md` §9's ratchet rule | decided | §9 governs; P5 is reworded | #294 |
 | P1 | 02 | Default service user: common `C##` or per-PDB local? | decided | common; per-PDB is documented | #615 |
 | P2 | 02 | Grant `SELECT ON SYS.USER$` by default? | decided | no; an optional, probed grant | #86 |
-| P3 | 02 | Does `--force` exist? | decided | yes; it overrides account checks 2–5 only | #89 |
+| P3 | 02 | Does `--force` exist? | decided | yes; it overrides account checks 2–5 and 7 (7 from #1059) | #89 |
 | P4 | 02 | One service account per database or per application? | decided | per database | #615 |
 | P5 | 02 | Does `doctor` fail or warn on over-grants? | decided | warn | #213 |
 | P6 | 02 | Keep 11.2 support? | decided | keep (D7) | #615 |

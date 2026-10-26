@@ -777,6 +777,16 @@ class UserState:
     #: guardrail 4 refuses. On Oracle, ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
     #: ``AUDIT_ADMIN``.
     admin_roles: frozenset[str] = frozenset()
+    #: The account passes every privilege check the server makes: a PostgreSQL
+    #: superuser. Guardrail 6 refuses it, and no flag waives that. The Oracle
+    #: driver never sets it: the nearest thing there, ``SYSDBA``, is a
+    #: password-file privilege, which :attr:`password_file_member` reports.
+    superuser: bool = False
+    #: The account this session is connected as: the tool's own. Guardrail 7
+    #: refuses it unless ``--force`` waives it (#1059). A plain ``bool``, unlike
+    #: the three-valued fields above, because every driver can answer it: the
+    #: session always knows who it is.
+    session_account: bool = False
 
 
 @dataclass(frozen=True)

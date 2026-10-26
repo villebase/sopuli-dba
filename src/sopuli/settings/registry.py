@@ -67,7 +67,7 @@ Flags that look like they belong here and do not:
 * ``--config`` -- P3's five-step first-match *file discovery* is a different
   chain, implemented in :mod:`sopuli.config.discovery`.
 * ``--force`` -- settled by decision P3, and deliberately absent. It overrides
-  the account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5) and
+  the account guardrails of ``02-oracle-privileges.md`` §4 (checks 2--5 and 7) and
   ``lock break``'s refusal of a lock that has not expired. Neither is a setting
   and neither has a precedence chain: both are asked of one thing at one
   moment -- this account, now; this lock, now. Keeping it out of the registry is

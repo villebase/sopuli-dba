@@ -33,9 +33,16 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres.client import client_lines
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
+from sopuli.driver.postgres.password import (
+    LIMIT,
+    MAX_PASSWORD_BYTES,
+    alter_role,
+    byte_width,
+    verifier,
+)
 from sopuli.driver.postgres.privileges import audit
 from sopuli.driver.postgres.roles import describe
-from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe
+from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
 from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     VERIFY_LOGIN,
@@ -167,7 +174,9 @@ class PostgresSession:
             return describe(cursor, account, target=self.target.name)
 
     def byte_limit(self) -> ByteLimit:
-        raise self._not_written("size a password")
+        """1024 bytes of UTF-8, whatever the server: the limit is libpq 13's, on
+        the application's side (:mod:`sopuli.driver.postgres.password`)."""
+        return LIMIT
 
     def password_constraints(self, account: str) -> None:
         """Not on the protocol: ``creds generate`` asks it of a driver that
@@ -181,7 +190,52 @@ class PostgresSession:
             return audit(cursor, accounts)
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        raise self._not_written("set a password")
+        """``ALTER ROLE … PASSWORD`` with a verifier computed here (invariant 15).
+
+        As on Oracle, the driver does not regenerate and ``changed`` is ``True``
+        whenever the statement succeeded: whether the role already had this
+        password is not a question a server can answer, so the command decides it
+        from the vault before calling this.
+
+        Refused before anything is sent, with ``password_sent`` left ``False``:
+        a read-only target, a role that does not exist, and a password over
+        :data:`~sopuli.driver.postgres.password.MAX_PASSWORD_BYTES`. Once the
+        statement is handed to libpq, a failure has ``password_sent`` set: what
+        crossed is a verifier, which still allows an offline guessing attack, so
+        the warnings about an unencrypted connection apply to it as they would
+        to a password.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'role "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create roles (Q8); `creds check` reports this as "
+                    "ACCOUNT_MISSING rather than failing"
+                ),
+            )
+        width = byte_width(secret)
+        if width > MAX_PASSWORD_BYTES:
+            raise DriverError(
+                f'the password for "{state.name}" is {width} bytes, and a PostgreSQL target '
+                f"takes at most {MAX_PASSWORD_BYTES}",
+                hint=(
+                    "libpq 13 cannot log in with a longer password; lower the policy's "
+                    "`length`, or use a charset of one-byte characters"
+                ),
+            )
+        computed = verifier(self.connection.pgconn, state.name, secret)
+        try:
+            with self._cursor() as cursor:
+                cursor.execute(alter_role(state.name, computed))
+        except DriverError as error:
+            error.password_sent = True
+            raise
+        LOG.debug(
+            "ALTER ROLE %s PASSWORD <SCRAM-SHA-256 verifier> on %s", state.name, self.target.name
+        )
+        return ChangeResult(changed=True, detail="password set")
 
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend a role")

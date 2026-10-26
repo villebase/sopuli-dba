@@ -80,9 +80,7 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
 @pytest.mark.parametrize(
     "call",
     [
-        lambda s: s.byte_limit(),
         lambda s: s.verify_password("acme_app_user", Secret("x")),
-        lambda s: s.set_password("acme_app_user", Secret("x")),
         lambda s: s.apply_attributes("acme_app_user", AccountAttributes()),
     ],
 )
@@ -97,12 +95,12 @@ def test_an_operation_not_written_yet_is_sopuli_20006(call: Any) -> None:
     assert "pip" not in str(refused.value)
 
 
-def test_a_write_refuses_without_reading_the_scope() -> None:
+def test_a_write_not_written_yet_refuses_without_reading_the_scope() -> None:
     """Not written yet is the answer on a standby too, so no round trip."""
     session = _session(recovery=True)
 
     with pytest.raises(session_module.NotWrittenError):
-        session.set_password("acme_app_user", Secret("x"))
+        session.suspend_account("acme_app_user")
 
     assert session._scope is None
 

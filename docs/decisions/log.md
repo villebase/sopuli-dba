@@ -3083,3 +3083,21 @@ the register.
   - No check 7. The whitelist would be the only protection, and declaring the
     tool account by mistake, say through a role predicate, would go unnoticed
     until the run locked itself out.
+
+## #1060
+
+- **Decided:** 2026-10-26, #1060
+- **Question:** With a verifier, the PostgreSQL server accepts a password of
+  any length. libpq 13 cannot log in with one over 1024 bytes, and libpq 14 to
+  18 can go much further (`pg-password-length`, #1057). What is the longest
+  password on a PostgreSQL target?
+- **Decision:** 1024 bytes, counted in UTF-8. For the generated charsets, which
+  are ASCII, that is 1024 characters. A longer password is refused before
+  anything is sent.
+- **Why:** an application may still connect with libpq 13, and a password it
+  cannot log in with would break it at its next login, after the vault and the
+  database agreed. 1024 bytes is far above any policy in use, so the ceiling
+  costs nothing.
+- **Rejected:**
+  - No ceiling. A libpq 13 client would fail with "out of memory", which
+    names neither the password nor its length.

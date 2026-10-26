@@ -145,6 +145,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
+        password_limit="1024",
         scope_only=True,
     ),
 }

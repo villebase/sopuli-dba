@@ -1344,7 +1344,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Privileges the service account holds that the tool does not need, e.g. SELECT ANY DICTIONARY or DBA. Reported as a warning, never fatal."
+          "description": "Privileges the service account holds that the tool does not need, e.g. SELECT ANY DICTIONARY or DBA on Oracle, and REPLICATION, pg_read_all_data or INHERIT TRUE ON <role> on PostgreSQL. Reported as a warning, never fatal."
         },
         "offline_verify_available": {
           "type": [
@@ -2137,14 +2137,14 @@
           "items": {
             "type": "string"
           },
-          "description": "Grants from 02-oracle-privileges.md 2 that this account has, spelled as the GRANT that issues them. A dictionary grant is answered by reading the view rather than by reading a grant table: a grant row is not access."
+          "description": "Grants from the product's privileges document, section 2, that this account has, named as the privilege the grant issues. On Oracle (02-oracle-privileges.md) a dictionary grant is answered by reading the view rather than by reading a grant table: a grant row is not access. On PostgreSQL (02-postgres-privileges.md) the entries are CREATEROLE and ADMIN OPTION ON <role> for each declared role, where the server requires it."
         },
         "missing": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Grants from 2 that it does not have. Empty on a correct install. What makes a half-installed account visible here rather than as unrelated failures several commands later. `V_$PDBS` is required only in the CDB root, where 2 grants it, and is absent from both lists elsewhere."
+          "description": "Grants from section 2 that it does not have. Empty on a correct install. What makes a half-installed account visible here rather than as unrelated failures several commands later. On Oracle, `V_$PDBS` is required only in the CDB root, where section 2 grants it, and is absent from both lists elsewhere."
         },
         "common": {
           "type": "array",

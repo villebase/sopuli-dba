@@ -186,7 +186,6 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.driver.registry import (
-    DRIVER_NOT_IMPLEMENTED,
     DRIVERS,
     driver_for,
     installed,
@@ -1050,6 +1049,12 @@ def _client_report(config: Config) -> dict[str, Any]:
     return report
 
 
+def _declared_on(bindings: Iterable[Binding], target: str) -> tuple[str, ...]:
+    """Each account ``bindings`` bind on ``target``, once, in the order they are
+    declared."""
+    return tuple(dict.fromkeys(binding.account for binding in bindings if binding.target == target))
+
+
 def _examine(
     target: ExpandedTarget, run: Invocation, config: Config, *, privileges: bool = False
 ) -> dict[str, Any]:
@@ -1078,27 +1083,17 @@ def _examine(
         try:
             scope = session.scope()
             if privileges:
-                try:
-                    audit = session.privileges()
-                except DriverError as error:
-                    # A driver with no audit yet (`SOPULI-20006`) still reported
-                    # what the target is, so the entry keeps its scope and says
-                    # the audit was not made. Any other failure is the entry's.
-                    if error.code != DRIVER_NOT_IMPLEMENTED:
-                        raise
-                    warnings = (error.message,)
-                else:
-                    # Folded into the scope the entry already carries rather
-                    # than added beside it, because `scope.over_granted` is where
-                    # the run schema puts this, and two places for one fact are
-                    # two things that can disagree.
-                    scope = replace(scope, over_granted=audit.over_granted)
-                    # The findings alone would be a report that reads as
-                    # complete whatever it managed to look at. `caveats()` is
-                    # what stops `over_granted: []` meaning both "nothing is
-                    # over-granted" and "the view that would have said so was
-                    # refused".
-                    warnings = audit.caveats()
+                audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
+                # Folded into the scope the entry already carries rather than
+                # added beside it, because `scope.over_granted` is where the run
+                # schema puts this, and two places for one fact are two things
+                # that can disagree.
+                scope = replace(scope, over_granted=audit.over_granted)
+                # The findings alone would be a report that reads as complete
+                # whatever it managed to look at. `caveats()` is what stops
+                # `over_granted: []` meaning both "nothing is over-granted" and
+                # "the view that would have said so was refused".
+                warnings = audit.caveats()
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             return build_target(
                 target, connected=True, error=_finding(error), duration_ms=_elapsed(started)
@@ -5736,9 +5731,7 @@ def _profile_readings(
     means by absent.
     """
     found: list[tuple[str, AccountConstraints]] = []
-    for account in dict.fromkeys(
-        binding.account for binding in bindings if binding.target == target
-    ):
+    for account in _declared_on(bindings, target):
         try:
             one = session.password_constraints(account)
         except Exception:  # noqa: BLE001 -- reporting only; see the docstring
@@ -8765,7 +8758,9 @@ def _preflight_target(
         )
 
     try:
-        audit = session.privileges()
+        # The accounts this run surveys, not every one declared: a grant missing
+        # for an account the selectors left out does not block this run.
+        audit = session.privileges(accounts=_declared_on(bindings, target.name))
         missing_privileges = tuple(audit.missing)
         privileges_hint = audit.hint
     except Exception as error:  # noqa: BLE001 -- likewise

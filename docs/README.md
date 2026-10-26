@@ -29,6 +29,7 @@ on which Oracle release, and what it showed.
 | [design/00-principles.md](design/00-principles.md) | P1 multi-product DB support (Oracle first), P2 multi-vault support, P3 config file + precedence, P4 cross-platform, P5 cross-cutting behaviour and exit codes |
 | [design/01-configuration.md](design/01-configuration.md) | YAML schema in two shapes (single application inline, `applications:` for several), the estate sections, target templating with labels, profiles (run context), environment variables, SecretRef syntax, password charsets, precedence |
 | [design/02-oracle-privileges.md](design/02-oracle-privileges.md) | The grant model: direct `ALTER USER`, common vs per-PDB service accounts, client-side guardrails, auditing |
+| [design/02-postgres-privileges.md](design/02-postgres-privileges.md) | The PostgreSQL grant model: `CREATEROLE` and no superuser, `ADMIN OPTION` per managed role, `pg_hba.conf`, what must not be granted, where password text surfaces |
 | [design/03-json-output.md](design/03-json-output.md) | The `--output json` / `--output jsonl` contract, redaction, stability policy, `jq` recipes |
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
@@ -419,8 +420,8 @@ These entries share a setup. The probe is
 
 ### PostgreSQL
 
-These entries are for the PostgreSQL driver for UC-1, which connects and reports
-the cluster, and does nothing more yet. The
+These entries are for the PostgreSQL driver for UC-1, which connects, reports
+the cluster and audits the tool account, and does nothing more yet. The
 probes are in `sql/postgres/`, and the matrix of releases 13 to 18 is the
 `postgres-matrix` profile of `test/compose.yaml`. A major release named here,
 such as "from 16", means the one release of it that was measured.

@@ -153,7 +153,7 @@ class FakeSession:
     def scope(self) -> Scope:
         return Scope(type="pdb", container="ORDERS", read_write=True, capabilities=frozenset())
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         return PrivilegeAudit()
 
     def close(self) -> None:

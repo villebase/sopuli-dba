@@ -222,7 +222,7 @@ class FakeSession:
             encryption=self.encryption,
         )
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         if isinstance(self.audit, Exception):
             raise self.audit
         return self.audit if self.audit is not None else PrivilegeAudit()

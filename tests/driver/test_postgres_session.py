@@ -1,8 +1,9 @@
 """The PostgreSQL session on a scripted connection. Tier 0, with psycopg installed.
 
-What this build does past connecting is refuse, so the refusals are the
-behaviour: ``SOPULI-20006`` for an operation not written yet, a read-only
-session refused first for a write, and an absent capability named.
+Past the scope and the privilege audit, what this build does is refuse, so the
+refusals are the behaviour: ``SOPULI-20006`` for an operation not written yet,
+and an absent capability named. The audit itself is in
+``test_postgres_privileges.py``.
 """
 
 from __future__ import annotations
@@ -80,7 +81,6 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
     [
         lambda s: s.describe_user("acme_app_user"),
         lambda s: s.byte_limit(),
-        lambda s: s.privileges(),
         lambda s: s.verify_password("acme_app_user", Secret("x")),
         lambda s: s.set_password("acme_app_user", Secret("x")),
         lambda s: s.apply_attributes("acme_app_user", AccountAttributes()),
@@ -151,14 +151,15 @@ def _failing_session(error: Exception) -> Any:
         ("InsufficientPrivilege", "42501"),
     ],
 )
-def test_a_failed_scope_read_is_mapped(raised: str, code: str) -> None:
+@pytest.mark.parametrize("read", [lambda s: s.scope(), lambda s: s.privileges()])
+def test_a_failed_read_is_mapped(raised: str, code: str, read: Any) -> None:
     """A lost connection has no SQLSTATE; a server error has its own."""
     import psycopg
 
     error = getattr(psycopg.errors, raised)("the server's message")
 
     with pytest.raises(DriverError) as caught:
-        _failing_session(error).scope()
+        read(_failing_session(error))
 
     assert caught.value.code == code
     assert caught.value.message == f"{code}: the server's message"
@@ -174,12 +175,13 @@ def test_a_client_side_error_is_not_read_as_a_lost_connection() -> None:
         _failing_session(error).scope()
 
 
-def test_a_closed_session_refuses_with_a_message() -> None:
+@pytest.mark.parametrize("read", [lambda s: s.scope(), lambda s: s.privileges()])
+def test_a_closed_session_refuses_with_a_message(read: Any) -> None:
     session = _session()
     session.close()
 
     with pytest.raises(DriverError, match="is closed"):
-        session.scope()
+        read(session)
 
 
 def test_close_is_safe_twice() -> None:

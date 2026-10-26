@@ -302,7 +302,17 @@ the server inside a statement.** A SCRAM verifier computed on the client is
 kept in the same places. It still allows an offline guessing attack, which the
 password policy's minimum length protects against.
 
-The driver sends no `ALTER ROLE` in this build.
+So the driver computes the verifier on the client, through libpq, and sends
+`ALTER ROLE "<role>" PASSWORD 'SCRAM-SHA-256$…'` (invariant 15). libpq applies
+SASLprep as the server does at login, so the two agree on a non-ASCII password
+(`pg-saslprep` in [`../README.md`](../README.md)). The algorithm is named in
+the call, so a server whose `password_encryption` is `md5` still gets a SCRAM
+verifier. The role's name is quoted as `pg_roles` spells it.
+
+The longest password is **1024 bytes of UTF-8**. libpq 13 cannot log in with a
+longer one (`pg-password-length`), and an application may still use it. The
+server takes any length behind a verifier, so this is the tool's ceiling, and a
+longer password is refused before anything is sent.
 
 ---
 

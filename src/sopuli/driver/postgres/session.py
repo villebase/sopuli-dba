@@ -8,21 +8,23 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 **What this build does.** It connects, labels the session with the run's
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
 its encryption, audits the tool account's privileges for
-`doctor --check-privileges`, and describes a role for the guardrails
-(:meth:`PostgresSession.describe_user`). It verifies a role's password by
-logging in as the role (:meth:`PostgresSession.verify_password`). Only `doctor`
+`doctor --check-privileges`, describes a role for the guardrails
+(:meth:`PostgresSession.describe_user`), verifies a role's password by logging
+in as the role (:meth:`PostgresSession.verify_password`), and sets a role's
+password with a verifier computed on the client
+(:meth:`PostgresSession.set_password`, invariant 15). That ``ALTER ROLE`` is the
+one statement the driver sends that changes anything, and it checks
+:func:`~sopuli.driver.postgres.scope.require_read_write` first. Only `doctor`
 gets this far: the registry entry lists no other command it is written for, so
 every other command refuses the target with ``SOPULI-20006`` before it connects
 (:func:`~sopuli.driver.registry.require_command`). The methods not written yet are a
 second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
-A write that is written later checks
-:func:`~sopuli.driver.postgres.scope.require_read_write` first. The driver sends
-no DDL.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -36,9 +38,17 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, client_lines, libpq_release
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
+from sopuli.driver.postgres.limits import LIMIT
+from sopuli.driver.postgres.password import (
+    SCRAM_FROM,
+    SCRAM_VERIFIER,
+    admit,
+    alter_role,
+    verifier,
+)
 from sopuli.driver.postgres.privileges import audit
 from sopuli.driver.postgres.roles import describe
-from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe
+from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
 from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
@@ -194,7 +204,9 @@ class PostgresSession:
             return describe(cursor, account, target=self.target.name)
 
     def byte_limit(self) -> ByteLimit:
-        raise self._not_written("size a password")
+        """1024 bytes of UTF-8, whatever the server: the limit is libpq 13's, on
+        the application's side (:mod:`sopuli.driver.postgres.password`)."""
+        return LIMIT
 
     def password_constraints(self, account: str) -> None:
         """Not on the protocol: ``creds generate`` asks it of a driver that
@@ -208,7 +220,56 @@ class PostgresSession:
             return audit(cursor, accounts)
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        raise self._not_written("set a password")
+        """``ALTER ROLE … PASSWORD`` with a verifier computed here (invariant 15).
+
+        As on Oracle, the driver does not regenerate and ``changed`` is ``True``
+        whenever the statement succeeded: whether the role already had this
+        password is not a question a server can answer, so the command decides it
+        from the vault before calling this.
+
+        Refused before anything is sent, with ``password_sent`` left ``False``:
+        a read-only target; a server older than PostgreSQL 10, which would store
+        the verifier's text as a plaintext password; a role that does not exist;
+        a password :func:`~sopuli.driver.postgres.password.admit` refuses; and a
+        verifier libpq could not compute. Once the statement is handed to the
+        server, a failure has ``password_sent`` set: what crossed is a verifier,
+        which still allows an offline guessing attack, so the warnings about an
+        unencrypted connection apply to it as they would to a password.
+        """
+        admit(secret)
+        scope = self.scope()
+        require_read_write(scope, target=self.target.name)
+        major = _major(scope.db_version)
+        if major is None or major < SCRAM_FROM:
+            raise UnsupportedCapabilityError(
+                SCRAM_VERIFIER,
+                target=self.target.name,
+                hint=(
+                    f"PostgreSQL {scope.db_version} cannot store a SCRAM verifier, so the "
+                    f"tool cannot set a password there without sending it; this needs "
+                    f"PostgreSQL {SCRAM_FROM} or later, and the driver is tested on 13 to 18"
+                ),
+            )
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'role "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create roles (Q8); `creds check` reports this as "
+                    "ACCOUNT_MISSING rather than failing"
+                ),
+            )
+        computed = verifier(self.connection.pgconn, state.name, secret)
+        try:
+            with self._cursor() as cursor:
+                cursor.execute(alter_role(state.name, computed))
+        except DriverError as error:
+            error.password_sent = True
+            raise
+        LOG.debug(
+            "ALTER ROLE %s PASSWORD <SCRAM-SHA-256 verifier> on %s", state.name, self.target.name
+        )
+        return ChangeResult(changed=True, detail="password set")
 
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend a role")
@@ -402,6 +463,15 @@ class PostgresDriver:
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )
+
+
+def _major(version: str | None) -> int | None:
+    """The major release from ``server_version``'s first word: 16 from
+    ``16.15``, 9 from ``9.6.24``, 18 from ``18beta1`` and 17 from ``17devel``.
+    ``None`` where it does not start with a number, which refuses rather than
+    guesses."""
+    found = re.match(r"\d+", version or "")
+    return int(found.group()) if found else None
 
 
 def build_driver(context: DriverContext) -> PostgresDriver:

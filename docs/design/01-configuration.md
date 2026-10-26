@@ -1484,7 +1484,9 @@ targets:
 These are settings, not assertions. The block is optional, and a target
 without one connects with the defaults. `sslmode` accepts the weak values,
 because `require_encryption` (§9) is the rule that refuses a password over an
-unencrypted connection, for every product.
+unencrypted connection, for every product. A mode that does not verify the
+server, `disable`, `allow`, `prefer` or `require`, warns with `SOPULI-W058`
+on every run, once per target.
 
 The target's `admin` is a role with `CREATEROLE` that is not a superuser.
 [`02-postgres-privileges.md`](02-postgres-privileges.md) has its grants, and
@@ -1791,6 +1793,13 @@ target; a target's, a target set's or a group's block speaks for that target.
 The run reads the connection again just before each statement that sends a
 password. A target the plan-time read could not reach is refused there, on its
 row, so a refusal at plan time is not the only check.
+
+**A PostgreSQL target under `sslmode: disable` is refused without a
+connection** (#1058). That mode never encrypts, so the config already says what
+a connection would. The hint names the key that required encryption and the
+`sslmode` line. `allow` and `prefer` may still negotiate TLS, so the connection
+decides for them, as for every other mode. The setting does not ask for a
+verified server: `require` passes it, and warns with `SOPULI-W058`.
 
 Here `encrypted.yaml` sets `defaults.safety.require_encryption: true`, and the
 target's connection has no NNE:
@@ -3552,6 +3561,9 @@ notices until a rotation.
   `config validate` (ADR-005). Not an error: an internal CA nobody has
   distributed yet is a real situation, and a tool that refused would be unusable
   exactly where an operator most needs it to say what it is doing
+- a PostgreSQL target whose `sslmode` does not verify the server (`disable`,
+  `allow`, `prefer` or `require`) → warning, once per target, carrying
+  `SOPULI-W058` and repeated on every run, for the reason `SOPULI-W004` is
 - a `tls.client_key` with no `tls.client_cert` beside it → error. The reverse is
   allowed: a client certificate may be written alone when the file holds both
   halves, which is an ordinary way to write mutual TLS, but a key with no

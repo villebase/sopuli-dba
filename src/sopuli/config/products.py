@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Application, Config, ExpandedTarget, Override, TargetOracle
-from sopuli.config.targets import EXTERNAL, ORACLE, POSTGRESQL
+from sopuli.config.targets import EXTERNAL, ORACLE, POSTGRESQL, VERIFYING_SSLMODES
 
 #: One label of a host name (RFC 1123): letters, digits and inner hyphens.
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
@@ -41,12 +41,6 @@ _DSN_HINT = (
     "`postgres.database` and TLS in `postgres.sslmode`; the password is never "
     "written in this file (P2)"
 )
-
-
-#: The `sslmode` values under which libpq verifies the server with
-#: `sslrootcert`. Below `require` it ignores the file, and under `require` the
-#: file turns the mode into `verify-ca` without saying so.
-_VERIFYING_SSLMODES = ("verify-ca", "verify-full")
 
 
 def check_products(config: Config) -> None:
@@ -94,7 +88,7 @@ def _check_postgresql(expanded: ExpandedTarget) -> None:
     if (
         postgres is not None
         and postgres.sslrootcert is not None
-        and postgres.sslmode not in _VERIFYING_SSLMODES
+        and postgres.sslmode not in VERIFYING_SSLMODES
     ):
         raise ConfigError(
             f"target {expanded.name!r} names a CA file under `sslmode: {postgres.sslmode}`, "

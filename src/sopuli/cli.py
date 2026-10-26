@@ -112,6 +112,7 @@ from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
+from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
@@ -8576,11 +8577,29 @@ def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, conf
     reach, or whose scope it cannot read, is left to the run, which reports it on
     its rows. That is not a way past the check: the run reads the connection it
     sends over again, and :func:`_unencrypted` refuses that row there.
+
+    **A PostgreSQL target under `sslmode: disable` is refused without a
+    connection** (#1058). That mode never negotiates TLS, so the config already
+    answers what a connection would. `allow` and `prefer` may still negotiate
+    it, so they are read like any other.
     """
     for expanded in targets:
         location = encryption_required_at(expanded, config, run.resolved)
         if location is None:
             continue
+        if (
+            expanded.target.type == POSTGRESQL
+            and expanded.target.postgres_settings.sslmode == UNENCRYPTED_SSLMODE
+        ):
+            sslmode_at = declared_at(expanded, "postgres").key("sslmode")
+            raise UnsupportedCapabilityError(
+                ENCRYPTED_CONNECTION,
+                target=expanded.name,
+                hint=(
+                    f"`{location}` requires it, and `{sslmode_at}` is "
+                    f"`{UNENCRYPTED_SSLMODE}`, which never encrypts: use `sslmode: verify-full`"
+                ),
+            )
         try:
             session = _open_session(expanded, run, config)
         except Exception:  # noqa: BLE001 -- the run reports it on each row

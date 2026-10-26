@@ -109,6 +109,16 @@ POSTGRES_KEYS = ("database", "sslmode", "sslrootcert")
 #: a password over an unencrypted connection, for every product.
 POSTGRES_SSLMODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 
+#: The `sslmode` values under which libpq verifies the server's certificate,
+#: with `sslrootcert` where one is given. Below `require` libpq ignores the
+#: file, and under `require` the file turns the mode into `verify-ca` without
+#: saying so.
+VERIFYING_SSLMODES = ("verify-ca", "verify-full")
+
+#: The one `sslmode` certain to connect without encryption. `allow` and
+#: `prefer` may still negotiate TLS.
+UNENCRYPTED_SSLMODE = "disable"
+
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:
     """Read ``targets:`` -- the explicitly listed endpoints (§2)."""

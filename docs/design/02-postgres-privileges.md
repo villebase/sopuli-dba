@@ -167,8 +167,13 @@ What each outcome means:
 - `28000`, or a server that did not use SCRAM: the login was refused for
   another reason, such as no line for this host and role. That says nothing
   about the password, and the run says which line to add;
-- a role that does not exist is reported before any login, because the server
-  would answer its login as a wrong password.
+- no `CONNECT` on the database (`42501`), or the role at its `CONNECTION
+  LIMIT` (`53300`): the server says these only after it accepted the password,
+  so the password matches, and the run says why the session did not open;
+- a role that does not exist, a `NOLOGIN` role and a role whose `VALID UNTIL`
+  has passed are reported before any login. The server would answer the first
+  and the last as a wrong password, even with the right one (measured on
+  16.15).
 
 `require_auth` needs libpq 16 or later. With an older libpq the tool refuses the
 login and sends nothing.

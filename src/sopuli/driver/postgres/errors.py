@@ -28,6 +28,8 @@ INSUFFICIENT_PRIVILEGE = "42501"
 UNDEFINED_OBJECT = "42704"
 READ_ONLY_TRANSACTION = "25006"
 INVALID_CATALOG = "3D000"
+#: ``too_many_connections``: the role is at its ``CONNECTION LIMIT``.
+TOO_MANY_CONNECTIONS = "53300"
 #: ``sqlclient_unable_to_establish_sqlconnection``.
 UNABLE_TO_CONNECT = "08001"
 #: ``connection_failure``.
@@ -88,6 +90,10 @@ RULES: dict[str, _Rule] = {
         exit_code=ExitCode.CONFIG_INVALID,
         hint="the database in `postgres.database` does not exist in this cluster",
     ),
+    TOO_MANY_CONNECTIONS: _Rule(
+        "database",
+        hint="the role is at its CONNECTION LIMIT; raise the limit or end a session",
+    ),
 }
 
 #: The server's message for a failure libpq reports without a SQLSTATE, and the
@@ -115,6 +121,10 @@ _CONNECT_MESSAGES = (
     (re.compile(r"no pg_hba\.conf entry for|pg_hba\.conf rejects connection"), LOGIN_REFUSED),
     (re.compile(r'role ".*" is not permitted to log in|role ".*" does not exist'), LOGIN_REFUSED),
     (re.compile(r'database ".*" does not exist'), INVALID_CATALOG),
+    # The server says these only after the password was accepted (measured on
+    # 16.15, #1067): with a wrong password it answers 28P01 first.
+    (re.compile(r'permission denied for database ".*"'), INSUFFICIENT_PRIVILEGE),
+    (re.compile(r'too many connections for role ".*"'), TOO_MANY_CONNECTIONS),
 )
 
 #: libpq's own messages when it cannot verify the server certificate, which the

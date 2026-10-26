@@ -56,13 +56,18 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         "tool": f"sopuli_tool_{suffix}",
         "managed": f"acme_{suffix}_app_user",
         "nologin": f"acme_{suffix}_nologin_user",
+        "limited": f"acme_{suffix}_limited_user",
     }
     # Test passwords for throwaway roles, not credentials.
     password = uuid.uuid4().hex
     try:
         with _superuser(live_postgres) as admin:
             admin.execute("set password_encryption = 'scram-sha-256'")
-            for key, kind in (("tool", "login createrole"), ("managed", "login")):
+            for key, kind in (
+                ("tool", "login createrole"),
+                ("managed", "login"),
+                ("limited", "login connection limit 0"),
+            ):
                 admin.execute(
                     sql.SQL(f"create role {{}} {kind} password {{}}").format(
                         sql.Identifier(names[key]), sql.Literal(password)
@@ -136,14 +141,23 @@ def test_a_missing_role_is_unavailable(session: Any) -> None:
     assert "there is no role" in str(result.detail)
 
 
-def test_a_nologin_role_is_unavailable_and_not_drift(session: Any, roles: dict[str, str]) -> None:
-    """`check` never tries this login, because `describe_user` reports the role
-    locked. Made here to see the server's `28000`."""
+def test_a_nologin_role_is_unavailable_and_not_tried(session: Any, roles: dict[str, str]) -> None:
     result = session.verify_password(roles["nologin"], Secret(roles["password"]))
 
     assert result.result == UNAVAILABLE
-    assert str(result.detail).startswith("28000: ")
-    assert "is not permitted to log in" in str(result.detail)
+    assert "the role cannot log in (NOLOGIN)" in str(result.detail)
+
+
+def test_a_role_at_its_connection_limit_has_its_password_accepted(
+    session: Any, roles: dict[str, str]
+) -> None:
+    """The server says `too many connections` only after it accepted the password."""
+    right = session.verify_password(roles["limited"], Secret(roles["password"]))
+    wrong = session.verify_password(roles["limited"], Secret("Not-The-Password-7x"))
+
+    assert right.result == PASS
+    assert "too many connections for role" in str(right.detail)
+    assert wrong.result == FAIL
 
 
 def test_a_comparison_is_refused(session: Any, roles: dict[str, str]) -> None:

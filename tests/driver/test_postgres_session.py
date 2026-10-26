@@ -68,7 +68,9 @@ def _session(recovery: bool = False) -> Any:
     target = ExpandedTarget(
         target=Target(name="pg-dev", type="postgresql", dsn="pg-dev.example.com:5432")
     )
-    return session_module.PostgresSession(connection=_Connection(recovery), target=target)
+    return session_module.PostgresSession(
+        connection=_Connection(recovery), target=target, correlation_id="run"
+    )
 
 
 def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
@@ -267,7 +269,12 @@ def logins(monkeypatch: pytest.MonkeyPatch) -> Any:
         if account == "acme_missing_user":
             return None
         return UserState(
-            name=account.lower(), status="OPEN", password_file_member=False, vendor_maintained=False
+            name=account.lower(),
+            status="NOLOGIN" if "nologin" in account else "OPEN",
+            password_file_member=False,
+            vendor_maintained=False,
+            locked="nologin" in account,
+            expired="expired" in account,
         )
 
     def install(raises: Exception | None = None, libpq: int = 180004) -> _Logins:
@@ -325,6 +332,39 @@ def test_a_missing_role_is_unavailable_and_not_tried(logins: Any) -> None:
     assert result.result == "unavailable"
     assert 'there is no role "acme_missing_user"' in str(result.detail)
     assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    ("account", "said"),
+    [
+        ("acme_nologin_user", "the role cannot log in (NOLOGIN)"),
+        ("acme_expired_user", "VALID UNTIL has passed"),
+    ],
+)
+def test_a_role_that_cannot_log_in_is_not_tried(logins: Any, account: str, said: str) -> None:
+    """The server answers an expired role's right password as a wrong one
+    (measured on 16.15), and NOLOGIN as 28000: neither is worth a login."""
+    fake = logins()
+
+    result = _session().verify_password(account, Secret("x"))
+
+    assert result.result == "unavailable"
+    assert said in str(result.detail)
+    assert fake.calls == []
+
+
+def test_a_refusal_after_the_password_was_accepted_is_a_pass(logins: Any) -> None:
+    logins(
+        _failed(
+            'FATAL:  permission denied for database "postgres"\n'
+            "DETAIL:  User does not have CONNECT privilege."
+        )
+    )
+
+    result = _session().verify_password("acme_app_user", Secret("x"))
+
+    assert result.result == "pass"
+    assert "accepted the password, and then refused the session: 42501" in str(result.detail)
 
 
 def test_the_login_uses_the_spelling_pg_roles_gives(logins: Any) -> None:

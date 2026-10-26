@@ -11,7 +11,7 @@ import pytest
 
 from sopuli.driver.postgres.errors import from_error
 from sopuli.driver.postgres.verification import HBA_HINT, WRONG_PASSWORD_DETAIL, login_outcome
-from sopuli.driver.protocol import FAIL, UNAVAILABLE
+from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
 
 class _FailedLoginError(Exception):
@@ -88,6 +88,27 @@ def test_a_server_that_does_not_use_scram_is_unavailable(asked: str) -> None:
     assert result[0] == UNAVAILABLE
     assert f"({asked})" in str(result[1])
     assert "the password was not tried" in str(result[1])
+
+
+@pytest.mark.parametrize(
+    ("server", "code"),
+    [
+        (
+            'FATAL:  permission denied for database "postgres"\n'
+            "DETAIL:  User does not have CONNECT privilege.",
+            "42501",
+        ),
+        ('FATAL:  too many connections for role "acme_app_user"', "53300"),
+    ],
+    ids=["no connect", "connection limit"],
+)
+def test_a_refusal_after_the_password_is_a_pass(server: str, code: str) -> None:
+    """The server says these only once the password was accepted (16.15)."""
+    result = outcome(f'connection to server at "127.0.0.1", port 5432 failed: {server}')
+
+    assert result is not None
+    assert result[0] == PASS
+    assert f"refused the session: {code}: " in str(result[1])
 
 
 @pytest.mark.parametrize(

@@ -234,10 +234,10 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
     assert "can run only `doctor`, `creds apply` there yet" in refused.value.message
 
 
-def test_postgresql_is_written_for_no_command_past_doctor_yet() -> None:
+def test_postgresql_is_written_for_check_and_nothing_else_yet() -> None:
     """Pinned so that adding a command is a deliberate, reviewed line (#1060,
     #1067)."""
-    assert DRIVERS["postgresql"].commands == frozenset()
+    assert DRIVERS["postgresql"].commands == frozenset({"creds.check"})
     assert DRIVERS["oracle"].commands is None
 
 

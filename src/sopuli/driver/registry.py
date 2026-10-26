@@ -149,8 +149,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
-        # Nothing past `doctor` yet (#1060, #1067 add to it).
-        commands=frozenset(),
+        # `creds check` by login (#1067). #1060 adds the rest.
+        commands=frozenset({"creds.check"}),
     ),
 }
 

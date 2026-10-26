@@ -15,10 +15,11 @@ password with a verifier computed on the client
 (:meth:`PostgresSession.set_password`, invariant 15). That ``ALTER ROLE`` is the
 one statement the driver sends that changes anything, and it checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. The registry
-entry lists the commands it is written for, `creds check` so far, and every
-other command but `doctor` refuses the target with ``SOPULI-20006`` before it
-connects (:func:`~sopuli.driver.registry.require_command`). The methods not
-written yet are a second line behind that, and refuse with ``SOPULI-20006``
+entry lists the commands it is written for, UC-1's, and UC-2's refuse the
+target with ``SOPULI-20006`` before it connects
+(:func:`~sopuli.driver.registry.require_command`). What PostgreSQL has no
+counterpart for, such as a rollover window, is refused by capability, exit 5.
+The methods for UC-2 are not written yet, and refuse with ``SOPULI-20006``
 without a round trip.
 """
 
@@ -210,9 +211,15 @@ class PostgresSession:
         return LIMIT
 
     def password_constraints(self, account: str) -> None:
-        """Not on the protocol: ``creds generate`` asks it of a driver that
-        has it, and would read a missing method as no answer."""
-        raise self._not_written("read a role's password rules")
+        """Nothing beyond the length, read without a round trip: a plain server
+        has no verify function and no reuse history (``password_reuse_policy``
+        is absent), so ``creds generate`` reports none for a role.
+
+        A server module that checks passwords, such as ``passwordcheck``, is
+        not read. It sees only the verifier the tool sends, not the password,
+        so it can refuse little; whatever it refuses is the server's error on
+        that row. Not on the protocol: ``generate`` asks it of a driver that
+        has it."""
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What the tool account holds, needs and should not hold, and its
@@ -405,10 +412,22 @@ class PostgresSession:
     def require_rollover(self, account: str) -> None:
         """PostgreSQL has no password rollover, so this always refuses
         (invariant 4)."""
-        require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
+        require_capability(
+            self.scope(),
+            PASSWORD_ROLLOVER,
+            target=self.target.name,
+            hint=(
+                "PostgreSQL keeps one password per role, so there is no window to open: "
+                "use --strategy staged, or leave --strategy out"
+            ),
+        )
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        raise self._not_written("end a rollover window")
+        """A role never has a window, so there is none to end (invariant 4).
+        `creds finish-rollover` settles every role before it gets here; this
+        refuses by capability for any other caller."""
+        self.require_rollover(account)
+        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
 
     def close(self) -> None:
         """Let the connection go. Safe twice, also after a close that raised."""

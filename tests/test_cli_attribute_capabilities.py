@@ -30,6 +30,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
     ENCRYPTION_TLS,
     PASS,
+    PASSWORD_ROLLOVER,
     PROFILE_MANAGEMENT,
     ChangeResult,
     Credential,
@@ -38,6 +39,7 @@ from sopuli.driver.protocol import (
     Scope,
     UserState,
     VerifyResult,
+    require_capability,
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
@@ -83,6 +85,7 @@ class FakeSession:
         self.missing = missing
         self.scope_error = scope_error
         self.changed: list[str] = []
+        self.attributed: list[str] = []
         self.described = False
 
     def scope(self) -> Scope:
@@ -119,7 +122,14 @@ class FakeSession:
         return ChangeResult(changed=True)
 
     def apply_attributes(self, account: str, attributes: Any) -> tuple[Any, ...]:
+        self.attributed.append(account.upper())
         return ()
+
+    def require_rollover(self, account: str) -> None:
+        """As every driver does: the capability first, before the account."""
+        require_capability(
+            self.scope(), PASSWORD_ROLLOVER, target="appdb-alpha", hint="the driver's hint"
+        )
 
     def close(self) -> None:
         return None
@@ -136,7 +146,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
     def install(
         capabilities: frozenset[str],
         *,
-        refuse_first: bool = False,
+        refuse_first: int = 0,
         missing: bool = False,
         scope_error: bool = False,
     ) -> dict[str, Any]:
@@ -160,7 +170,8 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
                 attempts.append(target.name)
-                if refuse_first and len(attempts) == 1:
+                # The first ``refuse_first`` connections fail: the plan-time reads.
+                if len(attempts) <= refuse_first:
                     raise ConnectionError("the listener did not answer")
                 opened = FakeSession(capabilities, missing=missing, scope_error=scope_error)
                 sessions.append(opened)
@@ -290,7 +301,7 @@ def test_a_target_the_plan_could_not_read_is_refused_on_its_row(
     """The plan-time read cannot reach the target, so the run asks the
     connection that would enforce the attribute, and refuses there. Nothing is
     unlocked and no password is set."""
-    harness = estate(frozenset(), refuse_first=True)
+    harness = estate(frozenset(), refuse_first=1)
     result = invoke(runner, write_config(UNLOCK), "creds", "apply")
 
     [row] = json.loads(result.output)["results"]
@@ -339,6 +350,58 @@ def test_no_attribute_asks_nothing_and_opens_no_extra_connection(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(harness["sessions"]) == 1
+
+
+# --------------------------------------------------- --strategy rollover ---
+
+
+def test_rollover_is_refused_when_no_declared_account_exists(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The target has no rollover at all, so the refusal does not wait for an
+    account to exist: it is the driver's own, made before any account is read,
+    and nothing is staged (#1072)."""
+    harness = estate(frozenset(), missing=True)
+    before = harness["store"].read("apps/acme/db").data
+    result = invoke(
+        runner, write_config(NEITHER), "creds", "rotate", "--strategy", "rollover", "--confirm"
+    )
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    error = json.loads(result.output)["error"]
+    assert error["target_capability"] == PASSWORD_ROLLOVER
+    assert error["hint"] == "the driver's hint"
+    assert harness["store"].read("apps/acme/db").data == before
+
+
+def test_rollover_is_asked_again_where_the_pre_flight_could_not_reach(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pre-flight passes over a target it could not reach. The run asks the
+    connection that would set the password, and refuses on the row."""
+    harness = estate(frozenset(), refuse_first=1)
+    result = invoke(runner, write_config(NEITHER), "creds", "apply", "--strategy", "rollover")
+
+    [row] = json.loads(result.output)["results"]
+    assert row["state"] == "ERROR"
+    assert "does not support password_rollover" in row["error"]["message"]
+    assert row["error"]["hint"] == "the driver's hint"
+    assert changed(harness) == []
+
+
+def test_the_rollover_refusal_on_a_row_comes_before_any_attribute_change(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The row is refused before the attribute pass, so nothing about the
+    account is changed either."""
+    # Two plan-time reads fail: the attribute check's and the strategy pre-flight's.
+    harness = estate(frozenset({ACCOUNT_LOCK_STATE}), refuse_first=2)
+    result = invoke(runner, write_config(UNLOCK), "creds", "apply", "--strategy", "rollover")
+
+    [row] = json.loads(result.output)["results"]
+    assert row["state"] == "ERROR"
+    assert all(not session.attributed for session in harness["sessions"])
+    assert changed(harness) == []
 
 
 # ---------------------------------------------- a locked account's advice ---

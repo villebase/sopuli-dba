@@ -420,8 +420,7 @@ These entries share a setup. The probe is
 
 ### PostgreSQL
 
-These entries are for the PostgreSQL driver for UC-1, which connects, reports
-the cluster and audits the tool account, and does nothing more yet. The
+These entries are for the PostgreSQL driver, which runs UC-1's commands. The
 probes are in `sql/postgres/`, and the matrix of releases 13 to 18 is the
 `postgres-matrix` profile of `test/compose.yaml`. A major release named here,
 such as "from 16", means the one release of it that was measured.

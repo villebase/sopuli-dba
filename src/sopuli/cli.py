@@ -170,6 +170,7 @@ from sopuli.driver.protocol import (
     FAIL,
     PASS,
     PASSWORD_EXPIRE,
+    PASSWORD_ROLLOVER,
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLLOVER_FINISH,
@@ -8123,6 +8124,13 @@ def _apply_one(
                 )
             return _refused_row(binding, source, held, selection=selection)
 
+        # `--strategy rollover`, asked again of this connection before anything
+        # changes here, the attributes included: the pre-flight passes over a
+        # target it could not reach, and that is not a way past it. The driver's
+        # own refusal, so its hint and its profile check are the pre-flight's.
+        if strategy == strategies.ROLLOVER:
+            session.require_rollover(user.name)
+
         if attributes.requested():
             # Fenced like every other mutation (P5). `apply_attributes` issues
             # `ALTER USER ... ACCOUNT UNLOCK` and `ALTER USER ... PROFILE` -- a
@@ -9199,7 +9207,24 @@ def _check_strategy(
     what it needs for it, and one extra query on a pre-flight that only runs under
     an explicit ``--strategy`` is a cheaper thing to spend than a second copy of the
     refusal.
+
+    **A target with no rollover at all is refused before any account is read**
+    (#1072), so the refusal cannot depend on a declared account existing. The
+    driver's own ``require_rollover`` makes it, with its hint: it asks the
+    capability before the account.
     """
+    if (
+        strategy == strategies.ROLLOVER
+        and bindings
+        and not session.scope().supports(PASSWORD_ROLLOVER)
+    ):
+        session.require_rollover(bindings[0].account)
+        # Reached only by a driver that broke the protocol's order.
+        raise UnsupportedCapabilityError(
+            PASSWORD_ROLLOVER,
+            target=target,
+            hint="this target has no password rollover: use --strategy staged",
+        )
     for binding in bindings:
         user = session.describe_user(binding.account)
         if user is None:
@@ -11800,6 +11825,10 @@ def _survey_one(
     started = time.monotonic()
     try:
         user = session.describe_user(binding.account)
+        try:
+            rollover: bool | None = session.scope().supports(PASSWORD_ROLLOVER)
+        except Exception:  # noqa: BLE001 -- the column says it does not know
+            rollover = None
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _finding(error)
         return _Surveyed(
@@ -11822,6 +11851,7 @@ def _survey_one(
             documents=documents,
             stores=stores,
             max_age_days=max_age_days,
+            rollover_supported=rollover,
         ),
         duration_ms=_elapsed(started),
     )
@@ -11835,6 +11865,7 @@ def _row(
     documents: Mapping[LockKey, Any],
     stores: Mapping[str, SecretStore],
     max_age_days: int | None,
+    rollover_supported: bool | None = None,
 ) -> Row:
     """Assemble one row from the vault half and the database half.
 
@@ -11854,6 +11885,7 @@ def _row(
         age=age,
         user=user,
         over_age=status_states.exceeds(age, max_age_days),
+        rollover_supported=rollover_supported,
     )
 
 

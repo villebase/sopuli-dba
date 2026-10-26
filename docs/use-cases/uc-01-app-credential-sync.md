@@ -1235,6 +1235,20 @@ acme_batch_user  pg-dev  IN_SYNC  changed and verified by login
 Run again, it changes nothing: `the vault's password is already accepted;
 nothing to change` for each role.
 
+The other UC-1 commands run on PostgreSQL as well (#1072):
+
+- **`creds generate`** draws to the driver's limit, 1024 bytes of UTF-8,
+  which the plan prints as `constraints: 1024 bytes in UTF8, from pg-dev`. A
+  role reports no password rules beyond that: a plain server has no verify
+  function and no reuse history.
+- **`creds rotate`** is `generate` and `apply` in one run, as on Oracle, under
+  the `staged` regime. `--strategy rollover`, `unlock_if_locked` and `profile:`
+  are refused at plan time, as for `apply`.
+- **`creds status`** shows the vault's age. PostgreSQL does not record when a
+  password was changed, so `DB_PW_CHANGED` is empty and `SOPULI-W021` says
+  why, and `ROLLOVER` reads `not supported`.
+- **`creds finish-rollover`** finds no window to close: a role never has one.
+
 ---
 
 ## 6. Oracle specifics

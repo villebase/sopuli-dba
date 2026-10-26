@@ -89,6 +89,10 @@ class Row:
     user: UserState | None = None
     #: Whether ``age`` is past the run's ``--max-age-days``.
     over_age: bool = False
+    #: Whether the target reports ``password_rollover``, or ``None`` where its
+    #: scope could not be read. ``False`` is a product with no rollover at all,
+    #: which the ROLLOVER column says rather than "not configured" (#1072).
+    rollover_supported: bool | None = None
 
 
 def rotated_at(document: Any, binding: Binding) -> datetime | None:

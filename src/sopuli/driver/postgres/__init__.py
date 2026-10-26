@@ -7,7 +7,7 @@ compute a verifier, and psycopg's ``sql`` to quote the statement. The others are
 tier 0: they build what is sent and read what comes back, with no client on the
 machine.
 
-This build connects, reports what it found, describes a role and sets its
-password. Every other operation refuses with ``SOPULI-20006``, as the whole
-driver did before it had a module.
+This build connects, reports what it found, describes a role, checks its
+password by logging in as it, and sets it: UC-1's commands. UC-2's operations
+refuse with ``SOPULI-20006``, as the whole driver did before it had a module.
 """

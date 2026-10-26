@@ -83,6 +83,20 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
     assert isinstance(_session(), Session)
 
 
+def test_a_role_has_no_password_rules_beyond_the_length() -> None:
+    """No verify function and no reuse history on a plain server, so `creds
+    generate` reports none, with no round trip (#1072)."""
+
+    class _Untouchable:
+        def cursor(self) -> Any:
+            raise AssertionError("password_constraints made a round trip")
+
+    session = _session()
+    session.connection = _Untouchable()
+
+    assert session.password_constraints("acme_app_user") is None
+
+
 @pytest.mark.parametrize(
     "call",
     [
@@ -117,6 +131,15 @@ def test_rollover_is_an_absent_capability() -> None:
 
     assert refused.value.capability == PASSWORD_ROLLOVER
     assert refused.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "--strategy staged" in str(refused.value.hint)
+
+
+def test_ending_a_window_is_an_absent_capability_too() -> None:
+    """A role has no window to end: exit 5, never "not written yet" (#1072)."""
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        _session().finish_rollover("acme_app_user")
+
+    assert refused.value.capability == PASSWORD_ROLLOVER
 
 
 def test_audit_coverage_answers_unknown_and_never_raises() -> None:

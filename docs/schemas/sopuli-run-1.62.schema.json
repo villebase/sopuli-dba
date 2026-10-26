@@ -1628,6 +1628,10 @@
                 "string",
                 "null"
               ]
+            },
+            "supported": {
+              "type": "boolean",
+              "description": "Whether the target has password rollover at all (`password_rollover`). False on PostgreSQL, where `creds status` prints \"not supported\" rather than \"not configured\". Absent where the target's scope could not be read. Additive in 1.62 (#1072)."
             }
           }
         },

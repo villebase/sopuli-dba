@@ -3399,8 +3399,10 @@ def test_a_missing_account_does_not_refuse_the_estate_over_a_strategy(
     """`ACCOUNT_MISSING` is a state the run reports per account. The driver's
     `require_rollover` raises for one, having no way to know this caller would
     rather skip it, so the pre-flight has to check before asking -- otherwise an
-    account the run was going to report on anyway takes the whole estate down."""
-    harness = estate(users={})
+    account the run was going to report on anyway takes the whole estate down.
+    The target has rollover: one without it is refused before any account is
+    read (`test_cli_attribute_capabilities.py`)."""
+    harness = estate(users={}, capabilities=frozenset({PASSWORD_ROLLOVER}))
     result = run(runner, write_config(CONFIG), "--strategy", "rollover")
 
     assert check.ACCOUNT_MISSING in result.output

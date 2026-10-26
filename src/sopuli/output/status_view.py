@@ -83,7 +83,7 @@ def build_result(
     database_age = _database_age(row.user)
     if database_age is not None:
         entry["password_age_days"] = database_age
-    rollover = _rollover(row.user)
+    rollover = _rollover(row.user, row.rollover_supported)
     if rollover is not None:
         entry["rollover"] = rollover
     if duration_ms is not None:
@@ -106,17 +106,25 @@ def _database_age(user: UserState | None) -> float | None:
     return None if user is None else password_age_days(user.password_changed_at)
 
 
-def _rollover(user: UserState | None) -> dict[str, Any] | None:
+def _rollover(user: UserState | None, supported: bool | None = None) -> dict[str, Any] | None:
     """The window, and the profile that decides whether there can be one.
 
     Emitted for every account whose state was read, not only the ones with a
     window open: "this profile grants none" and "this profile grants one and it
     is closed" are different facts about an estate, and an inventory is where
-    somebody goes to tell them apart.
+    somebody goes to tell them apart. ``supported`` is the third: whether the
+    target has rollover at all, absent where its scope could not be read
+    (#1072).
     """
     if user is None:
         return None
-    return {"active": bool(user.rollover_active), "profile_rollover_time": user.rollover_time}
+    found: dict[str, Any] = {
+        "active": bool(user.rollover_active),
+        "profile_rollover_time": user.rollover_time,
+    }
+    if supported is not None:
+        found["supported"] = supported
+    return found
 
 
 def _warnings(row: Row) -> list[dict[str, Any]]:
@@ -260,7 +268,7 @@ def render_status_table(rows: Sequence[Row]) -> str:
                 _age(row),
                 _changed_at(row.user),
                 _profile(row.user),
-                _rollover_cell(row.user),
+                _rollover_cell(row.user, row.rollover_supported),
             ]
             for row in rows
         ],
@@ -347,20 +355,27 @@ def _profile(user: UserState | None) -> Cell | str:
     return user.profile
 
 
-def _rollover_cell(user: UserState | None) -> Cell | str:
+def _rollover_cell(user: UserState | None, supported: bool | None = None) -> Cell | str:
     """Whether a window can open here, and whether one is open now.
 
     Three answers rather than two, because "not configured" and "configured and
     quiet" are what decide whether a zero-downtime rotation is available at all
     -- which is the question §6.3 makes an operator ask before scheduling one.
+    A fourth where the target has no rollover at all (``password_rollover``
+    absent, #1072): "not configured" would send an operator to look for a
+    setting that does not exist.
     """
     if user is None:
         return Cell("-", Role.MUTED)
+    if supported is False:
+        return Cell("not supported", Role.MUTED)
     if user.rollover_active:
         return Cell("window open", Role.NOTABLE)
     configured = user.rollover_days
     if not configured:
-        return Cell("not configured", Role.MUTED)
+        # Unknown where the scope could not be read: "not configured" would
+        # claim the target has rollover to configure.
+        return Cell("-" if supported is None else "not configured", Role.MUTED)
     return f"{_hours(configured)} configured"
 
 

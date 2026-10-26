@@ -36,8 +36,9 @@ postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-10-26
 (#1057). The host client was psycopg 3.3.6 with libpq 18.4, on Windows 11
 AMD64. The psql clients were the postgres:13-alpine to postgres:18-alpine
 images, with libpq 13.23, libpq 14.24, libpq 15.19, libpq 16.15, libpq 17.11
-and libpq 18.6. Three times, exit 0, the same result each time but for the
-timings, which are the ranges below. Earlier versions are not counted. They
+and libpq 18.6. Four times, exit 0, the same result each time but for the
+timings, which are the ranges below. The fourth ran after changes to the
+probe's timeouts and clean-up. Earlier versions are not counted. They
 ran psql in the matrix's own containers, which load libpq 18 whatever the
 server's release, so they missed the libpq 13 limit below. One also timed out
 at 1 MiB under a 10 s connect_timeout.
@@ -101,14 +102,16 @@ ASCII_LENGTHS += (1 << 18, 1 << 20)
 LOGIN_TIMEOUT = 120
 NON_ASCII_LENGTHS = (1024, 1025, 2048)
 ALPHABET = charsets.ALPHABETS["alnum_safe"]
-#: The longest entry Windows allows in a process's environment.
+#: The longest entry Windows allows in a process's environment, counting the
+#: terminating NUL.
 ENV_LIMIT = 32767
 #: e with acute, written as a code point so the source stays ASCII.
 E_ACUTE = chr(0xE9)
 
 
 def _client(version: int) -> str:
-    return f"{PROJECT}-probe-client-{version}"
+    """The client container's name. 06 uses its own, so the two can run at once."""
+    return f"{PROJECT}-probe-len-client-{version}"
 
 
 def _port(version: int) -> str:
@@ -196,14 +199,21 @@ def _login_host(version: int, password: str) -> str:
 
 
 def _login_psql(version: int, password: str) -> str:
-    if len("PGPASSWORD=") + len(password) > ENV_LIMIT:
+    if len("PGPASSWORD=") + len(password) + 1 > ENV_LIMIT:
         return "not run"
     argv = ["docker", "exec", "-e", "PGPASSWORD", _client(version)]
-    argv += ["psql", f"host=postgres-{version} dbname=sopuli user={ROLE}"]
+    argv += ["psql", f"host=postgres-{version} dbname=sopuli user={ROLE} connect_timeout=10"]
     argv += ["-X", "-At", "-c", "SELECT 'logged in'"]
-    done = subprocess.run(
-        argv, capture_output=True, env={**os.environ, "PGPASSWORD": password}, check=False
-    )
+    try:
+        done = subprocess.run(
+            argv,
+            capture_output=True,
+            env={**os.environ, "PGPASSWORD": password},
+            check=False,
+            timeout=LOGIN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return f"error: no answer in {LOGIN_TIMEOUT} s"
     out = (done.stdout + done.stderr).decode("utf-8", "replace").strip()
     if done.returncode == 0 and out == "logged in":
         return "ok"
@@ -224,19 +234,22 @@ def _short(version: int, password: str) -> str:
 
 
 def _one(conn: psycopg.Connection, version: int, password: str) -> tuple[str, str]:
+    """PL1 and PL2, then PL3, which does not depend on them."""
     try:
         verifier = conn.pgconn.encrypt_password(
             password.encode(), ROLE.encode(), b"scram-sha-256"
         ).decode()
-        pl1 = f"verifier of {len(verifier)} bytes"
     except psycopg.Error as exc:
-        return f"PL1 {_error(exc)}", ""
-    try:
-        _alter(conn, verifier)
-        host, psql = _login_host(version, password), _login_psql(version, password)
-        pl2 = f"PL2 host {host}, psql {psql}, one character short {_short(version, password)}"
-    except psycopg.Error as exc:
-        pl2 = f"PL2 ALTER ROLE {_error(exc)}"
+        first = f"PL1 {_error(exc)}; PL2 not run"
+    else:
+        try:
+            _alter(conn, verifier)
+            host, psql = _login_host(version, password), _login_psql(version, password)
+            short = _short(version, password)
+            pl2 = f"PL2 host {host}, psql {psql}, one character short {short}"
+        except psycopg.Error as exc:
+            pl2 = f"PL2 ALTER ROLE {_error(exc)}"
+        first = f"PL1 verifier of {len(verifier)} bytes; {pl2}"
     try:
         conn.execute("SET password_encryption = 'scram-sha-256'")
         _alter(conn, password)
@@ -245,7 +258,7 @@ def _one(conn: psycopg.Connection, version: int, password: str) -> tuple[str, st
         pl3 = f"PL3 ALTER ROLE {_error(exc)}"
     finally:
         conn.execute("RESET password_encryption")
-    return f"PL1 {pl1}; {pl2}", pl3
+    return first, pl3
 
 
 def _server(version: int) -> None:
@@ -253,11 +266,11 @@ def _server(version: int) -> None:
         row = conn.execute("SELECT current_setting('server_version')").fetchone()
         assert row is not None
         print(f"=== server {row[0]}")
-        container = _start_client(version)
-        print(f"host client: libpq {pq.version()}; container client: {container}")
-        conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ROLE)))
-        conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(ROLE)))
         try:
+            container = _start_client(version)
+            print(f"host client: libpq {pq.version()}; container client: {container}")
+            conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ROLE)))
+            conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(ROLE)))
             cases = [(n, False) for n in ASCII_LENGTHS] + [(n, True) for n in NON_ASCII_LENGTHS]
             for length, non_ascii in cases:
                 kind = "ending in U+00E9" if non_ascii else "ASCII"

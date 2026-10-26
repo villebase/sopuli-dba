@@ -202,14 +202,14 @@ Not measured: every other minor release, and every managed service.
 | `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-25 | #1032 | As on 13.23. The server warns that md5 passwords are deprecated |
 | `05_psycopg_libpq_probe.py` | `18.6` | 2026-10-25 | #1032 | psycopg 3.3.6 loads libpq 18.4 on Windows AMD64 and libpq 18.6 on Linux x86_64, glibc and musl. 3.2.13, 3.1.20 and 3.1.12 load libpq 17.6, libpq 16.3 and libpq 16.0 on Linux, and accept `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 load libpq 15.0 and libpq 14.4, and refuse it in the client as an invalid connection option. Each computes a SCRAM verifier. Not run on macOS (unverified: psycopg-libpq-macos) |
-| `06_saslprep_probe.py` | `13.23` | 2026-10-26 | #1057 | A verifier from libpq 18.4 and the server's own hash agree on every non-ASCII password tried, and each logs in with both spellings SASLprep makes one, by psycopg and by psql with libpq 13.23. A password with a character SASLprep prohibits logs in as given. A verifier computed without SASLprep refuses a password SASLprep changes. The named charsets are ASCII |
-| `06_saslprep_probe.py` | `14.24` | 2026-10-26 | #1057 | As on 13.23, with psql's libpq 14.24. Each later release's psql has its own libpq too |
+| `06_saslprep_probe.py` | `13.23` | 2026-10-26 | #1057 | A verifier from libpq 18.4 and the server's own hash agree on every non-ASCII password tried, and each logs in with both spellings SASLprep makes one, by psycopg and by psql with the release's own libpq. A password with a character SASLprep prohibits logs in as given. A verifier computed without SASLprep refuses a password SASLprep changes. The named charsets are ASCII |
+| `06_saslprep_probe.py` | `14.24` | 2026-10-26 | #1057 | As on 13.23 |
 | `06_saslprep_probe.py` | `15.19` | 2026-10-26 | #1057 | As on 13.23 |
 | `06_saslprep_probe.py` | `16.15` | 2026-10-26 | #1057 | As on 13.23 |
 | `06_saslprep_probe.py` | `17.11` | 2026-10-26 | #1057 | As on 13.23 |
 | `06_saslprep_probe.py` | `18.6` | 2026-10-26 | #1057 | As on 13.23 |
 | `07_password_length_probe.py` | `13.23` | 2026-10-26 | #1057 | Set as a verifier from libpq 18.4, a password of 12 bytes to 1 MiB logs in with psycopg, and one character short does not. The login takes about 10 s at 1 MiB and 0.1 s or less up to 8192 bytes. psql with libpq 13.23 fails above 1024 bytes with "out of memory". A plaintext password over 1024 bytes is refused in `ALTER ROLE`, SQLSTATE `54000` |
-| `07_password_length_probe.py` | `14.24` | 2026-10-26 | #1057 | As on 13.23, but psql with libpq 14.24 logs in at every length up to 8192 bytes, and a plaintext password of any length up to 1 MiB is accepted |
+| `07_password_length_probe.py` | `14.24` | 2026-10-26 | #1057 | As on 13.23, but psql with the release's own libpq logs in at every length up to 8192 bytes, and a plaintext password of any length up to 1 MiB is accepted |
 | `07_password_length_probe.py` | `15.19` | 2026-10-26 | #1057 | As on 14.24 |
 | `07_password_length_probe.py` | `16.15` | 2026-10-26 | #1057 | As on 14.24 |
 | `07_password_length_probe.py` | `17.11` | 2026-10-26 | #1057 | As on 14.24 |

@@ -45,8 +45,9 @@ postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-10-26
 (#1057). The host client was psycopg 3.3.6 with libpq 18.4, on Windows 11
 AMD64. The psql clients were the postgres:13-alpine to postgres:18-alpine
 images, with libpq 13.23, libpq 14.24, libpq 15.19, libpq 16.15, libpq 17.11
-and libpq 18.6. Three times, exit 0, the same result each time. Four earlier
-runs are not counted: they ran psql in the matrix's own containers, which
+and libpq 18.6. Four times, exit 0, the same result each time. The fourth ran
+after changes to the probe's timeouts and clean-up. Four earlier runs are
+not counted: they ran psql in the matrix's own containers, which
 load libpq 18 whatever the server's release. They gave the same SP0 to SP3.
 
 RESULTS -- the same on all six releases
@@ -128,8 +129,13 @@ WRONG = PREFIX + "wrong"
 ASCII_CONTROL = (("ascii", PREFIX + "ascii"),)
 
 
+#: Seconds a psql login may take, before the probe gives up on it.
+LOGIN_TIMEOUT = 60
+
+
 def _client(version: int) -> str:
-    return f"{PROJECT}-probe-client-{version}"
+    """The client container's name. 07 uses its own, so the two can run at once."""
+    return f"{PROJECT}-probe-sasl-client-{version}"
 
 
 def _port(version: int) -> str:
@@ -219,18 +225,25 @@ def _login_host(version: int, password: str) -> str:
             connect_timeout=10,
         ):
             return "ok"
-    except psycopg.OperationalError as exc:
+    except psycopg.Error as exc:
         text = str(exc)
         return "refused" if "password authentication failed" in text else f"error: {text.strip()}"
 
 
 def _login_psql(version: int, password: str) -> str:
     argv = ["docker", "exec", "-e", "PGPASSWORD", _client(version)]
-    argv += ["psql", f"host=postgres-{version} dbname=sopuli user={ROLE}"]
+    argv += ["psql", f"host=postgres-{version} dbname=sopuli user={ROLE} connect_timeout=10"]
     argv += ["-X", "-At", "-c", "SELECT 'logged in'"]
-    done = subprocess.run(
-        argv, capture_output=True, env={**os.environ, "PGPASSWORD": password}, check=False
-    )
+    try:
+        done = subprocess.run(
+            argv,
+            capture_output=True,
+            env={**os.environ, "PGPASSWORD": password},
+            check=False,
+            timeout=LOGIN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return f"error: no answer in {LOGIN_TIMEOUT} s"
     out = (done.stdout + done.stderr).decode("utf-8", "replace").strip()
     if done.returncode == 0 and out == "logged in":
         return "ok"
@@ -264,11 +277,11 @@ def _server(version: int) -> None:
         ).fetchone()
         assert row is not None
         print(f"=== server {row[0]}, encoding {row[1]}")
-        container = _start_client(version)
-        print(f"SP1 host client: libpq {pq.version()}; container client: {container}")
-        conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ROLE)))
-        conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(ROLE)))
         try:
+            container = _start_client(version)
+            print(f"SP1 host client: libpq {pq.version()}; container client: {container}")
+            conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ROLE)))
+            conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(ROLE)))
             for name, group in GROUPS.items():
                 for how, setter in (("client", _set_by_client), ("server", _set_by_server)):
                     for label, form in group:

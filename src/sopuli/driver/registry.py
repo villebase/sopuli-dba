@@ -89,11 +89,17 @@ class DatabaseDriver:
     #: driver's own rule.
     password_limit: str | None = None
     #: The commands this driver is written for, by the run document's command
-    #: name (``creds.apply``), or ``None`` for every command. `doctor` is never
-    #: listed and never refused: it asks only what the target is, which every
-    #: driver can answer. :func:`require_command` refuses any other command
-    #: not listed. A driver is built one command at a time, and this says how far
-    #: it has got.
+    #: name (``creds.apply``, never ``creds apply``), or ``None`` for every
+    #: command. `doctor` is never listed and never refused: it asks only what the
+    #: target is, which every driver can answer. :func:`require_command` refuses
+    #: any other command not listed. A driver is built one command at a time, and
+    #: this says how far it has got.
+    #:
+    #: **A command is listed only when every mode of it either works or is
+    #: refused at plan time.** A mode the driver cannot do is refused through a
+    #: capability, before any connection (invariant 4), as ``check --method
+    #: hash`` is where ``offline_verify`` is absent. A mode that would reach a
+    #: method not written yet keeps the command off this list.
     commands: frozenset[str] | None = None
 
     @property
@@ -149,7 +155,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
-        # Nothing past `doctor` yet (#1060, #1067 add to it).
+        # Nothing past `doctor` yet.
         commands=frozenset(),
     ),
 }
@@ -229,7 +235,7 @@ def require_command(target: Target, command: str) -> None:
     asks what the target is, and skips it.
     """
     supported = DRIVERS[target.type].commands
-    if supported is None or command in supported:
+    if supported is None or command == "doctor" or command in supported:
         return
     names = ", ".join(f"`{name.replace('.', ' ')}`" for name in ("doctor", *sorted(supported)))
     raise DriverNotImplementedError(

@@ -14,11 +14,12 @@ in as the role (:meth:`PostgresSession.verify_password`), and sets a role's
 password with a verifier computed on the client
 (:meth:`PostgresSession.set_password`, invariant 15). That ``ALTER ROLE`` is the
 one statement the driver sends that changes anything, and it checks
-:func:`~sopuli.driver.postgres.scope.require_read_write` first. Only `doctor`
-gets this far: the registry entry lists no other command it is written for, so
-every other command refuses the target with ``SOPULI-20006`` before it connects
-(:func:`~sopuli.driver.registry.require_command`). The methods not written yet are a
-second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
+:func:`~sopuli.driver.postgres.scope.require_read_write` first. The registry
+entry lists the commands it is written for, `creds check` so far, and every
+other command but `doctor` refuses the target with ``SOPULI-20006`` before it
+connects (:func:`~sopuli.driver.registry.require_command`). The methods not
+written yet are a second line behind that, and refuse with ``SOPULI-20006``
+without a round trip.
 """
 
 from __future__ import annotations

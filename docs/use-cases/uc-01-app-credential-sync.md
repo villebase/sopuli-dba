@@ -1718,6 +1718,46 @@ the status already said, which is the harm this section exists to prevent.
 `sopuli/cli.py:_settled_by_status` is the refusal; `sopuli/check.py:decide` is
 the reporting.
 
+### On PostgreSQL
+
+`check` logs in as each managed role with the vault's password. The tool host
+needs a `pg_hba.conf` line for each role, with `scram-sha-256`
+(`02-postgres-privileges.md` §2.3). The login asks libpq for SCRAM, so a server
+that asks for another method, or lets the role in without asking, is refused
+before the password is sent.
+
+- A login that succeeds is `IN_SYNC`. A wrong password (`28P01`) is `DRIFT`,
+  exit 3. The detail says that the server answers the same way for a role whose
+  stored verifier is md5.
+- A login the server refuses for another reason (`28000`), or one that is not
+  SCRAM, is `UNVERIFIABLE`, exit 0, with the line to add. It is not drift.
+- A `NOLOGIN` role is `LOCKED`, and no login is tried. A role whose
+  `VALID UNTIL` has passed is `EXPIRED`.
+- `--method hash` and `--method both` are refused at plan time, exit 5. The
+  verifiers are in `pg_authid`, which only a superuser can read, so the driver
+  reports no `offline_verify`.
+- PostgreSQL has no failed-login lockout, so there is no `LCOUNT` guard to run
+  and no warning that it is not running. `verification.lcount` is `null`.
+
+The sample is from tier 1. `acme_drift_user`'s vault value is not its
+password, `pg_hba.conf` rejects `acme_nohba_user`, and `acme_nologin_user` is
+`NOLOGIN`:
+
+```
+$ sopuli --config postgres-check.yaml creds check
+...
+ACCOUNT            TARGET  STATE         DETAIL
+acme_app_user      pg-dev  IN_SYNC       vault v2 verified by login
+acme_drift_user    pg-dev  DRIFT         vault v2 the server refused the password (28P01). It gives the same answer for a role whose stored verifier is md5, which no password opens through a scram-sha-256 line; `creds apply` stores a SCRAM verifier
+acme_nohba_user    pg-dev  UNVERIFIABLE  28000: connection failed: connection to server at "127.0.0.1", port 5532 failed: FATAL:  pg_hba.conf rejects connection for host "172.19.0.1", user "acme_nohba_user", database "postgres", no encryption. The server refused the login for a reason other than the password, so this says nothing about it: give the tool host a pg_hba.conf line for this role with scram-sha-256 (02-postgres-privileges.md §2.3)
+acme_nologin_user  pg-dev  LOCKED        account is nologin; the password was not tried
+
+1 drift, 2 unverifiable
+...
+```
+
+It exits 3.
+
 ---
 
 ## 8. `sopuli creds rotate`

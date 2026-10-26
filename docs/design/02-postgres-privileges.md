@@ -114,7 +114,7 @@ the rule that `CREATEROLE` needs `ADMIN OPTION`. A server whose
 `pg_auth_members` has `set_option` is one that requires `ADMIN OPTION`. On
 every release measured, 13.23 to 18.6, the column and the rule go together:
 the column is absent on 13.23, 14.24 and 15.19, and present on 16.15, 17.11
-and 18.6. A managed service or a fork is not measured. (open: #1047)
+and 18.6. A managed service or a fork is not measured.
 
 ### 2.3 `pg_hba.conf`
 
@@ -148,17 +148,35 @@ measurement.
 `sopuli doctor --check-privileges` reports what the tool account holds. It
 warns and never fails ([P5](../decisions/log.md#p5)). It reads only catalogs
 that every role can read, so the audit needs no grant of its own.
-(open: #1047)
 
 | Reported as | What it reads |
 |---|---|
 | held or missing | `CREATEROLE` on the tool account, from `pg_roles.rolcreaterole` |
-| held or missing | `ADMIN OPTION` on each managed role, from `pg_auth_members.admin_option`, where the server requires it (§2.2) |
-| over-granted | each row of §3 that the tool account holds |
-| not checked | a row of §3 that this server cannot answer |
+| held or missing | `ADMIN OPTION` on each managed role, from `pg_has_role(…, 'USAGE WITH ADMIN OPTION')`, where the server requires it (§2.2) |
+| over-granted | `SUPERUSER`, `REPLICATION` and `BYPASSRLS`, from `pg_roles` |
+| over-granted | §3's built-in roles, held through any chain of grants in `pg_auth_members`. From 16 a role counts only where some chain to it has `INHERIT` on every grant, or `SET` on every grant. A role's privileges pass only down `INHERIT` grants and `SET ROLE` reaches only down `SET` grants, so a chain of one of each gives neither |
+| over-granted | a managed role whose privileges the tool account uses, from `pg_has_role(…, 'USAGE')`, or that it can `SET ROLE` to, from `pg_has_role(…, 'SET')`. Before 16, every member can `SET ROLE`, so it reads `'MEMBER'` |
 
-A managed role that does not exist is reported, and is not an error here. The
-tool does not create roles.
+The report lists every role the tool account holds, through any chain, usable
+or not.
+
+A managed role is matched to the config's account name as written, and then by
+`upper()`, as the config compares names. The report uses the cluster's
+spelling.
+
+Each over-granted managed role comes with the statement that removes the
+over-grant, with the names quoted. From 16 that statement is a `GRANT` with
+the new options. It changes the grant made by the role that runs it, so it is
+run as the role that made the grant. Where the role also reaches the tool
+account through another role, a statement about the direct grant would not
+remove that path, so the report says so. A managed role that does not exist
+gets a line that says so. It is not missing, since no grant fixes it, and it
+is not an error here. The tool does not create roles.
+
+`pg_has_role` answers true for every role when the tool account is a
+superuser. So the built-in roles are read from `pg_auth_members` instead, and a
+superuser's managed roles are not reported one by one: its `SUPERUSER` finding
+covers them.
 
 ---
 
@@ -178,7 +196,7 @@ tool does not create roles.
 
 `doctor --check-privileges` names anything on this list that the tool account
 holds. Over-granting is the usual result of fixing a permissions problem in a
-hurry. The tool notices it and says so. (open: #1047)
+hurry. The tool notices it and says so.
 
 ---
 

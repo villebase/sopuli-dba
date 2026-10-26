@@ -10,6 +10,8 @@ import json
 import os
 import sys
 import uuid
+from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from click.testing import CliRunner
 
 from sopuli.cli import cli
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetPostgres
+from sopuli.driver.postgres.privileges import GRANT_OPTIONS_ROW
 from sopuli.driver.protocol import Credential, DriverContext
 from sopuli.secrets import Secret
 
@@ -79,11 +82,11 @@ def test_doctor_reaches_the_cluster_and_reports_what_it_is(
     assert scope["encryption"]["protocol"] == "tcp"
 
 
-def test_a_privilege_audit_the_driver_lacks_keeps_the_scope(
+def test_check_privileges_reports_a_superuser_and_still_passes(
     runner: CliRunner, live_postgres: Any, tmp_path: Path
 ) -> None:
-    """`--check-privileges` warns and never fails (P5), so a driver with no
-    audit yet still reports the cluster, and says the audit was not made."""
+    """The stack's `postgres` is the bootstrap superuser. Over-granting warns
+    and never fails (P5)."""
     config = _config(tmp_path / "doctor.yaml", live_postgres.dsn, live_postgres.user)
 
     result = runner.invoke(
@@ -93,8 +96,170 @@ def test_a_privilege_audit_the_driver_lacks_keeps_the_scope(
     assert result.exit_code == 0, result.output
     (entry,) = json.loads(result.stdout)["targets"]
     assert entry["scope"]["type"] == "cluster"
-    assert "error" not in entry or entry["error"] is None
-    assert any("audit the tool's privileges" in line for line in entry["warnings"])
+    assert {"SUPERUSER", "REPLICATION", "BYPASSRLS"} <= set(entry["scope"]["over_granted"])
+    assert entry["privileges"]["held"] == ["CREATEROLE"]
+
+
+@pytest.fixture
+def tool_account(live_postgres: Any) -> Iterator[tuple[str, str, str]]:
+    """A `CREATEROLE` tool account that is not a superuser, and one role for it
+    to manage: the setup of `02-postgres-privileges.md` §2, with no grant yet."""
+    import psycopg
+    from psycopg import sql
+
+    suffix = uuid.uuid4().hex[:8]
+    tool, managed, password = f"sopuli_tool_{suffix}", f"acme_{suffix}_user", uuid.uuid4().hex
+    with _superuser(live_postgres) as admin:
+        admin.execute(
+            sql.SQL("create role {} login createrole password {}").format(
+                sql.Identifier(tool), sql.Literal(password)
+            )
+        )
+        admin.execute(f'create role "{managed}" login')
+    try:
+        yield tool, password, managed
+    finally:
+        with _superuser(live_postgres) as admin:
+            for role in (managed, tool):
+                with suppress(psycopg.Error):
+                    admin.execute(f'drop role "{role}"')
+
+
+@pytest.fixture
+def grant_options(live_postgres: Any) -> None:
+    """Skip unless grants carry INHERIT and SET options, the capability these
+    tests' grants and findings depend on (``02-postgres-privileges.md`` §2.2)."""
+    with _superuser(live_postgres) as admin:
+        (present,) = admin.execute(GRANT_OPTIONS_ROW).fetchone()
+    if not present:
+        pytest.skip(
+            "capability absent: grants with INHERIT and SET options (pg_auth_members.set_option)"
+        )
+
+
+def _superuser(live_postgres: Any) -> Any:
+    import psycopg
+
+    return psycopg.connect(
+        host=live_postgres.host,
+        port=live_postgres.port,
+        user=live_postgres.user,
+        password=live_postgres.password,
+        dbname="postgres",
+        sslmode="disable",
+        autocommit=True,
+    )
+
+
+def _audit_as(live_postgres: Any, user: str, password: str, accounts: tuple[str, ...]) -> Any:
+    from sopuli.driver.postgres.session import build_driver
+
+    driver = build_driver(DriverContext(env=os.environ, correlation_id="audit", runtime=Runtime()))
+    target = ExpandedTarget(
+        target=Target(
+            name="tier1-postgres",
+            type="postgresql",
+            dsn=live_postgres.dsn,
+            postgres=TargetPostgres(sslmode="disable"),
+        )
+    )
+    session = driver.connect(target, Credential(username=user, secret=Secret(password)))
+    try:
+        return session.privileges(accounts=accounts)
+    finally:
+        session.close()
+
+
+@pytest.mark.usefixtures("grant_options")
+def test_a_role_without_admin_option_is_missing_and_with_it_held(
+    live_postgres: Any, tool_account: tuple[str, str, str]
+) -> None:
+    """A server whose grants carry options requires ADMIN OPTION (§2.2)."""
+    tool, password, managed = tool_account
+
+    before = _audit_as(live_postgres, tool, password, (managed,))
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'grant "{managed}" to "{tool}" with admin option, inherit false, set false')
+    after = _audit_as(live_postgres, tool, password, (managed,))
+
+    assert before.missing == (f"ADMIN OPTION ON {managed}",)
+    assert after.missing == ()
+    assert after.held == (f"ADMIN OPTION ON {managed}", "CREATEROLE")
+    assert after.over_granted == ()
+
+
+@pytest.mark.usefixtures("grant_options")
+def test_a_grant_that_inherits_and_a_built_in_role_are_over_granted(
+    live_postgres: Any, tool_account: tuple[str, str, str]
+) -> None:
+    tool, password, managed = tool_account
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'grant "{managed}" to "{tool}" with admin option')
+        admin.execute(f'grant pg_monitor to "{tool}"')
+
+    found = _audit_as(live_postgres, tool, password, (managed, "acme_absent_user"))
+
+    assert found.over_granted == (
+        f"INHERIT TRUE ON {managed}",
+        f"SET TRUE ON {managed}",
+        "pg_monitor",
+        "pg_read_all_stats",
+    )
+    assert found.missing == ()
+    assert found.remedies[0].startswith(f'GRANT "{managed}" TO "{tool}" WITH INHERIT FALSE')
+    assert found.remedies[1].startswith("acme_absent_user does not exist")
+
+
+@pytest.mark.usefixtures("grant_options")
+def test_a_managed_role_reached_through_another_role_says_so(
+    live_postgres: Any, tool_account: tuple[str, str, str]
+) -> None:
+    tool, password, managed = tool_account
+    ops = f"{managed}_ops"
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'grant "{managed}" to "{tool}" with admin option, inherit false, set false')
+        admin.execute(f'create role "{ops}"')
+        admin.execute(f'grant "{managed}" to "{ops}"')
+        admin.execute(f'grant "{ops}" to "{tool}"')
+    try:
+        found = _audit_as(live_postgres, tool, password, (managed,))
+    finally:
+        with _superuser(live_postgres) as admin:
+            admin.execute(f'drop role "{ops}"')
+
+    assert found.over_granted == (f"INHERIT TRUE ON {managed}", f"SET TRUE ON {managed}")
+    (remedy,) = found.remedies
+    assert remedy.startswith(f"the tool account reaches {managed} through another role")
+    assert ops in found.roles
+
+
+@pytest.mark.usefixtures("grant_options")
+def test_a_chain_of_one_inherit_and_one_set_grant_gives_nothing(
+    live_postgres: Any, tool_account: tuple[str, str, str]
+) -> None:
+    """Privileges pass down INHERIT grants and SET ROLE down SET grants, so a
+    chain of one of each gives the tool neither."""
+    tool, password, _ = tool_account
+    mid = f"{tool}_mid"
+    with _superuser(live_postgres) as admin:
+        admin.execute(f'create role "{mid}"')
+        admin.execute(f'grant "{mid}" to "{tool}" with inherit true, set false')
+        admin.execute(f'grant pg_read_server_files to "{mid}" with inherit false, set true')
+    try:
+        found = _audit_as(live_postgres, tool, password, ())
+        with _superuser(live_postgres) as admin:
+            (usable,) = admin.execute(
+                "select pg_has_role(%s, 'pg_read_server_files', 'USAGE') "
+                "or pg_has_role(%s, 'pg_read_server_files', 'SET')",
+                (tool, tool),
+            ).fetchone()
+    finally:
+        with _superuser(live_postgres) as admin:
+            admin.execute(f'drop role "{mid}"')
+
+    assert usable is False, "the server agrees the chain gives nothing"
+    assert "pg_read_server_files" not in found.over_granted
+    assert "pg_read_server_files" in found.roles
 
 
 def test_doctor_prints_the_postgresql_client_lines(

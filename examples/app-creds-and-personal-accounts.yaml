@@ -1,0 +1,188 @@
+# A whole estate in one file: application credentials (UC-1) and personal
+# account resets (UC-2) side by side, the way a team keeps them. Three
+# environments, a pluggable database per tenant, and a container root per
+# environment.
+#
+# Each part is explained in its own example. This one shows how they fit
+# together. Read these first:
+#
+#   target-sets.yaml         generated targets, container roots, groups
+#   admin-credentials.yaml   where the tool's own login password comes from
+#   personal-accounts.yaml   personal_accounts, delivery, reset_records
+#   safety-hardened.yaml     the safety settings
+#
+# Check it before you use it:
+#     sopuli --config app-creds-and-personal-accounts.yaml config validate
+#     sopuli --config app-creds-and-personal-accounts.yaml target list
+#
+# Full reference: ../docs/design/01-configuration.md
+
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-3.3.schema.json
+
+version: 1
+
+# One vault server for each environment, each with its own token.
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com
+    mount: kv
+    kv_version: 2
+    non_production: true
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_DEV } }
+  vault-qa:
+    type: hashicorp
+    addr: https://vault-qa.example.com
+    mount: kv
+    kv_version: 2
+    non_production: true
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_QA } }
+  vault-prod:
+    type: hashicorp
+    addr: https://vault.example.com
+    mount: kv
+    kv_version: 2
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_PROD } }
+  # The journal of personal-account resets. See `reset_records:` at the end.
+  vault-ops:
+    type: hashicorp
+    addr: https://vault-ops.example.com
+    mount: kv
+    kv_version: 2
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_OPS } }
+
+defaults:
+  safety:
+    # Any run that would change something in prod asks first.
+    confirm_environments: [prod]
+
+target_sets:
+  # The tenant databases: 3 in dev, 2 in qa, 3 in prod.
+  appdb:
+    type: oracle
+    name: "appdb-{env}-{tenant}"
+    dsn: "{host}:1521/{tenant}{env}.pdb.example.com"
+    environment: "{env}"
+    vault: "{vault}"
+    # The tool's own login, read from each environment's vault. No prompt, and
+    # each environment can have its own password.
+    admin:
+      username: C##SOPULI_SVC
+      auth: { method: vault, secret: "ops/sopuli/{env}/admin#password" }
+    oracle: { scope: pdb, container: "{tenant}{env}" }
+    for_each:
+      env:
+        dev:
+          host: db-dev.example.com
+          vault: vault-dev
+          tenant: [alpha, beta, gamma]
+        qa:
+          host: db-qa.example.com
+          vault: vault-qa
+          tenant: [alpha, beta]
+        prod:
+          host: db-prod.example.com
+          vault: vault-prod
+          tenant: [alpha, beta, gamma]
+
+  # The container root of each environment, for common users.
+  appdb-cdb:
+    type: oracle
+    name: "appdb-{env}-cdb"
+    dsn: "{host}:1521/{cdb_service}"
+    environment: "{env}"
+    vault: "{vault}"
+    admin:
+      username: C##SOPULI_SVC
+      auth: { method: vault, secret: "ops/sopuli/{env}/admin#password" }
+    oracle: { scope: cdb_root }
+    for_each:
+      env:
+        dev:
+          host: db-dev.example.com
+          cdb_service: CDBDEV.example.com
+          vault: vault-dev
+        qa:
+          host: db-qa.example.com
+          cdb_service: CDBQA.example.com
+          vault: vault-qa
+        prod:
+          host: db-prod.example.com
+          cdb_service: CDBPROD.example.com
+          vault: vault-prod
+
+groups:
+  tenant-pdbs: { match: { target_set: appdb } }
+  cdb-roots:   { match: { target_set: appdb-cdb } }
+
+policies:
+  app-standard:
+    password:
+      length: 24
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+  personal-standard:
+    password:
+      length: 20
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+
+# ---------------------------------------------------------------------------
+# UC-1: application accounts. A vault holds each password as the master copy,
+# and the tool makes the databases match it.
+# ---------------------------------------------------------------------------
+applications:
+  - name: acme
+    targets: { group: tenant-pdbs }
+    accounts: [acme_web_user, acme_api_user, acme_batch_user]
+    secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+    policy: app-standard
+
+  - name: monitoring
+    targets: { group: cdb-roots }
+    accounts: ["C##MONITOR"]
+    secret: "ops/monitoring#password"
+    policy: app-standard
+
+# ---------------------------------------------------------------------------
+# UC-2: personal accounts. Nothing holds these passwords as a master copy. A
+# DBA resets one when its owner needs it, and the tool hands it over.
+#
+# Keep application accounts out of personal_accounts. A name written in both
+# places is refused when the file loads. A profile or role rule is checked
+# against the database, so the file cannot see that kind of overlap: give
+# ACME_DEVELOPER to people only, never to acme_web_user and the others.
+# `account list` warns (SOPULI-W042) if a rule admits an application account.
+# ---------------------------------------------------------------------------
+personal_accounts:
+  - profile: ACME_DEVELOPER
+    targets: { group: tenant-pdbs }
+    policy: personal-standard
+
+  - accounts: ["C##ACME_DBA_CAROL", "C##ACME_DBA_DAVE"]
+    targets: { group: cdb-roots }
+    policy: personal-standard
+
+# The new password goes into the target's own vault behind a single-use
+# wrapping token: a prod reset wraps in vault-prod, a dev reset in vault-dev.
+# So the token of each of those vaults needs `update` on `sys/wrapping/wrap`.
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+
+# One journal of resets for the whole estate, in its own store. Each record is
+# at <prefix>/<target>/<account>, and the lock for a reset at the same path
+# under `locks/`.
+#
+# One store for every environment has a cost: every reset, dev and qa
+# included, needs SOPULI_VAULT_TOKEN_OPS, with read, write and list under both
+# paths, and no reset runs while vault-ops is down. A separate store keeps
+# that dependency off the production vault. To reset while vault-ops is down,
+# remove this block for the run: the reset then writes no record and takes no
+# lock.
+reset_records:
+  vault: vault-ops
+  prefix: sopuli/personal-resets

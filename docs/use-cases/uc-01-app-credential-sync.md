@@ -1175,6 +1175,48 @@ exit 4 cannot say is why an estate that confirmed was not promoted. So a failed
 promotion write has its own code, `SOPULI-W033`, which names the same repair
 command, printed as a note under the line.
 
+### On PostgreSQL
+
+`apply` runs as on Oracle: it reads the vault, logs in as the role to see
+whether the password already works, changes it where it does not, logs in
+again to confirm, and promotes. What differs is the statement and what can
+refuse it.
+
+- **The password never reaches the server** (invariant 15). libpq computes a
+  SCRAM-SHA-256 verifier on the tool host, and the driver sends
+  `ALTER ROLE "<role>" PASSWORD 'SCRAM-SHA-256$…'`, with the role named as
+  `pg_roles` spells it. The server's log and `pg_stat_statements` keep that
+  statement, so what they keep is a verifier
+  (`02-postgres-privileges.md` §6).
+- **Refused before anything is sent:** a password that is empty, holds a
+  control character, cannot be encoded as UTF-8, or is over 1024 bytes; a
+  standby or a read-only role; a server before PostgreSQL 10, which cannot
+  store a verifier (exit 5, `scram_verifier`); and a role the guardrails
+  refuse (`02-postgres-privileges.md` §5).
+- **The tool account needs `ADMIN OPTION` on each role from PostgreSQL 16**
+  (`02-postgres-privileges.md` §2.2), and the login before and after the change
+  needs the `pg_hba.conf` line `check` needs.
+- **There is no rollover window,** so `apply` uses the `staged` strategy only.
+
+The sample is from tier 1, after `creds generate` staged both passwords:
+
+```
+$ sopuli --config postgres.yaml creds apply
+...
+ACCOUNT          TARGET  STATE    DETAIL
+acme_app_user    pg-dev  IN_SYNC  changed and verified by login
+acme_batch_user  pg-dev  IN_SYNC  changed and verified by login
+
+2 changed, 1 promoted to `current`
+
+1 note:
+  pg-dev: a password was sent over a connection that is not encrypted: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
+...
+```
+
+Run again, it changes nothing: `the vault's password is already accepted;
+nothing to change` for each role.
+
 ---
 
 ## 6. Oracle specifics

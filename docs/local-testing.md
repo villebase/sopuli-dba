@@ -449,10 +449,10 @@ and the run exits 1.
 ### A PostgreSQL cluster
 
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
-password `sopuli-test`. `doctor` connects to it and reports what it found, and
-`creds check` checks a role's password by logging in as it. The other commands
-refuse a PostgreSQL target with `SOPULI-20006`, except `creds generate`, which
-uses the policy's limits for it.
+password `sopuli-test`. `doctor` connects to it and reports what it found,
+`creds check` checks a role's password by logging in as it, and `creds apply`
+sets one. The other commands refuse a PostgreSQL target with `SOPULI-20006`,
+except `creds generate`, which uses the policy's limits for it.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
@@ -552,6 +552,57 @@ acme_drift_user  pg-dev  DRIFT    vault v1 the server refused the password (28P0
 A wrong password exits 3. A role that `pg_hba.conf` does not let in is
 `UNVERIFIABLE`, and a `NOLOGIN` role is `LOCKED`. Use the default
 `--method login`: `hash` and `both` are refused on PostgreSQL.
+
+To set the passwords, the tool account needs `ADMIN OPTION` on each role on
+PostgreSQL 16 and later
+([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2.2):
+
+```
+postgres=# GRANT acme_app_user TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+```
+
+Stage passwords with `creds generate`, then run `creds apply`:
+
+```
+$ sopuli --config postgres.yaml creds apply
+Plan: 2 accounts x 1 target = 2 applys   [dev]
+
+ACCOUNT          TARGET  INTENT                               SECRET
+acme_app_user    pg-dev  verify, password_set, vault_promote  vault-dev:acme/pg-dev
+acme_batch_user  pg-dev  verify, password_set, vault_promote  vault-dev:acme/pg-dev
+
+shared secrets (1 document):
+SECRET                 TARGETS  ACCOUNTS
+vault-dev:acme/pg-dev  pg-dev   acme_app_user, acme_batch_user
+
+ACCOUNT          TARGET  SECRET                 SOURCE
+acme_app_user    pg-dev  vault-dev:acme/pg-dev  pending
+acme_batch_user  pg-dev  vault-dev:acme/pg-dev  pending
+
+ACCOUNT          TARGET  STATE    DETAIL
+acme_app_user    pg-dev  IN_SYNC  changed and verified by login
+acme_batch_user  pg-dev  IN_SYNC  changed and verified by login
+
+2 changed, 1 promoted to `current`
+
+1 note:
+  pg-dev: a password was sent over a connection that is not encrypted: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
+```
+
+The server never sees the password: the statement carries a SCRAM verifier
+computed on this machine. `pg_stat_statements` shows what it kept:
+
+```
+$ docker exec sopuli-test-postgres-1 psql -U postgres -tAc "select query from pg_stat_statements where query ilike 'alter role%'"
+ALTER ROLE "acme_app_user" PASSWORD 'SCRAM-SHA-256$4096:…'
+ALTER ROLE "acme_batch_user" PASSWORD 'SCRAM-SHA-256$4096:…'
+```
+
+Run `creds apply` again and it changes nothing.
 
 ---
 

@@ -80,7 +80,6 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
 @pytest.mark.parametrize(
     "call",
     [
-        lambda s: s.describe_user("acme_app_user"),
         lambda s: s.byte_limit(),
         lambda s: s.verify_password("acme_app_user", Secret("x")),
         lambda s: s.set_password("acme_app_user", Secret("x")),

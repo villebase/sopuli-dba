@@ -179,3 +179,18 @@ def test_a_lost_connection_with_no_sqlstate_is_08006() -> None:
 
 def test_the_first_line_leads_with_the_code() -> None:
     assert classify("28P01", WRONG_PASSWORD).first_line == f"28P01: {WRONG_PASSWORD}"
+
+
+def test_no_connect_on_the_database_has_a_connect_hint() -> None:
+    """No statement ran, so the rule's own hint about a statement does not fit."""
+    diagnosis = from_error(
+        _PsycopgError(
+            'connection to server at "127.0.0.1", port 5432 failed: FATAL:  permission denied '
+            'for database "postgres"\nDETAIL:  User does not have CONNECT privilege.'
+        ),
+        connecting=True,
+    )
+
+    assert diagnosis.code == "42501"
+    assert "GRANT CONNECT ON DATABASE" in str(diagnosis.hint)
+    assert "statement" not in str(diagnosis.hint)

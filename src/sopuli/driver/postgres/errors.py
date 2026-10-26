@@ -124,8 +124,17 @@ _CONNECT_MESSAGES = (
     # The server says these only after the password was accepted (measured on
     # 16.15, #1067): with a wrong password it answers 28P01 first.
     (re.compile(r'permission denied for database ".*"'), INSUFFICIENT_PRIVILEGE),
-    (re.compile(r'too many connections for role ".*"'), TOO_MANY_CONNECTIONS),
+    (re.compile(r'too many connections for (role|database) ".*"'), TOO_MANY_CONNECTIONS),
 )
+
+#: The hint for a code recovered from a failed connection, where the rule's
+#: own hint is about a statement and no statement ran.
+_CONNECT_HINTS = {
+    INSUFFICIENT_PRIVILEGE: (
+        "the role has no CONNECT on `postgres.database`: GRANT CONNECT ON DATABASE to it, "
+        "or to PUBLIC"
+    ),
+}
 
 #: libpq's own messages when it cannot verify the server certificate, which the
 #: default `sslmode: verify-full` asks it to. No SQLSTATE: the server never saw a
@@ -251,7 +260,9 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
         # The earliest in the message, which is the first attempt; at one
         # place, the earlier row, so `password …` wins over `… authentication
         # failed` when both match.
-        return classify(min(found)[2], message)
+        recovered = classify(min(found)[2], message)
+        hint = _CONNECT_HINTS.get(recovered.code)
+        return recovered if hint is None else replace(recovered, hint=hint)
     diagnosis = classify(UNABLE_TO_CONNECT, message)
     if _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)

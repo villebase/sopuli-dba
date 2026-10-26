@@ -304,13 +304,20 @@ def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
     :mod:`sopuli.config.references` refuses a dangling ``policy:`` when the file
     is read, which is the earlier and better moment.
     """
-    name = binding.policy if binding.policy is not None else config.defaults.policy
+    name = policy_name_for(config, binding)
     if name is None:
         return AccountAttributes()
     found = next((policy for policy in config.policies if policy.name == name), None)
     if found is None:
         return AccountAttributes()
     return _attributes(found.account)
+
+
+def policy_name_for(config: Config, binding: Binding) -> str | None:
+    """The policy :func:`attributes_for` reads for ``binding``: its own
+    ``policy:``, then ``defaults.policy``. One chain, so a message naming a
+    policy key names the policy whose attributes are enforced."""
+    return binding.policy if binding.policy is not None else config.defaults.policy
 
 
 def _attributes(policy: AccountPolicy) -> AccountAttributes:
@@ -334,6 +341,7 @@ def settled_before_acting(
     *,
     requested: str | None = None,
     unlock: bool = False,
+    unlockable: bool = True,
     expiry_cleared: bool = True,
 ) -> Outcome | None:
     """The outcome for an account nothing should be issued against, or ``None``.
@@ -364,7 +372,11 @@ def settled_before_acting(
       caller unlocks and asks again, so this function is what decides both
       whether the estate may be acted on and whether the unlock got it there. The
       default is off, because an account that was locked and is still locked when
-      the question is asked again must settle rather than loop.
+      the question is asked again must settle rather than loop. ``unlockable``
+      is whether the target reports ``account_lock_state``: where it does not,
+      such as a ``NOLOGIN`` role on PostgreSQL, the advice to declare the
+      attribute would be refused at plan time, so the message says the tool
+      does not change it instead.
     * **A rollback with a rotation in flight.** ``PENDING_APPLY``. Rolling back
       while a `pending` is staged leaves it staged, and the next `apply` moves
       the estate forward with it -- undoing the undo, unattended. Last of the
@@ -389,11 +401,20 @@ def settled_before_acting(
             "the config declares this account; the database has no such user",
         )
     if user.locked and not unlock:
+        cannot = (
+            f"account is {user.status.lower()}; the password was not changed, because a "
+            f"locked account cannot confirm one"
+        )
+        if not unlockable:
+            return Outcome(
+                LOCKED,
+                f"{cannot}. This target cannot unlock an account, and the tool does not "
+                f"change whether it can log in: whoever owns the account unlocks it",
+            )
         return Outcome(
             LOCKED,
-            f"account is {user.status.lower()}; the password was not changed, because a "
-            f"locked account cannot confirm one -- declare `account: {{ unlock_if_locked: "
-            f"true }}` on this account's policy to have `apply` unlock it first",
+            f"{cannot} -- declare `account: {{ unlock_if_locked: true }}` on this "
+            f"account's policy to have `apply` unlock it first",
         )
     if user.expired and not expiry_cleared:
         return Outcome(

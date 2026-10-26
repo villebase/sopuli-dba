@@ -51,12 +51,14 @@ from sopuli.diagnostics import (
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK_STATE,
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
     EXPIRE_PASSWORD,
     FAIL,
     PASS,
     PASSWORD_ROLLOVER,
+    PROFILE_MANAGEMENT,
     SKIPPED,
     VERIFY_LOGIN,
     AccountAttributes,
@@ -327,6 +329,16 @@ def validator() -> Draft202012Validator:
 #: in the tests about them.
 TLS = Encryption(method="tls", protocol="tcps")
 
+#: What every Oracle target reports for UC-1 §5's attributes.
+ATTRIBUTE_CAPABILITIES = frozenset({ACCOUNT_LOCK_STATE, PROFILE_MANAGEMENT})
+
+
+def working(harness: dict[str, Any]) -> Any:
+    """The first session the run did its work over. Under a declared attribute
+    the plan-time capability check opens one first, per target, that only
+    reads the scope."""
+    return next(session for session in harness["sessions"] if session.described)
+
 
 class FakeSession:
     """One target's worth of answers, and a record of everything it was asked.
@@ -385,17 +397,22 @@ class FakeSession:
         self.changed: list[tuple[str, str]] = []
         self.finished: list[str] = []
         self.closed = False
+        #: Whether the run read an account over this session. The plan-time
+        #: capability check (#1072) opens one that only reads the scope.
+        self.described = False
 
     def scope(self) -> Scope:
+        # The attribute capabilities are always there, as on Oracle, where
+        # `account_lock_state` is structural and `profile_management` is in the
+        # baseline grants. `test_cli_attribute_capabilities.py` takes them away.
+        capabilities = self.capabilities | ATTRIBUTE_CAPABILITIES
         if self.given_scope is not None:
-            return replace(
-                self.given_scope, capabilities=self.capabilities, encryption=self.encryption
-            )
+            return replace(self.given_scope, capabilities=capabilities, encryption=self.encryption)
         return Scope(
             type="pdb",
             container="ALPHA",
             read_write=True,
-            capabilities=self.capabilities,
+            capabilities=capabilities,
             encryption=self.encryption,
         )
 
@@ -411,6 +428,7 @@ class FakeSession:
         return self.audit if self.audit is not None else PrivilegeAudit()
 
     def describe_user(self, account: str) -> UserState | None:
+        self.described = True
         self._called("describe_user")
         if self.describe_error is not None:
             raise self.describe_error
@@ -1037,7 +1055,7 @@ def test_a_locked_account_is_unlocked_and_then_rotated(
     harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
     result = run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
 
-    session = harness["sessions"][0]
+    session = working(harness)
     assert session.unlocked == ["ACME_WEB_USER"]
     assert session.changed == [("ACME_WEB_USER", STAGED)]
     assert result.exit_code == ExitCode.SUCCESS
@@ -1052,7 +1070,7 @@ def test_the_unlock_happens_before_the_first_login(
     harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
     run(runner, write_config(UNLOCKING_CONFIG), "--select", "tenant=alpha")
 
-    session = harness["sessions"][0]
+    session = working(harness)
     assert session.unlocked == ["ACME_WEB_USER"]
     assert session.attempts, "the run should still have verified after unlocking"
 
@@ -1115,7 +1133,10 @@ def test_the_dry_run_unlocks_nothing(
     harness = estate(users={"ACME_WEB_USER": user(status="LOCKED", locked=True)})
     run(runner, write_config(UNLOCKING_CONFIG), "--dry-run")
 
-    assert harness["sessions"] == []
+    # The plan-time capability check reads each target's scope (#1072), and
+    # changes nothing.
+    assert all(not session.unlocked for session in harness["sessions"])
+    assert all(not session.changed for session in harness["sessions"])
 
 
 def test_an_account_is_moved_to_the_profile_the_policy_names(
@@ -1126,7 +1147,7 @@ def test_an_account_is_moved_to_the_profile_the_policy_names(
     harness = estate(users={"ACME_WEB_USER": user(profile="ACME_LEGACY_PROF")})
     result = run(runner, write_config(ASSIGNING_CONFIG), "--select", "tenant=alpha")
 
-    session = harness["sessions"][0]
+    session = working(harness)
     assert session.assigned == [("ACME_WEB_USER", "ACME_APP_PROF")]
     assert session.changed == [("ACME_WEB_USER", STAGED)]
     assert result.exit_code == ExitCode.SUCCESS
@@ -1762,7 +1783,7 @@ def test_a_takeover_stops_the_next_account_before_its_attribute_pass(
 
     result = run(runner, write_config(SHARED_UNLOCKING_CONFIG))
 
-    session = harness["sessions"][0]
+    session = working(harness)
     assert session.unlocked == ["ACME_WEB_USER"]
     assert session.changed == [("ACME_WEB_USER", STAGED)]
     assert result.exit_code == ExitCode.PARTIAL
@@ -1875,8 +1896,8 @@ def test_a_takeover_after_the_attribute_pass_keeps_the_row(
 
     validator.validate(found)
     assert found["exit_code"] == ExitCode.PARTIAL
-    assert harness["sessions"][0].unlocked == ["ACME_WEB_USER"]
-    assert harness["sessions"][0].changed == []
+    assert working(harness).unlocked == ["ACME_WEB_USER"]
+    assert working(harness).changed == []
     [row] = found["results"]
     # True for the unlock: the row's `changed` counts every change to the account.
     assert row["changed"] is True

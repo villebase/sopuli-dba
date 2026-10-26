@@ -126,6 +126,7 @@ def test_rollover_is_an_absent_capability() -> None:
 
     assert refused.value.capability == PASSWORD_ROLLOVER
     assert refused.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "--strategy staged" in str(refused.value.hint)
 
 
 def test_audit_coverage_answers_unknown_and_never_raises() -> None:

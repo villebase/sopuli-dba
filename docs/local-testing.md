@@ -449,10 +449,9 @@ and the run exits 1.
 ### A PostgreSQL cluster
 
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
-password `sopuli-test`. `doctor` connects to it and reports what it found,
-`creds check` checks a role's password by logging in as it, and `creds apply`
-sets one. The other commands refuse a PostgreSQL target with `SOPULI-20006`,
-except `creds generate`, which uses the policy's limits for it.
+password `sopuli-test`. `doctor` connects to it and reports what it found, and
+the UC-1 commands run against it: `creds generate`, `apply`, `check`, `rotate`
+and `status`. The UC-2 commands refuse a PostgreSQL target with `SOPULI-20006`.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
@@ -608,6 +607,71 @@ ALTER ROLE "acme_batch_user" PASSWORD 'SCRAM-SHA-256$4096:…'
 ```
 
 Run `creds apply` again and it changes nothing.
+
+`creds rotate` draws, stages, applies and promotes in one run:
+
+```
+$ sopuli --config postgres.yaml creds rotate --confirm
+Plan: 2 accounts x 1 target = 2 rotations   [dev]
+
+ACCOUNT          TARGET  INTENT                                                              SECRET
+acme_app_user    pg-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/pg-dev
+acme_batch_user  pg-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/pg-dev
+
+shared secrets (1 document):
+SECRET                 TARGETS  ACCOUNTS
+vault-dev:acme/pg-dev  pg-dev   acme_app_user, acme_batch_user
+
+ACCOUNT          TARGET  STATE    DETAIL
+acme_app_user    pg-dev  IN_SYNC  changed and verified by login
+acme_batch_user  pg-dev  IN_SYNC  changed and verified by login
+
+2 changed, 1 promoted to `current`
+
+rotation: staged 1 document, promoted 1 document
+
+1 note:
+  pg-dev: a password was sent over a connection that is not encrypted: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
+```
+
+PostgreSQL keeps one password per role, so `--strategy rollover` is refused
+with exit 5. So is a policy that declares `account: { unlock_if_locked: true }`
+or `account: { profile: … }`: a `NOLOGIN` role is not a lock, and there are no
+password profiles.
+
+`creds status` shows the vault's age for each password. PostgreSQL does not
+record when a password was changed, so `DB_PW_CHANGED` is empty and the run
+says why:
+
+```
+$ sopuli --config postgres.yaml creds status
+Plan: 2 accounts x 1 target = 2 accounts   [dev]
+
+ACCOUNT          TARGET  INTENT  SECRET
+acme_app_user    pg-dev  none    vault-dev:acme/pg-dev
+acme_batch_user  pg-dev  none    vault-dev:acme/pg-dev
+
+shared secrets (1 document):
+SECRET                 TARGETS  ACCOUNTS
+vault-dev:acme/pg-dev  pg-dev   acme_app_user, acme_batch_user
+
+ACCOUNT          TARGET  STATE         VAULT_V  AGE  DB_PW_CHANGED  PROFILE  ROLLOVER
+acme_app_user    pg-dev  UNVERIFIABLE  4        0d   -              -        not configured
+acme_batch_user  pg-dev  UNVERIFIABLE  4        0d   -              -        not configured
+
+2 accounts, nothing to act on
+
+1 note:
+  pg-dev: DB_PW_CHANGED is empty for 2 accounts: PostgreSQL does not record when a role's password was changed
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
+```
 
 ---
 

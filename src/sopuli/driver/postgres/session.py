@@ -406,7 +406,15 @@ class PostgresSession:
     def require_rollover(self, account: str) -> None:
         """PostgreSQL has no password rollover, so this always refuses
         (invariant 4)."""
-        require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
+        require_capability(
+            self.scope(),
+            PASSWORD_ROLLOVER,
+            target=self.target.name,
+            hint=(
+                "PostgreSQL keeps one password per role, so there is no window to open: "
+                "use --strategy staged, or leave --strategy out"
+            ),
+        )
 
     def finish_rollover(self, account: str) -> ChangeResult:
         raise self._not_written("end a rollover window")

@@ -240,10 +240,45 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
 
 
 def test_postgresql_is_written_for_check_and_nothing_else_yet() -> None:
-    """Pinned so that adding a command is a deliberate, reviewed line (#1060,
-    #1067)."""
+    """Pinned so that adding a command is a deliberate, reviewed line."""
     assert DRIVERS["postgresql"].commands == frozenset({"creds.check"})
     assert DRIVERS["oracle"].commands is None
+
+
+def test_doctor_is_never_refused_whoever_asks() -> None:
+    """`doctor` is exempt in the gate itself, not only because its one caller
+    skips the gate."""
+    require_command(target("pg-dev", "postgresql"), "doctor")
+
+
+def _command_names() -> set[str]:
+    """Every verb's dotted name, as the run document spells it."""
+    import click
+
+    from sopuli.cli import cli
+
+    names: set[str] = set()
+
+    def walk(group: click.Group, prefix: tuple[str, ...]) -> None:
+        for name, command in group.commands.items():
+            if isinstance(command, click.Group):
+                walk(command, (*prefix, name))
+            else:
+                names.add(".".join((*prefix, name)))
+
+    walk(cli, ())
+    return names
+
+
+def test_every_listed_command_is_a_real_command_name() -> None:
+    """A misspelling, or the spaced form (`creds apply`), would refuse that
+    command on every target of the driver, and say only that it is not
+    written yet."""
+    real = _command_names()
+    assert "creds.apply" in real, "the walk finds the dotted names"
+    for kind, entry in DRIVERS.items():
+        for name in entry.commands or ():
+            assert name in real, f"{kind} lists {name!r}, which is no command"
 
 
 def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:

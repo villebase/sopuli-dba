@@ -8,8 +8,8 @@ length below:
   PL1  whether PGconn.encrypt_password computes a verifier
   PL2  that verifier set with ALTER ROLE, then a login with the password by
        psycopg, timed, and by psql. The same password without its last
-       character must be refused, so a client that cut the password short is
-       seen
+       character must not log in with either, so a client that cut the
+       password short is seen
   PL3  the password as plaintext in ALTER ROLE, which the server hashes under
        password_encryption = scram-sha-256, then a login by psycopg
 
@@ -17,52 +17,64 @@ The lengths are in bytes. Each ASCII password is drawn from the alnum_safe
 charset. A second set ends with U+00E9, two bytes in UTF-8, so SASLprep has to
 process it rather than pass it through as ASCII.
 
-psycopg runs on the host running the probe. psql runs in the server's own
-container and reaches the server by its compose service name, so over TCP and
-not through the image's trust lines. A password reaches psql through the
-environment of `docker exec`, never through argv. Windows limits one
-environment variable to 32767 characters, so psql is not run above that.
+psycopg runs on the host running the probe. psql is the server's major
+release, in a container the probe starts from the postgres:<major>-alpine
+image on the compose network, because that image builds its own libpq. The
+Debian images of the matrix do not: their psql loads the newest libpq5 of the
+PostgreSQL apt repository, which is 18 in every one. A password reaches psql
+through the environment of `docker exec`, never through argv. Windows limits
+one environment entry, `PGPASSWORD=` and the value, to 32767 characters, so
+psql is not run above that.
+
+A password one character short that logs in, by either client, makes the
+probe exit 1.
 
 It MEASURES and decides nothing.
 
 STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-10-26
 (#1057). The host client was psycopg 3.3.6 with libpq 18.4, on Windows 11
-AMD64; the container clients were psql with libpq 13.23, libpq 14.24,
-libpq 15.19, libpq 16.15, libpq 17.11 and libpq 18.6. Three times, exit 0, the
-same result each time but for the timings, which are the ranges below. Two
-earlier versions are not counted. The first stopped at 65536 bytes and gave
-the results below. The second added 1 MiB with a 10 s connect_timeout, and its
-1 MiB logins timed out on 16.15 and 18.6 in one run and not in the other.
+AMD64. The psql clients were the postgres:13-alpine to postgres:18-alpine
+images, with libpq 13.23, libpq 14.24, libpq 15.19, libpq 16.15, libpq 17.11
+and libpq 18.6. Three times, exit 0, the same result each time but for the
+timings, which are the ranges below. Earlier versions are not counted. They
+ran psql in the matrix's own containers, which load libpq 18 whatever the
+server's release, so they missed the libpq 13 limit below. One also timed out
+at 1 MiB under a 10 s connect_timeout.
 
 RESULTS
 
   PL1  a verifier of 133 bytes at every length, 12 bytes to 1 MiB
-  PL2  the password logs in at every length, on all six servers, by psycopg
-       and, up to 8192 bytes, by psql. One character short, it is refused at
-       every length. A login takes 0.1 s or less up to 8192 bytes, 0.6 to 1 s
-       at 65536, 2.5 to 3.4 s at 256 KiB and 10 to 15 s at 1 MiB: libpq's
-       PBKDF2 hashes the password in each of 4096 iterations, so the time
-       grows with the length
+  PL2  psycopg logs in at every length, on all six servers. psql with libpq
+       14 to 18 logs in at every length it was run with, up to 8192 bytes.
+       psql with libpq 13 logs in up to 1024 bytes, and above that fails
+       before it sends anything: "psql: error: out of memory", ASCII or not.
+       No password one character short logs in. A psycopg login takes 0.1 s
+       or less up to 8192 bytes, 0.6 to 0.7 s at 65536, 2.5 to 2.7 s at
+       256 KiB and about 10 s at 1 MiB: libpq's PBKDF2 hashes the password in
+       each of 4096 iterations, so the time grows with the length
   PL3  13.23 refuses a plaintext password longer than 1024 bytes in ALTER
        ROLE: SQLSTATE 54000, "password too long", ASCII or not. 14.24 to 18.6
        accept every length, and the password logs in
 
-  So with a verifier no length up to 1 MiB is refused anywhere. The ceiling
-  that matters is the login time, which the client pays at each login.
+  So with a verifier the server sets no limit, up to 1 MiB. The client does:
+  libpq 13 cannot log in with a password longer than 1024 bytes, and the
+  login time grows with the length on every client.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
 repo's virtual environment:
 
     .venv/Scripts/python sql/postgres/07_password_length_probe.py
 
-It needs psycopg and the docker CLI. The container names follow
+It needs psycopg and the docker CLI, and pulls postgres:13-alpine to
+postgres:18-alpine. The container and network names follow
 COMPOSE_PROJECT_NAME, and the ports SOPULI_TEST_POSTGRES13_PORT to
 SOPULI_TEST_POSTGRES18_PORT, so a second clone's matrix is the one it uses.
 
 THROWAWAY SERVERS ONLY. On each server it creates the role sopuli_probe_len
 and drops it at the end, and before it starts it drops one an interrupted run
-left.
+left. It removes each client container at the end, and one an interrupted
+run left before it starts one.
 """
 
 from __future__ import annotations
@@ -75,6 +87,8 @@ import time
 import psycopg
 from psycopg import pq, sql
 
+from sopuli.config import charsets
+
 #: The stack's project name, so a second clone's stack is the one probed.
 PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "sopuli-test")
 VERSIONS = (13, 14, 15, 16, 17, 18)
@@ -86,20 +100,47 @@ ASCII_LENGTHS += (1 << 18, 1 << 20)
 #: Seconds a login may take. A 1 MiB password takes about ten.
 LOGIN_TIMEOUT = 120
 NON_ASCII_LENGTHS = (1024, 1025, 2048)
-#: alnum_safe, from sopuli.config.charsets, in a fixed order.
-ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_#-.+=~"
-#: The longest value Windows allows for one environment variable.
+ALPHABET = charsets.ALPHABETS["alnum_safe"]
+#: The longest entry Windows allows in a process's environment.
 ENV_LIMIT = 32767
 #: e with acute, written as a code point so the source stays ASCII.
 E_ACUTE = chr(0xE9)
 
 
-def _container(version: int) -> str:
-    return f"{PROJECT}-postgres-{version}-1"
+def _client(version: int) -> str:
+    return f"{PROJECT}-probe-client-{version}"
 
 
 def _port(version: int) -> str:
     return os.environ.get(f"SOPULI_TEST_POSTGRES{version}_PORT", f"54{version}")
+
+
+class StepError(Exception):
+    """A step that is not a result failed, or a short password logged in."""
+
+
+def _docker(*argv: str) -> str:
+    done = subprocess.run(["docker", *argv], capture_output=True, check=False)
+    out = (done.stdout + done.stderr).decode("utf-8", "replace").strip()
+    if done.returncode != 0:
+        raise StepError(f"docker {' '.join(argv[:3])} exited {done.returncode}: {out}")
+    return out
+
+
+def _remove_client(version: int) -> None:
+    subprocess.run(["docker", "rm", "-f", _client(version)], capture_output=True, check=False)
+
+
+def _start_client(version: int) -> str:
+    """Start the psql container for this major release, and say which libpq it has."""
+    _remove_client(version)
+    _docker(
+        "run", "-d", "--name", _client(version), "--network", f"{PROJECT}_default",
+        "--entrypoint", "sleep", f"postgres:{version}-alpine", "infinity",
+    )  # fmt: skip
+    psql = _docker("exec", _client(version), "psql", "--version")
+    libpq = _docker("exec", _client(version), "sh", "-c", "ls /usr/local/lib/libpq.so.5.*")
+    return f"{psql}, {libpq}"
 
 
 def _password(length: int, non_ascii: bool) -> str:
@@ -155,9 +196,9 @@ def _login_host(version: int, password: str) -> str:
 
 
 def _login_psql(version: int, password: str) -> str:
-    if len(password) > ENV_LIMIT:
+    if len("PGPASSWORD=") + len(password) > ENV_LIMIT:
         return "not run"
-    argv = ["docker", "exec", "-e", "PGPASSWORD", _container(version)]
+    argv = ["docker", "exec", "-e", "PGPASSWORD", _client(version)]
     argv += ["psql", f"host=postgres-{version} dbname=sopuli user={ROLE}"]
     argv += ["-X", "-At", "-c", "SELECT 'logged in'"]
     done = subprocess.run(
@@ -171,10 +212,15 @@ def _login_psql(version: int, password: str) -> str:
     return f"error: {' '.join(out.split())[:160]}"
 
 
-def _psql_version(version: int) -> str:
-    argv = ["docker", "exec", _container(version), "psql", "--version"]
-    done = subprocess.run(argv, capture_output=True, check=True)
-    return done.stdout.decode().strip()
+def _short(version: int, password: str) -> str:
+    """Log in with the password one character short, which neither client may
+    do. An error is a result, as it is for the whole password: a client that
+    cannot send this length fails the same way at both."""
+    host, psql = _login_host(version, password[:-1]), _login_psql(version, password[:-1])
+    for client, result in (("psycopg", host), ("psql", psql)):
+        if result.startswith("ok"):
+            raise StepError(f"{client} logged in with the password one character short")
+    return f"host {host}, psql {psql}"
 
 
 def _one(conn: psycopg.Connection, version: int, password: str) -> tuple[str, str]:
@@ -188,8 +234,7 @@ def _one(conn: psycopg.Connection, version: int, password: str) -> tuple[str, st
     try:
         _alter(conn, verifier)
         host, psql = _login_host(version, password), _login_psql(version, password)
-        short = _login_host(version, password[:-1])
-        pl2 = f"PL2 host {host}, psql {psql}, one character short {short}"
+        pl2 = f"PL2 host {host}, psql {psql}, one character short {_short(version, password)}"
     except psycopg.Error as exc:
         pl2 = f"PL2 ALTER ROLE {_error(exc)}"
     try:
@@ -208,7 +253,8 @@ def _server(version: int) -> None:
         row = conn.execute("SELECT current_setting('server_version')").fetchone()
         assert row is not None
         print(f"=== server {row[0]}")
-        print(f"host client: libpq {pq.version()}; container client: {_psql_version(version)}")
+        container = _start_client(version)
+        print(f"host client: libpq {pq.version()}; container client: {container}")
         conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ROLE)))
         conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(ROLE)))
         try:
@@ -216,14 +262,19 @@ def _server(version: int) -> None:
             for length, non_ascii in cases:
                 kind = "ending in U+00E9" if non_ascii else "ASCII"
                 first, pl3 = _one(conn, version, _password(length, non_ascii))
-                print(f"{length} bytes, {kind}: {first}; {pl3}")
+                print(f"{length} bytes, {kind}: {first}; {pl3}", flush=True)
         finally:
             conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ROLE)))
+            _remove_client(version)
 
 
 def main() -> int:
-    for version in VERSIONS:
-        _server(version)
+    try:
+        for version in VERSIONS:
+            _server(version)
+    except StepError as exc:
+        print(f"STOPPED: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

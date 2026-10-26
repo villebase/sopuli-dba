@@ -491,7 +491,8 @@ such as "from 16", means the one release of it that was measured.
   client log in with a non-ASCII password?**
   Yes, where every client runs SASLprep. A verifier from libpq 18.4 and the
   server's own hash of the plaintext give the same result on 13 to 18. Each
-  password logs in with psycopg and with psql of the server's release, and so
+  password logs in with psycopg and with psql of the server's release, whose
+  libpq is that release's too (the `-alpine` images), and so
   does the other spelling SASLprep makes the same: e with acute composed and
   decomposed, the fi ligature and f i, a no-break space and a space, a soft
   hyphen and nothing. A password with a character SASLprep prohibits, such as
@@ -505,16 +506,20 @@ such as "from 16", means the one release of it that was measured.
   `sql/postgres/06_saslprep_probe.py` measures it.
 - `verified` `pg-password-length` (#1057) — **What is the longest password
   that PostgreSQL accepts, set as a verifier?**
-  No limit was found up to 1 MiB. libpq 18.4 computes a 133-byte verifier at
-  every length from 12 bytes, and the password logs in on 13 to 18, with
-  psycopg and, up to 8192 bytes, with psql. The same password one character
-  short is refused, so no client cut it short. The server never sees a
-  password set as a verifier. Only a plaintext password in `ALTER ROLE` has a
-  limit: 13 refuses one over 1024 bytes with SQLSTATE `54000`, and 14 to 18
-  accept 1 MiB. What grows with the length is the login time, because libpq's
-  PBKDF2 hashes the whole password in each of its 4096 iterations: 0.1 s or
-  less up to 8192 bytes, up to 1 s at 65536 and 10 to 15 s at 1 MiB, at each
-  login. `sql/postgres/07_password_length_probe.py` measures it.
+  The server sets none up to 1 MiB, and the client may. libpq 18.4 computes a
+  133-byte verifier at every length from 12 bytes, and the password logs in
+  with psycopg on 13 to 18. psql with libpq 14 to 18 logs in at every length
+  it was run with, up to 8192 bytes. **libpq 13 cannot log in with a password
+  longer than 1024 bytes**: it fails before it sends anything, with "out of
+  memory", ASCII or not. So an application whose client has libpq 13 cannot
+  use a longer password that the driver sets. No password one character short
+  logged in, so no client cut one short. Only a plaintext password in
+  `ALTER ROLE` has a server limit: 13 refuses one over 1024 bytes with
+  SQLSTATE `54000`, and 14 to 18 accept 1 MiB. The login time grows with the
+  length on every client, because libpq's PBKDF2 hashes the whole password in
+  each of its 4096 iterations: 0.1 s or less up to 8192 bytes, under 1 s at
+  65536 and about 10 s at 1 MiB, at each login. Clients other than libpq were
+  not measured. `sql/postgres/07_password_length_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
   Not run: there is no macOS host. Linux arm64 is not run either. Nothing is

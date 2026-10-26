@@ -2847,8 +2847,8 @@ policy is bound to and that lacks the capability. The refusal names the
 capability, the target and the key (invariant 4). A PostgreSQL cluster reports
 neither: `NOLOGIN` is not a lock, and it has no password profiles. So bind its
 accounts to a policy without the key. On Oracle, `profile_management` needs the
-grant on `DBA_PROFILES` (`02-oracle-privileges.md` §2), and the refusal says so
-first. The check reads each such target once, sharing that login with
+grant on `DBA_PROFILES` (`02-oracle-privileges.md` §2), so the refusal names a
+missing grant before it suggests dropping the key. The check reads each such target once, sharing that login with
 `require_encryption`'s, and `--dry-run` reads it too, so the preview refuses
 what the run would. A target it cannot reach is asked again on the connection
 that would enforce the attribute.

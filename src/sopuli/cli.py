@@ -6584,8 +6584,9 @@ def creds_apply(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
-    # A dry run connects only for the pre-flight or for `require_encryption`'s
-    # read (#857); without either it reads the vault.
+    # A dry run connects only for the pre-flight, for `require_encryption`'s
+    # read (#857), or for the attribute capability read (#1072); without any of
+    # them it reads the vault.
     connects = (
         not run.dry_run
         or strategy is not None
@@ -6594,6 +6595,7 @@ def creds_apply(
             encryption_required_at(target, config, run.resolved) is not None
             for target in _targets_of(config, bindings)
         )
+        or bool(_attribute_needs(config, bindings))
     )
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings) if connects else [], run.prompt, action="applying a password"
@@ -7756,6 +7758,9 @@ def _apply_target(
                     # target can sit on different policies, and only one of them may
                     # have opted into an attribute.
                     attributes=apply_states.attributes_for(config, binding),
+                    attributes_at=(
+                        f"policies.{apply_states.policy_name_for(config, binding)}.account"
+                    ),
                     encryption_required=required,
                     held=refusing or None,
                 )
@@ -7897,6 +7902,7 @@ def _apply_one(
     declared: frozenset[str],
     selection: Selection,
     attributes: AccountAttributes,
+    attributes_at: str = "account",
     force: bool = False,
     requested: str | None = None,
     encryption_required: str | None = None,
@@ -8003,8 +8009,10 @@ def _apply_one(
     try:
         user = session.describe_user(binding.account)
         # Whether the advice for a locked account may be to declare the unlock:
-        # a target without the capability refuses that at plan time.
-        unlockable = session.scope().supports(ACCOUNT_LOCK_STATE)
+        # a target without the capability refuses that at plan time. Read only
+        # for a locked account, so a failed scope read cannot turn a missing or
+        # open account's row into an error.
+        unlockable = user is None or not user.locked or session.scope().supports(ACCOUNT_LOCK_STATE)
         settled = apply_states.settled_before_acting(
             user, source, requested=requested, unlock=attributes.unlock, unlockable=unlockable
         )
@@ -8113,7 +8121,7 @@ def _apply_one(
             # that is not a way past it (#1072).
             refusal = _attribute_refusal(
                 session.scope(),
-                _needs_of(attributes, "account"),
+                _needs_of(attributes, attributes_at),
                 target=binding.target,
             )
             if refusal is not None:
@@ -8702,9 +8710,8 @@ _ATTRIBUTE_HINTS = {
     ),
     PROFILE_MANAGEMENT: (
         "the tool account cannot read this target's password profiles. Where the "
-        "product has them, grant what reads them (on Oracle, SELECT on DBA_PROFILES, "
-        "02-oracle-privileges.md §2); where it has none, bind its accounts to a "
-        "policy without that key"
+        "product has them, grant what reads them, as its privileges document lists; "
+        "where it has none, bind its accounts to a policy without that key"
     ),
 }
 

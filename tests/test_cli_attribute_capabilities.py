@@ -76,12 +76,18 @@ NEITHER = CONFIG.replace("ACCOUNT\n", "")
 
 
 class FakeSession:
-    def __init__(self, capabilities: frozenset[str]) -> None:
+    def __init__(
+        self, capabilities: frozenset[str], *, missing: bool = False, scope_error: bool = False
+    ) -> None:
         self.capabilities = capabilities
+        self.missing = missing
+        self.scope_error = scope_error
         self.changed: list[str] = []
         self.described = False
 
     def scope(self) -> Scope:
+        if self.scope_error:
+            raise RuntimeError("the scope probe failed")
         return Scope(
             type="pdb",
             container="ALPHA",
@@ -95,6 +101,8 @@ class FakeSession:
 
     def describe_user(self, account: str) -> UserState | None:
         self.described = True
+        if self.missing:
+            return None
         return UserState(
             name=account.upper(), status="OPEN", password_file_member=False, vendor_maintained=False
         )
@@ -125,7 +133,13 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
     """A vault with `pending` staged, and a fake driver whose sessions report
     ``capabilities``."""
 
-    def install(capabilities: frozenset[str], *, refuse_first: bool = False) -> dict[str, Any]:
+    def install(
+        capabilities: frozenset[str],
+        *,
+        refuse_first: bool = False,
+        missing: bool = False,
+        scope_error: bool = False,
+    ) -> dict[str, Any]:
         store = MemoryStore()
         store.write(
             "apps/acme/db",
@@ -148,7 +162,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 attempts.append(target.name)
                 if refuse_first and len(attempts) == 1:
                     raise ConnectionError("the listener did not answer")
-                opened = FakeSession(capabilities)
+                opened = FakeSession(capabilities, missing=missing, scope_error=scope_error)
                 sessions.append(opened)
                 return opened
 
@@ -244,13 +258,15 @@ def test_the_profile_hint_names_the_grant_before_dropping_the_key(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """On Oracle the capability is probed from DBA_PROFILES, so a missing grant
-    is the usual cause, and dropping `profile:` would stop enforcing it."""
+    is the usual cause, and dropping `profile:` would stop enforcing it. The
+    hint names no product: the privileges document says which grant."""
     estate(frozenset())
     result = invoke(runner, write_config(PROFILE), "creds", "apply")
 
     hint = json.loads(result.output)["error"]["hint"]
-    assert "SELECT on DBA_PROFILES" in hint
+    assert "privileges document" in hint
     assert hint.index("grant") < hint.index("policy without that key")
+    assert "Oracle" not in hint
 
 
 def test_encryption_and_an_attribute_share_one_login_per_target(
@@ -280,7 +296,38 @@ def test_a_target_the_plan_could_not_read_is_refused_on_its_row(
     [row] = json.loads(result.output)["results"]
     assert row["state"] == "ERROR"
     assert "does not support account_lock_state" in row["error"]["message"]
+    assert row["error"]["hint"].startswith(
+        "`policies.app-standard.account.unlock_if_locked` asks for it"
+    )
     assert changed(harness) == []
+
+
+def test_a_dry_run_that_reads_the_scope_asks_whether_anyone_can_answer_a_prompt(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The attribute check makes a dry run connect, so a target whose admin
+    password is prompted for, with nobody to answer, is refused up front, as
+    the real run is."""
+    estate(frozenset({ACCOUNT_LOCK_STATE}))
+    prompted = UNLOCK.replace(
+        "    vault: vault-prod\n",
+        "    vault: vault-prod\n    admin: { username: C##SOPULI_SVC, auth: { method: prompt } }\n",
+    )
+    result = invoke(runner, write_config(prompted), "creds", "apply", "--dry-run")
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+
+
+def test_a_missing_account_is_reported_missing_when_the_scope_cannot_be_read(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The scope is read only for a locked account's advice, so a failed read
+    does not turn a missing account's row into an error."""
+    estate(frozenset(), missing=True, scope_error=True)
+    result = invoke(runner, write_config(NEITHER), "creds", "apply")
+
+    [row] = json.loads(result.output)["results"]
+    assert row["state"] == "ACCOUNT_MISSING", row
 
 
 def test_no_attribute_asks_nothing_and_opens_no_extra_connection(

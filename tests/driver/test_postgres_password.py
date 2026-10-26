@@ -29,12 +29,15 @@ VERIFIER = "SCRAM-SHA-256$4096:c2FsdA==$c3RvcmVk:c2VydmVy"
 
 
 class _PGconn:
-    def __init__(self, answer: str = VERIFIER) -> None:
+    def __init__(self, answer: str = VERIFIER, fails: Exception | None = None) -> None:
         self.answer = answer
+        self.fails = fails
         self.asked: list[tuple[bytes, bytes, bytes | None]] = []
 
     def encrypt_password(self, passwd: bytes, user: bytes, algorithm: bytes | None = None) -> bytes:
         self.asked.append((passwd, user, algorithm))
+        if self.fails is not None:
+            raise self.fails
         return self.answer.encode("ascii")
 
 
@@ -67,7 +70,7 @@ class _Connection:
         yield _Cursor(self)
 
 
-def _session(*, read_write: bool = True) -> Any:
+def _session(*, read_write: bool = True, version: str = "16.15") -> Any:
     target = ExpandedTarget(
         target=Target(name="pg-dev", type="postgresql", dsn="pg-dev.example.com:5432")
     )
@@ -76,8 +79,17 @@ def _session(*, read_write: bool = True) -> Any:
         type="cluster",
         open_mode="READ WRITE" if read_write else "READ ONLY",
         read_write=read_write,
+        db_version=version,
     )
     return built
+
+
+def _refused_before_sending(session: Any, secret: Secret) -> Any:
+    with pytest.raises(DriverError) as refused:
+        session.set_password(ROLE, secret)
+    assert session.connection.sent == []
+    assert refused.value.password_sent is False
+    return refused.value
 
 
 def _text(statement: Any) -> str:
@@ -194,14 +206,66 @@ def test_a_refused_statement_has_password_sent_set() -> None:
 # --------------------------------------------------------------- the guards ---
 
 
-def test_a_non_scram_answer_from_libpq_is_never_sent() -> None:
+def test_a_non_scram_answer_from_libpq_is_never_sent_and_never_quoted() -> None:
     session = _session()
-    session.connection.pgconn = _PGconn(answer="md5abcdef0123456789abcdef0123456789")
+    answer = "md5abcdef0123456789abcdef0123456789"
+    session.connection.pgconn = _PGconn(answer=answer)
 
-    with pytest.raises(ValueError, match="not SCRAM-SHA-256"):
-        session.set_password(ROLE, Secret(PASSWORD))
+    refused = _refused_before_sending(session, Secret(PASSWORD))
 
-    assert session.connection.sent == []
+    assert isinstance(refused, password.VerifierError)
+    assert answer[:8] not in str(refused)
+
+
+def test_a_libpq_failure_is_a_mapped_error_and_nothing_is_sent() -> None:
+    import psycopg
+
+    session = _session()
+    session.connection.pgconn = _PGconn(fails=psycopg.OperationalError("out of memory"))
+
+    refused = _refused_before_sending(session, Secret(PASSWORD))
+
+    assert isinstance(refused, password.VerifierError)
+    assert "could not compute a SCRAM verifier" in refused.message
+    assert refused.hint
+
+
+@pytest.mark.parametrize(
+    ("value", "says"),
+    [
+        ("", "empty"),
+        ("Before\x00After-1", "control characters"),
+        ("Tab\there-1", "control characters"),
+        ("Lone\ud800surrogate", "cannot be encoded"),
+    ],
+)
+def test_a_password_libpq_would_mangle_is_refused_before_libpq_sees_it(
+    value: str, says: str
+) -> None:
+    """A NUL would end libpq's C string early: the role would get the prefix's
+    verifier, and the vault would keep the whole value."""
+    session = _session()
+
+    refused = _refused_before_sending(session, Secret(value))
+
+    assert isinstance(refused, password.PasswordNotAdmissibleError)
+    assert says in refused.message
+    assert refused.category == "policy"
+    assert session.connection.pgconn.asked == []
+
+
+@pytest.mark.parametrize("version", ["9.6.24", "garbled"])
+def test_a_server_that_cannot_store_a_verifier_is_refused_before_anything_is_sent(
+    version: str,
+) -> None:
+    """Before 10 the server reads `SCRAM-SHA-256$…` as a plaintext password. A
+    version that cannot be read refuses rather than guesses."""
+    session = _session(version=version)
+
+    refused = _refused_before_sending(session, Secret(PASSWORD))
+
+    assert "cannot store a SCRAM verifier" in refused.message
+    assert session.connection.pgconn.asked == []
 
 
 def test_the_statement_builder_refuses_anything_but_a_verifier() -> None:

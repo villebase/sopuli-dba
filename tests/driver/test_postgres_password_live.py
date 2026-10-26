@@ -97,7 +97,6 @@ def observed(live_postgres: Any) -> Iterator[dict[str, Any]]:
                         sql.Identifier(managed), sql.Identifier(tool)
                     )
                 )
-            admin.execute("select pg_stat_statements_reset()")
             offset = _log_size(admin)
         yield {"tool": tool, "tool_password": tool_password, "managed": managed, "offset": offset}
     finally:
@@ -135,12 +134,23 @@ def test_the_password_reaches_neither_the_log_nor_pg_stat_statements(
         session.close()
     assert result.changed is True
 
-    # The logging collector writes in its own process.
-    time.sleep(2)
+    # The logging collector writes in its own process, so wait for the
+    # statement to reach the file, with a deadline rather than a fixed sleep.
+    # pg_stat_statements is read for the tool account's rows only: the new
+    # role is unique, and nothing is reset for the other sessions of the stack.
+    deadline = time.monotonic() + 30
     with _superuser(live_postgres) as admin:
         logged = _log_since(admin, observed["offset"])
+        while "SCRAM-SHA-256$" not in logged and time.monotonic() < deadline:
+            time.sleep(0.5)
+            logged = _log_since(admin, observed["offset"])
         statements = [
-            str(row[0]) for row in admin.execute("select query from pg_stat_statements").fetchall()
+            str(row[0])
+            for row in admin.execute(
+                "select s.query from pg_stat_statements s "
+                "join pg_roles r on r.oid = s.userid where r.rolname = %s",
+                (observed["tool"],),
+            ).fetchall()
         ]
 
     assert "SCRAM-SHA-256$" in logged, "the log is working: it keeps the verifier"

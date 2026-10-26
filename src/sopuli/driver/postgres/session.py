@@ -8,14 +8,16 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 **What this build does.** It connects, labels the session with the run's
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
 its encryption, audits the tool account's privileges for
-`doctor --check-privileges`, and describes a role for the guardrails
-(:meth:`PostgresSession.describe_user`). Only `doctor` gets this far: the
-registry entry is ``scope_only``, so every other command refuses the target
-with ``SOPULI-20006`` before it connects. The methods not written yet are a
-second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
-A write that is written later checks
-:func:`~sopuli.driver.postgres.scope.require_read_write` first. The driver sends
-no DDL.
+`doctor --check-privileges`, describes a role for the guardrails
+(:meth:`PostgresSession.describe_user`), and sets a role's password with a
+verifier computed on the client (:meth:`PostgresSession.set_password`,
+invariant 15). That ``ALTER ROLE`` is the one statement the driver sends that
+changes anything, and it checks
+:func:`~sopuli.driver.postgres.scope.require_read_write` first. Only `doctor`
+reaches the driver so far: the registry entry is ``scope_only``, so every other
+command refuses the target with ``SOPULI-20006`` before it connects. The
+methods not written yet are a second line behind that, and refuse with
+``SOPULI-20006`` without a round trip.
 """
 
 from __future__ import annotations
@@ -35,9 +37,9 @@ from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
 from sopuli.driver.postgres.password import (
     LIMIT,
-    MAX_PASSWORD_BYTES,
+    SCRAM_FROM,
+    admit,
     alter_role,
-    byte_width,
     verifier,
 )
 from sopuli.driver.postgres.privileges import audit
@@ -198,14 +200,24 @@ class PostgresSession:
         from the vault before calling this.
 
         Refused before anything is sent, with ``password_sent`` left ``False``:
-        a read-only target, a role that does not exist, and a password over
-        :data:`~sopuli.driver.postgres.password.MAX_PASSWORD_BYTES`. Once the
-        statement is handed to libpq, a failure has ``password_sent`` set: what
-        crossed is a verifier, which still allows an offline guessing attack, so
-        the warnings about an unencrypted connection apply to it as they would
-        to a password.
+        a read-only target; a server older than PostgreSQL 10, which would store
+        the verifier's text as a plaintext password; a role that does not exist;
+        a password :func:`~sopuli.driver.postgres.password.admit` refuses; and a
+        verifier libpq could not compute. Once the statement is handed to the
+        server, a failure has ``password_sent`` set: what crossed is a verifier,
+        which still allows an offline guessing attack, so the warnings about an
+        unencrypted connection apply to it as they would to a password.
         """
-        require_read_write(self.scope(), target=self.target.name)
+        scope = self.scope()
+        require_read_write(scope, target=self.target.name)
+        major = _major(scope.db_version)
+        if major is None or major < SCRAM_FROM:
+            raise DriverError(
+                f'target "{self.target.name}" runs PostgreSQL {scope.db_version}, which '
+                "cannot store a SCRAM verifier, so the tool cannot set a password there "
+                "without sending it",
+                hint="the PostgreSQL driver supports PostgreSQL 13 to 18",
+            )
         state = self.describe_user(account)
         if state is None:
             raise DriverError(
@@ -215,16 +227,7 @@ class PostgresSession:
                     "ACCOUNT_MISSING rather than failing"
                 ),
             )
-        width = byte_width(secret)
-        if width > MAX_PASSWORD_BYTES:
-            raise DriverError(
-                f'the password for "{state.name}" is {width} bytes, and a PostgreSQL target '
-                f"takes at most {MAX_PASSWORD_BYTES}",
-                hint=(
-                    "libpq 13 cannot log in with a longer password; lower the policy's "
-                    "`length`, or use a charset of one-byte characters"
-                ),
-            )
+        admit(secret)
         computed = verifier(self.connection.pgconn, state.name, secret)
         try:
             with self._cursor() as cursor:
@@ -344,6 +347,14 @@ class PostgresDriver:
             time.monotonic() - started,
         )
         return PostgresSession(connection=connection, target=target)
+
+
+def _major(version: str | None) -> int | None:
+    """The major release from ``server_version``'s first word: 16 from
+    ``16.15``, 9 from ``9.6.24``. ``None`` where it does not start with a
+    number, which refuses rather than guesses."""
+    head = (version or "").split(".", 1)[0]
+    return int(head) if head.isdigit() else None
 
 
 def build_driver(context: DriverContext) -> PostgresDriver:

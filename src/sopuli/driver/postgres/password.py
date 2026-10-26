@@ -25,10 +25,13 @@ literal: ``ALTER ROLE`` is a utility statement and takes no bind parameters.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
+import psycopg
 from psycopg import sql
 
+from sopuli.config import charsets
+from sopuli.driver.protocol import DriverError
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
@@ -48,6 +51,11 @@ ALGORITHM = b"scram-sha-256"
 PREFIX = "SCRAM-SHA-256$"
 
 
+#: The first major release whose server stores a SCRAM verifier it is sent.
+#: An older server reads ``SCRAM-SHA-256$…`` as a plaintext password.
+SCRAM_FROM = 10
+
+
 class PasswordConnection(Protocol):
     """The part of psycopg's ``PGconn`` this module uses."""
 
@@ -56,20 +64,65 @@ class PasswordConnection(Protocol):
     ) -> bytes: ...
 
 
-def byte_width(secret: Secret) -> int:
-    """How many bytes ``secret`` is in UTF-8, the width :data:`LIMIT` counts."""
-    return LIMIT.width(secret.reveal())
+class PasswordNotAdmissibleError(DriverError):
+    """The password cannot be sent to this target. ``policy``, and the exit
+    code inherited, for the reason Oracle's class of the same name gives. The
+    message names a class of problem and never a character of the password."""
+
+    category = "policy"
+
+
+class VerifierError(DriverError):
+    """libpq could not compute a SCRAM verifier. Nothing was sent."""
+
+
+def admit(secret: Secret) -> None:
+    """Refuse a password this target cannot take, before libpq sees it.
+
+    libpq takes the password as a C string, so a NUL would cut it short
+    without an error, and the vault would hold a password the role does not
+    have. Control characters are refused with it, as on Oracle. An empty
+    password gets a verifier no login can use. A lone surrogate cannot be
+    encoded as UTF-8. And the ceiling is :data:`MAX_PASSWORD_BYTES`.
+    """
+    text = secret.reveal()
+    if not text:
+        raise PasswordNotAdmissibleError("the password is empty")
+    if any(charsets.is_control(character) for character in text):
+        raise PasswordNotAdmissibleError("the password contains control characters")
+    if not LIMIT.encodable(text):
+        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-8")
+    width = LIMIT.width(text)
+    if width > LIMIT.max_bytes:
+        raise PasswordNotAdmissibleError(
+            f"the password is {width} bytes, and a PostgreSQL target takes at most "
+            f"{LIMIT.max_bytes}",
+            hint=(
+                "libpq 13 cannot log in with a longer password; lower the policy's "
+                "`length`, or use a charset of one-byte characters"
+            ),
+        )
 
 
 def verifier(pgconn: PasswordConnection, role: str, secret: Secret) -> str:
     """The SCRAM-SHA-256 verifier for ``secret``, computed by libpq on this
     machine. ``role`` is the salt's only other input in old algorithms and is
-    ignored by SCRAM, but libpq asks for it."""
-    computed = pgconn.encrypt_password(
-        secret.reveal().encode("utf-8"), role.encode("utf-8"), ALGORITHM
-    ).decode("ascii")
+    ignored by SCRAM, but libpq asks for it. A failure is a
+    :class:`VerifierError`, whose message quotes nothing libpq returned."""
+    try:
+        computed = pgconn.encrypt_password(
+            secret.reveal().encode("utf-8"), role.encode("utf-8"), ALGORITHM
+        ).decode("ascii")
+    except psycopg.Error as error:
+        raise VerifierError(
+            f"libpq could not compute a SCRAM verifier: {error}",
+            hint="nothing was sent; this is the client library, not the server",
+        ) from error
     if not computed.startswith(PREFIX):
-        raise ValueError(f"libpq returned a verifier that is not SCRAM-SHA-256: {computed[:16]}")
+        raise VerifierError(
+            "libpq returned something other than a SCRAM-SHA-256 verifier",
+            hint="nothing was sent; check which libpq psycopg loaded (`sopuli doctor`)",
+        )
     return computed
 
 
@@ -80,9 +133,3 @@ def alter_role(role: str, computed: str) -> sql.Composed:
     if not computed.startswith(PREFIX):
         raise ValueError("refusing to send a password that is not a SCRAM-SHA-256 verifier")
     return sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(computed))
-
-
-def as_text(statement: sql.Composed, context: Any) -> str:
-    """The statement as the server would receive it, for tests and the debug log.
-    It holds a verifier, never a password."""
-    return statement.as_string(context)

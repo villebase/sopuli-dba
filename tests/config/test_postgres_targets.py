@@ -470,3 +470,32 @@ def test_each_generated_target_warns_once_and_points_at_its_line() -> None:
         ("pg-dev", "target_sets.pg.postgres.sslmode"),
         ("pg-qa", "target_sets.pg.postgres.sslmode"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("patch", "at"),
+    [
+        ({"database": "appdb"}, "target_sets.pg.postgres.sslmode"),
+        ({"sslmode": "prefer"}, "target_sets.pg.overrides.pg-qa.postgres.sslmode"),
+    ],
+    ids=["another key", "sslmode"],
+)
+def test_the_warning_points_at_the_layer_that_wrote_sslmode(patch: dict[str, str], at: str) -> None:
+    """A `postgres:` patch merges key by key, so an override that writes only
+    `database` leaves `sslmode` on the template's line."""
+    warnings = unverified(
+        {
+            "target_sets": {
+                "pg": {
+                    "name": "pg-{env}",
+                    "type": "postgresql",
+                    "dsn": "pg-{env}.example.com:5432",
+                    "postgres": {"sslmode": "require"},
+                    "for_each": {"env": {"qa": {}}},
+                    "overrides": {"pg-qa": {"postgres": patch}},
+                }
+            }
+        }
+    )
+
+    assert [warning.at for warning in warnings] == [at]

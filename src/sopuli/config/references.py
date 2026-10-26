@@ -39,7 +39,7 @@ from sopuli.config.codes import (
     UNVERIFIED_TRANSPORT,
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.expansion import declared_at
+from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
 from sopuli.config.targets import EXTERNAL, POSTGRESQL, VERIFYING_SSLMODES
@@ -623,7 +623,7 @@ def _warn_about_unverified_databases(config: Config) -> tuple[ConfigWarning, ...
                 f"target {expanded.name!r} does not verify the server "
                 f"(`sslmode: {expanded.target.postgres_settings.sslmode}`)"
             ),
-            at=str(declared_at(expanded, "postgres").key("sslmode")),
+            at=str(postgres_key_at(expanded, "sslmode")),
             hint=(
                 "anything between this run and the server can present its own certificate "
                 "and read the password a run sets. Use `sslmode: verify-full` (the default), "

@@ -420,7 +420,8 @@ def test_sslmode_disable_is_refused_before_anything_connects(
         "`defaults.safety.require_encryption` requires it, and `targets[1].postgres.sslmode` "
         "is `disable`, which never encrypts: use `sslmode: verify-full`"
     )
-    assert [session.encryption for session in harness["sessions"]] == [NATIVE]
+    # Not even `appdb-alpha`, which comes first: the config alone decided.
+    assert harness["sessions"] == []
     assert changed(harness) == []
 
 
@@ -441,17 +442,27 @@ def row_errors(result: Result) -> dict[str, str | None]:
 
 @pytest.mark.parametrize("sslmode", ["allow", "prefer"])
 def test_a_mode_that_may_negotiate_tls_is_left_to_the_connection(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, sslmode: str
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    sslmode: str,
 ) -> None:
     """`allow` and `prefer` may still encrypt, so the config does not refuse
-    them. This build's PostgreSQL driver only connects and reports (`doctor`),
-    so the target's row stops with SOPULI-20006 before a connection is read."""
+    them, and the connection's reading decides. This build's PostgreSQL driver
+    only connects and reports (`doctor`), so the test lifts that refusal to
+    reach the reading a full driver gets."""
+    monkeypatch.setattr("sopuli.cli.require_full_driver", lambda target: None)
     harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
     result = apply(runner, write_config(postgres(sslmode)), "--output", "json")
 
-    assert exit_of(result) == ExitCode.PARTIAL, result.output
-    assert row_errors(result) == {"appdb-alpha": None, "appdb-beta": "SOPULI-20006"}
-    assert changed(harness) == ["ACME_WEB_USER"]
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    hint = json.loads(result.output)["error"]["hint"]
+    assert hint.startswith(
+        "`defaults.safety.require_encryption` requires it, and this connection's encryption is none"
+    )
+    assert CLEAR in [session.encryption for session in harness["sessions"]]
+    assert changed(harness) == []
 
 
 def test_sslmode_disable_is_not_refused_with_the_setting_off(

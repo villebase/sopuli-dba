@@ -48,8 +48,8 @@
 --
 -- In a second clone the container name starts with its COMPOSE_PROJECT_NAME.
 --
--- It refuses to start on a server with no log file, such as the tier-0
--- postgres service, which runs without the logging collector.
+-- It refuses to start on a server with no log file, one that runs without
+-- the logging collector.
 --
 -- THROWAWAY SERVERS ONLY. Creates and drops two roles. It creates the
 -- pg_stat_statements and dblink extensions in the database it runs in, if they

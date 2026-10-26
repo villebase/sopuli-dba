@@ -150,6 +150,16 @@ detail.
     affected. The rule applies to `check --method hash`: never send a password or
     a verifier as a bind to compare it.
 
+15. **On PostgreSQL the password never reaches the server.** The driver computes
+    a SCRAM-SHA-256 verifier on the client, through libpq, and sends
+    `ALTER ROLE … PASSWORD 'SCRAM-SHA-256$…'`. PostgreSQL keeps the statement's
+    text in its log, in `pg_stat_statements` and in `pg_stat_activity`, even
+    for a statement that fails. The verifier still allows an offline guessing
+    attack, so treat it as sensitive, but it is never the password.
+    `docs/design/02-postgres-privileges.md` §6 has the measurements. A tier-1
+    test sets `log_statement = all`, loads `pg_stat_statements`, changes a
+    password, and finds it in neither.
+
 ---
 
 ## Open questions: surface, do not resolve

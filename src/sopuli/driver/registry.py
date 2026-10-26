@@ -155,6 +155,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
+        password_limit="1024",
         # `creds check`, by login (#1067).
         commands=frozenset({"creds.check"}),
     ),

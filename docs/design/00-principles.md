@@ -237,7 +237,8 @@ targets:
 is written one command at a time, and its registry entry lists the commands it
 is written for. Any other command refuses the target with `SOPULI-20006` before
 it resolves a credential or connects. The PostgreSQL entry lists UC-1's
-commands: `creds generate`, `apply`, `check`, `rotate` and `status`. Every
+commands: `creds generate`, `apply`, `check`, `rotate`, `status` and
+`finish-rollover`. Every
 other command but `doctor` refuses a PostgreSQL target. What PostgreSQL lacks,
 such as a rollover window or an account lock, is refused at plan time by
 capability, not by product. The driver registry and the store

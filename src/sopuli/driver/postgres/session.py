@@ -423,7 +423,11 @@ class PostgresSession:
         )
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        raise self._not_written("end a rollover window")
+        """A role never has a window, so there is none to end (invariant 4).
+        `creds finish-rollover` settles every role before it gets here; this
+        refuses by capability for any other caller."""
+        self.require_rollover(account)
+        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
 
     def close(self) -> None:
         """Let the connection go. Safe twice, also after a close that raised."""

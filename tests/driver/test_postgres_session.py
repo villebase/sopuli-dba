@@ -134,6 +134,14 @@ def test_rollover_is_an_absent_capability() -> None:
     assert "--strategy staged" in str(refused.value.hint)
 
 
+def test_ending_a_window_is_an_absent_capability_too() -> None:
+    """A role has no window to end: exit 5, never "not written yet" (#1072)."""
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        _session().finish_rollover("acme_app_user")
+
+    assert refused.value.capability == PASSWORD_ROLLOVER
+
+
 def test_audit_coverage_answers_unknown_and_never_raises() -> None:
     assert _session().audit_coverage("acme_app_user").audited is None
 

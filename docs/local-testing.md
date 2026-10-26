@@ -450,8 +450,9 @@ and the run exits 1.
 
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
 password `sopuli-test`. `doctor` connects to it and reports what it found, and
-the UC-1 commands run against it: `creds generate`, `apply`, `check`, `rotate`
-and `status`. The UC-2 commands refuse a PostgreSQL target with `SOPULI-20006`.
+the UC-1 commands run against it: `creds generate`, `apply`, `check`, `rotate`,
+`status` and `finish-rollover`, which finds no window to close. The UC-2
+commands refuse a PostgreSQL target with `SOPULI-20006`.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).

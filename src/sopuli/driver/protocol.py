@@ -1352,7 +1352,9 @@ class Session(Protocol):
 
         * **the release has no such feature** --
           :class:`UnsupportedCapabilityError`, exit 5, naming the capability and
-          the target (invariant 4);
+          the target (invariant 4). **Asked first, before the account is read**:
+          the pre-flight relies on it to refuse a target with no rollover
+          whether or not a declared account exists (#1072);
         * **the account's profile grants no window** -- a
           :class:`DriverError` whose hint carries the exact ``ALTER PROFILE`` an
           operator would run. The tool never issues it: profiles are shared, so

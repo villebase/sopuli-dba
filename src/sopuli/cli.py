@@ -8124,6 +8124,13 @@ def _apply_one(
                 )
             return _refused_row(binding, source, held, selection=selection)
 
+        # `--strategy rollover`, asked again of this connection before anything
+        # changes here, the attributes included: the pre-flight passes over a
+        # target it could not reach, and that is not a way past it. The driver's
+        # own refusal, so its hint and its profile check are the pre-flight's.
+        if strategy == strategies.ROLLOVER:
+            session.require_rollover(user.name)
+
         if attributes.requested():
             # Fenced like every other mutation (P5). `apply_attributes` issues
             # `ALTER USER ... ACCOUNT UNLOCK` and `ALTER USER ... PROFILE` -- a
@@ -8173,14 +8180,6 @@ def _apply_one(
                 )
 
         regime = strategy or strategies.default_for(session.scope(), user)
-        # Asked again of the connection that sets the password: the pre-flight
-        # passes over a target it could not reach, and that is not a way past it.
-        if regime == strategies.ROLLOVER and not session.scope().supports(PASSWORD_ROLLOVER):
-            raise UnsupportedCapabilityError(
-                PASSWORD_ROLLOVER,
-                target=binding.target,
-                hint="this target has no password rollover: use --strategy staged",
-            )
         before = session.verify_password(
             user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
@@ -9220,7 +9219,12 @@ def _check_strategy(
         and not session.scope().supports(PASSWORD_ROLLOVER)
     ):
         session.require_rollover(bindings[0].account)
-        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=target)
+        # Reached only by a driver that broke the protocol's order.
+        raise UnsupportedCapabilityError(
+            PASSWORD_ROLLOVER,
+            target=target,
+            hint="this target has no password rollover: use --strategy staged",
+        )
     for binding in bindings:
         user = session.describe_user(binding.account)
         if user is None:

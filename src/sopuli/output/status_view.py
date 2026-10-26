@@ -83,7 +83,7 @@ def build_result(
     database_age = _database_age(row.user)
     if database_age is not None:
         entry["password_age_days"] = database_age
-    rollover = _rollover(row.user)
+    rollover = _rollover(row.user, row.rollover_supported)
     if rollover is not None:
         entry["rollover"] = rollover
     if duration_ms is not None:
@@ -106,17 +106,25 @@ def _database_age(user: UserState | None) -> float | None:
     return None if user is None else password_age_days(user.password_changed_at)
 
 
-def _rollover(user: UserState | None) -> dict[str, Any] | None:
+def _rollover(user: UserState | None, supported: bool | None = None) -> dict[str, Any] | None:
     """The window, and the profile that decides whether there can be one.
 
     Emitted for every account whose state was read, not only the ones with a
     window open: "this profile grants none" and "this profile grants one and it
     is closed" are different facts about an estate, and an inventory is where
-    somebody goes to tell them apart.
+    somebody goes to tell them apart. ``supported`` is the third: whether the
+    target has rollover at all, absent where its scope could not be read
+    (#1072).
     """
     if user is None:
         return None
-    return {"active": bool(user.rollover_active), "profile_rollover_time": user.rollover_time}
+    found: dict[str, Any] = {
+        "active": bool(user.rollover_active),
+        "profile_rollover_time": user.rollover_time,
+    }
+    if supported is not None:
+        found["supported"] = supported
+    return found
 
 
 def _warnings(row: Row) -> list[dict[str, Any]]:
@@ -365,7 +373,9 @@ def _rollover_cell(user: UserState | None, supported: bool | None = None) -> Cel
         return Cell("window open", Role.NOTABLE)
     configured = user.rollover_days
     if not configured:
-        return Cell("not configured", Role.MUTED)
+        # Unknown where the scope could not be read: "not configured" would
+        # claim the target has rollover to configure.
+        return Cell("-" if supported is None else "not configured", Role.MUTED)
     return f"{_hours(configured)} configured"
 
 

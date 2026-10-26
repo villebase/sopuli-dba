@@ -1195,8 +1195,20 @@ refuse it.
   refuse (`02-postgres-privileges.md` §5).
 - **The tool account needs `ADMIN OPTION` on each role from PostgreSQL 16**
   (`02-postgres-privileges.md` §2.2), and the login before and after the change
-  needs the `pg_hba.conf` line `check` needs.
-- **There is no rollover window,** so `apply` uses the `staged` strategy only.
+  needs the `pg_hba.conf` line `check` needs. Without that line, `apply`
+  changes the password and cannot confirm it, as on Oracle when the lockout
+  guard declines the login: the row is `UNVERIFIABLE` and nothing is promoted.
+- **A role whose `VALID UNTIL` has passed is `EXPIRED`, and nothing is sent.**
+  On Oracle a new password ends an expired password, so `apply` fixes it.
+  On PostgreSQL the date expires the role, and a new password does not move
+  it. The driver reports no `expire_password` capability, and `apply` reads
+  that to leave the role alone. Move the date first.
+- **There is no rollover window,** so `--strategy rollover` is refused, exit 5.
+  PostgreSQL has no profiles and no lock state the tool sets, so a policy's
+  `profile:` and `unlock_if_locked` cannot be honoured there.
+- **The `SOPULI-W031` note** says "a password was sent" on every product.
+  On PostgreSQL what crossed the connection is the verifier, which still
+  allows an offline guessing attack, so the note applies to it unchanged.
 
 The sample is from tier 1, after `creds generate` staged both passwords:
 

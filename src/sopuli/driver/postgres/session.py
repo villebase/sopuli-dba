@@ -109,8 +109,8 @@ class NotWrittenError(DriverError):
         super().__init__(
             f'target "{target}" is a PostgreSQL cluster, and this build cannot {what} there yet',
             hint=(
-                "this is not something to install: the PostgreSQL driver connects and "
-                "reports the cluster, and the rest of it is not written yet"
+                f"this is not something to install: the PostgreSQL driver reads roles, "
+                f"checks and sets their passwords, and cannot {what} yet"
             ),
             code=DRIVER_NOT_IMPLEMENTED,
         )

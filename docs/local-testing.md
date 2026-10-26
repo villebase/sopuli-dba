@@ -553,12 +553,15 @@ A wrong password exits 3. A role that `pg_hba.conf` does not let in is
 `UNVERIFIABLE`, and a `NOLOGIN` role is `LOCKED`. Use the default
 `--method login`: `hash` and `both` are refused on PostgreSQL.
 
-To set the passwords, the tool account needs `ADMIN OPTION` on each role on
-PostgreSQL 16 and later
+To set passwords, declare the roles the run sets (here `acme_app_user` and
+`acme_batch_user`) and create the second one. On PostgreSQL 16 and later the
+tool account needs `ADMIN OPTION` on each
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2.2):
 
 ```
+postgres=# CREATE ROLE acme_batch_user LOGIN;
 postgres=# GRANT acme_app_user TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+postgres=# GRANT acme_batch_user TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
 ```
 
 Stage passwords with `creds generate`, then run `creds apply`:
@@ -594,9 +597,11 @@ acme_batch_user  pg-dev  IN_SYNC  changed and verified by login
 ```
 
 The server never sees the password: the statement carries a SCRAM verifier
-computed on this machine. `pg_stat_statements` shows what it kept:
+computed on this machine. The stack preloads `pg_stat_statements`; create its
+view once, and it shows what the server kept:
 
 ```
+$ docker exec sopuli-test-postgres-1 psql -U postgres -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
 $ docker exec sopuli-test-postgres-1 psql -U postgres -tAc "select query from pg_stat_statements where query ilike 'alter role%'"
 ALTER ROLE "acme_app_user" PASSWORD 'SCRAM-SHA-256$4096:…'
 ALTER ROLE "acme_batch_user" PASSWORD 'SCRAM-SHA-256$4096:…'

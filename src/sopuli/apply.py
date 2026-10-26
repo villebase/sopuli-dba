@@ -334,6 +334,7 @@ def settled_before_acting(
     *,
     requested: str | None = None,
     unlock: bool = False,
+    expiry_cleared: bool = True,
 ) -> Outcome | None:
     """The outcome for an account nothing should be issued against, or ``None``.
 
@@ -370,10 +371,15 @@ def settled_before_acting(
       four, because it is a reason not to do something that was going to happen
       and the two above it are reasons it was never going to.
 
-    **An expired password is deliberately not here.** ``ORA-28001`` is listed in
-    §6.4 as resolvable *by* apply -- setting a password clears the expiry -- so an
-    expired account is one this command fixes rather than one it declines. The
-    state is only reported when something else stops the run.
+    **An expired password is deliberately not here, where a new password ends
+    the expiry.** ``ORA-28001`` is listed in §6.4 as resolvable *by* apply --
+    setting a password clears the expiry -- so an expired account is one this
+    command fixes rather than one it declines. ``expiry_cleared`` says whether
+    the target's expiry is that kind: the caller passes whether the target has
+    the ``expire_password`` capability. A target without it, such as
+    PostgreSQL, whose ``VALID UNTIL`` expires the role itself, keeps the expiry
+    through a password change. There an expired account is ``EXPIRED`` and no
+    DDL: setting the password would be repeated on every run and never confirm.
     """
     if source is None:
         return Outcome(ERROR, _nothing_to_apply(requested))
@@ -388,6 +394,13 @@ def settled_before_acting(
             f"account is {user.status.lower()}; the password was not changed, because a "
             f"locked account cannot confirm one -- declare `account: {{ unlock_if_locked: "
             f"true }}` on this account's policy to have `apply` unlock it first",
+        )
+    if user.expired and not expiry_cleared:
+        return Outcome(
+            EXPIRED,
+            f"account is {user.status.lower()}; the password was not changed, because on "
+            f"this target a new password does not end the expiry, so the change could "
+            f"never be confirmed -- move the account's expiry date first",
         )
     if source.stage == PREVIOUS and source.pending_staged:
         # A rollback underneath a rotation in flight. The `pending` would survive

@@ -71,7 +71,7 @@ CREATE ROLE sopuli_admin LOGIN CREATEROLE;
 ```
 
 `\password` asks for the password and sends only a SCRAM verifier that libpq
-computes on the client, so the password never reaches the server (§5). libpq
+computes on the client, so the password never reaches the server (§6). libpq
 chooses the algorithm from the session's `password_encryption`. The `SET` is
 what makes it SCRAM on a server set to `md5`, as the `postgres:13` image is.
 Without it the verifier is md5, and the `scram-sha-256` line of §2.3 refuses
@@ -200,7 +200,7 @@ covers them.
 | `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files` | they run programs and read or write files on the database server, as the server's operating system user |
 | `pg_read_all_data`, `pg_write_all_data` | they read or write every table in every database |
 | `pg_signal_backend` | it can cancel or end other sessions |
-| `pg_read_all_stats`, and `pg_monitor`, which includes it | it shows every session's statement text in `pg_stat_activity` and `pg_stat_statements`, and §5 says that text can hold a password |
+| `pg_read_all_stats`, and `pg_monitor`, which includes it | it shows every session's statement text in `pg_stat_activity` and `pg_stat_statements`, and §6 says that text can hold a password |
 | a membership in a managed role with `INHERIT TRUE` or `SET TRUE` | the tool account gets the role's privileges, or can act as the role. From 16, grant `INHERIT FALSE, SET FALSE` (§2.2) |
 | any membership in a managed role, on 13 to 15 | it is not needed there, and it cannot be granted without `SET` (§2.2) |
 
@@ -224,7 +224,43 @@ creates for itself, such as its replication role.
 
 ---
 
-## 5. Where the password text can surface
+## 5. Roles the tool refuses to change
+
+The account guardrails of `02-oracle-privileges.md` §4 apply to PostgreSQL too.
+The rules are product-neutral. The driver reads the facts from `pg_roles`,
+which any role can read, so the guardrails need no grant:
+
+| Check | Refuses | From | `--force` |
+|---|---|---|---|
+| 2 | a role `initdb` created: the bootstrap superuser and every `pg_*` role | the role's oid is below 16384 | waives |
+| 4 | a role with `REPLICATION`, `BYPASSRLS` or `CREATEROLE` | `pg_roles` | waives |
+| 4 | a member of `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`, `pg_read_all_data`, `pg_write_all_data` or `pg_signal_backend`, through any chain of grants | `pg_has_role(…, 'MEMBER')` | waives |
+| 6 | a superuser | `rolsuper` | never |
+| 7 | the tool's own account, the one the session logged in as | `session_user` | waives |
+
+Check 3, the password file, does not exist on PostgreSQL, so it always passes
+and leaves no caveat. Check 5 is for an Oracle release with no answer to check 2.
+PostgreSQL always answers it.
+
+`pg_monitor` and `pg_read_all_stats` are not refused for an application role.
+The tool account must not hold them (§3), but a monitoring application often
+needs them.
+
+Two more facts come from the same read:
+
+- **`NOLOGIN` is reported as locked.** `check` does not try a login that cannot
+  succeed, and `apply` does not change a password it cannot confirm.
+- **A past `VALID UNTIL` is reported as expired.** The role cannot log in with
+  any password until somebody moves the date, so a new password does not fix
+  it.
+
+A name is matched by `upper()`, as the config compares names (invariant 5). The
+role keeps the spelling `pg_roles` gives back. Two roles whose names differ only
+in case are refused, because the config cannot tell them apart.
+
+---
+
+## 6. Where the password text can surface
 
 PostgreSQL keeps the whole text of `ALTER ROLE … PASSWORD` in every place
 measured, on 13 to 18. The `pg-password-text` entry in
@@ -245,11 +281,11 @@ The driver sends no `ALTER ROLE` in this build.
 
 ---
 
-## 6. Files
+## 7. Files
 
 | File | Purpose |
 |---|---|
-| `sql/postgres/01_password_text_probe.sql` | what the server log, `pg_stat_statements` and `pg_stat_activity` keep of `ALTER ROLE … PASSWORD` (§5) |
+| `sql/postgres/01_password_text_probe.sql` | what the server log, `pg_stat_statements` and `pg_stat_activity` keep of `ALTER ROLE … PASSWORD` (§6) |
 | `sql/postgres/02_system_identifier_probe.sql` | whether a role with no grants can read `system_identifier`, which tells two targets on one cluster apart (`01-configuration.md` §*`postgres:` on a target*) |
 | `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password (§1, §2.2) |
 | `sql/postgres/04_md5_line_scram_verifier_probe.py` | whether a SCRAM verifier logs in through a `pg_hba.conf` line that says `md5` (§2.3) |

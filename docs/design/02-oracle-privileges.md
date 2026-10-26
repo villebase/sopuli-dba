@@ -800,7 +800,8 @@ Before any `ALTER USER`, the tool refuses when the target account:
 5. is on a literal deny list. This is for 11.2, where `ORACLE_MAINTAINED` does
    not exist;
 6. is a superuser. Only the PostgreSQL driver reports one
-   (`02-postgres-privileges.md`); Oracle's nearest thing, `SYSDBA`, is check 3;
+   (`02-postgres-privileges.md` §5, which gives the PostgreSQL facts for every
+   check); Oracle's nearest thing, `SYSDBA`, is check 3;
 7. is the account the session is connected as: the tool's own. Changing it
    mid-run can lock the tool out of the targets it has not reached yet.
 

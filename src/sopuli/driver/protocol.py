@@ -773,9 +773,12 @@ class UserState:
     password_file_member: bool | None = None
     #: Roles held, upper-cased.
     roles: frozenset[str] = frozenset()
-    #: The roles in :attr:`roles` that the driver counts as administrative, which
-    #: guardrail 4 refuses. On Oracle, ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
-    #: ``AUDIT_ADMIN``.
+    #: What the driver counts as administrative, which guardrail 4 refuses: roles
+    #: from :attr:`roles`, and on a product with role attributes, those
+    #: attributes too. On Oracle, ``DBA``, ``PDB_DBA``, ``CDB_DBA`` and
+    #: ``AUDIT_ADMIN``. On PostgreSQL, ``REPLICATION``, ``BYPASSRLS`` and
+    #: ``CREATEROLE``, and membership in a built-in role that reaches past the
+    #: database, such as ``PG_READ_ALL_DATA``.
     admin_roles: frozenset[str] = frozenset()
     #: The account passes every privilege check the server makes: a PostgreSQL
     #: superuser. Guardrail 6 refuses it, and no flag waives that. The Oracle

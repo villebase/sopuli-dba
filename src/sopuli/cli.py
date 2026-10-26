@@ -162,6 +162,7 @@ from sopuli.driver import guardrails
 from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK_STATE,
     ACCOUNT_UNLOCK,
     ATTRIBUTE_SET,
     DEFAULT_MARGIN,
@@ -169,6 +170,7 @@ from sopuli.driver.protocol import (
     PASS,
     PASSWORD_EXPIRE,
     PASSWORD_SET,
+    PROFILE_MANAGEMENT,
     ROLLOVER_FINISH,
     VERIFY_BOTH,
     VERIFY_HASH,
@@ -6636,6 +6638,7 @@ def creds_apply(
     # both and holds no lock. Every target the plan names: one whose accounts have
     # nothing staged is checked too, which can only refuse more.
     _require_encryption(_targets_of(config, bindings), run, config)
+    _require_attribute_capabilities(bindings, run, config)
 
     if run.dry_run:
         # Invariant 8: print the plan, take no lock, write nothing. The documents
@@ -7996,8 +7999,11 @@ def _apply_one(
 
     try:
         user = session.describe_user(binding.account)
+        # Whether the advice for a locked account may be to declare the unlock:
+        # a target without the capability refuses that at plan time.
+        unlockable = session.scope().supports(ACCOUNT_LOCK_STATE)
         settled = apply_states.settled_before_acting(
-            user, source, requested=requested, unlock=attributes.unlock
+            user, source, requested=requested, unlock=attributes.unlock, unlockable=unlockable
         )
         if settled is not None:
             _left_alone(binding.account, binding.target, settled.state, settled.detail)
@@ -8064,7 +8070,9 @@ def _apply_one(
             # before the attribute pass, which is a change too. One login. Asked
             # again without the unlock first: the attribute pass will not run, so
             # a locked account stays locked and is reported as that.
-            locked = apply_states.settled_before_acting(user, source, requested=requested)
+            locked = apply_states.settled_before_acting(
+                user, source, requested=requested, unlockable=unlockable
+            )
             if locked is not None:
                 _left_alone(binding.account, binding.target, locked.state, locked.detail)
                 return _Applied(
@@ -8107,7 +8115,9 @@ def _apply_one(
             # call let the run *reach* the attribute pass; this one is about the
             # state that pass left behind, and an account still locked here is one
             # whose password must not be changed after all.
-            blocked = apply_states.settled_before_acting(user, source, requested=requested)
+            blocked = apply_states.settled_before_acting(
+                user, source, requested=requested, unlockable=unlockable
+            )
             if blocked is not None:
                 _left_alone(binding.account, binding.target, blocked.state, blocked.detail)
                 return _Applied(
@@ -8638,6 +8648,59 @@ def _unencrypted(
             f"{encryption.method}: {encryption.hint or 'nothing more is known'}"
         ),
     )
+
+
+def _require_attribute_capabilities(
+    bindings: Sequence[Binding], run: Invocation, config: Config
+) -> None:
+    """Refuse, at plan time, an account attribute a target cannot enforce
+    (invariant 4, #1072).
+
+    A policy's ``account.unlock_if_locked`` needs ``account_lock_state``, and
+    its ``account.profile`` needs ``profile_management``. A target that
+    reports neither is refused before any password is drawn or any database
+    is changed, with exit 5 naming the capability, the target and the key.
+    The question is the capability's, never the product's.
+
+    **One connection per target that some binding asks an attribute of, and
+    none otherwise**, as :func:`_require_encryption` does. A target this cannot
+    reach, or whose scope it cannot read, is left to the run, which reports it
+    on its rows.
+    """
+    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+    for target_name, grouped in _grouped(bindings).items():
+        needed: dict[str, str] = {}
+        for binding in grouped:
+            attributes = apply_states.attributes_for(config, binding)
+            policy = binding.policy if binding.policy is not None else config.defaults.policy
+            at = f"policies.{policy}.account"
+            if attributes.unlock:
+                needed.setdefault(ACCOUNT_LOCK_STATE, f"{at}.unlock_if_locked")
+            if attributes.profile is not None:
+                needed.setdefault(PROFILE_MANAGEMENT, f"{at}.profile")
+        if not needed:
+            continue
+        try:
+            session = _open_session(by_target[target_name], run, config)
+        except Exception:  # noqa: BLE001 -- the run reports it on each row
+            continue
+        try:
+            scope = session.scope()
+        except Exception:  # noqa: BLE001 -- likewise
+            continue
+        finally:
+            with suppress(Exception):
+                session.close()
+        for capability, key in needed.items():
+            if not scope.supports(capability):
+                raise UnsupportedCapabilityError(
+                    capability,
+                    target=target_name,
+                    hint=(
+                        f"`{key}` asks for it, and this target cannot enforce it: "
+                        "use a policy without that key for this target's bindings"
+                    ),
+                )
 
 
 def _rolling_back(sources: Sequence[tuple[Binding, Source | None]]) -> frozenset[tuple[str, str]]:
@@ -10570,6 +10633,7 @@ def creds_rotate(
     # both and holds no lock. Every target the plan names, due or not: a target
     # with nothing due is checked too, which can only refuse more.
     _require_encryption(_targets_of(config, bindings), run, config)
+    _require_attribute_capabilities(bindings, run, config)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The

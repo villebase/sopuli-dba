@@ -304,6 +304,33 @@ def test_an_empty_db_pw_changed_says_why_in_the_document(
     assert not list(validator.iter_errors(found))
 
 
+def test_a_product_that_records_no_change_date_says_so_under_w021(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """The third cause (#1072): PostgreSQL records no change date, and no grant
+    helps. The reason is the driver's own sentence, so the run carries it as
+    given."""
+    from sopuli.driver.postgres.roles import NO_CHANGE_DATE
+
+    estate(
+        users={
+            "ACME_WEB_USER": account("ACME_WEB_USER", password_changed_unknown=NO_CHANGE_DATE),
+            "ACME_BATCH_USER": account("ACME_BATCH_USER", password_changed_unknown=NO_CHANGE_DATE),
+        }
+    )
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    for row in found["results"]:
+        assert "password_age_days" not in row
+        assert [(one["code"], one["message"]) for one in row["warnings"]] == [
+            ("SOPULI-W021", "PostgreSQL does not record when a role's password was changed")
+        ]
+    assert not list(validator.iter_errors(found))
+
+
 def test_an_empty_db_pw_changed_says_why_once_per_target_in_the_table(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

@@ -708,6 +708,12 @@ These rules apply, and the first is the one the others protect:
   reading the policy out of the results.
 - **No effect on the promotion.** The unlock is a change to the database, like
   the password. `pending` still waits for every target to confirm (invariant 7).
+- **Only where the target can unlock.** The attribute needs the
+  `account_lock_state` capability. A target without it is refused at plan time,
+  exit 5 (`01-configuration.md` §8). On such a target, a locked account's message
+  does not name the key. It says that the tool does not change whether the
+  account can log in. PostgreSQL is such a target: a `NOLOGIN` role is reported
+  `LOCKED`, and whoever owns it decides.
 
 The unlock is its own `actions[]` entry:
 

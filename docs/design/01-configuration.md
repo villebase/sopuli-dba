@@ -2840,6 +2840,14 @@ roadmap in `docs/README.md` has the use cases they went to.
 
 A third key here would be a decision rather than an implementation detail.
 
+**Each key needs a capability on the target** (P1). `unlock_if_locked` needs
+`account_lock_state`, and `profile` needs `profile_management`. `apply` and
+`rotate` refuse, at plan time with exit 5, a target that an account with such a
+policy is bound to and that lacks the capability. The refusal names the
+capability, the target and the key (invariant 4). A PostgreSQL cluster reports
+neither: `NOLOGIN` is not a lock, and it has no password profiles. So bind its
+accounts to a policy without the key.
+
 **`profile:` is a name, and which profiles exist is a property of each target.**
 It is resolved against `DBA_PROFILES` and used in the spelling the dictionary
 gives back, for the reason `02-oracle-privileges.md` §4 gives about account names:

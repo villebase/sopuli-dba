@@ -69,8 +69,11 @@ def test_the_postgresql_session_still_names_its_cluster() -> None:
     the refusal off without a type error. This is what catches it."""
     session_module = pytest.importorskip("sopuli.driver.postgres.session")
     from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import Timeouts
 
     target = ExpandedTarget(target=Target(name="pg-dev", type="postgresql", dsn="h:5432"))
-    session = session_module.PostgresSession(connection=None, target=target)
+    session = session_module.PostgresSession(
+        connection=None, target=target, correlation_id="run", timeouts=Timeouts()
+    )
 
     assert isinstance(session, ClusterIdentity)

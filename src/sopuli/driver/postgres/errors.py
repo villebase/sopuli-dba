@@ -28,6 +28,8 @@ INSUFFICIENT_PRIVILEGE = "42501"
 UNDEFINED_OBJECT = "42704"
 READ_ONLY_TRANSACTION = "25006"
 INVALID_CATALOG = "3D000"
+#: ``too_many_connections``: the role is at its ``CONNECTION LIMIT``.
+TOO_MANY_CONNECTIONS = "53300"
 #: ``sqlclient_unable_to_establish_sqlconnection``.
 UNABLE_TO_CONNECT = "08001"
 #: ``connection_failure``.
@@ -88,6 +90,10 @@ RULES: dict[str, _Rule] = {
         exit_code=ExitCode.CONFIG_INVALID,
         hint="the database in `postgres.database` does not exist in this cluster",
     ),
+    TOO_MANY_CONNECTIONS: _Rule(
+        "database",
+        hint="the role is at its CONNECTION LIMIT; raise the limit or end a session",
+    ),
 }
 
 #: The server's message for a failure libpq reports without a SQLSTATE, and the
@@ -115,7 +121,20 @@ _CONNECT_MESSAGES = (
     (re.compile(r"no pg_hba\.conf entry for|pg_hba\.conf rejects connection"), LOGIN_REFUSED),
     (re.compile(r'role ".*" is not permitted to log in|role ".*" does not exist'), LOGIN_REFUSED),
     (re.compile(r'database ".*" does not exist'), INVALID_CATALOG),
+    # The server says these only after the password was accepted (measured on
+    # 16.15, #1067): with a wrong password it answers 28P01 first.
+    (re.compile(r'permission denied for database ".*"'), INSUFFICIENT_PRIVILEGE),
+    (re.compile(r'too many connections for (role|database) ".*"'), TOO_MANY_CONNECTIONS),
 )
+
+#: The hint for a code recovered from a failed connection, where the rule's
+#: own hint is about a statement and no statement ran.
+_CONNECT_HINTS = {
+    INSUFFICIENT_PRIVILEGE: (
+        "the role has no CONNECT on `postgres.database`: GRANT CONNECT ON DATABASE to it, "
+        "or to PUBLIC"
+    ),
+}
 
 #: libpq's own messages when it cannot verify the server certificate, which the
 #: default `sslmode: verify-full` asks it to. No SQLSTATE: the server never saw a
@@ -201,6 +220,24 @@ def classify(code: str, message: str) -> Diagnosis:
     )
 
 
+def _reasons(message: str) -> list[tuple[int, int, str]]:
+    """Each row of :data:`_CONNECT_MESSAGES` the message holds: where, which
+    row, and its code."""
+    return [
+        (match.start(), index, recovered)
+        for index, (pattern, recovered) in enumerate(_CONNECT_MESSAGES)
+        if (match := pattern.search(message))
+    ]
+
+
+def first_reason_at(message: str) -> int | None:
+    """Where in a failed connection's message the first recognised reason
+    starts, or ``None``. The reason there is the one :func:`from_error`
+    reports."""
+    found = _reasons(message)
+    return min(found)[0] if found else None
+
+
 def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
     """Classify a psycopg exception without importing psycopg.
 
@@ -218,16 +255,14 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
         return classify(str(code), message)
     if not connecting:
         return classify(CONNECTION_FAILURE, message)
-    found = [
-        (match.start(), index, recovered)
-        for index, (pattern, recovered) in enumerate(_CONNECT_MESSAGES)
-        if (match := pattern.search(message))
-    ]
+    found = _reasons(message)
     if found:
         # The earliest in the message, which is the first attempt; at one
         # place, the earlier row, so `password …` wins over `… authentication
         # failed` when both match.
-        return classify(min(found)[2], message)
+        recovered = classify(min(found)[2], message)
+        hint = _CONNECT_HINTS.get(recovered.code)
+        return recovered if hint is None else replace(recovered, hint=hint)
     diagnosis = classify(UNABLE_TO_CONNECT, message)
     if _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)

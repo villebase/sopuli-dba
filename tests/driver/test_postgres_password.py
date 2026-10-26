@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
-from sopuli.driver.protocol import DriverError, Scope, UnsupportedCapabilityError
+from sopuli.driver.protocol import DriverError, Scope, Timeouts, UnsupportedCapabilityError
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
@@ -75,7 +75,9 @@ def _session(*, read_write: bool = True, version: str = "16.15") -> Any:
     target = ExpandedTarget(
         target=Target(name="pg-dev", type="postgresql", dsn="pg-dev.example.com:5432")
     )
-    built = session_module.PostgresSession(connection=_Connection(), target=target)
+    built = session_module.PostgresSession(
+        connection=_Connection(), target=target, correlation_id="run-id", timeouts=Timeouts()
+    )
     built._scope = Scope(
         type="cluster",
         open_mode="READ WRITE" if read_write else "READ ONLY",

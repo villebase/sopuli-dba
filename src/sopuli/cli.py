@@ -191,7 +191,7 @@ from sopuli.driver.registry import (
     DRIVERS,
     driver_for,
     installed,
-    require_full_driver,
+    require_command,
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
@@ -8529,8 +8529,10 @@ def _open_session(
     is the point -- a pre-flight that connected differently would be clearing a
     different thing from the one that runs.
 
-    ``scope_only`` is `doctor`'s, which only asks what the target is; see
-    :func:`~sopuli.driver.registry.require_full_driver`.
+    ``scope_only`` is `doctor`'s, which only asks what the target is. Every
+    other command is checked against the driver's
+    :attr:`~sopuli.driver.registry.DatabaseDriver.commands`, by the command
+    this run is (:func:`~sopuli.driver.registry.require_command`).
 
     A session that can name its cluster (a PostgreSQL one) reads its scope
     here, and is closed and refused if another target of this run already
@@ -8539,7 +8541,7 @@ def _open_session(
     does both itself, so that a refusal is reported for a target it reached.
     """
     if not scope_only:
-        require_full_driver(target.target)
+        require_command(target.target, run.document.command)
     driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
     session = driver.connect(target, credential.credential)

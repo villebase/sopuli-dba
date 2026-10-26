@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn
@@ -41,7 +42,7 @@ from sopuli.driver.registry import (
     DriverNotInstalledError,
     driver_for,
     installed,
-    require_full_driver,
+    require_command,
     resolve,
 )
 from sopuli.exit_codes import ExitCode
@@ -204,19 +205,75 @@ def test_driver_for_hands_the_context_to_the_module(monkeypatch: pytest.MonkeyPa
     assert seen == [context]
 
 
-def test_a_scope_only_driver_is_refused_for_a_full_command() -> None:
-    """Every command but `doctor` is refused with SOPULI-20006 before any
-    credential is resolved or socket opened, so its per-target handler reports
-    it and the run carries on (#1040)."""
+def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
+    """Refused with SOPULI-20006 before any credential is resolved or socket
+    opened, so its per-target handler reports it and the run carries on
+    (#1040). The message names what the driver can run, and the hint the
+    command asked for."""
     with pytest.raises(DriverNotImplementedError) as refused:
-        require_full_driver(target("pg-dev", "postgresql"))
+        require_command(target("pg-dev", "postgresql"), "creds.apply")
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
-    assert "`doctor`" in refused.value.message
+    assert "can run only `doctor` there yet" in refused.value.message
+    assert "`creds apply` is not written for it" in str(refused.value.hint)
 
 
-def test_a_full_driver_is_not_refused() -> None:
-    require_full_driver(target())
+def test_a_driver_written_for_every_command_refuses_none() -> None:
+    require_command(target(), "creds.apply")
+
+
+def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """How a driver grows: one command at a time, by name."""
+    monkeypatch.setitem(
+        DRIVERS, "postgresql", replace(DRIVERS["postgresql"], commands=frozenset({"creds.apply"}))
+    )
+
+    require_command(target("pg-dev", "postgresql"), "creds.apply")
+    with pytest.raises(DriverNotImplementedError) as refused:
+        require_command(target("pg-dev", "postgresql"), "creds.check")
+    assert "can run only `doctor`, `creds apply` there yet" in refused.value.message
+
+
+def test_postgresql_is_written_for_no_command_past_doctor_yet() -> None:
+    """Pinned so that adding a command is a deliberate, reviewed line."""
+    assert DRIVERS["postgresql"].commands == frozenset()
+    assert DRIVERS["oracle"].commands is None
+
+
+def test_doctor_is_never_refused_whoever_asks() -> None:
+    """`doctor` is exempt in the gate itself, not only because its one caller
+    skips the gate."""
+    require_command(target("pg-dev", "postgresql"), "doctor")
+
+
+def _command_names() -> set[str]:
+    """Every verb's dotted name, as the run document spells it."""
+    import click
+
+    from sopuli.cli import cli
+
+    names: set[str] = set()
+
+    def walk(group: click.Group, prefix: tuple[str, ...]) -> None:
+        for name, command in group.commands.items():
+            if isinstance(command, click.Group):
+                walk(command, (*prefix, name))
+            else:
+                names.add(".".join((*prefix, name)))
+
+    walk(cli, ())
+    return names
+
+
+def test_every_listed_command_is_a_real_command_name() -> None:
+    """A misspelling, or the spaced form (`creds apply`), would refuse that
+    command on every target of the driver, and say only that it is not
+    written yet."""
+    real = _command_names()
+    assert "creds.apply" in real, "the walk finds the dotted names"
+    for kind, entry in DRIVERS.items():
+        for name in entry.commands or ():
+            assert name in real, f"{kind} lists {name!r}, which is no command"
 
 
 def test_driver_for_lets_a_missing_driver_through(monkeypatch: pytest.MonkeyPatch) -> None:

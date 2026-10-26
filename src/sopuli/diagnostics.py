@@ -655,9 +655,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "The database would not say when this account's password was last set, so "
             "`password_age_days` is absent from the result and `creds status` shows `-` "
             "under DB_PW_CHANGED. The message says why -- a release with no such column "
-            "and no grant to read it elsewhere, or a value that could not be read -- "
-            "because those want different responses. Informational: nothing gates on the "
-            "database's date, and `--max-age-days` reads the vault's."
+            "and no grant to read it elsewhere, a value that could not be read, or a "
+            "product that records no such date, as PostgreSQL does not -- because those "
+            "want different responses. Informational: nothing gates on the database's "
+            "date, and `--max-age-days` reads the vault's."
         ),
         STORE_DEGRADED: (
             "A configured store answered and cannot serve this run: sealed, standing by, "

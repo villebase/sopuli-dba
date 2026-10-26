@@ -424,8 +424,9 @@ def refuse_if_nobody_to_ask(
 
     A ``--dry-run`` whose preview connects is refused like the real run, before
     the plan is printed, as the ``readonly`` and ``max_targets`` refusals are.
-    ``creds apply --dry-run`` with no ``--preflight`` and no ``--strategy`` reads
-    only the vault, so its caller passes no targets and it still prints its plan.
+    ``creds apply --dry-run`` with no ``--preflight``, no ``--strategy``, no
+    ``require_encryption`` and no declared account attribute reads only the
+    vault, so its caller passes no targets and it still prints its plan.
 
     The refusal points at each target's ``admin.auth`` key, because that is the
     line to edit for a run that has to go unattended. One target's key is the

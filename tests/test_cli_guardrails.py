@@ -114,7 +114,13 @@ class FakeSession:
         self.changed: list[tuple[str, str]] = []
 
     def scope(self) -> Scope:
-        return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=frozenset())
+        # `account_lock_state`, as on every Oracle target: it is structural there.
+        return Scope(
+            type="pdb",
+            container="ALPHA",
+            read_write=True,
+            capabilities=frozenset({"account_lock_state"}),
+        )
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         return PrivilegeAudit()

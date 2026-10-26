@@ -28,6 +28,7 @@ from sopuli.config.targets import EXTERNAL
 from sopuli.driver.protocol import (
     ENCRYPTION_NATIVE,
     ENCRYPTION_NONE,
+    ENCRYPTION_TLS,
     PASS,
     UNKNOWN,
     ChangeResult,
@@ -387,3 +388,93 @@ def test_a_later_config_file_cannot_turn_it_off(
     )
 
     assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
+
+
+# ------------------------------------------------- a PostgreSQL target (#1058) ---
+
+TLS = Encryption(method=ENCRYPTION_TLS, protocol="tcp")
+
+
+def postgres(sslmode: str) -> str:
+    """`REQUIRED`, with `appdb-beta` a PostgreSQL cluster under ``sslmode``."""
+    return REQUIRED.replace(
+        "    type: oracle\n    dsn: db-prod.example.com:1521/beta.pdb.example.com\n",
+        "    type: postgresql\n    dsn: pg-prod.example.com:5432\n"
+        f"    postgres: {{ sslmode: {sslmode} }}\n",
+    )
+
+
+def test_sslmode_disable_is_refused_before_anything_connects(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`disable` never encrypts, so the config answers what a connection would.
+    The refusal names the target and both settings, and opens no connection."""
+    harness = estate({"appdb-alpha": NATIVE, "appdb-beta": TLS})
+    result = apply(runner, write_config(postgres("disable")), "--output", "json")
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
+    error = json.loads(result.output)["error"]
+    assert error["target_capability"] == "encrypted_connection"
+    assert 'target "appdb-beta" does not support encrypted_connection' in error["message"]
+    assert error["hint"] == (
+        "`defaults.safety.require_encryption` requires it, and `targets[1].postgres.sslmode` "
+        "is `disable`, which never encrypts: use `sslmode: verify-full`"
+    )
+    # Not even `appdb-alpha`, which comes first: the config alone decided.
+    assert harness["sessions"] == []
+    assert changed(harness) == []
+
+
+def test_sslmode_disable_is_refused_in_a_dry_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate({"appdb-alpha": NATIVE, "appdb-beta": TLS})
+    result = apply(runner, write_config(postgres("disable")), "--dry-run")
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
+
+
+def row_errors(result: Result) -> dict[str, str | None]:
+    """Each row's error code, by target."""
+    rows = json.loads(result.output)["results"]
+    return {row["target"]: (row.get("error") or {}).get("code") for row in rows}
+
+
+@pytest.mark.parametrize("sslmode", ["allow", "prefer"])
+def test_a_mode_that_may_negotiate_tls_is_left_to_the_connection(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    sslmode: str,
+) -> None:
+    """`allow` and `prefer` may still encrypt, so the config does not refuse
+    them, and the connection's reading decides. This build's PostgreSQL driver
+    only connects and reports (`doctor`), so the test lifts that refusal to
+    reach the reading a full driver gets."""
+    monkeypatch.setattr("sopuli.cli.require_full_driver", lambda target: None)
+    harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
+    result = apply(runner, write_config(postgres(sslmode)), "--output", "json")
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    hint = json.loads(result.output)["error"]["hint"]
+    assert hint.startswith(
+        "`defaults.safety.require_encryption` requires it, and this connection's encryption is none"
+    )
+    assert CLEAR in [session.encryption for session in harness["sessions"]]
+    assert changed(harness) == []
+
+
+def test_sslmode_disable_is_not_refused_with_the_setting_off(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """SOPULI-W058 says so, and the run goes on to the target's row."""
+    harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
+    config = postgres("disable").replace("  safety: { require_encryption: true }\n", "")
+    result = apply(runner, write_config(config), "--output", "json")
+
+    assert exit_of(result) == ExitCode.PARTIAL, result.output
+    assert row_errors(result) == {"appdb-alpha": None, "appdb-beta": "SOPULI-20006"}
+    assert changed(harness) == ["ACME_WEB_USER"]
+    codes = {one.get("code") for one in json.loads(result.output)["diagnostics"]}
+    assert "SOPULI-W058" in codes

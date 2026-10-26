@@ -33,12 +33,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sopuli.config.codes import PROFILE_NAMED_AFTER_ENVIRONMENT, UNVERIFIED_TRANSPORT
+from sopuli.config.codes import (
+    PROFILE_NAMED_AFTER_ENVIRONMENT,
+    UNVERIFIED_DATABASE,
+    UNVERIFIED_TRANSPORT,
+)
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.expansion import declared_at
+from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
-from sopuli.config.targets import EXTERNAL
+from sopuli.config.targets import EXTERNAL, POSTGRESQL, VERIFYING_SSLMODES
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
@@ -94,7 +98,11 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_breaking_locks_without_a_fence(config)
     _check_external_admin(config)
     _check_admin_refs(config)
-    return (*_warn_about_profile_names(config), *_warn_about_unverified_transport(config))
+    return (
+        *_warn_about_profile_names(config),
+        *_warn_about_unverified_transport(config),
+        *_warn_about_unverified_databases(config),
+    )
 
 
 # ------------------------------------------------------------ resolution ---
@@ -597,6 +605,35 @@ def _warn_about_unverified_transport(config: Config) -> tuple[ConfigWarning, ...
         )
         for vault in config.vaults
         if vault.tls is not None and not vault.tls.verified
+    )
+
+
+def _warn_about_unverified_databases(config: Config) -> tuple[ConfigWarning, ...]:
+    """§2: a PostgreSQL target whose ``sslmode`` does not verify the server says
+    so on every run, once per target (#1058).
+
+    The database counterpart of ``SOPULI-W004``, for the same reason: the
+    weakening is one line in a file, and it applies to every password a run
+    sets on that target. A warning and not an error, because §2 accepts the weak
+    modes and ``require_encryption`` is the rule that refuses one.
+    """
+    return tuple(
+        ConfigWarning(
+            message=(
+                f"target {expanded.name!r} does not verify the server "
+                f"(`sslmode: {expanded.target.postgres_settings.sslmode}`)"
+            ),
+            at=str(postgres_key_at(expanded, "sslmode")),
+            hint=(
+                "anything between this run and the server can present its own certificate "
+                "and read the password a run sets. Use `sslmode: verify-full` (the default), "
+                "with `sslrootcert` naming the CA that issued the server's certificate"
+            ),
+            code=UNVERIFIED_DATABASE,
+        )
+        for expanded in config.expanded_targets
+        if expanded.target.type == POSTGRESQL
+        and expanded.target.postgres_settings.sslmode not in VERIFYING_SSLMODES
     )
 
 

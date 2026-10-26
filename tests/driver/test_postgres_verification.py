@@ -99,8 +99,9 @@ def test_a_server_that_does_not_use_scram_is_unavailable(asked: str) -> None:
             "42501",
         ),
         ('FATAL:  too many connections for role "acme_app_user"', "53300"),
+        ('FATAL:  too many connections for database "postgres"', "53300"),
     ],
-    ids=["no connect", "connection limit"],
+    ids=["no connect", "role connection limit", "database connection limit"],
 )
 def test_a_refusal_after_the_password_is_a_pass(server: str, code: str) -> None:
     """The server says these only once the password was accepted (16.15)."""

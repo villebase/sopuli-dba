@@ -74,8 +74,14 @@ LOG = logger("postgres")
 
 
 def _ms(started: float) -> int:
-    """Milliseconds since ``started``, a :func:`time.monotonic` reading."""
-    return round((time.monotonic() - started) * 1000)
+    """Milliseconds since ``started``, a :func:`time.monotonic` reading,
+    truncated as the CLI's ``duration_ms`` is."""
+    return int((time.monotonic() - started) * 1000)
+
+
+def _not_tried(detail: str) -> VerifyResult:
+    """A login :meth:`PostgresSession.verify_password` settled without trying."""
+    return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
 
 
 class NotWrittenError(DriverError):
@@ -108,9 +114,10 @@ class PostgresSession:
     target: ExpandedTarget
     #: The run's, for the logins :meth:`verify_password` makes as a managed
     #: role, which carry the same ``application_name`` and timeouts. No
-    #: default, so a session cannot be built that loses the run's id.
+    #: defaults, so a session cannot be built that loses the run's id or its
+    #: budgets.
     correlation_id: str
-    timeouts: Timeouts = field(default_factory=Timeouts)
+    timeouts: Timeouts
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
     #: Why :meth:`cluster_identity` found no answer, or ``None``.
@@ -285,15 +292,11 @@ class PostgresSession:
         # The server would answer each of these as a wrong password, or as a
         # refusal no different from a missing pg_hba.conf line, so none is tried.
         if role is None:
-            not_tried = f'there is no role "{account}" on this target'
-        elif role.locked:
-            not_tried = f"the role cannot log in ({role.status}); no login was attempted"
-        elif role.expired:
-            not_tried = "the role's VALID UNTIL has passed; no login was attempted"
-        else:
-            not_tried = None
-        if role is None or not_tried is not None:
-            return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=not_tried)
+            return _not_tried(f'there is no role "{account}" on this target')
+        if role.locked:
+            return _not_tried(f"the role cannot log in ({role.status}); no login was attempted")
+        if role.expired:
+            return _not_tried("the role's VALID UNTIL has passed; no login was attempted")
         account = role.name
         arguments = connect_arguments(
             self.target,

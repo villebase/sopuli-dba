@@ -4,8 +4,9 @@ Tier 1. The login as a managed role, made the way `creds check` makes it: as the
 role, over a `scram-sha-256` line of the image's `pg_hba.conf`, with
 `require_auth=scram-sha-256`. What only a server can answer: that the right
 password logs in through `require_auth`, that a wrong one reaches the client as
-the text the driver reads as `28P01`, and that a `NOLOGIN` role's refusal reads
-as `28000`.
+the text the driver reads as `28P01`, and that a role at its `CONNECTION LIMIT`
+is refused only after its password was accepted. A `NOLOGIN` role is settled
+from `describe_user`, so its `28000` is not reached here.
 """
 
 from __future__ import annotations

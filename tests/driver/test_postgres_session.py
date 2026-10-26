@@ -24,6 +24,7 @@ from sopuli.driver.protocol import (
     DriverContext,
     DriverError,
     Session,
+    Timeouts,
     UnsupportedCapabilityError,
     UserState,
 )
@@ -69,7 +70,7 @@ def _session(recovery: bool = False) -> Any:
         target=Target(name="pg-dev", type="postgresql", dsn="pg-dev.example.com:5432")
     )
     return session_module.PostgresSession(
-        connection=_Connection(recovery), target=target, correlation_id="run"
+        connection=_Connection(recovery), target=target, correlation_id="run", timeouts=Timeouts()
     )
 
 
@@ -449,8 +450,6 @@ def test_require_verifier_refuses_at_plan_time() -> None:
 
 def test_the_driver_gives_its_session_the_runs_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """The managed role's login carries the run's correlation id and timeouts."""
-    from sopuli.driver.protocol import Timeouts
-
     monkeypatch.setattr(session_module.psycopg, "connect", lambda **_: _Connection())
     driver = session_module.PostgresDriver(correlation_id="run-7", timeouts=Timeouts(connect_s=3))
 

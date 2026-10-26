@@ -11,8 +11,9 @@ its encryption, audits the tool account's privileges for
 `doctor --check-privileges`, and describes a role for the guardrails
 (:meth:`PostgresSession.describe_user`). It verifies a role's password by
 logging in as the role (:meth:`PostgresSession.verify_password`). Only `doctor`
-gets this far: the registry entry is ``scope_only``, so every other command
-refuses the target with ``SOPULI-20006`` before it connects. The methods not written yet are a
+gets this far: the registry entry lists no other command it is written for, so
+every other command refuses the target with ``SOPULI-20006`` before it connects
+(:func:`~sopuli.driver.registry.require_command`). The methods not written yet are a
 second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
 A write that is written later checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. The driver sends

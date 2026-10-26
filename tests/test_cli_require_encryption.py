@@ -452,7 +452,7 @@ def test_a_mode_that_may_negotiate_tls_is_left_to_the_connection(
     them, and the connection's reading decides. This build's PostgreSQL driver
     only connects and reports (`doctor`), so the test lifts that refusal to
     reach the reading a full driver gets."""
-    monkeypatch.setattr("sopuli.cli.require_full_driver", lambda target: None)
+    monkeypatch.setattr("sopuli.cli.require_command", lambda target, command: None)
     harness = estate({"appdb-alpha": NATIVE, "appdb-beta": CLEAR})
     result = apply(runner, write_config(postgres(sslmode)), "--output", "json")
 

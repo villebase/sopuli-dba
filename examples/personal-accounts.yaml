@@ -1,0 +1,123 @@
+# Personal accounts: the database accounts people log in with, as opposed to
+# the accounts applications use. The tool does not keep these passwords in a
+# vault. When a person is locked out or has forgotten theirs, a DBA resets it,
+# and the tool hands the new password to that person and records who did it.
+#
+# Read this one for `personal_accounts:`, `delivery:` and `reset_records:`.
+#
+# Check it before you use it:
+#     sopuli --config personal-accounts.yaml config validate
+#
+# Reset one person's password:
+#     sopuli --config personal-accounts.yaml account reset-password --account acme_dev_alice
+#
+# Full reference: ../docs/use-cases/uc-02-personal-account-passwords.md
+
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-3.3.schema.json
+
+version: 1
+
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com
+    mount: kv
+    kv_version: 2
+    non_production: true
+    auth: { method: token, token: { env: SOPULI_VAULT_TOKEN_DEV } }
+
+defaults:
+  vault: vault-dev
+
+targets:
+  # A tenant database, where local accounts live.
+  - name: appdb-dev-alpha
+    type: oracle
+    environment: dev
+    dsn: "db-dev.example.com:1521/alphadev.pdb.example.com"
+    admin: { username: C##SOPULI_SVC, auth: prompt }
+    oracle: { scope: pdb, container: alphadev }
+    labels: { tier: tenant }
+
+  # The container root, where common users (names starting C##) live. A common
+  # user's password is set here and is the same in every tenant database.
+  - name: appdb-dev-cdb
+    type: oracle
+    environment: dev
+    dsn: "db-dev.example.com:1521/CDBDEV.example.com"
+    admin: { username: C##SOPULI_SVC, auth: prompt }
+    oracle: { scope: cdb_root }
+    labels: { tier: root }
+
+groups:
+  tenant-pdbs: { match: { tier: tenant } }
+  cdb-roots:   { match: { tier: root } }
+
+policies:
+  personal-standard:
+    password:
+      length: 20
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+
+# ---------------------------------------------------------------------------
+# Which accounts are personal. Like every account list in this file, it is a
+# whitelist: the tool never resets an account that no entry here admits.
+# A reset still names exactly one account on the command line.
+# ---------------------------------------------------------------------------
+personal_accounts:
+  # By name. A short list somebody reads and reviews.
+  - accounts: [acme_dev_alice, acme_dev_bob]
+    targets: { group: tenant-pdbs }
+    policy: personal-standard
+
+  # Common users go to the container root only. The tool changes a common
+  # user's password only from the root, and refuses to from a tenant database.
+  - accounts: ["C##ACME_DBA_CAROL"]
+    targets: { group: cdb-roots }
+    policy: personal-standard
+
+  # By profile: every account that has this database profile, found when a
+  # command runs. Use this when a list would be hundreds of names. The cost is
+  # that whoever can give an account this profile can make it resettable,
+  # without changing this file. `account list` shows what it matches today.
+  - profile: ACME_DEVELOPER
+    targets: { group: tenant-pdbs }
+    policy: personal-standard
+
+# ---------------------------------------------------------------------------
+# How the new password reaches its owner.
+# ---------------------------------------------------------------------------
+delivery:
+  # vault_wrapped: the password goes into Vault behind a single-use wrapping
+  # token, and the DBA passes the token on. Nobody but the owner sees the
+  # password. The token stops working after `ttl`, so keep it short.
+  method: vault_wrapped
+  vault_wrapped:
+    ttl: 15m
+
+  # manual: the DBA's terminal shows the password, and the DBA passes it on.
+  # Use it only where no vault is available. `force_expire: true` is required:
+  # the password expires at the owner's first logon, so the DBA's copy stops
+  # working. This block is kept but not used. Change `method:` above to
+  # `manual` to switch.
+  manual:
+    force_expire: true
+
+# ---------------------------------------------------------------------------
+# The record of each reset: who reset which account, when, and how the
+# password was handed over. It never holds the password.
+#
+# One store and one prefix for the whole file. Each record is at
+# <prefix>/<target>/<account>, for example
+# sopuli/personal-resets/appdb-dev-cdb/c##acme_dba_carol, and the same path is
+# locked while a reset runs, so two DBAs cannot reset one account at once. The
+# vault token needs read, write and list access under the prefix.
+#
+# Leaving this block out is allowed: a reset then warns, writes no record and
+# takes no lock.
+# ---------------------------------------------------------------------------
+reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets

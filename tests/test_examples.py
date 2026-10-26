@@ -48,6 +48,7 @@ EXAMPLE_FILES = [
     "safety-hardened.yaml",
     "target-sets.yaml",
     "admin-credentials.yaml",
+    "personal-accounts.yaml",
 ]
 
 

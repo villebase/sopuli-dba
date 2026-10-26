@@ -304,13 +304,20 @@ def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
     :mod:`sopuli.config.references` refuses a dangling ``policy:`` when the file
     is read, which is the earlier and better moment.
     """
-    name = binding.policy if binding.policy is not None else config.defaults.policy
+    name = policy_name_for(config, binding)
     if name is None:
         return AccountAttributes()
     found = next((policy for policy in config.policies if policy.name == name), None)
     if found is None:
         return AccountAttributes()
     return _attributes(found.account)
+
+
+def policy_name_for(config: Config, binding: Binding) -> str | None:
+    """The policy :func:`attributes_for` reads for ``binding``: its own
+    ``policy:``, then ``defaults.policy``. One chain, so a message naming a
+    policy key names the policy whose attributes are enforced."""
+    return binding.policy if binding.policy is not None else config.defaults.policy
 
 
 def _attributes(policy: AccountPolicy) -> AccountAttributes:

@@ -183,6 +183,7 @@ from sopuli.driver.protocol import (
     DriverError,
     Encryption,
     PartialAccountChangeError,
+    Scope,
     Session,
     Timeouts,
     UnsupportedCapabilityError,
@@ -6636,9 +6637,11 @@ def creds_apply(
     )
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
-    # nothing staged is checked too, which can only refuse more.
-    _require_encryption(_targets_of(config, bindings), run, config)
-    _require_attribute_capabilities(bindings, run, config)
+    # nothing staged is checked too, which can only refuse more. The two checks
+    # share one login per target.
+    scopes: dict[str, Scope | None] = {}
+    _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
+    _require_attribute_capabilities(bindings, run, config, scopes=scopes)
 
     if run.dry_run:
         # Invariant 8: print the plan, take no lock, write nothing. The documents
@@ -8105,6 +8108,16 @@ def _apply_one(
             # one just before `set_password`, after the login, so without this one
             # the attribute change would be unfenced.
             manager.check(_lock_key(binding))
+            # Asked again of the connection that enforces it, as encryption is:
+            # the plan-time check passes over a target it could not reach, and
+            # that is not a way past it (#1072).
+            refusal = _attribute_refusal(
+                session.scope(),
+                _needs_of(attributes, "account"),
+                target=binding.target,
+            )
+            if refusal is not None:
+                raise refusal
             # The driver decides what still needs doing and reports a row either
             # way, which is where invariant 9 lives for these: an account that is
             # already unlocked is `changed: false` rather than an absent action.
@@ -8576,7 +8589,45 @@ def _driver_context(run: Invocation, config: Config) -> DriverContext:
     )
 
 
-def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, config: Config) -> None:
+def _plan_scope(
+    expanded: ExpandedTarget,
+    run: Invocation,
+    config: Config,
+    scopes: dict[str, Scope | None],
+) -> Scope | None:
+    """One target's scope for a plan-time check, read over one connection and
+    kept in ``scopes``, so the checks a run makes share one login per target.
+
+    ``None`` where the target could not be reached or its scope not read: the
+    run reports that on its rows, and each check makes its own second check
+    when it sends.
+    """
+    if expanded.name in scopes:
+        return scopes[expanded.name]
+    found: Scope | None = None
+    try:
+        session = _open_session(expanded, run, config)
+    except Exception:  # noqa: BLE001 -- the run reports it on each row
+        scopes[expanded.name] = None
+        return None
+    try:
+        found = session.scope()
+    except Exception:  # noqa: BLE001 -- likewise
+        found = None
+    finally:
+        with suppress(Exception):
+            session.close()
+    scopes[expanded.name] = found
+    return found
+
+
+def _require_encryption(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    scopes: dict[str, Scope | None] | None = None,
+) -> None:
     """Refuse, at plan time, to send a password over an unencrypted connection
     (#857).
 
@@ -8616,19 +8667,12 @@ def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, conf
                     f"is `{UNENCRYPTED_SSLMODE}`, which never encrypts: use `sslmode: verify-full`"
                 ),
             )
+    cache: dict[str, Scope | None] = {} if scopes is None else scopes
     for expanded, location in required:
-        try:
-            session = _open_session(expanded, run, config)
-        except Exception:  # noqa: BLE001 -- the run reports it on each row
+        scope = _plan_scope(expanded, run, config, cache)
+        if scope is None:
             continue
-        try:
-            encryption = session.scope().encryption
-        except Exception:  # noqa: BLE001 -- likewise
-            continue
-        finally:
-            with suppress(Exception):
-                session.close()
-        refusal = _unencrypted(encryption, target=expanded.name, location=location)
+        refusal = _unencrypted(scope.encryption, target=expanded.name, location=location)
         if refusal is not None:
             raise refusal
 
@@ -8650,57 +8694,91 @@ def _unencrypted(
     )
 
 
+#: What to do about an attribute a target does not report the capability for.
+_ATTRIBUTE_HINTS = {
+    ACCOUNT_LOCK_STATE: (
+        "this target cannot lock or unlock an account: bind its accounts to a "
+        "policy without that key"
+    ),
+    PROFILE_MANAGEMENT: (
+        "the tool account cannot read this target's password profiles. Where the "
+        "product has them, grant what reads them (on Oracle, SELECT on DBA_PROFILES, "
+        "02-oracle-privileges.md §2); where it has none, bind its accounts to a "
+        "policy without that key"
+    ),
+}
+
+
+def _needs_of(attributes: AccountAttributes, at: str) -> dict[str, str]:
+    """The capabilities one account's attributes need, each with the key under
+    ``at`` that asks for it."""
+    needed: dict[str, str] = {}
+    if attributes.unlock:
+        needed[ACCOUNT_LOCK_STATE] = f"{at}.unlock_if_locked"
+    if attributes.profile is not None:
+        needed[PROFILE_MANAGEMENT] = f"{at}.profile"
+    return needed
+
+
+def _attribute_needs(config: Config, bindings: Sequence[Binding]) -> dict[str, str]:
+    """The capabilities these bindings' attributes need, each with the first
+    policy key that asks for it."""
+    needed: dict[str, str] = {}
+    for binding in bindings:
+        at = f"policies.{apply_states.policy_name_for(config, binding)}.account"
+        for capability, key in _needs_of(apply_states.attributes_for(config, binding), at).items():
+            needed.setdefault(capability, key)
+    return needed
+
+
+def _attribute_refusal(
+    scope: Scope, needed: Mapping[str, str], *, target: str
+) -> UnsupportedCapabilityError | None:
+    """The refusal for the first needed capability ``scope`` lacks, or ``None``."""
+    for capability, key in needed.items():
+        if not scope.supports(capability):
+            return UnsupportedCapabilityError(
+                capability,
+                target=target,
+                hint=f"`{key}` asks for it, and {_ATTRIBUTE_HINTS[capability]}",
+            )
+    return None
+
+
 def _require_attribute_capabilities(
-    bindings: Sequence[Binding], run: Invocation, config: Config
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    *,
+    scopes: dict[str, Scope | None] | None = None,
 ) -> None:
     """Refuse, at plan time, an account attribute a target cannot enforce
     (invariant 4, #1072).
 
     A policy's ``account.unlock_if_locked`` needs ``account_lock_state``, and
-    its ``account.profile`` needs ``profile_management``. A target that
-    reports neither is refused before any password is drawn or any database
-    is changed, with exit 5 naming the capability, the target and the key.
-    The question is the capability's, never the product's.
+    its ``account.profile`` needs ``profile_management``. A target that lacks a
+    capability a binding asks for is refused before any password is drawn or
+    any database is changed, with exit 5 naming the capability, the target and
+    the key. The question is the capability's, never the product's.
 
     **One connection per target that some binding asks an attribute of, and
-    none otherwise**, as :func:`_require_encryption` does. A target this cannot
-    reach, or whose scope it cannot read, is left to the run, which reports it
-    on its rows.
+    none otherwise**, shared with :func:`_require_encryption` through
+    ``scopes``. A dry run reads it too, so the preview refuses what the run
+    would. A target this cannot reach, or whose scope it cannot read, is left
+    to the run, and :func:`_apply_one` asks again before it enforces anything.
     """
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+    cache: dict[str, Scope | None] = {} if scopes is None else scopes
     for target_name, grouped in _grouped(bindings).items():
-        needed: dict[str, str] = {}
-        for binding in grouped:
-            attributes = apply_states.attributes_for(config, binding)
-            policy = binding.policy if binding.policy is not None else config.defaults.policy
-            at = f"policies.{policy}.account"
-            if attributes.unlock:
-                needed.setdefault(ACCOUNT_LOCK_STATE, f"{at}.unlock_if_locked")
-            if attributes.profile is not None:
-                needed.setdefault(PROFILE_MANAGEMENT, f"{at}.profile")
+        needed = _attribute_needs(config, grouped)
         if not needed:
             continue
-        try:
-            session = _open_session(by_target[target_name], run, config)
-        except Exception:  # noqa: BLE001 -- the run reports it on each row
+        scope = _plan_scope(by_target[target_name], run, config, cache)
+        if scope is None:
             continue
-        try:
-            scope = session.scope()
-        except Exception:  # noqa: BLE001 -- likewise
-            continue
-        finally:
-            with suppress(Exception):
-                session.close()
-        for capability, key in needed.items():
-            if not scope.supports(capability):
-                raise UnsupportedCapabilityError(
-                    capability,
-                    target=target_name,
-                    hint=(
-                        f"`{key}` asks for it, and this target cannot enforce it: "
-                        "use a policy without that key for this target's bindings"
-                    ),
-                )
+        refusal = _attribute_refusal(scope, needed, target=target_name)
+        if refusal is not None:
+            raise refusal
 
 
 def _rolling_back(sources: Sequence[tuple[Binding, Source | None]]) -> frozenset[tuple[str, str]]:
@@ -10631,9 +10709,11 @@ def creds_rotate(
 
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target
-    # with nothing due is checked too, which can only refuse more.
-    _require_encryption(_targets_of(config, bindings), run, config)
-    _require_attribute_capabilities(bindings, run, config)
+    # with nothing due is checked too, which can only refuse more. The two
+    # checks share one login per target.
+    scopes: dict[str, Scope | None] = {}
+    _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
+    _require_attribute_capabilities(bindings, run, config, scopes=scopes)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The

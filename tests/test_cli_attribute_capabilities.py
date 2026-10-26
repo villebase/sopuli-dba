@@ -125,7 +125,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
     """A vault with `pending` staged, and a fake driver whose sessions report
     ``capabilities``."""
 
-    def install(capabilities: frozenset[str]) -> dict[str, Any]:
+    def install(capabilities: frozenset[str], *, refuse_first: bool = False) -> dict[str, Any]:
         store = MemoryStore()
         store.write(
             "apps/acme/db",
@@ -133,6 +133,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
             cas=0,
         )
         sessions: list[FakeSession] = []
+        attempts: list[str] = []
 
         def fake_connect(
             vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
@@ -144,6 +145,9 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
+                attempts.append(target.name)
+                if refuse_first and len(attempts) == 1:
+                    raise ConnectionError("the listener did not answer")
                 opened = FakeSession(capabilities)
                 sessions.append(opened)
                 return opened
@@ -234,6 +238,49 @@ def test_a_target_that_reports_the_capability_is_applied(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert changed(harness) == ["ACME_WEB_USER"]
+
+
+def test_the_profile_hint_names_the_grant_before_dropping_the_key(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """On Oracle the capability is probed from DBA_PROFILES, so a missing grant
+    is the usual cause, and dropping `profile:` would stop enforcing it."""
+    estate(frozenset())
+    result = invoke(runner, write_config(PROFILE), "creds", "apply")
+
+    hint = json.loads(result.output)["error"]["hint"]
+    assert "SELECT on DBA_PROFILES" in hint
+    assert hint.index("grant") < hint.index("policy without that key")
+
+
+def test_encryption_and_an_attribute_share_one_login_per_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The two plan-time checks read one scope: one login for both, then the run's."""
+    harness = estate(frozenset({ACCOUNT_LOCK_STATE}))
+    config = UNLOCK.replace(
+        "  policy: app-standard\n",
+        "  policy: app-standard\n  safety: { require_encryption: true }\n",
+    )
+    result = invoke(runner, write_config(config), "creds", "apply")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert [session.described for session in harness["sessions"]] == [False, True]
+
+
+def test_a_target_the_plan_could_not_read_is_refused_on_its_row(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The plan-time read cannot reach the target, so the run asks the
+    connection that would enforce the attribute, and refuses there. Nothing is
+    unlocked and no password is set."""
+    harness = estate(frozenset(), refuse_first=True)
+    result = invoke(runner, write_config(UNLOCK), "creds", "apply")
+
+    [row] = json.loads(result.output)["results"]
+    assert row["state"] == "ERROR"
+    assert "does not support account_lock_state" in row["error"]["message"]
+    assert changed(harness) == []
 
 
 def test_no_attribute_asks_nothing_and_opens_no_extra_connection(

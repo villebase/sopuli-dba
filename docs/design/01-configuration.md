@@ -2846,7 +2846,12 @@ A third key here would be a decision rather than an implementation detail.
 policy is bound to and that lacks the capability. The refusal names the
 capability, the target and the key (invariant 4). A PostgreSQL cluster reports
 neither: `NOLOGIN` is not a lock, and it has no password profiles. So bind its
-accounts to a policy without the key.
+accounts to a policy without the key. On Oracle, `profile_management` needs the
+grant on `DBA_PROFILES` (`02-oracle-privileges.md` §2), and the refusal says so
+first. The check reads each such target once, sharing that login with
+`require_encryption`'s, and `--dry-run` reads it too, so the preview refuses
+what the run would. A target it cannot reach is asked again on the connection
+that would enforce the attribute.
 
 **`profile:` is a name, and which profiles exist is a property of each target.**
 It is resolved against `DBA_PROFILES` and used in the spelling the dictionary

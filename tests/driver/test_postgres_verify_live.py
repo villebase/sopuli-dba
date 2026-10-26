@@ -83,8 +83,19 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
 
 @pytest.fixture
 def session(live_postgres: Any, roles: dict[str, str]) -> Iterator[Any]:
-    """A session as the tool account, built the way the CLI builds one."""
+    """A session as the tool account, built the way the CLI builds one.
+
+    The managed role's login needs `require_auth`, so a psycopg that loaded an
+    older libpq skips: the driver refuses that login by design.
+    """
+    from psycopg import pq
+
+    from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, libpq_release
     from sopuli.driver.postgres.session import build_driver
+
+    major, minor = libpq_release(pq.version())
+    if major < REQUIRE_AUTH_FROM:
+        pytest.skip(f"libpq {major}.{minor} has no require_auth; libpq {REQUIRE_AUTH_FROM}+ needed")
 
     driver = build_driver(DriverContext(env=os.environ, correlation_id="verify", runtime=Runtime()))
     target = ExpandedTarget(
@@ -115,7 +126,14 @@ def test_the_right_password_passes(session: Any, roles: dict[str, str]) -> None:
 def test_a_wrong_password_fails(session: Any, roles: dict[str, str]) -> None:
     result = session.verify_password(roles["managed"], Secret("Not-The-Password-7x"))
 
-    assert (result.result, result.detail) == (FAIL, None)
+    assert result.result == FAIL
+
+
+def test_a_missing_role_is_unavailable(session: Any) -> None:
+    result = session.verify_password(f"acme_{uuid.uuid4().hex[:8]}_missing_user", Secret("x"))
+
+    assert result.result == UNAVAILABLE
+    assert "there is no role" in str(result.detail)
 
 
 def test_a_nologin_role_is_unavailable_and_not_drift(session: Any, roles: dict[str, str]) -> None:

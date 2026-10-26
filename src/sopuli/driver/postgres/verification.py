@@ -18,13 +18,22 @@ A failed login is one of three things here:
   ``UNVERIFIABLE`` and not as drift;
 * anything else, such as a server that did not answer: not an answer about
   the password, so the session raises it.
+
+A message can hold one attempt per address the host name resolves to. As in
+:func:`~sopuli.driver.postgres.errors.from_error`, the first attempt's reason
+is the one that counts.
 """
 
 from __future__ import annotations
 
 import re
 
-from sopuli.driver.postgres.errors import LOGIN_REFUSED, WRONG_PASSWORD, Diagnosis
+from sopuli.driver.postgres.errors import (
+    LOGIN_REFUSED,
+    WRONG_PASSWORD,
+    Diagnosis,
+    first_reason_at,
+)
 from sopuli.driver.protocol import FAIL, UNAVAILABLE
 
 #: The one method the tool logs in with as a managed role
@@ -34,9 +43,9 @@ REQUIRED_METHOD = "scram-sha-256"
 #: libpq's own message when the server asks for another method than the one
 #: ``require_auth`` allows, or completes the login without asking at all, as a
 #: ``trust`` line does. No SQLSTATE: libpq ends the login itself. The text after
-#: the colon says what the server asked for, such as ``server requested a
-#: cleartext password``. Measured with ``require_auth=md5`` in #1032; the
-#: message has the same shape for every method.
+#: the colon says what the server asked for: ``server requested a cleartext
+#: password``, or ``server did not complete authentication`` for a ``trust``
+#: line (measured on 16.15, #1067).
 _METHOD_REFUSED = re.compile(r'authentication method requirement "[^"]+" failed: ([^\n]+)')
 
 #: What to do about a login the server refused for a reason other than the
@@ -46,20 +55,31 @@ HBA_HINT = (
     "(02-postgres-privileges.md §2.3)"
 )
 
+#: A wrong password, and the one other cause the server gives the same answer
+#: for. A role whose stored verifier is md5 cannot log in through a
+#: ``scram-sha-256`` line with any password, and the tool account cannot read
+#: ``pg_authid`` to tell the two apart.
+WRONG_PASSWORD_DETAIL = (
+    "the server refused the password (28P01). It gives the same answer for a role "
+    "whose stored verifier is md5, which no password opens through a scram-sha-256 "
+    "line; `creds apply` stores a SCRAM verifier"
+)
+
 
 def login_outcome(diagnosis: Diagnosis) -> tuple[str, str | None] | None:
     """The result and detail for a login that failed with ``diagnosis``, or
     ``None`` where the failure says nothing about the password, and the caller
     raises it."""
     refused = _METHOD_REFUSED.search(diagnosis.message)
-    if refused is not None:
+    reason = first_reason_at(diagnosis.message)
+    if refused is not None and (reason is None or refused.start() < reason):
         return UNAVAILABLE, (
             f"the server did not log in with {REQUIRED_METHOD} "
             f"({refused.group(1).strip()}), and the tool sends a managed role's "
             f"password only that way; the password was not tried: {HBA_HINT}"
         )
     if diagnosis.code == WRONG_PASSWORD:
-        return FAIL, None
+        return FAIL, WRONG_PASSWORD_DETAIL
     if diagnosis.code == LOGIN_REFUSED:
         return UNAVAILABLE, (
             f"{diagnosis.first_line}. The server refused the login for a reason "

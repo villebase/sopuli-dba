@@ -201,6 +201,24 @@ def classify(code: str, message: str) -> Diagnosis:
     )
 
 
+def _reasons(message: str) -> list[tuple[int, int, str]]:
+    """Each row of :data:`_CONNECT_MESSAGES` the message holds: where, which
+    row, and its code."""
+    return [
+        (match.start(), index, recovered)
+        for index, (pattern, recovered) in enumerate(_CONNECT_MESSAGES)
+        if (match := pattern.search(message))
+    ]
+
+
+def first_reason_at(message: str) -> int | None:
+    """Where in a failed connection's message the first recognised reason
+    starts, or ``None``. The reason there is the one :func:`from_error`
+    reports."""
+    found = _reasons(message)
+    return min(found)[0] if found else None
+
+
 def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
     """Classify a psycopg exception without importing psycopg.
 
@@ -218,11 +236,7 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
         return classify(str(code), message)
     if not connecting:
         return classify(CONNECTION_FAILURE, message)
-    found = [
-        (match.start(), index, recovered)
-        for index, (pattern, recovered) in enumerate(_CONNECT_MESSAGES)
-        if (match := pattern.search(message))
-    ]
+    found = _reasons(message)
     if found:
         # The earliest in the message, which is the first attempt; at one
         # place, the earlier row, so `password …` wins over `… authentication

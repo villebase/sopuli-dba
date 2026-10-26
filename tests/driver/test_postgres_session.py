@@ -25,6 +25,7 @@ from sopuli.driver.protocol import (
     DriverError,
     Session,
     UnsupportedCapabilityError,
+    UserState,
 )
 from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
 from sopuli.exit_codes import ExitCode
@@ -259,10 +260,21 @@ class _Logins:
 
 @pytest.fixture
 def logins(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The login, and a `describe_user` that finds every role but
+    `acme_missing_user`, spelled as `pg_roles` would."""
+
+    def described(self: Any, account: str) -> UserState | None:
+        if account == "acme_missing_user":
+            return None
+        return UserState(
+            name=account.lower(), status="OPEN", password_file_member=False, vendor_maintained=False
+        )
+
     def install(raises: Exception | None = None, libpq: int = 180004) -> _Logins:
         fake = _Logins(raises)
         monkeypatch.setattr(session_module.psycopg, "connect", fake)
         monkeypatch.setattr(session_module.pq, "version", lambda: libpq)
+        monkeypatch.setattr(session_module.PostgresSession, "describe_user", described)
         return fake
 
     return install
@@ -300,7 +312,50 @@ def test_a_wrong_password_fails(logins: Any) -> None:
 
     result = _session().verify_password("acme_app_user", Secret("x"))
 
-    assert (result.result, result.detail) == ("fail", None)
+    assert result.result == "fail"
+    assert "stored verifier is md5" in str(result.detail)
+
+
+def test_a_missing_role_is_unavailable_and_not_tried(logins: Any) -> None:
+    """The server would answer its login as a wrong password, which is drift."""
+    fake = logins()
+
+    result = _session().verify_password("acme_missing_user", Secret("x"))
+
+    assert result.result == "unavailable"
+    assert 'there is no role "acme_missing_user"' in str(result.detail)
+    assert fake.calls == []
+
+
+def test_the_login_uses_the_spelling_pg_roles_gives(logins: Any) -> None:
+    fake = logins()
+
+    _session().verify_password("ACME_APP_USER", Secret("x"))
+
+    assert fake.calls[0]["user"] == "acme_app_user"
+
+
+def test_an_unknown_method_is_refused_and_nothing_logs_in(logins: Any) -> None:
+    fake = logins()
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        _session().verify_password("acme_app_user", Secret("x"), method="bogus")
+
+    assert "verification method 'bogus'" in refused.value.message
+    assert fake.calls == []
+
+
+def test_a_failed_close_after_a_login_still_passes(
+    logins: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = logins()
+
+    def close() -> None:
+        raise _failed("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(fake, "close", close)
+
+    assert _session().verify_password("acme_app_user", Secret("x")).result == "pass"
 
 
 def test_no_pg_hba_line_is_unavailable_with_the_hint(logins: Any) -> None:

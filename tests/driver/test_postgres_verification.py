@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from sopuli.driver.postgres.errors import from_error
-from sopuli.driver.postgres.verification import HBA_HINT, login_outcome
+from sopuli.driver.postgres.verification import HBA_HINT, WRONG_PASSWORD_DETAIL, login_outcome
 from sopuli.driver.protocol import FAIL, UNAVAILABLE
 
 
@@ -24,11 +24,26 @@ def outcome(message: str) -> tuple[str, str | None] | None:
     return login_outcome(from_error(_FailedLoginError(message), connecting=True))
 
 
-def test_a_wrong_password_is_a_fail() -> None:
+def test_a_wrong_password_is_a_fail_that_names_the_md5_case() -> None:
+    """The server answers an md5 verifier behind a scram-sha-256 line the same way."""
     assert outcome(
         'connection failed: connection to server at "127.0.0.1", port 5432 failed: '
         'FATAL:  password authentication failed for user "acme_app_user"'
-    ) == (FAIL, None)
+    ) == (FAIL, WRONG_PASSWORD_DETAIL)
+
+
+def test_the_first_attempts_reason_is_the_one_that_counts() -> None:
+    """A host with two addresses: the password was tried at the first, and
+    refused, so it is a fail, whatever the second attempt said."""
+    result = outcome(
+        'connection to server at "192.0.2.10", port 5432 failed: FATAL:  password '
+        'authentication failed for user "acme_app_user"\n'
+        'connection to server at "192.0.2.11", port 5432 failed: authentication method '
+        'requirement "scram-sha-256" failed: server requested a cleartext password'
+    )
+
+    assert result is not None
+    assert result[0] == FAIL
 
 
 @pytest.mark.parametrize(

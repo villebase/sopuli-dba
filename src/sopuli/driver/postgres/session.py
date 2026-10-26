@@ -11,9 +11,8 @@ its encryption, audits the tool account's privileges for
 `doctor --check-privileges`, and describes a role for the guardrails
 (:meth:`PostgresSession.describe_user`). It verifies a role's password by
 logging in as the role (:meth:`PostgresSession.verify_password`). Only `doctor`
-gets this far: the
-registry entry is ``scope_only``, so every other command refuses the target
-with ``SOPULI-20006`` before it connects. The methods not written yet are a
+gets this far: the registry entry is ``scope_only``, so every other command
+refuses the target with ``SOPULI-20006`` before it connects. The methods not written yet are a
 second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
 A write that is written later checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. The driver sends
@@ -25,7 +24,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +43,9 @@ from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
     PASS,
     PASSWORD_ROLLOVER,
+    UNAVAILABLE,
+    VERIFY_BOTH,
+    VERIFY_HASH,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -56,6 +58,7 @@ from sopuli.driver.protocol import (
     PrivilegeAudit,
     Scope,
     Timeouts,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
     require_capability,
@@ -249,17 +252,34 @@ class PostgresSession:
         ``login`` only. ``hash`` and ``both`` need ``offline_verify``, which
         this driver never reports: the verifiers are in ``pg_authid``, which
         only a superuser reads. :meth:`require_verifier` refuses them at plan
-        time, and this refuses them again.
+        time, and this refuses them again, and any other method, rather than
+        log in in their place.
 
-        PostgreSQL has no failed-login lockout, so ``lockout_margin`` and
-        ``attempts`` have nothing to guard, and the result carries no counter.
-        The login uses the target's ``sslmode``, timeouts and
-        ``application_name``, as :meth:`PostgresDriver.connect` does, and asks
-        for SCRAM. A libpq older than 16 cannot ask, so the login is refused
-        before anything is sent.
+        A role that does not exist is :data:`~sopuli.driver.protocol.UNAVAILABLE`
+        before any login, as on Oracle: the server would answer its login as a
+        wrong password. PostgreSQL has no failed-login lockout, so
+        ``lockout_margin`` and ``attempts`` have nothing to guard, and the
+        result carries no counter. The login uses the target's ``sslmode``,
+        timeouts and ``application_name``, as :meth:`PostgresDriver.connect`
+        does, and asks for SCRAM. A libpq older than 16 cannot ask, so the
+        login is refused before anything is sent.
         """
-        if method != VERIFY_LOGIN:
+        if method in (VERIFY_HASH, VERIFY_BOTH):
             self.require_verifier(account, secret)
+        if method != VERIFY_LOGIN:
+            raise UnsupportedCapabilityError(
+                f"verification method {method!r}",
+                target=self.target.name,
+                hint="this driver verifies by `login` only",
+            )
+        role = self.describe_user(account)
+        if role is None:
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                detail=f'there is no role "{account}" on this target',
+            )
+        account = role.name
         major, minor = libpq_release(pq.version())
         if major < REQUIRE_AUTH_FROM:
             raise DriverError(
@@ -293,7 +313,10 @@ class PostgresSession:
                 method=VERIFY_LOGIN, result=result, latency_ms=_ms(started), detail=detail
             )
         latency = _ms(started)
-        connection.close()
+        # The login has answered. A socket that drops as it closes does not
+        # change the answer.
+        with suppress(psycopg.Error):
+            connection.close()
         LOG.debug("login as %s: pass in %.3fs", account, latency / 1000)
         return VerifyResult(method=VERIFY_LOGIN, result=PASS, latency_ms=latency)
 

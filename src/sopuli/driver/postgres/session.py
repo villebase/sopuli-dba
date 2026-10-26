@@ -210,9 +210,10 @@ class PostgresSession:
         return LIMIT
 
     def password_constraints(self, account: str) -> None:
-        """Not on the protocol: ``creds generate`` asks it of a driver that
-        has it, and would read a missing method as no answer."""
-        raise self._not_written("read a role's password rules")
+        """Nothing beyond the length: a plain server has no verify function and
+        no reuse history (``password_reuse_policy`` is absent), so ``creds
+        generate`` reports none for a role. Not on the protocol: ``generate``
+        asks it of a driver that has it."""
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What the tool account holds, needs and should not hold, and its

@@ -292,8 +292,11 @@ class OracleSession:
                 )
         return self._scope
 
-    def privileges(self) -> PrivilegeAudit:
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What this session holds that §3 says it should not.
+
+        ``accounts`` is not read: ``ALTER USER`` reaches every account, so no
+        grant is per account.
 
         **Not folded into** :meth:`scope`, unlike the capability probe, and the
         difference is who asks. Every command calls ``scope()``; only

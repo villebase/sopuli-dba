@@ -233,7 +233,7 @@ targets:
 `sopuli-dba[oracle]`. psycopg comes with `sopuli-dba[postgres]`.
 `sopuli/driver/registry.py` implements this. The config accepts
 `type: postgresql`. `doctor` connects to the cluster and reports the scope,
-`cluster`. Every other command refuses a PostgreSQL target with `SOPULI-20006`
+`cluster`, and `doctor --check-privileges` audits the tool account. Every other command refuses a PostgreSQL target with `SOPULI-20006`
 before it resolves a credential or connects, until the driver is written. The driver registry and the store
 registry share `sopuli/extras.py`, which finds a module without importing it and
 reads a `ModuleNotFoundError` three ways. That logic is subtle, so it has one

@@ -7,7 +7,8 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 
 **What this build does.** It connects, labels the session with the run's
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
-its encryption. Only `doctor` gets this far: the registry entry is
+its encryption, and audits the tool account's privileges for
+`doctor --check-privileges`. Only `doctor` gets this far: the registry entry is
 ``scope_only``, so every other command refuses the target with ``SOPULI-20006``
 before it connects. The methods past the scope are a second line behind that,
 and refuse with ``SOPULI-20006`` without a round trip. A write that is written
@@ -19,7 +20,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,8 +30,9 @@ import psycopg
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres.client import client_lines
 from sopuli.driver.postgres.connection import connect_arguments
-from sopuli.driver.postgres.errors import from_error
-from sopuli.driver.postgres.scope import observe
+from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
+from sopuli.driver.postgres.privileges import audit
+from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe
 from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     VERIFY_LOGIN,
@@ -87,28 +90,18 @@ class PostgresSession:
     target: ExpandedTarget
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: Why :meth:`cluster_identity` found no answer, or ``None``.
+    identity_caveat: str | None = field(default=None, init=False)
 
     def scope(self) -> Scope:
         """What this session is: a cluster, read-write or not, and its encryption.
 
-        Probed on the first call and cached for the session (invariant 3).
-        An error psycopg raises before it sends anything has no SQLSTATE and is
-        not an ``OperationalError``. That is a fault in this tool, so it is left
-        unmapped rather than reported as a lost connection.
+        Probed on the first call and cached for the session (invariant 3). A
+        superuser is refused here, with ``SOPULI-20007``.
         """
         if self._scope is None:
-            if self.connection is None:
-                raise DriverError(
-                    f'the session to target "{self.target.name}" is closed',
-                    hint="this is a fault in sopuli: a closed session was used again",
-                )
-            try:
-                with self.connection.cursor() as cursor:
-                    self._scope = observe(cursor)
-            except psycopg.Error as error:
-                if error.sqlstate is None and not isinstance(error, psycopg.OperationalError):
-                    raise
-                raise from_error(error).as_error() from error
+            with self._cursor() as cursor:
+                self._scope = observe(cursor, target=self.target.name)
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a cluster, %s %s, encryption %s",
@@ -118,6 +111,48 @@ class PostgresSession:
                     self._scope.encryption.method,
                 )
         return self._scope
+
+    def cluster_identity(self) -> str | None:
+        """The cluster's ``system_identifier``, which the CLI uses to refuse two
+        targets that are one cluster. A primary and its standbys share it.
+
+        ``None`` where the session may not run ``pg_control_system()``, with the
+        reason in :attr:`identity_caveat`. Any role can run it by default, so
+        this is a site that revoked it. Not knowing is not a finding.
+        """
+        try:
+            with self._cursor() as cursor:
+                cursor.execute(SYSTEM_IDENTIFIER)
+                return str(cursor.fetchone()[0])
+        except DriverError as error:
+            if error.code != INSUFFICIENT_PRIVILEGE:
+                raise
+            self.identity_caveat = (
+                "cannot read system_identifier, so the tool cannot tell whether another "
+                f"target is the same cluster: {error.message}"
+            )
+            return None
+
+    @contextmanager
+    def _cursor(self) -> Iterator[Any]:
+        """A cursor on the open connection, with the server's errors mapped.
+
+        An error psycopg raises before it sends anything has no SQLSTATE and is
+        not an ``OperationalError``. That is a fault in this tool, so it is left
+        unmapped rather than reported as a lost connection.
+        """
+        if self.connection is None:
+            raise DriverError(
+                f'the session to target "{self.target.name}" is closed',
+                hint="this is a fault in sopuli: a closed session was used again",
+            )
+        try:
+            with self.connection.cursor() as cursor:
+                yield cursor
+        except psycopg.Error as error:
+            if error.sqlstate is None and not isinstance(error, psycopg.OperationalError):
+                raise
+            raise from_error(error).as_error() from error
 
     def _not_written(self, what: str) -> NotWrittenError:
         return NotWrittenError(self.target.name, what)
@@ -133,8 +168,11 @@ class PostgresSession:
         has it, and would read a missing method as no answer."""
         raise self._not_written("read a role's password rules")
 
-    def privileges(self) -> PrivilegeAudit:
-        raise self._not_written("audit the tool's privileges")
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
+        """What the tool account holds, needs and should not hold, and its
+        ``ADMIN OPTION`` on each of ``accounts``. Uncached: a run asks once."""
+        with self._cursor() as cursor:
+            return audit(cursor, accounts)
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         raise self._not_written("set a password")

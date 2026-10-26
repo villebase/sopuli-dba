@@ -1,8 +1,9 @@
 """The PostgreSQL session on a scripted connection. Tier 0, with psycopg installed.
 
-What this build does past connecting is refuse, so the refusals are the
-behaviour: ``SOPULI-20006`` for an operation not written yet, a read-only
-session refused first for a write, and an absent capability named.
+Past the scope and the privilege audit, what this build does is refuse, so the
+refusals are the behaviour: ``SOPULI-20006`` for an operation not written yet,
+and an absent capability named. The audit itself is in
+``test_postgres_privileges.py``.
 """
 
 from __future__ import annotations
@@ -34,8 +35,9 @@ scope_module = pytest.importorskip("sopuli.driver.postgres.scope")
 class _Cursor:
     def __init__(self, recovery: bool) -> None:
         self._rows = {
-            scope_module.SESSION_FACTS: ("16.15", recovery, "off"),
+            scope_module.SESSION_FACTS: ("16.15", recovery, "off", "sopuli_admin", False, None),
             scope_module.SSL_ROW: (False,),
+            scope_module.SYSTEM_IDENTIFIER: (7426912345678901234,),
         }
         self._last = ""
 
@@ -80,7 +82,6 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
     [
         lambda s: s.describe_user("acme_app_user"),
         lambda s: s.byte_limit(),
-        lambda s: s.privileges(),
         lambda s: s.verify_password("acme_app_user", Secret("x")),
         lambda s: s.set_password("acme_app_user", Secret("x")),
         lambda s: s.apply_attributes("acme_app_user", AccountAttributes()),
@@ -151,14 +152,15 @@ def _failing_session(error: Exception) -> Any:
         ("InsufficientPrivilege", "42501"),
     ],
 )
-def test_a_failed_scope_read_is_mapped(raised: str, code: str) -> None:
+@pytest.mark.parametrize("read", [lambda s: s.scope(), lambda s: s.privileges()])
+def test_a_failed_read_is_mapped(raised: str, code: str, read: Any) -> None:
     """A lost connection has no SQLSTATE; a server error has its own."""
     import psycopg
 
     error = getattr(psycopg.errors, raised)("the server's message")
 
     with pytest.raises(DriverError) as caught:
-        _failing_session(error).scope()
+        read(_failing_session(error))
 
     assert caught.value.code == code
     assert caught.value.message == f"{code}: the server's message"
@@ -174,12 +176,44 @@ def test_a_client_side_error_is_not_read_as_a_lost_connection() -> None:
         _failing_session(error).scope()
 
 
-def test_a_closed_session_refuses_with_a_message() -> None:
+@pytest.mark.parametrize("read", [lambda s: s.scope(), lambda s: s.privileges()])
+def test_a_closed_session_refuses_with_a_message(read: Any) -> None:
     session = _session()
     session.close()
 
     with pytest.raises(DriverError, match="is closed"):
-        session.scope()
+        read(session)
+
+
+def test_the_cluster_identity_is_the_system_identifier_as_text() -> None:
+    session = _session()
+
+    assert session.cluster_identity() == "7426912345678901234"
+    assert session.identity_caveat is None
+
+
+def test_an_identity_the_site_revoked_is_a_caveat_and_not_an_error() -> None:
+    import psycopg
+
+    error = psycopg.errors.InsufficientPrivilege("permission denied for function pg_control_system")
+    session = _failing_session(error)
+
+    assert session.cluster_identity() is None
+    assert session.identity_caveat == (
+        "cannot read system_identifier, so the tool cannot tell whether another target "
+        "is the same cluster: 42501: permission denied for function pg_control_system"
+    )
+
+
+def test_any_other_failure_to_read_the_identity_is_raised() -> None:
+    import psycopg
+
+    with pytest.raises(DriverError) as caught:
+        _failing_session(
+            psycopg.OperationalError("server closed the connection")
+        ).cluster_identity()
+
+    assert caught.value.code == "08006"
 
 
 def test_close_is_safe_twice() -> None:

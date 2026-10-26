@@ -1444,6 +1444,15 @@ look**, and they are not interchangeable:
   every correct install partial would teach readers to skip the line that matters
   when a view really was refused.
 
+On a PostgreSQL target both are empty, because the audit reads only catalogs
+that every role can read (`02-postgres-privileges.md` §2.4). `held` and
+`missing` name `CREATEROLE` and, where the server requires it, `ADMIN OPTION
+ON <role>` for each role the config declares there. A declared role the cluster
+does not have is in neither list, because no grant fixes it, and gets a caveat
+line. A managed role whose privileges the tool
+account can use is in `over_granted`, and a caveat line gives the statement
+that removes it.
+
 Both reach the text report and `targets[].warnings` as caveats, on every run, not
 only on a bad one. Where a `GRANT` would shrink `unaudited`, a line names it.
 Neither changes the exit code: `--check-privileges` warns and does not fail
@@ -2249,7 +2258,9 @@ records its highest number too.
 | `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape again (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`. Only a run that has something to send reaches it. `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
 | `SOPULI-20004` | `config` | 9 | Oracle Instant Client cannot be used, and thick mode needs it (D3): it was not found (`DPI-1047`), it is older than the driver needs (`DPI-1050`), or its version is not supported (`DPI-1072`). The message keeps the driver's own diagnosis, and the hint says how to install the client on this platform. Installing a working client fixes it, or pointing `runtime.oracle.client_lib_dir` or `SOPULI_ORACLE_CLIENT_LIB_DIR` at one that is installed. A target whose credential resolved no username or password is also refused before connecting, and has no code, because the file or a variable fixes it |
 | `SOPULI-20005` | `config` | 9 | A `vaults:` entry names a `type` that `01-configuration.md` §3a accepts and this build has no module for. Neither editing the file nor installing anything fixes it, so the message never carries an install line |
-| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. A `postgresql` target reaches it on every command but `doctor`, before a credential is resolved or a connection opened: the PostgreSQL driver connects and reports the scope, and does not read or change a role yet. `creds generate` treats it as it treats a target it cannot reach, and draws to the policy's declared limits. In a run over several targets it is that target's error, and the others carry on |
+| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. A `postgresql` target reaches it on every command but `doctor`, before a credential is resolved or a connection opened: the PostgreSQL driver connects, reports the scope and audits its own account, and does not read or change a managed role yet. `creds generate` treats it as it treats a target it cannot reach, and draws to the policy's declared limits. In a run over several targets it is that target's error, and the others carry on |
+| `SOPULI-20007` | `config` | 9 | A PostgreSQL target's admin is a superuser, or a member of a superuser role, and the tool does not run as one (`02-postgres-privileges.md` §1). The driver reads both in the first read every session makes, so the target is refused before anything else is asked of it. The fix is in the config, which names a role with `CREATEROLE` instead. It has a code because nothing in the server's answer tells it apart: the login succeeded. `doctor` reports it as the target's error, as it reports any target it reached and could not use |
+| `SOPULI-20008` | `config` | 9 | Two PostgreSQL targets of one run are one cluster: they share a `system_identifier` (`01-configuration.md` §*`postgres:` on a target*). The second to connect is refused, naming both, and the first is unaffected. It has a code for `SOPULI-20007`'s reason: the logins succeeded, and only the tool sees the conflict. `doctor` reports it as that target's error. Where the identifier cannot be read, nothing is refused, and `doctor` puts the reason in the target's `warnings` |
 
 **The category is `config`, not `capability`** (ADR-006, E5). `capability` names
 what a *target* cannot do: a property of the database at the other end, which

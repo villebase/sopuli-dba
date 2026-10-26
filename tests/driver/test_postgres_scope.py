@@ -12,11 +12,14 @@ from sopuli.driver.postgres.scope import (
     READ_WRITE,
     SESSION_FACTS,
     SSL_ROW,
+    SUPERUSER_REFUSED,
     ReadOnlyTargetError,
+    SuperuserError,
     observe,
     require_read_write,
 )
 from sopuli.driver.protocol import CLUSTER, Scope
+from sopuli.exit_codes import ExitCode
 
 
 class _Cursor:
@@ -44,7 +47,38 @@ def _observe(
     ssl: tuple[Any, ...] | None = (True,),
     version: str = "16.15",
 ) -> Scope:
-    return observe(_Cursor((version, recovery, read_only), ssl))
+    facts = (version, recovery, read_only, "sopuli_admin", False, None)
+    return observe(_Cursor(facts, ssl), target="pg-dev")
+
+
+def test_a_member_of_a_superuser_role_is_refused_as_a_superuser_is() -> None:
+    cursor = _Cursor(("16.15", False, "off", "sopuli_admin", False, "postgres"), (True,))
+
+    with pytest.raises(SuperuserError) as refused:
+        observe(cursor, target="pg-dev")
+
+    assert refused.value.code == SUPERUSER_REFUSED
+    assert refused.value.message == (
+        'target "pg-dev" connects as "sopuli_admin", a member of the superuser role '
+        '"postgres", and sopuli does not run as a superuser'
+    )
+
+
+def test_a_superuser_is_refused_before_the_second_read() -> None:
+    cursor = _Cursor(("16.15", False, "off", "postgres", True, None), (True,))
+
+    with pytest.raises(SuperuserError) as refused:
+        observe(cursor, target="pg-dev")
+
+    assert refused.value.code == SUPERUSER_REFUSED
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+    assert refused.value.category == "config"
+    assert refused.value.message == (
+        'target "pg-dev" connects as "postgres", a superuser, and sopuli does not run '
+        "as a superuser"
+    )
+    assert "CREATEROLE" in str(refused.value.hint)
+    assert cursor.sent == [SESSION_FACTS]
 
 
 def test_a_primary_is_a_read_write_cluster() -> None:

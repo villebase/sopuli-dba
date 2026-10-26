@@ -798,12 +798,19 @@ Before any `ALTER USER`, the tool refuses when the target account:
    check has no input, and the run says so instead of passing (§2);
 4. holds `DBA`, `PDB_DBA`, `CDB_DBA` or `AUDIT_ADMIN`;
 5. is on a literal deny list. This is for 11.2, where `ORACLE_MAINTAINED` does
-   not exist.
+   not exist;
+6. is a superuser. Only the PostgreSQL driver reports one
+   (`02-postgres-privileges.md`); Oracle's nearest thing, `SYSDBA`, is check 3;
+7. is the account the session is connected as: the tool's own. Changing it
+   mid-run can lock the tool out of the targets it has not reached yet.
 
-`--force` overrides checks 2 to 5, for a DBA who deliberately manages an unusual
-account ([P3](../decisions/log.md#p3)). The audit event and the JSON output
-record the override. It never overrides check 1, because acting on an account
-the config does not declare would make the tool's own audit trail meaningless.
+`--force` overrides checks 2 to 5 and 7, for a DBA who deliberately manages an
+unusual account, or rotates the tool's own password
+([P3](../decisions/log.md#p3), [#1059](../decisions/log.md#1059)). The audit
+event and the JSON output record the override. It never overrides check 1,
+because acting on an account the config does not declare would make the tool's
+own audit trail meaningless. It never overrides check 6 either: a tool account
+that is not a superuser cannot change a superuser's password.
 
 `src/sopuli/driver/guardrails.py` implements the checks. It reviews; it does
 not decide, as the error mapping does. `creds apply` and `creds rotate` call it.

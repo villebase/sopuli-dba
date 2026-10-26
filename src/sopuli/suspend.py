@@ -82,7 +82,7 @@ def decide(
     finding rather than an error: the tool creates nothing (Q8), and an estate
     where a person has an account on four of nine targets is ordinary.
 
-    **`--force` waives guardrails 2 to 5 and never the declaration**, which is
+    **`--force` waives guardrails 2 to 5 and 7 and never the declaration**, which is
     invariant 5's own sentence: ``--force`` overrides other guardrails, never the
     whitelist. That is enforced by :func:`~sopuli.driver.guardrails.review` rather
     than here, and it is why the declaration is expressed *through* the review's

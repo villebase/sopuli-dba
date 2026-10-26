@@ -296,6 +296,13 @@ ROLES_QUERY = (
 #: ``None``, and anything else raises.
 PWFILE_QUERY = "select count(*) from v$pwfile_users where username = :name"
 
+#: Who this session is, for guardrail 7: the tool's own account. ``SESSION_USER``
+#: rather than ``CURRENT_USER``, because the guardrail is about the account that
+#: logged in, whose password the next connection needs. It is the spelling
+#: ``DBA_USERS`` holds, so it compares exactly with ``UserState.name``. Needs no
+#: grant.
+SESSION_USER_QUERY = "select sys_context('USERENV', 'SESSION_USER') from dual"
+
 #: Just the spelling, for the one caller that needs the name and nothing else.
 #:
 #: Separate from :data:`USER_QUERY` rather than reusing :func:`describe`, because

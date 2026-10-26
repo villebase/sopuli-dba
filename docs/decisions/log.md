@@ -3055,3 +3055,31 @@ the register.
     invariant 2 puts redaction at the serialiser, not at each call site.
   - Refusing `VAULT_ADDR` too. The variable may belong to something else on
     the machine.
+
+## #1059
+
+- **Decided:** 2026-10-26, #1059
+- **Question:** The PostgreSQL design refuses the tool's own account and a
+  superuser, both "never overridable, like check 1". The guardrails are
+  product-neutral, so the rule for the tool's own account reaches Oracle too,
+  where `creds rotate` changes `C##SOPULI_SVC` today when it is declared. How
+  should these two checks behave?
+- **Decision:** Two checks join `02-oracle-privileges.md` §4. Check 6 refuses a
+  superuser and is never waived. Check 7 refuses the account the session is
+  connected as, and `--force` waives it, as it waives checks 2 to 5, with the
+  waiver recorded. Both read `UserState`: `superuser`, which only the
+  PostgreSQL driver sets, and `session_account`, which every driver sets.
+- **Why:** A superuser's password is one a tool account that is not a superuser
+  cannot change, and a superuser tool account is refused when it connects, so
+  a waiver for check 6 would only move the refusal to the server. Changing the
+  tool's own password mid-run can lock the tool out of the targets it has not
+  reached, so it is refused by default. Rotating the tool's own password on
+  purpose is ordinary work, so a waiver exists for it, as P3 gives one for
+  `DBSNMP`.
+- **Rejected:**
+  - Never waiving check 7. Rotating the tool's own password would then have to
+    happen outside the tool on both products, a change for Oracle, where it
+    works today.
+  - No check 7. The whitelist would be the only protection, and declaring the
+    tool account by mistake, say through a role predicate, would go unnoticed
+    until the run locked itself out.

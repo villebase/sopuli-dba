@@ -43,6 +43,7 @@ import oracledb
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.accounts import (
+    SESSION_USER_QUERY,
     accounts_with_profile,
     accounts_with_role,
     deliberately_locked,
@@ -243,6 +244,8 @@ class OracleSession:
     #: Cached beside the scope and for the same reason: it is one more thing this
     #: connection is, and asking twice is two chances to disagree.
     _limit: ByteLimit | None = field(default=None, init=False, repr=False)
+    #: The account this connection logged in as, cached for the same reason.
+    _session_user: str | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this connection is, and what it can do.
@@ -326,9 +329,18 @@ class OracleSession:
         with no ``DBA_USERS.PASSWORD_CHANGE_DATE``, the date comes from
         ``SYS.USER$.PTIME`` (decision #386). Asked of the capability probe, which is
         cached, so a session without the grant never issues the read at all.
+
+        ``session_account`` says whether this is the account the session logged
+        in as, for guardrail 7. The session user is read once and cached.
         """
         with traced_cursor(self.connection) as cursor:
-            return describe(cursor, account, user_dollar=self.scope().supports(OFFLINE_VERIFY))
+            state = describe(cursor, account, user_dollar=self.scope().supports(OFFLINE_VERIFY))
+            if state is None:
+                return None
+            if self._session_user is None:
+                cursor.execute(SESSION_USER_QUERY)
+                self._session_user = str(cursor.fetchone()[0])
+            return replace(state, session_account=state.name == self._session_user)
 
     def password_constraints(self, account: str) -> AccountConstraints | None:
         """What this target says about a password for one account.

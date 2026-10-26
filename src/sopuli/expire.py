@@ -42,7 +42,8 @@ def decide(
 
     :func:`sopuli.suspend.decide`, reporting ``EXPIRED`` where it proceeds. Its
     docstring is the specification: a missing account is a finding rather than
-    an error, and ``--force`` waives guardrails 2 to 5 and never the whitelist.
+    an error, and ``--force`` waives guardrails 2 to 5 and 7 and never the
+    whitelist.
     """
     return _decide(
         state,

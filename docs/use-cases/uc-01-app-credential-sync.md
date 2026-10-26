@@ -502,7 +502,7 @@ sopuli creds apply --application acme
                    [--preflight]                          # survey every target before writing anything
                    [--repair FILE]                        # act only on a run's unconfirmed set
                    [--lockout-margin N]                   # default 2; see §7
-                   [--force]                              # waive account guardrails 2 to 5
+                   [--force]                              # waive account guardrails 2 to 5 and 7
 ```
 
 **Flow, per target**

@@ -13,8 +13,10 @@ import pytest
 from sopuli.driver.guardrails import (
     DECLARED,
     DENY_LIST,
+    OWN_ACCOUNT,
     PASSWORD_FILE,
     PRIVILEGED_ROLE,
+    SUPERUSER,
     VENDOR_MAINTAINED,
     Refusal,
     is_declared,
@@ -34,6 +36,8 @@ def account(
     roles: frozenset[str] = frozenset(),
     admin_roles: frozenset[str] = frozenset(),
     supplied_name: bool = False,
+    superuser: bool = False,
+    session_account: bool = False,
 ) -> UserState:
     return UserState(
         name=name,
@@ -43,6 +47,8 @@ def account(
         roles=roles | admin_roles,
         admin_roles=admin_roles,
         supplied_name=supplied_name,
+        superuser=superuser,
+        session_account=session_account,
     )
 
 
@@ -189,12 +195,53 @@ def test_nothing_is_overridden_when_force_was_not_asked_for() -> None:
     assert not reviewed.permitted
 
 
-@pytest.mark.parametrize("check", [VENDOR_MAINTAINED, PASSWORD_FILE, PRIVILEGED_ROLE, DENY_LIST])
-def test_every_check_but_the_first_is_overridable(check: str) -> None:
-    """The flag covers checks 2-5 only. Asserted per check rather than in
-    prose, so a sixth guardrail has to choose a side deliberately."""
+@pytest.mark.parametrize(
+    "check", [VENDOR_MAINTAINED, PASSWORD_FILE, PRIVILEGED_ROLE, DENY_LIST, OWN_ACCOUNT]
+)
+def test_checks_two_to_five_and_seven_are_overridable(check: str) -> None:
+    """The flag covers checks 2-5 and 7. Asserted per check rather than in
+    prose, so the next guardrail has to choose a side deliberately."""
     assert Refusal(check, "ACME_WEB_USER", "…").overridable
-    assert not Refusal(DECLARED, "ACME_WEB_USER", "…").overridable
+
+
+@pytest.mark.parametrize("check", [DECLARED, SUPERUSER])
+def test_the_whitelist_and_a_superuser_are_never_overridable(check: str) -> None:
+    assert not Refusal(check, "ACME_WEB_USER", "…").overridable
+
+
+# ------------------------------------------ checks 6 and 7 (#1059) ---
+
+
+def test_a_superuser_is_refused_and_force_does_not_waive_it() -> None:
+    """Check 6. A tool account that is not a superuser cannot change a
+    superuser's password, so a waiver would only move the refusal to the
+    server."""
+    state = account(superuser=True)
+
+    assert checks(state) == {SUPERUSER}
+    forced = review(state, declared=DECLARED_SET, force=True)
+    assert not forced.permitted
+    assert [refusal.check for refusal in forced.refusals] == [SUPERUSER]
+    assert forced.overridden == ()
+
+
+def test_the_tool_s_own_account_is_refused_and_force_waives_it_on_the_record() -> None:
+    """Check 7. Rotating the tool's own password on purpose is ordinary work,
+    so `--force` reaches it, and the waiver is recorded like any other."""
+    state = account(session_account=True)
+
+    refused = review(state, declared=DECLARED_SET)
+    assert not refused.permitted
+    assert [refusal.check for refusal in refused.refusals] == [OWN_ACCOUNT]
+    assert "connected as" in refused.refusals[0].reason
+
+    forced = review(state, declared=DECLARED_SET, force=True)
+    assert forced.permitted
+    assert [refusal.check for refusal in forced.overridden] == [OWN_ACCOUNT]
+
+
+def test_an_account_that_is_neither_passes_checks_six_and_seven() -> None:
+    assert checks(account()) == set()
 
 
 # -------------------------------------------------- the third answer (§4.3) ---

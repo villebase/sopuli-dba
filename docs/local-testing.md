@@ -523,15 +523,30 @@ text. `REVOKE pg_monitor FROM sopuli_admin` clears the line.
 
 To check a managed role, add the vault and an application to `postgres.yaml`,
 as §8 does for Oracle, and create the role with the vault's password as above.
-The stack's `pg_hba.conf` already has a `scram-sha-256` line for every role:
+The stack's `pg_hba.conf` already has a `scram-sha-256` line for every role.
+Here the vault holds another value for `acme_drift_user`:
 
 ```
 $ sopuli --config postgres.yaml creds check
-...
-ACCOUNT            TARGET  STATE         DETAIL
-acme_app_user      pg-dev  IN_SYNC       vault v2 verified by login
-acme_drift_user    pg-dev  DRIFT         vault v2 the server refused the password (28P01). It gives the same answer for a role whose stored verifier is md5, which no password opens through a scram-sha-256 line; `creds apply` stores a SCRAM verifier
-...
+Plan: 2 accounts x 1 target = 2 checks   [dev]
+
+ACCOUNT          TARGET  INTENT  SECRET
+acme_app_user    pg-dev  verify  vault-dev:acme/pg-dev
+acme_drift_user  pg-dev  verify  vault-dev:acme/pg-dev
+
+shared secrets (1 document):
+SECRET                 TARGETS  ACCOUNTS
+vault-dev:acme/pg-dev  pg-dev   acme_app_user, acme_drift_user
+
+ACCOUNT          TARGET  STATE    DETAIL
+acme_app_user    pg-dev  IN_SYNC  vault v1 verified by login
+acme_drift_user  pg-dev  DRIFT    vault v1 the server refused the password (28P01). It gives the same answer for a role whose stored verifier is md5, which no password opens through a scram-sha-256 line; `creds apply` stores a SCRAM verifier
+
+1 drift
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
 ```
 
 A wrong password exits 3. A role that `pg_hba.conf` does not let in is

@@ -27,6 +27,7 @@ from sopuli.driver.postgres.roles import (
     describe,
     state_of,
 )
+from sopuli.exit_codes import ExitCode
 
 WEB = "acme_web_user"
 DECLARED = (WEB, "pg_read_all_data")
@@ -175,13 +176,13 @@ def test_the_session_s_own_role_is_check_seven() -> None:
 
 
 def test_a_missing_role_is_none() -> None:
-    assert describe(_Cursor([]), WEB) is None
+    assert describe(_Cursor([]), WEB, target="pg-dev") is None
 
 
 def test_the_name_is_bound_and_never_written_into_the_query() -> None:
     cursor = _Cursor([_row()])
 
-    describe(cursor, WEB)
+    describe(cursor, WEB, target="pg-dev")
 
     ((query, params),) = cursor.executed
     assert query == ROLE_QUERY
@@ -189,11 +190,37 @@ def test_the_name_is_bound_and_never_written_into_the_query() -> None:
     assert WEB not in ROLE_QUERY
 
 
-def test_two_roles_that_differ_only_in_case_are_refused() -> None:
+def test_two_roles_that_differ_only_in_case_are_refused_as_config() -> None:
     cursor = _Cursor([_row("acme_web_user"), _row("ACME_WEB_USER")])
 
     with pytest.raises(AmbiguousRoleError) as refused:
-        describe(cursor, WEB)
+        describe(cursor, WEB, target="pg-dev")
 
     assert '"ACME_WEB_USER", "acme_web_user"' in refused.value.message
+    assert 'target "pg-dev"' in refused.value.message
     assert refused.value.category == "config"
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_non_ascii_name_is_matched_by_python_s_upper() -> None:
+    """The server's upper() follows LC_CTYPE, so under `C` it leaves `ä` alone.
+    The query returns non-ASCII names whatever their case, and the match is
+    made with the comparison the config uses."""
+    cursor = _Cursor([_row("ACME_Ä_USER"), _row("acme_ö_user")])
+
+    found = describe(cursor, "acme_ä_user", target="pg-dev")
+
+    assert found is not None
+    assert found.name == "ACME_Ä_USER"
+
+
+def test_a_candidate_that_does_not_match_is_not_the_role() -> None:
+    assert describe(_Cursor([_row("acme_ö_user")]), "acme_ä_user", target="pg-dev") is None
+
+
+def test_the_memberships_walk_the_grants_that_exist() -> None:
+    """Not `pg_has_role` over every role in the cluster, which costs the whole
+    cluster per role and reports a superuser as a member of everything."""
+    assert "pg_auth_members" in ROLE_QUERY
+    assert "with recursive" in ROLE_QUERY
+    assert "pg_has_role" not in ROLE_QUERY

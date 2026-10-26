@@ -64,24 +64,25 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         "group": f"acme_{suffix}_readers",
     }
     password = uuid.uuid4().hex
-    with _superuser(live_postgres) as admin:
-        admin.execute(
-            sql.SQL("create role {} login createrole password {}").format(
-                sql.Identifier(names["tool"]), sql.Literal(password)
-            )
-        )
-        admin.execute(f'create role "{names["ordinary"]}" login')
-        admin.execute(f'create role "{names["nologin"]}" nologin')
-        admin.execute(f"create role \"{names['expired']}\" login valid until '2000-01-01'")
-        admin.execute(f'create role "{names["superuser"]}" login superuser')
-        admin.execute(f'create role "{names["replication"]}" login replication')
-        admin.execute(f'create role "{names["bypassrls"]}" login bypassrls')
-        admin.execute(f'create role "{names["createrole"]}" login createrole')
-        # Membership through a chain: reader -> group -> pg_read_all_data.
-        admin.execute(f'create role "{names["group"]}" nologin')
-        admin.execute(f'grant pg_read_all_data to "{names["group"]}"')
-        admin.execute(f'create role "{names["reader"]}" login in role "{names["group"]}"')
     try:
+        # Inside the `try`, so a failure part way still drops what was made.
+        with _superuser(live_postgres) as admin:
+            admin.execute(
+                sql.SQL("create role {} login createrole password {}").format(
+                    sql.Identifier(names["tool"]), sql.Literal(password)
+                )
+            )
+            admin.execute(f'create role "{names["ordinary"]}" login')
+            admin.execute(f'create role "{names["nologin"]}" nologin')
+            admin.execute(f"create role \"{names['expired']}\" login valid until '2000-01-01'")
+            admin.execute(f'create role "{names["superuser"]}" login superuser')
+            admin.execute(f'create role "{names["replication"]}" login replication')
+            admin.execute(f'create role "{names["bypassrls"]}" login bypassrls')
+            admin.execute(f'create role "{names["createrole"]}" login createrole')
+            # Membership through a chain: reader -> group -> pg_read_all_data.
+            admin.execute(f'create role "{names["group"]}" nologin')
+            admin.execute(f'grant pg_read_all_data to "{names["group"]}"')
+            admin.execute(f'create role "{names["reader"]}" login in role "{names["group"]}"')
         yield {**names, "password": password}
     finally:
         with _superuser(live_postgres) as admin:
@@ -154,8 +155,15 @@ def test_a_past_valid_until_is_expired(session: Any, roles: dict[str, str]) -> N
     assert state.password_expires_at.year == 2000
 
 
-def test_a_superuser_is_refused(session: Any, roles: dict[str, str]) -> None:
-    assert SUPERUSER in _checks(session, roles["superuser"])
+def test_a_superuser_is_refused_for_what_it_is_and_nothing_it_was_not_granted(
+    session: Any, roles: dict[str, str]
+) -> None:
+    """The memberships come from the grants that exist, so a superuser is not
+    reported as a member of every role in the cluster."""
+    state = session.describe_user(roles["superuser"])
+
+    assert state.roles == frozenset()
+    assert _checks(session, roles["superuser"]) == {SUPERUSER}
 
 
 @pytest.mark.parametrize("case", ["replication", "bypassrls", "createrole"])

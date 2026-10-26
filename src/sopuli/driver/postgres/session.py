@@ -8,13 +8,14 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 **What this build does.** It connects, labels the session with the run's
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
 its encryption, audits the tool account's privileges for
-`doctor --check-privileges`, and describes a role for the guardrails. Only
-`doctor` gets this far: the registry entry is
-``scope_only``, so every other command refuses the target with ``SOPULI-20006``
-before it connects. The methods past the scope are a second line behind that,
-and refuse with ``SOPULI-20006`` without a round trip. A write that is written
-later checks :func:`~sopuli.driver.postgres.scope.require_read_write` first.
-The driver sends no DDL.
+`doctor --check-privileges`, and describes a role for the guardrails
+(:meth:`PostgresSession.describe_user`). Only `doctor` gets this far: the
+registry entry is ``scope_only``, so every other command refuses the target
+with ``SOPULI-20006`` before it connects. The methods not written yet are a
+second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
+A write that is written later checks
+:func:`~sopuli.driver.postgres.scope.require_read_write` first. The driver sends
+no DDL.
 """
 
 from __future__ import annotations
@@ -163,7 +164,7 @@ class PostgresSession:
         """The role from ``pg_roles``, or ``None`` if there is none
         (:mod:`sopuli.driver.postgres.roles`)."""
         with self._cursor() as cursor:
-            return describe(cursor, account)
+            return describe(cursor, account, target=self.target.name)
 
     def byte_limit(self) -> ByteLimit:
         raise self._not_written("size a password")

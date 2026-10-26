@@ -16,7 +16,8 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
-from sopuli.driver.protocol import DriverError, Scope
+from sopuli.driver.protocol import DriverError, Scope, UnsupportedCapabilityError
+from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
 session_module = pytest.importorskip("sopuli.driver.postgres.session")
@@ -264,8 +265,30 @@ def test_a_server_that_cannot_store_a_verifier_is_refused_before_anything_is_sen
 
     refused = _refused_before_sending(session, Secret(PASSWORD))
 
-    assert "cannot store a SCRAM verifier" in refused.message
+    assert isinstance(refused, UnsupportedCapabilityError)
+    assert refused.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "scram_verifier" in str(refused)
+    assert "cannot store a SCRAM verifier" in str(refused.hint)
     assert session.connection.pgconn.asked == []
+
+
+@pytest.mark.parametrize("version", ["10.23", "18beta1", "17devel"])
+def test_a_server_from_10_takes_the_verifier_pre_releases_included(version: str) -> None:
+    session = _session(version=version)
+
+    session.set_password(ROLE, Secret(PASSWORD))
+
+    assert len(session.connection.sent) == 1
+
+
+def test_an_answer_libpq_cannot_decode_is_a_verifier_error() -> None:
+    session = _session()
+    session.connection.pgconn = _PGconn(answer="SCRAM-SHA-256$ok")
+    session.connection.pgconn.encrypt_password = lambda *_: b"\xff\xfe-not-ascii"
+
+    refused = _refused_before_sending(session, Secret(PASSWORD))
+
+    assert isinstance(refused, password.VerifierError)
 
 
 def test_the_statement_builder_refuses_anything_but_a_verifier() -> None:

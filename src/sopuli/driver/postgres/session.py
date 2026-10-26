@@ -23,6 +23,7 @@ methods not written yet are a second line behind that, and refuse with
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -35,9 +36,10 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres.client import client_lines
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
+from sopuli.driver.postgres.limits import LIMIT
 from sopuli.driver.postgres.password import (
-    LIMIT,
     SCRAM_FROM,
+    SCRAM_VERIFIER,
     admit,
     alter_role,
     verifier,
@@ -59,6 +61,7 @@ from sopuli.driver.protocol import (
     PrivilegeAudit,
     Scope,
     Timeouts,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
     require_capability,
@@ -208,15 +211,19 @@ class PostgresSession:
         which still allows an offline guessing attack, so the warnings about an
         unencrypted connection apply to it as they would to a password.
         """
+        admit(secret)
         scope = self.scope()
         require_read_write(scope, target=self.target.name)
         major = _major(scope.db_version)
         if major is None or major < SCRAM_FROM:
-            raise DriverError(
-                f'target "{self.target.name}" runs PostgreSQL {scope.db_version}, which '
-                "cannot store a SCRAM verifier, so the tool cannot set a password there "
-                "without sending it",
-                hint="the PostgreSQL driver supports PostgreSQL 13 to 18",
+            raise UnsupportedCapabilityError(
+                SCRAM_VERIFIER,
+                target=self.target.name,
+                hint=(
+                    f"PostgreSQL {scope.db_version} cannot store a SCRAM verifier, so the "
+                    f"tool cannot set a password there without sending it; this needs "
+                    f"PostgreSQL {SCRAM_FROM} or later, and the driver is tested on 13 to 18"
+                ),
             )
         state = self.describe_user(account)
         if state is None:
@@ -227,7 +234,6 @@ class PostgresSession:
                     "ACCOUNT_MISSING rather than failing"
                 ),
             )
-        admit(secret)
         computed = verifier(self.connection.pgconn, state.name, secret)
         try:
             with self._cursor() as cursor:
@@ -351,10 +357,11 @@ class PostgresDriver:
 
 def _major(version: str | None) -> int | None:
     """The major release from ``server_version``'s first word: 16 from
-    ``16.15``, 9 from ``9.6.24``. ``None`` where it does not start with a
-    number, which refuses rather than guesses."""
-    head = (version or "").split(".", 1)[0]
-    return int(head) if head.isdigit() else None
+    ``16.15``, 9 from ``9.6.24``, 18 from ``18beta1`` and 17 from ``17devel``.
+    ``None`` where it does not start with a number, which refuses rather than
+    guesses."""
+    found = re.match(r"\d+", version or "")
+    return int(found.group()) if found else None
 
 
 def build_driver(context: DriverContext) -> PostgresDriver:

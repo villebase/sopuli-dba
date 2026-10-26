@@ -18,6 +18,7 @@ from sopuli.cli import cli, help_with
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.driver.oracle import limits
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
+from sopuli.driver.postgres import limits as pg_limits
 from sopuli.driver.registry import DRIVERS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,10 +44,9 @@ def test_the_registry_states_the_rule_max_bytes_applies() -> None:
 
 def test_the_registry_states_the_postgresql_limit() -> None:
     """Pinned to the driver's constant for the Oracle literal's reason.
-    `password.py` imports psycopg, so the test skips without the extra."""
-    password = pytest.importorskip("sopuli.driver.postgres.password")
-    assert DRIVERS["postgresql"].password_limit == str(password.MAX_PASSWORD_BYTES)
-    assert "postgresql: 1024" in _help("policy", "sample")
+    `limits.py` imports no psycopg, so this runs in every install shape."""
+    assert DRIVERS["postgresql"].password_limit == str(pg_limits.MAX_PASSWORD_BYTES)
+    assert f"postgresql: {pg_limits.MAX_PASSWORD_BYTES}" in _help("policy", "sample")
 
 
 def test_the_rule_in_words_follows_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:

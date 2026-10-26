@@ -107,11 +107,12 @@ from sopuli.config import (
     refuse_unknown_vaults,
 )
 from sopuli.config import delivery as delivery_config
-from sopuli.config.expansion import declared_at
+from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
+from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import Handover, Receipt
@@ -8578,11 +8579,32 @@ def _require_encryption(targets: Iterable[ExpandedTarget], run: Invocation, conf
     reach, or whose scope it cannot read, is left to the run, which reports it on
     its rows. That is not a way past the check: the run reads the connection it
     sends over again, and :func:`_unencrypted` refuses that row there.
+
+    **A PostgreSQL target under `sslmode: disable` is refused before any
+    connection** (#1058), in a first pass over every target. That mode never
+    negotiates TLS, so the config already answers what a connection would, and
+    the run does not wait on another target's connection to say so. `allow` and
+    `prefer` may still negotiate it, so they are read like any other.
     """
-    for expanded in targets:
-        location = encryption_required_at(expanded, config, run.resolved)
-        if location is None:
-            continue
+    required = [
+        (expanded, location)
+        for expanded in targets
+        if (location := encryption_required_at(expanded, config, run.resolved)) is not None
+    ]
+    for expanded, location in required:
+        if (
+            expanded.target.type == POSTGRESQL
+            and expanded.target.postgres_settings.sslmode == UNENCRYPTED_SSLMODE
+        ):
+            raise UnsupportedCapabilityError(
+                ENCRYPTED_CONNECTION,
+                target=expanded.name,
+                hint=(
+                    f"`{location}` requires it, and `{postgres_key_at(expanded, 'sslmode')}` "
+                    f"is `{UNENCRYPTED_SSLMODE}`, which never encrypts: use `sslmode: verify-full`"
+                ),
+            )
+    for expanded, location in required:
         try:
             session = _open_session(expanded, run, config)
         except Exception:  # noqa: BLE001 -- the run reports it on each row

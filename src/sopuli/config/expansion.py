@@ -107,6 +107,19 @@ def declared_at(expanded: ExpandedTarget, field: str | None = None) -> KeyPath:
     return at if field is None else at.key(field)
 
 
+def postgres_key_at(expanded: ExpandedTarget, key: str) -> KeyPath:
+    """Where one key of this target's ``postgres:`` block was written.
+
+    An override's ``postgres:`` patch merges key by key, so the block as a
+    whole has no one line. An override that writes only ``database`` leaves
+    ``sslmode`` on the template's line.
+    """
+    at = _location(expanded)
+    if f"postgres.{key}" in expanded.patched and expanded.target_set is not None:
+        at = at.key("overrides").key(expanded.name)
+    return at.key("postgres").key(key)
+
+
 def _location(expanded: ExpandedTarget) -> KeyPath:
     if expanded.target_set is not None:
         return _TARGET_SETS.key(expanded.target_set)
@@ -423,6 +436,9 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
     ``labels`` is the one measured by content rather than by presence: it is a
     tuple with an empty default rather than an optional, so "absent" and "given"
     are the same value.
+
+    A ``postgres:`` patch also adds ``postgres.<key>`` for each key it writes,
+    because it merges key by key (:func:`postgres_key_at`).
     """
     given = {
         "type": patch.type is not None,
@@ -435,6 +451,10 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         "labels": bool(patch.labels),
         "safety": patch.safety is not None,
     }
+    if patch.postgres is not None:
+        given["postgres.database"] = patch.postgres.database is not None
+        given["postgres.sslmode"] = patch.postgres.sslmode is not None
+        given["postgres.sslrootcert"] = patch.postgres.sslrootcert is not None
     return tuple(sorted(key for key, written in given.items() if written))
 
 

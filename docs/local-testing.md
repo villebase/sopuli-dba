@@ -479,7 +479,8 @@ targets:
 ```
 
 The container has no TLS, so the target sets `sslmode: disable`. Without it the
-driver asks for `verify-full`. Run `doctor`:
+driver asks for `verify-full`. Every command then warns that the target does
+not verify the server. Run `doctor`:
 
 ```
 $ sopuli --config postgres.yaml doctor
@@ -496,6 +497,9 @@ TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
 pg-dev  yes        cluster  -          READ WRITE  0             none
   pg-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
 ...
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
 ```
 
 `libpq` is the one psycopg loaded. `require_auth` needs libpq 16 or later.

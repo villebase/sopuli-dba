@@ -419,3 +419,83 @@ def test_a_container_clause_on_oracle_targets_beside_a_cluster_is_fine() -> None
     )
 
     assert {binding.target for binding in config.bindings} == {"cdb-root-dev", "pg-dev"}
+
+
+# ------------------------------------------- a server that is not verified ---
+
+
+def unverified(sections: dict[str, Any]) -> list[Any]:
+    config = build_config(document(**sections))
+    return [warning for warning in config.warnings if warning.code == "SOPULI-W058"]
+
+
+@pytest.mark.parametrize("sslmode", ["disable", "allow", "prefer", "require"])
+def test_a_target_that_does_not_verify_the_server_warns(sslmode: str) -> None:
+    (warning,) = unverified({"targets": [{**CLUSTER, "postgres": {"sslmode": sslmode}}]})
+
+    assert warning.message == f"target 'pg-dev' does not verify the server (`sslmode: {sslmode}`)"
+    assert warning.at == "targets[0].postgres.sslmode"
+    assert "verify-full" in str(warning.hint)
+
+
+@pytest.mark.parametrize("postgres", [None, {"sslmode": "verify-ca"}, {"sslmode": "verify-full"}])
+def test_a_target_that_verifies_the_server_does_not_warn(postgres: dict[str, str] | None) -> None:
+    target = dict(CLUSTER) if postgres is None else {**CLUSTER, "postgres": postgres}
+
+    assert unverified({"targets": [target]}) == []
+
+
+def test_an_oracle_target_does_not_warn() -> None:
+    assert unverified({"targets": [ORACLE]}) == []
+
+
+def test_each_generated_target_warns_once_and_points_at_its_line() -> None:
+    """The override's line for the target it weakened, the template's for the rest."""
+    warnings = unverified(
+        {
+            "target_sets": {
+                "pg": {
+                    "name": "pg-{env}",
+                    "type": "postgresql",
+                    "dsn": "pg-{env}.example.com:5432",
+                    "postgres": {"sslmode": "require"},
+                    "for_each": {"env": {"dev": {}, "qa": {}, "prod": {}}},
+                    "overrides": {"pg-prod": {"postgres": {"sslmode": "verify-full"}}},
+                }
+            }
+        }
+    )
+
+    assert [(warning.message.split("'")[1], warning.at) for warning in warnings] == [
+        ("pg-dev", "target_sets.pg.postgres.sslmode"),
+        ("pg-qa", "target_sets.pg.postgres.sslmode"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("patch", "at"),
+    [
+        ({"database": "appdb"}, "target_sets.pg.postgres.sslmode"),
+        ({"sslmode": "prefer"}, "target_sets.pg.overrides.pg-qa.postgres.sslmode"),
+    ],
+    ids=["another key", "sslmode"],
+)
+def test_the_warning_points_at_the_layer_that_wrote_sslmode(patch: dict[str, str], at: str) -> None:
+    """A `postgres:` patch merges key by key, so an override that writes only
+    `database` leaves `sslmode` on the template's line."""
+    warnings = unverified(
+        {
+            "target_sets": {
+                "pg": {
+                    "name": "pg-{env}",
+                    "type": "postgresql",
+                    "dsn": "pg-{env}.example.com:5432",
+                    "postgres": {"sslmode": "require"},
+                    "for_each": {"env": {"qa": {}}},
+                    "overrides": {"pg-qa": {"postgres": patch}},
+                }
+            }
+        }
+    )
+
+    assert [warning.at for warning in warnings] == [at]

@@ -1,8 +1,7 @@
 # Example configurations
 
-Complete config files, from the smallest one that works to one with the safety
-settings turned on. Each is commented for a reader who has not written one
-before.
+Complete config files, starting with the smallest one that works. Each is
+commented for a reader who has not written one before.
 
 | File | Shows |
 |---|---|
@@ -21,10 +20,11 @@ sopuli --config single-application.yaml config validate
 cannot silently drift out of date with the config layer.
 
 **They point at addresses that are not yours.** The first two point at the
-project's own test containers (`127.0.0.1:1521/FREEPDB1`,
-`http://127.0.0.1:8200`). The others point at `example.com` and `192.0.2.0/24`,
-which are reserved for documentation and reach nothing. Change the addresses, the account names
-and the vault paths before running anything against a real database.
+project's own test containers on `127.0.0.1`, port 1521 for the database and
+8200 for the vault. The others point at `example.com` and `192.0.2.0/24`, which
+are reserved for documentation and reach nothing. Change the addresses, the
+account names and the vault paths before running anything against a real
+database.
 
 ## The one thing that will stop you first
 

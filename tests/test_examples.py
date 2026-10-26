@@ -84,6 +84,35 @@ def test_example_config_validates_without_warnings(name: str, write_config: Writ
     assert "0 warnings" in result.output, result.output
 
 
+def test_target_sets_example_generates_the_targets_its_comments_name(
+    write_config: WriteConfig,
+) -> None:
+    """The comments in target-sets.yaml name every target it generates.
+
+    Validation alone stays green when a tenant list is edited, and the comments
+    would then name targets that no longer exist.
+    """
+    source = EXAMPLES / "target-sets.yaml"
+    path = write_config(source.read_text(encoding="utf-8"))
+    runner = CliRunner()
+
+    validated = runner.invoke(cli, ["--config", str(path), "config", "validate"])
+    listed = runner.invoke(cli, ["--config", str(path), "target", "list", "--output", "text"])
+
+    assert "ok: 7 targets, 12 bindings" in validated.output, validated.output
+    assert listed.exit_code == ExitCode.SUCCESS, listed.output
+    names = {line.split()[0] for line in listed.output.splitlines() if line.startswith("appdb-")}
+    assert names == {
+        "appdb-dev-alpha",
+        "appdb-dev-beta",
+        "appdb-dev-gamma",
+        "appdb-qa-alpha",
+        "appdb-qa-beta",
+        "appdb-dev-cdb",
+        "appdb-qa-cdb",
+    }
+
+
 # ------------------------------------------- and the editor pointer is real ---
 
 

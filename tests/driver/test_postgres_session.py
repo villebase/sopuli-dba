@@ -1,9 +1,10 @@
 """The PostgreSQL session on a scripted connection. Tier 0, with psycopg installed.
 
-Past the scope and the privilege audit, what this build does is refuse, so the
-refusals are the behaviour: ``SOPULI-20006`` for an operation not written yet,
-and an absent capability named. The audit itself is in
-``test_postgres_privileges.py``.
+Past the scope, the privilege audit and the login that verifies a password,
+what this build does is refuse, so the refusals are the behaviour:
+``SOPULI-20006`` for an operation not written yet, and an absent capability
+named. The audit itself is in ``test_postgres_privileges.py``, and what each
+failed login means in ``test_postgres_verification.py``.
 """
 
 from __future__ import annotations
@@ -18,11 +19,14 @@ from sopuli.config.model import ExpandedTarget, Runtime, Target
 from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     AccountAttributes,
+    Credential,
     Driver,
     DriverContext,
     DriverError,
     Session,
+    Timeouts,
     UnsupportedCapabilityError,
+    UserState,
 )
 from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
 from sopuli.exit_codes import ExitCode
@@ -65,7 +69,9 @@ def _session(recovery: bool = False) -> Any:
     target = ExpandedTarget(
         target=Target(name="pg-dev", type="postgresql", dsn="pg-dev.example.com:5432")
     )
-    return session_module.PostgresSession(connection=_Connection(recovery), target=target)
+    return session_module.PostgresSession(
+        connection=_Connection(recovery), target=target, correlation_id="run", timeouts=Timeouts()
+    )
 
 
 def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
@@ -81,7 +87,6 @@ def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
     "call",
     [
         lambda s: s.byte_limit(),
-        lambda s: s.verify_password("acme_app_user", Secret("x")),
         lambda s: s.set_password("acme_app_user", Secret("x")),
         lambda s: s.apply_attributes("acme_app_user", AccountAttributes()),
     ],
@@ -232,3 +237,224 @@ def test_the_client_report_names_the_libpq_this_process_loaded() -> None:
 
     assert report["psycopg"] == psycopg.__version__
     assert set(report) == {"psycopg", "libpq", "require_auth"}
+
+
+# --------------------------------------------- verifying a password by login ---
+
+
+class _Logins:
+    """``psycopg.connect`` for the managed role's login: records the arguments,
+    and connects or raises what the test says."""
+
+    def __init__(self, raises: Exception | None = None) -> None:
+        self.raises = raises
+        self.calls: list[dict[str, Any]] = []
+        self.closed = 0
+
+    def __call__(self, **arguments: Any) -> Any:
+        self.calls.append(arguments)
+        if self.raises is not None:
+            raise self.raises
+        return self
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+@pytest.fixture
+def logins(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The login, and a `describe_user` that finds every role but
+    `acme_missing_user`, spelled as `pg_roles` would."""
+
+    def described(self: Any, account: str) -> UserState | None:
+        if account == "acme_missing_user":
+            return None
+        return UserState(
+            name=account.lower(),
+            status="NOLOGIN" if "nologin" in account else "OPEN",
+            password_file_member=False,
+            vendor_maintained=False,
+            locked="nologin" in account,
+            expired="expired" in account,
+        )
+
+    def install(raises: Exception | None = None, libpq: int = 180004) -> _Logins:
+        fake = _Logins(raises)
+        monkeypatch.setattr(session_module.psycopg, "connect", fake)
+        monkeypatch.setattr(session_module.pq, "version", lambda: libpq)
+        monkeypatch.setattr(session_module.PostgresSession, "describe_user", described)
+        return fake
+
+    return install
+
+
+def _failed(message: str) -> Exception:
+    import psycopg
+
+    return psycopg.OperationalError(message)
+
+
+def test_a_password_that_logs_in_passes(logins: Any) -> None:
+    fake = logins()
+    session = _session()
+    session.correlation_id = "run-42"
+
+    result = session.verify_password("acme_app_user", Secret("Correct-Horse-9x"))
+
+    assert (result.method, result.result) == ("login", "pass")
+    assert result.failed_logins is None
+    assert result.lockout_margin_hit is False
+    assert result.detail is None
+    assert fake.closed == 1
+    (arguments,) = fake.calls
+    assert arguments["user"] == "acme_app_user"
+    assert arguments["password"] == "Correct-Horse-9x"
+    assert arguments["require_auth"] == "scram-sha-256"
+    assert arguments["sslmode"] == "verify-full"
+    assert arguments["application_name"].endswith("run-42")
+    assert "autocommit" not in arguments
+
+
+def test_a_wrong_password_fails(logins: Any) -> None:
+    logins(_failed('FATAL:  password authentication failed for user "acme_app_user"'))
+
+    result = _session().verify_password("acme_app_user", Secret("x"))
+
+    assert result.result == "fail"
+    assert "stored verifier is md5" in str(result.detail)
+
+
+def test_a_missing_role_is_unavailable_and_not_tried(logins: Any) -> None:
+    """The server would answer its login as a wrong password, which is drift."""
+    fake = logins()
+
+    result = _session().verify_password("acme_missing_user", Secret("x"))
+
+    assert result.result == "unavailable"
+    assert 'there is no role "acme_missing_user"' in str(result.detail)
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    ("account", "said"),
+    [
+        ("acme_nologin_user", "the role cannot log in (NOLOGIN)"),
+        ("acme_expired_user", "VALID UNTIL has passed"),
+    ],
+)
+def test_a_role_that_cannot_log_in_is_not_tried(logins: Any, account: str, said: str) -> None:
+    """The server answers an expired role's right password as a wrong one
+    (measured on 16.15), and NOLOGIN as 28000: neither is worth a login."""
+    fake = logins()
+
+    result = _session().verify_password(account, Secret("x"))
+
+    assert result.result == "unavailable"
+    assert said in str(result.detail)
+    assert fake.calls == []
+
+
+def test_a_refusal_after_the_password_was_accepted_is_a_pass(logins: Any) -> None:
+    logins(
+        _failed(
+            'FATAL:  permission denied for database "postgres"\n'
+            "DETAIL:  User does not have CONNECT privilege."
+        )
+    )
+
+    result = _session().verify_password("acme_app_user", Secret("x"))
+
+    assert result.result == "pass"
+    assert "accepted the password, and then refused the session: 42501" in str(result.detail)
+
+
+def test_the_login_uses_the_spelling_pg_roles_gives(logins: Any) -> None:
+    fake = logins()
+
+    _session().verify_password("ACME_APP_USER", Secret("x"))
+
+    assert fake.calls[0]["user"] == "acme_app_user"
+
+
+def test_an_unknown_method_is_refused_and_nothing_logs_in(logins: Any) -> None:
+    fake = logins()
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        _session().verify_password("acme_app_user", Secret("x"), method="bogus")
+
+    assert "verification method 'bogus'" in refused.value.message
+    assert fake.calls == []
+
+
+def test_a_failed_close_after_a_login_still_passes(
+    logins: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = logins()
+
+    def close() -> None:
+        raise _failed("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(fake, "close", close)
+
+    assert _session().verify_password("acme_app_user", Secret("x")).result == "pass"
+
+
+def test_no_pg_hba_line_is_unavailable_with_the_hint(logins: Any) -> None:
+    logins(_failed('FATAL:  no pg_hba.conf entry for host "192.0.2.10", user "acme_app_user"'))
+
+    result = _session().verify_password("acme_app_user", Secret("x"))
+
+    assert result.result == "unavailable"
+    assert "pg_hba.conf line for this role" in str(result.detail)
+
+
+def test_a_failure_that_is_not_about_the_password_is_raised(logins: Any) -> None:
+    logins(_failed("connection timeout expired"))
+
+    with pytest.raises(DriverError) as raised:
+        _session().verify_password("acme_app_user", Secret("x"))
+
+    assert raised.value.code == "08001"
+
+
+def test_a_libpq_that_cannot_require_scram_sends_nothing(logins: Any) -> None:
+    fake = logins(libpq=150000)
+
+    with pytest.raises(DriverError) as refused:
+        _session().verify_password("acme_app_user", Secret("x"))
+
+    assert "libpq 15.0 cannot require SCRAM" in refused.value.message
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("method", ["hash", "both"])
+def test_a_comparison_is_an_absent_capability(logins: Any, method: str) -> None:
+    fake = logins()
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        _session().verify_password("acme_app_user", Secret("x"), method=method)
+
+    assert refused.value.capability == "offline_verify"
+    assert refused.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "pg_authid" in str(refused.value.hint)
+    assert fake.calls == []
+
+
+def test_require_verifier_refuses_at_plan_time() -> None:
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        _session().require_verifier("acme_app_user", Secret("x"))
+
+    assert refused.value.capability == "offline_verify"
+    assert 'target "pg-dev"' in refused.value.message
+
+
+def test_the_driver_gives_its_session_the_runs_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The managed role's login carries the run's correlation id and timeouts."""
+    monkeypatch.setattr(session_module.psycopg, "connect", lambda **_: _Connection())
+    driver = session_module.PostgresDriver(correlation_id="run-7", timeouts=Timeouts(connect_s=3))
+
+    opened = driver.connect(
+        _session().target, Credential(username="sopuli_admin", secret=Secret("x"))
+    )
+
+    assert (opened.correlation_id, opened.timeouts.connect_s) == ("run-7", 3)

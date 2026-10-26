@@ -9,9 +9,10 @@ a traceback (ADR-006 rule 1). The modules beside it are tier 0.
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and
 its encryption, audits the tool account's privileges for
 `doctor --check-privileges`, and describes a role for the guardrails
-(:meth:`PostgresSession.describe_user`). Only `doctor` gets this far: the
-registry entry lists no other command it is written for, so every other
-command refuses the target with ``SOPULI-20006`` before it connects
+(:meth:`PostgresSession.describe_user`). It verifies a role's password by
+logging in as the role (:meth:`PostgresSession.verify_password`). Only `doctor`
+gets this far: the registry entry lists no other command it is written for, so
+every other command refuses the target with ``SOPULI-20006`` before it connects
 (:func:`~sopuli.driver.registry.require_command`). The methods not written yet are a
 second line behind that, and refuse with ``SOPULI-20006`` without a round trip.
 A write that is written later checks
@@ -24,21 +25,28 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any
 
 import psycopg
+from psycopg import pq
 
 from sopuli.config.model import ExpandedTarget, Runtime
-from sopuli.driver.postgres.client import client_lines
+from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, client_lines, libpq_release
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
 from sopuli.driver.postgres.privileges import audit
 from sopuli.driver.postgres.roles import describe
 from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe
+from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
+    OFFLINE_VERIFY,
+    PASS,
     PASSWORD_ROLLOVER,
+    UNAVAILABLE,
+    VERIFY_BOTH,
+    VERIFY_HASH,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -51,6 +59,7 @@ from sopuli.driver.protocol import (
     PrivilegeAudit,
     Scope,
     Timeouts,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
     require_capability,
@@ -62,6 +71,17 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("postgres")
+
+
+def _ms(started: float) -> int:
+    """Milliseconds since ``started``, a :func:`time.monotonic` reading,
+    truncated as the CLI's ``duration_ms`` is."""
+    return int((time.monotonic() - started) * 1000)
+
+
+def _not_tried(detail: str) -> VerifyResult:
+    """A login :meth:`PostgresSession.verify_password` settled without trying."""
+    return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
 
 
 class NotWrittenError(DriverError):
@@ -92,6 +112,12 @@ class PostgresSession:
 
     connection: Any
     target: ExpandedTarget
+    #: The run's, for the logins :meth:`verify_password` makes as a managed
+    #: role, which carry the same ``application_name`` and timeouts. No
+    #: defaults, so a session cannot be built that loses the run's id or its
+    #: budgets.
+    correlation_id: str
+    timeouts: Timeouts
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
     #: Why :meth:`cluster_identity` found no answer, or ``None``.
@@ -229,10 +255,90 @@ class PostgresSession:
         lockout_margin: int = 2,
         attempts: int = 1,
     ) -> VerifyResult:
-        raise self._not_written("verify a password")
+        """Log in once as ``account`` with ``secret``, and say what that showed
+        (:mod:`sopuli.driver.postgres.verification`).
+
+        ``login`` only. ``hash`` and ``both`` need ``offline_verify``, which
+        this driver never reports: the verifiers are in ``pg_authid``, which
+        only a superuser reads. :meth:`require_verifier` refuses them at plan
+        time, and this refuses them again, and any other method, rather than
+        log in in their place.
+
+        A role that does not exist is :data:`~sopuli.driver.protocol.UNAVAILABLE`
+        before any login, as on Oracle: the server would answer its login as a
+        wrong password. PostgreSQL has no failed-login lockout, so
+        ``lockout_margin`` and ``attempts`` have nothing to guard, and the
+        result carries no counter. The login uses the target's ``sslmode``,
+        timeouts and ``application_name``, as :meth:`PostgresDriver.connect`
+        does, and asks for SCRAM. A libpq older than 16 cannot ask, so the
+        login is refused before anything is sent.
+        """
+        if method in (VERIFY_HASH, VERIFY_BOTH):
+            self.require_verifier(account, secret)
+        if method != VERIFY_LOGIN:
+            raise UnsupportedCapabilityError(
+                f"verification method {method!r}",
+                target=self.target.name,
+                hint="this driver verifies by `login` only",
+            )
+        major, minor = libpq_release(pq.version())
+        if major < REQUIRE_AUTH_FROM:
+            raise DriverError(
+                f"libpq {major}.{minor} cannot require SCRAM, so the tool will not log in "
+                f'as "{account}" on target "{self.target.name}" with its password',
+                hint=f"install a psycopg wheel that bundles libpq {REQUIRE_AUTH_FROM} or later",
+            )
+        role = self.describe_user(account)
+        # The server would answer each of these as a wrong password, or as a
+        # refusal no different from a missing pg_hba.conf line, so none is tried.
+        if role is None:
+            return _not_tried(f'there is no role "{account}" on this target')
+        if role.locked:
+            return _not_tried(f"the role cannot log in ({role.status}); no login was attempted")
+        if role.expired:
+            return _not_tried("the role's VALID UNTIL has passed; no login was attempted")
+        account = role.name
+        arguments = connect_arguments(
+            self.target,
+            Credential(username=account, secret=secret),
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+        )
+        arguments["require_auth"] = REQUIRED_METHOD
+        started = time.monotonic()
+        try:
+            connection = psycopg.connect(**arguments)
+        except psycopg.Error as error:
+            latency = _ms(started)
+            failure = from_error(error, connecting=True)
+            LOG.debug("login as %s failed with %s in %.3fs", account, failure.code, latency / 1000)
+            outcome = login_outcome(failure)
+            if outcome is None:
+                raise failure.as_error() from error
+            result, detail = outcome
+            return VerifyResult(
+                method=VERIFY_LOGIN, result=result, latency_ms=latency, detail=detail
+            )
+        latency = _ms(started)
+        # The login has answered. A socket that drops as it closes does not
+        # change the answer.
+        with suppress(psycopg.Error):
+            connection.close()
+        LOG.debug("login as %s: pass in %.3fs", account, latency / 1000)
+        return VerifyResult(method=VERIFY_LOGIN, result=PASS, latency_ms=latency)
 
     def require_verifier(self, account: str, secret: Secret) -> None:
-        raise self._not_written("compare a stored verifier")
+        """Refuse ``hash`` and ``both`` at plan time (invariant 4): this driver
+        never reports ``offline_verify``."""
+        require_capability(
+            self.scope(),
+            OFFLINE_VERIFY,
+            target=self.target.name,
+            hint=(
+                "the verifiers are in pg_authid, which only a superuser reads; "
+                "use --method login, the default"
+            ),
+        )
 
     def require_rollover(self, account: str) -> None:
         """PostgreSQL has no password rollover, so this always refuses
@@ -290,7 +396,12 @@ class PostgresDriver:
             credential.username,
             time.monotonic() - started,
         )
-        return PostgresSession(connection=connection, target=target)
+        return PostgresSession(
+            connection=connection,
+            target=target,
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+        )
 
 
 def build_driver(context: DriverContext) -> PostgresDriver:

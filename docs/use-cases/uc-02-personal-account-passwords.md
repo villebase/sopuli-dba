@@ -210,7 +210,7 @@ types `account` at the prompt.
 
 | Command | What it does | Mutates |
 |---|---|---|
-| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped`. A file naming an unseen method that is not built yet (`vault_path`, `one_time_link`, `onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped` and `vault_path`. A file naming an unseen method that is not built yet (`one_time_link`, `onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, and show it once, after confirmation. Under §6.5's five guards | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password: "make them change it". Closes an open rollover window first | yes |
 | `sopuli account suspend` | `ACCOUNT LOCK`, for offboarding | yes |
@@ -1122,7 +1122,7 @@ exist. A file that breaks either rule is refused at load as config-invalid
 | `method` | Path | The person gets | Built |
 |---|---|---|---|
 | `vault_wrapped` | unseen | a Vault response-wrapping token, single use | yes |
-| `vault_path` | unseen | a KV path only their own identity can read | no (open: #447) |
+| `vault_path` | unseen | a KV path only their own identity can read | yes |
 | `one_time_link` | unseen | a URL that decrypts once | no (open: #445) |
 | `onepassword_share` | unseen | an item in a password manager | no (open: #446) |
 | `manual` | **seen** | the password, printed to the DBA's terminal | yes |
@@ -1375,16 +1375,20 @@ whose store token can read the person's path could read the password back, and
 the unseen path's reason for skipping expiry would be gone. So the tool checks
 (H8, decided in #459). Before writing, `vault_path` asks Vault for the DBA token's
 capabilities on the person's path (`sys/capabilities-self`), and **refuses at plan
-time if they include `read` or `root`**, naming the path and the policy
-(invariant 4). `root` matters: a root-policy token answers `["root"]` and never
+time if they include `read` or `root`**, naming the path and the capability
+(invariant 4). It asks twice. At plan time it asks on the account name as typed,
+before anything connects, and a refusal there exits 5. Where the database stores
+the name differently, it asks again on each target, just before a password is
+drawn. A refusal there is that target's `ERROR` row, as every per-target refusal
+is, and no password is drawn on it. `root` matters: a root-policy token answers `["root"]` and never
 lists `read`, so a check for `read` alone would admit the one token that can read
 everything. On the tier-1 Vault (2.0.4), a root token answered `["root"]`, a token
 scoped to the write `["create","update"]`, and one also granted read
 `["create","read","update"]`. The tool does not proceed on documentation alone,
 which would let a misconfigured policy silently turn an unseen reset into a seen
 one that was never expired. It does not fall back to the seen path either, which
-would swap one guarantee for another without being asked. The check is built with
-`vault_path` (open: #447). On `vault_wrapped` the question does not arise: the
+would swap one guarantee for another without being asked. On `vault_wrapped` the
+question does not arise: the
 DBA's token never holds the wrapping token's cubbyhole. What the DBA holds is the
 token itself, and §1 says what that is worth.
 

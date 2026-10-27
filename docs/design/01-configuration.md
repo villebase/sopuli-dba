@@ -279,8 +279,8 @@ method's issue: the answer is a fact about the service behind it, and nothing in
 config layer could know it.
 
 **`vault_path:`** writes the password to a KV v2 path that only the person's own
-Vault identity can read (UC-2 §6.6). Its keys are read; the method itself is
-not built yet (open: #447).
+Vault identity can read (UC-2 §6.6, decided in
+[#447](../decisions/log.md#447)).
 
 ```yaml
 delivery:
@@ -309,9 +309,8 @@ repeats the prefix, and in a Vault policy path they are wildcards or a template.
 `vault` is **optional**, with `vault_wrapped`'s chain.
 
 **The tool does not validate the keys inside the sub-blocks of `one_time_link`,
-`onepassword_share` and `smtp_encrypted`**, so a typo inside one is accepted. And
-a method whose keys are validated, such as `vault_path`, may still not be built.
-So **`config validate` warns when the selected method is not implemented in this
+`onepassword_share` and `smtp_encrypted`**, because none of them is built, so a
+typo inside one is accepted. So **`config validate` warns when the selected method is not implemented in this
 build** (`SOPULI-W035`), so that a clean parse does not read as a working
 delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
 build serves.

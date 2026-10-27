@@ -160,6 +160,11 @@ class FakeSession:
 class FakeBackend:
     """An unseen delivery that always succeeds, before the DDL (6.4)."""
 
+    stored_name = False
+
+    def preflight(self, *, account: str, target: str) -> None:
+        return None
+
     def deliver(self, secret: Secret, *, account: str, target: str) -> Receipt:
         return Receipt(
             method="vault_wrapped",
@@ -211,7 +216,7 @@ def _open(monkeypatch: pytest.MonkeyPatch, session: FakeSession, *, unseen: bool
     if unseen:
         monkeypatch.setattr(
             "sopuli.cli._delivery_backends",
-            lambda run, config, delivery, reached: {TARGET: FakeBackend()},
+            lambda run, config, delivery, reached, account: {TARGET: FakeBackend()},
         )
     else:
         monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)

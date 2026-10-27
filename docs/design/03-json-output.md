@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.62.schema.json`](../schemas/sopuli-run-1.62.schema.json),
-[`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
+Schemas: [`../schemas/sopuli-run-1.63.schema.json`](../schemas/sopuli-run-1.63.schema.json),
+[`../schemas/sopuli-event-1.18.schema.json`](../schemas/sopuli-event-1.18.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -2008,7 +2008,14 @@ unseen method will have its own kind of handle for the same fact.
   `creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may
   have shortened below what the file asked for. It is reported and never
   enforced. The store already enforces the TTL, and a second clock would only
-  disagree with it.
+  disagree with it. On `vault_path` it is the `deletion_time` Vault gave the
+  version it wrote, which a mount's own `delete_version_after` may shorten.
+- **On `vault_path`, `path` and `version` say where the password went**, from
+  run schema 1.63 and event schema 1.18: the KV v2 mount and path, and the
+  version the write created. `accessor` is `null`, because there is no token to
+  name. The person reads the path with their own Vault identity, so neither
+  field retrieves anything, and together they find the person's read in Vault's
+  audit device (UC-2 §6.6). Both are absent on every other method.
 
 **`audited`** says whether the database audits the DBA's routes to acting as the
 person (UC-2 §1): `true`, `false` or `"unknown"`. **`audited_detail`** says why:

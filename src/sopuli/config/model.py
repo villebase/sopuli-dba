@@ -1050,9 +1050,8 @@ class Delivery:
     can know that. A field holding the sub-block as opaque pairs would carry
     unvalidated content through the model and invite a consumer to read it, which
     is the shape of the mistake `01-configuration.md` §1 calls the one with the worst consequences.
-    Each method whose keys are read has a typed field of its own, `vault_path`
-    included, although it is not built yet. A method whose keys are not read
-    has none, and its sub-block is not retained.
+    Each method whose keys are read has a typed field of its own. A method
+    whose keys are not read has none, and its sub-block is not retained.
 
     The same applies to `notify:`, which nests under delivery because it is
     a property of a delivery rather than of a run -- and which may never carry the

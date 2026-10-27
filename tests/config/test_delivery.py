@@ -559,14 +559,10 @@ def test_the_path_block_is_not_read_when_another_method_is_selected() -> None:
     assert section.vault_path is None
 
 
-def test_vault_path_still_warns_that_nothing_serves_it() -> None:
-    """Its keys are read, and the method is not built yet (TODO(#447)). A file
-    that validates clean must not read as one that would deliver. Through the
-    loader, so the warning reaches `config.warnings` and not only the helper."""
+def test_vault_path_is_served_by_this_build() -> None:
+    """Through the loader, so `config.warnings` carries no W035 for it."""
     config = build_config(
         {"version": 1, "delivery": {"method": "vault_path", "vault_path": path_block()}}
     )
 
-    found = [warning for warning in config.warnings if warning.code == DELIVERY_UNSERVICEABLE]
-    assert len(found) == 1
-    assert "vault_path" in found[0].message
+    assert not [warning for warning in config.warnings if warning.code == DELIVERY_UNSERVICEABLE]

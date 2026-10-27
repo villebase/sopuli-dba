@@ -289,9 +289,10 @@ def assert_no_secret(document: Any, *, secret: Secret, token: Secret | None = No
     :class:`AssertionError` rather than a matter of the caller having picked the
     right field.
 
-    ``None`` where the method produced no token -- the seen path, and the
-    identity-scoped path of TODO(#447) -- because there is then nothing to compare
-    against and an absent argument says that better than a sentinel.
+    ``None`` where the method produced no token -- the seen path, and
+    `vault_path`, whose ``delivery.to`` is the path the person reads with their
+    own identity -- because there is then nothing to compare against and an
+    absent argument says that better than a sentinel.
 
     What remains uncovered is a *derived* value written into one of the permitted
     string fields -- a hash of the password in ``delivery.to``. Saying so is better
@@ -332,8 +333,8 @@ def assert_no_secret(document: Any, *, secret: Secret, token: Secret | None = No
             raise AssertionError(
                 "reset record carries the hand-over token: it holds no password and "
                 "produces one, which UC-2 §6.1 treats the same way because the rule is "
-                "about reach. `delivery.to` takes the accessor, which names the hand-over "
-                "and cannot perform it (UC-2 §3.1)"
+                "about reach. `delivery.to` takes the accessor, or on `vault_path` the "
+                "path, which name the hand-over and cannot perform it (UC-2 §3.1)"
             )
 
 

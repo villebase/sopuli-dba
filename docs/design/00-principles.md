@@ -425,6 +425,7 @@ pip install "sopuli-dba[postgres]"     # + psycopg, for PostgreSQL; the driver c
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
+pip install "sopuli-dba[yopass]"       # + UC-2's one_time_link delivery: httpx and pysequoia
 pip install "sopuli-dba[all]"          # everything
 ```
 
@@ -434,6 +435,7 @@ pip install "sopuli-dba[all]"          # everything
 | store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
 | driver extras | one database driver per product (P1) | `sopuli-dba[<product>]` |
 | channel extras | the client a delivery channel needs | `sopuli-dba[notify]` |
+| delivery extras | what a delivery method needs to reach its service | `sopuli-dba[yopass]` |
 | `all` | every extra above | `sopuli-dba[all]` |
 
 This is packaging, not architecture: nothing above about `SecretStore`, the

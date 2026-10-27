@@ -45,6 +45,7 @@ The base install carries what every invocation uses and nothing else.
 | store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
 | driver extras | one database driver per product | `sopuli-dba[<product>]` |
 | notify extras | the client a notify channel posts with (E7, #442) | `sopuli-dba[notify]` |
+| delivery extras | what a delivery method reaches its service with, and anything else it needs: `httpx` and `pysequoia` for `one_time_link` (#445) | `sopuli-dba[yopass]` |
 | `all` | every extra above | `sopuli-dba[all]` |
 
 `pywin32` is in base and is not a counter-example: it is selected by a platform
@@ -68,7 +69,7 @@ cosmetic:
 3. **Nothing in base opens a socket.** This is the property being defended.
    What a test can hold is the dependency set that stands for it: in a base
    install none of the clients the backends reach with — `httpx`, the OCI SDK,
-   `python-oracledb` — is importable. The standard library's `urllib` and
+   `python-oracledb`, `pysequoia` — is importable. The standard library's `urllib` and
    `http.client` are importable in every Python and no packaging rule changes
    that, so they are covered by the rule's intent rather than by its assertion:
    base code does not reach the network, whatever it would reach it with.

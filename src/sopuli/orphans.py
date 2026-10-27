@@ -427,9 +427,10 @@ def delete_command(vault: Vault, path: str) -> str | None:
     versions and the metadata, and on a lock path it keeps the version counter,
     so a first acquisition at version 0 can never succeed there again.
 
-    It names the address, so it reaches the store the config names whatever
-    ``VAULT_ADDR`` the shell holds. The address holds no user name or password,
-    because the loader refuses one (#891). It is quoted for a POSIX shell.
+    It names the address this run resolved, so it reaches the store this run
+    read, whatever ``VAULT_ADDR`` the shell that runs it holds. The address holds
+    no user name or password, because the loader refuses or drops one (#891). It
+    is quoted for a POSIX shell.
 
     ``None`` for a backend this build has no command for.
     """

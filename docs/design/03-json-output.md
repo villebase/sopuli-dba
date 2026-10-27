@@ -250,9 +250,9 @@ Each part of the tool writes these lines:
   server's message reaches the operator in the error.
 - **`postgres`**: each connection, with the target, the user and the time it
   took, or the code it failed with. The scope the session found. Each
-  verification login and its result. Each `ALTER ROLE`, with its verifier
-  written as `<SCRAM-SHA-256 verifier>`. It does not write the other
-  statements it sends.
+  verification login and its result. Each `ALTER ROLE` the server accepted,
+  with its verifier written as `<SCRAM-SHA-256 verifier>`. It does not write
+  a refused `ALTER ROLE`, or the other statements it sends.
 - **`plan`**: why a unit is in the run or not. Each declared target that a
   selector left out, and each account left out on a target that stays, with the
   flag that left it out, such as `--select`, `--account` or `--repair`. Each
@@ -1260,12 +1260,13 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
 - **`delete_command` is `vault kv metadata delete`** on KV v2. A plain
   `vault kv delete` keeps the metadata, and on a lock path it keeps the version
   counter, so the first acquisition there could never succeed again. On KV v1
-  it is `vault kv delete`. It names the store's address, and its namespace where
-  it has one, so it reaches the store the config names whatever `VAULT_ADDR`
-  the shell holds. The address is written as the run resolved it, which holds
-  no user name or password: the loader refuses one in an address from the
-  config or this tool's own flag and variable, and drops one from `VAULT_ADDR`
-  (`SOPULI-W057`). So there is nothing to hide. It is quoted for a POSIX shell. It is `null` while a lock
+  it is `vault kv delete`. It names the store's address as this run resolved
+  it, and its namespace where it has one, so it reaches the store this run read,
+  whatever `VAULT_ADDR` the shell that runs it holds. The address holds no user
+  name or password, so nothing in it is hidden: the loader refuses one in an
+  address from any other source, and from `VAULT_ADDR` it drops the user name
+  and password, or does not apply the variable at all (`SOPULI-W057`). It is
+  quoted for a POSIX shell. It is `null` while a lock
   that has not expired is held at the secret path, for the lock and for its
   secret, because somebody may be rotating it.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
@@ -1483,8 +1484,8 @@ ADR-006's E6, and it sets the whole shape of the section:
 > evidence as often as it is a diagnostic; a section that appears only when
 > something is wrong cannot be quoted as proof that nothing was.
 
-From `doctor --output json` against the tier-1 stack, with one Oracle target
-and one HashiCorp store, laid out one row to a line:
+From `doctor --output json` against the tier-1 stack, with a config that
+declares one Oracle target and one HashiCorp store, laid out one row to a line:
 
 ```json
 "install": {
@@ -2615,7 +2616,9 @@ the tier-1 stack, with `--confirm`, trimmed only where `…` says so:
 compare-and-set per secret path, however many targets share it. So its events, a
 `vault.read`, a `password.generated` per account drawn, and a `vault.write`, name
 a `path` and no `target`, and all of them come before the first
-`target.started`. That is UC-1 §8's own order: stage everything, *then* touch a
+`target.started`. A diagnostic can come between them, such as `SOPULI-W022`
+when the run connects for the admin credential, and it names its target. That
+is UC-1 §8's own order: stage everything, *then* touch a
 database. Interleaving the two phases per target would put a database event
 between two vault writes that happened one after the other.
 
@@ -2634,7 +2637,8 @@ between two vault writes that happened one after the other.
   as `target.finished`.
 - **The rows come last, in `results[]` order**: first the staging rows
   (`PENDING_APPLY`, one per account and target), then the applied ones. `apply`'s
-  reason for waiting applies unchanged.
+  reason for waiting applies unchanged. Only the diagnostics about the whole
+  run, such as `SOPULI-W031`, and `run.finished` come after them.
 - **`--finish-rollover` has no event of its own.** Closing a window is reported
   on the row, and no event in the enum names it.
 

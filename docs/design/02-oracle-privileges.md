@@ -606,17 +606,17 @@ GRANT SELECT ON SYS.V_$PARAMETER TO sopuli_svc;                   -- or c##sopul
 
 A database in pure unified mode, such as 26ai, does not need the third grant,
 because the check does not read `AUDIT_TRAIL` there. In mixed mode without it,
-the service account gets `ORA-00942` on `V$PARAMETER` (measured by hand on
-21.3.0.0.0 and 18.4.0.0.0, on 2026-10-23). The reset then records `audited: unknown` where the policies
+the service account gets `ORA-00942` on `V$PARAMETER`, on 21.3.0.0.0 and
+18.4.0.0.0 (`15_mixed_mode_trail_probe.sql`). The reset then records `audited: unknown` where the policies
 cover both actions, and the detail names the grant. The tool cannot rule out
 `AUDIT_TRAIL = NONE`, under which those policies record nothing (§5).
 
 For a common service account, run the grants as `SYS` in `CDB$ROOT` with
 `CONTAINER=ALL`. The probe measured that a common account granted this way reads
-both views in a PDB. For `V$PARAMETER` it was measured by hand on 21.3.0.0.0 and
-18.4.0.0.0, on 2026-10-23: a common account holding only `CREATE SESSION` gets
-`ORA-00942` in XEPDB1, and after the grant in `CDB$ROOT` with `CONTAINER=ALL` it
-reads `AUDIT_TRAIL` there.
+both views in a PDB. For `V$PARAMETER`, `15_mixed_mode_trail_probe.sql`
+measured it on 21.3.0.0.0 and 18.4.0.0.0: a common account holding only
+`CREATE SESSION` gets `ORA-00942` in XEPDB1, and after the grant in `CDB$ROOT`
+with `CONTAINER=ALL` it reads `AUDIT_TRAIL` there.
 
 **Do not grant the `AUDIT_VIEWER` role instead.** It holds the same two grants,
 and much more: on 26ai 23.26.2.0.0 it holds 34 object grants, including `READ` on
@@ -746,12 +746,15 @@ does.
 `EXECUTE ON DBMS_LOCK` cannot be audited, and no grant changes that.
 
 The three states look like this. Each is an excerpt from `doctor
---check-privileges` against a PDB service account on 26ai Free 23.26.2.0.0,
-created by `sql/oracle/00_install.sql` in `PDB` mode. The default install:
+--check-privileges` against a PDB service account on 26ai Free 23.26.3.0.0,
+created by `sql/oracle/00_install.sql` in `PDB` mode. The tier-1 container
+requires no encryption, so each also has the line that says so. The default
+install:
 
 ```
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK, SYSDBA, SYSOPER
   free-pdb: SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which 02-oracle-privileges.md §2 leaves optional: GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to audit them
 ```
@@ -760,8 +763,9 @@ The same account with the grant taken, holding neither privilege. One row is
 left unchecked, and there is nothing to suggest about it:
 
 ```
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
 ```
 
@@ -769,8 +773,9 @@ The same account granted `SYSDBA`. The finding is reported and, under P5, is
 not fatal: the run exits 0.
 
 ```
-TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6
+TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  6             none
+  free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
   free-pdb: over-granted, and the tool needs none of it: SYSDBA
 ```
@@ -814,7 +819,8 @@ own audit trail meaningless. It never overrides check 6 either: a tool account
 that is not a superuser cannot change a superuser's password.
 
 `src/sopuli/driver/guardrails.py` implements the checks. It reviews; it does
-not decide, as the error mapping does. `creds apply` and `creds rotate` call it.
+not decide, as the error mapping does. `creds apply`, `creds rotate`, `account
+reset-password`, `account expire-password` and `account suspend` call it.
 It holds no Oracle names. The Oracle driver
 (`src/sopuli/driver/oracle/accounts.py`) holds the role list for check 4 and the
 deny list for check 5, and reports what they find on each account it describes.
@@ -1021,10 +1027,11 @@ measured keeps nothing. So the change is after 11.2 and no later than 12.2.0.1.0
 not been run. Read the 11.2 result as "11.2 keeps it", not as "every release
 before 12.2 keeps it".
 
-This was confirmed with sopuli's own statement, not just the probe's. A real
-`creds apply` ran against 11g XE through the usual path: Instant Client,
+The tool's own statement shows the same 11.2 retention, not just the probe's.
+The run below is a real
+`creds apply` against 11g XE through the usual path: Instant Client,
 `SOPULI_SVC` with exactly §2's grants, and a password that sopuli generated,
-wrote to Vault and showed nobody. This is the search for that password, read
+wrote to Vault and showed nobody. It is the search for that password, read
 back from the vault, with the password masked by the search script, not by
 Oracle:
 
@@ -1040,8 +1047,7 @@ DBA_AUDIT_TRAIL.sql_text      clean        0
 ```
 
 **The tool does nothing about it, and the documents say so**
-([P8](../decisions/log.md#p8)). The alternatives were a runtime warning on 11.2,
-or refusing to rotate there. Refusing would have reversed
+([P8](../decisions/log.md#p8)). Refusing to rotate on 11.2 would reverse
 [`00-principles.md`](00-principles.md) D7. The decision rests on one fact: **the
 kept text is a window, not a record.** On 11g XE 11.2.0.2.0:
 
@@ -1310,10 +1316,12 @@ because only two releases are measured: decided in
 [#1004](../decisions/log.md#1004). Only the five measured settings keep a
 `true`. Under any other value the answer is `unknown`, and the detail names the
 value: decided in [#1013](../decisions/log.md#1013). The check compares the
-value in upper case, with `, ` between its parts. On 21.3.0.0.0, `ALTER SYSTEM`
-refuses `TRUE`, `OS, EXTENDED` and `EXTENDED` with `ORA-00096`, and the message
-names the six values it accepts: `NONE | OS | DB | DB,EXTENDED | XML |
-XML,EXTENDED` (measured by hand, on 2026-10-24). Other spellings, such as
+value in upper case, with `, ` between its parts. On 21.3.0.0.0 and
+18.4.0.0.0, `ALTER SYSTEM … SCOPE = SPFILE` refuses `TRUE`, `OS, EXTENDED` and
+`EXTENDED` with `ORA-00096` (`15_mixed_mode_trail_probe.sql`). For
+`OS, EXTENDED` and `EXTENDED` the `ORA-00096` follows `ORA-32017`, and names
+the six values it accepts: `NONE | OS | DB | DB,EXTENDED | XML | XML,EXTENDED`.
+For `TRUE` the `ORA-00096` names five: `extended, xml, none, os, db`. Other spellings, such as
 `FALSE` or `DB_EXTENDED`, were not tried. A value nobody has measured gets the
 `unknown`, on a release that accepts one. Where `AUDIT_TRAIL` cannot be read,
 the value is `unknown` too, because the tool cannot rule out `NONE`, and the
@@ -1428,7 +1436,7 @@ each header says what it creates and leaves behind.
 |---|---|---|
 | ~~P1~~ | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
 | ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative is #124. Reasons: [P2](../decisions/log.md#p2) |
-| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag, overriding checks 2–5 of §4 and nothing else** (#89); it is not a setting. Reasons: [P3](../decisions/log.md#p3) |
+| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 of §4, and check 7 since #1059; it never overrides check 1 or check 6. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
 | ~~P4~~ | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213); `scope.over_granted` is populated and the exit code is unchanged. Reasons: [P5](../decisions/log.md#p5) |
 | ~~P6~~ | ~~11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases?~~ | **decided** (#615): keep for now, drop if it starts costing real complexity. Reasons: [P6](../decisions/log.md#p6) |

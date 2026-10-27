@@ -10,7 +10,7 @@ Two gates, in this order, and the order is the point:
 1. **is it declared** -- invariant 5, which H1 made harder than a list lookup by
    allowing a predicate. :mod:`sopuli.personal` answers it from the state the
    run has already read;
-2. **do the guardrails allow it** -- ``02-oracle-privileges.md`` §4's five checks,
+2. **do the guardrails allow it** -- ``02-oracle-privileges.md`` §4's checks,
    unchanged and shared with every other mutating verb, because locking
    ``DBSNMP`` ought to refuse exactly as rotating it does.
 

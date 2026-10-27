@@ -60,13 +60,13 @@ class Finding:
     ``category`` is the run document's own (``03-json-output.md`` §2's closed
     enum) and travels on the finding rather than being inferred from ``check`` by
     whoever reports it. The two are not the same question: ``check`` says which
-    of §8's five this is, and ``category`` says which kind of failure it is for a
-    consumer that branches on `error.category` -- a missing grant is
+    of §8's checks this is, and ``category`` says which kind of failure it is for
+    a consumer that branches on `error.category` -- a missing grant is
     ``authorization`` whether it was found here or by `doctor`.
 
-    ``account`` is set only on the findings that are about one, which is
-    :data:`ACCOUNT` today. A finding about the target carries ``None`` rather
-    than repeating the target name, so a reader can tell "this database is in the
+    ``account`` is set only on the findings that are about one: :data:`ACCOUNT`
+    and :data:`PROFILE`. A finding about the target carries ``None`` rather than
+    repeating the target name, so a reader can tell "this database is in the
     wrong container" from "this account is missing from it".
 
     ``blocking`` is what separates *this estate cannot do what you asked* from
@@ -162,7 +162,7 @@ def survey(
 ) -> tuple[Finding, ...]:
     """Everything wrong with one reachable target, in §8's order.
 
-    Four checks, and each is a refusal the run would otherwise have discovered
+    Each check is a refusal the run would otherwise have discovered
     with part of the estate already changed:
 
     * **the scope the file claims**, per :func:`assertion_holds`, reported with

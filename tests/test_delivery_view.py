@@ -74,12 +74,29 @@ def test_the_instruction_not_to_check_it_is_part_of_the_output() -> None:
 
 
 def test_a_receipt_with_nothing_to_carry_renders_nothing() -> None:
-    """An identity-scoped path (`vault_path`, TODO(#447)) hands over no bearer
-    credential, and neither does mail that has been sent. A heading over an
-    empty value would suggest something had gone missing."""
-    empty = Receipt(method="vault_path")
+    """Mail that has been sent hands over no bearer credential and no path. A
+    heading over an empty value would suggest something had gone missing."""
+    empty = Receipt(method="smtp_encrypted")
 
     assert render_handover(empty, account="acme_dev_alice", target="free-pdb") is None
+
+
+def test_a_path_receipt_says_where_the_person_reads_and_until_when() -> None:
+    """`vault_path` hands over no token: the operator passes on where to read,
+    and the person reads it with their own Vault login (UC-2 §6.6)."""
+    receipt = Receipt(
+        method="vault_path",
+        path="kv/personal/ACME_DEV_ALICE/free-pdb",
+        version=2,
+        expires_at=datetime(2026, 10, 27, 21, 0, tzinfo=UTC),
+    )
+
+    text = render_handover(receipt, account="ACME_DEV_ALICE", target="free-pdb") or ""
+
+    assert "kv/personal/ACME_DEV_ALICE/free-pdb" in text
+    assert "their own Vault login" in text
+    assert "2026-10-27T21:00:00Z" in text
+    assert "unwrap" not in text
 
 
 def test_the_password_has_no_way_into_this_view() -> None:
@@ -90,7 +107,14 @@ def test_the_password_has_no_way_into_this_view() -> None:
     from inspect import signature
 
     assert set(signature(render_handover).parameters) == {"receipt", "account", "target"}
-    assert set(Receipt.__dataclass_fields__) == {"method", "token", "accessor", "expires_at"}
+    assert set(Receipt.__dataclass_fields__) == {
+        "method",
+        "token",
+        "accessor",
+        "expires_at",
+        "path",
+        "version",
+    }
 
 
 # ------------------------------------------------ what the document says instead ---

@@ -3,9 +3,13 @@
 This guide sets up the local test stack and runs the usual commands against it.
 You see each command succeed, and a few of them refuse on purpose.
 
-Every sample is pasted from a real run of main at caf2645, after the 0.78.0
-release, on 2026-10-23, on Windows 11, with Instant Client 23.26.3.0.0 and the `tier1`
-container stack (Oracle 26ai Free and Vault).
+Every sample is pasted from a real run on Windows 11, with Instant Client
+23.26.3.0.0 and the `tier1` container stack: Oracle 26ai Free, PostgreSQL 16
+and Vault. Most come from main at caf2645, after the 0.78.0 release, on
+2026-10-23. A sample added since then comes from a run of the change that added
+it. Every sample that shows PostgreSQL is one of these, from 18a0ceb to 50ea18d,
+2026-10-25 and 2026-10-26. The samples in §11 come from main at 50ea18d on
+2026-10-27.
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
@@ -40,10 +44,11 @@ The `creds` commands manage application credentials (UC-1). The `account`
 commands manage personal accounts (UC-2). `vault orphans` lists vault records
 the tool wrote at paths the config no longer declares (§13).
 
-There is no `sopuli admin` command. To install the service account, run the SQL
-in `sql/oracle/` by hand. The only store backend is `hashicorp`; `doctor` lists
-the others as `not_implemented`. The PostgreSQL driver connects to a cluster,
-reports it and audits the tool account (§7), and does nothing more yet.
+There is no `sopuli admin` command. To install the Oracle service account, run
+the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
+`psql` (§7). The only store backend is `hashicorp`; `doctor` lists
+the others as `not_implemented`. A PostgreSQL target runs `doctor` and the
+`creds` commands (§7), and refuses the `account` commands.
 
 ---
 
@@ -1017,6 +1022,81 @@ ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-23     -
 
 A reset draws a new password every time, so running it twice resets twice.
 
+### Delivering to the person's own Vault path
+
+With this `delivery:` block, the tool writes the password to a Vault path that
+only the person's own Vault login can read, and Vault deletes it when the `ttl`
+runs out:
+
+```yaml
+delivery:
+  method: vault_path
+  vault_path:
+    ttl: 8h
+    prefix: personal
+```
+
+The stack's Vault is set up for it. A `userpass` login `alice` (password
+`sopuli-test-alice`) has `db_account = ACME_DEV_ALICE` on its identity, and its
+policy reads `kv/data/personal/{{identity.entity.metadata.db_account}}/*`. The
+token `sopuli-test-personal-writer` can write under `personal/` and cannot read
+it. It cannot write `reset_records:` either, so this run used a config without
+that block. Run the reset with that token:
+
+```
+$ VAULT_TOKEN=sopuli-test-personal-writer sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
+...
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
+
+reset acme_dev_alice on 1 of 1 targets
+...
+tell acme_dev_alice the new password for free-pdb is waiting at:
+
+    kv/personal/ACME_DEV_ALICE/free-pdb
+
+They read it with their own Vault login. Vault deletes it at 2026-10-27T23:29:13.926882Z;
+a token that holds `undelete` on the path can still restore it.
+```
+
+The path uses the account name as the database stores it. The person logs in and
+reads it. The `vault` alias from §4 sends the root token, so use a shell in the
+container instead; `vault login` asks for the password:
+
+```
+$ docker exec -it -e VAULT_ADDR=http://127.0.0.1:8200 sopuli-test-vault-1 sh
+/ # vault login -method=userpass username=alice
+/ # vault kv get -mount=kv personal/ACME_DEV_ALICE/free-pdb
+============== Secret Path ==============
+kv/data/personal/ACME_DEV_ALICE/free-pdb
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-10-27T15:29:13.926882676Z
+custom_metadata    <nil>
+deletion_time      2026-10-27T23:29:13.926882676Z
+destroyed          false
+version            2
+
+====== Data ======
+Key         Value
+---         -----
+account     ACME_DEV_ALICE
+password    <PASSWORD>
+target      free-pdb
+```
+
+Logged in as `bob`, the same read answers `Code: 403` and `permission denied`.
+
+A token that can also read the path is refused before anything changes:
+
+```
+$ VAULT_TOKEN=sopuli-test-personal-writer-read sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
+sopuli: the token for 'vault-dev' holds read on kv/data/personal/acme_dev_alice/free-pdb, so it could read acme_dev_alice's password back
+  hint: on `vault_path` the DBA must not be able to read the person's path (UC-2 6.6). Remove `read` from this token's policy on that path, or use a token without the root policy
+```
+
 ### The seen path
 
 With this `delivery:` block, the tool prints the password on your terminal once
@@ -1256,7 +1336,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.56 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
+1.62 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 `acme_batch_user` is `ROLLOVER_ACTIVE` because the `apply` in §10 opened its
@@ -1271,9 +1351,9 @@ it. The last event carries the summary and the exit code:
 
 ```
 $ sopuli --config sopuli.yaml creds check --output jsonl
-{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-23T08:16:05.779447Z","correlation_id":"b9c4c2c5-b738-4847-a5ed-cc6f7e947b2b","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T06:32:46.882197Z","correlation_id":"dbddf924-3728-4bc8-b78e-549c2a1c6663","data":{"command":"creds.check","dry_run":false}}
 ...
-{"schema_version":"1.17","event":"run.finished","seq":6,"ts":"2026-10-23T08:16:06.695012Z","correlation_id":"b9c4c2c5-b738-4847-a5ed-cc6f7e947b2b","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
+{"schema_version":"1.17","event":"run.finished","seq":6,"ts":"2026-10-27T06:32:47.678313Z","correlation_id":"dbddf924-3728-4bc8-b78e-549c2a1c6663","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
 ```
 
 Other commands refuse it:

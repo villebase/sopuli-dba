@@ -19,7 +19,7 @@ Pure, like :mod:`sopuli.check`. Drawing is :mod:`sopuli.passwords` and writing i
 :mod:`sopuli.store.credentials`; what lives here is the arithmetic between them --
 which policy applies to which account, and which accounts share a write.
 
-Three things here are decisions rather than transcription:
+These things are decisions rather than transcription:
 
 **One document is one write, however many accounts land in it.** Q7 made one
 secret per application the documented default, so generating for three accounts

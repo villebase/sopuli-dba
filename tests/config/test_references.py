@@ -69,7 +69,16 @@ def test_the_hint_says_so_when_there_is_no_vaults_section_at_all() -> None:
 
 @pytest.mark.parametrize(
     "section",
-    ["application", "override", "profile", "defaults", "target_set", "admin"],
+    [
+        "application",
+        "override",
+        "profile",
+        "defaults",
+        "target_set",
+        "admin",
+        "vault_wrapped",
+        "vault_path",
+    ],
     ids=lambda name: f"from-{name}",
 )
 def test_every_place_that_names_a_vault_is_checked(section: str) -> None:
@@ -101,6 +110,13 @@ def test_every_place_that_names_a_vault_is_checked(section: str) -> None:
         sections["profiles"] = {"ci": {"vault": "nope"}}
     elif section == "defaults":
         sections["defaults"] = {"vault": "nope"}
+    elif section == "vault_wrapped":
+        sections["delivery"] = {"vault_wrapped": {"ttl": "15m", "vault": "nope"}}
+    elif section == "vault_path":
+        sections["delivery"] = {
+            "method": "vault_path",
+            "vault_path": {"ttl": "8h", "prefix": "personal", "vault": "nope"},
+        }
     else:
         sections["target_sets"] = {
             "appdb": {
@@ -121,6 +137,8 @@ def test_every_place_that_names_a_vault_is_checked(section: str) -> None:
         # The ref, not the block it sits in: `admin:` has three keys that could
         # each be wrong, and only one of them names a store.
         assert "targets[0].admin.auth.secret" in rendered
+    if section in ("vault_wrapped", "vault_path"):
+        assert f"delivery.{section}.vault" in rendered
 
 
 def test_the_inline_application_reports_its_reference_at_the_root() -> None:

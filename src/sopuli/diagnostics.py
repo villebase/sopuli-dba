@@ -176,8 +176,8 @@ PASSWORD_REUSE_ENFORCED = "SOPULI-W017"
 #: Its own code, because a code exists for what the exit code cannot tell you.
 #: This run exits 0 with every account applied, and the thing that is not in the
 #: exit code, the states, or ``results[].overridden`` is that one of
-#: the five checks contributed nothing to the answer. An operator who reads
-#: ``changed: true`` and no refusal is entitled to believe five checks passed.
+#: the guardrail checks contributed nothing to the answer. An operator who reads
+#: ``changed: true`` and no refusal is entitled to believe every check passed.
 #:
 #: **Not a refusal**, and the reason is the estate rather than the severity.
 #: Check 3 reads ``V$PWFILE_USERS``, which ``02-oracle-privileges.md`` §2

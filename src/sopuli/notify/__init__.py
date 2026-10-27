@@ -48,7 +48,7 @@ class Facts:
     account: str
     target: str
     #: When the hand-over stops working, where the method knows. ``None`` for
-    #: one that never expires -- `manual`, or the identity path (TODO(#447)) --
+    #: one that never expires -- `manual` --
     #: and rendered as an empty string there, because a message reading "expires
     #: at None" is worse than one whose estate chose to mention an expiry that
     #: does not exist.

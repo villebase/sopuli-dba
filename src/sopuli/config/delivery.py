@@ -8,10 +8,9 @@ documents what is *built*, and this is the layer that makes the second true.
 the sub-block with the same name carries that method's own settings. Both halves
 are checked here. This module refuses a method UC-2 §6.2 does not define and a
 method whose sub-block is missing, which is the part that is common to all six.
-Where the selected method is `manual` or `vault_wrapped`, the methods that are
-built, it also reads that method's keys. The keys of `vault_path:`
-(TODO(#447)), `one_time_link:` (TODO(#445)) and `onepassword_share:`
-(TODO(#446)) are not read yet.
+Where the selected method is `manual`, `vault_wrapped` or `vault_path`, it also
+reads that method's keys. The keys of `one_time_link:` (TODO(#445)) and
+`onepassword_share:` (TODO(#446)) are not read yet.
 
 **Why the sub-block must exist at all**, rather than defaulting: every method
 needs something. A wrapping token needs a TTL, a link needs a backend and a base
@@ -36,10 +35,11 @@ from sopuli.config.fields import (
     mapping,
     optional_bool,
     reject_unknown_keys,
+    required_prefix,
     required_string,
     string,
 )
-from sopuli.config.model import Delivery, ManualDelivery, WrappedDelivery
+from sopuli.config.model import Delivery, ManualDelivery, PathDelivery, WrappedDelivery
 from sopuli.config.notify import build_notify
 
 #: The methods UC-2 §6.2 defines, in the order that section lists them. **The
@@ -69,14 +69,17 @@ DEFAULT_METHOD = "vault_wrapped"
 #: The seen path. Named because two rules key on it and neither should re-spell it.
 MANUAL = "manual"
 
-#: The one *unseen* method this build serves, and the default.
+#: The default *unseen* method.
 WRAPPED = "vault_wrapped"
+
+#: A KV path only the person's own identity can read (decision #447).
+PATH = "vault_path"
 
 #: The methods this build can actually serve. Here rather than in
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
 #: disagreeing about which methods work.
-IMPLEMENTED = (MANUAL, WRAPPED)
+IMPLEMENTED = (MANUAL, WRAPPED, PATH)
 
 #: The keys `manual:` takes. One, and it is required -- see
 #: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
@@ -89,10 +92,22 @@ MANUAL_KEYS = ("force_expire",)
 #: not have to learn a second.
 WRAPPED_KEYS = ("ttl", "vault")
 
+#: The keys `vault_path:` takes. `ttl` and `prefix` are required; `vault` is
+#: optional, with `vault_wrapped`'s chain.
+PATH_KEYS = ("ttl", "prefix", "vault")
+
+#: Characters `vault_path.prefix` refuses beyond what any store path does. The
+#: person's Vault policy repeats the prefix, and in a policy path `*` and `+`
+#: are wildcards and `{{ }}` opens a template, so a prefix holding one would
+#: grant read on more than the tool writes, or fail to parse.
+POLICY_CHARACTERS = "*+{}"
+
 #: A Vault duration: digits and one unit. Shape only -- see
 #: :class:`~sopuli.config.model.WrappedDelivery` for why the grammar stays
-#: Vault's. ``s``, ``m`` and ``h`` are the three a wrap TTL is ever written in;
-#: Vault accepts more, and an estate that needs one can say ``5400s``.
+#: Vault's. The same shape for a wrap TTL and for `vault_path`'s
+#: ``delete_version_after``. Only ``s``, ``m`` and ``h``: a day is ``24h`` and a
+#: week ``168h``, so one pattern covers both without the tool claiming a unit
+#: nobody has measured Vault accepting in both places.
 TTL_PATTERN = re.compile(r"^[1-9][0-9]*[smh]$")
 
 #: The key `vault_wrapped:` refuses rather than accepts. Its own constant because
@@ -145,6 +160,7 @@ def build_delivery(document: dict[str, Any]) -> Delivery | None:
         vault_wrapped=(
             _build_wrapped(block[WRAPPED], at=at.key(WRAPPED)) if method == WRAPPED else None
         ),
+        vault_path=_build_path(block[PATH], at=at.key(PATH)) if method == PATH else None,
         # Read whichever method is selected, which is the opposite of the rule one
         # line up. A method's sub-block is left unjudged when it is not the
         # chosen one, because nothing consults it; a notification is a property of
@@ -244,29 +260,87 @@ def _build_wrapped(raw: Any, *, at: KeyPath) -> WrappedDelivery:
         )
     reject_unknown_keys(block, allowed=WRAPPED_KEYS, at=at)
 
-    if "ttl" not in block:
-        raise ConfigError(
-            "`vault_wrapped` delivery needs a `ttl`",
-            at=at.key("ttl"),
-            hint=(
-                "the token stops working, and how soon is the whole of what this method "
-                "promises -- so it is written down rather than defaulted. A Vault duration: "
-                "`15m`, `900s`, `1h`"
-            ),
-        )
+    ttl = _required_ttl(
+        block,
+        method=WRAPPED,
+        at=at,
+        why=(
+            "the token stops working, and how soon is the whole of what this method "
+            "promises -- so it is written down rather than defaulted. A Vault duration: "
+            "`15m`, `900s`, `1h`"
+        ),
+    )
     vault = string(block["vault"], at=at.key("vault")) if "vault" in block else None
+    return WrappedDelivery(ttl=ttl, vault=vault)
+
+
+def _build_path(raw: Any, *, at: KeyPath) -> PathDelivery:
+    """`vault_path:`'s own settings.
+
+    **Only where `vault_path` is the selected method**, for `manual`'s reason.
+
+    `ttl` is **required**: the value at the path is a working password until
+    Vault deletes it, and this is when (decision #447). It becomes the path's
+    ``delete_version_after``, so it is a Vault duration and gets the wrap TTL's
+    shape check.
+
+    `prefix` is **required** and normalised as `reset_records.prefix` is. The
+    person's policy names the same prefix, so a default would be a path the
+    file does not show. A traversal segment is refused with a located message:
+    a ``..`` would put a live password outside the prefix the policy covers.
+    """
+    block = mapping(raw, at=at)
+    reject_unknown_keys(block, allowed=PATH_KEYS, at=at)
+
+    ttl = _required_ttl(
+        block,
+        method=PATH,
+        at=at,
+        why=(
+            "the password stays at the path until Vault deletes it, and this is when. "
+            "A Vault duration: `30m`, `8h`, `168h`"
+        ),
+    )
+    prefix = required_prefix(
+        block,
+        at=at,
+        missing="`vault_path` delivery needs a `prefix`",
+        hint=(
+            "the path in the KV v2 mount that the person's policy covers, such as "
+            "`personal`. The value goes to `<prefix>/<account>/<target>`. The policy "
+            "names the prefix too, so it may not hold `*`, `+`, `{` or `}`, which "
+            "mean something else in a Vault policy path"
+        ),
+        traversal_hint=(
+            "write the path the person's policy covers -- a relative segment resolves "
+            "somewhere else on the way to the store"
+        ),
+        also=POLICY_CHARACTERS,
+    )
+    vault = string(block["vault"], at=at.key("vault")) if "vault" in block else None
+    return PathDelivery(ttl=ttl, prefix=prefix, vault=vault)
+
+
+def _required_ttl(block: dict[str, Any], *, method: str, at: KeyPath, why: str) -> str:
+    """A method's required `ttl`, in :data:`TTL_PATTERN`'s shape.
+
+    One check for both methods that take one, so the two cannot drift. ``why``
+    is the hint for a missing `ttl`: what the duration bounds differs by method.
+    """
+    if "ttl" not in block:
+        raise ConfigError(f"`{method}` delivery needs a `ttl`", at=at.key("ttl"), hint=why)
     ttl = required_string(block, "ttl", at=at)
     if not TTL_PATTERN.match(ttl):
         raise ConfigError(
             f"ttl {ttl!r} is not a duration",
             at=at.key("ttl"),
             hint=(
-                "digits and one unit -- `s`, `m` or `h`, as in `15m`. The value is passed to "
-                "Vault rather than interpreted here, so an unparseable one would otherwise "
-                "fail with a 400 after a password had already been drawn"
+                "digits and one unit -- `s`, `m` or `h`, as in `15m`; a day is `24h`. The "
+                "value is passed to Vault rather than interpreted here, so an unparseable "
+                "one would otherwise fail after a password had already been drawn"
             ),
         )
-    return WrappedDelivery(ttl=ttl, vault=vault)
+    return ttl
 
 
 def _require_sub_block(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
@@ -320,9 +394,10 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
     typed ``vault_wrapped: 15m`` meant ``ttl:`` and wants to be told.
 
     The consequence: a typo *inside* the sub-block of an unselected method is
-    accepted, and so is one inside the selected method's block where that method
-    is not built. That is why :func:`unserviceable` warns -- a file that validates
-    clean must not be read as a file that would deliver.
+    accepted, and so is one inside the selected method's block where this layer
+    does not read that method's keys. Separately, a method whose keys are read
+    may still not be built. That is why :func:`unserviceable` warns -- a file
+    that validates clean must not be read as a file that would deliver.
 
     The rule that governs `notify:` is UC-2 §6.1's rather than this module's:
     the channel that notifies may be low-trust and the channel that carries the
@@ -342,8 +417,8 @@ def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
     :data:`IMPLEMENTED` lists the methods this build serves. The others are not
-    built: `vault_path` (TODO(#447)), `one_time_link` (TODO(#445)),
-    `onepassword_share` (TODO(#446)) and `smtp_encrypted`, which has no issue. A
+    built: `one_time_link` (TODO(#445)), `onepassword_share` (TODO(#446)) and
+    `smtp_encrypted`, which has no issue. A
     file naming `method: one_time_link` parses and cannot hand anybody a
     password.
 

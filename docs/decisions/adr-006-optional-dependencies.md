@@ -111,7 +111,8 @@ client. A config naming eleven backends validates with none of them installed.
 **Drivers follow the same rule as stores (E1).** `python-oracledb` exists only
 to reach Oracle, so it is `sopuli-dba[oracle]`. Symmetry decides it: a split that
 bound stores and not drivers would read as arbitrary the first time somebody
-asked why. The cost is an interface with one member today, and D3's thick-mode
+asked why. The rule holds for the second driver too: `psycopg` is
+`sopuli-dba[postgres]`. The cost is small, because D3's thick-mode
 Instant Client prerequisite already makes reaching Oracle a per-site runtime
 condition rather than a universal one — the extra names a fact that was true
 anyway.
@@ -179,7 +180,7 @@ there. A name that has stopped meaning that is a split in appearance only.
 
 The cost is one more name in an install line and one more cell in the matrix, which
 is small and is paid by the estates that use the feature. What it buys is that the
-three registries — stores, drivers, and now channels — all answer the same question
+three registries — stores, drivers and channels — all answer the same question
 the same way, and `tests/store/test_install_shape.py` derives its exemptions from all
 three rather than from a hand-kept list.
 

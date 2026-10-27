@@ -181,7 +181,7 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 
 | Service | Port | Notes |
 |---|---|---|
-| vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
+| vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. A `userpass` mount has users `alice`, `bob` and `carol`, with passwords `sopuli-test-alice` and so on, for the `vault_path` delivery tests; the comment above `vault-init` in `compose.yaml` lists its policies and tokens. **Restarting it loses all of this** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test`. Like the matrix, it preloads `pg_stat_statements` and writes the server log to `log/postgresql.log` in the data directory, so `docker logs` shows only the start of it. Invariant 15's test reads the log back with `pg_read_file()` |
 | postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
 | pgbouncer, pgbouncer-ignore | 6432 and 6433, or `SOPULI_TEST_PGBOUNCER_PORT` and `SOPULI_TEST_PGBOUNCER_IGNORE_PORT` | **`--profile pgbouncer` only**, with tier 0. PgBouncer 1.26.0 in front of postgres; databases `session` and `transaction`. `pgbouncer-ignore` drops the startup parameter `options` |
@@ -259,6 +259,10 @@ The public test suite must be green using only what a contributor can pull —
 | `oracle-init/01_test_profiles.sql` | profiles the suite needs: lockout, strong verify function, password reuse, rollover |
 | `oracle-init-nne/sqlnet-nne.ora` | the server settings that require Native Network Encryption on the NNE service |
 | `oracle-init-nne/01_require_nne.sh` | adds `sqlnet-nne.ora` to the NNE service's `sqlnet.ora` on each start |
+| `oracle-init-19c/01_test_profiles_in_pdb.sh` | creates the test profiles in `ORCLPDB1` on the 19c images |
+| `oracle-init-12c/init.sh` | on the 12.2 image: writes the password file (without it every remote `AS SYSDBA` is refused), adds a `USERS` tablespace in `CDB$ROOT` (the `COMMON` install needs it), and creates the test profiles in the PDB. The image has no user-script hook, so run it by hand once after the first start |
+| `jdbc/JdbcLogin.java` | logs in through a JDBC URL, once for each password it reads on stdin, for `../tests/test_password_paths.py` |
+| `oci-dbcs/new-db-system.ps1` | creates, connects to, stops, starts or tears down a minimal OCI Base Database Service 19c DB system. Not part of the compose stack. [`../docs/maintainer-environments.md`](../docs/maintainer-environments.md) says how to use it |
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
 | `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |
@@ -272,7 +276,7 @@ Fixtures use the fictional vocabulary from `01-configuration.md` — application
 
 ## Kubernetes, which is not part of the compose stack
 
-`k8s_eso_probe.py` is the one thing here that does not use `compose.yaml`. It
+`k8s_eso_probe.py` does not use `compose.yaml`. It
 needs a Kubernetes cluster, because the thing it is checking is a Kubernetes
 add-on reading a vault. Docker Desktop's built-in cluster is what it was
 written against — *Settings → Kubernetes → Enable Kubernetes* — and any cluster

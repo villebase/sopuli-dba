@@ -170,8 +170,8 @@ from UC-1. `docs/README.md` puts it as *a password is handed over, not synced*.
 Nothing reads the value to stay in step with it, so no store is master of it. On
 the unseen path a store does hold it for the person to fetch. That is transport,
 not mastery. How long that copy lives depends on the method (§6.6): on
-`vault_wrapped` nothing outlives the unwrap, and on `vault_path` it is open
-(open: #447). So invariants 6 and 7 have nothing to govern here (§7). **That does
+`vault_wrapped` nothing outlives the unwrap, and on `vault_path` Vault deletes it
+when the method's `ttl` runs out. So invariants 6 and 7 have nothing to govern here (§7). **That does
 not make the database a source of truth either.** The tool reads account state
 from it, as UC-1 does, and never a password. §3.2 makes that boundary precise,
 because H2 puts the database on the authoritative side of one question, *when*
@@ -210,7 +210,7 @@ types `account` at the prompt.
 
 | Command | What it does | Mutates |
 |---|---|---|
-| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped`. A file naming an unseen method that is not built yet (`vault_path`, `one_time_link`, `onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped` and `vault_path`. A file naming an unseen method that is not built yet (`one_time_link`, `onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, and show it once, after confirmation. Under §6.5's five guards | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password: "make them change it". Closes an open rollover window first | yes |
 | `sopuli account suspend` | `ACCOUNT LOCK`, for offboarding | yes |
@@ -396,7 +396,10 @@ Reasons: [H1](../decisions/log.md#h1).
 5's rule that selectors cannot extend the declared set stays exactly as written.
 `account list` resolves the predicate. `reset-password`, `expire-password` and
 `suspend` also require the account named on the command line, and refuse any name
-the declaration does not admit. So one run touches exactly one account.
+the declaration does not admit. So one run touches exactly one account. They do
+not check whether a predicate admitted an application's account, which only
+`account list` reports (`SOPULI-W042`). Whether they should refuse it is an open
+decision (open: #1056).
 
 **A name may not be declared twice.** An account that is both an application
 account and a personal one would make the whitelist ambiguous about which
@@ -540,14 +543,13 @@ rules apply:
 - **A common user's name keeps its `#`.** The record of `C##JDOE` is at
   `<prefix>/<target>/c##jdoe`, and so is its lock. The HashiCorp backends
   percent-encode each path segment, so the `#` reaches the vault as part of the
-  name. Releases up to 0.79.0 sent nothing after the first `#`, so they wrote
-  the record and lock of every `C##` account on a target at
-  `<prefix>/<target>/c`. A reset of a `C##` account no longer reads that path.
-  It is also the path of an account named `C`, so a reset of `C` reads and
-  locks the old record as its own. `lock status` lists a lock left there as the
-  lock of an account `c`, and `lock break` can break it. Operators who reset
-  `C##` accounts upgrade together, because two releases lock one account at two
-  paths ([#884](../decisions/log.md#884)).
+  name. A reset of a `C##` account never reads `<prefix>/<target>/c`: a record
+  or lock there is an account named `C`'s. A reset of `C` reads and locks it,
+  `lock status` lists it as the lock of `c`, and `lock break` can break it.
+  Releases up to 0.79.0 wrote every `C##` account's record and lock there, so
+  everyone who resets `C##` accounts on one target runs the same release. With
+  two releases, one account is locked at two paths
+  ([#884](../decisions/log.md#884)).
 
 **The record is written after the database confirms and after delivery** (§6.4).
 On the seen path, "after delivery" is as late as possible: the value is composed
@@ -1120,7 +1122,7 @@ exist. A file that breaks either rule is refused at load as config-invalid
 | `method` | Path | The person gets | Built |
 |---|---|---|---|
 | `vault_wrapped` | unseen | a Vault response-wrapping token, single use | yes |
-| `vault_path` | unseen | a KV path only their own identity can read | no (open: #447) |
+| `vault_path` | unseen | a KV path only their own identity can read | yes |
 | `one_time_link` | unseen | a URL that decrypts once | no (open: #445) |
 | `onepassword_share` | unseen | an item in a password manager | no (open: #446) |
 | `manual` | **seen** | the password, printed to the DBA's terminal | yes |
@@ -1326,11 +1328,15 @@ look interchangeable, so this section says how they differ.
   the path's policy says so. It uses identity instead of a bearer token, which is
   the opposite trade. Interception needs the person's own credentials, but
   nothing makes the read single-use, so **the value stays a live credential**
-  until something removes it. That something could be the next reset overwriting
-  it, or a destroy on a clock, since KV has no after-first-read hook. It is not
-  decided (open: #447). §1's principle narrows it: a copy that persists keeps the
-  one unattributable route open for as long as it exists, and the password is
-  worth something beyond the one database.
+  until Vault deletes it. KV has no after-first-read hook, so the deletion
+  follows a clock: the method's required `ttl`, set as the path's
+  `delete_version_after` (decided in [#447](../decisions/log.md#447)). §1's
+  principle is the reason: a copy that persists keeps the one unattributable
+  route open for as long as it exists, and the password is worth something beyond
+  the one database. **The deletion is Vault's soft delete, not a destroy.** A
+  token that holds `undelete` on the path can bring the version back, so the
+  guarantee is "deleted", never "destroyed". A person who has not read the value
+  by then needs another reset.
 - **`one_time_link`**: one use, like the wrapping token, and a bearer credential
   for the same reason: the URL carries its own decryption key in the fragment. It
   adds a third party to the trust story, which the two Vault methods do not.
@@ -1369,18 +1375,87 @@ whose store token can read the person's path could read the password back, and
 the unseen path's reason for skipping expiry would be gone. So the tool checks
 (H8, decided in #459). Before writing, `vault_path` asks Vault for the DBA token's
 capabilities on the person's path (`sys/capabilities-self`), and **refuses at plan
-time if they include `read` or `root`**, naming the path and the policy
-(invariant 4). `root` matters: a root-policy token answers `["root"]` and never
+time if they include `read` or `root`**, naming the path and the capability
+(invariant 4). It asks twice. At plan time it asks on the account name as typed,
+before anything connects, and a refusal there exits 5. Where the database stores
+the name differently, it asks again on each target, just before a password is
+drawn. A refusal there is that target's `ERROR` row, as every per-target refusal
+is, and no password is drawn on it. `root` matters: a root-policy token answers `["root"]` and never
 lists `read`, so a check for `read` alone would admit the one token that can read
 everything. On the tier-1 Vault (2.0.4), a root token answered `["root"]`, a token
 scoped to the write `["create","update"]`, and one also granted read
 `["create","read","update"]`. The tool does not proceed on documentation alone,
 which would let a misconfigured policy silently turn an unseen reset into a seen
 one that was never expired. It does not fall back to the seen path either, which
-would swap one guarantee for another without being asked. The check is built with
-`vault_path` (open: #447). On `vault_wrapped` the question does not arise: the
+would swap one guarantee for another without being asked. On `vault_wrapped` the
+question does not arise: the
 DBA's token never holds the wrapping token's cubbyhole. What the DBA holds is the
 token itself, and §1 says what that is worth.
+
+**Which path is the person's, on `vault_path`** (decided in
+[#447](../decisions/log.md#447)). The tool writes to
+`<prefix>/<account>/<target>` in a KV v2 mount: a prefix the configuration names,
+the account's name exactly as the database stores it, and the target's name. For
+example, `personal/ACME_DEV_ALICE/<target>`. The target is in the path
+because each target holds a separate account with a separate password, and a
+reset on one target must not overwrite the copy for another. **The mapping from a
+person to that name lives in Vault, not in the tool's config.** The Vault admin
+sets the account name as metadata on the person's identity entity, such as
+`db_account = ACME_DEV_ALICE`. A Vault policy names KV v2's API path, which has
+`data/` after the mount, so with the mount `secret` the person's policy grants
+`read` on `secret/data/personal/{{identity.entity.metadata.db_account}}/*`.
+**Each name is one path segment.** A name that contains `/`, which only a quoted
+identifier can, is refused at plan time, because it would add a level to the
+path. Every other character is percent-encoded in the request, so the `#` in a
+common user's `C##` prefix reaches Vault as part of the name. An alias name could not do
+this job: it comes from the auth method (the LDAP login name, the OIDC claim a
+role names), so it matches a database account name only by coincidence. Entity
+metadata is set by the Vault admin, kept where the identity is, and audited there.
+On the tier-1 Vault (2.0.4), the mapped identity read the value. An identity
+mapped to another account was refused. One with no `db_account` key got 403,
+because the template does not resolve, so a missing mapping grants nothing. One
+mapped to the name in lower case was refused, because the path is case-sensitive.
+
+What the tool cannot check, it does not claim. **It cannot see the mapping,** so
+it cannot tell whether `db_account` names the right person. Whoever can write
+entity metadata can point a person's path at their own identity. That is an
+identity admin, who can do as much in other ways, but the guarantee rests on
+them. A person with two accounts of different names, such as `ACME_DEV_ALICE`
+and `C##ACME_DBA_ALICE`, needs a metadata key and a policy rule for each. The
+tool sets up neither the auth method, nor the entities, nor the policy.
+
+**The order of the writes.** `delete_version_after` applies only to versions
+written after it is set. Measured on the tier-1 Vault: set after the write, it
+left the version without a `deletion_time`, and the person could still read it
+past the TTL. So the tool writes the path's metadata first and the value second.
+That needs `create` and `update` on the metadata path as well as on the data
+path, and the plan-time check above asks about both API paths:
+`<mount>/data/<path>` and `<mount>/metadata/<path>`. **A KV v1 mount is refused
+at plan time,** naming the mount (invariant 4), because it has neither versions
+nor `delete_version_after`.
+
+**The deletion time is Vault's answer, not the configuration's.** A mount can
+set its own `delete_version_after`, and it can shorten the path's. So the tool
+reads `deletion_time` from the response to the write. A response with no
+`deletion_time` means Vault will not delete the value, and the reset is refused
+there. Both writes come before the DDL (§6.4), so a refusal at either leaves the
+account's password unchanged, and the value at the path is not a working
+password. The same holds for a mount that requires check-and-set: the tool
+writes without it, and Vault refuses the write before the DDL.
+
+**Earlier versions stay at the path, soft-deleted,** up to the mount's
+`max_versions`. Each is a password that a later reset replaced, so undeleting
+one gives nothing that works. The exception is a reset run with
+`--keep-rollover` (§4.3): the previous password then works until the rollover
+window closes.
+
+**The run document records the hand-over** in `results[].handover`. On this
+method `accessor` is `null`, because there is no token to name. `expires_at` is
+the version's `deletion_time`. `path` and `version` are added for this method:
+the path written and the KV version the write created. Vault's audit device logs
+the person's read under their own identity, and the path and version find it
+there. Neither retrieves anything. The two fields are a minor bump of the run
+schema, made with the method.
 
 ### 6.7 Reusable by UC-4
 
@@ -1534,6 +1609,7 @@ absent (`04-testing.md`). They never branch on a version.
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6.5): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it and stdin required to be a terminal (#853), and `force_expire: true` required. `CLAUDE.md` invariant 2's fourth exception · #439 |
 | ~~—~~ | ~~When the reset journal's store and the delivery store are different vaults, and the journal's is down, does the run refuse or deliver without a lock and a record (§3.3)?~~ | **closed** — it refuses before any DDL; to reset during a journal outage, remove `reset_records:` and `SOPULI-W024` says so (§3.3). Reasons: [#516](../decisions/log.md#516) · #516 |
 | — | Should the seen reset's rollover refusal narrow to accounts whose old password still authenticates (§4.3)? | #541 |
+| — | Should a mutating `account` verb refuse an application's account that a predicate admits (§2)? | #1056 |
 
 §4.4's conflict between guardrail check 4 and DBA accounts is not a question with
 an issue. It is P3 applied to a population it was not written for, stated here so

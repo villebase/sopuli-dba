@@ -278,11 +278,42 @@ chosen something. This is the case that shows why each method's keys belong to t
 method's issue: the answer is a fact about the service behind it, and nothing in a
 config layer could know it.
 
-**The tool does not validate the keys inside the other methods' sub-blocks**, so
-a typo inside one is accepted. That is why **`config validate` warns when the
-selected method is not implemented in this build** (`SOPULI-W035`), so that a
-clean parse does not read as a working delivery. `IMPLEMENTED` in
-`sopuli/config/delivery.py` lists the methods this build serves.
+**`vault_path:`** writes the password to a KV v2 path that only the person's own
+Vault identity can read (UC-2 §6.6, decided in
+[#447](../decisions/log.md#447)).
+
+```yaml
+delivery:
+  method: vault_path
+  vault_path:
+    ttl: 8h
+    prefix: personal
+    vault: vault-handover    # optional
+```
+
+The value goes to `<prefix>/<account>/<target>` in the store's KV v2 mount, with
+the account named as the database stores it.
+
+`ttl` is **required**, as `vault_wrapped`'s is. The value at the path is a
+working password until Vault deletes it, and the `ttl` is when: it becomes the
+path's `delete_version_after`. It is checked for the same shape, `30m`, `8h` or
+`168h`.
+
+`prefix` is **required**. The person's policy names the same prefix, so a default
+would be a path the file does not show. It is checked and normalised as
+`reset_records.prefix` is: a `.` or `..` segment is refused, because it would put
+the password outside the path the policy covers, and so are the characters no
+store path may hold. `*`, `+`, `{` and `}` are refused too, because the policy
+repeats the prefix, and in a Vault policy path they are wildcards or a template.
+
+`vault` is **optional**, with `vault_wrapped`'s chain.
+
+**The tool does not validate the keys inside the sub-blocks of `one_time_link`,
+`onepassword_share` and `smtp_encrypted`**, because none of them is built, so a
+typo inside one is accepted. So **`config validate` warns when the selected method is not implemented in this
+build** (`SOPULI-W035`), so that a clean parse does not read as a working
+delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
+build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an
 *unselected* sub-block unjudged on purpose, so `required: ["ttl"]`, a pattern on
@@ -925,7 +956,8 @@ vaults:
 ```
 
 A lock needs compare-and-set. P2's capability table gives `cas` to KV v2 and,
-through ETags, to OCI; KV v1 and the file backend have none. Everywhere else a
+through ETags, to OCI; KV v1 has none, nor would the `file` backend, which is
+not built. Everywhere else a
 missing store capability is emulated in the payload — but "not atomic" is exactly
 what CAS is for, so there is nothing to emulate, and under the default a mutating
 command **refuses** on a store that cannot lock, with `error.category: capability`
@@ -933,9 +965,9 @@ naming this key. `advisory-only` is the operator saying they know: the record is
 still written, every run emits a warning diagnostic so the weakening reaches each
 run's audit trail rather than only the config file, and the run document reports
 `lock.mode: none`. The documented remedy is `vault kv enable-versioning`, which
-is in place on an existing mount. The file backend does not attempt `flock`: it
-is documented as non-production, and one rule is worth more here than a
-marginally stronger local mutex.
+is in place on an existing mount. The `file` backend's design does not attempt
+`flock`: it is meant for non-production use, and one rule is worth more here
+than a marginally stronger local mutex.
 
 **As a block**, under `defaults:` or in a profile:
 
@@ -1097,7 +1129,7 @@ reason for it:
   name *who* rather than prove it, so they are written as they are. `role_id` is
   arguably an identifier too, and is a MaterialRef anyway: carving out one field
   that may be inline sets a precedent to be re-litigated for every method added
-  later. Uniform now; relax it if it turns out to be friction.
+  later.
 
 ### `targets:` — a list of endpoints
 
@@ -1187,7 +1219,7 @@ ordering holds because the run layers are consulted only where the file said
 nothing at all.
 
 A target declaring `method: vault` with no store anywhere is refused when the
-credential is read, naming all four places one could be written. Not at load:
+credential is read, naming every place one could be written. Not at load:
 `SOPULI_VAULT` and a profile are properties of a run, so a file that is fine
 under tomorrow's environment must not be rejected today — which is C15's
 reasoning for bindings, applied unchanged.
@@ -1502,12 +1534,14 @@ connects to, and opens no connection to a target the selectors left out. The
 second target to reach a cluster is refused with `SOPULI-20008`, a `config`
 error naming both targets, and is that target's error in the run. `doctor`
 reports it as the target's error and still exits 0, as for any target it
-reached and could not use.
+reached and could not use. Whether it should exit non-zero is an open decision
+(open: #1062).
 
 A cluster copied with `pg_basebackup`, or a standby promoted and split off,
 keeps the identifier of the cluster it came from, and has its own roles from
 then on. The tool cannot tell such a copy from a standby, so it refuses the
-second of the two as well. Any role can read the
+second of the two as well. Whether to keep refusing that pair is an open
+decision (open: #1061). Any role can read the
 identifier by default (`pg-system-identifier` in
 [`../README.md`](../README.md) §*Verify before implementing*). Where a site
 revoked it, `doctor` says so in a warning and the target is not checked: not

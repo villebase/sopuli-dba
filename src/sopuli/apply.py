@@ -16,7 +16,7 @@ had to learn twice. What this module adds is the *sequence* -- which of those
 states settles the question before any DDL is issued, and which of them permits a
 promotion afterwards.
 
-Four decisions here are this module's own:
+These decisions are this module's own:
 
 **Nothing is issued that cannot be verified.** UC-1 §5 step 6 verifies with a
 fresh login and §8 case 6 says a change that could not be confirmed is reported
@@ -292,13 +292,13 @@ def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
     refuses**. A policy is required in order to *draw* a password, because §8 has
     no default length and inventing one is the thing it exists not to do; it is
     not required in order to *apply* one, and an estate that has never declared a
-    policy applies passwords today. Refusing here would make an unrelated feature
-    a new precondition on a command that already works.
+    policy still applies passwords. Refusing here would make an unrelated feature
+    a precondition of `apply`.
 
     So an account with no policy, or one whose policy declares no ``account:``
     block, gets :class:`~sopuli.driver.protocol.AccountAttributes` with nothing
     set -- which is the same answer as declaring every attribute ``false``, and
-    the same behaviour this command had before attributes existed.
+    changes nothing on the account.
 
     A name that names nothing is not handled here either, and does not need to be:
     :mod:`sopuli.config.references` refuses a dangling ``policy:`` when the file

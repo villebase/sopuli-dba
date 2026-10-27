@@ -17,6 +17,8 @@
 --   CR3  ADMIN OPTION on the target, without CREATEROLE
 --   CR4  CREATEROLE and ADMIN OPTION, and the target a superuser
 --   CR5  a role that the CREATEROLE role created itself
+--   CR6  a new role with only CREATEROLE, and no membership in any role,
+--        grants itself the built-in role pg_execute_server_program (#1098)
 --
 -- psql runs with VERBOSITY verbose, so each error shows its SQLSTATE.
 --
@@ -25,7 +27,11 @@
 -- STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13
 -- to postgres:18 images of test/compose.yaml profile postgres-matrix, as the
 -- superuser postgres, on 2026-10-25 (#1032). Twice on each release, exit 0,
--- and the same result every time.
+-- and the same result every time. Run again with CR6 on the same six
+-- releases on 2026-10-27 (#1098): twice on each, exit 0, CR1 to CR5 as below,
+-- and the same result every time. An earlier CR6, not counted, had the role
+-- of CR1 to CR5 grant itself the role, with the grants those cases left; it
+-- gave the same result.
 --
 -- RESULTS
 --
@@ -44,6 +50,12 @@
 --   CR5  accepted on all six. 13.23 to 15.19 add no pg_auth_members row for
 --        the creator. 16.15 to 18.6 add one with admin_option true, granted
 --        by the bootstrap superuser postgres
+--   CR6  The new role starts with no pg_auth_members row on all six.
+--        13.23, 14.24, 15.19: accepted. pg_auth_members gains a row with
+--        admin_option false, granted by the CREATEROLE role itself.
+--        16.15, 17.11, 18.6: refused, 42501 "permission denied to grant role
+--        "pg_execute_server_program"", DETAIL "Only roles with the ADMIN
+--        option on role "pg_execute_server_program" may grant this role."
 --
 --   In every case, the admin_option column and pg_has_role(..., 'USAGE WITH
 --   ADMIN OPTION') agree, also with INHERIT FALSE and SET FALSE. So the
@@ -56,8 +68,10 @@
 --     docker exec -i sopuli-test-postgres-16-1 psql -U postgres -d sopuli -X \
 --         < sql/postgres/03_createrole_password_probe.sql
 --
--- THROWAWAY SERVERS ONLY. Creates and drops five roles, one of them a
--- superuser.
+-- THROWAWAY SERVERS ONLY. Creates and drops six roles, one of them a
+-- superuser. On 13 to 15, CR6 gives one of them pg_execute_server_program,
+-- which runs programs as the server's operating system user. A run stopped
+-- before the cleanup leaves that role, and the next run drops it.
 --------------------------------------------------------------------------------
 \set ON_ERROR_STOP 1
 \set VERBOSITY verbose
@@ -74,6 +88,7 @@ DROP ROLE IF EXISTS sopuli_probe_super;
 DROP ROLE IF EXISTS sopuli_probe_own;
 DROP ROLE IF EXISTS sopuli_probe_admin;
 DROP ROLE IF EXISTS sopuli_probe_seed;
+DROP ROLE IF EXISTS sopuli_probe_cr;
 
 -- A verifier to send, computed by the server from a password no measured
 -- statement carries.
@@ -157,7 +172,22 @@ ALTER ROLE sopuli_probe_own PASSWORD :'verifier';
 \set ON_ERROR_STOP 1
 RESET ROLE;
 
+-- ---------------------------------------------------------------- CR6 --
+\echo CR6 a new role with only CREATEROLE grants itself pg_execute_server_program:
+CREATE ROLE sopuli_probe_cr CREATEROLE;
+SELECT count(*) AS memberships_before FROM pg_auth_members
+ WHERE member = 'sopuli_probe_cr'::regrole;
+SET ROLE sopuli_probe_cr;
+\set ON_ERROR_STOP 0
+GRANT pg_execute_server_program TO sopuli_probe_cr;
+\set ON_ERROR_STOP 1
+RESET ROLE;
+SELECT m.roleid::regrole AS role, m.admin_option, m.grantor::regrole AS grantor
+  FROM pg_auth_members m
+ WHERE m.member = 'sopuli_probe_cr'::regrole;
+
 -- ---------------------------------------------------------------- cleanup --
+DROP ROLE sopuli_probe_cr;
 DROP ROLE sopuli_probe_own;
 DROP ROLE sopuli_probe_app;
 DROP ROLE sopuli_probe_super;

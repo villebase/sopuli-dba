@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.62.schema.json`](../schemas/sopuli-run-1.62.schema.json),
-[`../schemas/sopuli-event-1.17.schema.json`](../schemas/sopuli-event-1.17.schema.json)
+Schemas: [`../schemas/sopuli-run-1.63.schema.json`](../schemas/sopuli-run-1.63.schema.json),
+[`../schemas/sopuli-event-1.18.schema.json`](../schemas/sopuli-event-1.18.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -248,6 +248,11 @@ Each part of the tool writes these lines:
   always a failure: a capability probe reads `ORA-00942` as an absent
   capability, and the scope line after the probes says what it concluded. The
   server's message reaches the operator in the error.
+- **`postgres`**: each connection, with the target, the user and the time it
+  took, or the code it failed with. The scope the session found. Each
+  verification login and its result. Each `ALTER ROLE` the server accepted,
+  with its verifier written as `<SCRAM-SHA-256 verifier>`. It does not write
+  a refused `ALTER ROLE`, or the other statements it sends.
 - **`plan`**: why a unit is in the run or not. Each declared target that a
   selector left out, and each account left out on a target that stays, with the
   flag that left it out, such as `--select`, `--account` or `--repair`. Each
@@ -365,10 +370,10 @@ only decorate a sentence. Both carry diagnostic codes for a program that needs
 to branch. Their module docstrings say so.
 
 **`role_for_state` in `sopuli/output/palette.py` is the one function that gives
-a state its role.** Every view calls it. When each view kept its own subset of
-the enum, `check` coloured `DRIFT` and `apply` did not, and `apply` coloured
-`ERROR` and `check` did not. One state got different emphasis depending on the
-verb, which is what the roles exist to prevent.
+a state its role.** Every view calls it. Views that each keep their own subset
+of the enum drift apart: `check` colours `DRIFT` and `apply` does not, `apply`
+colours `ERROR` and `check` does not. One state then gets different emphasis
+depending on the verb, which is what the roles exist to prevent.
 
 These properties of the palette are decisions, not taste:
 
@@ -681,7 +686,8 @@ read. On Autonomous Database its hint says that no account there can read it,
 and does not advise a grant nobody there can make.
 
 **A pre-flight refusal** has the `category` of the problem that stopped it:
-`connectivity`, `authorization` or `database`. `message` gives the number of
+`connectivity`, `authorization`, `config` or `database`. `config` is a profile
+the policy assigns that the database does not have. `message` gives the number of
 findings over the number of targets and names the first. Each finding is a
 `diagnostics[]` entry with its `target`, and its `account` where the check is
 about one. The findings have no diagnostic code: §3's rule is that a code exists
@@ -1106,11 +1112,11 @@ asked, and `lock status` asks none. So the survey finds reset locks by listing
 the prefix. Such an entry has `declared: true` and
 `declared_by: "reset_records"`.
 
-- **`declared` widened; it was not replaced.** It means "this configuration
-  accounts for the path at all", which is what a consumer filtering its own locks
-  out of a survey asks. Widening a boolean is a minor bump. Turning it into a
-  three-valued string would be a rename, which is major, and every consumer
-  would pay for a question none of them asked.
+- **`declared` covers reset locks too, and stays a boolean.** It means "this
+  configuration accounts for the path at all", which is what a consumer
+  filtering its own locks out of a survey asks. Widening what a boolean covers
+  is a minor bump. A three-valued string in its place would be a rename, which
+  is major, and every consumer would pay for a question none of them asked.
 - **`declared_by` is not an enum**, unlike `state`. A later use case may claim
   another prefix: UC-4 hands accounts over through the same delivery
   abstraction (UC-2 §6.7). A consumer that switched on two values would break on
@@ -1254,10 +1260,13 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
 - **`delete_command` is `vault kv metadata delete`** on KV v2. A plain
   `vault kv delete` keeps the metadata, and on a lock path it keeps the version
   counter, so the first acquisition there could never succeed again. On KV v1
-  it is `vault kv delete`. It names the store's address, and its namespace where
-  it has one, so it reaches the store the config names whatever `VAULT_ADDR`
-  the shell holds. Credentials in the address are shown as `***`, as
-  `config show` shows them. It is quoted for a POSIX shell. It is `null` while a lock
+  it is `vault kv delete`. It names the store's address as this run resolved
+  it, and its namespace where it has one, so it reaches the store this run read,
+  whatever `VAULT_ADDR` the shell that runs it holds. The address holds no user
+  name or password, so nothing in it is hidden: the loader refuses one in an
+  address from any other source, and from `VAULT_ADDR` it drops the user name
+  and password, or does not apply the variable at all (`SOPULI-W057`). It is
+  quoted for a POSIX shell. It is `null` while a lock
   that has not expired is held at the secret path, for the lock and for its
   secret, because somebody may be rotating it.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
@@ -1334,9 +1343,9 @@ each of those words would mean something else. `IN_SYNC` on a healthy target
 would claim a sync that never happened, and `SKIPPED` means "we chose not to
 try".
 
-Widening `result` was the alternative: make `account` optional and add states.
-That is a major change, because a consumer that reads `result.account`
-unconditionally breaks. A new section is a minor one.
+`result` does not carry `doctor`'s per-target report with an optional `account`
+and new states, because that is a major change: a consumer that reads
+`result.account` unconditionally breaks. A new section is a minor one.
 
 ```json
 "targets": [
@@ -1475,16 +1484,20 @@ ADR-006's E6, and it sets the whole shape of the section:
 > evidence as often as it is a diagnostic; a section that appears only when
 > something is wrong cannot be quoted as proof that nothing was.
 
+From `doctor --output json` against the tier-1 stack, with a config that
+declares one Oracle target and one HashiCorp store, laid out one row to a line:
+
 ```json
 "install": {
   "backends": [
     { "name": "file",      "status": "not_implemented", "vaults": [] },
-    { "name": "hashicorp", "status": "installed",       "vaults": ["vault-prod"] },
+    { "name": "hashicorp", "status": "installed",       "vaults": ["vault-dev"] },
     { "name": "keyring",   "status": "not_implemented", "vaults": [] },
-    { "name": "oci",       "status": "not_implemented", "vaults": ["vault-dr"] }
+    { "name": "oci",       "status": "not_implemented", "vaults": [] }
   ],
   "drivers": [
-    { "name": "oracle", "status": "installed", "targets": 21 }
+    { "name": "oracle",     "status": "installed", "targets": 1 },
+    { "name": "postgresql", "status": "installed", "targets": 0 }
   ]
 }
 ```
@@ -1866,8 +1879,8 @@ for accounts with an open window. `active: false` beside a
 `null`. The first says a window opened and was closed in the run
 (`--strategy direct`); the second says no window was possible. An apply row
 has no `rollover_finish` action, even when the run closed the window, so this
-field is where the regime each account ran under is recovered from. That is why
-`--strategy` needed no new field.
+field is where the regime each account ran under is recovered from, and
+`--strategy` has no field of its own.
 
 **A promotion is reported on every account in the document it promoted**, with
 the version it produced, because they shared one compare-and-set. Where the
@@ -1995,7 +2008,14 @@ unseen method will have its own kind of handle for the same fact.
   `creation_time` plus the TTL it actually applied, which a mount's `max_ttl` may
   have shortened below what the file asked for. It is reported and never
   enforced. The store already enforces the TTL, and a second clock would only
-  disagree with it.
+  disagree with it. On `vault_path` it is the `deletion_time` Vault gave the
+  version it wrote, which a mount's own `delete_version_after` may shorten.
+- **On `vault_path`, `path` and `version` say where the password went**, from
+  run schema 1.63 and event schema 1.18: the KV v2 mount and path, and the
+  version the write created. `accessor` is `null`, because there is no token to
+  name. The person reads the path with their own Vault identity, so neither
+  field retrieves anything, and together they find the person's read in Vault's
+  audit device (UC-2 §6.6). Both are absent on every other method.
 
 **`audited`** says whether the database audits the DBA's routes to acting as the
 person (UC-2 §1): `true`, `false` or `"unknown"`. **`audited_detail`** says why:
@@ -2307,9 +2327,10 @@ an exception to invariant 2: a credential that never reached the wire would
 authenticate nothing.
 
 `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in a
-module that holds none of these sites, of either class. It is a tripwire, not a
-proof: a second call in a permitted module, or a call spelled another way,
-passes it.
+module that holds none of these sites, of either class. It also fails on a
+second call in the seen path's view, `output/reset_view.py`. It is a tripwire,
+not a proof: a second call in any other permitted module, or a call spelled
+another way, passes it.
 
 These consequences show in the schema:
 
@@ -2500,24 +2521,26 @@ A staged password applied and promoted against the tier-1 stack, pasted from the
 run and trimmed only where `…` says so:
 
 ```jsonl
-{"schema_version":"1.4","event":"run.started","seq":0,"ts":"2026-09-26T12:55:57.739823Z","correlation_id":"be07e5d1-…","data":{"command":"creds.apply","dry_run":false}}
-{"schema_version":"1.4","event":"plan.resolved","seq":1,"ts":"2026-09-26T12:55:57.739965Z","correlation_id":"be07e5d1-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify","password_set","vault_promote"],…}],"blast_radius":{…}}}
-{"schema_version":"1.4","event":"lock.acquired","seq":2,"ts":"2026-09-26T12:55:58.305433Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":false}}
-{"schema_version":"1.4","event":"vault.read","seq":3,"ts":"2026-09-26T12:55:58.307418Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":3}}
-{"schema_version":"1.4","event":"target.started","seq":4,"ts":"2026-09-26T12:55:58.307538Z","correlation_id":"be07e5d1-…","target":"free-pdb"}
-{"schema_version":"1.4","event":"diagnostic","seq":5,"ts":"2026-09-26T12:55:59.661498Z","correlation_id":"be07e5d1-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
-{"schema_version":"1.4","event":"password.applied","seq":6,"ts":"2026-09-26T12:55:59.661586Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"version":3,"outcome":"IN_SYNC"}}
-{"schema_version":"1.4","event":"verification.done","seq":7,"ts":"2026-09-26T12:55:59.661692Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
-{"schema_version":"1.4","event":"vault.promote","seq":8,"ts":"2026-09-26T12:55:59.669352Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":4}}
-{"schema_version":"1.4","event":"lock.released","seq":9,"ts":"2026-09-26T12:55:59.671666Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":true}}
-{"schema_version":"1.4","event":"target.finished","seq":10,"ts":"2026-09-26T12:55:59.671771Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":4,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1159}}
-{"schema_version":"1.4","event":"run.finished","seq":11,"ts":"2026-09-26T12:55:59.672032Z","correlation_id":"be07e5d1-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T07:22:13.884288Z","correlation_id":"3c0cfd73-…","data":{"command":"creds.apply","dry_run":false}}
+{"schema_version":"1.17","event":"plan.resolved","seq":1,"ts":"2026-10-27T07:22:13.884441Z","correlation_id":"3c0cfd73-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify","password_set","vault_promote"],…}],"blast_radius":{…},"confirmation_required":false}}
+{"schema_version":"1.17","event":"lock.acquired","seq":2,"ts":"2026-10-27T07:22:14.324458Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":3,"acquired_at":"2026-10-27T07:22:14.318838Z","expires_at":"2026-10-27T07:37:14.318838Z","released":false}}
+{"schema_version":"1.17","event":"vault.read","seq":3,"ts":"2026-10-27T07:22:14.326820Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":1}}
+{"schema_version":"1.17","event":"target.started","seq":4,"ts":"2026-10-27T07:22:14.327012Z","correlation_id":"3c0cfd73-…","target":"free-pdb"}
+{"schema_version":"1.17","event":"diagnostic","seq":5,"ts":"2026-10-27T07:22:15.792967Z","correlation_id":"3c0cfd73-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.17","event":"password.applied","seq":6,"ts":"2026-10-27T07:22:15.793090Z","correlation_id":"3c0cfd73-…","account":"acme_app_user","target":"free-pdb","data":{"version":1,"outcome":"IN_SYNC"}}
+{"schema_version":"1.17","event":"verification.done","seq":7,"ts":"2026-10-27T07:22:15.793168Z","correlation_id":"3c0cfd73-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
+{"schema_version":"1.17","event":"vault.promote","seq":8,"ts":"2026-10-27T07:22:15.803027Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":2}}
+{"schema_version":"1.17","event":"lock.released","seq":9,"ts":"2026-10-27T07:22:15.806921Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":3,"acquired_at":"2026-10-27T07:22:14.318838Z","expires_at":"2026-10-27T07:37:14.318838Z","released":true}}
+{"schema_version":"1.17","event":"target.finished","seq":10,"ts":"2026-10-27T07:22:15.807068Z","correlation_id":"3c0cfd73-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"DB_CREDENTIALS","pointer":"/acme_app_user","version":2,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1259}}
+{"schema_version":"1.17","event":"diagnostic","seq":11,"ts":"2026-10-27T07:22:15.807407Z","correlation_id":"3c0cfd73-…","target":"free-pdb","level":"warning","message":"free-pdb: a password was sent over a connection that is not encrypted …","data":{"code":"SOPULI-W031"}}
+{"schema_version":"1.17","event":"run.finished","seq":12,"ts":"2026-10-27T07:22:15.807505Z","correlation_id":"3c0cfd73-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
 ```
 
 Read from top to bottom, this is UC-1 §3's order as it happened: the lock, the
-document read under it (`version` 3, which is what was applied), the target, the
-database changed and verified, *then* the promotion to version 4, then the
-release.
+document read under it (`version` 1, which is what was applied), the target, the
+database changed and verified, *then* the promotion to version 2, then the
+release. `SOPULI-W031` comes after the rows, because it is reported once per
+target at the end of the run.
 
 **`target.finished` arrives after the promotion, not as each target finishes.**
 That is where `apply`'s stream differs from `check`'s. `target.finished.data`
@@ -2560,8 +2583,8 @@ with the same exit code.
 `local-testing.md` §10 does:
 
 ```jsonl
-{"schema_version":"1.4","event":"lock.denied","seq":2,"ts":"2026-09-26T12:56:19.697278Z","correlation_id":"aacd2f9f-…","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-09-26T12:00:00Z","expires_at":"2026-09-26T23:59:00Z","expired":false}}
-{"schema_version":"1.4","event":"run.finished","seq":3,"ts":"2026-09-26T12:56:19.697391Z","correlation_id":"aacd2f9f-…","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
+{"schema_version":"1.17","event":"lock.denied","seq":2,"ts":"2026-10-27T07:26:57.689540Z","correlation_id":"3dbcb3ff-…","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-10-27T07:00:00Z","expires_at":"2026-10-27T23:59:00Z","expired":false}}
+{"schema_version":"1.17","event":"run.finished","seq":3,"ts":"2026-10-27T07:26:57.689658Z","correlation_id":"3dbcb3ff-…","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
 ```
 
 **The lock manager emits the lock events itself**, because only the manager sees
@@ -2577,41 +2600,45 @@ an event that said otherwise would contradict it.
 the tier-1 stack, with `--confirm`, trimmed only where `…` says so:
 
 ```jsonl
-{"schema_version":"1.5","event":"run.started","seq":0,"ts":"2026-09-26T14:10:11.974415Z","correlation_id":"0306dc38-…","data":{"command":"creds.rotate","dry_run":false}}
-{"schema_version":"1.5","event":"plan.resolved","seq":1,"ts":"2026-09-26T14:10:11.974569Z","correlation_id":"0306dc38-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["generate","vault_write_pending","verify","password_set","vault_promote"],…}],"blast_radius":{…}}}
-{"schema_version":"1.5","event":"lock.acquired","seq":2,"ts":"2026-09-26T14:10:12.493418Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":17,"acquired_at":"2026-09-26T14:10:12.487821Z","expires_at":"2026-09-26T14:25:12.487821Z","released":false}}
-{"schema_version":"1.5","event":"vault.read","seq":3,"ts":"2026-09-26T14:10:12.495419Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":4}}
-{"schema_version":"1.5","event":"diagnostic","seq":4,"ts":"2026-09-26T14:10:13.298561Z","correlation_id":"0306dc38-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable …","data":{"code":"SOPULI-W022"}}
-{"schema_version":"1.5","event":"vault.read","seq":5,"ts":"2026-09-26T14:10:13.298639Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":4}}
-{"schema_version":"1.5","event":"password.generated","seq":6,"ts":"2026-09-26T14:10:13.298701Z","correlation_id":"0306dc38-…","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending"}}
-{"schema_version":"1.5","event":"vault.write","seq":7,"ts":"2026-09-26T14:10:13.301380Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":5,"stage":"pending"}}
-{"schema_version":"1.5","event":"vault.read","seq":8,"ts":"2026-09-26T14:10:13.303210Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":5}}
-{"schema_version":"1.5","event":"target.started","seq":9,"ts":"2026-09-26T14:10:13.303317Z","correlation_id":"0306dc38-…","target":"free-pdb"}
-{"schema_version":"1.5","event":"password.applied","seq":10,"ts":"2026-09-26T14:10:14.554989Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"version":5,"outcome":"IN_SYNC"}}
-{"schema_version":"1.5","event":"verification.done","seq":11,"ts":"2026-09-26T14:10:14.555063Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
-{"schema_version":"1.5","event":"vault.promote","seq":12,"ts":"2026-09-26T14:10:14.562842Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":6}}
-{"schema_version":"1.5","event":"vault.read","seq":13,"ts":"2026-09-26T14:10:14.564655Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":6}}
-{"schema_version":"1.5","event":"lock.released","seq":14,"ts":"2026-09-26T14:10:14.567062Z","correlation_id":"0306dc38-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":17,"acquired_at":"2026-09-26T14:10:12.487821Z","expires_at":"2026-09-26T14:25:12.487821Z","released":true}}
-{"schema_version":"1.5","event":"target.finished","seq":15,"ts":"2026-09-26T14:10:14.567175Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"PENDING_APPLY","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending","field":"acme_app_user","version":5},"actions":[{"kind":"vault_write_pending","applied":true,"detail":"staged v5"}]}}
-{"schema_version":"1.5","event":"target.finished","seq":16,"ts":"2026-09-26T14:10:14.567274Z","correlation_id":"0306dc38-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":6,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1204}}
-{"schema_version":"1.5","event":"run.finished","seq":17,"ts":"2026-09-26T14:10:14.567540Z","correlation_id":"0306dc38-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T06:28:36.048063Z","correlation_id":"35e381d4-…","data":{"command":"creds.rotate","dry_run":false}}
+{"schema_version":"1.17","event":"plan.resolved","seq":1,"ts":"2026-10-27T06:28:36.048195Z","correlation_id":"35e381d4-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["generate","vault_write_pending","verify","password_set","vault_promote"],…}],"blast_radius":{…},"confirmation_required":true}}
+{"schema_version":"1.17","event":"lock.acquired","seq":2,"ts":"2026-10-27T06:28:36.534573Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":5,"acquired_at":"2026-10-27T06:28:36.528804Z","expires_at":"2026-10-27T06:43:36.528804Z","released":false}}
+{"schema_version":"1.17","event":"vault.read","seq":3,"ts":"2026-10-27T06:28:36.537807Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":1}}
+{"schema_version":"1.17","event":"diagnostic","seq":4,"ts":"2026-10-27T06:28:36.917935Z","correlation_id":"35e381d4-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD …","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.17","event":"vault.read","seq":5,"ts":"2026-10-27T06:28:36.917998Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":1}}
+{"schema_version":"1.17","event":"password.generated","seq":6,"ts":"2026-10-27T06:28:36.918076Z","correlation_id":"35e381d4-…","account":"acme_app_user","data":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending"}}
+{"schema_version":"1.17","event":"vault.write","seq":7,"ts":"2026-10-27T06:28:36.920654Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":2,"stage":"pending"}}
+{"schema_version":"1.17","event":"vault.read","seq":8,"ts":"2026-10-27T06:28:36.922665Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":2}}
+{"schema_version":"1.17","event":"target.started","seq":9,"ts":"2026-10-27T06:28:36.922830Z","correlation_id":"35e381d4-…","target":"free-pdb"}
+{"schema_version":"1.17","event":"password.applied","seq":10,"ts":"2026-10-27T06:28:38.157611Z","correlation_id":"35e381d4-…","account":"acme_app_user","target":"free-pdb","data":{"version":2,"outcome":"IN_SYNC"}}
+{"schema_version":"1.17","event":"verification.done","seq":11,"ts":"2026-10-27T06:28:38.157694Z","correlation_id":"35e381d4-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
+{"schema_version":"1.17","event":"vault.promote","seq":12,"ts":"2026-10-27T06:28:38.165891Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":3}}
+{"schema_version":"1.17","event":"vault.read","seq":13,"ts":"2026-10-27T06:28:38.167730Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":3}}
+{"schema_version":"1.17","event":"lock.released","seq":14,"ts":"2026-10-27T06:28:38.170080Z","correlation_id":"35e381d4-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":5,"acquired_at":"2026-10-27T06:28:36.528804Z","expires_at":"2026-10-27T06:43:36.528804Z","released":true}}
+{"schema_version":"1.17","event":"target.finished","seq":15,"ts":"2026-10-27T06:28:38.170215Z","correlation_id":"35e381d4-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"PENDING_APPLY","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","stage":"pending","field":"DB_CREDENTIALS","pointer":"/acme_app_user","version":2},"actions":[{"kind":"vault_write_pending","applied":true,"detail":"staged v2"}]}}
+{"schema_version":"1.17","event":"target.finished","seq":16,"ts":"2026-10-27T06:28:38.170307Z","correlation_id":"35e381d4-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"DB_CREDENTIALS","pointer":"/acme_app_user","version":3,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1186}}
+{"schema_version":"1.17","event":"diagnostic","seq":17,"ts":"2026-10-27T06:28:38.170614Z","correlation_id":"35e381d4-…","target":"free-pdb","level":"warning","message":"free-pdb: a password was sent over a connection that is not encrypted …","data":{"code":"SOPULI-W031"}}
+{"schema_version":"1.17","event":"run.finished","seq":18,"ts":"2026-10-27T06:28:38.170653Z","correlation_id":"35e381d4-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
 ```
 
 **The vault phase is per document, and comes first.** Staging is one
 compare-and-set per secret path, however many targets share it. So its events, a
 `vault.read`, a `password.generated` per account drawn, and a `vault.write`, name
 a `path` and no `target`, and all of them come before the first
-`target.started`. That is UC-1 §8's own order: stage everything, *then* touch a
+`target.started`. A diagnostic can come between them, such as `SOPULI-W022`
+for an admin credential read from the environment, and it names its target. That
+is UC-1 §8's own order: stage everything, *then* touch a
 database. Interleaving the two phases per target would put a database event
 between two vault writes that happened one after the other.
 
-- **`vault.read` appears three times per document**, and each is a real read:
+- **`vault.read` appears four times per document**, and each is a real read:
   under the lock at step 3, which `--max-age-days` is answered from; just before
-  the staging write, whose version is the compare-and-set; and after the
+  the staging write, whose version is the compare-and-set; at the start of the
+  apply phase, which reads the value it applies, as `apply` does; and after the
   promotion, which is step 8's read-back. `rotate` has that last read and
   `apply` does not.
-- **The version applied is the version staged**: `vault.write` says 5,
-  `password.applied` says 5, and the promotion produced 6.
+- **The version applied is the version staged**: `vault.write` says 2,
+  `password.applied` says 2, and the promotion produced 3.
 - **A staging write the vault refused is a `vault.write` with `version: null`
   and the store's `error`**, not a missing event. It is a finding for that
   document, and the run continues to its refusal. Nothing reaches a database
@@ -2619,7 +2646,8 @@ between two vault writes that happened one after the other.
   as `target.finished`.
 - **The rows come last, in `results[]` order**: first the staging rows
   (`PENDING_APPLY`, one per account and target), then the applied ones. `apply`'s
-  reason for waiting applies unchanged.
+  reason for waiting applies unchanged. Only the diagnostics about the whole
+  run, such as `SOPULI-W031`, and `run.finished` come after them.
 - **`--finish-rollover` has no event of its own.** Closing a window is reported
   on the row, and no event in the enum names it.
 
@@ -2657,9 +2685,9 @@ section. From the tier-1 stack, trimmed only where `…` says so:
 **`constraints.resolved` is the whole section, sent once, as soon as it
 exists**: the `constraints` object the run document carries, unchanged, sent
 after every target has been read and before anything is drawn. That is how
-`plan.resolved` works. One event per target as each is read was the
-alternative. It was rejected because the section's estate-wide fields,
-`strictest_target` and `character_set`, belong to no single target, and a
+`plan.resolved` works. It is not one event per target as each is read, because
+the section's estate-wide fields, `strictest_target` and `character_set`,
+belong to no single target, and a
 stream per target would leave every consumer to work out "strictest" again,
 which is logic this tool already owns. The notes the reading produced
 (`SOPULI-W015` to `W017`) arrive just before it as `diagnostic` events. A
@@ -2702,21 +2730,25 @@ gap. A `vault_wrapped` reset against the tier-1 stack, trimmed only where `…`
 says so:
 
 ```jsonl
-{"schema_version":"1.7","event":"run.started","seq":0,"ts":"2026-09-26T17:13:35.870495Z","correlation_id":"8ebe1029-…","data":{"command":"account.reset-password","dry_run":false}}
-{"schema_version":"1.7","event":"plan.resolved","seq":1,"ts":"2026-09-26T17:13:35.870664Z","correlation_id":"8ebe1029-…","data":{"units":[{"account":"acme_dev_alice","target":"free-pdb","intent":["password_set"]}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
-{"schema_version":"1.7","event":"diagnostic","seq":2,"ts":"2026-09-26T17:13:36.478946Z","correlation_id":"8ebe1029-…","level":"warning","message":"no `reset_records:` block is declared, s…","data":{"code":"SOPULI-W024"}}
-{"schema_version":"1.7","event":"target.started","seq":3,"ts":"2026-09-26T17:13:36.479212Z","correlation_id":"8ebe1029-…","target":"free-pdb"}
-{"schema_version":"1.7","event":"diagnostic","seq":4,"ts":"2026-09-26T17:13:37.595170Z","correlation_id":"8ebe1029-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from…","data":{"code":"SOPULI-W022"}}
-{"schema_version":"1.7","event":"password.applied","seq":5,"ts":"2026-09-26T17:13:37.595243Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"version":null,"outcome":"RESET"}}
-{"schema_version":"1.7","event":"password.delivered","seq":6,"ts":"2026-09-26T17:13:37.595276Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"method":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"}}}
-{"schema_version":"1.7","event":"target.finished","seq":7,"ts":"2026-09-26T17:13:37.595303Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"account":"acme_dev_alice","target":"free-pdb","state":"RESET","changed":true,"actions":[…],"account_status":"OPEN","delivered":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"},"duration_ms":1111}}
-{"schema_version":"1.7","event":"run.finished","seq":8,"ts":"2026-09-26T17:13:37.595600Z","correlation_id":"8ebe1029-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T07:22:16.306692Z","correlation_id":"39ccecf5-…","data":{"command":"account.reset-password","dry_run":false}}
+{"schema_version":"1.17","event":"plan.resolved","seq":1,"ts":"2026-10-27T07:22:16.306826Z","correlation_id":"39ccecf5-…","data":{"units":[{"account":"acme_dev_alice","target":"free-pdb","intent":["password_set"]}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]},"confirmation_required":false}}
+{"schema_version":"1.17","event":"diagnostic","seq":2,"ts":"2026-10-27T07:22:16.724043Z","correlation_id":"39ccecf5-…","level":"warning","message":"no `reset_records:` block is declared, s…","data":{"code":"SOPULI-W024"}}
+{"schema_version":"1.17","event":"target.started","seq":3,"ts":"2026-10-27T07:22:16.724278Z","correlation_id":"39ccecf5-…","target":"free-pdb"}
+{"schema_version":"1.17","event":"diagnostic","seq":4,"ts":"2026-10-27T07:22:17.405948Z","correlation_id":"39ccecf5-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from…","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.17","event":"password.applied","seq":5,"ts":"2026-10-27T07:22:17.406018Z","correlation_id":"39ccecf5-…","account":"acme_dev_alice","target":"free-pdb","data":{"version":null,"outcome":"RESET"}}
+{"schema_version":"1.17","event":"password.delivered","seq":6,"ts":"2026-10-27T07:22:17.406052Z","correlation_id":"39ccecf5-…","account":"acme_dev_alice","target":"free-pdb","data":{"method":"vault_wrapped","handover":{"accessor":"VjiIZS8IO9HwzZ47o2UknCkI","expires_at":"2026-10-27T07:37:17.377543Z"}}}
+{"schema_version":"1.17","event":"target.finished","seq":7,"ts":"2026-10-27T07:22:17.406080Z","correlation_id":"39ccecf5-…","account":"acme_dev_alice","target":"free-pdb","data":{"account":"acme_dev_alice","target":"free-pdb","state":"RESET","changed":true,"actions":[…],"account_status":"OPEN","delivered":"vault_wrapped","handover":{"accessor":"VjiIZS8IO9HwzZ47o2UknCkI","expires_at":"2026-10-27T07:37:17.377543Z"},"audited":false,"audited_detail":"no enabled policy records LOGON or ALTER USER for ACME_DEV_ALICE","duration_ms":677}}
+{"schema_version":"1.17","event":"diagnostic","seq":8,"ts":"2026-10-27T07:22:17.406378Z","correlation_id":"39ccecf5-…","target":"free-pdb","level":"warning","message":"free-pdb: a password was sent over a connection that is not encrypted …","data":{"code":"SOPULI-W031"}}
+{"schema_version":"1.17","event":"run.finished","seq":9,"ts":"2026-10-27T07:22:17.406414Z","correlation_id":"39ccecf5-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
 ```
 
 **Per target, as each finishes**: `creds check`'s grain, not `apply`'s. An apply
 row waits for a promotion decided after every target. A reset row is final when
 its target is, because nothing decided later is written back onto it. So a stream
-that stops on target three has already said what happened on one and two.
+that stops on target three has already said what happened on one and two. The
+encryption warnings, `SOPULI-W031` and `SOPULI-W032`, are the exception: they
+are reported once per target after every target is done, so such a stream has
+not sent them yet.
 
 - **`password.applied`** where the password was set, with `"version": null`: a
   reset draws a password and keeps it in no document that a version could name.
@@ -2818,8 +2850,9 @@ flag, because of D2's grammar: a bare top-level command fits it, and a root-leve
 `--output` belongs to the group's parser, so `sopuli --output json about` is
 accepted there whatever the command does. A command that then printed text and
 exited 0 would ignore the request silently, which §2 refuses everywhere else. So
-`about` refuses `--output`, `--config`, `--profile` and `--vault-token-file` in
-that position by name, and exits 2 with no document.
+`about` refuses `--config`, `--output`, `--profile`, `--vault-token-file`,
+`--vault-addr` and `--debug` in that position by name, and exits 2 with no
+document.
 
 So **`about` is not in the `command` enum and must not be added to it.** An enum
 value that nothing emits is a branch a consumer can write and never reach.
@@ -3038,9 +3071,9 @@ three:
   may rightly write a reader for it before anything fills it. An enum value is a
   name.
 - It does not cover a value for a verb not built *yet*. It covers a verb that was
-  **declined**: `creds.promote` was removed under this rule, because UC-1 §4 says
-  there is no `creds promote` and there will not be one. `admin.install` was
-  removed in 1.37, because [#655](../decisions/log.md#655) declined
+  **declined**. `creds.promote` was removed under this rule, because UC-1 §4
+  says there is no `creds promote` and there will not be one. `admin.install`
+  was removed in 1.37, because [#655](../decisions/log.md#655) declined
   `admin install`. UC-4 may install the service account, but with a verb of its
   own, not this one. A slot for something that might arrive is honest. A branch
   nothing can ever reach is not.

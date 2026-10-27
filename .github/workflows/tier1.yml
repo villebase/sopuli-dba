@@ -201,16 +201,17 @@ jobs:
       # which is the compose file written twice.
       # Two calls, because `--wait` fails on a container that has *exited* even
       # when it exited 0, and `vault-init` is a one-shot by design: it mounts kv
-      # (v2) and kv1 (v1) and stops. Waiting on the long-running services by name
-      # and starting the one-shot afterwards says what is meant. Its own success
-      # is not asserted here -- a missing mount surfaces immediately as 404s in
-      # the store tests, which is a better message than anything this step would
-      # print.
+      # (v2) and kv1 (v1), sets up the userpass identities, and stops. Waiting on
+      # the long-running services by name and starting the one-shot afterwards
+      # says what is meant. `wait` then holds pytest until vault-init has
+      # finished, and fails the step if it exited non-zero: a half-finished setup
+      # would show up as login failures in the personal-path tests.
       - name: bring up the tier-1 stack
         working-directory: test
         run: |
           docker compose --profile tier1 up -d --wait vault postgres oracle-free
           docker compose --profile tier1 up -d vault-init
+          docker compose --profile tier1 wait vault-init
 
       - name: pytest
         env:

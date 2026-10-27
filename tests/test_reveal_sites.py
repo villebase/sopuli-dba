@@ -60,6 +60,10 @@ PERMITTED = {
         "the vault write -- invariant 2's first exception, reached as a wrap rather "
         "than a KV put (UC-2 §6.6)"
     ),
+    "delivery/vault_path.py": (
+        "the vault write -- invariant 2's first exception, as a KV v2 put to a path "
+        "only the person's own identity reads (UC-2 §6.6, decision #447)"
+    ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "driver/oracle/verifier.py": (
         "`check --method hash`'s comparison (UC-1 §7) -- `passwords.py`'s reason: the "

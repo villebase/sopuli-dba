@@ -1,8 +1,8 @@
-"""Database drivers (P1), as far as UC-1 needs them.
+"""Database drivers (P1): Oracle and PostgreSQL.
 
 :mod:`sopuli.driver.protocol` is the interface every command touching a database
-goes through. No command contains vendor SQL, and Oracle -- the first and for now
-the only product -- gets no privileged position in the shape of it.
+goes through. No command contains vendor SQL, and no product gets a privileged
+position in the shape of it.
 
 Nothing here imports a database client. A driver is an install extra on the same
 rule as a store (D9, ADR-006): ``python-oracledb`` arrives with

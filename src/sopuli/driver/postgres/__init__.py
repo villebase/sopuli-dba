@@ -9,5 +9,5 @@ machine.
 
 This build connects, reports what it found, describes a role, checks its
 password by logging in as it, and sets it: UC-1's commands. UC-2's operations
-refuse with ``SOPULI-20006``, as the whole driver did before it had a module.
+refuse with ``SOPULI-20006``.
 """

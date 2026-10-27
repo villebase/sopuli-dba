@@ -55,8 +55,8 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   isolation. A run on `main` afterwards would test an identical tree a second
   time.
 - **A prose-only pull request runs neither *heavy* lane** — no tier 1, and no
-  `lint`, `test` or `install shape` — and the two workflows arrange that
-  differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
+  `lint`, `test`, `release build` or `install shape` — and the two workflows
+  arrange that differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
   filters in a `changes` job that every other job carries an `if:` on, for the
   branch-protection reason below. It does still run the cheap `docs` job, which
   is the bullet after this one. **Both lists are measured, not "docs"** — the
@@ -150,12 +150,14 @@ It applies to the default branch, has no bypass actors, and has these rules:
   contract. Renaming the job leaves the required `ci ok` check pending for
   ever, and no pull request can merge until the ruleset names the new job.
 - a change reaches the branch only through a pull request, which needs no
-  approving review;
+  approving review. The rule allows every merge method; the repository's
+  settings are what allow only a squash merge;
 - the branch cannot be deleted;
 - the branch cannot be force-pushed.
 
 `ci.yml` skips its lanes on a prose-only
-pull request — `changes` decides, and `lint`, `test` and `install shape` carry
+pull request — `changes` decides, and `lint`, `test`, `release build` and
+`install shape` carry
 `if: needs.changes.outputs.code == 'true'` — because a job skipped by an `if:`
 reports `skipped`, which protection accepts, while a whole workflow skipped by
 `paths-ignore` never creates its contexts at all and a required one stays pending

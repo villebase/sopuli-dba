@@ -85,7 +85,8 @@ CI lane sets `SOPULI_TEST_TIER1=required`.
 different passwords**, as they can on an OCI DB system or a database where one
 of them was changed. Every image in `test/compose.yaml` sets both from one
 variable, `ORACLE_PASSWORD`, `ORACLE_PWD` or, for 12.2, `DB_PASSWD`, so its
-stacks do not need it.
+stacks do not need it. On 12.2, `SYS` has that password only after
+`test/oracle-init-12c/init.sh` has written the password file (§3).
 The tests that log in as `SYS` are the `sysdba` fixture's and
 `tests/driver/test_oracle_install_script.py`. If the `SYS` logon fails with
 `ORA-01017`, they skip, and the reason names the variable to set. Under

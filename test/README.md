@@ -246,7 +246,7 @@ The public test suite must be green using only what a contributor can pull —
 | `oracle-init-nne/sqlnet-nne.ora` | the server settings that require Native Network Encryption on the NNE service |
 | `oracle-init-nne/01_require_nne.sh` | adds `sqlnet-nne.ora` to the NNE service's `sqlnet.ora` on each start |
 | `oracle-init-19c/01_test_profiles_in_pdb.sh` | creates the test profiles in `ORCLPDB1` on the 19c images |
-| `oracle-init-12c/init.sh` | creates the test profiles on the 12.2 image, which has no user-script hook. Run by hand once after the first start |
+| `oracle-init-12c/init.sh` | on the 12.2 image: writes the password file (without it every remote `AS SYSDBA` is refused), adds a `USERS` tablespace in `CDB$ROOT` (the `COMMON` install needs it), and creates the test profiles in the PDB. The image has no user-script hook, so run it by hand once after the first start |
 | `jdbc/JdbcLogin.java` | logs in through a JDBC URL, once for each password it reads on stdin, for `../tests/test_password_paths.py` |
 | `oci-dbcs/new-db-system.ps1` | creates, connects to, stops, starts or tears down a minimal OCI Base Database Service 19c DB system. Not part of the compose stack. [`../docs/maintainer-environments.md`](../docs/maintainer-environments.md) says how to use it |
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |

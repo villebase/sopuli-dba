@@ -35,7 +35,7 @@ This is also why the matrix is keyed on capabilities, not versions (§3).
 | Oracle 21c XE | `gvenzl/oracle-xe:21` | CDB and PDB on an older line, password rollover, unified auditing |
 | Oracle 18c XE | `gvenzl/oracle-xe:18` | no rollover, which makes it a negative case; passwords limited to 30 bytes |
 | Oracle 11g XE | `gvenzl/oracle-xe:11.2.0.2-slim` | non-CDB, 30-byte passwords, 10G and 11G verifiers, `DBA_AUDIT_TRAIL` |
-| PostgreSQL 13–18 | `postgres:<v>` | the PostgreSQL driver: tier 1 runs against `postgres:16-alpine`, and the `postgres-matrix` profile runs the probes against 13 to 18 |
+| PostgreSQL 13–18 | `postgres:16-alpine`; `postgres:13` to `postgres:18` | the PostgreSQL driver: tiers 0 and 1 use `postgres:16-alpine`, and the `postgres-matrix` profile starts 13 to 18 for the probes in `sql/postgres/`, which are run by hand |
 | SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a third driver, later |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store |

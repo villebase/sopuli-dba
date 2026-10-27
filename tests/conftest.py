@@ -191,6 +191,20 @@ ALLOW_REMOTE_VAULT = "SOPULI_TEST_ALLOW_REMOTE_VAULT"
 
 
 @dataclass(frozen=True)
+class Person:
+    """A userpass user that `test/compose.yaml`'s vault-init creates, with its entity.
+
+    The password is a test credential, as the root token is: the dev Vault is
+    in-memory and loopback-only.
+    """
+
+    login: str
+    password: str
+    #: The entity's `db_account` metadata, or None for an entity without the key.
+    db_account: str | None
+
+
+@dataclass(frozen=True)
 class VaultStack:
     """The running tier-1 Vault, and what a test needs to reach it.
 
@@ -209,6 +223,20 @@ class VaultStack:
     #: CLAUDE.md's fixture vocabulary. Scratch space, but still an example in the
     #: codebase, so `acme` and never anything real.
     scratch: str = "apps/acme/conformance"
+    #: The `vault_path` delivery fixture (UC-2 §6.6) that vault-init sets up.
+    #: A person reads `<kv2_mount>/data/<personal_prefix>/<db_account>/*` through
+    #: the `personal-reader` policy. The writer token has `create` and `update` on
+    #: the data and metadata paths under the prefix; the second token also has
+    #: `read`.
+    userpass_mount: str = "userpass"
+    personal_prefix: str = "personal"
+    personal_writer_token: str = "sopuli-test-personal-writer"
+    personal_writer_read_token: str = "sopuli-test-personal-writer-read"
+    #: alice's account is the one the tier-1 Oracle tests reset, as the database
+    #: stores it.
+    alice: Person = Person("alice", "sopuli-test-alice", "ACME_DEV_ALICE")
+    bob: Person = Person("bob", "sopuli-test-bob", "ACME_DEV_BOB")
+    carol: Person = Person("carol", "sopuli-test-carol", None)
 
 
 #: Set to ``required`` where a tier-1 environment is supposed to be present --
@@ -305,6 +333,31 @@ def private_mount(vault_stack: VaultStack, request: pytest.FixtureRequest) -> It
         pytest.fail(f"could not mount {path}: HTTP {created.status_code} {created.text}")
     yield path
     client.delete(f"/v1/sys/mounts/{path}")
+
+
+@pytest.fixture(scope="session")
+def vault_personal(vault_stack: VaultStack) -> VaultStack:
+    """The tier-1 Vault with vault-init's `vault_path` setup, or a skip.
+
+    A Vault started before vault-init set this up, or one restarted since, has
+    the mounts back after `up` but not necessarily the people, and a token past
+    its 768h expires. Each would fail every test with a 400 or a 403 that does
+    not say why.
+    """
+    client = vault_stack.client
+    rerun = "run `docker compose --profile tier0 up -d vault-init` from test/"
+    auths = client.get("/v1/sys/auth")
+    if auths.status_code != 200 or f"{vault_stack.userpass_mount}/" not in auths.json()["data"]:
+        _missing_environment(f"Vault has no {vault_stack.userpass_mount}/ auth mount; {rerun}")
+    for token in (vault_stack.personal_writer_token, vault_stack.personal_writer_read_token):
+        lookup = client.get("/v1/auth/token/lookup-self", headers={"X-Vault-Token": token})
+        if lookup.status_code != 200:
+            _missing_environment(f"the token {token} does not authenticate; {rerun}")
+    for person in (vault_stack.alice, vault_stack.bob, vault_stack.carol):
+        entity = client.get(f"/v1/identity/entity/name/{person.login}")
+        if entity.status_code != 200 or not entity.json()["data"]["aliases"]:
+            _missing_environment(f"Vault has no entity with an alias for {person.login}; {rerun}")
+    return vault_stack
 
 
 # ------------------------------------------------------ tier 1: PostgreSQL ---

@@ -406,8 +406,8 @@ every backend except OCI, and `@stage=pending` works on a store with no versions
 because a stage is a key beside the value and not a generation of it.
 
 **`cas` cannot be emulated either**, because its purpose is atomicity. A store
-without it gets no lock, not a weaker lock. P5's advisory lock refuses KV v1 and
-the file backend unless the store is configured as `locking: advisory-only`. Then
+without it gets no lock, not a weaker lock. P5's advisory lock refuses KV v1, and
+would refuse the unbuilt `file` backend, unless the store is configured as `locking: advisory-only`. Then
 the record is written without compare-and-set, and every run says so
 (`01-configuration.md` §3a).
 

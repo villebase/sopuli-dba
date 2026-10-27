@@ -492,8 +492,8 @@ the register.
   `DBSNMP` is ordinary DBA work. A tool with no override does not stop that
   change. It moves it to SQL\*Plus, where nothing records it. An audited
   override is better than an unrecorded workaround. The accepted cost: a DBA who
-  wants to bypass one check bypasses all of them, and the audit record is there
-  for that.
+  wants to bypass one check bypasses every check the flag overrides, and the
+  audit record is there for that.
 - **Rejected:**
   - No override: the tool gets worked around, and the workaround is not
     audited.

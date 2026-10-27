@@ -69,20 +69,21 @@ the agent cannot read this skill.
 | Area | Files |
 |---|---|
 | config | `docs/design/01-configuration.md`, `examples/*.yaml` |
-| output-1 | `docs/design/03-json-output.md`, from the start to the middle of §2 |
-| output-2 | `docs/design/03-json-output.md`, from the middle of §2 to the end |
+| output-1 | `docs/design/03-json-output.md`, from the start to the line before `` ### `orphans`, emitted by `vault orphans` `` in §2 |
+| output-2 | `docs/design/03-json-output.md`, from `` ### `orphans`, emitted by `vault orphans` `` to the end |
 | uc1 | `docs/use-cases/uc-01-app-credential-sync.md`, `docs/scenarios/*.md` |
 | uc2 | `docs/use-cases/uc-02-personal-account-passwords.md` |
 | oracle | `docs/design/00-principles.md`, `docs/design/02-oracle-privileges.md`, `docs/design/02-postgres-privileges.md`, `docs/measurements.md` |
 | process | `docs/design/04-testing.md`, `docs/workflow.md`, `docs/maintainer-environments.md`, `test/README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.github/copilot-instructions.md` |
 | front | `README.md`, `SECURITY.md`, `docs/getting-started.md`, `docs/security-model.md`, `docs/local-testing.md` |
-| register | `docs/README.md`, `docs/decisions/log.md` |
+| register | `docs/README.md` |
+| log | `docs/decisions/log.md` |
 | adrs | `docs/decisions/adr-*.md` |
 | code | module docstrings, docstrings and comments in `src/sopuli/**/*.py` |
 
 `03-json-output.md` is two areas because one sweep of the whole file checked only
-about 2 claims per 1,000 words (#1086). Split it at a line number, and tell each
-agent its range of lines.
+about 2 claims per 1,000 words (#1086). Split it at that heading, so that every
+audit compares the same two halves, and tell each agent its range of lines.
 
 Some areas need a note after the file list in the prompt:
 
@@ -91,7 +92,7 @@ Some areas need a note after the file list in the prompt:
   `docs/measurements.md`; do not report them as narration."
 - **process**: "The sources of truth also include `.github/workflows/*.yml`, the
   compose files in `test/`, `pyproject.toml` and `tests/`."
-- **register** and **adrs**: "Decision records and ADRs record why a decision was made, so
+- **register**, **log** and **adrs**: "Decision records and ADRs record why a decision was made, so
   describing the rejected options is not narration. An ADR's *Context*
   section describes the situation when the decision was made; do not report
   it. Report claims about the current build that are false, and status claims

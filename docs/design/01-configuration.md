@@ -925,7 +925,8 @@ vaults:
 ```
 
 A lock needs compare-and-set. P2's capability table gives `cas` to KV v2 and,
-through ETags, to OCI; KV v1 and the file backend have none. Everywhere else a
+through ETags, to OCI; KV v1 has none, nor would the `file` backend, which is
+not built. Everywhere else a
 missing store capability is emulated in the payload — but "not atomic" is exactly
 what CAS is for, so there is nothing to emulate, and under the default a mutating
 command **refuses** on a store that cannot lock, with `error.category: capability`
@@ -933,9 +934,9 @@ naming this key. `advisory-only` is the operator saying they know: the record is
 still written, every run emits a warning diagnostic so the weakening reaches each
 run's audit trail rather than only the config file, and the run document reports
 `lock.mode: none`. The documented remedy is `vault kv enable-versioning`, which
-is in place on an existing mount. The file backend does not attempt `flock`: it
-is documented as non-production, and one rule is worth more here than a
-marginally stronger local mutex.
+is in place on an existing mount. The `file` backend's design does not attempt
+`flock`: it is meant for non-production use, and one rule is worth more here
+than a marginally stronger local mutex.
 
 **As a block**, under `defaults:` or in a profile:
 

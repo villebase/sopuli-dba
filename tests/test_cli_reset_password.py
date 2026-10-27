@@ -1535,3 +1535,143 @@ def test_a_profile_that_cannot_answer_refuses_a_seen_reset_before_connecting(
     assert isinstance(result.exception, RefusedError)
     assert result.exception.exit_code == ExitCode.ABORTED
     assert "the active profile says nobody is here to answer" in str(result.exception)
+
+
+# ------------------------------------------------- `vault_path`, tier 1 ---
+
+#: `delivery.method: vault_path` into the shared KV v2 mount, where the
+#: `vault_personal` fixture's policies are. No `reset_records:`: the writer
+#: token holds only the personal paths.
+PATH = MANUAL.replace(
+    """delivery:
+  method: manual
+  manual:
+    force_expire: true
+""",
+    """delivery:
+  method: vault_path
+  vault_path:
+    ttl: {ttl}
+    prefix: {prefix}
+
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: {addr}
+    mount: {mount}
+    kv_version: 2
+    auth:
+      method: token
+""",
+).replace(
+    """defaults:
+  policy: personal-standard
+""",
+    """defaults:
+  policy: personal-standard
+  vault: vault-dev
+""",
+)
+
+
+@pytest.fixture
+def personal(vault_personal: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The `vault_path` fixture, with the run holding the write-only token."""
+    monkeypatch.setenv("VAULT_TOKEN", vault_personal.personal_writer_token)
+    monkeypatch.delenv("SOPULI_VAULT_TOKEN", raising=False)
+    return vault_personal
+
+
+def _path_config(live_oracle: Environment, stack: Any, *, ttl: str = "1h") -> str:
+    return PATH.format(
+        dsn=live_oracle.dsn,
+        user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+        account=ACCOUNT,
+        addr=stack.addr,
+        mount=stack.kv2_mount,
+        prefix=stack.personal_prefix,
+        ttl=ttl,
+    )
+
+
+def _read_as(stack: Any, person: Any, path: str) -> Any:
+    """Read ``<mount>/data/<path>`` with the person's own userpass login."""
+    login = stack.client.post(
+        f"/v1/auth/{stack.userpass_mount}/login/{person.login}",
+        json={"password": person.password},
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["auth"]["client_token"]
+    return stack.client.get(f"/v1/{stack.kv2_mount}/data/{path}", headers={"X-Vault-Token": token})
+
+
+def test_vault_path_puts_the_password_where_only_its_owner_reads_it(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    personal: Any,
+) -> None:
+    """UC-2 §6.6's claim, against the stack's Vault: the owner's identity reads
+    the value, another identity does not, and the DBA's token cannot read it."""
+    config = write_config(_path_config(live_oracle, personal))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    path = f"{personal.personal_prefix}/{personal.alice.db_account}/tier1-oracle"
+    assert f"{personal.kv2_mount}/{path}" in result.output
+    owner = _read_as(personal, personal.alice, path)
+    assert owner.status_code == 200
+    assert owner.json()["data"]["data"]["account"] == personal.alice.db_account
+    assert owner.json()["data"]["metadata"]["deletion_time"]
+    assert _read_as(personal, personal.bob, path).status_code == 403
+    dba = personal.client.get(
+        f"/v1/{personal.kv2_mount}/data/{path}",
+        headers={"X-Vault-Token": personal.personal_writer_token},
+    )
+    assert dba.status_code == 403
+    assert account() == "OPEN"
+
+
+def test_vault_path_records_the_path_and_version_and_no_password(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    personal: Any,
+) -> None:
+    config = write_config(_path_config(live_oracle, personal))
+
+    result = run(runner, config, "--account", ACCOUNT, "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.stdout)
+    handover = document["results"][0]["handover"]
+    path = f"{personal.personal_prefix}/{personal.alice.db_account}/tier1-oracle"
+    assert handover["path"] == f"{personal.kv2_mount}/{path}"
+    assert isinstance(handover["version"], int)
+    assert handover["accessor"] is None
+    assert handover["expires_at"]
+    secret = _read_as(personal, personal.alice, path).json()["data"]["data"]["password"]
+    assert secret not in result.output
+
+
+def test_vault_path_refuses_a_token_that_could_read_the_path(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    personal: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H8: refused at plan time, with exit 5, before any password is drawn."""
+    monkeypatch.setenv("VAULT_TOKEN", personal.personal_writer_read_token)
+    config = write_config(_path_config(live_oracle, personal))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert isinstance(result.exception, RefusedError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "could read" in str(result.exception)
+    assert account() == "OPEN"

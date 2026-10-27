@@ -2979,12 +2979,14 @@ def _reset_one(
             # way -- an account with a password nobody holds, and the person who
             # could not log in now cannot be helped by themselves either.
             #
-            # The account is named as the database stores it, which on
-            # `vault_path` is the path the person's policy covers.
+            # On `vault_path` the account is named as the database stores it,
+            # because that is the path the person's policy covers. A wrapped
+            # cubbyhole keeps the name the operator typed.
+            named = state.name if delivery.method == delivery_config.PATH else account
             receipt = (
                 None
                 if backend is None
-                else backend.deliver(secret, account=state.name, target=target.name)
+                else backend.deliver(secret, account=named, target=target.name)
             )
             # Read before the call, and kept on a failure only where the driver
             # says the password's statement went out (`_carried`): a statement
@@ -3328,9 +3330,7 @@ def _delivery_backends(
     """
     if delivery.is_seen or run.dry_run:
         return {}
-    backends = {
-        target.name: _delivery_backend(run, config, delivery, target) for target in reached
-    }
+    backends = {target.name: _delivery_backend(run, config, delivery, target) for target in reached}
     for target_name, backend in backends.items():
         backend.preflight(account=account, target=target_name)
     return backends
@@ -3356,9 +3356,7 @@ def _delivery_backend(
     store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
     if delivery.vault_path is not None:
         settings = delivery.vault_path
-        return vault_path.for_store(
-            store, vault=name, ttl=settings.ttl, prefix=settings.prefix
-        )
+        return vault_path.for_store(store, vault=name, ttl=settings.ttl, prefix=settings.prefix)
     wrapped = delivery.vault_wrapped
     if wrapped is None:  # pragma: no cover -- unreachable through a config file
         # Unreachable through a file: `_require_sub_block` and `_build_wrapped`

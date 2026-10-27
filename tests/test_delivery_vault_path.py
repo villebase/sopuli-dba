@@ -276,4 +276,9 @@ def test_a_kv_v2_mount_gives_a_backend_on_that_mount() -> None:
 
     path = for_store(store, vault="vault-dev", ttl="8h", prefix="personal")
 
-    assert (path.mount, path.prefix, path.ttl, path.vault) == ("secret", "personal", "8h", "vault-dev")
+    assert (path.mount, path.prefix, path.ttl, path.vault) == (
+        "secret",
+        "personal",
+        "8h",
+        "vault-dev",
+    )

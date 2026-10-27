@@ -1022,6 +1022,80 @@ ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-23     -
 
 A reset draws a new password every time, so running it twice resets twice.
 
+### Delivering to the person's own Vault path
+
+With this `delivery:` block, the tool writes the password to a Vault path that
+only the person's own Vault login can read, and Vault deletes it when the `ttl`
+runs out:
+
+```yaml
+delivery:
+  method: vault_path
+  vault_path:
+    ttl: 8h
+    prefix: personal
+```
+
+The stack's Vault is set up for it. A `userpass` login `alice` (password
+`sopuli-test-alice`) has `db_account = ACME_DEV_ALICE` on its identity, and its
+policy reads `kv/data/personal/{{identity.entity.metadata.db_account}}/*`. The
+token `sopuli-test-personal-writer` can write under `personal/` and cannot read
+it. It cannot write `reset_records:` either, so this run used a config without
+that block. Run the reset with that token:
+
+```
+$ VAULT_TOKEN=sopuli-test-personal-writer sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
+...
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
+
+reset acme_dev_alice on 1 of 1 targets
+...
+tell acme_dev_alice the new password for free-pdb is waiting at:
+
+    kv/personal/ACME_DEV_ALICE/free-pdb
+
+They read it with their own Vault login. Vault deletes it at 2026-10-27T22:48:58.096780Z.
+```
+
+The path uses the account name as the database stores it. The person logs in and
+reads it. The `vault` alias from §4 sends the root token, so use a shell in the
+container instead; `vault login` asks for the password:
+
+```
+$ docker exec -it -e VAULT_ADDR=http://127.0.0.1:8200 sopuli-test-vault-1 sh
+/ # vault login -method=userpass username=alice
+/ # vault kv get -mount=kv personal/ACME_DEV_ALICE/free-pdb
+============== Secret Path ==============
+kv/data/personal/ACME_DEV_ALICE/free-pdb
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-10-27T14:48:58.096780399Z
+custom_metadata    <nil>
+deletion_time      2026-10-27T22:48:58.096780399Z
+destroyed          false
+version            1
+
+====== Data ======
+Key         Value
+---         -----
+account     ACME_DEV_ALICE
+password    <PASSWORD>
+target      free-pdb
+```
+
+Logged in as `bob`, the same read answers `Code: 403` and `permission denied`.
+
+A token that can also read the path is refused before anything changes:
+
+```
+$ VAULT_TOKEN=sopuli-test-personal-writer-read sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
+sopuli: the token for 'vault-dev' holds read on kv/data/personal/acme_dev_alice/free-pdb, so it could read acme_dev_alice's password back
+  hint: on `vault_path` the DBA must not be able to read the person's path (UC-2 6.6). Remove `read` from this token's policy on that path, or use a token without the root policy
+```
+
 ### The seen path
 
 With this `delivery:` block, the tool prints the password on your terminal once

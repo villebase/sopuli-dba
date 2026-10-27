@@ -40,8 +40,9 @@ The `creds` commands manage application credentials (UC-1). The `account`
 commands manage personal accounts (UC-2). `vault orphans` lists vault records
 the tool wrote at paths the config no longer declares (§13).
 
-There is no `sopuli admin` command. To install the service account, run the SQL
-in `sql/oracle/` by hand. The only store backend is `hashicorp`; `doctor` lists
+There is no `sopuli admin` command. To install the Oracle service account, run
+the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
+`psql` (§7). The only store backend is `hashicorp`; `doctor` lists
 the others as `not_implemented`. A PostgreSQL target runs `doctor` and the
 `creds` commands (§7), and refuses the `account` commands.
 

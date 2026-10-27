@@ -30,10 +30,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.fields import mapping, reject_unknown_keys, required_string, string
+from sopuli.config.errors import ROOT, KeyPath
+from sopuli.config.fields import mapping, reject_unknown_keys, required_string
 from sopuli.config.model import ResetRecords
-from sopuli.config.secret_refs import normalise_path, reject_unaddressable_path
+from sopuli.config.secret_refs import required_prefix
 
 RESET_RECORDS_KEYS = ("vault", "prefix")
 
@@ -85,31 +85,14 @@ def _build_prefix(block: dict[str, Any], *, at: KeyPath) -> str:
     wrong; more to the point, a ``..`` under a prefix walks out of it, and what it
     would walk into here is whatever else the estate keeps in that store.
     """
-    where = at.key("prefix")
-    if "prefix" not in block:
-        raise ConfigError(
-            "must name the prefix records are written under",
-            at=where,
-            hint="a path in the store, such as `sopuli/personal-resets`",
-        )
-
-    written = string(block["prefix"], at=where)
-    reject_unaddressable_path(
-        written,
-        what=f"prefix {written!r}",
-        at=where,
+    return required_prefix(
+        block,
+        at=at,
+        missing="must name the prefix records are written under",
+        hint="a path in the store, such as `sopuli/personal-resets`",
         traversal_hint=(
             "write the path records actually live at -- a relative segment resolves "
             "somewhere else on the way to the store, so records would be written "
             "outside the prefix this file names"
         ),
     )
-
-    prefix = normalise_path(written)
-    if not prefix:
-        raise ConfigError(
-            "must name the prefix records are written under",
-            at=where,
-            hint="a path in the store, such as `sopuli/personal-resets`",
-        )
-    return prefix

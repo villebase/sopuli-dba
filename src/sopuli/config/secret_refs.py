@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 
@@ -267,6 +268,38 @@ def parse_secret_ref(text: str, *, at: KeyPath = ROOT) -> SecretRef:
         version=version,
         stage=stage,
     )
+
+
+def required_prefix(
+    block: dict[str, Any], *, at: KeyPath, missing: str, hint: str, traversal_hint: str
+) -> str:
+    """A block's required `prefix:`, checked and normalised.
+
+    For the keys that name where in a store something is written:
+    `reset_records.prefix` and `delivery.vault_path.prefix`. Required rather than
+    defaulted, because a default would be a path the file does not show. A
+    traversal segment is refused by :func:`reject_unaddressable_path`, with
+    ``traversal_hint`` saying what it would do at this site. The rest is
+    :func:`normalise_path`, so ``a//b/`` and ``a/b`` are one prefix. A prefix
+    that normalises to nothing is refused like a missing one.
+
+    ``missing`` is the message for an absent or empty prefix, and ``hint`` its
+    hint.
+    """
+    # Inside the function: `fields` imports `model`, which imports this module.
+    from sopuli.config.fields import string
+
+    where = at.key("prefix")
+    if "prefix" not in block:
+        raise ConfigError(missing, at=where, hint=hint)
+    written = string(block["prefix"], at=where)
+    reject_unaddressable_path(
+        written, what=f"prefix {written!r}", at=where, traversal_hint=traversal_hint
+    )
+    prefix = normalise_path(written)
+    if not prefix:
+        raise ConfigError(missing, at=where, hint=hint)
+    return prefix
 
 
 def normalise_path(path: str) -> str:

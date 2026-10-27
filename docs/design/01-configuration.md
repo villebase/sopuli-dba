@@ -306,11 +306,13 @@ path the policy covers.
 
 `vault` is **optional**, with `vault_wrapped`'s chain.
 
-**The tool does not validate the keys inside the other methods' sub-blocks**, so
-a typo inside one is accepted. That is why **`config validate` warns when the
-selected method is not implemented in this build** (`SOPULI-W035`), so that a
-clean parse does not read as a working delivery. `IMPLEMENTED` in
-`sopuli/config/delivery.py` lists the methods this build serves.
+**The tool does not validate the keys inside the sub-blocks of `one_time_link`,
+`onepassword_share` and `smtp_encrypted`**, so a typo inside one is accepted. And
+a method whose keys are validated, such as `vault_path`, may still not be built.
+So **`config validate` warns when the selected method is not implemented in this
+build** (`SOPULI-W035`), so that a clean parse does not read as a working
+delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
+build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an
 *unselected* sub-block unjudged on purpose, so `required: ["ttl"]`, a pattern on

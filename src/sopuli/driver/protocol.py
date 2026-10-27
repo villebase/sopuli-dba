@@ -1,4 +1,4 @@
-"""The driver interface (P1), as far as UC-1 needs it.
+"""The driver interface (P1), for UC-1 and UC-2.
 
 P1's rule is that every operation touching a database goes through this
 interface, no command contains vendor SQL, and Oracle's shape does not leak
@@ -1003,8 +1003,8 @@ class Session(Protocol):
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What the tool's own account holds beyond what it needs.
 
-        Only ``doctor --check-privileges`` asks. It reports and never refuses:
-        over-granting warns (P5).
+        ``doctor --check-privileges`` and the creds pre-flight ask. Over-granting
+        is never a refusal; it warns (P5).
 
         ``accounts`` is the accounts on this target the caller asks about:
         `doctor` passes every one the config declares, and the pre-flight the

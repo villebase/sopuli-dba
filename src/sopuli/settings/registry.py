@@ -13,7 +13,7 @@ how colliding layers merge. Flags, ``SOPULI_*`` variables and config keys all
 bind to setting *names*; the same registry is what ``invocation.options`` and
 ``config show --resolved --explain`` iterate over.
 
-Three things here are decisions rather than transcription:
+These things are decisions rather than transcription:
 
 **:data:`SAFETY_SETTINGS` is a literal, and it is authoritative.** Invariant 10
 wants one place a reviewer can look to see the whole ratcheted set, which a

@@ -240,7 +240,7 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
-| — | — | Exit non-zero when doctor reaches a target and refuses it | open | | #1062 |
+| — | — | Exit non-zero when `doctor` reaches a target and refuses it | open | | #1062 |
 | — | — | Refuse a libpq older than 16 at plan time | open | | #1076 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the

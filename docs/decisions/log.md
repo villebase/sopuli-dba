@@ -3176,11 +3176,13 @@ the register.
   without a message. A plain `SET` leaks to other clients under transaction
   pooling. PgBouncer refuses a wrong password as "SASL authentication failed"
   with no SQLSTATE, so `creds check` reports drift as `ERROR`, and `creds apply`
-  and `rotate` cannot change a password. `doctor` reads the encryption of the
-  pooler's hop to the server, not of the tool's own hop.
+  and `rotate` cannot change a password. `doctor` and `require_encryption`
+  read the encryption of the pooler's hop to the server, not of the tool's own
+  hop.
 - **Decision:** Not supported, for now. A PostgreSQL target's `dsn` names the
-  server. 01-configuration says so. The driver does not change: the tool cannot
-  tell that it is behind a pooler, so a run there fails as measured.
+  server. 01-configuration says so, and says what a run behind a pooler does.
+  The driver does not change and does not detect a pooler, so a run there
+  behaves as measured.
 - **Why:** a DBA tool can usually reach the server directly, and poolers mostly
   sit in front of applications. Support would first need the pooler's
   authentication messages measured, a way to say a target is a pooler, a rule

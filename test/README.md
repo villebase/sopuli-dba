@@ -2,7 +2,8 @@
 
 What each environment is, and what to know before using it:
 
-- **tier 0** brings up Vault, with both KV versions mounted, and PostgreSQL.
+- **tier 0** brings up Vault, with both KV versions mounted, PostgreSQL, and a
+  Yopass server.
 - **tier 1** adds Oracle Free, with the profiles in `oracle-init/`.
 - **21c XE** (`oracle-xe21`) is healthy in about a minute. The `oracle-init/`
   profiles are created, including `SOPULI_ROLLOVER`. **Set `AUDIT_TRAIL` before
@@ -134,7 +135,7 @@ project name of its own, its `up` works on the first clone's containers. It
 recreates them, because the `./oracle-init` mount points at another directory,
 and the database is lost. Its `--profile '*' down` would remove them.
 
-Set four variables in the environment of everything that works in the second
+Set five variables in the environment of everything that works in the second
 clone: its shells, its editor and any agent working in it.
 
 ```bash
@@ -142,14 +143,16 @@ export COMPOSE_PROJECT_NAME=sopuli-test-w2
 export SOPULI_TEST_VAULT_PORT=8300
 export SOPULI_TEST_POSTGRES_PORT=5532
 export SOPULI_TEST_ORACLE_PORT=1621
+export SOPULI_TEST_YOPASS_PORT=1437
 ```
 
 Compose takes the project name and the ports from them. The suite takes its
 defaults from them too: Vault at `http://127.0.0.1:8300`, Oracle at
-`localhost:1621/FREEPDB1`, and the container `sopuli-test-w2-oracle-free-1`.
-So the four variables are the one place that names the stack.
+`localhost:1621/FREEPDB1`, Yopass at `http://127.0.0.1:1437`, and the
+container `sopuli-test-w2-oracle-free-1`. So the five variables are the one
+place that names the stack.
 `VAULT_ADDR`, `SOPULI_TEST_ORACLE_DSN` and `SOPULI_TEST_ORACLE_CONTAINER`
-still override the defaults when they are set. A shell that lacks the four
+still override the defaults when they are set. A shell that lacks the five
 variables works on the first clone's stack, without a warning, because both
 stacks publish their ports on loopback and the first one uses the default
 ports.
@@ -169,7 +172,7 @@ port in them. The tier2's Oracle services, `oracle-nne`, `lowkey-vault` and the
 maintainer-only services keep fixed ports, so only one clone can run each of
 them. The `postgres-matrix` services each take a port variable of their own,
 `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT`, defaults 5413
-to 5418. The suite does not read them, so they are not among the four. A second
+to 5418. The suite does not read them, so they are not among the five. A second
 clone that starts the matrix sets them too, for example to 5613 to 5618. The
 same holds for `SOPULI_TEST_PGBOUNCER_PORT` and
 `SOPULI_TEST_PGBOUNCER_IGNORE_PORT`, defaults 6432 and 6433, for the
@@ -185,6 +188,7 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test`. Like the matrix, it preloads `pg_stat_statements` and writes the server log to `log/postgresql.log` in the data directory, so `docker logs` shows only the start of it. Invariant 15's test reads the log back with `pg_read_file()` |
 | postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
 | pgbouncer, pgbouncer-ignore | 6432 and 6433, or `SOPULI_TEST_PGBOUNCER_PORT` and `SOPULI_TEST_PGBOUNCER_IGNORE_PORT` | **`--profile pgbouncer` only**, with tier 0. PgBouncer 1.26.0 in front of postgres; databases `session` and `transaction`. `pgbouncer-ignore` drops the startup parameter `options` |
+| yopass | 1337, or `SOPULI_TEST_YOPASS_PORT` | Yopass 16.0.1 with default flags, for the `one_time_link` delivery tests; it stores secrets in `yopass-memcached`, which publishes no port. The image has no shell, so it has no healthcheck: `curl http://127.0.0.1:1337/health` answers `{"status":"healthy"}`. The web page is at <http://127.0.0.1:1337/> |
 | oracle-free | 1521, or `SOPULI_TEST_ORACLE_PORT` | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
 | oracle-xe18 | 1523 | 18c XE — no rollover, a deliberate negative case |

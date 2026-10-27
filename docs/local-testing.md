@@ -1097,6 +1097,68 @@ sopuli: the token for 'vault-dev' holds read on kv/data/personal/acme_dev_alice/
   hint: on `vault_path` the DBA must not be able to read the person's path (UC-2 6.6). Remove `read` from this token's policy on that path, or use a token without the root policy
 ```
 
+### Delivering a one-time link
+
+With this `delivery:` block, the tool encrypts the password, stores the
+ciphertext on the stack's Yopass server as a one-time secret, and prints a link.
+It needs the `yopass` extra.
+
+```yaml
+delivery:
+  method: one_time_link
+  one_time_link:
+    base_url: http://127.0.0.1:1337
+    ttl: 1h
+```
+
+```
+$ sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
+...
+ACCOUNT         TARGET    STATE  WAS   DETAIL
+acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
+
+reset acme_dev_alice on 1 of 1 targets
+...
+hand this link to acme_dev_alice for free-pdb; it opens once:
+
+    http://127.0.0.1:1337/#/s/<ID>/<KEY>
+
+It stops working at 2026-10-27T19:36:18Z, and the first open is the last.
+Do not open it to check -- that uses up the person's one view, and them
+finding it gone is the only warning either of you gets.
+```
+
+The person opens the link in a browser. The page says the message can be opened
+only once and has a button to show it. The button shows the password. The server
+then no longer has the secret:
+
+```
+$ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:1337/secret/<ID>
+404
+```
+
+With `split_key: true`, the tool prints the link without the key, and the key,
+to send by two different channels. The page asks for the key:
+
+```
+hand these to acme_dev_alice for free-pdb, by two different channels:
+
+    link:  http://127.0.0.1:1337/#/s/<ID>
+    key:   <KEY>
+
+The link asks for the key. Send each one a different way, so that neither
+channel alone can read the password.
+```
+
+A `ttl` the server does not accept, here `2h`, is refused before anything
+changes. Exit 5:
+
+```
+$ sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
+sopuli: `delivery.method: one_time_link` cannot use the Yopass server at http://127.0.0.1:1337: the server does not accept a ttl of 2h: it accepts 1h, 24h or 168h
+  hint: change the server's setting, or `delivery.one_time_link`, or choose another method (UC-2 6.2). Nothing was drawn or changed
+```
+
 ### The seen path
 
 With this `delivery:` block, the tool prints the password on your terminal once

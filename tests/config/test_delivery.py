@@ -678,6 +678,5 @@ def test_the_link_block_is_not_read_when_another_method_is_selected() -> None:
     assert section.one_time_link is None
 
 
-def test_one_time_link_is_not_served_by_this_build_yet() -> None:
-    """Its keys are read, and the method itself comes later (TODO(#445))."""
-    assert unserviceable(built(method="one_time_link", one_time_link=link_block())) is not None
+def test_one_time_link_is_served_by_this_build() -> None:
+    assert unserviceable(built(method="one_time_link", one_time_link=link_block())) is None

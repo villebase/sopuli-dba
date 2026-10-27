@@ -194,6 +194,7 @@ pair of brackets, separated by commas.
 | `"sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
 | `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
 | `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
+| `"sopuli-dba[yopass]"` | an HTTP client and `pysequoia`, an OpenPGP library | `account reset-password` hands a password over as a one-time Yopass link |
 | `"sopuli-dba[all]"` | every extra | CI, or you genuinely have all of them |
 
 A working install is one store plus one database. For most sites that is:

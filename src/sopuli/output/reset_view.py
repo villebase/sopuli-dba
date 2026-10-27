@@ -176,6 +176,10 @@ def build_result(
             entry["handover"]["path"] = handover.path
         if handover.version is not None:
             entry["handover"]["version"] = handover.version
+        # Only where a method created a Yopass secret: `one_time_link` (run
+        # schema 1.64). The id names the secret and cannot read it.
+        if handover.id is not None:
+            entry["handover"]["id"] = handover.id
     if audited is not None:
         entry["audited"] = audited_value(audited)
         entry["audited_detail"] = audited.detail

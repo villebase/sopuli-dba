@@ -72,9 +72,12 @@ detail.
    4. `account reset-password` on the seen (`manual`) path. This is a real
       credential, so it has five structural guards, stricter than the sample's.
       The exposure is deliberate, witnessed, and ends at the owner's first logon;
-   5. the wrapping token an unseen delivery returns. It holds no password, but it
-      retrieves one, so it is a `Secret`. The tool has no other channel to hand it
-      over on.
+   5. the retrieval credential an unseen delivery returns: a wrapping token, or a
+      one-time link or its key. It holds no password, but it retrieves one, so it
+      is a `Secret`. The tool has no other channel to hand it over on.
+
+   `one_time_link` passes the password to `pysequoia` in the process, and only
+   ciphertext leaves. That call is its store write, as the vault write is (#445).
 
    `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in
    a module that holds none of these sites, and on a second call in the seen

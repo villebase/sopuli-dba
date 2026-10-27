@@ -1001,8 +1001,8 @@ class LinkDelivery:
     The tool encrypts the password, sends the ciphertext to the server at
     ``base_url`` as a one-time secret, and hands over a link that carries the
     secret's id and the key. Nothing here talks to the server: which ``ttl``
-    values it accepts is its own setting, which the method will read from its
-    `/config` at plan time (TODO(#445)).
+    values it accepts is its own setting, which :mod:`sopuli.delivery.yopass`
+    reads from its `/config` at plan time.
 
     ``base_url`` is **required**, and must be ``https://`` unless the host is
     loopback, as a vault address must (decision #856). The person's browser

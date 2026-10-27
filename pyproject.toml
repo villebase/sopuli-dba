@@ -99,11 +99,20 @@ notify = [
   # A future `smtp` channel adds nothing here: the standard library sends mail.
   "httpx>=0.27",
 ]
+yopass = [
+  # #445: `one_time_link` delivery. `httpx` reaches the Yopass server, and
+  # `pysequoia` (Sequoia PGP) encrypts the password before anything leaves the
+  # process, because the server stores only ciphertext. 0.1.35 is the release
+  # measured. Its wheels cover CPython 3.10 to 3.14 everywhere and 3.15 on Linux
+  # x86_64; elsewhere on 3.15 it builds from source and needs Rust.
+  "httpx>=0.27",
+  "pysequoia>=0.1.35",
+]
 # E3: `all` exists because CI and the test matrix need one name that means
 # everything. It is deliberately not what README recommends -- an install line
 # that reads `sopuli[all]` undoes the split for every reader who copies it.
 all = [
-  "sopuli-dba[oracle,postgres,hashicorp,oci,notify]",
+  "sopuli-dba[oracle,postgres,hashicorp,oci,notify,yopass]",
 ]
 
 dev = [

@@ -995,6 +995,34 @@ class PathDelivery:
 
 
 @dataclass(frozen=True)
+class LinkDelivery:
+    """`delivery.one_time_link:` -- a link a Yopass server opens once (decision #445).
+
+    The tool encrypts the password, sends the ciphertext to the server at
+    ``base_url`` as a one-time secret, and hands over a link that carries the
+    secret's id and the key. Nothing here talks to the server: which ``ttl``
+    values it accepts is its own setting, which the method will read from its
+    `/config` at plan time (TODO(#445)).
+
+    ``base_url`` is **required**, and must be ``https://`` unless the host is
+    loopback, as a vault address must (decision #856). The person's browser
+    loads the page that reads the key from there.
+
+    ``ttl`` is **required**, for `vault_wrapped`'s reason: a link that stops
+    working is what this method promises. The shape is the wrap TTL's, and the
+    server is sent the number of seconds.
+
+    ``split_key`` prints the link without the key, and the key, as two values
+    for two channels. ``False`` by default, because the person then has to type
+    the key.
+    """
+
+    base_url: str
+    ttl: str
+    split_key: bool = False
+
+
+@dataclass(frozen=True)
 class WebhookNotify:
     """`delivery.notify.webhook:` -- where to post, and what to say.
 
@@ -1072,6 +1100,8 @@ class Delivery:
     vault_wrapped: WrappedDelivery | None = None
     #: `vault_path`'s settings, where it is selected.
     vault_path: PathDelivery | None = None
+    #: `one_time_link`'s settings, where it is selected.
+    one_time_link: LinkDelivery | None = None
     #: The channel that says a password is ready, or ``None`` where the
     #: estate configured none. Read whichever `method` is selected, unlike a
     #: method's own sub-block: a notification is a property of the delivery as a

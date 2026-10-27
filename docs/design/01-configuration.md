@@ -210,7 +210,7 @@ that shows somebody a live password. Availability rather than preference.
 
 **The selected method's sub-block must exist**, and is refused at load when it
 does not (§9b). Every method needs something: a wrapping token needs a TTL, a link
-needs a backend, `manual` needs `force_expire: true`. A block that could be
+needs a server address, `manual` needs `force_expire: true`. A block that could be
 omitted would make "delivery is configured" mean "a word was typed", and the
 failure would arrive once a password had already been drawn.
 
@@ -308,9 +308,43 @@ repeats the prefix, and in a Vault policy path they are wildcards or a template.
 
 `vault` is **optional**, with `vault_wrapped`'s chain.
 
-**The tool does not validate the keys inside the sub-blocks of `one_time_link`,
-`onepassword_share` and `smtp_encrypted`**, because none of them is built, so a
-typo inside one is accepted. So **`config validate` warns when the selected method is not implemented in this
+**`one_time_link:`** hands the person a link that a Yopass server opens once
+(UC-2 §6.6, decided in #445). Its keys are read. The method itself is not built
+yet.
+
+```yaml
+delivery:
+  method: one_time_link
+  one_time_link:
+    base_url: https://yopass.example.com
+    ttl: 1h
+    split_key: false    # optional
+```
+
+`base_url` is **required**: the Yopass server's address. It must be `https://`,
+or `http://` to `127.0.0.1`, `::1` or `localhost`, by the rule a vault address
+follows (§3a). The person's browser loads the page that reads the key from this
+address, and a page sent in clear can be changed on the way. It must name a
+host. It may not hold a user name or a password, because everything before the
+`#` goes into every link. It may not hold a `?` or a `#`, because the link puts
+its own fragment after it. One trailing `/` is dropped.
+
+`ttl` is **required**, as `vault_wrapped`'s is: the link stops working, and how
+soon is what the method promises. It is checked for the same shape, and the
+server is sent the number of seconds. Which values the server accepts is its own
+setting, so the file is not checked for that. A server without custom expiry
+accepts `1h`, `24h` and `168h`.
+
+`split_key` is **optional**, `false` by default. When it is `true`, the tool
+prints the link without the key and the key as two values, for two channels.
+
+There is no key for one-time. The tool always asks the server for a one-time
+secret.
+
+**The tool does not validate the keys inside the sub-blocks of
+`onepassword_share` and `smtp_encrypted`**, because neither is built, so a typo
+inside one is accepted. And a method whose keys are validated, such as
+`one_time_link`, may still not be built. So **`config validate` warns when the selected method is not implemented in this
 build** (`SOPULI-W035`), so that a clean parse does not read as a working
 delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
 build serves.

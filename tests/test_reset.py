@@ -43,7 +43,7 @@ UNSEEN = Delivery(method="vault_wrapped", vault_wrapped=WrappedDelivery(ttl="15m
 #: A method UC-2 §6.2 defines and this build still cannot serve. It has its own
 #: constant so that "unseen" and "unavailable" are two different values and no
 #: test passes for the wrong reason.
-UNIMPLEMENTED = Delivery(method="one_time_link")
+UNIMPLEMENTED = Delivery(method="onepassword_share")
 
 TARGET = {
     "type": "oracle",

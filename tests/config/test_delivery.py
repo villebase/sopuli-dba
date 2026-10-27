@@ -7,8 +7,8 @@ One accept and one reject per rule, and the rejects assert on the *message*: a r
 that fires without saying which key is wrong has not finished its job.
 
 Which keys a method's sub-block takes is a fact about the service behind the
-method, so only built methods have keys to test. `vault_wrapped:`'s have a
-section of their own below; `vault_path:` (TODO(#447)), `one_time_link:`
+method, so only methods whose keys are read have keys to test. `vault_wrapped:`
+and `vault_path:` have sections of their own below; `one_time_link:`
 (TODO(#445)) and `onepassword_share:` (TODO(#446)) are not read yet. What this
 layer owes every method is the part common to all six: the method is one of the
 six, and the selected one brought settings.
@@ -72,9 +72,13 @@ def test_manual_is_the_one_seen_method() -> None:
     for method in DELIVERY_METHODS:
         if method != "manual":
             # Each method has its own required keys, so a sweep over the enum
-            # has to carry them: `vault_wrapped` needs a `ttl`, and an empty
-            # block is a config error rather than an unseen delivery.
-            settings = {"ttl": "15m"} if method == "vault_wrapped" else {}
+            # has to carry them: `vault_wrapped` needs a `ttl`, `vault_path` a
+            # `ttl` and a `prefix`, and an empty block is a config error rather
+            # than an unseen delivery.
+            settings: dict[str, Any] = {
+                "vault_wrapped": {"ttl": "15m"},
+                "vault_path": {"ttl": "8h", "prefix": "personal"},
+            }.get(method, {})
             assert not built(method=method, **{method: settings}).is_seen
 
 
@@ -453,3 +457,116 @@ def test_vault_wrapped_is_served_by_this_build() -> None:
     `manual` and about this method, and `IMPLEMENTED` is one list so that
     `config validate` and the verb cannot disagree."""
     assert unserviceable(built(method="vault_wrapped", vault_wrapped={"ttl": "15m"})) is None
+
+
+# ------------------------------------------------------- `vault_path:`'s keys ---
+
+
+def path_block(**keys: Any) -> dict[str, Any]:
+    return {"ttl": "8h", "prefix": "personal", **keys}
+
+
+def test_the_path_block_is_read() -> None:
+    section = built(method="vault_path", vault_path=path_block())
+
+    assert section.vault_path is not None
+    assert section.vault_path.ttl == "8h"
+    assert section.vault_path.prefix == "personal"
+    assert section.vault_path.vault is None
+    assert not section.is_seen
+
+
+def test_the_path_ttl_is_required_rather_than_defaulted() -> None:
+    """The value at the path is a working password until Vault deletes it, and
+    the ttl is when (decision #447). A default would be an unreviewed number."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="vault_path", vault_path={"prefix": "personal"}))
+
+    assert "needs a `ttl`" in str(raised.value)
+    assert "delivery.vault_path.ttl" in str(raised.value)
+
+
+@pytest.mark.parametrize("ttl", ["8", "8d", "0h", "eight hours"])
+def test_a_path_ttl_that_is_not_a_duration_is_refused_at_load(ttl: str) -> None:
+    with pytest.raises(ConfigError, match="is not a duration"):
+        build_delivery(document(method="vault_path", vault_path=path_block(ttl=ttl)))
+
+
+def test_the_prefix_is_required_because_the_policy_names_it() -> None:
+    """The person's policy has to name the same prefix, so a default would be a
+    path the file does not show."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="vault_path", vault_path={"ttl": "8h"}))
+
+    assert "needs a `prefix`" in str(raised.value)
+    assert "delivery.vault_path.prefix" in str(raised.value)
+
+
+def test_the_prefix_is_normalised() -> None:
+    section = built(method="vault_path", vault_path=path_block(prefix="/acme//personal/"))
+
+    assert section.vault_path is not None
+    assert section.vault_path.prefix == "acme/personal"
+
+
+@pytest.mark.parametrize("prefix", ["personal/../shared", "../personal", "personal/."])
+def test_a_traversal_in_the_prefix_is_refused(prefix: str) -> None:
+    """A `..` would put a live password outside the prefix the policy covers."""
+    with pytest.raises(ConfigError, match="delivery.vault_path.prefix"):
+        build_delivery(document(method="vault_path", vault_path=path_block(prefix=prefix)))
+
+
+@pytest.mark.parametrize("prefix", ["team*", "per+sonal", "{{x}}"])
+def test_a_prefix_with_a_vault_policy_wildcard_is_refused(prefix: str) -> None:
+    """The person's policy repeats the prefix, and these characters are
+    wildcards or a template there, so the policy would grant more than the tool
+    writes."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="vault_path", vault_path=path_block(prefix=prefix)))
+
+    assert "delivery.vault_path.prefix" in str(raised.value)
+    assert "Vault policy" in str(raised.value.hint or "")
+
+
+def test_the_delivery_names_the_selected_method_s_store() -> None:
+    wrapped = built(method="vault_wrapped", vault_wrapped={"ttl": "15m", "vault": "a"})
+    path = built(method="vault_path", vault_path=path_block(vault="b"))
+
+    assert (wrapped.vault, path.vault) == ("a", "b")
+    assert built(method="manual", manual={"force_expire": True}).vault is None
+
+
+def test_a_prefix_of_only_slashes_is_refused() -> None:
+    with pytest.raises(ConfigError, match="needs a `prefix`"):
+        build_delivery(document(method="vault_path", vault_path=path_block(prefix="//")))
+
+
+def test_the_path_store_can_be_named_on_the_method() -> None:
+    section = built(method="vault_path", vault_path=path_block(vault="vault-handover"))
+
+    assert section.vault_path is not None
+    assert section.vault_path.vault == "vault-handover"
+
+
+def test_an_unknown_key_in_the_path_block_is_refused() -> None:
+    with pytest.raises(ConfigError, match="delivery.vault_path"):
+        build_delivery(document(method="vault_path", vault_path=path_block(identity_scoped=True)))
+
+
+def test_the_path_block_is_not_read_when_another_method_is_selected() -> None:
+    section = built(method="vault_wrapped", vault_wrapped={"ttl": "15m"}, vault_path={"tt1": 1})
+
+    assert section.vault_path is None
+
+
+def test_vault_path_still_warns_that_nothing_serves_it() -> None:
+    """Its keys are read, and the method is not built yet (TODO(#447)). A file
+    that validates clean must not read as one that would deliver. Through the
+    loader, so the warning reaches `config.warnings` and not only the helper."""
+    config = build_config(
+        {"version": 1, "delivery": {"method": "vault_path", "vault_path": path_block()}}
+    )
+
+    found = [warning for warning in config.warnings if warning.code == DELIVERY_UNSERVICEABLE]
+    assert len(found) == 1
+    assert "vault_path" in found[0].message

@@ -28,6 +28,7 @@ from typing import Any
 
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.model import Pairs
+from sopuli.config.secret_refs import normalise_path, reject_unaddressable_path
 
 #: How each Python type reads in an error message. `bool` is listed before `int`
 #: because it is a subclass of it and would otherwise be described as a number.
@@ -95,6 +96,50 @@ def required_string(
     if key not in container:
         raise ConfigError("must be given", at=at.key(key), hint=hint)
     return string(container[key], at=at.key(key))
+
+
+def required_prefix(
+    block: dict[str, Any],
+    *,
+    at: KeyPath,
+    missing: str,
+    hint: str,
+    traversal_hint: str,
+    also: str = "",
+) -> str:
+    """A block's required `prefix:`, checked and normalised.
+
+    For the keys that name where in a store something is written:
+    `reset_records.prefix` and `delivery.vault_path.prefix`. Required rather than
+    defaulted, because a default would be a path the file does not show. A
+    traversal segment and the characters a store path cannot hold are refused by
+    :func:`~sopuli.config.secret_refs.reject_unaddressable_path`, with
+    ``traversal_hint`` saying what a relative segment would do at this site.
+    ``also`` names further characters the site refuses, with ``hint`` as the
+    reason. The rest is :func:`~sopuli.config.secret_refs.normalise_path`, so
+    ``a//b/`` and ``a/b`` are one prefix. A prefix that normalises to nothing is
+    refused like a missing one.
+
+    ``missing`` is the message for an absent or empty prefix.
+    """
+    where = at.key("prefix")
+    if "prefix" not in block:
+        raise ConfigError(missing, at=where, hint=hint)
+    written = string(block["prefix"], at=where)
+    reject_unaddressable_path(
+        written, what=f"prefix {written!r}", at=where, traversal_hint=traversal_hint
+    )
+    refused = sorted({character for character in written if character in also})
+    if refused:
+        raise ConfigError(
+            f"prefix {written!r} contains {', '.join(repr(one) for one in refused)}",
+            at=where,
+            hint=hint,
+        )
+    prefix = normalise_path(written)
+    if not prefix:
+        raise ConfigError(missing, at=where, hint=hint)
+    return prefix
 
 
 def choice(value: Any, *, allowed: Iterable[str], at: KeyPath, noun: str) -> str:

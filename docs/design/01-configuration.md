@@ -278,11 +278,43 @@ chosen something. This is the case that shows why each method's keys belong to t
 method's issue: the answer is a fact about the service behind it, and nothing in a
 config layer could know it.
 
-**The tool does not validate the keys inside the other methods' sub-blocks**, so
-a typo inside one is accepted. That is why **`config validate` warns when the
-selected method is not implemented in this build** (`SOPULI-W035`), so that a
-clean parse does not read as a working delivery. `IMPLEMENTED` in
-`sopuli/config/delivery.py` lists the methods this build serves.
+**`vault_path:`** writes the password to a KV v2 path that only the person's own
+Vault identity can read (UC-2 §6.6). Its keys are read; the method itself is
+not built yet (open: #447).
+
+```yaml
+delivery:
+  method: vault_path
+  vault_path:
+    ttl: 8h
+    prefix: personal
+    vault: vault-handover    # optional
+```
+
+The value goes to `<prefix>/<account>/<target>` in the store's KV v2 mount, with
+the account named as the database stores it.
+
+`ttl` is **required**, as `vault_wrapped`'s is. The value at the path is a
+working password until Vault deletes it, and the `ttl` is when: it becomes the
+path's `delete_version_after`. It is checked for the same shape, `30m`, `8h` or
+`168h`.
+
+`prefix` is **required**. The person's policy names the same prefix, so a default
+would be a path the file does not show. It is checked and normalised as
+`reset_records.prefix` is: a `.` or `..` segment is refused, because it would put
+the password outside the path the policy covers, and so are the characters no
+store path may hold. `*`, `+`, `{` and `}` are refused too, because the policy
+repeats the prefix, and in a Vault policy path they are wildcards or a template.
+
+`vault` is **optional**, with `vault_wrapped`'s chain.
+
+**The tool does not validate the keys inside the sub-blocks of `one_time_link`,
+`onepassword_share` and `smtp_encrypted`**, so a typo inside one is accepted. And
+a method whose keys are validated, such as `vault_path`, may still not be built.
+So **`config validate` warns when the selected method is not implemented in this
+build** (`SOPULI-W035`), so that a clean parse does not read as a working
+delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
+build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an
 *unselected* sub-block unjudged on purpose, so `required: ["ttl"]`, a pattern on

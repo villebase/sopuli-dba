@@ -2617,7 +2617,7 @@ compare-and-set per secret path, however many targets share it. So its events, a
 `vault.read`, a `password.generated` per account drawn, and a `vault.write`, name
 a `path` and no `target`, and all of them come before the first
 `target.started`. A diagnostic can come between them, such as `SOPULI-W022`
-when the run connects for the admin credential, and it names its target. That
+for an admin credential read from the environment, and it names its target. That
 is UC-1 §8's own order: stage everything, *then* touch a
 database. Interleaving the two phases per target would put a database event
 between two vault writes that happened one after the other.

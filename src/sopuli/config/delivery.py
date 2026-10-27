@@ -35,12 +35,12 @@ from sopuli.config.fields import (
     mapping,
     optional_bool,
     reject_unknown_keys,
+    required_prefix,
     required_string,
     string,
 )
 from sopuli.config.model import Delivery, ManualDelivery, PathDelivery, WrappedDelivery
 from sopuli.config.notify import build_notify
-from sopuli.config.secret_refs import required_prefix
 
 #: The methods UC-2 §6.2 defines, in the order that section lists them. **The
 #: whole set, not the subset that is built**: `smtp_encrypted` is here although
@@ -96,6 +96,12 @@ WRAPPED_KEYS = ("ttl", "vault")
 #: The keys `vault_path:` takes. `ttl` and `prefix` are required; `vault` is
 #: optional, with `vault_wrapped`'s chain.
 PATH_KEYS = ("ttl", "prefix", "vault")
+
+#: Characters `vault_path.prefix` refuses beyond what any store path does. The
+#: person's Vault policy repeats the prefix, and in a policy path `*` and `+`
+#: are wildcards and `{{ }}` opens a template, so a prefix holding one would
+#: grant read on more than the tool writes, or fail to parse.
+POLICY_CHARACTERS = "*+{}"
 
 #: A Vault duration: digits and one unit. Shape only -- see
 #: :class:`~sopuli.config.model.WrappedDelivery` for why the grammar stays
@@ -302,12 +308,15 @@ def _build_path(raw: Any, *, at: KeyPath) -> PathDelivery:
         missing="`vault_path` delivery needs a `prefix`",
         hint=(
             "the path in the KV v2 mount that the person's policy covers, such as "
-            "`personal`. The value goes to `<prefix>/<account>/<target>`"
+            "`personal`. The value goes to `<prefix>/<account>/<target>`. The policy "
+            "names the prefix too, so it may not hold `*`, `+`, `{` or `}`, which "
+            "mean something else in a Vault policy path"
         ),
         traversal_hint=(
             "write the path the person's policy covers -- a relative segment resolves "
             "somewhere else on the way to the store"
         ),
+        also=POLICY_CHARACTERS,
     )
     vault = string(block["vault"], at=at.key("vault")) if "vault" in block else None
     return PathDelivery(ttl=ttl, prefix=prefix, vault=vault)

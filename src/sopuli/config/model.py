@@ -1059,8 +1059,8 @@ class Delivery:
     secret or anything that retrieves it (UC-2 §6.1), a rule its own builder must
     enforce because it needs the template grammar.
 
-    **`manual` has a typed field of its own**, as each built method does, rather
-    than a bag. It is ``None`` where `manual` is not the selected method -- an
+    **`manual` has a typed field of its own**, as each method whose keys are read
+    does, rather than a bag. It is ``None`` where `manual` is not the selected method -- an
     unselected method's settings are not read, and a field holding them would
     invite a consumer to act on a block the run is not using.
     """
@@ -1068,8 +1068,8 @@ class Delivery:
     method: str
     #: `manual`'s settings, where `manual` is selected.
     manual: ManualDelivery | None = None
-    #: `vault_wrapped`'s settings, where it is selected. Each built method has a
-    #: typed field, ``None`` for every method the run is not using.
+    #: `vault_wrapped`'s settings, where it is selected. Each method whose keys
+    #: are read has a typed field, ``None`` for every method the run is not using.
     vault_wrapped: WrappedDelivery | None = None
     #: `vault_path`'s settings, where it is selected.
     vault_path: PathDelivery | None = None
@@ -1089,6 +1089,16 @@ class Delivery:
         because of what it does, not because a file said so.
         """
         return self.method == "manual"
+
+    @property
+    def vault(self) -> str | None:
+        """The `vault:` the selected method names, or ``None`` for §3's chain.
+
+        One answer for every method that takes a store, so the reference check
+        and the run that opens the store cannot read different keys.
+        """
+        settings = self.vault_wrapped or self.vault_path
+        return settings.vault if settings is not None else None
 
 
 @dataclass(frozen=True)

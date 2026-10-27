@@ -174,15 +174,10 @@ def _vault_references(config: Config) -> list[_Reference]:
     # one to switch to, and validating a name in it would refuse a file the run
     # never consults.
     delivery = config.delivery
-    if delivery is not None:
-        for method, settings in (
-            ("vault_wrapped", delivery.vault_wrapped),
-            ("vault_path", delivery.vault_path),
-        ):
-            if settings is not None and settings.vault is not None:
-                found.append(
-                    _Reference(settings.vault, ROOT.key("delivery").key(method).key("vault"))
-                )
+    if delivery is not None and delivery.vault is not None:
+        found.append(
+            _Reference(delivery.vault, ROOT.key("delivery").key(delivery.method).key("vault"))
+        )
 
     return found
 

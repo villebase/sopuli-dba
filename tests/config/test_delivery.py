@@ -516,6 +516,26 @@ def test_a_traversal_in_the_prefix_is_refused(prefix: str) -> None:
         build_delivery(document(method="vault_path", vault_path=path_block(prefix=prefix)))
 
 
+@pytest.mark.parametrize("prefix", ["team*", "per+sonal", "{{x}}"])
+def test_a_prefix_with_a_vault_policy_wildcard_is_refused(prefix: str) -> None:
+    """The person's policy repeats the prefix, and these characters are
+    wildcards or a template there, so the policy would grant more than the tool
+    writes."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="vault_path", vault_path=path_block(prefix=prefix)))
+
+    assert "delivery.vault_path.prefix" in str(raised.value)
+    assert "Vault policy" in str(raised.value.hint or "")
+
+
+def test_the_delivery_names_the_selected_method_s_store() -> None:
+    wrapped = built(method="vault_wrapped", vault_wrapped={"ttl": "15m", "vault": "a"})
+    path = built(method="vault_path", vault_path=path_block(vault="b"))
+
+    assert (wrapped.vault, path.vault) == ("a", "b")
+    assert built(method="manual", manual={"force_expire": True}).vault is None
+
+
 def test_a_prefix_of_only_slashes_is_refused() -> None:
     with pytest.raises(ConfigError, match="needs a `prefix`"):
         build_delivery(document(method="vault_path", vault_path=path_block(prefix="//")))

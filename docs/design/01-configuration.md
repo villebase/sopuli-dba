@@ -300,9 +300,11 @@ path's `delete_version_after`. It is checked for the same shape, `30m`, `8h` or
 `168h`.
 
 `prefix` is **required**. The person's policy names the same prefix, so a default
-would be a path the file does not show. It is normalised as `reset_records.prefix`
-is, and a `..` segment is refused, because it would put the password outside the
-path the policy covers.
+would be a path the file does not show. It is checked and normalised as
+`reset_records.prefix` is: a `.` or `..` segment is refused, because it would put
+the password outside the path the policy covers, and so are the characters no
+store path may hold. `*`, `+`, `{` and `}` are refused too, because the policy
+repeats the prefix, and in a Vault policy path they are wildcards or a template.
 
 `vault` is **optional**, with `vault_wrapped`'s chain.
 

@@ -31,9 +31,8 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.config.errors import ROOT, KeyPath
-from sopuli.config.fields import mapping, reject_unknown_keys, required_string
+from sopuli.config.fields import mapping, reject_unknown_keys, required_prefix, required_string
 from sopuli.config.model import ResetRecords
-from sopuli.config.secret_refs import required_prefix
 
 RESET_RECORDS_KEYS = ("vault", "prefix")
 

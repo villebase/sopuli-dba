@@ -24,10 +24,11 @@ could reach the server, in session and in transaction pooling:
        does not have, a role with no password, and a wrong password, for a
        role that auth_query reads from the server and for one in auth_file
        (test/pgbouncer/userlist.txt). Then a role whose auth_file password is
-       not the server's
+       not the server's. Through the PgBouncer that refuses `options`
   PB7  with --server-down, run after the postgres service is stopped and
-       PgBouncer left running: the right and a wrong password for each kind of
-       role, and a role the server does not have
+       PgBouncer left running: the right and a wrong password for the
+       auth_query role and for the auth_file role, and a role the server does
+       not have. Through the PgBouncer that refuses `options`
 
 It MEASURES and decides nothing. The tool's own verbs through PgBouncer are run
 by hand; the results are below.

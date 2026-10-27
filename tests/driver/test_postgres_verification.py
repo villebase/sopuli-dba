@@ -46,6 +46,20 @@ def test_the_first_attempts_reason_is_the_one_that_counts() -> None:
     assert result[0] == FAIL
 
 
+def test_pgbouncers_refusal_on_the_first_attempt_is_the_one_that_counts() -> None:
+    """PgBouncer's message is a recognised reason too, so a method refused on a
+    later attempt does not make the check UNAVAILABLE."""
+    assert (
+        outcome(
+            'connection to server at "192.0.2.10", port 6432 failed: FATAL:  SASL '
+            "authentication failed\n"
+            'connection to server at "192.0.2.11", port 6432 failed: authentication method '
+            'requirement "scram-sha-256" failed: server requested a cleartext password'
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "server",
     [

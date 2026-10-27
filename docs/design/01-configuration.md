@@ -1571,7 +1571,12 @@ in [`../measurements.md`](../measurements.md)):
   error is `08001`, and its hint says that the target is a pooler. PgBouncer
   sends the same message for a role with no password, and messages of its own
   for a role the server does not have and for a server it cannot log in to.
-  Each gets the same hint.
+  Each of these is `08001` too. Its hint says that the target is a pooler,
+  and what PgBouncer sends that message for.
+- Where PgBouncer's `auth_file` holds another password than the server, it
+  passes on the server's own refusal of the file's password. `creds check`
+  reads that as the server's `28P01`, and reports `DRIFT` when the vault holds
+  the file's password.
 - A `db.query_timeout_s` makes PgBouncer refuse the whole connection, so every
   verb finds the target unreachable. Where PgBouncer ignores the `options`
   parameter, the budget is dropped without a message instead.

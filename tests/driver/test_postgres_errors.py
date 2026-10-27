@@ -176,7 +176,7 @@ _PGBOUNCER = 'connection failed: connection to server at "127.0.0.1", port 6432 
 @pytest.mark.parametrize(
     ("refusal", "meaning"),
     [
-        ("SASL authentication failed", "a wrong password, and for a role with no password"),
+        ("SASL authentication failed", "where PgBouncer's auth_file holds another one"),
         ("no such user", "a role the server does not have"),
         (
             "server login has been failing, cached error: server DNS lookup failed "

@@ -51,6 +51,15 @@ What each environment is, and what to know before using it:
   md5` and an `md5` line in `pg_hba.conf`. The others use `scram-sha-256`. Each
   server keeps its data in an anonymous volume, which a recreate keeps. To start
   one from a new data directory, add `--renew-anon-volumes` to `up`.
+- **pgbouncer** (`pgbouncer` and `pgbouncer-ignore`, ports 6432 and 6433) is
+  PgBouncer 1.26.0 in front of tier 0's `postgres`, for
+  `sql/postgres/08_pgbouncer_probe.py`. Start it with tier 0:
+  `docker compose --profile tier0 --profile pgbouncer up -d`. Each has a
+  database `session` and a database `transaction`, one for each pool mode.
+  `pgbouncer` refuses the startup parameter `options`, and `pgbouncer-ignore`
+  drops it. `pgbouncer/pgbouncer.ini` has the rest. A client logs in with
+  SCRAM, and PgBouncer reads the role's verifier with `auth_query`, which needs
+  the role and the function that the probe creates.
 
 CI starts tier 1 for each pull request, except one that changes only files
 that `.github/workflows/tier1.yml` lists under `paths-ignore`. Every other
@@ -70,6 +79,7 @@ docker compose --profile tier2 up -d      # + 21c/18c/11g XE, about 90 s once pu
 docker compose --profile nne   up -d      # Vault + Oracle requiring NNE, on 1525
 docker compose --profile emulators up -d  # lowkey-vault, on 8443
 docker compose --profile postgres-matrix up -d  # PostgreSQL 13 to 18, on 5413 to 5418
+docker compose --profile tier0 --profile pgbouncer up -d  # + PgBouncer, on 6432 and 6433
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
 docker compose --profile oracle19c-ru up -d  # 19.19 EE, arm64 hosts only; fails under emulation on x86
 docker compose --profile oracle12c up -d  # 12.2.0.1 EE, maintainer-only; run its init.sh once, then healthy
@@ -160,7 +170,10 @@ maintainer-only services keep fixed ports, so only one clone can run each of
 them. The `postgres-matrix` services each take a port variable of their own,
 `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT`, defaults 5413
 to 5418. The suite does not read them, so they are not among the four. A second
-clone that starts the matrix sets them too, for example to 5613 to 5618.
+clone that starts the matrix sets them too, for example to 5613 to 5618. The
+same holds for `SOPULI_TEST_PGBOUNCER_PORT` and
+`SOPULI_TEST_PGBOUNCER_IGNORE_PORT`, defaults 6432 and 6433, for the
+`pgbouncer` profile.
 
 Measured on 2026-10-14: a healthy tier1 stack uses about 2.5 GB of memory in
 its containers, and about 2.9 GB while the suite runs against it. Oracle Free is
@@ -171,6 +184,7 @@ most of it, 2.25 GB idle and 2.8 GB under the suite.
 | vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. **Restarting it loses both** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test`. Like the matrix, it preloads `pg_stat_statements` and writes the server log to `log/postgresql.log` in the data directory, so `docker logs` shows only the start of it. Invariant 15's test reads the log back with `pg_read_file()` |
 | postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
+| pgbouncer, pgbouncer-ignore | 6432 and 6433, or `SOPULI_TEST_PGBOUNCER_PORT` and `SOPULI_TEST_PGBOUNCER_IGNORE_PORT` | **`--profile pgbouncer` only**, with tier 0. PgBouncer 1.26.0 in front of postgres; databases `session` and `transaction`. `pgbouncer-ignore` drops the startup parameter `options` |
 | oracle-free | 1521, or `SOPULI_TEST_ORACLE_PORT` | 23ai/26ai Free — CDB + PDB, rollover |
 | oracle-xe21 | 1522 | 21c XE |
 | oracle-xe18 | 1523 | 18c XE — no rollover, a deliberate negative case |

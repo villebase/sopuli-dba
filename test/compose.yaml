@@ -10,6 +10,7 @@
 #   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525; see README.md
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
+#   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
 #   docker compose --profile oracle12c up -d # 12.2.0.1 EE, maintainer-only
@@ -188,6 +189,39 @@ services:
     ports:
       - "127.0.0.1:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
       - "[::1]:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
+
+  # ------------------------------------------------------------ pgbouncer ---
+  # PgBouncer in front of postgres above, for sql/postgres/08_pgbouncer_probe.py
+  # (#1045). Start it with tier 0, which runs postgres:
+  #   docker compose --profile tier0 --profile pgbouncer up -d
+  # pgbouncer refuses a client that sends the startup parameter `options`, as
+  # PgBouncer does by default. pgbouncer-ignore lets it in and drops it
+  # (ignore_startup_parameters). Each has a database `session` and a database
+  # `transaction`, one for each pool mode; pgbouncer/pgbouncer.ini says how. A
+  # third-party image, as PgBouncer publishes none, and pinned, so that the
+  # release the probe's header records is the one that runs.
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.26.0-p0
+    profiles: [pgbouncer]
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ./pgbouncer:/etc/pgbouncer:ro
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_PGBOUNCER_PORT:-6432}:6432"
+      - "[::1]:${SOPULI_TEST_PGBOUNCER_PORT:-6432}:6432"
+
+  pgbouncer-ignore:
+    image: edoburu/pgbouncer:v1.26.0-p0
+    profiles: [pgbouncer]
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["/usr/bin/pgbouncer", "/etc/pgbouncer/ignore.ini"]
+    volumes:
+      - ./pgbouncer:/etc/pgbouncer:ro
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_PGBOUNCER_IGNORE_PORT:-6433}:6432"
+      - "[::1]:${SOPULI_TEST_PGBOUNCER_IGNORE_PORT:-6433}:6432"
 
   # --------------------------------------------------------------- oracle ---
   # 23ai/26ai Free: CDB + PDB, common users, gradual password rollover.

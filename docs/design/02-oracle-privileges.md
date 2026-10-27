@@ -1319,9 +1319,9 @@ value: decided in [#1013](../decisions/log.md#1013). The check compares the
 value in upper case, with `, ` between its parts. On 21.3.0.0.0 and
 18.4.0.0.0, `ALTER SYSTEM … SCOPE = SPFILE` refuses `TRUE`, `OS, EXTENDED` and
 `EXTENDED` with `ORA-00096` (`15_mixed_mode_trail_probe.sql`). For
-`OS, EXTENDED` and `EXTENDED` the error follows `ORA-32017`, and names the six
-values it accepts: `NONE | OS | DB | DB,EXTENDED | XML | XML,EXTENDED`. For
-`TRUE` it names five: `extended, xml, none, os, db`. Other spellings, such as
+`OS, EXTENDED` and `EXTENDED` the `ORA-00096` follows `ORA-32017`, and names
+the six values it accepts: `NONE | OS | DB | DB,EXTENDED | XML | XML,EXTENDED`.
+For `TRUE` the `ORA-00096` names five: `extended, xml, none, os, db`. Other spellings, such as
 `FALSE` or `DB_EXTENDED`, were not tried. A value nobody has measured gets the
 `unknown`, on a release that accepts one. Where `AUDIT_TRAIL` cannot be read,
 the value is `unknown` too, because the tool cannot rule out `NONE`, and the

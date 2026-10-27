@@ -197,7 +197,7 @@ Not measured: every other minor release, and every managed service.
 | `03_createrole_password_probe.sql` | `16.15` | 2026-10-25 | #1032 | `CREATEROLE` also needs `ADMIN OPTION` on the role, which works with `INHERIT FALSE, SET FALSE`. `pg_auth_members.admin_option` and `pg_has_role(…, 'USAGE WITH ADMIN OPTION')` show it. A role that creates another gets `ADMIN OPTION` on it |
 | `03_createrole_password_probe.sql` | `17.11` | 2026-10-25 | #1032 | As on 16.15 |
 | `03_createrole_password_probe.sql` | `18.6` | 2026-10-25 | #1032 | As on 16.15 |
-| `03_createrole_password_probe.sql` | `13.23` | 2026-10-27 | #1098 | CR6: a `CREATEROLE` role grants itself `pg_execute_server_program`. CR1 to CR5 as on 2026-10-25 |
+| `03_createrole_password_probe.sql` | `13.23` | 2026-10-27 | #1098 | CR6: a new role with only `CREATEROLE` grants itself `pg_execute_server_program`. CR1 to CR5 as on 2026-10-25 |
 | `03_createrole_password_probe.sql` | `14.24` | 2026-10-27 | #1098 | As on 13.23 |
 | `03_createrole_password_probe.sql` | `15.19` | 2026-10-27 | #1098 | As on 13.23 |
 | `03_createrole_password_probe.sql` | `16.15` | 2026-10-27 | #1098 | CR6: refused, `42501`, without `ADMIN OPTION` on the built-in role. CR1 to CR5 as on 2026-10-25 |
@@ -214,7 +214,7 @@ Not measured: every other minor release, and every managed service.
 | `04_md5_line_scram_verifier_probe.py` | `15.19` | 2026-10-27 | #1098 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-27 | #1098 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-27 | #1098 | As on 13.23 |
-| `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-27 | #1098 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-27 | #1098 | As on 13.23. The server warns at the md5 `\password` that md5 passwords are deprecated |
 | `05_psycopg_libpq_probe.py` | `18.6` | 2026-10-25 | #1032 | psycopg 3.3.6 loads libpq 18.4 on Windows AMD64 and libpq 18.6 on Linux x86_64, glibc and musl. 3.2.13, 3.1.20 and 3.1.12 load libpq 17.6, libpq 16.3 and libpq 16.0 on Linux, and accept `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 load libpq 15.0 and libpq 14.4, and refuse it in the client as an invalid connection option. Each computes a SCRAM verifier. Not run on macOS (unverified: psycopg-libpq-macos) |
 | `06_saslprep_probe.py` | `13.23` | 2026-10-26 | #1057 | A verifier from libpq 18.4 and the server's own hash agree on every non-ASCII password tried, and each logs in with both spellings SASLprep makes one, by psycopg and by psql with the release's own libpq. A password with a character SASLprep prohibits logs in as given. A verifier computed without SASLprep refuses a password SASLprep changes. The named charsets are ASCII |
 | `06_saslprep_probe.py` | `14.24` | 2026-10-26 | #1057 | As on 13.23 |

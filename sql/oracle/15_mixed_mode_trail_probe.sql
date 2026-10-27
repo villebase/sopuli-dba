@@ -122,10 +122,11 @@
 --
 -- THROWAWAY DATABASES ONLY. Creates and drops two local accounts, a common
 -- account and two audit policies, and plants known passwords. MT4 writes the
--- spfile's own AUDIT_TRAIL value back to it; a run stopped between its
--- attempts and the restore leaves any value that was accepted. Disables ORA_SECURECONFIG for MT2
--- and enables it again for every user, as the XE images ship it; a run
--- stopped in MT2 leaves it disabled. Under AUDIT_TRAIL = NONE a run leaves
+-- spfile's own AUDIT_TRAIL value back to it. A run stopped between its
+-- attempts and the restore leaves any value that was accepted, and the next
+-- run takes that value as the spfile's own: check the value MT4 prints first.
+-- Disables ORA_SECURECONFIG for MT2 and enables it again for every user, as
+-- the XE images ship it; a run stopped in MT2 leaves it disabled. Under AUDIT_TRAIL = NONE a run leaves
 -- nothing in UNIFIED_AUDIT_TRAIL. Under each other setting it leaves the
 -- logon and the ALTER USER rows, and the rows ORA_SECURECONFIG writes for the
 -- setup and the teardown: CREATE and DROP USER, the policy statements, AUDIT

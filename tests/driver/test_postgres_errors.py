@@ -168,6 +168,62 @@ def test_an_unverified_server_certificate_names_sslrootcert(message: str) -> Non
     assert "postgres.sslrootcert" in str(diagnosis.hint)
 
 
+#: PgBouncer 1.26.0's refusals, as psycopg 3.3.6 reported them (probe 08, PB6
+#: and PB7, #1105).
+_PGBOUNCER = 'connection failed: connection to server at "127.0.0.1", port 6432 failed: FATAL:  '
+
+
+@pytest.mark.parametrize(
+    ("refusal", "meaning"),
+    [
+        ("SASL authentication failed", "where PgBouncer's auth_file holds another one"),
+        ("no such user", "a role the server does not have"),
+        (
+            "server login has been failing, cached error: server DNS lookup failed "
+            "(server_login_retry)",
+            "cannot log in to the server behind it",
+        ),
+    ],
+)
+def test_a_pgbouncer_refusal_names_the_pooler(refusal: str, meaning: str) -> None:
+    """It stays a connection failure: a pooler is not a supported target
+    (#1045), so a refused password is not read as 28P01."""
+    error = from_error(_PsycopgError(_PGBOUNCER + refusal), connecting=True).as_error()
+
+    assert not isinstance(error, AuthenticationError)
+    assert (error.code, error.category, error.exit_code) == (
+        "08001",
+        "connectivity",
+        ExitCode.FAILURE,
+    )
+    assert "connection pooler" in str(error.hint)
+    assert "#1045" in str(error.hint)
+    assert meaning in str(error.hint)
+
+
+def test_the_servers_refusal_through_pgbouncer_keeps_its_code() -> None:
+    """Where auth_file holds another password than the server, PgBouncer passes
+    on the server's own refusal (PB6)."""
+    message = _PGBOUNCER + 'password authentication failed for user "acme_stale_user"'
+
+    assert from_error(_PsycopgError(message), connecting=True).code == "28P01"
+
+
+def test_a_pgbouncer_refusal_on_the_first_attempt_is_the_one_reported() -> None:
+    message = (
+        "connection failed: Multiple connection attempts failed. All failures were:\n"
+        '- host: "localhost", port: 6432, hostaddr: "::1": connection failed: '
+        "FATAL:  SASL authentication failed\n"
+        '- host: "localhost", port: 6432, hostaddr: "127.0.0.1": connection failed: '
+        'FATAL:  password authentication failed for user "acme_app_user"'
+    )
+
+    diagnosis = from_error(_PsycopgError(message), connecting=True)
+
+    assert diagnosis.code == "08001"
+    assert "connection pooler" in str(diagnosis.hint)
+
+
 def test_a_lost_connection_with_no_sqlstate_is_08006() -> None:
     """On an open session. A message that matches a login failure is not read
     as one there."""

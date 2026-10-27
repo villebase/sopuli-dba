@@ -46,6 +46,20 @@ def test_the_first_attempts_reason_is_the_one_that_counts() -> None:
     assert result[0] == FAIL
 
 
+def test_pgbouncers_refusal_on_the_first_attempt_is_the_one_that_counts() -> None:
+    """PgBouncer's message is a recognised reason too, so a method refused on a
+    later attempt does not make the check UNAVAILABLE."""
+    assert (
+        outcome(
+            'connection to server at "192.0.2.10", port 6432 failed: FATAL:  SASL '
+            "authentication failed\n"
+            'connection to server at "192.0.2.11", port 6432 failed: authentication method '
+            'requirement "scram-sha-256" failed: server requested a cleartext password'
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "server",
     [
@@ -118,8 +132,11 @@ def test_a_refusal_after_the_password_is_a_pass(server: str, code: str) -> None:
         'connection to server at "127.0.0.1", port 5432 failed: Connection refused',
         "connection timeout expired",
         'FATAL:  database "nosuch" does not exist',
+        # PgBouncer's, for a wrong password: through a pooler, which is not
+        # supported (#1045), the check does not read it as one.
+        'connection to server at "127.0.0.1", port 6432 failed: FATAL:  SASL authentication failed',
     ],
-    ids=["refused port", "timeout", "no database"],
+    ids=["refused port", "timeout", "no database", "pgbouncer"],
 )
 def test_any_other_failure_is_not_an_answer_about_the_password(message: str) -> None:
     assert outcome(message) is None

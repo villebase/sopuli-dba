@@ -40,9 +40,9 @@ inside itself. Silently resetting it would make this fix a regression on the
 stream that matters most. So the current value is read off the stream and passed
 back, and only the encoding changes.
 
-**Failure is silent.** There is no logging subsystem yet, and the tool's own
-prose is ASCII by convention (``tests/test_cli_smoke.py``), so a stream that
-refuses to reconfigure still produces correct output. ``sopuli doctor`` can
+**Failure is silent.** The tool's own prose is ASCII by convention
+(``tests/test_cli_smoke.py``), so a stream that refuses to reconfigure still
+produces correct output. ``sopuli doctor`` can
 report the state later by reading ``sys.stdout.encoding`` directly.
 """
 

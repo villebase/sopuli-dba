@@ -13,7 +13,7 @@ Four gates, in this order, and the order is what makes the refusals cheap:
    lookup by allowing a predicate;
 3. **is the account in a state a reset may touch** -- H4: a deliberate
    ``LOCKED`` is refused and a ``LOCKED(TIMED)`` is not;
-4. **do the guardrails allow it** -- ``02-oracle-privileges.md`` §4's five
+4. **do the guardrails allow it** -- ``02-oracle-privileges.md`` §4's
    checks, unchanged and shared with every other mutating verb.
 
 **Pure, and it issues nothing.** It takes the :class:`UserState` the caller read
@@ -274,7 +274,7 @@ def decide(
     is a finding rather than an error (Q8).
 
     **The deliberate lock is checked before the review and is not waivable.** It is
-    not one of §4's five checks, so ``--force`` has nothing to say about it: that
+    not one of §4's checks, so ``--force`` has nothing to say about it: that
     flag overrides *account guardrails*, and this is somebody's offboarding decision
     (H4). Checking it first also keeps the message specific -- reported through
     check 1 it would read as *not declared*, which is a different thing to go and

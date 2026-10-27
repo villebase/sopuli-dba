@@ -2514,24 +2514,26 @@ A staged password applied and promoted against the tier-1 stack, pasted from the
 run and trimmed only where `…` says so:
 
 ```jsonl
-{"schema_version":"1.4","event":"run.started","seq":0,"ts":"2026-09-26T12:55:57.739823Z","correlation_id":"be07e5d1-…","data":{"command":"creds.apply","dry_run":false}}
-{"schema_version":"1.4","event":"plan.resolved","seq":1,"ts":"2026-09-26T12:55:57.739965Z","correlation_id":"be07e5d1-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify","password_set","vault_promote"],…}],"blast_radius":{…}}}
-{"schema_version":"1.4","event":"lock.acquired","seq":2,"ts":"2026-09-26T12:55:58.305433Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":false}}
-{"schema_version":"1.4","event":"vault.read","seq":3,"ts":"2026-09-26T12:55:58.307418Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":3}}
-{"schema_version":"1.4","event":"target.started","seq":4,"ts":"2026-09-26T12:55:58.307538Z","correlation_id":"be07e5d1-…","target":"free-pdb"}
-{"schema_version":"1.4","event":"diagnostic","seq":5,"ts":"2026-09-26T12:55:59.661498Z","correlation_id":"be07e5d1-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
-{"schema_version":"1.4","event":"password.applied","seq":6,"ts":"2026-09-26T12:55:59.661586Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"version":3,"outcome":"IN_SYNC"}}
-{"schema_version":"1.4","event":"verification.done","seq":7,"ts":"2026-09-26T12:55:59.661692Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
-{"schema_version":"1.4","event":"vault.promote","seq":8,"ts":"2026-09-26T12:55:59.669352Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":4}}
-{"schema_version":"1.4","event":"lock.released","seq":9,"ts":"2026-09-26T12:55:59.671666Z","correlation_id":"be07e5d1-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":13,"acquired_at":"2026-09-26T12:55:58.294164Z","expires_at":"2026-09-26T13:10:58.294164Z","released":true}}
-{"schema_version":"1.4","event":"target.finished","seq":10,"ts":"2026-09-26T12:55:59.671771Z","correlation_id":"be07e5d1-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"acme_app_user","version":4,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1159}}
-{"schema_version":"1.4","event":"run.finished","seq":11,"ts":"2026-09-26T12:55:59.672032Z","correlation_id":"be07e5d1-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T07:22:13.884288Z","correlation_id":"3c0cfd73-…","data":{"command":"creds.apply","dry_run":false}}
+{"schema_version":"1.17","event":"plan.resolved","seq":1,"ts":"2026-10-27T07:22:13.884441Z","correlation_id":"3c0cfd73-…","data":{"units":[{"account":"acme_app_user","target":"free-pdb","intent":["verify","password_set","vault_promote"],…}],"blast_radius":{…},"confirmation_required":false}}
+{"schema_version":"1.17","event":"lock.acquired","seq":2,"ts":"2026-10-27T07:22:14.324458Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":3,"acquired_at":"2026-10-27T07:22:14.318838Z","expires_at":"2026-10-27T07:37:14.318838Z","released":false}}
+{"schema_version":"1.17","event":"vault.read","seq":3,"ts":"2026-10-27T07:22:14.326820Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","version":1}}
+{"schema_version":"1.17","event":"target.started","seq":4,"ts":"2026-10-27T07:22:14.327012Z","correlation_id":"3c0cfd73-…","target":"free-pdb"}
+{"schema_version":"1.17","event":"diagnostic","seq":5,"ts":"2026-10-27T07:22:15.792967Z","correlation_id":"3c0cfd73-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.17","event":"password.applied","seq":6,"ts":"2026-10-27T07:22:15.793090Z","correlation_id":"3c0cfd73-…","account":"acme_app_user","target":"free-pdb","data":{"version":1,"outcome":"IN_SYNC"}}
+{"schema_version":"1.17","event":"verification.done","seq":7,"ts":"2026-10-27T07:22:15.793168Z","correlation_id":"3c0cfd73-…","account":"acme_app_user","target":"free-pdb","data":{"method":"login","result":"pass",…}}
+{"schema_version":"1.17","event":"vault.promote","seq":8,"ts":"2026-10-27T07:22:15.803027Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","promoted_to":2}}
+{"schema_version":"1.17","event":"lock.released","seq":9,"ts":"2026-10-27T07:22:15.806921Z","correlation_id":"3c0cfd73-…","data":{"vault":"vault-dev","path":"acme/dev/acme","fence":3,"acquired_at":"2026-10-27T07:22:14.318838Z","expires_at":"2026-10-27T07:37:14.318838Z","released":true}}
+{"schema_version":"1.17","event":"target.finished","seq":10,"ts":"2026-10-27T07:22:15.807068Z","correlation_id":"3c0cfd73-…","account":"acme_app_user","target":"free-pdb","data":{"account":"acme_app_user","target":"free-pdb","state":"IN_SYNC","changed":true,"secret":{"vault":"vault-dev","path":"acme/dev/acme","field":"DB_CREDENTIALS","pointer":"/acme_app_user","version":2,"stage":"current"},"actions":[…],"verification":{…},"rollover":{…},"duration_ms":1259}}
+{"schema_version":"1.17","event":"diagnostic","seq":11,"ts":"2026-10-27T07:22:15.807407Z","correlation_id":"3c0cfd73-…","target":"free-pdb","level":"warning","message":"free-pdb: a password was sent over a connection that is not encrypted …","data":{"code":"SOPULI-W031"}}
+{"schema_version":"1.17","event":"run.finished","seq":12,"ts":"2026-10-27T07:22:15.807505Z","correlation_id":"3c0cfd73-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0,"unchanged":0,"unverifiable":0,"by_state":{"IN_SYNC":1}},"exit_code":0}}
 ```
 
 Read from top to bottom, this is UC-1 §3's order as it happened: the lock, the
-document read under it (`version` 3, which is what was applied), the target, the
-database changed and verified, *then* the promotion to version 4, then the
-release.
+document read under it (`version` 1, which is what was applied), the target, the
+database changed and verified, *then* the promotion to version 2, then the
+release. `SOPULI-W031` comes after the rows, because the password crossed a
+connection that is not encrypted.
 
 **`target.finished` arrives after the promotion, not as each target finishes.**
 That is where `apply`'s stream differs from `check`'s. `target.finished.data`
@@ -2721,15 +2723,16 @@ gap. A `vault_wrapped` reset against the tier-1 stack, trimmed only where `…`
 says so:
 
 ```jsonl
-{"schema_version":"1.7","event":"run.started","seq":0,"ts":"2026-09-26T17:13:35.870495Z","correlation_id":"8ebe1029-…","data":{"command":"account.reset-password","dry_run":false}}
-{"schema_version":"1.7","event":"plan.resolved","seq":1,"ts":"2026-09-26T17:13:35.870664Z","correlation_id":"8ebe1029-…","data":{"units":[{"account":"acme_dev_alice","target":"free-pdb","intent":["password_set"]}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]}}}
-{"schema_version":"1.7","event":"diagnostic","seq":2,"ts":"2026-09-26T17:13:36.478946Z","correlation_id":"8ebe1029-…","level":"warning","message":"no `reset_records:` block is declared, s…","data":{"code":"SOPULI-W024"}}
-{"schema_version":"1.7","event":"target.started","seq":3,"ts":"2026-09-26T17:13:36.479212Z","correlation_id":"8ebe1029-…","target":"free-pdb"}
-{"schema_version":"1.7","event":"diagnostic","seq":4,"ts":"2026-09-26T17:13:37.595170Z","correlation_id":"8ebe1029-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from…","data":{"code":"SOPULI-W022"}}
-{"schema_version":"1.7","event":"password.applied","seq":5,"ts":"2026-09-26T17:13:37.595243Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"version":null,"outcome":"RESET"}}
-{"schema_version":"1.7","event":"password.delivered","seq":6,"ts":"2026-09-26T17:13:37.595276Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"method":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"}}}
-{"schema_version":"1.7","event":"target.finished","seq":7,"ts":"2026-09-26T17:13:37.595303Z","correlation_id":"8ebe1029-…","account":"acme_dev_alice","target":"free-pdb","data":{"account":"acme_dev_alice","target":"free-pdb","state":"RESET","changed":true,"actions":[…],"account_status":"OPEN","delivered":"vault_wrapped","handover":{"accessor":"OApZG15TURKJpBT5fJGXjFF0","expires_at":"2026-09-26T17:28:37.542706Z"},"duration_ms":1111}}
-{"schema_version":"1.7","event":"run.finished","seq":8,"ts":"2026-09-26T17:13:37.595600Z","correlation_id":"8ebe1029-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
+{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T07:22:16.306692Z","correlation_id":"39ccecf5-…","data":{"command":"account.reset-password","dry_run":false}}
+{"schema_version":"1.17","event":"plan.resolved","seq":1,"ts":"2026-10-27T07:22:16.306826Z","correlation_id":"39ccecf5-…","data":{"units":[{"account":"acme_dev_alice","target":"free-pdb","intent":["password_set"]}],"blast_radius":{"targets":1,"accounts":1,"environments":["dev"]},"confirmation_required":false}}
+{"schema_version":"1.17","event":"diagnostic","seq":2,"ts":"2026-10-27T07:22:16.724043Z","correlation_id":"39ccecf5-…","level":"warning","message":"no `reset_records:` block is declared, s…","data":{"code":"SOPULI-W024"}}
+{"schema_version":"1.17","event":"target.started","seq":3,"ts":"2026-10-27T07:22:16.724278Z","correlation_id":"39ccecf5-…","target":"free-pdb"}
+{"schema_version":"1.17","event":"diagnostic","seq":4,"ts":"2026-10-27T07:22:17.405948Z","correlation_id":"39ccecf5-…","target":"free-pdb","level":"warning","message":"free-pdb: the admin credential came from…","data":{"code":"SOPULI-W022"}}
+{"schema_version":"1.17","event":"password.applied","seq":5,"ts":"2026-10-27T07:22:17.406018Z","correlation_id":"39ccecf5-…","account":"acme_dev_alice","target":"free-pdb","data":{"version":null,"outcome":"RESET"}}
+{"schema_version":"1.17","event":"password.delivered","seq":6,"ts":"2026-10-27T07:22:17.406052Z","correlation_id":"39ccecf5-…","account":"acme_dev_alice","target":"free-pdb","data":{"method":"vault_wrapped","handover":{"accessor":"VjiIZS8IO9HwzZ47o2UknCkI","expires_at":"2026-10-27T07:37:17.377543Z"}}}
+{"schema_version":"1.17","event":"target.finished","seq":7,"ts":"2026-10-27T07:22:17.406080Z","correlation_id":"39ccecf5-…","account":"acme_dev_alice","target":"free-pdb","data":{"account":"acme_dev_alice","target":"free-pdb","state":"RESET","changed":true,"actions":[…],"account_status":"OPEN","delivered":"vault_wrapped","handover":{"accessor":"VjiIZS8IO9HwzZ47o2UknCkI","expires_at":"2026-10-27T07:37:17.377543Z"},"audited":false,"audited_detail":"no enabled policy records LOGON or ALTER USER for ACME_DEV_ALICE","duration_ms":677}}
+{"schema_version":"1.17","event":"diagnostic","seq":8,"ts":"2026-10-27T07:22:17.406378Z","correlation_id":"39ccecf5-…","target":"free-pdb","level":"warning","message":"free-pdb: a password was sent over a connection that is not encrypted …","data":{"code":"SOPULI-W031"}}
+{"schema_version":"1.17","event":"run.finished","seq":9,"ts":"2026-10-27T07:22:17.406414Z","correlation_id":"39ccecf5-…","data":{"summary":{"total":1,"ok":1,"changed":1,"failed":0},"exit_code":0}}
 ```
 
 **Per target, as each finishes**: `creds check`'s grain, not `apply`'s. An apply

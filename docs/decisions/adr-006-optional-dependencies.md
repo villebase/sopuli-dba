@@ -180,7 +180,7 @@ there. A name that has stopped meaning that is a split in appearance only.
 
 The cost is one more name in an install line and one more cell in the matrix, which
 is small and is paid by the estates that use the feature. What it buys is that the
-three registries — stores, drivers, and now channels — all answer the same question
+three registries — stores, drivers and channels — all answer the same question
 the same way, and `tests/store/test_install_shape.py` derives its exemptions from all
 three rather than from a hand-kept list.
 

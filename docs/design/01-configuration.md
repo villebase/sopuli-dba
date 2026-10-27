@@ -1098,7 +1098,7 @@ reason for it:
   name *who* rather than prove it, so they are written as they are. `role_id` is
   arguably an identifier too, and is a MaterialRef anyway: carving out one field
   that may be inline sets a precedent to be re-litigated for every method added
-  later. Uniform now; relax it if it turns out to be friction.
+  later.
 
 ### `targets:` — a list of endpoints
 

@@ -38,27 +38,22 @@ lYEAaP1Es1mBLmQYFI+5dAM=
 ONE_HOUR = 3600
 
 
-def _create(stack: Any, *, expiration: int = ONE_HOUR, one_time: bool = True) -> Any:
-    return stack.client.post(
+def _create(yopass_stack: Any, *, expiration: int = ONE_HOUR) -> Any:
+    return yopass_stack.client.post(
         "/create/secret",
-        json={"message": CIPHERTEXT, "expiration": expiration, "one_time": one_time},
+        json={"message": CIPHERTEXT, "expiration": expiration, "one_time": True},
     )
 
 
-def _created_id(stack: Any) -> str:
-    response = _create(stack)
+def _created_id(yopass_stack: Any) -> str:
+    response = _create(yopass_stack)
     assert response.status_code == 200, response.text
     secret_id: str = response.json()["message"]
     return secret_id
 
 
-@pytest.fixture
-def stack(yopass_stack: Any) -> Any:
-    return yopass_stack
-
-
-def test_config_reports_the_keys_the_plan_time_checks_read(stack: Any) -> None:
-    config = stack.client.get("/config").json()
+def test_config_reports_the_keys_the_plan_time_checks_read(yopass_stack: Any) -> None:
+    config = yopass_stack.client.get("/config").json()
     assert config["READ_ONLY"] is False
     assert config["REQUIRE_AUTH"] is False
     assert config["ALLOW_CUSTOM_EXPIRATION"] is False
@@ -69,48 +64,55 @@ def test_config_reports_the_keys_the_plan_time_checks_read(stack: Any) -> None:
     assert "PUBLIC_URL" not in config
 
 
-def test_a_one_time_secret_is_returned_once(stack: Any) -> None:
-    secret_id = _created_id(stack)
+def test_a_one_time_secret_is_returned_once(yopass_stack: Any) -> None:
+    secret_id = _created_id(yopass_stack)
 
-    first = stack.client.get(f"/secret/{secret_id}")
+    first = yopass_stack.client.get(f"/secret/{secret_id}")
     assert first.status_code == 200
     assert first.json()["message"] == CIPHERTEXT
 
-    assert stack.client.get(f"/secret/{secret_id}").status_code == 404
+    assert yopass_stack.client.get(f"/secret/{secret_id}").status_code == 404
 
 
-def test_the_status_check_does_not_use_up_the_read(stack: Any) -> None:
-    secret_id = _created_id(stack)
+def test_the_status_check_does_not_use_up_the_read(yopass_stack: Any) -> None:
+    secret_id = _created_id(yopass_stack)
 
-    status = stack.client.get(f"/secret/{secret_id}/status")
+    status = yopass_stack.client.get(f"/secret/{secret_id}/status")
     assert status.status_code == 200
     assert status.json()["oneTime"] is True
 
-    assert stack.client.get(f"/secret/{secret_id}").status_code == 200
+    assert yopass_stack.client.get(f"/secret/{secret_id}").status_code == 200
 
 
 @pytest.mark.parametrize("seconds", [3600, 86400, 604800])
-def test_the_default_server_accepts_an_hour_a_day_and_a_week(stack: Any, seconds: int) -> None:
-    assert _create(stack, expiration=seconds).status_code == 200
+def test_the_default_server_accepts_an_hour_a_day_and_a_week(
+    yopass_stack: Any, seconds: int
+) -> None:
+    response = _create(yopass_stack, expiration=seconds)
+    assert response.status_code == 200
+    # Removed at once, so a stack that runs for days does not collect secrets
+    # that live for a week.
+    yopass_stack.client.delete(f"/secret/{response.json()['message']}")
 
 
 @pytest.mark.parametrize("seconds", [60, 7200])
-def test_the_default_server_refuses_any_other_expiration(stack: Any, seconds: int) -> None:
-    response = _create(stack, expiration=seconds)
+def test_the_default_server_refuses_any_other_expiration(yopass_stack: Any, seconds: int) -> None:
+    response = _create(yopass_stack, expiration=seconds)
     assert response.status_code == 400
     assert response.json()["message"] == "Invalid expiration specified"
 
 
-def test_a_message_that_is_not_openpgp_is_refused(stack: Any) -> None:
-    response = stack.client.post(
+def test_a_message_that_is_not_openpgp_is_refused(yopass_stack: Any) -> None:
+    response = yopass_stack.client.post(
         "/create/secret",
         json={"message": "not a password", "expiration": ONE_HOUR, "one_time": True},
     )
     assert response.status_code == 400
+    assert response.json()["message"] == "Message must be PGP encrypted"
 
 
-def test_the_id_alone_deletes_the_secret(stack: Any) -> None:
-    secret_id = _created_id(stack)
+def test_the_id_alone_deletes_the_secret(yopass_stack: Any) -> None:
+    secret_id = _created_id(yopass_stack)
 
-    assert stack.client.delete(f"/secret/{secret_id}").status_code == 204
-    assert stack.client.get(f"/secret/{secret_id}").status_code == 404
+    assert yopass_stack.client.delete(f"/secret/{secret_id}").status_code == 204
+    assert yopass_stack.client.get(f"/secret/{secret_id}").status_code == 404

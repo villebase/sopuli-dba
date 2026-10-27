@@ -370,6 +370,9 @@ def vault_personal(vault_stack: VaultStack) -> VaultStack:
 #: `SOPULI_TEST_VAULT_PORT`.
 YOPASS_URL = f"http://127.0.0.1:{os.environ.get('SOPULI_TEST_YOPASS_PORT', '1337')}"
 
+#: The release `test/compose.yaml` pins, as `/version` reports it.
+YOPASS_VERSION = "16.0.1"
+
 
 @dataclass(frozen=True)
 class YopassStack:
@@ -381,19 +384,21 @@ class YopassStack:
 
 @pytest.fixture(scope="session")
 def yopass_stack() -> Iterator[YopassStack]:
-    """A reachable Yopass server, or a skip saying which part was missing.
+    """A reachable Yopass server of the pinned release, or a skip saying why not.
 
-    The image has no shell, so compose cannot healthcheck it. This waits on
-    `/health` instead, for up to ten seconds after the container starts.
-    `httpx` is imported here: it is an extra, and a base install must reach the
-    skip.
+    The image has no shell, so compose cannot healthcheck it. This asks
+    `/health` instead, every half second, and gives up once ten seconds have
+    passed since the first try. Each try waits at most two seconds for an
+    answer. Then it checks `/version`, because another service on the port, or
+    another clone's Yopass, could answer `/health` too. `httpx` is imported
+    here: it is an extra, and a base install must reach the skip.
     """
     try:
         import httpx
     except ImportError:  # pragma: no cover -- reached only in a base install
         _missing_environment("httpx is not installed; `pip install -e '.[hashicorp]'`")
 
-    client = httpx.Client(base_url=YOPASS_URL, timeout=5)
+    client = httpx.Client(base_url=YOPASS_URL, timeout=2)
     deadline = time.monotonic() + 10
     while True:
         try:
@@ -411,6 +416,15 @@ def yopass_stack() -> Iterator[YopassStack]:
                     f"Yopass at {YOPASS_URL} answered /health with HTTP {health.status_code}"
                 )
         time.sleep(0.5)
+
+    version = client.get("/version")
+    found = version.json().get("version") if version.status_code == 200 else None
+    if found != YOPASS_VERSION:
+        client.close()
+        _missing_environment(
+            f"the server at {YOPASS_URL} reports Yopass {found!r}, and test/compose.yaml "
+            f"pins {YOPASS_VERSION}"
+        )
     yield YopassStack(url=YOPASS_URL, client=client)
     client.close()
 

@@ -1555,8 +1555,8 @@ hold one. The message does not repeat what was written.
 
 **The `dsn` names the server, never a connection pooler such as PgBouncer**
 (decided in [#1045](../decisions/log.md#1045)). The tool does not detect a
-pooler, so a target that is one is not refused; it fails, or worse, passes a
-check it should not. Measured behind PgBouncer 1.26.0 (`08_pgbouncer_probe.py`
+pooler before it connects, so a target that is one is not refused; it fails,
+or worse, passes a check it should not. Measured behind PgBouncer 1.26.0 (`08_pgbouncer_probe.py`
 in [`../measurements.md`](../measurements.md)):
 
 - **`require_encryption` can pass when the password crosses in clear.** It
@@ -1567,7 +1567,11 @@ in [`../measurements.md`](../measurements.md)):
   `creds check` reports a drifted role as `ERROR` (exit 1), not `DRIFT`
   (exit 3). `creds apply` and `creds rotate` log in with the new password
   before they change anything, so they stop there and change no database.
-  `rotate` has already staged the new password in the vault's `pending`.
+  `rotate` has already staged the new password in the vault's `pending`. The
+  error is `08001`, and its hint says that the target is a pooler. PgBouncer
+  sends the same message for a role with no password, and messages of its own
+  for a role the server does not have and for a server it cannot log in to.
+  Each gets the same hint.
 - A `db.query_timeout_s` makes PgBouncer refuse the whole connection, so every
   verb finds the target unreachable. Where PgBouncer ignores the `options`
   parameter, the budget is dropped without a message instead.

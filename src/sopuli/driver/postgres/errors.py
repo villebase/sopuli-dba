@@ -149,6 +149,42 @@ CERTIFICATE_HINT = (
     "CA file that issued it, and connect by the name the certificate carries"
 )
 
+#: PgBouncer's own refusals of a login, and what each was measured to mean
+#: (PgBouncer 1.26.0, ``08_pgbouncer_probe.py``, #1105). No SQLSTATE, and the
+#: server sends none of them, so the target is a pooler. It stays ``08001``: a
+#: pooler is not a supported target (#1045), and reading a refused password as
+#: ``28P01`` would make drift work through one.
+_POOLER_MESSAGES = (
+    (
+        re.compile(r"FATAL:\s+SASL authentication failed"),
+        "PgBouncer sends it for a wrong password, and for a role with no password",
+    ),
+    (
+        re.compile(r"FATAL:\s+no such user"),
+        "PgBouncer sends it for a role the server does not have",
+    ),
+    (
+        re.compile(r"FATAL:\s+server login has been failing"),
+        "PgBouncer sends it when it cannot log in to the server behind it",
+    ),
+)
+POOLER_HINT = (
+    "the server never sends this message, so the target is a connection pooler such as "
+    "PgBouncer. A pooler is not a supported target (#1045): point the target's `dsn` at "
+    "the server"
+)
+
+
+def _pooler(message: str) -> tuple[int, str] | None:
+    """Where the first of PgBouncer's refusals starts in the message, and the
+    hint for it, or ``None``."""
+    found = [
+        (match.start(), f"{POOLER_HINT}. {meaning}")
+        for pattern, meaning in _POOLER_MESSAGES
+        if (match := pattern.search(message))
+    ]
+    return min(found) if found else None
+
 
 @dataclass(frozen=True)
 class Diagnosis:
@@ -256,7 +292,8 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
     if not connecting:
         return classify(CONNECTION_FAILURE, message)
     found = _reasons(message)
-    if found:
+    pooler = _pooler(message)
+    if found and (pooler is None or min(found)[0] < pooler[0]):
         # The earliest in the message, which is the first attempt; at one
         # place, the earlier row, so `password …` wins over `… authentication
         # failed` when both match.
@@ -264,6 +301,8 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
         hint = _CONNECT_HINTS.get(recovered.code)
         return recovered if hint is None else replace(recovered, hint=hint)
     diagnosis = classify(UNABLE_TO_CONNECT, message)
+    if pooler is not None:
+        return replace(diagnosis, hint=pooler[1])
     if _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)
     return diagnosis

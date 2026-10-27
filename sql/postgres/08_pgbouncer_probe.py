@@ -20,13 +20,23 @@ could reach the server, in session and in transaction pooling:
        client that logged in before the change still answers
   PB5  one parametrised query run 8 times on one connection, past psycopg's
        prepare_threshold of 5, with a second client between each run
+  PB6  what PgBouncer says when it refuses a login (#1105): a role the server
+       does not have, a role with no password, and a wrong password, for a
+       role that auth_query reads from the server and for one in auth_file
+       (test/pgbouncer/userlist.txt). Then a role whose auth_file password is
+       not the server's
+  PB7  with --server-down, run after the postgres service is stopped and
+       PgBouncer left running: the right and a wrong password for each kind of
+       role, and a role the server does not have
 
 It MEASURES and decides nothing. The tool's own verbs through PgBouncer are run
 by hand; the results are below.
 
 STATUS: run twice against 16.15, the postgres service of test/compose.yaml,
 behind PgBouncer 1.26.0 (profile pgbouncer), on 2026-10-27 (#1045), from
-Windows 11 AMD64 with psycopg 3.3.6 and libpq 18.4. The two runs agree.
+Windows 11 AMD64 with psycopg 3.3.6 and libpq 18.4. The two runs agree. PB6
+and PB7 were added and run twice on the same day (#1105), from the same
+client. PB6's two runs agree, and PB7's differ in one login, as below.
 
 RESULTS
 
@@ -54,6 +64,25 @@ RESULTS
        psycopg's own prepared statement, _pg3_0. Transaction pooling: it holds
        PgBouncer's, PGBOUNCER_1 and PGBOUNCER_2. max_prepared_statements is
        left at PgBouncer's default
+  PB6  each refusal is PgBouncer's own message, with no SQLSTATE, and both
+       modes read the same. A role the server does not have: 'FATAL: no such
+       user'. A role with no password, and a wrong password under auth_query
+       and under auth_file: 'FATAL: SASL authentication failed'. The server
+       sends neither message. A role whose auth_file password is not the
+       server's: with the file's password PgBouncer passes on the server's own
+       refusal, 'password authentication failed for user', which the driver
+       reads as 28P01. With the server's password it reads 'SASL
+       authentication failed'
+  PB7  in compose, the stopped service's name no longer resolves. Under
+       auth_file, a wrong password still reads 'SASL authentication failed':
+       PgBouncer checks it against the file and does not reach the server.
+       Every other login fails without that message. It either waits past the
+       client's connect_timeout of 10 s, 'connection timeout expired', or,
+       once a server login has failed, reads 'FATAL: server login has been
+       failing, cached error: server DNS lookup failed (server_login_retry)'.
+       In the first run, an auth_file login with the right password was let in
+       on a server connection PgBouncer had kept from PB6; after a restart of
+       PgBouncer it timed out
 
   The tool through PgBouncer, sopuli 0.80.0, run by hand on the same day,
   with the tool account and the two roles of docs/local-testing.md and a
@@ -87,11 +116,18 @@ environment:
     docker compose --profile tier0 --profile pgbouncer up -d
     python sql/postgres/08_pgbouncer_probe.py
 
+and for PB7, with the server stopped:
+
+    docker compose --profile tier0 --profile pgbouncer stop postgres
+    python sql/postgres/08_pgbouncer_probe.py --server-down
+    docker compose --profile tier0 --profile pgbouncer start postgres
+
 The probe connects to the server directly, as the superuser, to create
-pgbouncer_auth, the function its auth_query calls, and the role acme_pool_user,
-and drops none of them. In a second clone, set SOPULI_TEST_POSTGRES_PORT,
-SOPULI_TEST_PGBOUNCER_PORT and SOPULI_TEST_PGBOUNCER_IGNORE_PORT as for compose.
-The passwords are tier 0's public test password and two of the probe's own.
+pgbouncer_auth, the function its auth_query calls, and the roles acme_pool_user,
+acme_file_user, acme_stale_user and acme_nopw_user, and drops none of them. In
+a second clone, set SOPULI_TEST_POSTGRES_PORT, SOPULI_TEST_PGBOUNCER_PORT and
+SOPULI_TEST_PGBOUNCER_IGNORE_PORT as for compose.
+The passwords are tier 0's public test password and the probe's own.
 """
 
 from __future__ import annotations
@@ -118,6 +154,16 @@ SUPERUSER_PASSWORD = "sopuli-test"
 ROLE = "acme_pool_user"
 PASSWORD = "PoolProbe-first-1"
 SECOND_PASSWORD = "PoolProbe-second-2"
+#: PB6 and PB7. A role in auth_file, with the password userlist.txt holds for
+#: it, and one whose server password is not the file's.
+FILE_ROLE = "acme_file_user"
+FILE_PASSWORD = "PoolProbe-file-3"
+STALE_ROLE = "acme_stale_user"
+STALE_SERVER_PASSWORD = "PoolProbe-other-4"
+#: A role with no password, and one the server does not have.
+NO_PASSWORD_ROLE = "acme_nopw_user"
+MISSING_ROLE = "acme_missing_user"
+WRONG_PASSWORD = "PoolProbe-wrong-5"
 #: The budget the probe asks for, and a sleep that outlasts it.
 BUDGET_MS = 1000
 SLEEP_S = 2
@@ -134,7 +180,13 @@ def _setup() -> None:
         autocommit=True,
     ) as conn:
         conn.execute("SET password_encryption = 'scram-sha-256'")
-        for role, password in (("pgbouncer_auth", SUPERUSER_PASSWORD), (ROLE, PASSWORD)):
+        for role, password in (
+            ("pgbouncer_auth", SUPERUSER_PASSWORD),
+            (ROLE, PASSWORD),
+            (FILE_ROLE, FILE_PASSWORD),
+            (STALE_ROLE, STALE_SERVER_PASSWORD),
+            (NO_PASSWORD_ROLE, None),
+        ):
             exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
             verb = "ALTER" if exists else "CREATE"
             conn.execute(
@@ -310,8 +362,59 @@ def pb5() -> None:
             )
 
 
+def _login_as(mode: str, role: str, password: str) -> str:
+    """Log in as ``role``, asking for SCRAM as the driver does."""
+    psycopg.connect(
+        host=HOST,
+        port=BOUNCERS["strict"],
+        dbname=mode,
+        user=role,
+        password=password,
+        connect_timeout=10,
+        require_auth="scram-sha-256",
+    ).close()
+    return "logged in"
+
+
+def _logins(cases: tuple[tuple[str, str, str], ...]) -> None:
+    for mode in MODES:
+        for label, role, password in cases:
+            print(f"  {mode:<11} {label}: {_outcome(_login_as, mode, role, password)}")
+
+
+def pb6() -> None:
+    print("PB6  what PgBouncer says when it refuses a login")
+    _logins(
+        (
+            ("a role the server does not have", MISSING_ROLE, WRONG_PASSWORD),
+            ("a role with no password", NO_PASSWORD_ROLE, WRONG_PASSWORD),
+            ("auth_query, a wrong password", ROLE, WRONG_PASSWORD),
+            ("auth_file, a wrong password", FILE_ROLE, WRONG_PASSWORD),
+            ("auth_file, the right password", FILE_ROLE, FILE_PASSWORD),
+            ("auth_file not the server's, the file's password", STALE_ROLE, FILE_PASSWORD),
+            ("auth_file not the server's, the server's", STALE_ROLE, STALE_SERVER_PASSWORD),
+        )
+    )
+
+
+def pb7() -> None:
+    print("PB7  the server is down, PgBouncer runs")
+    _logins(
+        (
+            ("auth_query, the right password", ROLE, PASSWORD),
+            ("auth_query, a wrong password", ROLE, WRONG_PASSWORD),
+            ("a role the server does not have", MISSING_ROLE, WRONG_PASSWORD),
+            ("auth_file, the right password", FILE_ROLE, FILE_PASSWORD),
+            ("auth_file, a wrong password", FILE_ROLE, WRONG_PASSWORD),
+        )
+    )
+
+
 def main() -> int:
     print(f"psycopg {psycopg.__version__}, libpq {pq.version()}")
+    if "--server-down" in sys.argv[1:]:
+        pb7()
+        return 0
     _setup()
     with _connect("strict", "session") as conn:
         print(f"server {conn.execute('SHOW server_version').fetchone()[0]}")
@@ -321,6 +424,7 @@ def main() -> int:
     pb3()
     pb4()
     pb5()
+    pb6()
     return 0
 
 

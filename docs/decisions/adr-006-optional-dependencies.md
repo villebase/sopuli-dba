@@ -111,7 +111,8 @@ client. A config naming eleven backends validates with none of them installed.
 **Drivers follow the same rule as stores (E1).** `python-oracledb` exists only
 to reach Oracle, so it is `sopuli-dba[oracle]`. Symmetry decides it: a split that
 bound stores and not drivers would read as arbitrary the first time somebody
-asked why. The cost is an interface with one member today, and D3's thick-mode
+asked why. The rule holds for the second driver too: `psycopg` is
+`sopuli-dba[postgres]`. The cost is small, because D3's thick-mode
 Instant Client prerequisite already makes reaching Oracle a per-site runtime
 condition rather than a universal one — the extra names a fact that was true
 anyway.

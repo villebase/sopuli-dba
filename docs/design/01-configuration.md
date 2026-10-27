@@ -1187,7 +1187,7 @@ ordering holds because the run layers are consulted only where the file said
 nothing at all.
 
 A target declaring `method: vault` with no store anywhere is refused when the
-credential is read, naming all four places one could be written. Not at load:
+credential is read, naming every place one could be written. Not at load:
 `SOPULI_VAULT` and a profile are properties of a run, so a file that is fine
 under tomorrow's environment must not be rejected today — which is C15's
 reasoning for bindings, applied unchanged.

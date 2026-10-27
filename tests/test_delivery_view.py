@@ -99,6 +99,46 @@ def test_a_path_receipt_says_where_the_person_reads_and_until_when() -> None:
     assert "unwrap" not in text
 
 
+LINK = "https://yopass.example.com/#/s/32kGY7o9KOnhJojy3zHURw"
+KEY = "A1b2C3d4E5f6G7h8I9j0Kx"
+
+
+def test_a_link_receipt_prints_the_link_that_opens_once() -> None:
+    """`one_time_link` (decision #445): the token is the whole link."""
+    receipt = Receipt(
+        method="one_time_link",
+        token=Secret(f"{LINK}/{KEY}"),
+        id="32kGY7o9KOnhJojy3zHURw",
+        expires_at=WHEN,
+    )
+
+    text = render_handover(receipt, account="acme_dev_alice", target="free-pdb") or ""
+
+    assert f"    {LINK}/{KEY}" in text
+    assert "it opens once" in text
+    assert "for free-pdb" in text
+    assert "2026-09-22T10:21:00Z" in text
+    assert "Do not open it to check" in text
+    assert "unwrap" not in text
+
+
+def test_a_split_receipt_prints_the_link_and_the_key_apart() -> None:
+    receipt = Receipt(
+        method="one_time_link",
+        token=Secret(KEY),
+        id="32kGY7o9KOnhJojy3zHURw",
+        link=LINK,
+        expires_at=WHEN,
+    )
+
+    text = render_handover(receipt, account="acme_dev_alice", target="free-pdb") or ""
+
+    assert f"link:  {LINK}\n" in text
+    assert f"key:   {KEY}\n" in text
+    assert f"{LINK}/{KEY}" not in text
+    assert "two different channels" in text
+
+
 def test_the_password_has_no_way_into_this_view() -> None:
     """The structural half of the argument: the only secret this module can be
     handed is the receipt's token. There is no parameter a password could arrive

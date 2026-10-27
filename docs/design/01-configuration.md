@@ -309,8 +309,8 @@ repeats the prefix, and in a Vault policy path they are wildcards or a template.
 `vault` is **optional**, with `vault_wrapped`'s chain.
 
 **`one_time_link:`** hands the person a link that a Yopass server opens once
-(UC-2 §6.6, decided in #445). Its keys are read. The method itself is not built
-yet.
+(UC-2 §6.6, decided in #445). It needs the `yopass` extra, which carries `httpx`
+and `pysequoia`.
 
 ```yaml
 delivery:
@@ -332,19 +332,22 @@ its own fragment after it. One trailing `/` is dropped.
 `ttl` is **required**, as `vault_wrapped`'s is: the link stops working, and how
 soon is what the method promises. It is checked for the same shape, and the
 server is sent the number of seconds. Which values the server accepts is its own
-setting, so the file is not checked for that. A server without custom expiry
-accepts `1h`, `24h` and `168h`.
+setting, so the file is not checked for that: a run reads the server's
+`/config` before a password is drawn, and refuses a `ttl` the server would
+refuse, with exit 5. A server without custom expiry accepts `1h`, `24h` and
+`168h`.
 
 `split_key` is **optional**, `false` by default. When it is `true`, the tool
-prints the link without the key and the key as two values, for two channels.
+prints the link without the key and the key as two values, for two channels. It
+also splits, whatever this says, when the server reports
+`DISABLE_ONE_CLICK_LINK`, or reports `PREFETCH_SECRET` false (UC-2 §6.6).
 
 There is no key for one-time. The tool always asks the server for a one-time
 secret.
 
 **The tool does not validate the keys inside the sub-blocks of
 `onepassword_share` and `smtp_encrypted`**, because neither is built, so a typo
-inside one is accepted. And a method whose keys are validated, such as
-`one_time_link`, may still not be built. So **`config validate` warns when the selected method is not implemented in this
+inside one is accepted. So **`config validate` warns when the selected method is not implemented in this
 build** (`SOPULI-W035`), so that a clean parse does not read as a working
 delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
 build serves.

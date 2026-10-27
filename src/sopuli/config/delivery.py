@@ -90,7 +90,7 @@ LINK = "one_time_link"
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
 #: disagreeing about which methods work.
-IMPLEMENTED = (MANUAL, WRAPPED, PATH)
+IMPLEMENTED = (MANUAL, WRAPPED, PATH, LINK)
 
 #: The keys `manual:` takes. One, and it is required -- see
 #: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
@@ -352,8 +352,8 @@ def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
     builds has one ``/`` before ``#``.
 
     `ttl` is **required**, with the wrap TTL's shape. Which values the server
-    accepts is its own setting, which the method will check against the server's
-    `/config` at plan time (TODO(#445)).
+    accepts is its own setting, which :mod:`sopuli.delivery.yopass` checks
+    against the server's `/config` at plan time.
 
     `split_key` is **optional** and ``false`` by default.
     """
@@ -517,10 +517,9 @@ def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
     :data:`IMPLEMENTED` lists the methods this build serves. The others are not
-    built: `one_time_link` (TODO(#445)), whose keys are read, `onepassword_share`
-    (TODO(#446)) and `smtp_encrypted`, which has no issue. A
-    file naming `method: one_time_link` parses and cannot hand anybody a
-    password.
+    built: `onepassword_share` (TODO(#446)) and `smtp_encrypted`, which has no
+    issue. A file naming `method: onepassword_share` parses and cannot hand
+    anybody a password.
 
     A **warning rather than a refusal**, following E4/E5's shape for a configured
     backend this build cannot serve (ADR-006): the file is valid, the install is

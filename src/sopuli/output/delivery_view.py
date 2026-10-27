@@ -39,6 +39,7 @@ from datetime import datetime
 from sopuli.clock import to_rfc3339
 from sopuli.delivery import Receipt
 from sopuli.output.palette import Role, paint
+from sopuli.secrets import Secret
 
 #: What to say when the receipt knows no expiry -- see
 #: :func:`sopuli.delivery.vault_wrapped._expiry` for when that happens. A phrase
@@ -73,9 +74,14 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
     single use is what makes interception detectable, and it only does that if
     whoever receives the token is the person who unwraps it -- so the line saying
     *do not unwrap it yourself* is doing work, not being polite.
+
+    A `one_time_link` receipt gets :func:`_render_link`: the link, or the link
+    and the key as two values.
     """
     if receipt.token is None:
         return _render_path(receipt, account=account, target=target)
+    if receipt.id is not None:
+        return _render_link(receipt, receipt.token, account=account, target=target)
     return "\n".join(
         [
             paint(f"hand this to {account} for {target}; it unwraps once:", Role.HEADING),
@@ -88,6 +94,51 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
             f"It stops working {_expires(receipt.expires_at)}, and the first unwrap is the",
             "last. Do not unwrap it to check -- that spends the person's one read, and",
             "them finding it spent is the only warning either of you gets.",
+        ]
+    )
+
+
+def _render_link(receipt: Receipt, token: Secret, *, account: str, target: str) -> str:
+    """A `one_time_link` hand-over: the link, or the link and the key apart.
+
+    ``token`` is the full link, or in split mode the key alone, with
+    :attr:`Receipt.link` the link without it (decision #445). Either way it is
+    a retrieval credential, and this is a ``reveal()`` of one, for this
+    module's reasons. The link without the key is not one: it holds the id and
+    nothing that decrypts.
+
+    **The same warning as the wrapping token's**, for the same reason: the
+    first open is the last, so a DBA who opens the link to check uses up the
+    person's one view.
+    """
+    warning = [
+        "",
+        f"It stops working {_expires(receipt.expires_at)}, and the first open is the last.",
+        "Do not open it to check -- that uses up the person's one view, and them",
+        "finding it gone is the only warning either of you gets.",
+    ]
+    if receipt.link is None:
+        return "\n".join(
+            [
+                paint(f"hand this link to {account} for {target}; it opens once:", Role.HEADING),
+                "",
+                f"    {token.reveal()}",
+                *warning,
+            ]
+        )
+    return "\n".join(
+        [
+            paint(
+                f"hand these to {account} for {target}, by two different channels:",
+                Role.HEADING,
+            ),
+            "",
+            f"    link:  {receipt.link}",
+            f"    key:   {token.reveal()}",
+            "",
+            "The link asks for the key. Send each one a different way, so that neither",
+            "channel alone can read the password.",
+            *warning,
         ]
     )
 

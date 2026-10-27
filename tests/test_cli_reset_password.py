@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -1675,3 +1676,131 @@ def test_vault_path_refuses_a_token_that_could_read_the_path(
     assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
     assert "could read" in str(result.exception)
     assert account() == "OPEN"
+
+
+# ---------------------------------------------- `one_time_link`, tier 1 ---
+
+#: `delivery.method: one_time_link` against the stack's Yopass (decision #445).
+LINK = MANUAL.replace(
+    """delivery:
+  method: manual
+  manual:
+    force_expire: true
+""",
+    """delivery:
+  method: one_time_link
+  one_time_link:
+    base_url: {url}
+    ttl: {ttl}
+    split_key: {split}
+""",
+)
+
+#: A full link as the tool prints it: the base, the id, then the key.
+FULL_LINK = re.compile(r"(http\S+)/#/s/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]{22})\b")
+
+
+def _link_config(dsn: str, url: str, *, ttl: str = "1h", split: bool = False) -> str:
+    return LINK.format(
+        dsn=dsn,
+        user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
+        account=ACCOUNT,
+        url=url,
+        ttl=ttl,
+        split="true" if split else "false",
+    )
+
+
+def _fetch(yopass_stack: Any, secret_id: str, key: str) -> str:
+    """What the person's browser does: fetch the ciphertext once and decrypt it."""
+    sequoia = pytest.importorskip("pysequoia")
+    answer = yopass_stack.client.get(f"/secret/{secret_id}")
+    assert answer.status_code == 200, answer.text
+    plain: bytes = sequoia.decrypt(answer.json()["message"].encode("ascii"), passwords=[key]).bytes
+    return plain.decode("utf-8")
+
+
+def test_one_time_link_hands_over_a_link_that_opens_once_to_the_new_password(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    yopass_stack: Any,
+) -> None:
+    config = write_config(_link_config(live_oracle.dsn, yopass_stack.url))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "it opens once" in result.output
+    found = FULL_LINK.search(result.output)
+    assert found is not None, result.output
+    base, secret_id, key = found.groups()
+    assert base == yopass_stack.url
+    password = _fetch(yopass_stack, secret_id, key)
+    assert password not in result.output
+    assert _logs_in(live_oracle, password)
+    assert not _logs_in(live_oracle, OLD)
+    assert yopass_stack.client.get(f"/secret/{secret_id}").status_code == 404
+    # Unseen, so not expired: nobody but the person saw it.
+    assert account() == "OPEN"
+
+
+def test_split_key_prints_the_link_and_the_key_apart(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    yopass_stack: Any,
+) -> None:
+    config = write_config(_link_config(live_oracle.dsn, yopass_stack.url, split=True))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert FULL_LINK.search(result.output) is None
+    link = re.search(r"link:\s+(\S+)/#/s/([A-Za-z0-9_-]+)\s", result.output)
+    key = re.search(r"key:\s+([A-Za-z0-9_-]{22})\s", result.output)
+    assert link is not None, result.output
+    assert key is not None, result.output
+    assert "two different channels" in result.output
+    assert _logs_in(live_oracle, _fetch(yopass_stack, link.group(2), key.group(1)))
+
+
+def test_one_time_link_records_the_id_and_nothing_that_opens_it(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    live_oracle: Environment,
+    account: Callable[..., Any],
+    yopass_stack: Any,
+) -> None:
+    config = write_config(_link_config(live_oracle.dsn, yopass_stack.url))
+
+    result = run(runner, config, "--account", ACCOUNT, "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    document = json.loads(result.stdout)
+    handover = document["results"][0]["handover"]
+    assert handover["accessor"] is None
+    assert handover["expires_at"]
+    found = FULL_LINK.search(result.stderr)
+    assert found is not None, result.stderr
+    _, secret_id, key = found.groups()
+    assert handover["id"] == secret_id
+    assert key not in result.stdout
+    assert _logs_in(live_oracle, _fetch(yopass_stack, secret_id, key))
+
+
+def test_a_ttl_the_server_would_refuse_is_refused_before_anything_connects(
+    runner: CliRunner, write_config: WriteConfig, yopass_stack: Any
+) -> None:
+    """Exit 5 at plan time, against an Oracle address nothing answers: the
+    refusal comes from the server's `/config`, not from a connection."""
+    pytest.importorskip("pysequoia")
+    config = write_config(_link_config("192.0.2.10:1521/ALPHA", yopass_stack.url, ttl="2h"))
+
+    result = run(runner, config, "--account", ACCOUNT)
+
+    assert isinstance(result.exception, RefusedError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "1h, 24h or 168h" in str(result.exception)

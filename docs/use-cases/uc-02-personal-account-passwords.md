@@ -5,8 +5,9 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 
 This document specifies `personal_accounts:`, `sopuli account reset-password`,
 `sopuli account expire-password`, `sopuli account suspend` and
-`sopuli account list`. The reset is built for the `manual` and `vault_wrapped`
-delivery methods; §6.2 lists the methods that are not built yet. §9 lists the
+`sopuli account list`. The reset is built for the `manual`, `vault_wrapped`,
+`vault_path` and `one_time_link` delivery methods; §6.2 lists the methods that
+are not built yet. §9 lists the
 open questions.
 
 **These commands are experimental in the alpha.** They are the newest part of
@@ -210,7 +211,7 @@ types `account` at the prompt.
 
 | Command | What it does | Mutates |
 |---|---|---|
-| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped` and `vault_path`. A file naming an unseen method that is not built yet (`one_time_link`, `onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped`, `vault_path` and `one_time_link`. A file naming an unseen method that is not built yet (`onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, and show it once, after confirmation. Under §6.5's five guards | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password: "make them change it". Closes an open rollover window first | yes |
 | `sopuli account suspend` | `ACCOUNT LOCK`, for offboarding | yes |
@@ -1123,7 +1124,7 @@ exist. A file that breaks either rule is refused at load as config-invalid
 |---|---|---|---|
 | `vault_wrapped` | unseen | a Vault response-wrapping token, single use | yes |
 | `vault_path` | unseen | a KV path only their own identity can read | yes |
-| `one_time_link` | unseen | a URL that decrypts once | no |
+| `one_time_link` | unseen | a URL that decrypts once | yes |
 | `onepassword_share` | unseen | an item in a password manager | no (open: #446) |
 | `manual` | **seen** | the password, printed to the DBA's terminal | yes |
 | `smtp_encrypted` | unseen | encrypted mail the tool sends | no; no issue yet |

@@ -3318,10 +3318,26 @@ def _delivery_backends(
 
     Each backend's ``preflight`` runs here on ``account`` as typed. On
     `vault_path` that is the plan-time check of the store's policy (UC-2 §6.6).
+    On `one_time_link` it reads the Yopass server's `/config`.
+
+    **`one_time_link` has one backend for every target.** It uses no store, so
+    nothing differs by target, and one backend reads the server's `/config` once.
     """
     if delivery.is_seen or run.dry_run:
         return {}
-    backends = {target.name: _delivery_backend(run, config, delivery, target) for target in reached}
+    if delivery.one_time_link is not None:
+        # Imported here, for `_delivery_backend`'s reason.
+        from sopuli.delivery import yopass
+
+        settings = delivery.one_time_link
+        link = yopass.Yopass(
+            base_url=settings.base_url, ttl=settings.ttl, split_key=settings.split_key
+        )
+        backends: dict[str, DeliveryBackend] = {target.name: link for target in reached}
+    else:
+        backends = {
+            target.name: _delivery_backend(run, config, delivery, target) for target in reached
+        }
     for target_name, backend in backends.items():
         backend.preflight(account=account, target=target_name)
     return backends
@@ -3335,8 +3351,9 @@ def _delivery_backend(
     One client per store per run, so a reset whose journal and whose
     cubbyhole live in the same vault authenticates to it once.
 
-    One branch per unseen method this build serves. Each further one adds a
-    branch here (TODO(#445), TODO(#446)).
+    One branch per unseen method this build serves that writes to a store.
+    `one_time_link` writes to none, so :func:`_delivery_backends` builds it.
+    Each further method adds a branch here or there (TODO(#446)).
     """
     # Imported here rather than at module scope, for the reason the store registry
     # imports its backends on first use (ADR-006 rule 1). Nothing above this line

@@ -140,7 +140,7 @@ def test_an_unimplemented_method_is_refused_before_anything_connects(
     from the delivery gate rather than from a connection timing out."""
     config = OFFLINE.replace(
         "method: manual\n  manual:\n    force_expire: true",
-        "method: one_time_link\n  one_time_link: {}",
+        "method: onepassword_share\n  onepassword_share: {}",
     )
     result = run(runner, write_config(config), "--account", ACCOUNT)
 

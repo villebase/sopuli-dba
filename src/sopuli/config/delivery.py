@@ -8,8 +8,8 @@ documents what is *built*, and this is the layer that makes the second true.
 the sub-block with the same name carries that method's own settings. Both halves
 are checked here. This module refuses a method UC-2 §6.2 does not define and a
 method whose sub-block is missing, which is the part that is common to all six.
-Where the selected method is `manual`, `vault_wrapped` or `vault_path`, it also
-reads that method's keys. The keys of `one_time_link:` (TODO(#445)) and
+Where the selected method is `manual`, `vault_wrapped`, `vault_path` or
+`one_time_link`, it also reads that method's keys. The keys of
 `onepassword_share:` (TODO(#446)) are not read yet.
 
 **Why the sub-block must exist at all**, rather than defaulting: every method
@@ -39,8 +39,15 @@ from sopuli.config.fields import (
     required_string,
     string,
 )
-from sopuli.config.model import Delivery, ManualDelivery, PathDelivery, WrappedDelivery
+from sopuli.config.model import (
+    Delivery,
+    LinkDelivery,
+    ManualDelivery,
+    PathDelivery,
+    WrappedDelivery,
+)
 from sopuli.config.notify import build_notify
+from sopuli.config.plain_http import plain_http_scheme
 
 #: The methods UC-2 §6.2 defines, in the order that section lists them. **The
 #: whole set, not the subset that is built**: `smtp_encrypted` is here although
@@ -75,6 +82,9 @@ WRAPPED = "vault_wrapped"
 #: A KV path only the person's own identity can read (decision #447).
 PATH = "vault_path"
 
+#: A link a Yopass server opens once (decision #445).
+LINK = "one_time_link"
+
 #: The methods this build can actually serve. Here rather than in
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
@@ -95,6 +105,11 @@ WRAPPED_KEYS = ("ttl", "vault")
 #: The keys `vault_path:` takes. `ttl` and `prefix` are required; `vault` is
 #: optional, with `vault_wrapped`'s chain.
 PATH_KEYS = ("ttl", "prefix", "vault")
+
+#: The keys `one_time_link:` takes. `base_url` and `ttl` are required;
+#: `split_key` is optional and ``false`` by default. There is no key for
+#: one-time: the tool always asks for it (decision #445).
+LINK_KEYS = ("base_url", "ttl", "split_key")
 
 #: Characters `vault_path.prefix` refuses beyond what any store path does. The
 #: person's Vault policy repeats the prefix, and in a policy path `*` and `+`
@@ -161,6 +176,7 @@ def build_delivery(document: dict[str, Any]) -> Delivery | None:
             _build_wrapped(block[WRAPPED], at=at.key(WRAPPED)) if method == WRAPPED else None
         ),
         vault_path=_build_path(block[PATH], at=at.key(PATH)) if method == PATH else None,
+        one_time_link=_build_link(block[LINK], at=at.key(LINK)) if method == LINK else None,
         # Read whichever method is selected, which is the opposite of the rule one
         # line up. A method's sub-block is left unjudged when it is not the
         # chosen one, because nothing consults it; a notification is a property of
@@ -321,6 +337,71 @@ def _build_path(raw: Any, *, at: KeyPath) -> PathDelivery:
     return PathDelivery(ttl=ttl, prefix=prefix, vault=vault)
 
 
+def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
+    """`one_time_link:`'s own settings.
+
+    **Only where `one_time_link` is the selected method**, for `manual`'s reason.
+
+    `base_url` is **required**, and refused unless it is ``https://`` or
+    ``http://`` to a loopback host, by the rule a vault address follows
+    (decision #856). The person's browser loads the page that reads the key
+    from there, and a page served over plain HTTP can be changed on the way.
+    One trailing ``/`` is dropped, so the link the tool builds has one ``/``
+    before ``#``.
+
+    `ttl` is **required**, with the wrap TTL's shape. Which values the server
+    accepts is its own setting, so the plan reads its `/config` for that.
+
+    `split_key` is **optional** and ``false`` by default.
+    """
+    block = mapping(raw, at=at)
+    reject_unknown_keys(block, allowed=LINK_KEYS, at=at)
+
+    if "base_url" not in block:
+        raise ConfigError(
+            "`one_time_link` delivery needs a `base_url`",
+            at=at.key("base_url"),
+            hint="the address of the Yopass server, such as `https://yopass.example.com`",
+        )
+    base_url = required_string(block, "base_url", at=at)
+    scheme = plain_http_scheme(base_url)
+    if scheme is not None:
+        raise ConfigError(
+            f"`base_url` must use https://, and this one uses {scheme}",
+            at=at.key("base_url"),
+            hint=(
+                "use https://. Plain http:// is allowed only to 127.0.0.1, ::1 or localhost: "
+                "the person's browser loads the page that reads the key from this address, "
+                "and a page sent in clear can be changed on the way"
+            ),
+        )
+    if "?" in base_url or "#" in base_url:
+        raise ConfigError(
+            "`base_url` may not hold a `?` or a `#`",
+            at=at.key("base_url"),
+            hint=(
+                "write the server's address only. The link is `<base_url>/#/s/<id>/<key>`, "
+                "and a query or fragment in the address would come before the link's own"
+            ),
+        )
+    ttl = _required_ttl(
+        block,
+        method=LINK,
+        at=at,
+        why=(
+            "the link stops working, and how soon is what this method promises -- so it is "
+            "written down rather than defaulted. A server without custom expiry accepts "
+            "`1h`, `24h` or `168h`"
+        ),
+    )
+    split_key = optional_bool(block, "split_key", at=at)
+    return LinkDelivery(
+        base_url=base_url.strip().removesuffix("/"),
+        ttl=ttl,
+        split_key=split_key is True,
+    )
+
+
 def _required_ttl(block: dict[str, Any], *, method: str, at: KeyPath, why: str) -> str:
     """A method's required `ttl`, in :data:`TTL_PATTERN`'s shape.
 
@@ -417,8 +498,8 @@ def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
     :data:`IMPLEMENTED` lists the methods this build serves. The others are not
-    built: `one_time_link` (TODO(#445)), `onepassword_share` (TODO(#446)) and
-    `smtp_encrypted`, which has no issue. A
+    built: `one_time_link` (TODO(#445)), whose keys are read, `onepassword_share`
+    (TODO(#446)) and `smtp_encrypted`, which has no issue. A
     file naming `method: one_time_link` parses and cannot hand anybody a
     password.
 

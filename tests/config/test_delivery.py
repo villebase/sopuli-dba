@@ -7,9 +7,9 @@ One accept and one reject per rule, and the rejects assert on the *message*: a r
 that fires without saying which key is wrong has not finished its job.
 
 Which keys a method's sub-block takes is a fact about the service behind the
-method, so only methods whose keys are read have keys to test. `vault_wrapped:`
-and `vault_path:` have sections of their own below; `one_time_link:`
-(TODO(#445)) and `onepassword_share:` (TODO(#446)) are not read yet. What this
+method, so only methods whose keys are read have keys to test. `vault_wrapped:`,
+`vault_path:` and `one_time_link:` have sections of their own below;
+`onepassword_share:` (TODO(#446)) is not read yet. What this
 layer owes every method is the part common to all six: the method is one of the
 six, and the selected one brought settings.
 """
@@ -53,9 +53,9 @@ def test_a_section_that_is_absent_is_none_rather_than_the_default() -> None:
 
 
 def test_the_method_is_read_and_its_sub_block_is_required() -> None:
-    section = built(method="one_time_link", one_time_link={"backend": "yopass"})
+    section = built(method="onepassword_share", onepassword_share={"vault": "acme"})
 
-    assert section.method == "one_time_link"
+    assert section.method == "onepassword_share"
     assert not section.is_seen
 
 
@@ -73,11 +73,12 @@ def test_manual_is_the_one_seen_method() -> None:
         if method != "manual":
             # Each method has its own required keys, so a sweep over the enum
             # has to carry them: `vault_wrapped` needs a `ttl`, `vault_path` a
-            # `ttl` and a `prefix`, and an empty block is a config error rather
-            # than an unseen delivery.
+            # `ttl` and a `prefix`, `one_time_link` a `base_url` and a `ttl`, and
+            # an empty block is a config error rather than an unseen delivery.
             settings: dict[str, Any] = {
                 "vault_wrapped": {"ttl": "15m"},
                 "vault_path": {"ttl": "8h", "prefix": "personal"},
+                "one_time_link": link_block(),
             }.get(method, {})
             assert not built(method=method, **{method: settings}).is_seen
 
@@ -214,10 +215,10 @@ def test_an_unimplemented_method_warns_that_nothing_serves_it() -> None:
     had already been drawn."""
     # The test is about the warning, not about which method is missing, so it
     # uses one this build does not implement.
-    notice = unserviceable(built(method="one_time_link", one_time_link={}))
+    notice = unserviceable(built(method="onepassword_share", onepassword_share={}))
 
     assert notice is not None
-    assert "one_time_link" in notice
+    assert "onepassword_share" in notice
     assert "not implemented in this build" in notice
 
 
@@ -306,7 +307,7 @@ def test_the_warning_reaches_config_warnings_rather_than_only_the_helper() -> No
     config = build_config(
         {
             "version": 1,
-            "delivery": {"method": "one_time_link", "one_time_link": {}},
+            "delivery": {"method": "onepassword_share", "onepassword_share": {}},
         }
     )
 
@@ -566,3 +567,99 @@ def test_vault_path_is_served_by_this_build() -> None:
     )
 
     assert not [warning for warning in config.warnings if warning.code == DELIVERY_UNSERVICEABLE]
+
+
+# ---------------------------------------------------- `one_time_link:`'s keys ---
+
+
+def link_block(**keys: Any) -> dict[str, Any]:
+    return {"base_url": "https://yopass.example.com", "ttl": "1h", **keys}
+
+
+def test_the_link_block_is_read() -> None:
+    section = built(method="one_time_link", one_time_link=link_block())
+
+    assert section.one_time_link is not None
+    assert section.one_time_link.base_url == "https://yopass.example.com"
+    assert section.one_time_link.ttl == "1h"
+    assert section.one_time_link.split_key is False
+
+
+def test_split_key_is_read() -> None:
+    section = built(method="one_time_link", one_time_link=link_block(split_key=True))
+
+    assert section.one_time_link is not None
+    assert section.one_time_link.split_key is True
+
+
+def test_split_key_must_be_a_boolean() -> None:
+    with pytest.raises(ConfigError, match="delivery.one_time_link.split_key"):
+        build_delivery(document(method="one_time_link", one_time_link=link_block(split_key="yes")))
+
+
+@pytest.mark.parametrize("key", ["base_url", "ttl"])
+def test_the_link_block_s_required_keys_are_required(key: str) -> None:
+    block = link_block()
+    del block[key]
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="one_time_link", one_time_link=block))
+    assert f"delivery.one_time_link.{key}" in str(raised.value)
+
+
+def test_a_link_ttl_that_is_not_a_duration_is_refused_at_load() -> None:
+    with pytest.raises(ConfigError, match="not a duration"):
+        build_delivery(document(method="one_time_link", one_time_link=link_block(ttl="1d")))
+
+
+@pytest.mark.parametrize(
+    "url", ["http://yopass.example.com", "ftp://yopass.example.com", "yopass.example.com"]
+)
+def test_a_base_url_that_is_not_https_off_loopback_is_refused(url: str) -> None:
+    """Decision #856's rule: the person's browser loads the page that reads the
+    key from here."""
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="one_time_link", one_time_link=link_block(base_url=url)))
+    assert "delivery.one_time_link.base_url" in str(raised.value)
+    assert "https://" in str(raised.value)
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:1337", "http://localhost:1337"])
+def test_plain_http_to_loopback_is_accepted(url: str) -> None:
+    section = built(method="one_time_link", one_time_link=link_block(base_url=url))
+
+    assert section.one_time_link is not None
+    assert section.one_time_link.base_url == url
+
+
+def test_a_trailing_slash_is_dropped() -> None:
+    section = built(
+        method="one_time_link", one_time_link=link_block(base_url="https://yopass.example.com/")
+    )
+
+    assert section.one_time_link is not None
+    assert section.one_time_link.base_url == "https://yopass.example.com"
+
+
+@pytest.mark.parametrize(
+    "url", ["https://yopass.example.com/?a=b", "https://yopass.example.com/#/s/x"]
+)
+def test_a_base_url_with_a_query_or_a_fragment_is_refused(url: str) -> None:
+    with pytest.raises(ConfigError, match="delivery.one_time_link.base_url"):
+        build_delivery(document(method="one_time_link", one_time_link=link_block(base_url=url)))
+
+
+def test_there_is_no_key_for_one_time() -> None:
+    """The tool always asks for one-time (decision #445)."""
+    with pytest.raises(ConfigError, match="one_time"):
+        build_delivery(document(method="one_time_link", one_time_link=link_block(one_time=False)))
+
+
+def test_the_link_block_is_not_read_when_another_method_is_selected() -> None:
+    section = built(method="vault_wrapped", vault_wrapped={"ttl": "15m"}, one_time_link={"x": 1})
+
+    assert section.one_time_link is None
+
+
+def test_one_time_link_is_not_served_by_this_build_yet() -> None:
+    """Its keys are read, and the method itself comes later (TODO(#445))."""
+    assert unserviceable(built(method="one_time_link", one_time_link=link_block())) is not None

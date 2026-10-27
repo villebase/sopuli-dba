@@ -344,7 +344,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[postgres]", "[hashicorp]", "[oci]", "[notify]", "[all]"]
+        shape: ["", "[oracle]", "[postgres]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[all]"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -381,7 +381,7 @@ jobs:
           import importlib.util
           import sys
 
-          present = [name for name in ("httpx", "oci", "oracledb", "psycopg")
+          present = [name for name in ("httpx", "oci", "oracledb", "psycopg", "pysequoia")
                      if importlib.util.find_spec(name) is not None]
           if present:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")

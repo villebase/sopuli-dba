@@ -872,8 +872,8 @@ def doctor(
     commands later.
 
     It is behind a flag because it is not cheap -- several reads per target, and
-    on Oracle one probe per documented grant -- and a survey of twenty databases should not
-    pay for a question nobody asked.
+    on Oracle one probe per documented grant -- and a survey of twenty databases
+    should not pay for a question nobody asked.
 
     What it *cannot* see is reported beside what it found: a refused view, and
     the rows of the must-not-grant list that no view reachable from here carries.

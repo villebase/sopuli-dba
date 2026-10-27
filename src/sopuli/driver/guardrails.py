@@ -15,10 +15,10 @@ the driver reports as vendor-maintained, or as holding administrative
 privileges" is a sentence about credentials, not about Oracle. So this module
 reads :class:`~sopuli.driver.protocol.UserState`, which the Oracle driver fills
 from `DBA_USERS` and the PostgreSQL driver from `pg_roles`
-(:mod:`sopuli.driver.postgres.roles`), and neither reimplements the reasoning. Which
-roles count as administrative, and which names the product supplies, are the
-driver's lists: it reports them as ``admin_roles`` and ``supplied_name``, and
-this module holds no product's names.
+(:mod:`sopuli.driver.postgres.roles`), and neither reimplements the reasoning.
+Which roles count as administrative, and which names the product supplies, are
+the driver's lists: it reports them as ``admin_roles`` and ``supplied_name``,
+and this module holds no product's names.
 
 **It reviews; it does not decide.** Like :mod:`sopuli.driver.oracle.errors`,
 this returns a value. Whether a refusal stops the whole run or skips one unit
@@ -90,7 +90,7 @@ from dataclasses import dataclass
 
 from sopuli.driver.protocol import UserState
 
-#: §4 check 1. With check 6, the only one `--force` cannot reach.
+#: §4 check 1. Never waived (:data:`NEVER_WAIVED`).
 DECLARED = "declared"
 
 #: §4 check 2 — the driver said this account belongs to the product.
@@ -105,7 +105,7 @@ PRIVILEGED_ROLE = "privileged_role"
 #: §4 check 5.
 DENY_LIST = "deny_list"
 
-#: Check 6. With check 1, the only one `--force` cannot reach.
+#: Check 6. Never waived (:data:`NEVER_WAIVED`).
 SUPERUSER = "superuser"
 
 #: Check 7.

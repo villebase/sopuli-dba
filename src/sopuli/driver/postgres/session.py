@@ -3,8 +3,8 @@
 The module :data:`sopuli.driver.registry.DRIVERS` imports for
 ``type: postgresql``. It imports ``psycopg`` at module scope, so a machine
 without the ``postgres`` extra gets ``SOPULI-20002`` from the registry rather than
-a traceback (ADR-006 rule 1). :mod:`.password`, which only this module imports,
-imports it too; the other modules beside it do not.
+a traceback (ADR-006 rule 1). Which of the modules beside it import ``psycopg``
+is in the package docstring.
 
 **What this build does.** It connects, labels the session with the run's
 correlation id, and reports the scope: ``cluster``, whether it takes writes, and

@@ -19,7 +19,7 @@ Reconfiguring to UTF-8 removes both. It is a no-op wherever the stream is
 already UTF-8, which is every POSIX system and every attached Windows console,
 so the only behaviour that changes is the one that was broken.
 
-Four things here are decisions rather than obvious lines of code:
+These things are decisions rather than obvious lines of code:
 
 **The guard is ``getattr``, not ``isinstance``.** ``sys.stdout`` is ``None``
 under ``pythonw.exe`` and is replaced by something else entirely under a test
@@ -40,10 +40,12 @@ inside itself. Silently resetting it would make this fix a regression on the
 stream that matters most. So the current value is read off the stream and passed
 back, and only the encoding changes.
 
-**Failure is silent.** The tool's own prose is ASCII by convention
-(``tests/test_cli_smoke.py``), so a stream that refuses to reconfigure still
-produces correct output. ``sopuli doctor`` can
-report the state later by reading ``sys.stdout.encoding`` directly.
+**Failure is silent.** :func:`sopuli.cli.main` calls this before click parses
+the command line, so ``--debug`` has not installed its handler and there is
+nothing to log to. For stdout and stderr that costs little: the tool's own prose
+is ASCII by convention (``tests/test_cli_smoke.py``), so a stream that refuses to
+reconfigure still produces correct output. A stdin that refuses keeps the locale
+encoding, with the risk :func:`reconfigure_stream` describes.
 """
 
 from __future__ import annotations

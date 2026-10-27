@@ -370,10 +370,10 @@ only decorate a sentence. Both carry diagnostic codes for a program that needs
 to branch. Their module docstrings say so.
 
 **`role_for_state` in `sopuli/output/palette.py` is the one function that gives
-a state its role.** Every view calls it. When each view kept its own subset of
-the enum, `check` coloured `DRIFT` and `apply` did not, and `apply` coloured
-`ERROR` and `check` did not. One state got different emphasis depending on the
-verb, which is what the roles exist to prevent.
+a state its role.** Every view calls it. Views that each keep their own subset
+of the enum drift apart: `check` colours `DRIFT` and `apply` does not, `apply`
+colours `ERROR` and `check` does not. One state then gets different emphasis
+depending on the verb, which is what the roles exist to prevent.
 
 These properties of the palette are decisions, not taste:
 
@@ -1112,11 +1112,11 @@ asked, and `lock status` asks none. So the survey finds reset locks by listing
 the prefix. Such an entry has `declared: true` and
 `declared_by: "reset_records"`.
 
-- **`declared` widened; it was not replaced.** It means "this configuration
-  accounts for the path at all", which is what a consumer filtering its own locks
-  out of a survey asks. Widening a boolean is a minor bump. Turning it into a
-  three-valued string would be a rename, which is major, and every consumer
-  would pay for a question none of them asked.
+- **`declared` covers reset locks too, and stays a boolean.** It means "this
+  configuration accounts for the path at all", which is what a consumer
+  filtering its own locks out of a survey asks. Widening what a boolean covers
+  is a minor bump. A three-valued string in its place would be a rename, which
+  is major, and every consumer would pay for a question none of them asked.
 - **`declared_by` is not an enum**, unlike `state`. A later use case may claim
   another prefix: UC-4 hands accounts over through the same delivery
   abstraction (UC-2 §6.7). A consumer that switched on two values would break on
@@ -1343,9 +1343,9 @@ each of those words would mean something else. `IN_SYNC` on a healthy target
 would claim a sync that never happened, and `SKIPPED` means "we chose not to
 try".
 
-Widening `result` was the alternative: make `account` optional and add states.
-That is a major change, because a consumer that reads `result.account`
-unconditionally breaks. A new section is a minor one.
+`result` does not carry `doctor`'s per-target report with an optional `account`
+and new states, because that is a major change: a consumer that reads
+`result.account` unconditionally breaks. A new section is a minor one.
 
 ```json
 "targets": [
@@ -1879,8 +1879,8 @@ for accounts with an open window. `active: false` beside a
 `null`. The first says a window opened and was closed in the run
 (`--strategy direct`); the second says no window was possible. An apply row
 has no `rollover_finish` action, even when the run closed the window, so this
-field is where the regime each account ran under is recovered from. That is why
-`--strategy` needed no new field.
+field is where the regime each account ran under is recovered from, and
+`--strategy` has no field of its own.
 
 **A promotion is reported on every account in the document it promoted**, with
 the version it produced, because they shared one compare-and-set. Where the
@@ -2676,9 +2676,9 @@ section. From the tier-1 stack, trimmed only where `…` says so:
 **`constraints.resolved` is the whole section, sent once, as soon as it
 exists**: the `constraints` object the run document carries, unchanged, sent
 after every target has been read and before anything is drawn. That is how
-`plan.resolved` works. One event per target as each is read was the
-alternative. It was rejected because the section's estate-wide fields,
-`strictest_target` and `character_set`, belong to no single target, and a
+`plan.resolved` works. It is not one event per target as each is read, because
+the section's estate-wide fields, `strictest_target` and `character_set`,
+belong to no single target, and a
 stream per target would leave every consumer to work out "strictest" again,
 which is logic this tool already owns. The notes the reading produced
 (`SOPULI-W015` to `W017`) arrive just before it as `diagnostic` events. A
@@ -3058,9 +3058,9 @@ three:
   may rightly write a reader for it before anything fills it. An enum value is a
   name.
 - It does not cover a value for a verb not built *yet*. It covers a verb that was
-  **declined**: `creds.promote` was removed under this rule, because UC-1 §4 says
-  there is no `creds promote` and there will not be one. `admin.install` was
-  removed in 1.37, because [#655](../decisions/log.md#655) declined
+  **declined**. `creds.promote` was removed under this rule, because UC-1 §4
+  says there is no `creds promote` and there will not be one. `admin.install`
+  was removed in 1.37, because [#655](../decisions/log.md#655) declined
   `admin install`. UC-4 may install the service account, but with a verb of its
   own, not this one. A slot for something that might arrive is honest. A branch
   nothing can ever reach is not.

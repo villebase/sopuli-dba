@@ -252,8 +252,8 @@ creates for itself, such as its replication role.
 ## 5. Roles the tool refuses to change
 
 The account guardrails of `02-oracle-privileges.md` §4 apply to PostgreSQL too.
-The rules are product-neutral. The driver reads the facts from `pg_roles`,
-which any role can read, so the guardrails need no grant:
+The rules are product-neutral. The driver reads the facts from `pg_roles` and
+`pg_auth_members`, which any role can read, so the guardrails need no grant:
 
 | Check | Refuses | From | `--force` |
 |---|---|---|---|

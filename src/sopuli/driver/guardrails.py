@@ -13,8 +13,9 @@ inside the Oracle driver:
 **The rule is product-neutral; the facts are the driver's.** "Refuse an account
 the driver reports as vendor-maintained, or as holding administrative
 privileges" is a sentence about credentials, not about Oracle. So this module
-reads :class:`~sopuli.driver.protocol.UserState` and PostgreSQL later fills the
-same fields from `pg_roles` rather than reimplementing the reasoning. Which
+reads :class:`~sopuli.driver.protocol.UserState`, and the PostgreSQL driver fills
+the same fields from `pg_roles` and `pg_auth_members` rather than reimplementing
+the reasoning. Which
 roles count as administrative, and which names the product supplies, are the
 driver's lists: it reports them as ``admin_roles`` and ``supplied_name``, and
 this module holds no product's names.

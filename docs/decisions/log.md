@@ -3166,3 +3166,33 @@ the register.
     naming, but it is a second list of people to keep in step with the
     directory, and an account a predicate admits would need an entry before it
     could be reset this way.
+
+## #1045
+
+- **Decided:** 2026-10-27, #1045
+- **Question:** Is a connection pooler such as PgBouncer a supported
+  PostgreSQL target? #1078 measured PostgreSQL 16.15 behind PgBouncer 1.26.0.
+  A `db.query_timeout_s` sent as a startup parameter is refused, or dropped
+  without a message. A plain `SET` leaks to other clients under transaction
+  pooling. PgBouncer refuses a wrong password as "SASL authentication failed"
+  with no SQLSTATE, so `creds check` reports drift as `ERROR`, and `creds apply`
+  and `rotate` cannot change a password. `doctor` and `require_encryption`
+  read the encryption of the pooler's hop to the server, not of the tool's own
+  hop.
+- **Decision:** Not supported, for now. A PostgreSQL target's `dsn` names the
+  server. 01-configuration says so, and says what a run behind a pooler does.
+  The driver does not change and does not detect a pooler, so a run there
+  behaves as measured.
+- **Why:** a DBA tool can usually reach the server directly, and poolers mostly
+  sit in front of applications. Support would first need the pooler's
+  authentication messages measured, a way to say a target is a pooler, a rule
+  for the query budget, and a decision on what "encrypted" means across two
+  hops. No estate has asked for it.
+- **Rejected:**
+  - Supported in session pooling, with no budget through the pooler. About a
+    day of driver work and a tier-1 job, plus the encryption decision and a
+    rule against `auth_file`, which checks a login against a file, not the
+    server.
+  - Supported in transaction pooling as well. Everything above, and every
+    statement wrapped in a transaction with `SET LOCAL statement_timeout`, three
+    round trips each, for a budget that is off by default.

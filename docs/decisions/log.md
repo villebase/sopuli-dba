@@ -100,8 +100,8 @@ the register.
 - **Why:** First decided on 2026-08-08, as "in the tree until a second driver
   exists". Reviewed when the PostgreSQL driver was planned, and kept. A plugin
   API makes the driver interface a public contract. Writing
-  the PostgreSQL driver changed that interface, because finding where
-  Oracle's shape leaked into it was part of the work. Under a plugin API, each
+  the PostgreSQL driver will change that interface, because finding where
+  Oracle's shape leaked into it is part of the work. Under a plugin API, each
   of those changes would break drivers outside the repo, and would need a
   version rule between the tool and each driver. Nobody outside the project
   writes a driver, so that cost buys nothing yet. Install extras (D9) already

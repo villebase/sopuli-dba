@@ -540,11 +540,12 @@ rules apply:
 - **A common user's name keeps its `#`.** The record of `C##JDOE` is at
   `<prefix>/<target>/c##jdoe`, and so is its lock. The HashiCorp backends
   percent-encode each path segment, so the `#` reaches the vault as part of the
-  name. A record or lock at `<prefix>/<target>/c` is an account named `C`'s: a
-  reset of `C` reads and locks it, `lock status` lists it as the lock of `c`,
-  and `lock break` can break it. Releases up to 0.79.0 wrote every `C##`
-  account's record and lock there, so operators who reset `C##` accounts run
-  one release, or one account is locked at two paths
+  name. A reset of a `C##` account never reads `<prefix>/<target>/c`: a record
+  or lock there is an account named `C`'s. A reset of `C` reads and locks it,
+  `lock status` lists it as the lock of `c`, and `lock break` can break it.
+  Releases up to 0.79.0 wrote every `C##` account's record and lock there, so
+  everyone who resets `C##` accounts on one target runs the same release. With
+  two releases, one account is locked at two paths
   ([#884](../decisions/log.md#884)).
 
 **The record is written after the database confirms and after delivery** (§6.4).

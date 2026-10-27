@@ -292,8 +292,8 @@ def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
     refuses**. A policy is required in order to *draw* a password, because §8 has
     no default length and inventing one is the thing it exists not to do; it is
     not required in order to *apply* one, and an estate that has never declared a
-    policy applies passwords today. Refusing here would make an unrelated feature
-    a new precondition on a command that already works.
+    policy still applies passwords. Refusing here would make an unrelated feature
+    a precondition of `apply`.
 
     So an account with no policy, or one whose policy declares no ``account:``
     block, gets :class:`~sopuli.driver.protocol.AccountAttributes` with nothing

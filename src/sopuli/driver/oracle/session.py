@@ -1,7 +1,7 @@
 """Opening a connection, and putting the run's id on it.
 
-The module :data:`sopuli.driver.registry.DRIVERS` imports for ``type: oracle``. It imports
-``oracledb`` at module scope on purpose: that is what makes
+The module :data:`sopuli.driver.registry.DRIVERS` imports for ``type: oracle``.
+It imports ``oracledb`` at module scope on purpose: that is what makes
 :func:`sopuli.driver.registry.resolve` able to answer "the driver is not
 installed" as a structured error instead of a traceback (ADR-006 rule 1). The
 package above it stays clean, so :mod:`.statements` and :mod:`.client` remain

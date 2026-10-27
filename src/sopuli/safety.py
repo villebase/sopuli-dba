@@ -3,8 +3,8 @@
 Invariant 10 says safety settings only ratchet toward safe, and
 :mod:`sopuli.settings.registry` is what makes that true of *resolution*: no layer
 can relax ``safety.readonly``, because the merge policy will not let it. This
-module is the other half: it acts on the resolved answer. Every mutating command
-calls it, so each one refuses the same way.
+module is the other half: it acts on the resolved answer, so each mutating
+command that calls it refuses the same way.
 
 **Exit 8, category ``policy``.** P5 reads exit 8 as "aborted by user /
 confirmation declined", and ``readonly: true`` is the operator declining in

@@ -219,8 +219,8 @@ these:
   the command did not print at all.
 - **The shape of what the server actually sends.** `ORA-28002` is the documented
   grace-period code, and Oracle 26ai does not send it; the message repeats its
-  own code and appends a URL on a second line. Neither is guessable, and both
-  changed the design.
+  own code and appends a URL on a second line. Neither can be guessed from the
+  documentation, and the code has to handle both.
 - **Anything intermittent.** A diagnostic query reported the probe's own session
   in one run out of two. One run is not a measurement.
 

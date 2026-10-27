@@ -298,7 +298,7 @@ def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
     So an account with no policy, or one whose policy declares no ``account:``
     block, gets :class:`~sopuli.driver.protocol.AccountAttributes` with nothing
     set -- which is the same answer as declaring every attribute ``false``, and
-    the same behaviour this command had before attributes existed.
+    changes nothing on the account.
 
     A name that names nothing is not handled here either, and does not need to be:
     :mod:`sopuli.config.references` refuses a dangling ``policy:`` when the file

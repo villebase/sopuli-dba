@@ -313,7 +313,7 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   OK: release-0.78.0/sopuli_dba-0.78.0.tar.gz
   ```
 
-  Each file must report `OK`. A release from before #947 has no assets to check.
+  Each file must report `OK`. Releases before 0.78.0 have no assets to check.
 
   **Anything other than `OK` for either file, or a publisher other than this
   workflow and environment, is a security incident**, not a failed release: a

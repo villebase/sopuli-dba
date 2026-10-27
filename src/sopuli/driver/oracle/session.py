@@ -1,7 +1,6 @@
 """Opening a connection, and putting the run's id on it.
 
-The first code in this project that opens a socket to a database, and the module
-:data:`sopuli.driver.registry.DRIVERS` imports for ``type: oracle``. It imports
+The module :data:`sopuli.driver.registry.DRIVERS` imports for ``type: oracle``. It imports
 ``oracledb`` at module scope on purpose: that is what makes
 :func:`sopuli.driver.registry.resolve` able to answer "the driver is not
 installed" as a structured error instead of a traceback (ADR-006 rule 1). The

@@ -13,8 +13,8 @@ Where the selected method is `manual`, `vault_wrapped`, `vault_path` or
 `onepassword_share:` (TODO(#446)) are not read yet.
 
 **Why the sub-block must exist at all**, rather than defaulting: every method
-needs something. A wrapping token needs a TTL, a link needs a backend and a base
-URL, `manual` needs `force_expire: true` (decision #439). A block that could be
+needs something. A wrapping token needs a TTL, a link needs a server address and
+a TTL, `manual` needs `force_expire: true` (decision #439). A block that could be
 omitted would make "delivery is configured" mean "a word was typed", and the
 failure would arrive when a password had already been drawn.
 
@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
@@ -346,24 +347,25 @@ def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
     ``http://`` to a loopback host, by the rule a vault address follows
     (decision #856). The person's browser loads the page that reads the key
     from there, and a page served over plain HTTP can be changed on the way.
-    One trailing ``/`` is dropped, so the link the tool builds has one ``/``
-    before ``#``.
+    It must name a host, and may not hold a user name or a password, which would
+    travel in every link. One trailing ``/`` is dropped, so the link the tool
+    builds has one ``/`` before ``#``.
 
     `ttl` is **required**, with the wrap TTL's shape. Which values the server
-    accepts is its own setting, so the plan reads its `/config` for that.
+    accepts is its own setting, which the method will check against the server's
+    `/config` at plan time (TODO(#445)).
 
     `split_key` is **optional** and ``false`` by default.
     """
     block = mapping(raw, at=at)
     reject_unknown_keys(block, allowed=LINK_KEYS, at=at)
 
-    if "base_url" not in block:
-        raise ConfigError(
-            "`one_time_link` delivery needs a `base_url`",
-            at=at.key("base_url"),
-            hint="the address of the Yopass server, such as `https://yopass.example.com`",
-        )
-    base_url = required_string(block, "base_url", at=at)
+    base_url = required_string(
+        block,
+        "base_url",
+        at=at,
+        hint="the address of the Yopass server, such as `https://yopass.example.com`",
+    ).strip()
     scheme = plain_http_scheme(base_url)
     if scheme is not None:
         raise ConfigError(
@@ -384,6 +386,23 @@ def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
                 "and a query or fragment in the address would come before the link's own"
             ),
         )
+    parts = urlsplit(base_url)
+    if not parts.hostname:
+        raise ConfigError(
+            "`base_url` names no host",
+            at=at.key("base_url"),
+            hint="write the server's address, such as `https://yopass.example.com`",
+        )
+    if "@" in parts.netloc:
+        # Not echoed: what comes before the `@` may be a password.
+        raise ConfigError(
+            "`base_url` may not hold a user name or a password",
+            at=at.key("base_url"),
+            hint=(
+                "write the server's address only. Everything before the `#` goes into every "
+                "link the person receives, so a password here would reach each of them"
+            ),
+        )
     ttl = _required_ttl(
         block,
         method=LINK,
@@ -396,7 +415,7 @@ def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
     )
     split_key = optional_bool(block, "split_key", at=at)
     return LinkDelivery(
-        base_url=base_url.strip().removesuffix("/"),
+        base_url=base_url.removesuffix("/"),
         ttl=ttl,
         split_key=split_key is True,
     )
@@ -405,7 +424,7 @@ def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
 def _required_ttl(block: dict[str, Any], *, method: str, at: KeyPath, why: str) -> str:
     """A method's required `ttl`, in :data:`TTL_PATTERN`'s shape.
 
-    One check for both methods that take one, so the two cannot drift. ``why``
+    One check for every method that takes one, so they cannot drift. ``why``
     is the hint for a missing `ttl`: what the duration bounds differs by method.
     """
     if "ttl" not in block:
@@ -417,8 +436,8 @@ def _required_ttl(block: dict[str, Any], *, method: str, at: KeyPath, why: str) 
             at=at.key("ttl"),
             hint=(
                 "digits and one unit -- `s`, `m` or `h`, as in `15m`; a day is `24h`. The "
-                "value is passed to Vault rather than interpreted here, so an unparseable "
-                "one would otherwise fail after a password had already been drawn"
+                "value goes to the store or the server, and an unparseable one would "
+                "otherwise fail there, after a password had already been drawn"
             ),
         )
     return ttl
@@ -447,7 +466,7 @@ def _require_sub_block(block: dict[str, Any], method: str, *, at: KeyPath) -> No
         at=at.key(method),
         hint=(
             "every method needs settings of its own -- a wrapping token needs a ttl, "
-            "a link needs a backend; write the block, or select a different method"
+            "a link needs a server address; write the block, or select a different method"
         ),
     )
 

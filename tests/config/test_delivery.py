@@ -648,6 +648,24 @@ def test_a_base_url_with_a_query_or_a_fragment_is_refused(url: str) -> None:
         build_delivery(document(method="one_time_link", one_time_link=link_block(base_url=url)))
 
 
+@pytest.mark.parametrize("url", ["https://", "https:///yopass"])
+def test_a_base_url_with_no_host_is_refused(url: str) -> None:
+    with pytest.raises(ConfigError, match="names no host"):
+        build_delivery(document(method="one_time_link", one_time_link=link_block(base_url=url)))
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://user:pw@yopass.example.com", "https://yopass.example.com@other.example.com"],
+)
+def test_a_base_url_with_a_user_or_a_password_is_refused_without_echoing_it(url: str) -> None:
+    """Everything before the `#` goes into every link the person receives."""
+    with pytest.raises(ConfigError, match="user name or a password") as raised:
+        build_delivery(document(method="one_time_link", one_time_link=link_block(base_url=url)))
+    assert "pw" not in str(raised.value)
+    assert "other.example.com" not in str(raised.value)
+
+
 def test_there_is_no_key_for_one_time() -> None:
     """The tool always asks for one-time (decision #445)."""
     with pytest.raises(ConfigError, match="one_time"):

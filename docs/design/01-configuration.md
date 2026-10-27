@@ -210,7 +210,7 @@ that shows somebody a live password. Availability rather than preference.
 
 **The selected method's sub-block must exist**, and is refused at load when it
 does not (§9b). Every method needs something: a wrapping token needs a TTL, a link
-needs a backend, `manual` needs `force_expire: true`. A block that could be
+needs a server address, `manual` needs `force_expire: true`. A block that could be
 omitted would make "delivery is configured" mean "a word was typed", and the
 failure would arrive once a password had already been drawn.
 
@@ -324,9 +324,10 @@ delivery:
 `base_url` is **required**: the Yopass server's address. It must be `https://`,
 or `http://` to `127.0.0.1`, `::1` or `localhost`, by the rule a vault address
 follows (§3a). The person's browser loads the page that reads the key from this
-address, and a page sent in clear can be changed on the way. It may not hold a
-`?` or a `#`, because the link puts its own fragment after it. One trailing `/`
-is dropped.
+address, and a page sent in clear can be changed on the way. It must name a
+host. It may not hold a user name or a password, because everything before the
+`#` goes into every link. It may not hold a `?` or a `#`, because the link puts
+its own fragment after it. One trailing `/` is dropped.
 
 `ttl` is **required**, as `vault_wrapped`'s is: the link stops working, and how
 soon is what the method promises. It is checked for the same shape, and the

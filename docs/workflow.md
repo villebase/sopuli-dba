@@ -143,12 +143,14 @@ that the installed `sopuli` binary runs. No containers, under a minute.
 ### "main is always green": `ci ok` is the required check
 
 A repository ruleset named `main` enforces the rule at the top of this document.
-It applies to the default branch, has no bypass actors, and has three rules:
+It applies to the default branch, has no bypass actors, and has these rules:
 
 - **`ci ok` is a required status check.** A pull request cannot merge until it
   passes. **One name, and not `lint` or the `test` cells**: that job name is the
   contract. Renaming the job leaves the required `ci ok` check pending for
   ever, and no pull request can merge until the ruleset names the new job.
+- a change reaches the branch only through a pull request, which needs no
+  approving review;
 - the branch cannot be deleted;
 - the branch cannot be force-pushed.
 
@@ -197,7 +199,8 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   `python -m build --no-isolation` and `twine check --strict`, and uploads
   `dist/`. `--no-isolation` makes the build use the pinned `hatchling`.
   `.github/requirements/release.in` says how to regenerate the pins, and the
-  `release build` job in `ci.yml` runs the same steps on every pull request.
+  `release build` job in `ci.yml` runs the same steps on every pull request
+  that changes code.
   `publish` downloads `dist/` and hands it to `pypa/gh-action-pypi-publish`
   through trusted publishing. There is no PyPI token anywhere: `publish` holds an
   OIDC token PyPI trusts for that one workflow, and `id-token: write` is the only

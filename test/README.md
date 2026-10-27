@@ -245,6 +245,10 @@ The public test suite must be green using only what a contributor can pull —
 | `oracle-init/01_test_profiles.sql` | profiles the suite needs: lockout, strong verify function, password reuse, rollover |
 | `oracle-init-nne/sqlnet-nne.ora` | the server settings that require Native Network Encryption on the NNE service |
 | `oracle-init-nne/01_require_nne.sh` | adds `sqlnet-nne.ora` to the NNE service's `sqlnet.ora` on each start |
+| `oracle-init-19c/01_test_profiles_in_pdb.sh` | creates the test profiles in `ORCLPDB1` on the 19c images |
+| `oracle-init-12c/init.sh` | creates the test profiles on the 12.2 image, which has no user-script hook. Run by hand once after the first start |
+| `jdbc/JdbcLogin.java` | logs in through a JDBC URL, once for each password it reads on stdin, for `../tests/test_password_paths.py` |
+| `oci-dbcs/new-db-system.ps1` | creates, connects to, stops, starts or tears down a minimal OCI Base Database Service 19c DB system. Not part of the compose stack. [`../docs/maintainer-environments.md`](../docs/maintainer-environments.md) says how to use it |
 | `capabilities.py` | sketch of capability probing and the pytest skip markers |
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
 | `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |
@@ -258,7 +262,7 @@ Fixtures use the fictional vocabulary from `01-configuration.md` — application
 
 ## Kubernetes, which is not part of the compose stack
 
-`k8s_eso_probe.py` is the one thing here that does not use `compose.yaml`. It
+`k8s_eso_probe.py` does not use `compose.yaml`. It
 needs a Kubernetes cluster, because the thing it is checking is a Kubernetes
 add-on reading a vault. Docker Desktop's built-in cluster is what it was
 written against — *Settings → Kubernetes → Enable Kubernetes* — and any cluster

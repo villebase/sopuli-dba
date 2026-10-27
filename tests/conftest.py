@@ -335,6 +335,31 @@ def private_mount(vault_stack: VaultStack, request: pytest.FixtureRequest) -> It
     client.delete(f"/v1/sys/mounts/{path}")
 
 
+@pytest.fixture(scope="session")
+def vault_personal(vault_stack: VaultStack) -> VaultStack:
+    """The tier-1 Vault with vault-init's `vault_path` setup, or a skip.
+
+    A Vault started before vault-init set this up, or one restarted since, has
+    the mounts back after `up` but not necessarily the people, and a token past
+    its 768h expires. Each would fail every test with a 400 or a 403 that does
+    not say why.
+    """
+    client = vault_stack.client
+    rerun = "run `docker compose --profile tier0 up -d vault-init` from test/"
+    auths = client.get("/v1/sys/auth")
+    if auths.status_code != 200 or f"{vault_stack.userpass_mount}/" not in auths.json()["data"]:
+        _missing_environment(f"Vault has no {vault_stack.userpass_mount}/ auth mount; {rerun}")
+    for token in (vault_stack.personal_writer_token, vault_stack.personal_writer_read_token):
+        lookup = client.get("/v1/auth/token/lookup-self", headers={"X-Vault-Token": token})
+        if lookup.status_code != 200:
+            _missing_environment(f"the token {token} does not authenticate; {rerun}")
+    for person in (vault_stack.alice, vault_stack.bob, vault_stack.carol):
+        entity = client.get(f"/v1/identity/entity/name/{person.login}")
+        if entity.status_code != 200 or not entity.json()["data"]["aliases"]:
+            _missing_environment(f"Vault has no entity with an alias for {person.login}; {rerun}")
+    return vault_stack
+
+
 # ------------------------------------------------------ tier 1: PostgreSQL ---
 #
 # The `postgres` service of `test/compose.yaml`, in the tier0 and tier1

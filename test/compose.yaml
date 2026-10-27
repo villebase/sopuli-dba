@@ -97,11 +97,13 @@ services:
   # reads it through a policy keyed on their entity's `db_account` metadata:
   #   - personal-reader: `read` on their own path, attached to every userpass user.
   #   - personal-writer: the DBA's `create` and `update`, with no `read`.
-  #   - personal-writer-read: the same with `read`, which sopuli has to refuse.
+  #   - personal-read: `read` on the same paths, which sopuli has to refuse.
   #   - userpass users alice (db_account ACME_DEV_ALICE, the tier-1 Oracle
   #     tests' personal account), bob (ACME_DEV_BOB) and carol (no db_account).
-  #   - tokens sopuli-test-personal-writer and sopuli-test-personal-writer-read,
-  #     one per writer policy.
+  #   - token sopuli-test-personal-writer, with personal-writer, and token
+  #     sopuli-test-personal-writer-read, with personal-writer and personal-read.
+  #     Both live 768h, the dev server's maximum; vault-init recreates an
+  #     expired one.
   # `tests/conftest.py` `VaultStack` carries the same names. The passwords go
   # through stdin, as `password=-`.
   vault-init:
@@ -136,29 +138,32 @@ services:
           capabilities = ["create", "update"]
         }
         EOF
-        vault policy write personal-writer-read - <<'EOF'
+        vault policy write personal-read - <<'EOF'
         path "kv/data/personal/*" {
-          capabilities = ["create", "update", "read"]
+          capabilities = ["read"]
         }
         path "kv/metadata/personal/*" {
-          capabilities = ["create", "update", "read"]
+          capabilities = ["read"]
         }
         EOF
-        for policy in personal-writer personal-writer-read; do
-          vault token lookup "sopuli-test-$$policy" >/dev/null 2>&1 \
-            || vault token create -id="sopuli-test-$$policy" -policy="$$policy" \
-                 -ttl=768h >/dev/null
-        done
+        vault token lookup sopuli-test-personal-writer >/dev/null 2>&1 \
+          || vault token create -id=sopuli-test-personal-writer \
+               -policy=personal-writer -ttl=768h >/dev/null
+        vault token lookup sopuli-test-personal-writer-read >/dev/null 2>&1 \
+          || vault token create -id=sopuli-test-personal-writer-read \
+               -policy=personal-writer -policy=personal-read -ttl=768h >/dev/null
         # A person: a userpass user, and an entity with an alias for that user.
         # The second argument is the entity's db_account; carol has none.
+        # The alias is created unless the entity already has one on this mount.
         person() {
           printf '%s' "sopuli-test-$$1" | vault write "auth/userpass/users/$$1" \
             password=- token_policies=personal-reader >/dev/null
           vault write -force "identity/entity/name/$$1" $${2:+metadata=db_account=$$2} >/dev/null
-          if [ "$$(vault read -field=aliases "identity/entity/name/$$1")" = "[]" ]; then
-            vault write identity/entity-alias name="$$1" mount_accessor="$$accessor" \
-              canonical_id="$$(vault read -field=id "identity/entity/name/$$1")" >/dev/null
-          fi
+          case "$$(vault read -field=aliases "identity/entity/name/$$1")" in
+            *"$$accessor"*) ;;
+            *) vault write identity/entity-alias name="$$1" mount_accessor="$$accessor" \
+                 canonical_id="$$(vault read -field=id "identity/entity/name/$$1")" >/dev/null ;;
+          esac
         }
         person alice ACME_DEV_ALICE
         person bob ACME_DEV_BOB

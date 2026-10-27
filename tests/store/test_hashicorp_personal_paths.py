@@ -56,6 +56,11 @@ def _as(token: str) -> dict[str, str]:
     return {"X-Vault-Token": token}
 
 
+@pytest.fixture(autouse=True)
+def _personal_setup(vault_personal: Any) -> None:
+    """Every test here needs vault-init's setup, and skips once without it."""
+
+
 @pytest.fixture
 def path(vault_stack: Any, request: pytest.FixtureRequest) -> Iterator[str]:
     """alice's path for one test, removed before and after it with the root token.
@@ -167,17 +172,20 @@ def _deletion_time(stack: Any, target: str, version: int) -> str:
 
 def test_delete_version_after_set_first_deletes_the_version(vault_stack: Any, path: str) -> None:
     """The order the method uses: metadata first, then the value. The person
-    reads it at once, and gets 404 once the clock has run."""
-    _set_delete_after(vault_stack, path, "2s")
+    reads it at once, and gets 404 once the clock has run.
+
+    alice logs in before the clock starts, and the window is 5 s, so a slow
+    runner still reads the value before it goes."""
+    alice = _as(_login(vault_stack, vault_stack.alice))
+    read = _data_path(vault_stack, vault_stack.alice.db_account, path)
+    _set_delete_after(vault_stack, path, "5s")
     version = _write(vault_stack, path)
     assert _deletion_time(vault_stack, path, version) != ""
-    read = _data_path(vault_stack, vault_stack.alice.db_account, path)
-    alice = _as(_login(vault_stack, vault_stack.alice))
     assert vault_stack.client.get(read, headers=alice).status_code == 200
 
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 15
     while (status := vault_stack.client.get(read, headers=alice).status_code) == 200:
-        assert time.monotonic() < deadline, "the version was still readable after 10 s"
+        assert time.monotonic() < deadline, "the version was still readable after 15 s"
         time.sleep(0.5)
 
     assert status == 404
@@ -187,6 +195,12 @@ def test_delete_version_after_set_later_leaves_the_version(vault_stack: Any, pat
     """`delete_version_after` applies only to versions written after it is set,
     which is why the method writes the metadata first."""
     version = _write(vault_stack, path)
-    _set_delete_after(vault_stack, path, "2s")
+    _set_delete_after(vault_stack, path, "1s")
+    time.sleep(2)
 
     assert _deletion_time(vault_stack, path, version) == ""
+    response = vault_stack.client.get(
+        _data_path(vault_stack, vault_stack.alice.db_account, path),
+        headers=_as(_login(vault_stack, vault_stack.alice)),
+    )
+    assert response.status_code == 200, response.text

@@ -12,8 +12,8 @@ but must not contradict them.
 ### The rule
 
 Every operation that touches a database goes through a **driver interface**. No
-command contains vendor SQL. Oracle is the first and only implemented driver;
-its shape must not leak into the interface.
+command contains vendor SQL. Oracle was the first driver and PostgreSQL the
+second. Neither one's shape may leak into the interface.
 
 ### Driver interface
 

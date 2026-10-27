@@ -14,7 +14,7 @@ inside the Oracle driver:
 the driver reports as vendor-maintained, or as holding administrative
 privileges" is a sentence about credentials, not about Oracle. So this module
 reads :class:`~sopuli.driver.protocol.UserState`, which the Oracle driver fills
-from `DBA_USERS` and the PostgreSQL driver from `pg_roles`
+from `DBA_USERS` and the PostgreSQL driver from `pg_roles` and `pg_auth_members`
 (:mod:`sopuli.driver.postgres.roles`), and neither reimplements the reasoning.
 Which roles count as administrative, and which names the product supplies, are
 the driver's lists: it reports them as ``admin_roles`` and ``supplied_name``,

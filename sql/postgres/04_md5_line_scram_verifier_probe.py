@@ -227,7 +227,7 @@ sed -i '1i {HBA_LINE}' "$PGDATA/pg_hba.conf"
     return f"{out}\n{rules}".strip()
 
 
-def _password_command(version: int) -> str:
+def _verifier_step(version: int) -> str:
     """Set a password with psql's \\password, before and after the session's SET.
 
     The server's own psql runs it, so libpq is that release's. With no tty,
@@ -319,7 +319,7 @@ def main() -> int:
                     for require_auth in ("", "md5", "scram-sha-256"):
                         result = _login(version, role, require_auth)
                         print(f"{role} require_auth={require_auth or '(unset)'}: {result}")
-                print(_password_command(version))
+                print(_verifier_step(version))
             except StepError as exc:
                 # Report the step that failed before the restore can fail too.
                 print(f"STOPPED on server {version}: {exc}", file=sys.stderr)

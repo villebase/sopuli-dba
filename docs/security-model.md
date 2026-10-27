@@ -12,7 +12,10 @@ It is written in plain language on purpose. The precise versions live in
 reader who is outside the project.
 
 A note on the current state before anything else: this is alpha software.
-Only Oracle is supported, and only HashiCorp Vault is supported as the secret
+This document describes Oracle. PostgreSQL is supported for the
+application-credential commands, and
+[`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) says what
+differs there. Only HashiCorp Vault is supported as the secret
 store. Try it against a test database first.
 
 ---

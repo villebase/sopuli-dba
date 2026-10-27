@@ -121,7 +121,7 @@ unfinished part. It promises three things:
 | | |
 |---|---|
 | **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`. The *Installing* section below says how to get pipx. `sopuli --version` and `sopuli about` report the installed version |
-| **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI |
+| **Databases** | Oracle, for every command. PostgreSQL 13 to 18, for the application-credential commands (UC-1) only: `doctor` and `creds`. The personal-account commands refuse a PostgreSQL target. For Oracle, CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. For PostgreSQL, CI runs against 16, and the measurements were made on 13 to 18 |
 | **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
@@ -190,6 +190,7 @@ pair of brackets, separated by commas.
 |---|---|---|
 | `sopuli-dba` | nothing beyond the CLI and the config layer | you only need `config validate`, `config show`, `target list` — in an editor, a linter, a pre-commit hook |
 | `"sopuli-dba[oracle]"` | `python-oracledb` | you manage Oracle databases |
+| `"sopuli-dba[postgres]"` | `psycopg`, with the libpq it bundles | you manage PostgreSQL clusters |
 | `"sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
 | `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
 | `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |

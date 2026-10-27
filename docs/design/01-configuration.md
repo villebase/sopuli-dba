@@ -1553,6 +1553,23 @@ connection URI (`postgresql://…`) and a keyword string (`host=… port=…`) a
 refused, because both can carry a password, the reason a vault address may not
 hold one. The message does not repeat what was written.
 
+**The `dsn` names the server, never a connection pooler such as PgBouncer**
+(decided in [#1045](../decisions/log.md#1045)). The tool cannot tell that it is
+talking to a pooler, so a target that is one is not refused; it fails. Measured
+behind PgBouncer 1.26.0 (`08_pgbouncer_probe.py` in
+[`../measurements.md`](../measurements.md)):
+
+- PgBouncer refuses a wrong password with its own message and no SQLSTATE, so
+  `creds check` reports a drifted role as `ERROR` (exit 1), not `DRIFT`
+  (exit 3). `creds apply` and `creds rotate` log in with the new password
+  before they change anything, so they stop there and change nothing.
+- A `db.query_timeout_s` is refused at connect, or dropped without a message
+  where PgBouncer ignores the `options` parameter.
+- `doctor` reads the encryption of PgBouncer's hop to the server, not of the
+  tool's hop to PgBouncer.
+
+Connect to the server directly.
+
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:
 

@@ -1096,7 +1096,8 @@ the register.
     reset is refused at plan time.
 
   `vault_path` is not built yet. How long its stored copy lives is decided
-  together with the method itself (open: #447).
+  together with the method itself. [#447](#447) later decided it: Vault
+  deletes the copy when the method's `ttl` runs out.
 - **Why:** "The DBA cannot read it" has to be checked, not assumed. A DBA token
   that can read the path lets the DBA learn the password, and then act as the
   person while the database audit trail shows only the person's name. A root
@@ -3104,3 +3105,58 @@ the register.
 - **Rejected:**
   - No ceiling. A libpq 13 client would fail with "out of memory", which
     names neither the password nor its length.
+
+## #447
+
+- **Decided:** 2026-10-27, #447
+- **Question:** For `delivery.method: vault_path`, three things H8 left open or
+  did not ask. How long does the stored copy live? Which path does the tool
+  write, so that it is the one the person's policy lets them read? And what
+  does the run document record about the hand-over?
+- **Decision:**
+  - **Lifetime:** the `vault_path:` block takes a required `ttl`. The tool
+    writes it as the path's `delete_version_after` in KV v2, **before** it
+    writes the value, and Vault deletes the version when the time runs out. A
+    KV v1 mount is refused at plan time.
+  - **Path:** the account's name exactly as the database stores it, and the
+    target's name, such as `personal/ACME_DEV_ALICE/<target>`. The Vault admin
+    maps a person to that name with metadata on their identity entity, such as
+    `db_account = ACME_DEV_ALICE`, and the person's policy grants `read` on
+    `personal/{{identity.entity.metadata.db_account}}/*`.
+  - **Record:** `results[].handover` carries the path and the KV version the
+    write created.
+- **Why:**
+  - A copy that persists keeps open, for as long as it exists, the one route
+    by which a DBA can act as the person with no name of their own on record
+    (UC-2 §1). Vault enforces `delete_version_after` itself, so nothing in the
+    tool has to run later. `delete_version_after` applies only to versions
+    written after it is set: on the tier-1 Vault (2.0.4), set after the write,
+    it left the version without a `deletion_time`. Hence the order.
+  - An alias name comes from the auth method: the LDAP login name, or the OIDC
+    claim a role names. It matches a database account name only by
+    coincidence, and Oracle stores names in upper case. Entity metadata is set
+    by the Vault admin and kept with the identity. Measured on the tier-1
+    Vault: the mapped identity read the value; an identity mapped to another
+    account, one with no `db_account` key and one mapped in lower case were
+    refused. A missing key grants nothing, so a missing mapping fails closed.
+    The target is in the path because each target holds a separate password.
+  - Vault's audit device logs the person's read under their own identity, and
+    the path and version find it. Neither retrieves anything.
+  - The costs are accepted. The deletion is a soft delete, so a token holding
+    `undelete` on the path can bring the version back, and the documentation
+    says "deleted", never "destroyed". A person who has not read the value by
+    then needs another reset. The tool cannot see the mapping, so whoever can
+    write entity metadata can point a person's path at their own identity. The
+    DBA's token needs `create` and `update` on the metadata path too, and the
+    plan-time check asks about both.
+- **Rejected:**
+  - The copy persists until the next reset overwrites it. A live credential
+    would stay in Vault indefinitely, guarded only by the path's policy.
+  - The tool destroys the copy later. Nothing in the tool runs later, so it
+    would need a scheduler or a verb the DBA must remember.
+  - A fixed name rule: the account name in lower case, with `C##` removed. It
+    works only where directory names follow database names.
+  - A map from account to alias name in the tool's config. It works for any
+    naming, but it is a second list of people to keep in step with the
+    directory, and an account a predicate admits would need an entry before it
+    could be reset this way.

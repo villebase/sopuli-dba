@@ -170,8 +170,8 @@ from UC-1. `docs/README.md` puts it as *a password is handed over, not synced*.
 Nothing reads the value to stay in step with it, so no store is master of it. On
 the unseen path a store does hold it for the person to fetch. That is transport,
 not mastery. How long that copy lives depends on the method (§6.6): on
-`vault_wrapped` nothing outlives the unwrap, and on `vault_path` it is open
-(open: #447). So invariants 6 and 7 have nothing to govern here (§7). **That does
+`vault_wrapped` nothing outlives the unwrap, and on `vault_path` Vault deletes it
+when the method's `ttl` runs out. So invariants 6 and 7 have nothing to govern here (§7). **That does
 not make the database a source of truth either.** The tool reads account state
 from it, as UC-1 does, and never a password. §3.2 makes that boundary precise,
 because H2 puts the database on the authoritative side of one question, *when*
@@ -1328,11 +1328,15 @@ look interchangeable, so this section says how they differ.
   the path's policy says so. It uses identity instead of a bearer token, which is
   the opposite trade. Interception needs the person's own credentials, but
   nothing makes the read single-use, so **the value stays a live credential**
-  until something removes it. That something could be the next reset overwriting
-  it, or a destroy on a clock, since KV has no after-first-read hook. It is not
-  decided (open: #447). §1's principle narrows it: a copy that persists keeps the
-  one unattributable route open for as long as it exists, and the password is
-  worth something beyond the one database.
+  until Vault deletes it. KV has no after-first-read hook, so the deletion
+  follows a clock: the method's required `ttl`, set as the path's
+  `delete_version_after` (decided in [#447](../decisions/log.md#447)). §1's
+  principle is the reason: a copy that persists keeps the one unattributable
+  route open for as long as it exists, and the password is worth something beyond
+  the one database. **The deletion is Vault's soft delete, not a destroy.** A
+  token that holds `undelete` on the path can bring the version back, so the
+  guarantee is "deleted", never "destroyed". A person who has not read the value
+  by then needs another reset.
 - **`one_time_link`**: one use, like the wrapping token, and a bearer credential
   for the same reason: the URL carries its own decryption key in the fragment. It
   adds a third party to the trust story, which the two Vault methods do not.
@@ -1383,6 +1387,46 @@ would swap one guarantee for another without being asked. The check is built wit
 `vault_path` (open: #447). On `vault_wrapped` the question does not arise: the
 DBA's token never holds the wrapping token's cubbyhole. What the DBA holds is the
 token itself, and §1 says what that is worth.
+
+**Which path is the person's, on `vault_path`** (decided in
+[#447](../decisions/log.md#447)). The tool writes to a path built from the
+account's name exactly as the database stores it and from the target's name, such
+as `personal/ACME_DEV_ALICE/<target>` in a KV v2 mount. The target is in the path
+because each target holds a separate account with a separate password, and a
+reset on one target must not overwrite the copy for another. **The mapping from a
+person to that name lives in Vault, not in the tool's config.** The Vault admin
+sets the account name as metadata on the person's identity entity, such as
+`db_account = ACME_DEV_ALICE`, and the person's policy grants `read` on
+`personal/{{identity.entity.metadata.db_account}}/*`. An alias name could not do
+this job: it comes from the auth method (the LDAP login name, the OIDC claim a
+role names), so it matches a database account name only by coincidence. Entity
+metadata is set by the Vault admin, kept where the identity is, and audited there.
+On the tier-1 Vault (2.0.4), the mapped identity read the value. An identity
+mapped to another account was refused. One with no `db_account` key got 403,
+because the template does not resolve, so a missing mapping grants nothing. One
+mapped to the name in lower case was refused, because the path is case-sensitive.
+
+What the tool cannot check, it does not claim. **It cannot see the mapping,** so
+it cannot tell whether `db_account` names the right person. Whoever can write
+entity metadata can point a person's path at their own identity. That is an
+identity admin, who can do as much in other ways, but the guarantee rests on
+them. A person with two accounts of different names, such as `ACME_DEV_ALICE`
+and `C##ACME_DBA_ALICE`, needs a metadata key and a policy rule for each. The
+tool sets up neither the auth method, nor the entities, nor the policy.
+
+**The order of the writes.** `delete_version_after` applies only to versions
+written after it is set. Measured on the tier-1 Vault: set after the write, it
+left the version without a `deletion_time`, and the person could still read it
+past the TTL. So the tool writes the path's metadata first and the value second.
+That needs `create` and `update` on the metadata path as well as on the data
+path, and the plan-time check above asks about both. **A KV v1 mount is refused
+at plan time,** naming the mount (invariant 4), because it has neither versions
+nor `delete_version_after`.
+
+**The run document records the path and the version** the write created, in
+`results[].handover`, as `vault_wrapped` records its accessor. Vault's audit
+device logs the person's read under their own identity, and the path and version
+find it there. Neither the path nor the version retrieves anything.
 
 ### 6.7 Reusable by UC-4
 

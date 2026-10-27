@@ -1340,6 +1340,9 @@ look interchangeable, so this section says how they differ.
 - **`one_time_link`**: one use, like the wrapping token, and a bearer credential
   for the same reason: the URL carries its own decryption key in the fragment. It
   adds a third party to the trust story, which the two Vault methods do not.
+  **The single use is the Yopass server's, not the tool's**: the server deletes
+  a one-time secret as part of the read that returns it. Unlike Vault, an
+  unlicensed Yopass server keeps no record of that read.
 - **`onepassword_share`**: whatever 1Password's API offers, which is not yet known
   (open: #446). If single view has to be simulated with a follow-up delete, the
   documentation must not claim single view.
@@ -1456,6 +1459,54 @@ the path written and the KV version the write created. Vault's audit device logs
 the person's read under their own identity, and the path and version find it
 there. Neither retrieves anything. The two fields are a minor bump of the run
 schema, made with the method.
+
+**How `one_time_link` makes the link** (decided in
+[#445](../decisions/log.md#445)). The method works with a Yopass server. Yopass
+stores only ciphertext. The tool draws a random 22-character key, encrypts the
+password with OpenPGP using the key as the password, and sends the ciphertext
+with `one_time: true`. The server answers with the secret's id. The link is
+`<link base>/#/s/<id>/<key>`. The key is in the fragment, after `#`, and a
+browser never sends the fragment to the server, so the server never holds
+anything that decrypts. The link base is the `PUBLIC_URL` the server reports,
+else the configured `base_url`. The encryption needs `pysequoia`, which is in
+the `yopass` extra.
+
+**With `split_key: true`, the tool prints two values**: the link without the
+key, `<link base>/#/s/<id>`, and the key. The DBA sends them by two channels,
+such as the link by email and the key by phone, so neither channel alone
+carries what reads the password. The person opens the link, and the page asks
+for the key. It is off by default, because the person has to type or paste the
+key. The tool also splits when the server reports `DISABLE_ONE_CLICK_LINK`. The
+link without the key is printed in plain text. It holds the id and nothing that
+decrypts. The key, and the full link when the tool does not split, are printed
+as the wrapping token is, under the rules above.
+
+**The tool reads the server's `/config` at plan time** and refuses, with exit 5,
+naming the server and the setting:
+
+- a server that reports `READ_ONLY`, because it cannot create a secret;
+- a server that reports `REQUIRE_AUTH`. Creating a secret there needs an API
+  token, which needs a Yopass licence, and the tool does not send one yet;
+- a `ttl` the server would refuse. The server accepts exactly
+  `FORCE_EXPIRATION` when it reports one. It accepts any value from
+  `MIN_EXPIRATION` to `MAX_EXPIRATION` when `ALLOW_CUSTOM_EXPIRATION` is true.
+  Otherwise it accepts 1h, 1d or 1w.
+
+**A link scanner can use up the view.** Chat link previews and mail scanners
+open links. In Yopass 16.0.1's page, a link without its key fetches nothing
+until the key is entered. A full link fetches nothing until the person clicks
+to reveal it, as long as the server reports `PREFETCH_SECRET`, which is the
+default. A server run with `--prefetch-secret=false` fetches when the page
+loads, so a scanner that runs the page's script uses up the view, and the
+person gets an error. Turn `split_key` on for such a server.
+
+**The run document records the hand-over** in `results[].handover`. On this
+method `accessor` is `null` and `id` is the secret's id. `expires_at` is the
+time of the create plus `ttl`, by this host's clock, because Yopass returns no
+expiry. The id names the secret and cannot read it, but like an accessor it can
+destroy what it names: whoever holds it can fetch the ciphertext, which uses up
+the view, or delete the secret. The person's own fetch then fails, so either is
+visible. `id` is a minor bump of the run schema, made with the method.
 
 ### 6.7 Reusable by UC-4
 

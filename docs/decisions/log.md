@@ -3196,3 +3196,78 @@ the register.
   - Supported in transaction pooling as well. Everything above, and every
     statement wrapped in a transaction with `SET LOCAL statement_timeout`, three
     round trips each, for a budget that is off by default.
+
+## #445
+
+- **Decided:** 2026-10-27, #445
+- **Question:** How does `delivery.method: one_time_link` work with a Yopass
+  server? Yopass's server stores only ciphertext. The client encrypts with
+  OpenPGP, using a random key as the password, and the key travels in the
+  link's fragment, which the browser never sends. So the tool must encrypt, and
+  needs an OpenPGP library. Which one? And what does the tool print, check and
+  record?
+- **Decision:**
+  - **Encryption:** `pysequoia`, Python bindings to Sequoia PGP, in a new
+    `yopass` extra beside `httpx`. The tool encrypts the password with a random
+    22-character key and sends `one_time: true` always, so the method has no
+    key for it.
+  - **Split mode:** a `split_key` setting, `false` by default. Off, the tool
+    prints one link, `<link base>/#/s/<id>/<key>`. On, it prints the link
+    without the key, `<link base>/#/s/<id>`, and the key, as two values for
+    two channels. The tool also splits when the server's `/config` reports
+    `DISABLE_ONE_CLICK_LINK`, because the server's admin has said not to hand
+    out a link that holds its key.
+  - **Plan-time checks:** the tool reads the server's `GET /config` before a
+    password is drawn, and refuses with exit 5, naming the server and the
+    setting, a server that is `READ_ONLY`, one that has `REQUIRE_AUTH`, and a
+    `ttl` the server would refuse. The server accepts exactly
+    `FORCE_EXPIRATION` when it reports one, any value from `MIN_EXPIRATION` to
+    `MAX_EXPIRATION` when `ALLOW_CUSTOM_EXPIRATION` is true, and otherwise 1h,
+    1d or 1w.
+  - **The link base** is the `PUBLIC_URL` that `/config` reports, else the
+    configured `base_url`. `base_url` follows #856: plain `http` is refused
+    unless the host is loopback.
+  - **Record:** `results[].handover` gains `id`, the secret's id. `accessor`
+    is `null`, and `expires_at` is the time of the create plus `ttl`, by this
+    host's clock, because Yopass returns no expiry.
+- **Why:**
+  - `pysequoia` is maintained, Apache-2.0, and the encryption is one call. It
+    has wheels for CPython 3.10 to 3.14 on Linux, macOS and Windows, and for
+    3.15 on Linux x86_64, which is the 3.15 CI cell. On Windows or macOS with
+    3.15 the extra builds from source and needs a Rust toolchain until a wheel
+    appears. Measured with 0.1.35: it writes a password-encrypted session key
+    (AES-256, iterated and salted SHA-256), then an integrity-protected data
+    packet in the older SEIPD v1 format. GnuPG 2.4.9 decrypted it with the key.
+  - Split mode is the one handover in which no single channel carries
+    everything that reads the password. Off by default, because the person has
+    to type or paste 22 characters, and an estate with one channel gains
+    nothing. In Yopass 16.0.1's web page, a link without its key asks for the
+    key and fetches nothing until it is entered, so a link scanner cannot use
+    up the view.
+  - A Yopass secret on an unlicensed server is single-use and expires, but
+    nothing records that the person read it. The id is the hand-over's only
+    record. It names the secret and cannot read it: the key is not in it. Like
+    a Vault accessor, it can destroy what it names. Whoever holds it can fetch
+    the ciphertext once, which uses up the view, or delete it. Either is
+    visible, because the person's fetch then fails. So the id goes in the run
+    document, and the link without the key, which is the id with the link base
+    in front, is printed in plain text. The key and the full link are
+    secrets.
+  - `REQUIRE_AUTH` needs an API token, which needs a Yopass licence. The tool
+    refuses it now, and adding a token is a separate issue.
+  - With `PREFETCH_SECRET` true, the default, the page asks before it fetches
+    a one-time secret, so a scanner that opens a full link does not use up the
+    view. A server run with `--prefetch-secret=false` fetches on load. The
+    tool does not refuse that server, and the documentation says to turn
+    `split_key` on for it.
+- **Rejected:**
+  - `python-gnupg`. GnuPG would become a runtime prerequisite on every
+    platform, as Instant Client is.
+  - `PGPy`. Its last release is from 2022, and it does not import on 3.13.
+  - Our own OpenPGP code on `cryptography`. About 150 lines of crypto code
+    owned by this project, in credential handling.
+  - The `yopass` Go client. Another binary prerequisite.
+  - Split mode on by default. It costs every estate the typing, for a gain
+    only an estate with a second channel gets.
+  - A fixed set of `ttl` values in the config. It would refuse values a server
+    with `--allow-custom-expiration` accepts.

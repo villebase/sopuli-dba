@@ -108,7 +108,8 @@ def _render_path(receipt: Receipt, *, account: str, target: str) -> str | None:
             f"    {receipt.path}",
             "",
             f"They read it with their own Vault login. Vault deletes it "
-            f"{_expires(receipt.expires_at)}.",
+            f"{_expires(receipt.expires_at)};",
+            "a token that holds `undelete` on the path can still restore it.",
         ]
     )
 

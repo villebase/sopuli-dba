@@ -1376,9 +1376,11 @@ the unseen path's reason for skipping expiry would be gone. So the tool checks
 (H8, decided in #459). Before writing, `vault_path` asks Vault for the DBA token's
 capabilities on the person's path (`sys/capabilities-self`), and **refuses at plan
 time if they include `read` or `root`**, naming the path and the capability
-(invariant 4). It asks twice: at plan time on the account name as typed, before
-anything connects, and on each target on the name the database stores, just
-before a password is drawn. `root` matters: a root-policy token answers `["root"]` and never
+(invariant 4). It asks twice. At plan time it asks on the account name as typed,
+before anything connects, and a refusal there exits 5. Where the database stores
+the name differently, it asks again on each target, just before a password is
+drawn. A refusal there is that target's `ERROR` row, as every per-target refusal
+is, and no password is drawn on it. `root` matters: a root-policy token answers `["root"]` and never
 lists `read`, so a check for `read` alone would admit the one token that can read
 everything. On the tier-1 Vault (2.0.4), a root token answered `["root"]`, a token
 scoped to the write `["create","update"]`, and one also granted read

@@ -1055,7 +1055,8 @@ tell acme_dev_alice the new password for free-pdb is waiting at:
 
     kv/personal/ACME_DEV_ALICE/free-pdb
 
-They read it with their own Vault login. Vault deletes it at 2026-10-27T22:48:58.096780Z.
+They read it with their own Vault login. Vault deletes it at 2026-10-27T23:29:13.926882Z;
+a token that holds `undelete` on the path can still restore it.
 ```
 
 The path uses the account name as the database stores it. The person logs in and
@@ -1072,11 +1073,11 @@ kv/data/personal/ACME_DEV_ALICE/free-pdb
 ======= Metadata =======
 Key                Value
 ---                -----
-created_time       2026-10-27T14:48:58.096780399Z
+created_time       2026-10-27T15:29:13.926882676Z
 custom_metadata    <nil>
-deletion_time      2026-10-27T22:48:58.096780399Z
+deletion_time      2026-10-27T23:29:13.926882676Z
 destroyed          false
-version            1
+version            2
 
 ====== Data ======
 Key         Value

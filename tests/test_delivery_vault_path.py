@@ -113,7 +113,10 @@ def test_a_common_user_s_name_stays_one_segment() -> None:
     )
 
 
-@pytest.mark.parametrize(("account", "target"), [("A/B", TARGET), (ACCOUNT, "pdb/1"), ("", TARGET)])
+@pytest.mark.parametrize(
+    ("account", "target"),
+    [("A/B", TARGET), (ACCOUNT, "pdb/1"), ("", TARGET), ("..", TARGET), (".", TARGET)],
+)
 def test_a_name_that_is_not_one_segment_is_refused(account: str, target: str) -> None:
     path, _ = backend()
 

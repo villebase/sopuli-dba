@@ -118,15 +118,21 @@ class VaultPath:
     stored_name = True
 
     def path(self, *, account: str, target: str) -> str:
-        """``<prefix>/<account>/<target>``, or a refusal for a name with a ``/``."""
+        """``<prefix>/<account>/<target>``, or a refusal for a name that is not
+        one segment.
+
+        A ``/`` would add a level, and ``.`` or ``..`` would walk out of the
+        prefix: the URL is normalised on the way to Vault, so ``..`` would write
+        the password somewhere the capability check never asked about.
+        """
         for what, name in (("account", account), ("target", target)):
-            if not name or "/" in name:
+            if not name or "/" in name or name in (".", ".."):
                 raise PathCapabilityError(
                     f"the {what} name {name!r} cannot be one segment of a vault path",
                     hint=(
-                        "`vault_path` writes to <prefix>/<account>/<target>, and a `/` in "
-                        "a name would add a level to the path, so the person's policy "
-                        "would not cover it. Use another delivery method for this account"
+                        "`vault_path` writes to <prefix>/<account>/<target>, and a `/`, "
+                        "`.` or `..` would put the password somewhere the person's policy "
+                        "does not cover. Use another delivery method for this account"
                     ),
                 )
         return f"{self.prefix}/{account}/{target}"

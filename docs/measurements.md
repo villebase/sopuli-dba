@@ -162,7 +162,7 @@ table, which says it is a libpq.
 | `13.23` | The `postgres:13` image, `test/compose.yaml` profile `postgres-matrix`, as pulled on 2026-10-25 |
 | `14.24` | The `postgres:14` image, the same profile, as pulled on 2026-10-25 |
 | `15.19` | The `postgres:15` image, the same profile, as pulled on 2026-10-25 |
-| `16.15` | The `postgres:16` image, the same profile, as pulled on 2026-10-25 |
+| `16.15` | The `postgres:16` image, the same profile, as pulled on 2026-10-25. Also the `postgres:16-alpine` image of the `postgres` service, as pulled on 2026-10-27, behind PgBouncer 1.26.0 (profile `pgbouncer`) |
 | `17.11` | The `postgres:17` image, the same profile, as pulled on 2026-10-25 |
 | `18.6` | The `postgres:18` image, the same profile, as pulled on 2026-10-25. Also the number of the libpq that the `postgres:18` image's psql and psycopg 3.3.6's Linux wheels bundle. A header writes the client as "libpq 18.6" |
 | `18.4` | libpq only: the one psycopg 3.3.6's Windows wheel bundles. No server ran it |
@@ -228,3 +228,4 @@ Not measured: every other minor release, and every managed service.
 | `07_password_length_probe.py` | `16.15` | 2026-10-26 | #1057 | As on 14.24 |
 | `07_password_length_probe.py` | `17.11` | 2026-10-26 | #1057 | As on 14.24 |
 | `07_password_length_probe.py` | `18.6` | 2026-10-26 | #1057 | As on 14.24 |
+| `08_pgbouncer_probe.py` | `16.15` | 2026-10-27 | #1045 | Behind PgBouncer 1.26.0, in session and transaction pooling. A connection that sends `options=-c statement_timeout=…` is refused, "unsupported startup parameter in options"; with `ignore_startup_parameters = options` the budget is dropped without a message. A plain `SET` reaches other clients under transaction pooling, and stays on the server connection after its client closes. `SET LOCAL` holds inside an explicit transaction and is gone after its COMMIT or rollback, and in autocommit it only warns, `25P01`. PgBouncer refuses a wrong password with "SASL authentication failed" and no SQLSTATE, so `creds check` reports drift as `ERROR`, and `creds apply` and `rotate` cannot change a password. `doctor`, and `check` of roles in sync, work |

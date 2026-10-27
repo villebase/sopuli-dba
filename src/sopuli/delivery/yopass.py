@@ -156,7 +156,11 @@ class ServerPolicy:
         if self.force_expiration is not None:
             return f"exactly {self.force_expiration}s (FORCE_EXPIRATION)"
         if self.allow_custom_expiration:
-            return f"{self.min_expiration}s to {self.max_expiration}s (ALLOW_CUSTOM_EXPIRATION)"
+            # Missing bounds read as :meth:`accepts` reads them: none.
+            low = f"{self.min_expiration}s" if self.min_expiration is not None else "0s"
+            if self.max_expiration is None:
+                return f"{low} or more (ALLOW_CUSTOM_EXPIRATION)"
+            return f"{low} to {self.max_expiration}s (ALLOW_CUSTOM_EXPIRATION)"
         return "1h, 24h or 168h"
 
 
@@ -259,15 +263,25 @@ class Yopass:
         """
         policy = self._server_policy()
         key = Secret(secrets.token_urlsafe(KEY_BYTES))
-        armored = (
-            _sequoia()
-            .encrypt(secret.reveal().encode("utf-8"), passwords=[key.reveal()])
-            .decode("ascii")
-        )
+        sequoia = _sequoia()
+        try:
+            armored = sequoia.encrypt(
+                secret.reveal().encode("utf-8"), passwords=[key.reveal()]
+            ).decode("ascii")
+        except Exception as error:  # noqa: BLE001 -- any failure means nothing was sent
+            # The type only: a library's message could quote what it was given.
+            raise StoreError(
+                f"the password could not be encrypted: {type(error).__name__}",
+                hint=(
+                    "pysequoia failed before anything was sent. Nothing was handed over, and "
+                    "the account's password has not changed. Check the installed pysequoia "
+                    f"against the `{EXTRA}` extra's floor"
+                ),
+            ) from None
 
         body = {"message": armored, "expiration": ttl_seconds(self.ttl), "one_time": True}
         answer = self._request("POST", "/create/secret", json=body)
-        secret_id = _created_id(answer.json() if _is_json(answer) else None)
+        secret_id = _created_id(_json(answer))
         expires_at = _server_time(answer.headers.get("Date"), ttl=ttl_seconds(self.ttl))
 
         base = link_base(policy, base_url=self.base_url)
@@ -287,7 +301,7 @@ class Yopass:
         """`/config`, read once, or a refusal."""
         if self._policy is None:
             answer = self._request("GET", "/config")
-            body = answer.json() if _is_json(answer) else None
+            body = _json(answer)
             if not isinstance(body, dict):
                 raise StoreError(
                     f"the Yopass server at {self.base_url} answered /config with something "
@@ -387,19 +401,25 @@ def _server_time(date: str | None, *, ttl: int) -> datetime | None:
     return sent + timedelta(seconds=ttl)
 
 
-def _is_json(response: httpx.Response) -> bool:
+def _json(response: httpx.Response) -> Any:
+    """The answer's JSON body, or ``None`` when it has none that parses.
+
+    ``None`` rather than an exception, so a proxy that answers 200 with an
+    empty or cut-off body is reported by the caller as an answer it could not
+    use, with a hint, not as a traceback.
+    """
     kind: str = response.headers.get("content-type", "")
-    return kind.startswith("application/json")
+    if not kind.startswith("application/json"):
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return None
 
 
 def _server_message(response: httpx.Response) -> str:
     """Yopass's own ``{"message": ...}``, or nothing."""
-    if not _is_json(response):
-        return ""
-    try:
-        body = response.json()
-    except ValueError:
-        return ""
+    body = _json(response)
     message = body.get("message") if isinstance(body, dict) else None
     return f"({message})" if isinstance(message, str) else ""
 

@@ -2532,8 +2532,8 @@ run and trimmed only where `…` says so:
 Read from top to bottom, this is UC-1 §3's order as it happened: the lock, the
 document read under it (`version` 1, which is what was applied), the target, the
 database changed and verified, *then* the promotion to version 2, then the
-release. `SOPULI-W031` comes after the rows, because the password crossed a
-connection that is not encrypted.
+release. `SOPULI-W031` comes after the rows, because it is reported once per
+target at the end of the run.
 
 **`target.finished` arrives after the promotion, not as each target finishes.**
 That is where `apply`'s stream differs from `check`'s. `target.finished.data`
@@ -2576,8 +2576,8 @@ with the same exit code.
 `local-testing.md` §10 does:
 
 ```jsonl
-{"schema_version":"1.4","event":"lock.denied","seq":2,"ts":"2026-09-26T12:56:19.697278Z","correlation_id":"aacd2f9f-…","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-09-26T12:00:00Z","expires_at":"2026-09-26T23:59:00Z","expired":false}}
-{"schema_version":"1.4","event":"run.finished","seq":3,"ts":"2026-09-26T12:56:19.697391Z","correlation_id":"aacd2f9f-…","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
+{"schema_version":"1.17","event":"lock.denied","seq":2,"ts":"2026-10-27T07:26:57.689540Z","correlation_id":"3dbcb3ff-…","data":{"vault":"vault-dev","path":"acme/dev/acme","reason":"held","holder":{"host":"beta.example.com","pid":1234,"os_user":"someone-else","correlation_id":"11111111-2222-3333-4444-555555555555","command":"creds rotate"},"acquired_at":"2026-10-27T07:00:00Z","expires_at":"2026-10-27T23:59:00Z","expired":false}}
+{"schema_version":"1.17","event":"run.finished","seq":3,"ts":"2026-10-27T07:26:57.689658Z","correlation_id":"3dbcb3ff-…","data":{"summary":{"total":0,"ok":0,"changed":0,"failed":0},"exit_code":7,"error":{"category":"lock","message":"vault-dev:acme/dev/acme is locked by someone-else@beta.example.com pid 1234 running creds rotate","hint":"wait for it to finish, or coordinate with whoever is running it"}}}
 ```
 
 **The lock manager emits the lock events itself**, because only the manager sees
@@ -2738,7 +2738,10 @@ says so:
 **Per target, as each finishes**: `creds check`'s grain, not `apply`'s. An apply
 row waits for a promotion decided after every target. A reset row is final when
 its target is, because nothing decided later is written back onto it. So a stream
-that stops on target three has already said what happened on one and two.
+that stops on target three has already said what happened on one and two. The
+encryption warnings, `SOPULI-W031` and `SOPULI-W032`, are the exception: they
+are reported once per target after every target is done, so such a stream has
+not sent them yet.
 
 - **`password.applied`** where the password was set, with `"version": null`: a
   reset draws a password and keeps it in no document that a version could name.

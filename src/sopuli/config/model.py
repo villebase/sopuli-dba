@@ -966,6 +966,35 @@ class WrappedDelivery:
 
 
 @dataclass(frozen=True)
+class PathDelivery:
+    """`delivery.vault_path:` -- a KV v2 path only the person's identity can read.
+
+    The value is written at ``<prefix>/<account>/<target>``, with the account
+    named exactly as the database stores it. The person's Vault policy reaches
+    that path through metadata on their identity entity, which the Vault admin
+    sets (decision #447). Nothing here builds the path: the account and the
+    target are known only when a reset runs.
+
+    ``ttl`` is **required**, for `vault_wrapped`'s reason read for a different
+    object. The value here is a live password that stays at the path until Vault
+    deletes it, so how long it stays is the whole of what this method promises
+    about it. It becomes the path's ``delete_version_after``. As with the wrap
+    TTL, Vault owns the grammar and this layer checks the shape.
+
+    ``prefix`` is **required** too. The person's policy has to name the same
+    prefix, so the estate writes it in two places on purpose, and a default here
+    would be a path the file does not show.
+    """
+
+    ttl: str
+    prefix: str
+    #: Which `vaults:` entry to write to, or ``None`` for §3's chain -- the
+    #: target's `vault:`, then `defaults.vault`. The same rule as
+    #: :attr:`WrappedDelivery.vault`.
+    vault: str | None = None
+
+
+@dataclass(frozen=True)
 class WebhookNotify:
     """`delivery.notify.webhook:` -- where to post, and what to say.
 
@@ -1041,6 +1070,8 @@ class Delivery:
     #: `vault_wrapped`'s settings, where it is selected. Each built method has a
     #: typed field, ``None`` for every method the run is not using.
     vault_wrapped: WrappedDelivery | None = None
+    #: `vault_path`'s settings, where it is selected.
+    vault_path: PathDelivery | None = None
     #: The channel that says a password is ready, or ``None`` where the
     #: estate configured none. Read whichever `method` is selected, unlike a
     #: method's own sub-block: a notification is a property of the delivery as a

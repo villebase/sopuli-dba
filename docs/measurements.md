@@ -114,6 +114,8 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `15_mixed_mode_trail_probe.sql` | `18.4.0.0.0` | 2026-10-23 | #1006 | As on 21.3, in a session that logs on after the policies change. A session keeps the policies enabled when it logged on: its `ALTER USER` is recorded under a policy it disabled, and not under one it enabled. On 21.3 the change reaches the session at once |
 | `15_mixed_mode_trail_probe.sql` | `21.3.0.0.0` | 2026-10-24 | #1013 | Under `AUDIT_TRAIL = DB, EXTENDED`, `OS`, `XML` and `XML, EXTENDED` each action leaves one row in `UNIFIED_AUDIT_TRAIL`, as under `DB` |
 | `15_mixed_mode_trail_probe.sql` | `18.4.0.0.0` | 2026-10-24 | #1013 | As under `DB` on 18.4, under each of the same four settings |
+| `15_mixed_mode_trail_probe.sql` | `21.3.0.0.0` | 2026-10-27 | #1098 | v4, under `AUDIT_TRAIL = NONE`. A local or common account holding only `CREATE SESSION` gets `ORA-00942` on `V$PARAMETER`; after `SYS` grants `SELECT ON V_$PARAMETER`, in the PDB or in `CDB$ROOT` with `CONTAINER = ALL`, it reads `AUDIT_TRAIL` in XEPDB1. `ALTER SYSTEM … SCOPE = SPFILE` refuses `TRUE` with `ORA-00096` naming five values, and `OS, EXTENDED` and `EXTENDED` with `ORA-32017` and an `ORA-00096` naming six |
+| `15_mixed_mode_trail_probe.sql` | `18.4.0.0.0` | 2026-10-27 | #1098 | As on 21.3, the same output |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-08-26 | — | `COMMON` and PDB installs, both `keep_audit` settings |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-10-17 | #812 | `keep_audit=N` drops the `SOPULI_CDB_*` policies in `CDB$ROOT`; in a PDB it drops the PDB's own and leaves the root's |
 | `99_uninstall.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | Both `keep_audit` settings |
@@ -195,12 +197,24 @@ Not measured: every other minor release, and every managed service.
 | `03_createrole_password_probe.sql` | `16.15` | 2026-10-25 | #1032 | `CREATEROLE` also needs `ADMIN OPTION` on the role, which works with `INHERIT FALSE, SET FALSE`. `pg_auth_members.admin_option` and `pg_has_role(…, 'USAGE WITH ADMIN OPTION')` show it. A role that creates another gets `ADMIN OPTION` on it |
 | `03_createrole_password_probe.sql` | `17.11` | 2026-10-25 | #1032 | As on 16.15 |
 | `03_createrole_password_probe.sql` | `18.6` | 2026-10-25 | #1032 | As on 16.15 |
+| `03_createrole_password_probe.sql` | `13.23` | 2026-10-27 | #1098 | CR6: a `CREATEROLE` role grants itself `pg_execute_server_program`. CR1 to CR5 as on 2026-10-25 |
+| `03_createrole_password_probe.sql` | `14.24` | 2026-10-27 | #1098 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `15.19` | 2026-10-27 | #1098 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `16.15` | 2026-10-27 | #1098 | CR6: refused, `42501`, without `ADMIN OPTION` on the built-in role. CR1 to CR5 as on 2026-10-25 |
+| `03_createrole_password_probe.sql` | `17.11` | 2026-10-27 | #1098 | As on 16.15 |
+| `03_createrole_password_probe.sql` | `18.6` | 2026-10-27 | #1098 | As on 16.15 |
 | `04_md5_line_scram_verifier_probe.py` | `13.23` | 2026-10-25 | #1032 | Under `password_encryption = md5`, a role given a SCRAM verifier logs in with SCRAM through a line that says `md5`. A client held to md5 is refused |
 | `04_md5_line_scram_verifier_probe.py` | `14.24` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `15.19` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-25 | #1032 | As on 13.23. The server warns that md5 passwords are deprecated |
+| `04_md5_line_scram_verifier_probe.py` | `13.23` | 2026-10-27 | #1098 | Under `password_encryption = md5`, the release's own psql `\password` sends an md5 verifier, and after `SET password_encryption = 'scram-sha-256'` a SCRAM one, which logs in with `require_auth=scram-sha-256`. The logins as on 2026-10-25 |
+| `04_md5_line_scram_verifier_probe.py` | `14.24` | 2026-10-27 | #1098 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `15.19` | 2026-10-27 | #1098 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-27 | #1098 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-27 | #1098 | As on 13.23 |
+| `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-27 | #1098 | As on 13.23 |
 | `05_psycopg_libpq_probe.py` | `18.6` | 2026-10-25 | #1032 | psycopg 3.3.6 loads libpq 18.4 on Windows AMD64 and libpq 18.6 on Linux x86_64, glibc and musl. 3.2.13, 3.1.20 and 3.1.12 load libpq 17.6, libpq 16.3 and libpq 16.0 on Linux, and accept `require_auth=scram-sha-256`. 3.1.4 and 3.0.18 load libpq 15.0 and libpq 14.4, and refuse it in the client as an invalid connection option. Each computes a SCRAM verifier. Not run on macOS (unverified: psycopg-libpq-macos) |
 | `06_saslprep_probe.py` | `13.23` | 2026-10-26 | #1057 | A verifier from libpq 18.4 and the server's own hash agree on every non-ASCII password tried, and each logs in with both spellings SASLprep makes one, by psycopg and by psql with the release's own libpq. A password with a character SASLprep prohibits logs in as given. A verifier computed without SASLprep refuses a password SASLprep changes. The named charsets are ASCII |
 | `06_saslprep_probe.py` | `14.24` | 2026-10-26 | #1057 | As on 13.23 |

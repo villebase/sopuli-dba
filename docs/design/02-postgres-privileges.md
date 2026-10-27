@@ -45,7 +45,8 @@ What `CREATEROLE` reaches depends on the release. The
 - **On 13 to 15**, `CREATEROLE` alone changes the password of every role that
   is not a superuser. There is nothing narrower to grant. It can also grant
   itself any role that is not a superuser, the built-in roles of §3 included:
-  on 15.19 a `CREATEROLE` role granted itself `pg_execute_server_program`. So
+  on 13.23, 14.24 and 15.19 a `CREATEROLE` role granted itself
+  `pg_execute_server_program` (`03_createrole_password_probe.sql`, CR6). So
   on these releases the tool account is close to a superuser, and its password
   needs the same care.
 - **From 16**, `CREATEROLE` also needs `ADMIN OPTION` on the role. So the grant
@@ -75,9 +76,10 @@ computes on the client, so the password never reaches the server (§6). libpq
 chooses the algorithm from the session's `password_encryption`. The `SET` is
 what makes it SCRAM on a server set to `md5`, as the `postgres:13` image is.
 Without it the verifier is md5, and the `scram-sha-256` line of §2.3 refuses
-the login. On 13.23, with `password_encryption = md5`, libpq's call gave an
-md5 verifier before the `SET` and a SCRAM one after it, and the role then
-logged in with `require_auth=scram-sha-256`.
+the login. On 13.23 to 18.6, with `password_encryption = md5`, `\password`
+gave an md5 verifier before the `SET` and a SCRAM one after it, and the role
+then logged in with `require_auth=scram-sha-256`
+(`04_md5_line_scram_verifier_probe.py`).
 
 The target's `admin.username` names this role
 ([`01-configuration.md`](01-configuration.md) §*`postgres:` on a target*). Give
@@ -325,8 +327,8 @@ longer password is refused before anything is sent.
 |---|---|
 | `sql/postgres/01_password_text_probe.sql` | what the server log, `pg_stat_statements` and `pg_stat_activity` keep of `ALTER ROLE … PASSWORD` (§6) |
 | `sql/postgres/02_system_identifier_probe.sql` | whether a role with no grants can read `system_identifier`, which tells two targets on one cluster apart (`01-configuration.md` §*`postgres:` on a target*) |
-| `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password (§1, §2.2) |
-| `sql/postgres/04_md5_line_scram_verifier_probe.py` | whether a SCRAM verifier logs in through a `pg_hba.conf` line that says `md5` (§2.3) |
+| `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password, and whether it can grant itself a built-in role (§1, §2.2) |
+| `sql/postgres/04_md5_line_scram_verifier_probe.py` | whether a SCRAM verifier logs in through a `pg_hba.conf` line that says `md5` (§2.3), and which verifier `\password` sends before and after the `SET` (§2.1) |
 | `sql/postgres/05_psycopg_libpq_probe.py` | which libpq each psycopg wheel bundles, and whether it accepts `require_auth` |
 | `sql/postgres/06_saslprep_probe.py` | whether a verifier computed on the client and the server's SASLprep agree on a non-ASCII password (`pg-saslprep`) |
 | `sql/postgres/07_password_length_probe.py` | the longest password that sets as a verifier and logs in (`pg-password-length`) |

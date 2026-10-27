@@ -606,17 +606,17 @@ GRANT SELECT ON SYS.V_$PARAMETER TO sopuli_svc;                   -- or c##sopul
 
 A database in pure unified mode, such as 26ai, does not need the third grant,
 because the check does not read `AUDIT_TRAIL` there. In mixed mode without it,
-the service account gets `ORA-00942` on `V$PARAMETER` (measured by hand on
-21.3.0.0.0 and 18.4.0.0.0, on 2026-10-23). The reset then records `audited: unknown` where the policies
+the service account gets `ORA-00942` on `V$PARAMETER`, on 21.3.0.0.0 and
+18.4.0.0.0 (`15_mixed_mode_trail_probe.sql`). The reset then records `audited: unknown` where the policies
 cover both actions, and the detail names the grant. The tool cannot rule out
 `AUDIT_TRAIL = NONE`, under which those policies record nothing (§5).
 
 For a common service account, run the grants as `SYS` in `CDB$ROOT` with
 `CONTAINER=ALL`. The probe measured that a common account granted this way reads
-both views in a PDB. For `V$PARAMETER` it was measured by hand on 21.3.0.0.0 and
-18.4.0.0.0, on 2026-10-23: a common account holding only `CREATE SESSION` gets
-`ORA-00942` in XEPDB1, and after the grant in `CDB$ROOT` with `CONTAINER=ALL` it
-reads `AUDIT_TRAIL` there.
+both views in a PDB. For `V$PARAMETER`, `15_mixed_mode_trail_probe.sql`
+measured it on 21.3.0.0.0 and 18.4.0.0.0: a common account holding only
+`CREATE SESSION` gets `ORA-00942` in XEPDB1, and after the grant in `CDB$ROOT`
+with `CONTAINER=ALL` it reads `AUDIT_TRAIL` there.
 
 **Do not grant the `AUDIT_VIEWER` role instead.** It holds the same two grants,
 and much more: on 26ai 23.26.2.0.0 it holds 34 object grants, including `READ` on
@@ -1316,10 +1316,12 @@ because only two releases are measured: decided in
 [#1004](../decisions/log.md#1004). Only the five measured settings keep a
 `true`. Under any other value the answer is `unknown`, and the detail names the
 value: decided in [#1013](../decisions/log.md#1013). The check compares the
-value in upper case, with `, ` between its parts. On 21.3.0.0.0, `ALTER SYSTEM`
-refuses `TRUE`, `OS, EXTENDED` and `EXTENDED` with `ORA-00096`, and the message
-names the six values it accepts: `NONE | OS | DB | DB,EXTENDED | XML |
-XML,EXTENDED` (measured by hand, on 2026-10-24). Other spellings, such as
+value in upper case, with `, ` between its parts. On 21.3.0.0.0 and
+18.4.0.0.0, `ALTER SYSTEM … SCOPE = SPFILE` refuses `TRUE`, `OS, EXTENDED` and
+`EXTENDED` with `ORA-00096` (`15_mixed_mode_trail_probe.sql`). For
+`OS, EXTENDED` and `EXTENDED` the error follows `ORA-32017`, and names the six
+values it accepts: `NONE | OS | DB | DB,EXTENDED | XML | XML,EXTENDED`. For
+`TRUE` it names five: `extended, xml, none, os, db`. Other spellings, such as
 `FALSE` or `DB_EXTENDED`, were not tried. A value nobody has measured gets the
 `unknown`, on a release that accepts one. Where `AUDIT_TRAIL` cannot be read,
 the value is `unknown` too, because the tool cannot rule out `NONE`, and the

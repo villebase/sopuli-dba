@@ -17,6 +17,8 @@
 --   CR3  ADMIN OPTION on the target, without CREATEROLE
 --   CR4  CREATEROLE and ADMIN OPTION, and the target a superuser
 --   CR5  a role that the CREATEROLE role created itself
+--   CR6  the CREATEROLE role, with no membership in it, grants itself the
+--        built-in role pg_execute_server_program (#1098)
 --
 -- psql runs with VERBOSITY verbose, so each error shows its SQLSTATE.
 --
@@ -25,6 +27,8 @@
 -- STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13
 -- to postgres:18 images of test/compose.yaml profile postgres-matrix, as the
 -- superuser postgres, on 2026-10-25 (#1032). Twice on each release, exit 0,
+-- and the same result every time. Run again with CR6 on the same six
+-- releases on 2026-10-27 (#1098): twice on each, exit 0, CR1 to CR5 as below,
 -- and the same result every time.
 --
 -- RESULTS
@@ -44,6 +48,11 @@
 --   CR5  accepted on all six. 13.23 to 15.19 add no pg_auth_members row for
 --        the creator. 16.15 to 18.6 add one with admin_option true, granted
 --        by the bootstrap superuser postgres
+--   CR6  13.23, 14.24, 15.19: accepted. pg_auth_members gains a row with
+--        admin_option false, granted by the CREATEROLE role itself.
+--        16.15, 17.11, 18.6: refused, 42501 "permission denied to grant role
+--        "pg_execute_server_program"", DETAIL "Only roles with the ADMIN
+--        option on role "pg_execute_server_program" may grant this role."
 --
 --   In every case, the admin_option column and pg_has_role(..., 'USAGE WITH
 --   ADMIN OPTION') agree, also with INHERIT FALSE and SET FALSE. So the
@@ -156,6 +165,17 @@ SET ROLE sopuli_probe_admin;
 ALTER ROLE sopuli_probe_own PASSWORD :'verifier';
 \set ON_ERROR_STOP 1
 RESET ROLE;
+
+-- ---------------------------------------------------------------- CR6 --
+\echo CR6 the CREATEROLE role grants itself pg_execute_server_program:
+SET ROLE sopuli_probe_admin;
+\set ON_ERROR_STOP 0
+GRANT pg_execute_server_program TO sopuli_probe_admin;
+\set ON_ERROR_STOP 1
+RESET ROLE;
+SELECT m.roleid::regrole AS role, m.admin_option, m.grantor::regrole AS grantor
+  FROM pg_auth_members m
+ WHERE m.roleid = 'pg_execute_server_program'::regrole AND m.member = 'sopuli_probe_admin'::regrole;
 
 -- ---------------------------------------------------------------- cleanup --
 DROP ROLE sopuli_probe_own;

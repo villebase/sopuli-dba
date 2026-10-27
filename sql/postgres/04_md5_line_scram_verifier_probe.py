@@ -1,4 +1,4 @@
-"""sopuli-dba : which method a pg_hba.conf line that says md5 uses for a SCRAM verifier
+r"""sopuli-dba : which method a pg_hba.conf line that says md5 uses for a SCRAM verifier
 
 #1032. The PostgreSQL driver is to store a SCRAM-SHA-256 verifier, whatever the
 server's password_encryption says. This measures what happens at the next
@@ -9,6 +9,14 @@ plaintext password that the server stores as md5. A first line in pg_hba.conf
 sends both roles to md5. Each role then logs in over TCP three ways, with
 require_auth unset, = md5 and = scram-sha-256. require_auth=md5 stands in for a
 client that speaks only md5.
+
+Then, still under password_encryption = md5, it does what
+02-postgres-privileges.md §2.1 tells a DBA to do (#1098). The server's own psql,
+so that release's libpq, sets the password of a third role, sopuli_probe_pw,
+with \password: once as the session starts, and once after
+SET password_encryption = 'scram-sha-256'. After each, it reads which kind of
+verifier the server stored. The role then logs in with
+require_auth=scram-sha-256.
 
 The client is psql in the postgres-18 container, with libpq 18.6, which has
 require_auth. It reaches each server by its compose service name. The password
@@ -25,6 +33,8 @@ restored pg_hba.conf was root's and the server could not read it again. Its
 logins gave the results below, but it ignored failed steps, so its exit code
 showed nothing. The third did not wait for each reload to take effect, and
 did not check what the setup stored. It gave the results below too.
+Run again with the \password step on the same six releases on 2026-10-27
+(#1098). Twice, exit 0, the same result each time, and the logins as below.
 
 RESULTS -- the same on all six releases
 
@@ -45,6 +55,13 @@ RESULTS -- the same on all six releases
   with password_encryption = md5. A client that speaks only md5 cannot log in
   as that role.
 
+  sopuli_probe_pw     \password before the SET: stored md5. After the SET:
+                      stored SCRAM-SHA-256. require_auth=scram-sha-256: logs
+                      in. 18.6 gives its md5 warning at the first \password
+
+  So libpq's \password follows the session's password_encryption, and the SET
+  is what makes its verifier SCRAM on a server set to md5.
+
 HOW TO RUN (from the repo root, against the matrix; test/README.md):
 
     python sql/postgres/04_md5_line_scram_verifier_probe.py
@@ -57,7 +74,7 @@ output, and so does a pg_hba.conf whose first rule is not the probe's line. So
 a login against a server the setup did not change is never printed as a result.
 
 THROWAWAY SERVERS ONLY. On each server it changes password_encryption and
-pg_hba.conf, and creates three roles. Whatever happens, it then puts
+pg_hba.conf, and creates four roles. Whatever happens, it then puts
 pg_hba.conf back, resets password_encryption and drops the roles. Before it
 starts on a server, it undoes what an interrupted run left there.
 """
@@ -79,6 +96,8 @@ CLIENT = 18
 #: environment of `docker exec`, never through argv.
 PASSWORD = "PwHbaMarker3x"
 ROLES = ("sopuli_probe_scram", "sopuli_probe_md5")
+#: The role psql's \password sets, as 02-postgres-privileges.md §2.1 does.
+PW_ROLE = "sopuli_probe_pw"
 HBA_LINE = f"host all {','.join(ROLES)} all md5"
 
 
@@ -195,6 +214,40 @@ sed -i '1i {HBA_LINE}' "$PGDATA/pg_hba.conf"
     return f"{out}\n{rule}".strip()
 
 
+def _password_command(version: int) -> str:
+    """Set a password with psql's \\password, before and after the session's SET.
+
+    The server's own psql runs it, so libpq is that release's. With no tty,
+    \\password reads the password and its repeat from stdin, the two lines after
+    the command. The setup has left password_encryption = md5.
+    """
+    kind = (
+        "SELECT 'stored ' || CASE WHEN rolpassword LIKE 'md5%' THEN 'md5'"
+        f" ELSE split_part(rolpassword, '$', 1) END FROM pg_authid WHERE rolname = '{PW_ROLE}';"
+    )
+    sql = "\n".join(
+        [
+            f"DROP ROLE IF EXISTS {PW_ROLE};",
+            f"CREATE ROLE {PW_ROLE} LOGIN;",
+            "SELECT 'before SET: password_encryption=' || current_setting('password_encryption');",
+            f"\\password {PW_ROLE}",
+            PASSWORD,
+            PASSWORD,
+            kind,
+            "SET password_encryption = 'scram-sha-256';",
+            "SELECT 'after SET: password_encryption=' || current_setting('password_encryption');",
+            f"\\password {PW_ROLE}",
+            PASSWORD,
+            PASSWORD,
+            kind,
+            "",
+        ]
+    )
+    out = _psql(version, sql)
+    login = _login(version, PW_ROLE, "scram-sha-256")
+    return f"{out}\n{PW_ROLE} require_auth=scram-sha-256: {login}"
+
+
 def _restore(version: int) -> str:
     """Undo the setup, or what an interrupted run left of it.
 
@@ -208,6 +261,7 @@ def _restore(version: int) -> str:
 ALTER SYSTEM RESET password_encryption;
 DROP ROLE IF EXISTS {ROLES[0]};
 DROP ROLE IF EXISTS {ROLES[1]};
+DROP ROLE IF EXISTS {PW_ROLE};
 DROP ROLE IF EXISTS sopuli_probe_seed;
 """,
         ),
@@ -243,6 +297,7 @@ def main() -> int:
                     for require_auth in ("", "md5", "scram-sha-256"):
                         result = _login(version, role, require_auth)
                         print(f"{role} require_auth={require_auth or '(unset)'}: {result}")
+                print(_password_command(version))
             except StepError as exc:
                 # Report the step that failed before the restore can fail too.
                 print(f"STOPPED on server {version}: {exc}", file=sys.stderr)

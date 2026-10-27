@@ -69,7 +69,7 @@ from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 import click
 
@@ -115,7 +115,7 @@ from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
-from sopuli.delivery import Handover, Receipt
+from sopuli.delivery import DeliveryBackend, Handover, Receipt
 from sopuli.diagnostics import (
     ADMITTED_CROSS_DECLARED,
     ADMITTED_VENDOR_ACCOUNT,
@@ -347,15 +347,6 @@ from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
 from sopuli.version import get_version
-
-if TYPE_CHECKING:  # pragma: no cover -- annotations only
-    # ADR-006 rule 1: `sopuli.delivery.vault_wrapped` reaches the HashiCorp
-    # transport and therefore `httpx`, so importing it at module scope would put a
-    # vendor client in the base install and load a backend for every offline
-    # command. `tests/store/test_install_shape.py` holds that. The same for
-    # `vault_path`.
-    from sopuli.delivery.vault_path import VaultPath
-    from sopuli.delivery.vault_wrapped import VaultWrapped
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -2543,7 +2534,7 @@ def _write_reset_record(
     account: str,
     target: str,
     delivery: Delivery,
-    accessor: str | None,
+    to: str | None,
     expired: bool,
     secret: Secret,
     token: Secret | None = None,
@@ -2597,7 +2588,7 @@ def _write_reset_record(
         reset_at=utc_now(),
         seen=delivery.is_seen,
         expired=expired,
-        delivery=reset_record.Delivery(method=delivery.method, to=accessor),
+        delivery=reset_record.Delivery(method=delivery.method, to=to),
         by=current_holder(),
         correlation_id=run.document.correlation_id,
         audited=audited_value(audited) if audited is not None else None,
@@ -2824,7 +2815,7 @@ def _reset_one(
     keep_rollover: bool,
     preview: bool,
     record_at: str | None = None,
-    backend: VaultWrapped | VaultPath | None = None,
+    backend: DeliveryBackend | None = None,
     channel: _NotifyChannel | None = None,
 ) -> _Reset:
     """One target: read the account, decide, draw, set, and hand it over.
@@ -2922,8 +2913,9 @@ def _reset_one(
             require_feasible(policy, limit=limit, target=target.name)
             # The store's policy, asked again on the name the database stores,
             # which is the path `vault_path` writes (UC-2 §6.6). Plan time asked
-            # on the name as typed.
-            if backend is not None:
+            # on the name as typed, so a name the database stores the same way
+            # needs no second request.
+            if backend is not None and backend.stored_name and state.name != account:
                 backend.preflight(account=state.name, target=target.name)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _finding(error)
@@ -2979,14 +2971,15 @@ def _reset_one(
             # way -- an account with a password nobody holds, and the person who
             # could not log in now cannot be helped by themselves either.
             #
-            # On `vault_path` the account is named as the database stores it,
-            # because that is the path the person's policy covers. A wrapped
-            # cubbyhole keeps the name the operator typed.
-            named = state.name if delivery.method == delivery_config.PATH else account
+            # The backend says which name it takes (`stored_name`).
             receipt = (
                 None
                 if backend is None
-                else backend.deliver(secret, account=named, target=target.name)
+                else backend.deliver(
+                    secret,
+                    account=state.name if backend.stored_name else account,
+                    target=target.name,
+                )
             )
             # Read before the call, and kept on a failure only where the driver
             # says the password's statement went out (`_carried`): a statement
@@ -3096,9 +3089,7 @@ def _reset_one(
                     account=account,
                     target=target.name,
                     delivery=delivery,
-                    # The record's `delivery.to` is a location: the wrap's
-                    # accessor, or the path `vault_path` wrote.
-                    accessor=(receipt.accessor or receipt.path) if receipt is not None else None,
+                    to=receipt.location if receipt is not None else None,
                     expired=decision.expire,
                     secret=secret,
                     token=receipt.token if receipt is not None else None,
@@ -3312,7 +3303,7 @@ def _delivery_backends(
     reached: Sequence[ExpandedTarget],
     *,
     account: str,
-) -> dict[str, VaultWrapped | VaultPath]:
+) -> dict[str, DeliveryBackend]:
     """One backend per target, built before anything connects (invariant 4).
 
     Empty on the seen path, which delivers through the terminal and has no
@@ -3338,7 +3329,7 @@ def _delivery_backends(
 
 def _delivery_backend(
     run: Invocation, config: Config, delivery: Delivery, target: ExpandedTarget
-) -> VaultWrapped | VaultPath:
+) -> DeliveryBackend:
     """The backend one unseen delivery goes through, opened from the run's cache.
 
     One client per store per run, so a reset whose journal and whose

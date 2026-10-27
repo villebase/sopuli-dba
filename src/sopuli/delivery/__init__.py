@@ -30,12 +30,52 @@ costs an estate with no delivery configured nothing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Protocol
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sopuli.secrets import Secret
 
-__all__ = ["DeliveryBackend", "Handover", "Receipt"]
+if TYPE_CHECKING:  # pragma: no cover -- annotations only
+    from sopuli.store.hashicorp._transport import Transport
+    from sopuli.store.protocol import SecretStore
+
+__all__ = ["DeliveryBackend", "Handover", "Receipt", "hashicorp_transport", "vault_time"]
+
+
+def vault_time(value: Any) -> datetime | None:
+    """An RFC 3339 timestamp from Vault, or ``None`` when it is not one.
+
+    Vault sends RFC 3339 with a ``Z``, which :meth:`datetime.fromisoformat`
+    reads from 3.11 on. An empty string, which KV v2 sends for a version with no
+    deletion time, is ``None`` too.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def hashicorp_transport(store: SecretStore) -> Transport | None:
+    """The store's authenticated HashiCorp transport, or ``None`` if it has none.
+
+    **The attribute is read before the import, and that order is the point.** A
+    base install has no `httpx`, so importing the transport to compare against
+    would raise for an estate whose delivery store is not a HashiCorp one at
+    all, burying the capability refusal under an import error about a client
+    that was never relevant (ADR-006 rule 1). A store with no transport cannot
+    be a HashiCorp one, which is answerable without importing anything.
+    """
+    transport = getattr(store, "transport", None)
+    if transport is None:
+        return None
+    # Only reachable where a store has a transport, which means a HashiCorp
+    # backend was opened, which means the client is installed.
+    from sopuli.store.hashicorp._transport import Transport
+
+    return transport if isinstance(transport, Transport) else None
 
 
 @dataclass(frozen=True)
@@ -99,6 +139,12 @@ class Receipt:
     path: str | None = None
     version: int | None = None
 
+    @property
+    def location(self) -> str | None:
+        """What the reset record's ``delivery.to`` holds: the wrap's accessor, or
+        the path a `vault_path` delivery wrote. Neither retrieves anything."""
+        return self.accessor or self.path
+
     def reported(self) -> Handover:
         """What may be written down about this hand-over.
 
@@ -123,6 +169,15 @@ class DeliveryBackend(Protocol):
     which failure to prefer, and the recovery for either is the same reset run
     again.
     """
+
+    @property
+    def stored_name(self) -> bool:
+        """Whether the backend takes the account as the database stores it.
+
+        `vault_path` does, because the stored name is the path the person's
+        policy covers. A wrapped cubbyhole keeps the name the operator typed.
+        """
+        ...
 
     def preflight(self, *, account: str, target: str) -> None:
         """Refuse, before a password is drawn, a delivery the store would not allow.

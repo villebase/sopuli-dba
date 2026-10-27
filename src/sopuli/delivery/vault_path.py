@@ -39,10 +39,9 @@ for :mod:`sopuli.delivery.vault_wrapped`'s reason (ADR-006 rule 1).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sopuli.delivery import Receipt
+from sopuli.delivery import Receipt, hashicorp_transport, vault_time
 from sopuli.exit_codes import ExitCode
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
@@ -113,6 +112,10 @@ class VaultPath:
     mount: str
     prefix: str
     ttl: str
+
+    #: The path is the account as the database stores it, which is what the
+    #: person's policy covers (decision #447).
+    stored_name = True
 
     def path(self, *, account: str, target: str) -> str:
         """``<prefix>/<account>/<target>``, or a refusal for a name with a ``/``."""
@@ -219,7 +222,7 @@ def _receipt(body: Any, *, path: str) -> Receipt:
             f"the write to {path} returned no version",
             hint="the version is what the run document records about the hand-over",
         )
-    deletion = _when(data.get("deletion_time"))
+    deletion = vault_time(data.get("deletion_time"))
     if deletion is None:
         raise StoreError(
             f"Vault will not delete the value at {path}: its answer has no deletion time",
@@ -232,32 +235,15 @@ def _receipt(body: Any, *, path: str) -> Receipt:
     return Receipt(method=METHOD, expires_at=deletion, path=path, version=version)
 
 
-def _when(value: Any) -> datetime | None:
-    """An RFC 3339 timestamp, or ``None`` for Vault's empty one or a malformed one."""
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
 def for_store(store: SecretStore, *, vault: str, ttl: str, prefix: str) -> VaultPath:
     """The backend for a store the run has already opened, or a refusal.
 
-    A store with no transport is not a HashiCorp one, which is answerable
-    without importing anything, as :func:`sopuli.delivery.vault_wrapped.for_store`
-    explains. A store without :data:`~sopuli.store.protocol.VERSIONING` is a
-    KV v1 mount.
+    A store with no transport is not a HashiCorp one
+    (:func:`~sopuli.delivery.hashicorp_transport`). A store without
+    :data:`~sopuli.store.protocol.VERSIONING` is a KV v1 mount.
     """
-    transport = getattr(store, "transport", None)
+    transport = hashicorp_transport(store)
     if transport is None:
-        raise NotAPathStoreError(vault, why="it is not a HashiCorp store")
-
-    from sopuli.store.hashicorp._transport import Transport
-
-    if not isinstance(transport, Transport):
         raise NotAPathStoreError(vault, why="it is not a HashiCorp store")
     if VERSIONING not in store.supports():
         raise NotAPathStoreError(vault, why="its mount is KV v1, which has no versions")

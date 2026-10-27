@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sopuli.delivery import Receipt
+from sopuli.delivery import Receipt, hashicorp_transport, vault_time
 from sopuli.exit_codes import ExitCode
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
@@ -106,6 +106,9 @@ class VaultWrapped:
 
     transport: Transport
     ttl: str
+
+    #: The cubbyhole names the account as the operator typed it.
+    stored_name = False
 
     def preflight(self, *, account: str, target: str) -> None:
         """Nothing to ask: the DBA's token never holds the cubbyhole (UC-2 §6.6)."""
@@ -202,51 +205,23 @@ def _expiry(info: dict[str, Any]) -> datetime | None:
 
 
 def _created(info: dict[str, Any]) -> datetime | None:
-    """``wrap_info.creation_time``, or ``None`` when it is not a timestamp.
-
-    Vault sends RFC 3339 with a ``Z``, which :meth:`datetime.fromisoformat` reads
-    from 3.11 on -- the floor this project already requires.
-    """
-    created = info.get("creation_time")
-    if not isinstance(created, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(created)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    """``wrap_info.creation_time``, or ``None`` when it is not a timestamp."""
+    return vault_time(info.get("creation_time"))
 
 
 def for_store(store: SecretStore, *, vault: str, ttl: str) -> VaultWrapped:
     """The backend for a store the run has already opened, or a refusal.
 
-    The import is local for this module's own reason, and it has a second one
-    here: a base install with no `httpx` cannot have opened a HashiCorp store
-    either, so the only way to reach this line is in an install where the import
-    works.
-
-    ``getattr`` rather than ``isinstance`` on the *store*, deliberately: what this needs is an
-    authenticated :class:`~sopuli.store.hashicorp._transport.Transport`, which
-    both KV v1 and KV v2 carry, and naming either class here would tie a delivery
-    method to the two KV versions that happen to exist today. What it must not do
-    is guess -- a store with no transport is :class:`NotWrappableError`, named and
-    refused at plan time.
+    What this needs is an authenticated
+    :class:`~sopuli.store.hashicorp._transport.Transport`, which both KV v1 and
+    KV v2 carry, so it asks for the transport rather than for either store
+    class: naming one would tie a delivery method to the two KV versions that
+    happen to exist today. What it must not do is guess -- a store with no
+    transport is :class:`NotWrappableError`, named and refused at plan time.
+    :func:`~sopuli.delivery.hashicorp_transport` says why it reads the
+    attribute before importing anything.
     """
-    transport = getattr(store, "transport", None)
+    transport = hashicorp_transport(store)
     if transport is None:
-        # **Before the import, and that ordering is the whole of it.** A base
-        # install has no `httpx`, so importing the transport to compare against
-        # would raise `ModuleNotFoundError` for an estate whose delivery store
-        # is not a HashiCorp one at all -- burying the capability refusal this
-        # function exists to give under an import error about a client that was
-        # never relevant. A store with no transport cannot be a HashiCorp one,
-        # which is answerable without importing anything.
-        raise NotWrappableError(vault)
-
-    from sopuli.store.hashicorp._transport import Transport
-
-    # Only reachable where a store *has* a transport, which means a HashiCorp
-    # backend was opened, which means the client is installed.
-    if not isinstance(transport, Transport):
         raise NotWrappableError(vault)
     return VaultWrapped(transport=transport, ttl=ttl)

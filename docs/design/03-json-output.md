@@ -370,9 +370,10 @@ only decorate a sentence. Both carry diagnostic codes for a program that needs
 to branch. Their module docstrings say so.
 
 **`role_for_state` in `sopuli/output/palette.py` is the one function that gives
-a state its role.** Every view calls it. A view that kept its own subset of the
-enum would give one state different emphasis depending on the verb, which is
-what the roles exist to prevent.
+a state its role.** Every view calls it. Views that each keep their own subset
+of the enum drift apart: `check` colours `DRIFT` and `apply` does not, `apply`
+colours `ERROR` and `check` does not. One state then gets different emphasis
+depending on the verb, which is what the roles exist to prevent.
 
 These properties of the palette are decisions, not taste:
 
@@ -1111,11 +1112,11 @@ asked, and `lock status` asks none. So the survey finds reset locks by listing
 the prefix. Such an entry has `declared: true` and
 `declared_by: "reset_records"`.
 
-- **`declared` is a boolean, and `declared_by` says how.** `declared` means
-  "this configuration accounts for the path at all", which is what a consumer
-  filtering its own locks out of a survey asks. A three-valued string in its
-  place would be a rename, which is major, and every consumer would pay for a
-  question none of them asked.
+- **`declared` covers reset locks too, and stays a boolean.** It means "this
+  configuration accounts for the path at all", which is what a consumer
+  filtering its own locks out of a survey asks. Widening what a boolean covers
+  is a minor bump. A three-valued string in its place would be a rename, which
+  is major, and every consumer would pay for a question none of them asked.
 - **`declared_by` is not an enum**, unlike `state`. A later use case may claim
   another prefix: UC-4 hands accounts over through the same delivery
   abstraction (UC-2 §6.7). A consumer that switched on two values would break on
@@ -1342,9 +1343,9 @@ each of those words would mean something else. `IN_SYNC` on a healthy target
 would claim a sync that never happened, and `SKIPPED` means "we chose not to
 try".
 
-`result` does not carry it with an optional `account` and new states, because
-that is a major change: a consumer that reads `result.account` unconditionally
-breaks. A new section is a minor one.
+`result` does not carry `doctor`'s per-target report with an optional `account`
+and new states, because that is a major change: a consumer that reads
+`result.account` unconditionally breaks. A new section is a minor one.
 
 ```json
 "targets": [
@@ -2676,8 +2677,8 @@ section. From the tier-1 stack, trimmed only where `…` says so:
 exists**: the `constraints` object the run document carries, unchanged, sent
 after every target has been read and before anything is drawn. That is how
 `plan.resolved` works. It is not one event per target as each is read, because
-the section's estate-wide fields,
-`strictest_target` and `character_set`, belong to no single target, and a
+the section's estate-wide fields, `strictest_target` and `character_set`,
+belong to no single target, and a
 stream per target would leave every consumer to work out "strictest" again,
 which is logic this tool already owns. The notes the reading produced
 (`SOPULI-W015` to `W017`) arrive just before it as `diagnostic` events. A
@@ -3057,9 +3058,10 @@ three:
   may rightly write a reader for it before anything fills it. An enum value is a
   name.
 - It does not cover a value for a verb not built *yet*. It covers a verb that was
-  **declined**: the enum has no `creds.promote`, because UC-1 §4 says there is no
-  `creds promote` and there will not be one, and no `admin.install`, because
-  [#655](../decisions/log.md#655) declined `admin install`. UC-4 may install the service account, but with a verb of its
+  **declined**. `creds.promote` was removed under this rule, because UC-1 §4
+  says there is no `creds promote` and there will not be one. `admin.install`
+  was removed in 1.37, because [#655](../decisions/log.md#655) declined
+  `admin install`. UC-4 may install the service account, but with a verb of its
   own, not this one. A slot for something that might arrive is honest. A branch
   nothing can ever reach is not.
 

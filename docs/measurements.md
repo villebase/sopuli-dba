@@ -209,7 +209,7 @@ Not measured: every other minor release, and every managed service.
 | `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `17.11` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `18.6` | 2026-10-25 | #1032 | As on 13.23. The server warns that md5 passwords are deprecated |
-| `04_md5_line_scram_verifier_probe.py` | `13.23` | 2026-10-27 | #1098 | Under `password_encryption = md5`, the release's own psql `\password` sends an md5 verifier, and after `SET password_encryption = 'scram-sha-256'` a SCRAM one, which logs in with `require_auth=scram-sha-256`. The logins as on 2026-10-25 |
+| `04_md5_line_scram_verifier_probe.py` | `13.23` | 2026-10-27 | #1098 | Under `password_encryption = md5`, the release's own psql `\password` sends an md5 verifier, which a `scram-sha-256` line refuses. After `SET password_encryption = 'scram-sha-256'` it sends a SCRAM one, which logs in, also with `require_auth=scram-sha-256`. The other logins as on 2026-10-25 |
 | `04_md5_line_scram_verifier_probe.py` | `14.24` | 2026-10-27 | #1098 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `15.19` | 2026-10-27 | #1098 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `16.15` | 2026-10-27 | #1098 | As on 13.23 |

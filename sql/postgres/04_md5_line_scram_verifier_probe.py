@@ -11,16 +11,18 @@ require_auth unset, = md5 and = scram-sha-256. require_auth=md5 stands in for a
 client that speaks only md5.
 
 Then, still under password_encryption = md5, it does what
-02-postgres-privileges.md §2.1 tells a DBA to do (#1098). The server's own psql,
-so that release's libpq, sets the password of a third role, sopuli_probe_pw,
-with \password: once as the session starts, and once after
+02-postgres-privileges.md §2.1 tells a DBA to do (#1098). A second line in
+pg_hba.conf sends a third role, sopuli_probe_pw, to scram-sha-256, as §2.3's
+line does. The server's own psql, so that release's libpq, sets the role's
+password with \password: once as the session starts, and once after
 SET password_encryption = 'scram-sha-256'. After each, it reads which kind of
-verifier the server stored. The role then logs in with
-require_auth=scram-sha-256.
+verifier the server stored, and the role logs in with require_auth unset and
+= scram-sha-256.
 
-The client is psql in the postgres-18 container, with libpq 18.6, which has
-require_auth. It reaches each server by its compose service name. The password
-reaches it through the environment of `docker exec`, never through argv.
+The client for every login is psql in the postgres-18 container, with libpq
+18.6, which has require_auth. It reaches each server by its compose service
+name. The password reaches it through the environment of `docker exec`, and
+reaches \password through psql's stdin, never through argv.
 
 It MEASURES and decides nothing.
 
@@ -34,7 +36,10 @@ logins gave the results below, but it ignored failed steps, so its exit code
 showed nothing. The third did not wait for each reload to take effect, and
 did not check what the setup stored. It gave the results below too.
 Run again with the \password step on the same six releases on 2026-10-27
-(#1098). Twice, exit 0, the same result each time, and the logins as below.
+(#1098). Three times, exit 0, the same result each time, and the logins as
+below. Two earlier versions of the step are not counted: they gave the same
+verifiers, but met the image's own pg_hba.conf line and did not check what
+\password stored.
 
 RESULTS -- the same on all six releases
 
@@ -55,12 +60,15 @@ RESULTS -- the same on all six releases
   with password_encryption = md5. A client that speaks only md5 cannot log in
   as that role.
 
-  sopuli_probe_pw     \password before the SET: stored md5. After the SET:
-                      stored SCRAM-SHA-256. require_auth=scram-sha-256: logs
-                      in. 18.6 gives its md5 warning at the first \password
+  sopuli_probe_pw     \password before the SET: stored md5. Both logins
+                      refused by the server, 'FATAL:  password authentication
+                      failed for user "sopuli_probe_pw"'. After the SET:
+                      stored SCRAM-SHA-256, and both logins log in. 18.6 gives
+                      its md5 warning at the first \password
 
   So libpq's \password follows the session's password_encryption, and the SET
-  is what makes its verifier SCRAM on a server set to md5.
+  is what makes its verifier SCRAM on a server set to md5. Without it, a
+  scram-sha-256 line refuses the login.
 
 HOW TO RUN (from the repo root, against the matrix; test/README.md):
 
@@ -70,8 +78,9 @@ It needs only the standard library and the docker CLI. The container names
 follow COMPOSE_PROJECT_NAME, so a second clone's matrix is the one it changes.
 
 A setup or restore step that fails stops the probe with exit 1 and that step's
-output, and so does a pg_hba.conf whose first rule is not the probe's line. So
-a login against a server the setup did not change is never printed as a result.
+output, and so does a pg_hba.conf whose first two rules are not the probe's
+lines, and a \password that did not store the expected kind of verifier. So a
+login against a server the setup did not change is never printed as a result.
 
 THROWAWAY SERVERS ONLY. On each server it changes password_encryption and
 pg_hba.conf, and creates four roles. Whatever happens, it then puts
@@ -93,12 +102,14 @@ VERSIONS = (13, 14, 15, 16, 17, 18)
 #: has require_auth.
 CLIENT = 18
 #: A test password, not a credential. It reaches the client through the
-#: environment of `docker exec`, never through argv.
+#: environment of `docker exec`, or psql's stdin, never through argv.
 PASSWORD = "PwHbaMarker3x"
 ROLES = ("sopuli_probe_scram", "sopuli_probe_md5")
 #: The role psql's \password sets, as 02-postgres-privileges.md §2.1 does.
 PW_ROLE = "sopuli_probe_pw"
 HBA_LINE = f"host all {','.join(ROLES)} all md5"
+#: The line of 02-postgres-privileges.md §2.3, for PW_ROLE alone.
+PW_HBA_LINE = f"host all {PW_ROLE} all scram-sha-256"
 
 
 def _container(version: int) -> str:
@@ -193,6 +204,7 @@ SELECT rolname || ' stored ' || split_part(rolpassword, '$', 1)
 set -e
 test ! -e "$PGDATA/pg_hba.conf.sopuli-probe"
 cp "$PGDATA/pg_hba.conf" "$PGDATA/pg_hba.conf.sopuli-probe"
+sed -i '1i {PW_HBA_LINE}' "$PGDATA/pg_hba.conf"
 sed -i '1i {HBA_LINE}' "$PGDATA/pg_hba.conf"
 """
     out = _psql(version, sql)
@@ -202,16 +214,17 @@ sed -i '1i {HBA_LINE}' "$PGDATA/pg_hba.conf"
     out += "\n" + _shell(version, hba)
     _reload(version)
     # pg_hba_file_rules parses the file on disk. _reload() has made sure the
-    # postmaster loaded that file, so this is also the rule a login meets.
-    rule = _psql(
+    # postmaster loaded that file, so these are also the rules a login meets.
+    rules = _psql(
         version,
-        "SELECT 'first rule: ' || line_number || ' ' || type || ' '"
+        "SELECT 'rule: ' || line_number || ' ' || type || ' '"
         " || array_to_string(user_name, ',') || ' ' || auth_method"
-        " FROM pg_hba_file_rules ORDER BY line_number LIMIT 1;",
+        " FROM pg_hba_file_rules ORDER BY line_number LIMIT 2;",
     )
-    if not rule.endswith(f"first rule: 1 host {','.join(ROLES)} md5"):
-        raise StepError(f"pg_hba.conf does not start with the probe's line:\n{rule}")
-    return f"{out}\n{rule}".strip()
+    expected = f"rule: 1 host {','.join(ROLES)} md5\nrule: 2 host {PW_ROLE} scram-sha-256"
+    if not rules.endswith(expected):
+        raise StepError(f"pg_hba.conf does not start with the probe's lines:\n{rules}")
+    return f"{out}\n{rules}".strip()
 
 
 def _password_command(version: int) -> str:
@@ -219,33 +232,42 @@ def _password_command(version: int) -> str:
 
     The server's own psql runs it, so libpq is that release's. With no tty,
     \\password reads the password and its repeat from stdin, the two lines after
-    the command. The setup has left password_encryption = md5.
+    the command. The setup has left password_encryption = md5, and a
+    scram-sha-256 line for the role. After each \\password, the role logs in.
+    The stored kind is checked before that login, so a login after a step that
+    did not store what it was meant to is never printed as a result.
     """
     kind = (
         "SELECT 'stored ' || CASE WHEN rolpassword LIKE 'md5%' THEN 'md5'"
         f" ELSE split_part(rolpassword, '$', 1) END FROM pg_authid WHERE rolname = '{PW_ROLE}';"
     )
-    sql = "\n".join(
-        [
-            f"DROP ROLE IF EXISTS {PW_ROLE};",
-            f"CREATE ROLE {PW_ROLE} LOGIN;",
-            "SELECT 'before SET: password_encryption=' || current_setting('password_encryption');",
-            f"\\password {PW_ROLE}",
-            PASSWORD,
-            PASSWORD,
-            kind,
-            "SET password_encryption = 'scram-sha-256';",
-            "SELECT 'after SET: password_encryption=' || current_setting('password_encryption');",
-            f"\\password {PW_ROLE}",
-            PASSWORD,
-            PASSWORD,
-            kind,
-            "",
-        ]
+    steps = (
+        ("before SET", "", "stored md5"),
+        ("after SET", "SET password_encryption = 'scram-sha-256';", "stored SCRAM-SHA-256"),
     )
-    out = _psql(version, sql)
-    login = _login(version, PW_ROLE, "scram-sha-256")
-    return f"{out}\n{PW_ROLE} require_auth=scram-sha-256: {login}"
+    _psql(version, f"DROP ROLE IF EXISTS {PW_ROLE};\nCREATE ROLE {PW_ROLE} LOGIN;")
+    lines = []
+    for label, set_sql, expected in steps:
+        sql = "\n".join(
+            [
+                set_sql,
+                f"SELECT '{label}: password_encryption='"
+                " || current_setting('password_encryption');",
+                f"\\password {PW_ROLE}",
+                PASSWORD,
+                PASSWORD,
+                kind,
+                "",
+            ]
+        )
+        out = _psql(version, sql)
+        if expected not in out:
+            raise StepError(f"\\password {label} did not give {expected!r}:\n{out}")
+        lines.append(out)
+        for require_auth in ("", "scram-sha-256"):
+            result = _login(version, PW_ROLE, require_auth)
+            lines.append(f"{PW_ROLE} require_auth={require_auth or '(unset)'}: {result}")
+    return "\n".join(lines)
 
 
 def _restore(version: int) -> str:

@@ -77,9 +77,9 @@ chooses the algorithm from the session's `password_encryption`. The `SET` is
 what makes it SCRAM on a server set to `md5`, as the `postgres:13` image is.
 Without it the verifier is md5, and the `scram-sha-256` line of §2.3 refuses
 the login. On 13.23 to 18.6, with `password_encryption = md5`, `\password`
-gave an md5 verifier before the `SET` and a SCRAM one after it, and the role
-then logged in with `require_auth=scram-sha-256`
-(`04_md5_line_scram_verifier_probe.py`).
+gave an md5 verifier before the `SET`, and a `scram-sha-256` line refused the
+login. After the `SET` it gave a SCRAM verifier, and the role logged in, also
+with `require_auth=scram-sha-256` (`04_md5_line_scram_verifier_probe.py`).
 
 The target's `admin.username` names this role
 ([`01-configuration.md`](01-configuration.md) §*`postgres:` on a target*). Give

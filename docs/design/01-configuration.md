@@ -925,7 +925,8 @@ vaults:
 ```
 
 A lock needs compare-and-set. P2's capability table gives `cas` to KV v2 and,
-through ETags, to OCI; KV v1 and the file backend have none. Everywhere else a
+through ETags, to OCI; KV v1 has none, nor would the `file` backend, which is
+not built. Everywhere else a
 missing store capability is emulated in the payload — but "not atomic" is exactly
 what CAS is for, so there is nothing to emulate, and under the default a mutating
 command **refuses** on a store that cannot lock, with `error.category: capability`
@@ -933,9 +934,9 @@ naming this key. `advisory-only` is the operator saying they know: the record is
 still written, every run emits a warning diagnostic so the weakening reaches each
 run's audit trail rather than only the config file, and the run document reports
 `lock.mode: none`. The documented remedy is `vault kv enable-versioning`, which
-is in place on an existing mount. The file backend does not attempt `flock`: it
-is documented as non-production, and one rule is worth more here than a
-marginally stronger local mutex.
+is in place on an existing mount. The `file` backend's design does not attempt
+`flock`: it is meant for non-production use, and one rule is worth more here
+than a marginally stronger local mutex.
 
 **As a block**, under `defaults:` or in a profile:
 
@@ -1187,7 +1188,7 @@ ordering holds because the run layers are consulted only where the file said
 nothing at all.
 
 A target declaring `method: vault` with no store anywhere is refused when the
-credential is read, naming all four places one could be written. Not at load:
+credential is read, naming every place one could be written. Not at load:
 `SOPULI_VAULT` and a profile are properties of a run, so a file that is fine
 under tomorrow's environment must not be rejected today — which is C15's
 reasoning for bindings, applied unchanged.
@@ -1502,12 +1503,14 @@ connects to, and opens no connection to a target the selectors left out. The
 second target to reach a cluster is refused with `SOPULI-20008`, a `config`
 error naming both targets, and is that target's error in the run. `doctor`
 reports it as the target's error and still exits 0, as for any target it
-reached and could not use.
+reached and could not use. Whether it should exit non-zero is an open decision
+(open: #1062).
 
 A cluster copied with `pg_basebackup`, or a standby promoted and split off,
 keeps the identifier of the cluster it came from, and has its own roles from
 then on. The tool cannot tell such a copy from a standby, so it refuses the
-second of the two as well. Any role can read the
+second of the two as well. Whether to keep refusing that pair is an open
+decision (open: #1061). Any role can read the
 identifier by default (`pg-system-identifier` in
 [`../README.md`](../README.md) §*Verify before implementing*). Where a site
 revoked it, `doctor` says so in a warning and the target is not checked: not

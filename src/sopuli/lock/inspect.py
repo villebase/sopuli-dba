@@ -7,7 +7,7 @@ other question -- *what is at these paths, and who put it there* -- and that is 
 different enough posture to be worth its own module rather than a read-only mode
 on the manager.
 
-Three things follow from asking it as an outsider.
+These things follow from asking it as an outsider.
 
 **It takes no lock**, as UC-1 §8 states for ``check``, ``status`` and every
 ``--dry-run``: an hourly survey that locked would block the rotations it is meant

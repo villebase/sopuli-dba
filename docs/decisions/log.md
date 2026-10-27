@@ -486,13 +486,14 @@ the register.
   privileged roles, and the 11.2 deny list. It never overrides check 1, the
   configuration whitelist (invariant 5), and it never relaxes a safety setting.
   It is not a setting itself. It is recorded in the audit event and in the run
-  document.
+  document. [#1059](#1059) added check 7, the tool's own account, to the checks
+  it overrides, and check 6, a superuser, to the ones it never overrides.
 - **Why:** Managing the password of an Oracle-maintained account such as
   `DBSNMP` is ordinary DBA work. A tool with no override does not stop that
   change. It moves it to SQL\*Plus, where nothing records it. An audited
   override is better than an unrecorded workaround. The accepted cost: a DBA who
-  wants to bypass one check bypasses four, and the audit record is there for
-  that.
+  wants to bypass one check bypasses every check the flag overrides, and the
+  audit record is there for that.
 - **Rejected:**
   - No override: the tool gets worked around, and the workaround is not
     audited.
@@ -774,8 +775,9 @@ the register.
   database with `DBMS_LOCK`?
 - **Decision:** In the vault. There is one lock record per secret path, written
   with check-and-set, with holder details and a TTL, under a `locks/` prefix on
-  the secret's own mount. A store without check-and-set (KV v1, the file
-  backend) refuses mutations unless it is configured `locking: advisory-only`.
+  the secret's own mount. A store without check-and-set (KV v1, or the `file`
+  backend, which is not built) refuses mutations unless it is configured
+  `locking: advisory-only`.
 - **Why:** The vault is the one participant every mutating command talks to.
   `DBMS_LOCK` has one advantage: a lock is released when its session dies. That
   does not help with the real risk. A stalled run's session is still alive, so
@@ -810,7 +812,7 @@ the register.
   - A configurable list of N: an unbounded payload, emulation on every backend,
     and stage names that cannot address the older entries.
   - None, relying on the store's history: rollback would depend on the backend,
-    and KV v1 and the file backend have no history.
+    and KV v1 has no history, nor would the unbuilt `file` backend.
 
 ## Q4
 
@@ -1848,7 +1850,8 @@ the register.
   or delete each?
 - **Decision:**
   - `SOPULI_LOG_LEVEL`: delete the claim. Profile `log_level` and `log_file`
-    stay parsed and documented as unused.
+    stay parsed and documented as unused. [#629](#629) later removed both keys,
+    so a config that writes them is refused.
   - A profile's `confirm: false`: implement. A gated run then refuses with exit
     8 unless `--confirm` is given.
   - A policy's `rotation.*` and `verify.*`, and the `rotation.strategy:

@@ -1,11 +1,11 @@
 """Which accounts the tool refuses to touch (`02-oracle-privileges.md` §4).
 
-Dropping the definer-rights package moved these checks out of the database and
-into the tool, and §4 is unusually direct about what that costs: they **stop
-being a security boundary**. A compromised service credential bypasses them
-entirely. What they are instead is protection against a typo, and against a
-config change with a wider blast radius than intended — which is what they
-realistically were anyway for an operator who already holds SYSDBA.
+These checks run in the tool, not in the database (ADR-001), and §4 is
+unusually direct about what that costs: they **are not a security boundary**.
+A compromised service credential bypasses them entirely. What they are instead
+is protection against a typo, and against a config change with a wider blast
+radius than intended — which is all they could be for an operator who already
+holds SYSDBA.
 
 Worth keeping, worth being honest about, and worth writing here rather than
 inside the Oracle driver:
@@ -13,12 +13,12 @@ inside the Oracle driver:
 **The rule is product-neutral; the facts are the driver's.** "Refuse an account
 the driver reports as vendor-maintained, or as holding administrative
 privileges" is a sentence about credentials, not about Oracle. So this module
-reads :class:`~sopuli.driver.protocol.UserState`, and the PostgreSQL driver fills
-the same fields from `pg_roles` and `pg_auth_members` rather than reimplementing
-the reasoning. Which
-roles count as administrative, and which names the product supplies, are the
-driver's lists: it reports them as ``admin_roles`` and ``supplied_name``, and
-this module holds no product's names.
+reads :class:`~sopuli.driver.protocol.UserState`, which the Oracle driver fills
+from `DBA_USERS` and the PostgreSQL driver from `pg_roles` and `pg_auth_members`
+(:mod:`sopuli.driver.postgres.roles`), and neither reimplements the reasoning.
+Which roles count as administrative, and which names the product supplies, are
+the driver's lists: it reports them as ``admin_roles`` and ``supplied_name``,
+and this module holds no product's names.
 
 **It reviews; it does not decide.** Like :mod:`sopuli.driver.oracle.errors`,
 this returns a value. Whether a refusal stops the whole run or skips one unit
@@ -90,7 +90,7 @@ from dataclasses import dataclass
 
 from sopuli.driver.protocol import UserState
 
-#: §4 check 1. The only one `--force` cannot reach.
+#: §4 check 1. Never waived (:data:`NEVER_WAIVED`).
 DECLARED = "declared"
 
 #: §4 check 2 — the driver said this account belongs to the product.
@@ -105,7 +105,7 @@ PRIVILEGED_ROLE = "privileged_role"
 #: §4 check 5.
 DENY_LIST = "deny_list"
 
-#: Check 6. With check 1, the only one `--force` cannot reach.
+#: Check 6. Never waived (:data:`NEVER_WAIVED`).
 SUPERUSER = "superuser"
 
 #: Check 7.

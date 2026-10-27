@@ -25,7 +25,7 @@ Three things here are decisions rather than transcription:
 **`intent` is supplied by the verb, not inferred here.** A unit's intent is the
 schema's `action_kind` vocabulary -- `verify`, `password_set`, `vault_promote` --
 and which of them a run means is the verb's whole identity. `creds check` intends
-`verify` on every unit; `creds rotate` intends four things in an order. Inferring
+`verify` on every unit; `creds rotate` intends several things in an order. Inferring
 it from anything available here would mean guessing at the caller, and a plan that
 guessed would be a plan the caller could not be held to.
 
@@ -116,7 +116,7 @@ class PlanUnit:
     account: str
     target: str
     #: What the verb intends, in the schema's ``action_kind`` vocabulary. A
-    #: sequence rather than one value: `rotate` is four actions on one unit, and
+    #: sequence rather than one value: `rotate` is several actions on one unit, and
     #: an array is what lets the plan say so without inventing a compound verb.
     intent: tuple[str, ...]
     #: The document this unit's credential lives in, or ``None`` where the config

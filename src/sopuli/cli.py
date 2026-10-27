@@ -871,9 +871,9 @@ def doctor(
     reporting it here is what stops it surfacing as six unrelated failures three
     commands later.
 
-    It is behind a flag because it is not cheap -- three reads plus one probe per
-    documented grant, per target -- and a survey of twenty databases should not
-    pay for a question nobody asked.
+    It is behind a flag because it is not cheap -- several reads per target, and
+    on Oracle one probe per documented grant -- and a survey of twenty databases
+    should not pay for a question nobody asked.
 
     What it *cannot* see is reported beside what it found: a refused view, and
     the rows of the must-not-grant list that no view reachable from here carries.

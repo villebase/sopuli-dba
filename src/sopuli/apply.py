@@ -16,7 +16,7 @@ had to learn twice. What this module adds is the *sequence* -- which of those
 states settles the question before any DDL is issued, and which of them permits a
 promotion afterwards.
 
-Four decisions here are this module's own:
+These decisions are this module's own:
 
 **Nothing is issued that cannot be verified.** UC-1 §5 step 6 verifies with a
 fresh login and §8 case 6 says a change that could not be confirmed is reported

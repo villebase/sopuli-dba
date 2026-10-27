@@ -176,7 +176,10 @@ What each outcome means:
   16.15).
 
 `require_auth` needs libpq 16 or later. With an older libpq the tool refuses the
-login and sends nothing.
+login and sends nothing. It refuses each account as it reaches it, during the
+run, not at plan time as invariant 4 asks. Whether to move the refusal to plan
+time is an open decision (open: #1076). The `psycopg[binary]` wheels the
+`postgres` extra installs bundle libpq 16 or later.
 
 ### 2.4 What `doctor --check-privileges` reads
 

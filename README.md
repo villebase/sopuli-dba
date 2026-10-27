@@ -12,8 +12,8 @@ hand them out to the applications that need them — and then makes the database
 agree with what the vault holds. The vault is always the source of truth for a
 password. The database never is.
 
-Oracle is the first database it supports, and it is designed so other database
-products can be added later.
+It supports Oracle, and PostgreSQL for application credentials. It is designed
+so that other database products can be added.
 
 ---
 
@@ -120,9 +120,9 @@ unfinished part. It promises three things:
 
 | | |
 |---|---|
-| **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`. The *Installing* section below says how to get pipx. `sopuli --version` and `sopuli about` report the installed version |
-| **Databases** | Oracle only. CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI |
-| **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
+| **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`, or `[postgres,hashicorp]` for PostgreSQL. The *Installing* section below says how to get pipx. `sopuli --version` and `sopuli about` report the installed version |
+| **Databases** | Oracle, for every command. PostgreSQL, for the application-credential commands (UC-1): of the commands that connect to a database, a PostgreSQL target runs `doctor` and `creds`, and the personal-account commands refuse it. For Oracle, CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. For PostgreSQL, the commands run end to end on 16.15, and the probes in `sql/postgres/` ran on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6 |
+| **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. PostgreSQL 12 and earlier, and the commands end to end on any release but 16.15. With a libpq older than 16, which the `postgres` extra does not install, the tool cannot log in as a managed role. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
 | **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, and one of their decisions, about the seen reset, is still open ([#541](https://github.com/villebase/sopuli-dba/issues/541)), so they may change more than the rest |
@@ -190,6 +190,7 @@ pair of brackets, separated by commas.
 |---|---|---|
 | `sopuli-dba` | nothing beyond the CLI and the config layer | you only need `config validate`, `config show`, `target list` — in an editor, a linter, a pre-commit hook |
 | `"sopuli-dba[oracle]"` | `python-oracledb` | you manage Oracle databases |
+| `"sopuli-dba[postgres]"` | `psycopg`, with the libpq it bundles | you manage PostgreSQL clusters |
 | `"sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
 | `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
 | `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
@@ -198,7 +199,7 @@ pair of brackets, separated by commas.
 A working install is one store plus one database. For most sites that is:
 
 ```
-pipx install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci]
+pipx install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci], or [postgres,hashicorp]
 ```
 
 `sopuli-dba[all]` exists for CI and the test matrix. It is deliberately not the

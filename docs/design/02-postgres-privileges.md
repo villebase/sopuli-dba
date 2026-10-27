@@ -259,7 +259,7 @@ which any role can read, so the guardrails need no grant:
 |---|---|---|---|
 | 2 | a role `initdb` created: the bootstrap superuser and every `pg_*` role | the role's oid is below 16384 | waives |
 | 4 | a role with `REPLICATION`, `BYPASSRLS` or `CREATEROLE` | `pg_roles` | waives |
-| 4 | a member of `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`, `pg_read_all_data`, `pg_write_all_data` or `pg_signal_backend`, through any chain of grants | `pg_has_role(…, 'MEMBER')` | waives |
+| 4 | a member of `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`, `pg_read_all_data`, `pg_write_all_data` or `pg_signal_backend`, through any chain of grants | `pg_auth_members`, walked up from the role | waives |
 | 6 | a superuser | `rolsuper` | never |
 | 7 | the tool's own account, the one the session logged in as | `session_user` | waives |
 

@@ -1027,10 +1027,10 @@ measured keeps nothing. So the change is after 11.2 and no later than 12.2.0.1.0
 not been run. Read the 11.2 result as "11.2 keeps it", not as "every release
 before 12.2 keeps it".
 
-This was confirmed with sopuli's own statement, not just the probe's. A real
-`creds apply` ran against 11g XE through the usual path: Instant Client,
+sopuli's own statement shows it, not just the probe's. The run below is a real
+`creds apply` against 11g XE through the usual path: Instant Client,
 `SOPULI_SVC` with exactly §2's grants, and a password that sopuli generated,
-wrote to Vault and showed nobody. This is the search for that password, read
+wrote to Vault and showed nobody. It is the search for that password, read
 back from the vault, with the password masked by the search script, not by
 Oracle:
 
@@ -1046,9 +1046,8 @@ DBA_AUDIT_TRAIL.sql_text      clean        0
 ```
 
 **The tool does nothing about it, and the documents say so**
-([P8](../decisions/log.md#p8)). The alternatives were a runtime warning on 11.2,
-or refusing to rotate there. Refusing would have reversed
-[`00-principles.md`](00-principles.md) D7. The decision rests on one fact: **the
+([P8](../decisions/log.md#p8)). It does not warn on 11.2 and does not refuse to
+rotate there. Refusing would reverse [`00-principles.md`](00-principles.md) D7. The decision rests on one fact: **the
 kept text is a window, not a record.** On 11g XE 11.2.0.2.0:
 
 | Question | Result |

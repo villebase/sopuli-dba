@@ -64,6 +64,12 @@ PERMITTED = {
         "the vault write -- invariant 2's first exception, as a KV v2 put to a path "
         "only the person's own identity reads (UC-2 §6.6, decision #447)"
     ),
+    "delivery/yopass.py": (
+        "the encryption before a Yopass create -- the method's store write, as the vault "
+        "write is invariant 2's first exception, and only ciphertext leaves the process; "
+        "and the link it returns, which holds the key and is the fifth exception's "
+        "retrieval credential (UC-2 §6.6, decision #445)"
+    ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "driver/oracle/verifier.py": (
         "`check --method hash`'s comparison (UC-1 §7) -- `passwords.py`'s reason: the "

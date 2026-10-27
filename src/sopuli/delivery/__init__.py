@@ -102,6 +102,9 @@ class Handover:
     #: (decision #447). ``None`` on a method that writes to no path.
     path: str | None = None
     version: int | None = None
+    #: The Yopass secret a `one_time_link` delivery created (decision #445).
+    #: ``None`` on every other method.
+    id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,12 @@ class Receipt:
     ``path`` and ``version`` are where a `vault_path` delivery wrote and the KV
     version the write created. Vault's audit device logs the person's read under
     their own identity, and the two find it there. Neither retrieves anything.
+
+    ``id`` and ``link`` are `one_time_link`'s (decision #445). ``id`` names the
+    Yopass secret. It cannot read it, because the key is not in it, but like an
+    accessor it can destroy what it names. ``link`` is the link without the key,
+    set only when the method splits the two: the key is then the ``token``. When
+    it does not split, the ``token`` is the whole link and ``link`` is ``None``.
     """
 
     method: str
@@ -138,12 +147,15 @@ class Receipt:
     expires_at: datetime | None = None
     path: str | None = None
     version: int | None = None
+    id: str | None = None
+    link: str | None = None
 
     @property
     def location(self) -> str | None:
-        """What the reset record's ``delivery.to`` holds: the wrap's accessor, or
-        the path a `vault_path` delivery wrote. Neither retrieves anything."""
-        return self.accessor or self.path
+        """What the reset record's ``delivery.to`` holds: the wrap's accessor,
+        the path a `vault_path` delivery wrote, or the id of a `one_time_link`
+        secret. None of them retrieves anything."""
+        return self.accessor or self.path or self.id
 
     def reported(self) -> Handover:
         """What may be written down about this hand-over.
@@ -157,6 +169,7 @@ class Receipt:
             expires_at=self.expires_at,
             path=self.path,
             version=self.version,
+            id=self.id,
         )
 
 

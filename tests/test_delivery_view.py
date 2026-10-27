@@ -114,6 +114,10 @@ def test_the_password_has_no_way_into_this_view() -> None:
         "expires_at",
         "path",
         "version",
+        # `one_time_link`'s secret id and the link without its key. Neither
+        # holds the password or the key (decision #445).
+        "id",
+        "link",
     }
 
 

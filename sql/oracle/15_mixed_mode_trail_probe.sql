@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- sopuli-dba : does an enabled unified policy record anything, in mixed mode,
---              under each AUDIT_TRAIL setting?   (v3)
+--              under each AUDIT_TRAIL setting?   (v4)
 --
 -- #1006. The audited check reads the policy views, not the trail. On the XE
 -- images the views showed an ALTER USER, LOGON policy enabled while the trail
@@ -17,6 +17,20 @@
 --        once in the session that changed the policies (MT2a), and once in a
 --        new session (MT2b). Then the policies each of the account's
 --        ALTER USER rows names
+--
+-- Two more sections measure what the check needs in order to read AUDIT_TRAIL,
+-- and which values the parameter takes (#1098):
+--
+--   MT3  an account holding only CREATE SESSION reads AUDIT_TRAIL from
+--        V$PARAMETER: a local account (MT3a), and again after SYS grants it
+--        SELECT on V_$PARAMETER in the PDB (MT3b); a common account in the
+--        PDB (MT3c), and again after SYS grants it in CDB$ROOT with
+--        CONTAINER = ALL (MT3d)
+--   MT4  as SYSDBA in CDB$ROOT, ALTER SYSTEM SET audit_trail = TRUE, then
+--        OS, EXTENDED, then EXTENDED, each SCOPE = SPFILE. The parameter is
+--        static, so the spfile is where a value is checked. Then, in case one
+--        was accepted, it puts back the spfile's value as it read it first,
+--        or RESETs the parameter where the spfile did not set it
 --
 -- Each count reads only rows whose UNIFIED_AUDIT_POLICIES names the probe's
 -- policy. The XE images enable ORA_LOGON_FAILURES, which MT1's filter keeps
@@ -46,6 +60,14 @@
 -- NONE on 2026-10-24 (#1014), once, by EZConnect: exit 0, with the same
 -- differences. Untried on every other release.
 --
+-- v4, with MT3 and MT4, run on the same two releases on 2026-10-27 (#1098),
+-- twice on each under AUDIT_TRAIL = NONE, as the images ship. Exit 0 every
+-- time, and the same output in every run, on both releases. MT0 to MT2 gave
+-- the NONE results below. On 21.3 MT4's restore was also run once with the
+-- spfile set to DB, EXTENDED, which it put back, and once with the spfile not
+-- setting the parameter, which it left unset. Each exit 0, and the spfile set
+-- back to NONE by hand afterwards.
+--
 -- Once, on 18.4 under NONE, SQL*Plus printed nothing after MT1's policy read
 -- and did not return, and V$SESSION showed no session of its own. It was
 -- stopped, and that run is not counted. A possible cause is the connect
@@ -74,6 +96,22 @@
 --        AUDIT_TRAIL = DB, EXTENDED, OS, XML and XML, EXTENDED: as under DB,
 --        on both releases, row for row
 --
+-- RESULTS -- MT3 and MT4, 21.3.0.0.0 and 18.4.0.0.0, 2026-10-27, the same
+-- output on both releases
+--
+--   MT3a ORA-00942 on V$PARAMETER
+--   MT3b reads audit_trail NONE
+--   MT3c ORA-00942 on V$PARAMETER, in XEPDB1
+--   MT3d reads audit_trail NONE, in XEPDB1
+--   MT4  TRUE: ORA-00096 "invalid value TRUE for parameter audit_trail, must
+--        be from among extended, xml, none, os, db"
+--        OS, EXTENDED: ORA-32017 "failure in updating SPFILE", then ORA-00096
+--        "invalid value OS,EXTENDED for parameter audit_trail, must be from
+--        among NONE | OS | DB | DB,EXTENDED | XML | XML,EXTENDED"
+--        EXTENDED: ORA-32017, then ORA-00096 "invalid value EXTENDED for
+--        parameter audit_trail", with the same six values
+--        The spfile's value reads NONE, specified, before and after
+--
 --   So in mixed mode on these releases, AUDIT_TRAIL = NONE stops these
 --   unified records too, while AUDIT_UNIFIED_ENABLED_POLICIES shows the
 --   policies enabled. Under each other setting measured, the policies record
@@ -82,10 +120,13 @@
 --   (/opt/oracle/install.*.sh) sets only AUDIT_TRAIL and AUDIT_SYS_OPERATIONS,
 --   and these runs changed only AUDIT_TRAIL.
 --
--- THROWAWAY DATABASES ONLY. Creates and drops an account and two audit
--- policies, and plants a known password. Disables ORA_SECURECONFIG for MT2
--- and enables it again for every user, as the XE images ship it; a run
--- stopped in MT2 leaves it disabled. Under AUDIT_TRAIL = NONE a run leaves
+-- THROWAWAY DATABASES ONLY. Creates and drops two local accounts, a common
+-- account and two audit policies, and plants known passwords. MT4 writes the
+-- spfile's own AUDIT_TRAIL value back to it. A run stopped between its
+-- attempts and the restore leaves any value that was accepted, and the next
+-- run takes that value as the spfile's own: check the value MT4 prints first.
+-- Disables ORA_SECURECONFIG for MT2 and enables it again for every user, as
+-- the XE images ship it; a run stopped in MT2 leaves it disabled. Under AUDIT_TRAIL = NONE a run leaves
 -- nothing in UNIFIED_AUDIT_TRAIL. Under each other setting it leaves the
 -- logon and the ALTER USER rows, and the rows ORA_SECURECONFIG writes for the
 -- setup and the teardown: CREATE and DROP USER, the policy statements, AUDIT
@@ -93,6 +134,8 @@
 --------------------------------------------------------------------------------
 define svc      = //localhost:1521/XEPDB1
 define sys_conn = system/sopuli-test
+define sysdba   = sys/sopuli-test
+define cdb      = //localhost:1521/XE
 
 set lines 160 pages 200 feedback off verify off
 whenever sqlerror exit failure
@@ -119,6 +162,12 @@ begin execute immediate 'drop audit policy mt_alter'; exception when others then
 /
 begin execute immediate 'drop user mt_person cascade'; exception when others then null; end;
 /
+begin execute immediate 'drop user mt_svc cascade'; exception when others then null; end;
+/
+connect &sysdba@&cdb as sysdba
+begin execute immediate 'drop user c##mt_svc cascade'; exception when others then null; end;
+/
+connect &sys_conn@&svc
 create user mt_person identified by "MtPersonPw_4417";
 grant create session to mt_person;
 
@@ -170,7 +219,76 @@ select unified_audit_policies, count(*) as alter_rows from unified_audit_trail
  group by unified_audit_policies order by 1;
 audit policy ora_secureconfig;
 
+prompt === MT3: who reads AUDIT_TRAIL from V$PARAMETER
+prompt --- MT3a: a local account holding only CREATE SESSION
+create user mt_svc identified by "MtSvcPw_7731";
+grant create session to mt_svc;
+connect mt_svc/"MtSvcPw_7731"@&svc
+whenever sqlerror continue
+select name, value from v$parameter where name = 'audit_trail';
+whenever sqlerror exit failure
+prompt --- MT3b: after SYS grants it in the PDB
+connect &sysdba@&svc as sysdba
+grant select on sys.v_$parameter to mt_svc;
+connect mt_svc/"MtSvcPw_7731"@&svc
+select name, value from v$parameter where name = 'audit_trail';
+prompt --- MT3c: a common account holding only CREATE SESSION, in the PDB
+connect &sysdba@&cdb as sysdba
+create user c##mt_svc identified by "MtSvcPw_8842" container = all;
+grant create session to c##mt_svc container = all;
+connect c##mt_svc/"MtSvcPw_8842"@&svc
+whenever sqlerror continue
+select name, value from v$parameter where name = 'audit_trail';
+whenever sqlerror exit failure
+prompt --- MT3d: after SYS grants it in CDB$ROOT with CONTAINER = ALL
+connect &sysdba@&cdb as sysdba
+grant select on sys.v_$parameter to c##mt_svc container = all;
+connect c##mt_svc/"MtSvcPw_8842"@&svc
+select name, value from v$parameter where name = 'audit_trail';
+
+prompt === MT4: values ALTER SYSTEM refuses for AUDIT_TRAIL
+connect &sysdba@&cdb as sysdba
+col spfile_value for a16
+col isspecified for a11
+-- A list value has a row for each part, so the parts are joined in order. An
+-- spfile that does not set the parameter is put back with RESET.
+col restore_stmt new_value restore_stmt noprint
+select listagg(display_value, ', ') within group (order by ordinal) as spfile_value,
+       max(isspecified) as isspecified,
+       case when max(isspecified) = 'TRUE'
+            then 'alter system set audit_trail = '
+                 || listagg(display_value, ', ') within group (order by ordinal)
+                 || ' scope = spfile'
+            else 'alter system reset audit_trail scope = spfile'
+       end as restore_stmt
+  from v$spparameter where name = 'audit_trail';
+whenever sqlerror continue
+alter system set audit_trail = TRUE scope = spfile;
+alter system set audit_trail = OS, EXTENDED scope = spfile;
+alter system set audit_trail = EXTENDED scope = spfile;
+whenever sqlerror exit failure
+-- Put the spfile back as it was, in case a value was accepted.
+-- SQL*Plus does not substitute the first word of a command, so the statement
+-- runs from a block. RESET gives ORA-32010 when no value was written, which
+-- leaves the spfile as it was.
+prompt &restore_stmt
+declare
+  nothing_to_reset exception;
+  pragma exception_init(nothing_to_reset, -32010);
+begin
+  execute immediate '&restore_stmt';
+exception
+  when nothing_to_reset then null;
+end;
+/
+select listagg(display_value, ', ') within group (order by ordinal) as spfile_value,
+       max(isspecified) as isspecified
+  from v$spparameter where name = 'audit_trail';
+
 prompt === teardown
+drop user c##mt_svc cascade;
+connect &sys_conn@&svc
+drop user mt_svc cascade;
 noaudit policy mt_logon by mt_person;
 noaudit policy mt_alter by system;
 drop audit policy mt_logon;

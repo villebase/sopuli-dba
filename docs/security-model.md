@@ -12,7 +12,14 @@ It is written in plain language on purpose. The precise versions live in
 reader who is outside the project.
 
 A note on the current state before anything else: this is alpha software.
-Only Oracle is supported, and only HashiCorp Vault is supported as the secret
+This document describes Oracle. PostgreSQL is supported for the
+application-credential commands, and the personal-account commands refuse it.
+[`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) says what
+differs there. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE`
+attribute the tool account needs can change the password of every role that is
+not a superuser, so there the tool account is close to a superuser and only the
+tool enforces the config's whitelist. From 16 the server enforces it too. Only
+HashiCorp Vault is supported as the secret
 store. Try it against a test database first.
 
 ---

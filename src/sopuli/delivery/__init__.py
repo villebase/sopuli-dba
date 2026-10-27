@@ -58,6 +58,10 @@ class Handover:
 
     accessor: str | None = None
     expires_at: datetime | None = None
+    #: Where a `vault_path` delivery wrote, and the KV version it created
+    #: (decision #447). ``None`` on a method that writes to no path.
+    path: str | None = None
+    version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,7 @@ class Receipt:
 
     ``token`` is what the person fetches with, and it is ``None`` for a method
     that hands over nothing to carry — a path the owner reads by their own
-    identity (TODO(#447)) has no bearer credential, and neither does mail that
+    identity (`vault_path`) has no bearer credential, and neither does mail that
     has already been sent. The field is optional for that reason and no other,
     the same way :attr:`sopuli.reset_record.Delivery.to` is.
 
@@ -82,12 +86,18 @@ class Receipt:
     ``expires_at`` is when fetching stops working, where the method knows. It is
     reported rather than enforced: nothing in this tool polices a TTL the store
     is already policing, and a second clock would only disagree with the first.
+
+    ``path`` and ``version`` are where a `vault_path` delivery wrote and the KV
+    version the write created. Vault's audit device logs the person's read under
+    their own identity, and the two find it there. Neither retrieves anything.
     """
 
     method: str
     token: Secret | None = None
     accessor: str | None = None
     expires_at: datetime | None = None
+    path: str | None = None
+    version: int | None = None
 
     def reported(self) -> Handover:
         """What may be written down about this hand-over.
@@ -96,7 +106,12 @@ class Receipt:
         reach the token by taking the wrong attribute: what it gets back has no
         such attribute at all.
         """
-        return Handover(accessor=self.accessor, expires_at=self.expires_at)
+        return Handover(
+            accessor=self.accessor,
+            expires_at=self.expires_at,
+            path=self.path,
+            version=self.version,
+        )
 
 
 class DeliveryBackend(Protocol):
@@ -108,6 +123,14 @@ class DeliveryBackend(Protocol):
     which failure to prefer, and the recovery for either is the same reset run
     again.
     """
+
+    def preflight(self, *, account: str, target: str) -> None:
+        """Refuse, before a password is drawn, a delivery the store would not allow.
+
+        Called at plan time on the account as typed, and again on each target on
+        the name the database stores. A method with nothing to ask does nothing.
+        """
+        ...
 
     def deliver(self, secret: Secret, *, account: str, target: str) -> Receipt:
         """Hand ``secret`` over, or raise.

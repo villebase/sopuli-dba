@@ -352,7 +352,9 @@ if TYPE_CHECKING:  # pragma: no cover -- annotations only
     # ADR-006 rule 1: `sopuli.delivery.vault_wrapped` reaches the HashiCorp
     # transport and therefore `httpx`, so importing it at module scope would put a
     # vendor client in the base install and load a backend for every offline
-    # command. `tests/store/test_install_shape.py` holds that.
+    # command. `tests/store/test_install_shape.py` holds that. The same for
+    # `vault_path`.
+    from sopuli.delivery.vault_path import VaultPath
     from sopuli.delivery.vault_wrapped import VaultWrapped
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -2144,7 +2146,11 @@ def account_reset_password(
     # needs nothing to deliver with, and opening the store would make `--dry-run`
     # require vault credentials that the run it previews would use and the
     # preview would not.
-    backends = _delivery_backends(run, config, delivery, reached)
+    #
+    # On `vault_path` this is also where the store's policy is first checked, on
+    # the account name as typed: a token that could read the person's path is
+    # refused before anything connects (UC-2 §6.6).
+    backends = _delivery_backends(run, config, delivery, reached, account=account)
 
     # **The notify channel too, and for the same reason.** Not inside `_notify`,
     # which wraps everything in a bare `except` so that a dead webhook cannot fail
@@ -2818,7 +2824,7 @@ def _reset_one(
     keep_rollover: bool,
     preview: bool,
     record_at: str | None = None,
-    backend: VaultWrapped | None = None,
+    backend: VaultWrapped | VaultPath | None = None,
     channel: _NotifyChannel | None = None,
 ) -> _Reset:
     """One target: read the account, decide, draw, set, and hand it over.
@@ -2914,6 +2920,11 @@ def _reset_one(
             policy = _reset_policy(config, account, target.name, state)
             limit = session.byte_limit()
             require_feasible(policy, limit=limit, target=target.name)
+            # The store's policy, asked again on the name the database stores,
+            # which is the path `vault_path` writes (UC-2 §6.6). Plan time asked
+            # on the name as typed.
+            if backend is not None:
+                backend.preflight(account=state.name, target=target.name)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _finding(error)
             return _Reset(
@@ -2967,10 +2978,13 @@ def _reset_one(
             # works**, so nobody is worse off. The other order fails the other
             # way -- an account with a password nobody holds, and the person who
             # could not log in now cannot be helped by themselves either.
+            #
+            # The account is named as the database stores it, which on
+            # `vault_path` is the path the person's policy covers.
             receipt = (
                 None
                 if backend is None
-                else backend.deliver(secret, account=account, target=target.name)
+                else backend.deliver(secret, account=state.name, target=target.name)
             )
             # Read before the call, and kept on a failure only where the driver
             # says the password's statement went out (`_carried`): a statement
@@ -3080,7 +3094,9 @@ def _reset_one(
                     account=account,
                     target=target.name,
                     delivery=delivery,
-                    accessor=receipt.accessor if receipt is not None else None,
+                    # The record's `delivery.to` is a location: the wrap's
+                    # accessor, or the path `vault_path` wrote.
+                    accessor=(receipt.accessor or receipt.path) if receipt is not None else None,
                     expired=decision.expire,
                     secret=secret,
                     token=receipt.token if receipt is not None else None,
@@ -3175,9 +3191,7 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
     for a store: a delivery with nowhere to deliver is knowable before a password
     is drawn.
     """
-    wrapped = delivery.vault_wrapped
-    named = wrapped.vault if wrapped is not None else None
-    chosen = named or target.target.vault or config.defaults.vault
+    chosen = delivery.vault or target.target.vault or config.defaults.vault
     if chosen is None:
         raise RefusedError(
             f"`delivery.method: {delivery.method}` has no store to deliver into",
@@ -3290,8 +3304,13 @@ def _notify(
 
 
 def _delivery_backends(
-    run: Invocation, config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
-) -> dict[str, VaultWrapped]:
+    run: Invocation,
+    config: Config,
+    delivery: Delivery,
+    reached: Sequence[ExpandedTarget],
+    *,
+    account: str,
+) -> dict[str, VaultWrapped | VaultPath]:
     """One backend per target, built before anything connects (invariant 4).
 
     Empty on the seen path, which delivers through the terminal and has no
@@ -3303,32 +3322,43 @@ def _delivery_backends(
     One per target rather than one per run, because the store is resolved through
     §3's chain and a target may name its own. The run's client cache makes a
     shared store one connection anyway.
+
+    Each backend's ``preflight`` runs here on ``account`` as typed. On
+    `vault_path` that is the plan-time check of the store's policy (UC-2 §6.6).
     """
     if delivery.is_seen or run.dry_run:
         return {}
-    return {target.name: _delivery_backend(run, config, delivery, target) for target in reached}
+    backends = {
+        target.name: _delivery_backend(run, config, delivery, target) for target in reached
+    }
+    for target_name, backend in backends.items():
+        backend.preflight(account=account, target=target_name)
+    return backends
 
 
 def _delivery_backend(
     run: Invocation, config: Config, delivery: Delivery, target: ExpandedTarget
-) -> VaultWrapped:
+) -> VaultWrapped | VaultPath:
     """The backend one unseen delivery goes through, opened from the run's cache.
 
     One client per store per run, so a reset whose journal and whose
     cubbyhole live in the same vault authenticates to it once.
 
-    `vault_wrapped` is the only unseen method this build serves, so this returns
-    its type rather than the protocol: a ``DeliveryBackend`` return annotation
-    would claim a polymorphism that does not exist yet. Each further unseen
-    method adds a branch here (TODO(#445), TODO(#446), TODO(#447)).
+    One branch per unseen method this build serves. Each further one adds a
+    branch here (TODO(#445), TODO(#446)).
     """
     # Imported here rather than at module scope, for the reason the store registry
     # imports its backends on first use (ADR-006 rule 1). Nothing above this line
     # needs `httpx`, and an offline command must not load a module that does.
-    from sopuli.delivery import vault_wrapped
+    from sopuli.delivery import vault_path, vault_wrapped
 
     name = _delivery_store(config, delivery, target)
     store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
+    if delivery.vault_path is not None:
+        settings = delivery.vault_path
+        return vault_path.for_store(
+            store, vault=name, ttl=settings.ttl, prefix=settings.prefix
+        )
     wrapped = delivery.vault_wrapped
     if wrapped is None:  # pragma: no cover -- unreachable through a config file
         # Unreachable through a file: `_require_sub_block` and `_build_wrapped`

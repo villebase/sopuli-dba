@@ -69,18 +69,17 @@ DEFAULT_METHOD = "vault_wrapped"
 #: The seen path. Named because two rules key on it and neither should re-spell it.
 MANUAL = "manual"
 
-#: The one *unseen* method this build serves, and the default.
+#: The default *unseen* method.
 WRAPPED = "vault_wrapped"
 
-#: A KV path only the person's own identity can read (decision #447). Its keys
-#: are read, and it is not served yet (TODO(#447)).
+#: A KV path only the person's own identity can read (decision #447).
 PATH = "vault_path"
 
 #: The methods this build can actually serve. Here rather than in
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
 #: disagreeing about which methods work.
-IMPLEMENTED = (MANUAL, WRAPPED)
+IMPLEMENTED = (MANUAL, WRAPPED, PATH)
 
 #: The keys `manual:` takes. One, and it is required -- see
 #: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
@@ -418,8 +417,8 @@ def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
     :data:`IMPLEMENTED` lists the methods this build serves. The others are not
-    built: `vault_path` (TODO(#447)), `one_time_link` (TODO(#445)),
-    `onepassword_share` (TODO(#446)) and `smtp_encrypted`, which has no issue. A
+    built: `one_time_link` (TODO(#445)), `onepassword_share` (TODO(#446)) and
+    `smtp_encrypted`, which has no issue. A
     file naming `method: one_time_link` parses and cannot hand anybody a
     password.
 

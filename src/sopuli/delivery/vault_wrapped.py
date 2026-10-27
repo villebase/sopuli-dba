@@ -107,6 +107,9 @@ class VaultWrapped:
     transport: Transport
     ttl: str
 
+    def preflight(self, *, account: str, target: str) -> None:
+        """Nothing to ask: the DBA's token never holds the cubbyhole (UC-2 §6.6)."""
+
     def deliver(self, secret: Secret, *, account: str, target: str) -> Receipt:
         """Wrap, and return what the person fetches with.
 

@@ -290,7 +290,7 @@ def assert_no_secret(document: Any, *, secret: Secret, token: Secret | None = No
     right field.
 
     ``None`` where the method produced no token -- the seen path, and the
-    identity-scoped path of TODO(#447) -- because there is then nothing to compare
+    identity-scoped path of `vault_path` -- because there is then nothing to compare
     against and an absent argument says that better than a sentinel.
 
     What remains uncovered is a *derived* value written into one of the permitted

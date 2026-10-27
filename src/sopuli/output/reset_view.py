@@ -171,6 +171,11 @@ def build_result(
                 to_rfc3339(handover.expires_at) if handover.expires_at is not None else None
             ),
         }
+        # Only where a method wrote to a path: `vault_path` (run schema 1.63).
+        if handover.path is not None:
+            entry["handover"]["path"] = handover.path
+        if handover.version is not None:
+            entry["handover"]["version"] = handover.version
     if audited is not None:
         entry["audited"] = audited_value(audited)
         entry["audited_detail"] = audited.detail

@@ -50,10 +50,11 @@ UNKNOWN_EXPIRY = "as soon as the store's TTL says"
 def render_handover(receipt: Receipt, *, account: str, target: str) -> str | None:
     """The token, and what the operator has to do with it.
 
-    ``None`` for a receipt with no token: a method that hands over nothing to
-    carry (mail that has been sent, or the identity-scoped path of TODO(#447))
-    leaves the operator nothing to pass on, and printing a heading over an empty
-    value would suggest something had gone missing.
+    ``None`` for a receipt with no token and no path: a method that hands over
+    nothing to carry, such as mail that has been sent, leaves the operator
+    nothing to pass on, and printing a heading over an empty value would suggest
+    something had gone missing. A `vault_path` receipt has no token either, and
+    gets :func:`_render_path`: where the person reads, and until when.
 
     **The target is named.** `account reset-password` with no `--target` reaches
     every declared target and draws a *separate* password for each, so without
@@ -74,7 +75,7 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
     *do not unwrap it yourself* is doing work, not being polite.
     """
     if receipt.token is None:
-        return None
+        return _render_path(receipt, account=account, target=target)
     return "\n".join(
         [
             paint(f"hand this to {account} for {target}; it unwraps once:", Role.HEADING),
@@ -87,6 +88,27 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
             f"It stops working {_expires(receipt.expires_at)}, and the first unwrap is the",
             "last. Do not unwrap it to check -- that spends the person's one read, and",
             "them finding it spent is the only warning either of you gets.",
+        ]
+    )
+
+
+def _render_path(receipt: Receipt, *, account: str, target: str) -> str | None:
+    """Where a `vault_path` delivery put the password, for the operator to pass on.
+
+    Nothing here retrieves anything: the person reads the path with their own
+    Vault login, so the path can be printed, piped and kept. ``None`` for a
+    receipt with no path.
+    """
+    if receipt.path is None:
+        return None
+    return "\n".join(
+        [
+            paint(f"tell {account} the new password for {target} is waiting at:", Role.HEADING),
+            "",
+            f"    {receipt.path}",
+            "",
+            f"They read it with their own Vault login. Vault deletes it "
+            f"{_expires(receipt.expires_at)}.",
         ]
     )
 

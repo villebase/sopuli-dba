@@ -35,7 +35,6 @@ from sopuli.secrets import Secret
 from sopuli.store.protocol import StoreError
 
 httpx = pytest.importorskip("httpx")
-pysequoia = pytest.importorskip("pysequoia")
 
 PASSWORD = "Correct#Horse9Battery"
 BASE = "https://yopass.example.com"
@@ -84,7 +83,16 @@ class Server:
         return body
 
 
+def needs_sequoia() -> Any:
+    """`pysequoia`, or a skip. Only the tests that encrypt or decrypt need it, so
+    the pure rule tests above run in any install."""
+    return pytest.importorskip("pysequoia")
+
+
 def backend(server: Server, **settings: Any) -> Yopass:
+    """A backend talking to ``server``. Its preflight checks for `pysequoia`, so
+    every test that builds one needs it."""
+    needs_sequoia()
     return Yopass(
         base_url=settings.pop("base_url", BASE),
         ttl=settings.pop("ttl", "1h"),
@@ -94,7 +102,7 @@ def backend(server: Server, **settings: Any) -> Yopass:
 
 
 def decrypt(armored: str, key: str) -> str:
-    plain: bytes = pysequoia.decrypt(armored.encode("ascii"), passwords=[key]).bytes
+    plain: bytes = needs_sequoia().decrypt(armored.encode("ascii"), passwords=[key]).bytes
     return plain.decode("utf-8")
 
 
@@ -312,10 +320,61 @@ def test_an_answer_with_no_usable_id_is_a_failure_not_an_empty_receipt(body: Any
         backend(Server(create_body=body)).deliver(Secret(PASSWORD), account="a", target="t")
 
 
+@pytest.mark.parametrize("content", [b"", b"{not json"])
+def test_a_json_answer_that_does_not_parse_is_a_store_error(content: bytes) -> None:
+    """A proxy that answers 200 with a cut-off body is reported, not a traceback."""
+    server = Server()
+
+    def broken(request: Any) -> Any:
+        if request.url.path == "/create/secret":
+            return httpx.Response(
+                200, content=content, headers={"content-type": "application/json"}
+            )
+        return server.handle(request)
+
+    needs_sequoia()
+    yopass = Yopass(
+        base_url=BASE,
+        ttl="1h",
+        client_factory=lambda url: httpx.Client(
+            base_url=url, transport=httpx.MockTransport(broken)
+        ),
+    )
+    with pytest.raises(StoreError, match="no usable secret id"):
+        yopass.deliver(Secret(PASSWORD), account="a", target="t")
+
+
+def test_an_encryption_failure_is_a_store_error_that_quotes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sequoia = needs_sequoia()
+
+    def fails(*args: Any, **kwargs: Any) -> bytes:
+        raise TypeError(f"cannot take {args!r}")
+
+    monkeypatch.setattr(sequoia, "encrypt", fails)
+    server = Server()
+    with pytest.raises(StoreError, match="could not be encrypted: TypeError") as raised:
+        backend(server).deliver(Secret(PASSWORD), account="a", target="t")
+
+    assert PASSWORD not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert not [one for one in server.requests if one.url.path == "/create/secret"]
+
+
+def test_a_custom_range_with_a_missing_bound_reads_as_the_rule_does() -> None:
+    policy = ServerPolicy.from_config({"ALLOW_CUSTOM_EXPIRATION": True, "MAX_EXPIRATION": 3600})
+    assert policy.accepted() == "0s to 3600s (ALLOW_CUSTOM_EXPIRATION)"
+    unbounded = ServerPolicy.from_config({"ALLOW_CUSTOM_EXPIRATION": True})
+    assert unbounded.accepted() == "0s or more (ALLOW_CUSTOM_EXPIRATION)"
+    assert unbounded.accepts(10**9)
+
+
 def test_an_unreachable_server_is_a_store_error() -> None:
     def refuse(request: Any) -> Any:
         raise httpx.ConnectError("refused", request=request)
 
+    needs_sequoia()
     yopass = Yopass(
         base_url=BASE,
         ttl="1h",
@@ -330,8 +389,10 @@ def test_an_unreachable_server_is_a_store_error() -> None:
 def test_without_pysequoia_preflight_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """ADR-006 rule 2: exit 9 and the install line, before a password is drawn."""
     monkeypatch.setitem(sys.modules, "pysequoia", None)
+    # Built directly: `backend()` would skip on the missing module.
+    yopass = Yopass(base_url=BASE, ttl="1h", client_factory=Server().factory)
     with pytest.raises(YopassNotInstalledError) as raised:
-        backend(Server()).preflight(account="a", target="t")
+        yopass.preflight(account="a", target="t")
 
     assert raised.value.exit_code == ExitCode.CONFIG_INVALID
     assert "sopuli-dba[yopass]" in str(raised.value.hint)
@@ -341,6 +402,7 @@ def test_without_pysequoia_preflight_names_the_extra(monkeypatch: pytest.MonkeyP
 
 
 def test_the_real_server_returns_ciphertext_the_key_decrypts_once(yopass_stack: Any) -> None:
+    needs_sequoia()
     yopass = Yopass(base_url=yopass_stack.url, ttl="1h")
     yopass.preflight(account="ACME_DEV_ALICE", target="tier1")
     receipt = yopass.deliver(Secret(PASSWORD), account="ACME_DEV_ALICE", target="tier1")
@@ -355,5 +417,6 @@ def test_the_real_server_returns_ciphertext_the_key_decrypts_once(yopass_stack: 
 
 
 def test_the_real_server_s_config_refuses_a_ttl_it_would_refuse(yopass_stack: Any) -> None:
+    needs_sequoia()
     with pytest.raises(YopassRefusedError, match="1h, 24h or 168h"):
         Yopass(base_url=yopass_stack.url, ttl="2h").preflight(account="a", target="t")

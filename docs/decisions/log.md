@@ -3117,14 +3117,20 @@ the register.
   - **Lifetime:** the `vault_path:` block takes a required `ttl`. The tool
     writes it as the path's `delete_version_after` in KV v2, **before** it
     writes the value, and Vault deletes the version when the time runs out. A
-    KV v1 mount is refused at plan time.
-  - **Path:** the account's name exactly as the database stores it, and the
-    target's name, such as `personal/ACME_DEV_ALICE/<target>`. The Vault admin
-    maps a person to that name with metadata on their identity entity, such as
-    `db_account = ACME_DEV_ALICE`, and the person's policy grants `read` on
-    `personal/{{identity.entity.metadata.db_account}}/*`.
-  - **Record:** `results[].handover` carries the path and the KV version the
-    write created.
+    KV v1 mount is refused at plan time. The deletion time reported is the
+    `deletion_time` in Vault's response to the write, and a response without
+    one refuses the reset before the DDL.
+  - **Path:** `<prefix>/<account>/<target>`: a configured prefix, the
+    account's name exactly as the database stores it, and the target's name,
+    such as `personal/ACME_DEV_ALICE/<target>`. Each name is one segment: a
+    name containing `/` is refused, and other characters are percent-encoded.
+    The Vault admin maps a person to that name with metadata on their identity
+    entity, such as `db_account = ACME_DEV_ALICE`, and the person's policy
+    grants `read` on
+    `<mount>/data/<prefix>/{{identity.entity.metadata.db_account}}/*`.
+  - **Record:** `results[].handover` gains `path` and `version`, the path
+    written and the KV version the write created. `accessor` is `null` and
+    `expires_at` is the version's `deletion_time`.
 - **Why:**
   - A copy that persists keeps open, for as long as it exists, the one route
     by which a DBA can act as the person with no name of their own on record

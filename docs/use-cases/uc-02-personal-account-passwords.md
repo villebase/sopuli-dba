@@ -1389,15 +1389,21 @@ DBA's token never holds the wrapping token's cubbyhole. What the DBA holds is th
 token itself, and §1 says what that is worth.
 
 **Which path is the person's, on `vault_path`** (decided in
-[#447](../decisions/log.md#447)). The tool writes to a path built from the
-account's name exactly as the database stores it and from the target's name, such
-as `personal/ACME_DEV_ALICE/<target>` in a KV v2 mount. The target is in the path
+[#447](../decisions/log.md#447)). The tool writes to
+`<prefix>/<account>/<target>` in a KV v2 mount: a prefix the configuration names,
+the account's name exactly as the database stores it, and the target's name. For
+example, `personal/ACME_DEV_ALICE/<target>`. The target is in the path
 because each target holds a separate account with a separate password, and a
 reset on one target must not overwrite the copy for another. **The mapping from a
 person to that name lives in Vault, not in the tool's config.** The Vault admin
 sets the account name as metadata on the person's identity entity, such as
-`db_account = ACME_DEV_ALICE`, and the person's policy grants `read` on
-`personal/{{identity.entity.metadata.db_account}}/*`. An alias name could not do
+`db_account = ACME_DEV_ALICE`. A Vault policy names KV v2's API path, which has
+`data/` after the mount, so with the mount `secret` the person's policy grants
+`read` on `secret/data/personal/{{identity.entity.metadata.db_account}}/*`.
+**Each name is one path segment.** A name that contains `/`, which only a quoted
+identifier can, is refused at plan time, because it would add a level to the
+path. Every other character is percent-encoded in the request, so the `#` in a
+common user's `C##` prefix reaches Vault as part of the name. An alias name could not do
 this job: it comes from the auth method (the LDAP login name, the OIDC claim a
 role names), so it matches a database account name only by coincidence. Entity
 metadata is set by the Vault admin, kept where the identity is, and audited there.
@@ -1419,14 +1425,33 @@ written after it is set. Measured on the tier-1 Vault: set after the write, it
 left the version without a `deletion_time`, and the person could still read it
 past the TTL. So the tool writes the path's metadata first and the value second.
 That needs `create` and `update` on the metadata path as well as on the data
-path, and the plan-time check above asks about both. **A KV v1 mount is refused
+path, and the plan-time check above asks about both API paths:
+`<mount>/data/<path>` and `<mount>/metadata/<path>`. **A KV v1 mount is refused
 at plan time,** naming the mount (invariant 4), because it has neither versions
 nor `delete_version_after`.
 
-**The run document records the path and the version** the write created, in
-`results[].handover`, as `vault_wrapped` records its accessor. Vault's audit
-device logs the person's read under their own identity, and the path and version
-find it there. Neither the path nor the version retrieves anything.
+**The deletion time is Vault's answer, not the configuration's.** A mount can
+set its own `delete_version_after`, and it can shorten the path's. So the tool
+reads `deletion_time` from the response to the write. A response with no
+`deletion_time` means Vault will not delete the value, and the reset is refused
+there. Both writes come before the DDL (§6.4), so a refusal at either leaves the
+account's password unchanged, and the value at the path is not a working
+password. The same holds for a mount that requires check-and-set: the tool
+writes without it, and Vault refuses the write before the DDL.
+
+**Earlier versions stay at the path, soft-deleted,** up to the mount's
+`max_versions`. Each is a password that a later reset replaced, so undeleting
+one gives nothing that works. The exception is a reset run with
+`--keep-rollover` (§4.3): the previous password then works until the rollover
+window closes.
+
+**The run document records the hand-over** in `results[].handover`. On this
+method `accessor` is `null`, because there is no token to name. `expires_at` is
+the version's `deletion_time`. `path` and `version` are added for this method:
+the path written and the KV version the write created. Vault's audit device logs
+the person's read under their own identity, and the path and version find it
+there. Neither retrieves anything. The two fields are a minor bump of the run
+schema, made with the method.
 
 ### 6.7 Reusable by UC-4
 

@@ -191,6 +191,20 @@ ALLOW_REMOTE_VAULT = "SOPULI_TEST_ALLOW_REMOTE_VAULT"
 
 
 @dataclass(frozen=True)
+class Person:
+    """A userpass user that `test/compose.yaml`'s vault-init creates, with its entity.
+
+    The password is a test credential, as the root token is: the dev Vault is
+    in-memory and loopback-only.
+    """
+
+    login: str
+    password: str
+    #: The entity's `db_account` metadata, or None for an entity without the key.
+    db_account: str | None
+
+
+@dataclass(frozen=True)
 class VaultStack:
     """The running tier-1 Vault, and what a test needs to reach it.
 
@@ -209,6 +223,20 @@ class VaultStack:
     #: CLAUDE.md's fixture vocabulary. Scratch space, but still an example in the
     #: codebase, so `acme` and never anything real.
     scratch: str = "apps/acme/conformance"
+    #: The `vault_path` delivery fixture (UC-2 §6.6) that vault-init sets up.
+    #: A person reads `<kv2_mount>/data/<personal_prefix>/<db_account>/*` through
+    #: the `personal-reader` policy. The writer token has `create` and `update` on
+    #: the data and metadata paths under the prefix; the second token also has
+    #: `read`.
+    userpass_mount: str = "userpass"
+    personal_prefix: str = "personal"
+    personal_writer_token: str = "sopuli-test-personal-writer"
+    personal_writer_read_token: str = "sopuli-test-personal-writer-read"
+    #: alice's account is the one the tier-1 Oracle tests reset, as the database
+    #: stores it.
+    alice: Person = Person("alice", "sopuli-test-alice", "ACME_DEV_ALICE")
+    bob: Person = Person("bob", "sopuli-test-bob", "ACME_DEV_BOB")
+    carol: Person = Person("carol", "sopuli-test-carol", None)
 
 
 #: Set to ``required`` where a tier-1 environment is supposed to be present --

@@ -6,8 +6,10 @@ You see each command succeed, and a few of them refuse on purpose.
 Every sample is pasted from a real run on Windows 11, with Instant Client
 23.26.3.0.0 and the `tier1` container stack: Oracle 26ai Free, PostgreSQL 16
 and Vault. Most come from main at caf2645, after the 0.78.0 release, on
-2026-10-23. The PostgreSQL samples in §7 come from later runs, and the samples
-in §11 from main at 50ea18d on 2026-10-27.
+2026-10-23. A sample added since then comes from a run of the change that added
+it. Every sample that shows PostgreSQL is one of these, from 18a0ceb to 50ea18d,
+2026-10-25 and 2026-10-26. The samples in §11 come from main at 50ea18d on
+2026-10-27.
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and

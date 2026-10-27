@@ -1123,7 +1123,7 @@ exist. A file that breaks either rule is refused at load as config-invalid
 |---|---|---|---|
 | `vault_wrapped` | unseen | a Vault response-wrapping token, single use | yes |
 | `vault_path` | unseen | a KV path only their own identity can read | yes |
-| `one_time_link` | unseen | a URL that decrypts once | no (open: #445) |
+| `one_time_link` | unseen | a URL that decrypts once | no |
 | `onepassword_share` | unseen | an item in a password manager | no (open: #446) |
 | `manual` | **seen** | the password, printed to the DBA's terminal | yes |
 | `smtp_encrypted` | unseen | encrypted mail the tool sends | no; no issue yet |
@@ -1338,8 +1338,13 @@ look interchangeable, so this section says how they differ.
   guarantee is "deleted", never "destroyed". A person who has not read the value
   by then needs another reset.
 - **`one_time_link`**: one use, like the wrapping token, and a bearer credential
-  for the same reason: the URL carries its own decryption key in the fragment. It
-  adds a third party to the trust story, which the two Vault methods do not.
+  for the same reason: whoever holds the link and its key can read the password,
+  whatever their identity. The key is in the link's fragment, or, in split mode,
+  travels beside it. It adds a third party to the trust story, which the two
+  Vault methods do not. **The single use is the Yopass server's, not the
+  tool's**: the server deletes a one-time secret as part of the read that
+  returns it. Unlike Vault, an unlicensed Yopass server keeps no record of that
+  read.
 - **`onepassword_share`**: whatever 1Password's API offers, which is not yet known
   (open: #446). If single view has to be simulated with a follow-up delete, the
   documentation must not claim single view.
@@ -1457,6 +1462,67 @@ the person's read under their own identity, and the path and version find it
 there. Neither retrieves anything. The two fields are a minor bump of the run
 schema, made with the method.
 
+**How `one_time_link` makes the link** (decided in
+[#445](../decisions/log.md#445)). The method works with a Yopass server. Yopass
+stores only ciphertext. The tool draws a random 22-character key, encrypts the
+password with OpenPGP using the key as the password, and sends the ciphertext
+with `one_time: true`. The server answers with the secret's id. The link is
+`<link base>/#/s/<id>/<key>`. The key is in the fragment, after `#`, and a
+browser never sends the fragment to the server, so the server never holds
+anything that decrypts. The link base is the `PUBLIC_URL` the server reports,
+else the configured `base_url`. Neither may be plain `http` unless the host is
+loopback, as for a vault address ([#856](../decisions/log.md#856)): a page
+served over plain `http` can be changed on the way, and the changed page could
+send the key anywhere. The encryption needs `pysequoia`, which is in the
+`yopass` extra.
+
+**Invariant 2 holds this way.** The password reaches the encryption inside the
+process, and only the ciphertext leaves. That call is the method's store
+write, as the vault write is for the Vault methods. The full link and the key
+are retrieval credentials, like the wrapping token, so they are the
+invariant's fifth exception and follow the rules above.
+
+**With `split_key: true`, the tool prints two values**: the link without the
+key, `<link base>/#/s/<id>`, and the key. The DBA sends them by two channels,
+such as the link by email and the key by phone, so neither channel alone
+carries what reads the password. The person opens the link, and the page asks
+for the key. It is off by default, because the person has to type or paste the
+key. The tool also splits when the server reports `DISABLE_ONE_CLICK_LINK`, and
+when it reports `PREFETCH_SECRET` false, for the reason under *A link scanner
+can use up the view* below. The link without the key is printed in plain text. It holds the id and nothing that
+decrypts. The key, and the full link when the tool does not split, are printed
+as the wrapping token is, under the rules above.
+
+**The tool reads the server's `/config` at plan time** and refuses, with exit 5,
+naming the server and the setting:
+
+- a server that reports `READ_ONLY`, because it cannot create a secret;
+- a server that reports `REQUIRE_AUTH`. Creating a secret there needs an API
+  token, which needs a Yopass licence, and the tool does not send one yet;
+- a `ttl` the server would refuse. The server accepts exactly
+  `FORCE_EXPIRATION` when it reports one. It accepts any value from
+  `MIN_EXPIRATION` to `MAX_EXPIRATION` when `ALLOW_CUSTOM_EXPIRATION` is true.
+  Otherwise it accepts 1h, 1d or 1w;
+- a `PUBLIC_URL` that is plain `http` on a host that is not loopback.
+
+**A link scanner can use up the view.** Chat link previews and mail scanners
+open links. In Yopass 16.0.1's page, a link without its key fetches nothing
+until the key is entered. A full link fetches nothing until the person clicks
+to reveal it, as long as the server reports `PREFETCH_SECRET`, which is the
+default. A server run with `--prefetch-secret=false` fetches when the page
+loads, so a scanner that runs the page's script would use up the view, and the
+person would get an error. Even there, a link without its key fetches nothing,
+so the tool splits for such a server.
+
+**The run document records the hand-over** in `results[].handover`. On this
+method `accessor` is `null` and `id` is the secret's id. Yopass returns no
+expiry, so `expires_at` is the `Date` header of the server's answer to the
+create, plus `ttl`. It comes from the server's clock, as it does on the Vault
+methods. An answer without a `Date` header leaves it `null`. The id names the secret and cannot read it, but like an accessor it can
+destroy what it names: whoever holds it can fetch the ciphertext, which uses up
+the view, or delete the secret. The person's own fetch then fails, so either is
+visible. `id` is a minor bump of the run schema, made with the method.
+
 ### 6.7 Reusable by UC-4
 
 The abstraction is a **delivery method that takes a value and a recipient**. It is
@@ -1516,7 +1582,7 @@ Reasons: [H6](../decisions/log.md#h6).
 | # | Invariant | Here |
 |---|---|---|
 | 1 | no secret in `argv` | applies unchanged, including every store credential |
-| 2 | redaction at the serialiser | applies. §3's metadata record is inside it, not an exception to it: it holds no password in any form, not a hash and not a verifier. A **Vault** write is already a permitted plaintext site, so the Vault methods need no widening. The other stores (`one_time_link`, `onepassword_share`, `smtp_encrypted`) are not automatically permitted, and each says how it keeps the invariant when it is built. **The seen path's display is the invariant's fourth exception** (decided in #439), under §6.5's five guards. It is allowed because the exposure is deliberate, witnessed and expired, not because it is harmless; harmlessness is the third exception's argument and does not apply here. The wrapping token an unseen delivery returns is the fifth (§6.6) |
+| 2 | redaction at the serialiser | applies. §3's metadata record is inside it, not an exception to it: it holds no password in any form, not a hash and not a verifier. A **Vault** write is already a permitted plaintext site, so the Vault methods need no widening. The other stores are not automatically permitted. `one_time_link` sends only ciphertext, and its encryption call is its store write (§6.6, decided in #445). `onepassword_share` and `smtp_encrypted` each say how they keep the invariant when they are built. **The seen path's display is the invariant's fourth exception** (decided in #439), under §6.5's five guards. It is allowed because the exposure is deliberate, witnessed and expired, not because it is harmless; harmlessness is the third exception's argument and does not apply here. The retrieval credential an unseen delivery returns is the fifth (§6.6): the wrapping token, or `one_time_link`'s full link or key |
 | 3 | branch on capability, not version | applies: rollover (§4.3) is a capability |
 | 4 | unavailable capability fails at plan time | applies: §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §4.3's seen-path refusal and §4.2's byte limit are asked on each target before any DDL, and a `--dry-run` asks them too ([#671](../decisions/log.md#671)). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | applies, with H1's addition: a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch. Selectors still cannot extend the declared set (§2) |

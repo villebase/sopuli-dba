@@ -53,8 +53,9 @@ PERMITTED = {
         "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"
     ),
     "output/delivery_view.py": (
-        "the wrapping token -- not a password, but UC-2 6.1's retrieval credential, "
-        "which the rule covers because it is about reach rather than value (UC-2 §6.6)"
+        "the retrieval credential an unseen delivery returns -- a wrapping token, or a "
+        "one-time link or its key (decision #445). Not a password, but UC-2 6.1's rule "
+        "covers it because it is about reach rather than value (UC-2 §6.6)"
     ),
     "delivery/vault_wrapped.py": (
         "the vault write -- invariant 2's first exception, reached as a wrap rather "

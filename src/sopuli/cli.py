@@ -3322,8 +3322,15 @@ def _delivery_backends(
 
     **`one_time_link` has one backend for every target.** It uses no store, so
     nothing differs by target, and one backend reads the server's `/config` once.
+    It is built here, not in :func:`_delivery_backend`, whose job is to open one
+    store per target.
+
+    **A `--dry-run` still runs `one_time_link`'s preflight.** Reading `/config`
+    needs no credential, and a preview that said "would be reset" for a server
+    the real run refuses would be wrong about what the run will do. Nothing is
+    returned, so nothing is delivered.
     """
-    if delivery.is_seen or run.dry_run:
+    if delivery.is_seen:
         return {}
     if delivery.one_time_link is not None:
         # Imported here, for `_delivery_backend`'s reason.
@@ -3333,7 +3340,12 @@ def _delivery_backends(
         link = yopass.Yopass(
             base_url=settings.base_url, ttl=settings.ttl, split_key=settings.split_key
         )
+        link.preflight(account=account, target=reached[0].name if reached else "")
+        if run.dry_run:
+            return {}
         backends: dict[str, DeliveryBackend] = {target.name: link for target in reached}
+    elif run.dry_run:
+        return {}
     else:
         backends = {
             target.name: _delivery_backend(run, config, delivery, target) for target in reached

@@ -1701,6 +1701,9 @@ FULL_LINK = re.compile(r"(http\S+)/#/s/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]{22})\b")
 
 
 def _link_config(dsn: str, url: str, *, ttl: str = "1h", split: bool = False) -> str:
+    """The config, or a skip where the `yopass` extra is missing: without
+    `pysequoia` the run exits 9, which says nothing about the method."""
+    pytest.importorskip("pysequoia")
     return LINK.format(
         dsn=dsn,
         user=os.environ.get("SOPULI_TEST_ORACLE_USER", "system"),
@@ -1796,7 +1799,6 @@ def test_a_ttl_the_server_would_refuse_is_refused_before_anything_connects(
 ) -> None:
     """Exit 5 at plan time, against an Oracle address nothing answers: the
     refusal comes from the server's `/config`, not from a connection."""
-    pytest.importorskip("pysequoia")
     config = write_config(_link_config("192.0.2.10:1521/ALPHA", yopass_stack.url, ttl="2h"))
 
     result = run(runner, config, "--account", ACCOUNT)
@@ -1804,3 +1806,16 @@ def test_a_ttl_the_server_would_refuse_is_refused_before_anything_connects(
     assert isinstance(result.exception, RefusedError)
     assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
     assert "1h, 24h or 168h" in str(result.exception)
+
+
+def test_a_preview_refuses_what_the_run_would_refuse(
+    runner: CliRunner, write_config: WriteConfig, yopass_stack: Any
+) -> None:
+    """`--dry-run` reads the server's `/config` too: it needs no credential, and
+    a preview that said "would be reset" here would be wrong about the run."""
+    config = write_config(_link_config("192.0.2.10:1521/ALPHA", yopass_stack.url, ttl="2h"))
+
+    result = run(runner, config, "--account", ACCOUNT, "--dry-run")
+
+    assert isinstance(result.exception, RefusedError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY

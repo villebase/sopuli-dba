@@ -3234,8 +3234,9 @@ the register.
     setting, a server that is `READ_ONLY`, one that has `REQUIRE_AUTH`, and a
     `ttl` the server would refuse. The server accepts exactly
     `FORCE_EXPIRATION` when it reports one, any value from `MIN_EXPIRATION` to
-    `MAX_EXPIRATION` when `ALLOW_CUSTOM_EXPIRATION` is true, and otherwise 1h,
-    1d or 1w.
+    `MAX_EXPIRATION` when `ALLOW_CUSTOM_EXPIRATION` is true, and otherwise an
+    hour, a day or a week, which the `ttl` grammar writes `1h`, `24h` or `168h`.
+    A `--dry-run` reads `/config` too, because it needs no credential.
   - **The link base** is the `PUBLIC_URL` that `/config` reports, else the
     configured `base_url`. Both follow #856: plain `http` is refused unless the
     host is loopback. `base_url` is refused when the file is read, and

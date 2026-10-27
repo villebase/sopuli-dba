@@ -1503,7 +1503,7 @@ naming the server and the setting:
 - a `ttl` the server would refuse. The server accepts exactly
   `FORCE_EXPIRATION` when it reports one. It accepts any value from
   `MIN_EXPIRATION` to `MAX_EXPIRATION` when `ALLOW_CUSTOM_EXPIRATION` is true.
-  Otherwise it accepts 1h, 1d or 1w;
+  Otherwise it accepts an hour, a day or a week, written `1h`, `24h` or `168h`;
 - a `PUBLIC_URL` that is plain `http` on a host that is not loopback.
 
 **A link scanner can use up the view.** Chat link previews and mail scanners

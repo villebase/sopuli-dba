@@ -9,13 +9,15 @@ could reach the server, in session and in transaction pooling:
        in ignore_startup_parameters, and to one that does. Where it gets in,
        `SHOW statement_timeout` and a `pg_sleep` longer than the budget
   PB2  `SET statement_timeout` after connecting, in autocommit, as the driver
-       runs. What a second client of the same role then reads, and what the
-       first client reads after it
+       runs. What a second client of the same role then reads, what a third
+       reads after both closed, and what one client reads after another sets
+       it back
   PB3  `SET LOCAL statement_timeout` inside an explicit transaction: whether it
-       holds there, and what is left after COMMIT. Then `SET LOCAL` in
-       autocommit, outside a transaction block
+       holds there, and what is left after a COMMIT and after a rollback. Then
+       `SET LOCAL` in autocommit, outside a transaction block
   PB4  a role whose password changes on the server while PgBouncer runs:
-       which password PgBouncer then accepts, with auth_query
+       which password PgBouncer then accepts, with auth_query, and whether a
+       client that logged in before the change still answers
   PB5  one parametrised query run 8 times on one connection, past psycopg's
        prepare_threshold of 5, with a second client between each run
 
@@ -35,16 +37,17 @@ RESULTS
        pg_sleep(2) completes
   PB2  session pooling: the setting holds for the client that set it, and no
        other client sees it, then or after it closes. Transaction pooling:
-       the second client reads 1s and its pg_sleep(2) is cancelled, 57014.
-       When the second client sets 0, the first reads 0. A client after both
-       closed reads 0
-  PB3  inside an explicit transaction, in both modes: SHOW reads 1s and a
-       pg_sleep(2) is cancelled, 57014. After the transaction it reads 0, and
-       another client reads 0. In autocommit, outside a transaction block, the
-       server warns 25P01 'SET LOCAL can only be used in transaction blocks'
-       and the setting reads 0
+       the second client reads 1s and its pg_sleep(2) is cancelled, 57014. A
+       third client, after both closed, still reads 1s: the server connection
+       keeps it. When another client sets 0, the client that set 1s reads 0
+  PB3  inside an explicit transaction, in both modes: SHOW reads 1s. After a
+       COMMIT it reads 0, and another client reads 0. In a second transaction
+       a pg_sleep(2) is cancelled, 57014, and after the rollback it reads 0.
+       In autocommit, outside a transaction block, the server warns 25P01 'SET
+       LOCAL can only be used in transaction blocks' and the setting reads 0
   PB4  in both modes, after each change PgBouncer accepts the new password and
-       refuses the old one. A refused login reads 'FATAL: SASL authentication
+       refuses the old one, and a client that logged in before the change
+       still answers. A refused login reads 'FATAL: SASL authentication
        failed', with no SQLSTATE. The server's own message is 'password
        authentication failed for user', which the driver reads as 28P01
   PB5  every run answers, in both modes. Session pooling: the server holds
@@ -58,9 +61,11 @@ RESULTS
   the same:
 
   - doctor, and doctor --check-privileges at `transaction`: reachable, READ
-    WRITE, scope cluster. ENCRYPTION reads none; it reads pg_stat_ssl, which describes
-    PgBouncer's connection to the server, not the tool's to PgBouncer. Not
-    run with TLS on either hop
+    WRITE, scope cluster. ENCRYPTION reads none. It comes from pg_stat_ssl,
+    which describes PgBouncer's connection to the server, not the tool's to
+    PgBouncer, and require_encryption reads the same. With TLS on that hop
+    only, it would read encrypted while the password crosses the tool's hop
+    in clear. Not run with TLS on either hop
   - with db.query_timeout_s set, doctor reports the target unreachable, 08001,
     with PB1's message. Through the PgBouncer that ignores options, it is
     reachable and the budget is gone
@@ -145,7 +150,7 @@ def _setup() -> None:
             RETURNS TABLE (usename name, passwd text)
             LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
               SELECT rolname, CASE WHEN rolvaliduntil < now() THEN NULL ELSE rolpassword END
-                FROM pg_authid WHERE rolname = p_user AND rolcanlogin
+                FROM pg_authid WHERE rolname = p_user AND rolcanlogin AND NOT rolsuper
             $$
             """
         )
@@ -218,24 +223,34 @@ def pb2() -> None:
             with _connect("strict", mode) as second:
                 print(f"  {mode:<11} second client, while first is open: {_show(second)}")
                 print(f"  {mode:<11} second: {_outcome(_sleep, second)}")
-                second.execute("SET statement_timeout = 0")
-                print(f"  {mode:<11} second sets 0; first then reads: {_show(first)}")
+        # Nothing has set it back, so a third client reads what the server
+        # connection was left with.
         with _connect("strict", mode) as third:
             print(f"  {mode:<11} a third client, after both closed: {_show(third)}")
+            third.execute(f"SET statement_timeout = {BUDGET_MS}")
+            with _connect("strict", mode) as fourth:
+                fourth.execute("SET statement_timeout = 0")
+                print(f"  {mode:<11} third sets it, fourth sets 0; third reads: {_show(third)}")
 
 
 def pb3() -> None:
     print(f"PB3  SET LOCAL statement_timeout = {BUDGET_MS}")
     for mode in MODES:
         with _connect("strict", mode) as conn, _connect("strict", mode) as other:
+            # A cancelled statement aborts its transaction, which then rolls
+            # back, so the sleep has a transaction of its own. Nothing fails in
+            # this one, so it ends with a real COMMIT.
+            with conn.transaction():
+                conn.execute(f"SET LOCAL statement_timeout = {BUDGET_MS}")
+                print(f"  {mode:<11} inside a transaction: {_show(conn)}")
+            print(f"  {mode:<11} after COMMIT: {_show(conn)}; other client: {_show(other)}")
             try:
                 with conn.transaction():
                     conn.execute(f"SET LOCAL statement_timeout = {BUDGET_MS}")
-                    print(f"  {mode:<11} inside the transaction: {_show(conn)}")
-                    print(f"  {mode:<11} inside: {_outcome(_sleep, conn)}")
+                    print(f"  {mode:<11} a second transaction: {_outcome(_sleep, conn)}")
             except psycopg.Error as exc:
                 print(f"  {mode:<11} the transaction ended with {exc.sqlstate}")
-            print(f"  {mode:<11} after it ended: {_show(conn)}; other client: {_show(other)}")
+            print(f"  {mode:<11} after it rolled back: {_show(conn)}")
             notices: list[str] = []
 
             def keep(diag: psycopg.errors.Diagnostic, notices: list[str] = notices) -> None:
@@ -249,17 +264,19 @@ def pb3() -> None:
 def pb4() -> None:
     print("PB4  the password changes on the server while PgBouncer runs")
     for mode in MODES:
-        # A pooled server connection, opened with the first password.
-        with _connect("strict", mode) as warm:
-            warm.execute("SELECT 1")
-        with psycopg.connect(
-            host=HOST,
-            port=SERVER_PORT,
-            dbname="sopuli",
-            user="postgres",
-            password=SUPERUSER_PASSWORD,
-            autocommit=True,
-        ) as admin:
+        # A client logged in with the first password, still open while the
+        # password changes, as an application's would be.
+        with (
+            _connect("strict", mode) as warm,
+            psycopg.connect(
+                host=HOST,
+                port=SERVER_PORT,
+                dbname="sopuli",
+                user="postgres",
+                password=SUPERUSER_PASSWORD,
+                autocommit=True,
+            ) as admin,
+        ):
             admin.execute("SET password_encryption = 'scram-sha-256'")
             for label, before, after in (
                 ("first -> second", PASSWORD, SECOND_PASSWORD),
@@ -273,6 +290,7 @@ def pb4() -> None:
                 for name, password in (("old", before), ("new", after)):
                     result = _outcome(_login, mode, password)
                     print(f"  {mode:<11} {label}, {name} password: {result}")
+                print(f"  {mode:<11} {label}, the open client: {_outcome(_role, warm)}")
 
 
 def pb5() -> None:

@@ -206,10 +206,12 @@ jobs:
       # says what is meant. `wait` then holds pytest until vault-init has
       # finished, and fails the step if it exited non-zero: a half-finished setup
       # would show up as login failures in the personal-path tests.
+      # yopass has no healthcheck, because its image has no shell, so `--wait`
+      # waits only for it to run. The `yopass_stack` fixture waits on /health.
       - name: bring up the tier-1 stack
         working-directory: test
         run: |
-          docker compose --profile tier1 up -d --wait vault postgres oracle-free
+          docker compose --profile tier1 up -d --wait vault postgres oracle-free yopass yopass-memcached
           docker compose --profile tier1 up -d vault-init
           docker compose --profile tier1 wait vault-init
 

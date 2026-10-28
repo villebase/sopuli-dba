@@ -71,9 +71,10 @@ from sopuli.config.codes import (
     THIRD_PARTY_ADDR_OVERRIDES,
     THIRD_PARTY_ADDR_USERINFO,
     THIRD_PARTY_NAMESPACE_OVERRIDES,
+    THIRD_PARTY_VARIABLE_UNAPPLIED,
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.model import Config, ConfigWarning, Vault, VaultPatch, VaultTls
+from sopuli.config.model import Config, ConfigWarning, Vault, VaultAuth, VaultPatch, VaultTls
 from sopuli.config.plain_http import PLAIN_HTTP_HINT, plain_http_scheme
 from sopuli.config.vault_env import (
     NO_ENV,
@@ -81,6 +82,7 @@ from sopuli.config.vault_env import (
     vault_cli_contributions,
     vault_env_contributions,
 )
+from sopuli.config.vaults import HASHICORP_KEYS, OCI_AUTH_METHODS
 from sopuli.settings import Contribution, Layer, Resolved, ratchet_note, resolve
 
 #: One store's environment contributions, keyed by setting key -- what
@@ -164,6 +166,9 @@ def apply_vault_layers(
         }
         for key, contributions in from_cli.get(vault.name, {}).items():
             supplied.setdefault(key, contributions)
+        if vault.type == "oci":
+            supplied, unapplied = _without_thirdparty(vault.name, supplied)
+            warnings.extend(unapplied)
         if "addr" in supplied:
             supplied["addr"], dropped = _drop_userinfo(vault.name, supplied["addr"])
             warnings.extend(dropped)
@@ -171,6 +176,118 @@ def apply_vault_layers(
         merged.append(one)
         warnings.extend(found)
     return tuple(merged), tuple(warnings)
+
+
+def _without_thirdparty(
+    name: str, supplied: dict[str, list[Contribution]]
+) -> tuple[dict[str, list[Contribution]], list[ConfigWarning]]:
+    """``supplied`` without HashiCorp's own variables, for an OCI store, and why.
+
+    ``VAULT_ADDR``, ``VAULT_NAMESPACE`` and ``VAULT_CACERT`` are exported in
+    every shell that has run `vault`, and they mean nothing to an OCI store. §6
+    does not fail a run over another tool's variable: it warns that the variable
+    was not applied, with ``SOPULI-W038``, and so does this (#1130). This tool's
+    own ``SOPULI_*`` variables and ``--vault-addr`` stay, and
+    :func:`_refuse_hashicorp_keys` refuses them.
+    """
+    kept: dict[str, list[Contribution]] = {}
+    warnings = []
+    for key, contributions in supplied.items():
+        for one in contributions:
+            if one.layer is not Layer.ENV_THIRDPARTY:
+                kept.setdefault(key, []).append(one)
+                continue
+            warnings.append(
+                ConfigWarning(
+                    message=(
+                        f"{one.location} is set and was not applied: the default store "
+                        f"{name!r} is an OCI store, which reads no HashiCorp setting"
+                    ),
+                    # No `at`: the message names the variable.
+                    at="",
+                    hint="ignore this if the variable belongs to other work on this machine",
+                    code=THIRD_PARTY_VARIABLE_UNAPPLIED,
+                )
+            )
+    return kept, warnings
+
+
+def _refuse_hashicorp_keys(
+    vault: Vault, values: Mapping[str, Any], settings: Mapping[str, Resolved]
+) -> None:
+    """An OCI store reads none of HashiCorp's keys, from any layer (#1130).
+
+    Checked on the merged values, so a profile, ``defaults.vaults``, a
+    ``SOPULI_*`` variable or ``--vault-addr`` is refused as the file is, and the
+    message names the layer that supplied the key. P3 refuses a key the tool
+    would ignore. ``merge_patch`` has its own message, in
+    :func:`_refuse_inert_merge_patch`.
+    """
+    if vault.type != "oci":
+        return
+    for key in HASHICORP_KEYS:
+        if values.get(key) is None:
+            continue
+        answer = settings.get(key) or next(
+            (one for name, one in settings.items() if name.startswith(f"{key}.")), None
+        )
+        given = "" if answer is None else f", from {answer.location},"
+        raise ConfigError(
+            f"vault {vault.name!r}: `{key}`{given} has no effect on a store of type 'oci'",
+            at=ROOT,
+            hint="it is a HashiCorp Vault key; remove it from this store",
+        )
+
+
+def _refuse_tls_on_oci(
+    vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
+) -> None:
+    """An OCI store has no ``tls:`` block, from any layer (#1130).
+
+    Its SDK verifies TLS itself. Checked before :func:`_merge_tls`, so that the
+    message is this one and not one of that function's own refusals, and it
+    names the layer that wrote the block.
+    """
+    if vault.type != "oci":
+        return
+    found = next((str(at.key("tls")) for _, at, patch in patches if patch.tls is not None), None)
+    if found is None and vault.tls is not None:
+        found = str(ROOT.key("vaults").key(vault.name).key("tls"))
+    if found is None:
+        found = next(
+            (
+                one.location
+                for key, contributions in from_env.items()
+                if key.startswith("tls.")
+                for one in contributions
+            ),
+            None,
+        )
+    if found is not None:
+        raise ConfigError(
+            f"vault {vault.name!r}: `tls`, from {found}, has no effect on a store of type 'oci'",
+            at=ROOT,
+            hint="it is a HashiCorp Vault key; the OCI SDK verifies TLS itself",
+        )
+
+
+def _refuse_hashicorp_auth(vault: Vault, auth: VaultAuth | None, *, at: KeyPath) -> None:
+    """An OCI store authenticates only with OCI's own methods (#1130).
+
+    The other way round, an OCI method on a HashiCorp store, is refused when the
+    store connects (:mod:`sopuli.store.hashicorp._auth`). This one is refused
+    when the file is read, as the HashiCorp keys are, so a store whose ``type``
+    was edited to ``oci`` does not keep an ``approle`` block that fails only at
+    the first connection. ``at`` is the block in force, which a profile or
+    ``defaults.vaults`` may have written.
+    """
+    if vault.type != "oci" or auth is None or auth.method in OCI_AUTH_METHODS:
+        return
+    raise ConfigError(
+        f"auth method {auth.method!r} is a HashiCorp Vault method, and this is an OCI store",
+        at=at,
+        hint=f"an OCI store authenticates with one of: {', '.join(OCI_AUTH_METHODS)}",
+    )
 
 
 def _refuse_inert_merge_patch(vault: Vault, values: Mapping[str, Any]) -> None:
@@ -362,6 +479,10 @@ def _merge(
         settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
+    # Before the address checks: on an OCI store the address is the fault, and
+    # a message about its `@` or its scheme would send the operator to fix the
+    # wrong thing first.
+    _refuse_hashicorp_keys(vault, values, settings)
     _refuse_inert_merge_patch(vault, values)
     _refuse_userinfo(vault, settings.get("addr"))
     _refuse_plain_http(vault, settings.get("addr"))
@@ -372,6 +493,9 @@ def _merge(
         if overridden is not None:
             warnings.append(overridden)
 
+    # Before the merge, for the same reason: `_merge_tls` has refusals of its
+    # own, and on an OCI store the block is the fault.
+    _refuse_tls_on_oci(vault, patches, from_env)
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
         values["tls"] = tls
@@ -380,6 +504,14 @@ def _merge(
     warnings.extend(tls_warnings)
 
     auth = _highest(patch.auth for _, _, patch in patches)
+    # `_highest` takes the front of the list, so the first patch with a block is
+    # the layer that wrote the one in force.
+    auth_at = next((at for _, at, patch in patches if patch.auth is not None), None)
+    _refuse_hashicorp_auth(
+        vault,
+        auth or vault.auth,
+        at=(auth_at or ROOT.key("vaults").key(vault.name)).key("auth"),
+    )
     if auth is not None:
         # Whole-block replacement, so there is nothing to merge and nothing to
         # keep from the declaration. `replace` leaves the declaration's own block

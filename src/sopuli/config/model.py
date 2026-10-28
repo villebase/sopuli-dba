@@ -351,6 +351,16 @@ class Vault:
     #: or WAF in front of Vault that blocks the PATCH method (#904). Absent means
     #: ``True``.
     merge_patch: bool | None = None
+    #: OCI only: the vault's OCID, the compartment new secrets go into, and the
+    #: KMS key that encrypts them. The tool creates secrets (#1128), and OCI's
+    #: CreateSecret needs all three. An OCID names a resource and proves
+    #: nothing, so these are plain strings rather than MaterialRefs.
+    vault_id: str | None = None
+    compartment_id: str | None = None
+    key_id: str | None = None
+    #: OCI only. ``None`` means the region the auth method supplies: the
+    #: config-file profile's, or the instance metadata's.
+    region: str | None = None
     tls: VaultTls | None = None
     auth: VaultAuth | None = None
     non_production: bool = False

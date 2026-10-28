@@ -43,23 +43,52 @@ VAULT_KEYS = (
     "namespace",
     "timeout_s",
     "merge_patch",
+    "vault_id",
+    "compartment_id",
+    "key_id",
+    "region",
     "tls",
     "auth",
     "non_production",
     "locking",
 )
 
+#: The keys only an OCI store reads, and the ones it cannot do without. The
+#: tool creates secrets (#1128), and OCI's CreateSecret needs a vault, a
+#: compartment and a key. ``region`` defaults to the auth method's.
+OCI_KEYS = ("vault_id", "compartment_id", "key_id", "region")
+OCI_REQUIRED_KEYS = ("vault_id", "compartment_id", "key_id")
+
+#: The keys only a HashiCorp store reads, apart from ``merge_patch``. An OCI
+#: store refuses each, on the merged values (:mod:`sopuli.config.vault_layers`),
+#: so that no layer can write one where nothing reads it. ``merge_patch`` has
+#: its own refusal, on every store but HashiCorp KV v2.
+HASHICORP_KEYS = ("addr", "mount", "kv_version", "namespace", "tls")
+
+#: The auth methods an OCI store can perform. The others are HashiCorp's, and an
+#: OCI store refuses them when the file is read.
+OCI_AUTH_METHODS = ("instance_principal", "resource_principal", "config_file", "session_token")
+
+#: Why an OCI key cannot be patched. One reason for all four: each names which
+#: vault this is, as ``type`` names which backend.
+OCI_KEY_REASON = (
+    "it names which OCI vault this is, so a different value is a second store; "
+    "declare that one under `vaults:` and name it"
+)
+
 #: ``tls:`` (ADR-005). Four paths, a host name and a boolean. The boolean is the one
 #: that is not ordinary config -- see :class:`~sopuli.config.model.VaultTls`.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
 
-#: The three keys a partial entry may **not** carry (C13, §5), each with why.
+#: The keys a partial entry may **not** carry (C13, §5), each with why.
 #:
 #: The reasons differ and the messages say so, because the remedies differ. Two
 #: are invariant 10 -- a guardrail must not be reachable from the invocation
-#: context -- and one is not a safety setting at all, so its message must not
-#: claim the ratchet. Somebody told "the safety ratchet forbids it" about ``type``
-#: would go looking for a way to relax a ratchet, and there is nothing there.
+#: context -- and the rest are not safety settings at all, so their messages must
+#: not claim the ratchet. Somebody told "the safety ratchet forbids it" about
+#: ``type`` would go looking for a way to relax a ratchet, and there is nothing
+#: there. ``type`` and the OCI keys say which store this is, so a different value
+#: is a second store.
 UNPATCHABLE_KEYS = {
     "type": (
         "a store that is HashiCorp from a laptop and OCI from CI is two stores; "
@@ -73,6 +102,7 @@ UNPATCHABLE_KEYS = {
         "it is a guardrail -- `advisory-only` concedes that a store cannot hold P5's "
         "lock -- and invariant 10 keeps a guardrail out of the invocation context"
     ),
+    **dict.fromkeys(OCI_KEYS, OCI_KEY_REASON),
 }
 
 #: What a partial entry may carry: the complement, never a second list.
@@ -176,15 +206,17 @@ def build_vaults(document: dict[str, Any]) -> tuple[Vault, ...]:
 def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
     entry = mapping(raw, at=at)
     reject_unknown_keys(entry, allowed=VAULT_KEYS, at=at)
+    type_ = choice(
+        required_string(entry, "type", at=at, hint=f"one of: {', '.join(VAULT_TYPES)}"),
+        allowed=VAULT_TYPES,
+        at=at.key("type"),
+        noun="vault type",
+    )
 
     return Vault(
         name=name,
-        type=choice(
-            required_string(entry, "type", at=at, hint=f"one of: {', '.join(VAULT_TYPES)}"),
-            allowed=VAULT_TYPES,
-            at=at.key("type"),
-            noun="vault type",
-        ),
+        type=type_,
+        **_oci_keys(entry, type_=type_, at=at),
         # Absent means production. §10 refuses a prod target pointed at a
         # non-production store, and defaulting the other way would make that
         # rule fire on every vault nobody has labelled yet.
@@ -197,6 +229,31 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
     )
 
 
+def _oci_keys(entry: dict[str, Any], *, type_: str, at: KeyPath) -> dict[str, Any]:
+    """The four OCI keys, which only an OCI store may write and it must write three of.
+
+    Read from the declaration alone, because no layer may patch them
+    (:data:`UNPATCHABLE_KEYS`). A HashiCorp key on an OCI store is refused later,
+    on the merged values, because a layer may write one of those.
+    """
+    if type_ != "oci":
+        for key in OCI_KEYS:
+            if key in entry:
+                raise ConfigError(
+                    f"`{key}` has no effect on a store of type {type_!r}",
+                    at=at.key(key),
+                    hint="it names an OCI vault; remove it, or set `type: oci`",
+                )
+        return {}
+    return {
+        **{
+            key: required_string(entry, key, at=at, hint="an OCID, from the OCI console")
+            for key in OCI_REQUIRED_KEYS
+        },
+        "region": optional_string(entry, "region", at=at),
+    }
+
+
 def build_vault_patches(container: dict[str, Any], *, at: KeyPath) -> tuple[VaultPatch, ...]:
     """A ``vaults:`` block under ``defaults:`` or in a profile (C13).
 
@@ -207,7 +264,7 @@ def build_vault_patches(container: dict[str, Any], *, at: KeyPath) -> tuple[Vaul
     (:mod:`sopuli.config.references`), so the message and the exit code are the
     ones a reader already knows.
 
-    What a layer may say is :data:`PATCHABLE_KEYS`, and the three it may not each
+    What a layer may say is :data:`PATCHABLE_KEYS`, and the keys it may not each
     get their own refusal rather than an unknown-key message: a whitelist reply
     would send somebody looking for the right spelling of a key that must not
     exist here, which is the same defect :func:`sopuli.config.profiles._reject_forbidden_keys`
@@ -229,7 +286,7 @@ def _build_patch(name: str, raw: Any, *, at: KeyPath) -> VaultPatch:
 
 
 def _reject_unpatchable_keys(entry: dict[str, Any], *, at: KeyPath) -> None:
-    """The three keys of :data:`UNPATCHABLE_KEYS`, refused before the whitelist.
+    """The keys of :data:`UNPATCHABLE_KEYS`, refused before the whitelist.
 
     Order matters for the message and not for the outcome, exactly as it does in
     a profile's blocklist: "unknown key `locking`" beside a list of the known ones

@@ -2544,7 +2544,7 @@ One string addresses a value in any backend:
 | `vault-dev:apps/orders/prod/db/creds#password` | explicit vault |
 | `tenants/beta#DB_CREDENTIALS/acme_web_user` | one entry in a JSON map held in one property — the layout in §2 |
 | `apps/orders/prod/db/creds#password@version=7` | pinned version (read-only contexts) |
-| `apps/orders/prod/db/creds#password@stage=pending` | staging label (OCI native, emulated elsewhere) |
+| `apps/orders/prod/db/creds#password@stage=pending` | staging label (emulated in the payload; on an `oci` store, a native version stage, and the path is one OCI name such as `orders-prod-db-creds`) |
 
 ### Parsing it
 
@@ -2738,9 +2738,9 @@ refused, whichever entries declare them ([#841](../decisions/log.md#841)). §10
 lists the rule.
 
 **An application's ref must have somewhere to stage into.** Where the
-store emulates the three stages in payload fields — every backend in P2's table
-but OCI — `pending` and `previous` are keys *beside* the container, so two refs
-that parse perfectly well still cannot be rotated:
+store emulates the three stages in payload fields, `pending` and `previous` are
+keys *beside* the container, so two refs that parse perfectly well still cannot
+be rotated:
 
 | Refused | Why |
 |---|---|
@@ -2781,12 +2781,31 @@ guard at the write boundary, because a binding whose store C15 completes later
 (§6) has no known backend while the file is being read, and the rule below is
 why that matters.
 
-**The store is why this is not a universal rule.** On OCI the stages are versions
-of the secret rather than fields in it (P2's `staging_labels` row), so a ref
-naming a whole secret is the natural layout there and a field called `pending`
-collides with nothing. No refusal in this section fires against a store that
-stages natively. A store type P2 gives no capability row — `keyring` — is left alone
-too, rather than assumed to emulate.
+**The rules apply on `hashicorp`, `file` and `oci` stores.** OCI stages
+natively (P2's `staging_labels` row), and the rules still apply there, for two
+reasons. A version's content holds the password beside the stamps that
+describe it, so a rotated OCI ref names a field. And a document that holds more
+than one account stages in payload fields even on OCI (UC-1 §3), so the reserved
+keys and the collision rule matter there too. A store type P2 gives no capability
+row, `keyring`, is left alone rather than assumed to emulate.
+
+**An application's ref on an `oci` store is the OCI secret name, exactly.** Its
+path is one name of letters, digits, `-`, `_` and `.`, with no `/`. Names are
+case-sensitive. OCI allows 255 characters, and a ref may give at most 242: its
+lock record is named `sopuli-locks.<name>`, which must fit too. A ref may not
+name a secret starting with `sopuli-locks.`. So `acme-prod-db#password`
+works and `apps/acme/prod/db#password` is refused when the file is read. ESO and
+other readers find an OCI secret by name, so the name must be the one the
+operator wrote. Translating `/` into a character OCI allows would let two paths
+name one secret. The limits were measured (`oci-name-rules` in
+[`../README.md`](../README.md) §*Verify before implementing*). Reasons:
+[#1137](../decisions/log.md#1137).
+
+For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
+the collision rule run when the run completes the store, before any command
+reaches it. They cover the bindings the run selects; a binding a selector leaves
+out is not the run's to refuse. An `admin.auth.secret` ref on an `oci` store is
+not checked against the name rule yet (open: #1132).
 
 None of this constrains a ref that is only ever *read*. An `admin.auth.secret` is
 a credential the tool authenticates with and never rotates, so the whole-secret
@@ -3364,7 +3383,8 @@ match instead:
 | a profile may not set a key that changes scope | §5 |
 | `locking.break_expired` beside an `advisory-only` store | yes |
 | an `oci` store requires `vault_id`, `compartment_id` and `key_id`, and refuses HashiCorp's keys and auth methods | §3a |
-| an application's ref must have somewhere to stage into, where the store emulates staging | §7 |
+| an application's ref must have somewhere to stage into, on a `hashicorp`, `file` or `oci` store | §7 |
+| a ref on an `oci` store is one OCI secret name | §7 |
 | the selected `delivery.method` must have a sub-block of the same name | §6 of UC-2 |
 
 So a file the schema accepts may still be refused by `sopuli config validate`,

@@ -46,6 +46,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
+from sopuli.config.bindings import (
+    application_locations,
+    check_for_store,
+    check_stages_do_not_collide,
+)
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Binding, Config
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
@@ -73,7 +78,7 @@ class _Candidate:
     location: str
 
 
-def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
+def complete(config: Config, *, env: Mapping[str, str] = NO_ENV, check_refs: bool = True) -> Config:
     """Fill in the store for bindings that reached load without one.
 
     Returns ``config`` itself when there is nothing to fill, so a caller can run
@@ -87,6 +92,12 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
     caller. Exported variables outlive the shell they were meant for, and
     refusing a run that never consulted one would be this tool taking a position
     on an environment it does not own.
+
+    ``check_refs`` applies the ref rules the loader could not
+    (:func:`_check_completed`). A caller that completes the whole estate only to
+    count bindings a selector left out, as the promotion gate does, passes
+    ``False``: the run does not touch those bindings, and refusing it over one
+    of them would be refusing over something it excluded.
     """
     candidate = _candidate(config, env=env)
     if candidate is None:
@@ -95,13 +106,35 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
         return config
 
     _refuse_dangling(candidate, config)
-    return replace(
+    completed = replace(
         config,
         bindings=tuple(
             replace(binding, vault=candidate.name) if _needs_store(binding) else binding
             for binding in config.bindings
         ),
     )
+    if check_refs:
+        _check_completed(candidate, config, completed)
+    return completed
+
+
+def _check_completed(candidate: _Candidate, loaded: Config, completed: Config) -> None:
+    """The ref rules the loader could not apply, now that the store is known.
+
+    At load a binding with no store has no backend, so the per-binding rules
+    (:func:`sopuli.config.bindings.check_for_store`: an OCI store's name rule,
+    #1137, and the payload rules) and the stage-collision rule could not run on
+    it. They run here, before any command reaches a store, with the functions the
+    loader uses. One difference: an error is located at the binding's application
+    entry, because a binding does not keep the key of an override that supplied
+    its ref. The message quotes the ref, so the override is still findable.
+    """
+    store_type = next(vault.type for vault in loaded.vaults if vault.name == candidate.name)
+    where = application_locations(loaded)
+    for binding in loaded.bindings:
+        if _needs_store(binding) and binding.secret is not None:
+            check_for_store(binding.secret, store_type, at=where.get(binding.application, ROOT))
+    check_stages_do_not_collide(completed.bindings, completed, where=where)
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

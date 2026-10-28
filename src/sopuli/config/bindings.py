@@ -60,13 +60,28 @@ from sopuli.config.secret_refs import (
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
 from sopuli.config.templates import PLACEHOLDER, substitute
-from sopuli.config.vaults import STAGING_EMULATED, STAGING_LABELS
+from sopuli.config.vaults import (
+    OCI_NAME,
+    OCI_NAME_MAX,
+    OCI_REF_MAX,
+    OCI_RESERVED_PREFIX,
+    PAYLOAD_RULE_TYPES,
+)
 from sopuli.payload import stage_layout
 
 #: What an unresolved token in a secret ref is measured against (§7).
 _SCOPE = "a secret template resolves from the account, the target and the target's labels (§7)"
 
 _APPLICATIONS = ROOT.key("applications")
+
+
+def application_locations(config: Config) -> dict[str | None, KeyPath]:
+    """Where each application entry is written: its key, or the root for the
+    inline form. One rule for every message about a binding."""
+    return {
+        application.name: ROOT if application.is_inline else _APPLICATIONS.index(index)
+        for index, application in enumerate(config.applications)
+    }
 
 
 def build_bindings(config: Config) -> tuple[Binding, ...]:
@@ -77,18 +92,16 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
     stable enough to diff between runs.
     """
     bindings: list[Binding] = []
-    where: dict[str | None, KeyPath] = {}
-    for index, application in enumerate(config.applications):
-        at = ROOT if application.is_inline else _APPLICATIONS.index(index)
-        where[application.name] = at
-        bindings.extend(_bind(config, application, at=at))
+    where = application_locations(config)
+    for application in config.applications:
+        bindings.extend(_bind(config, application, at=where[application.name]))
     # One user at two places first: its message names the user and the target,
     # which is the fault, where the rules below would name a password.
     _check_one_user_per_target(bindings, where=where)
     # Two accounts on one password next: where staging is emulated they would
     # also collide in `pending`, and this message names the actual fault.
     _check_one_account_per_password(bindings, where=where)
-    _check_stages_do_not_collide(bindings, config, where=where)
+    check_stages_do_not_collide(bindings, config, where=where)
     _check_one_policy_per_password(bindings, where=where)
     return tuple(bindings)
 
@@ -356,7 +369,7 @@ def _policy(binding: Binding) -> str:
     return "no policy" if binding.policy is None else repr(binding.policy)
 
 
-def _check_stages_do_not_collide(
+def check_stages_do_not_collide(
     bindings: Sequence[Binding], config: Config, *, where: Mapping[str | None, KeyPath]
 ) -> None:
     """No two accounts may stage into the same place in one document.
@@ -376,21 +389,22 @@ def _check_stages_do_not_collide(
     wrong audience: this is a defect in the *file*, so it is what
     ``config validate`` should say.
 
-    **Only where staging is emulated**, for ``_check_stageable``'s own reason:
-    where a store stages natively the stages are versions of the secret, so there
-    is no root ``pending`` key for two accounts to contend over.
+    **Only on the store types in** :data:`~sopuli.config.vaults.PAYLOAD_RULE_TYPES`.
+    OCI is one of them: a document that holds two accounts stages in payload
+    fields there too (UC-1 §3), so its root ``pending`` is contended the same way.
 
     **Only where the store is known.** A binding whose ``vault`` is still ``None``
     is one C15 completes later from a profile or ``SOPULI_VAULT``, and its
     backend -- and therefore whether this rule applies at all -- is not knowable
-    from the file alone. Those are left to ``generate.group``'s guard, which is
-    the second reason that guard stays.
+    from the file alone. :func:`sopuli.config.binding_stores.complete` calls this
+    again once the run supplies the store, and ``generate.group``'s guard stays
+    as the last line.
     """
-    labels = {vault.name: STAGING_LABELS.get(vault.type) for vault in config.vaults}
+    types = {vault.name: vault.type for vault in config.vaults}
     stageable = [
         binding
         for binding in bindings
-        if binding.vault is not None and labels.get(binding.vault) == STAGING_EMULATED
+        if binding.vault is not None and types.get(binding.vault) in PAYLOAD_RULE_TYPES
     ]
     for collision in colliding_stages(stageable):
         raise ConfigError(
@@ -546,14 +560,12 @@ def _check_stageable(
       turns out to contain a ``#``.
     * **The store is known.** Which matters, because the rule is not universal.
 
-    **Native staging is the reason for that last point.** Where a store stages
-    natively -- OCI, per P2's table -- the three stages are versions of the
-    secret, so a ref naming a whole secret is not merely legal but the natural
-    layout, and a field called ``pending`` collides with nothing. Refusing it
-    everywhere would reject a correct OCI config to enforce a rule that only
-    exists because HashiCorp KV has to emulate what OCI has. A store this layer
-    has no capability row for is left alone; see
-    :data:`~sopuli.config.vaults.STAGING_LABELS`.
+    The store types are :data:`~sopuli.config.vaults.PAYLOAD_RULE_TYPES`. OCI
+    is one, although it stages natively: a version's content holds the password
+    beside the stamps that describe it (#1137), so a rotated OCI ref
+    names a field too. A store this layer has no capability row for, such as
+    ``keyring``, is left alone. An OCI ref must also be an OCI secret name; see
+    :func:`check_for_store`.
     """
     if secret is None or store is None:
         return
@@ -563,9 +575,60 @@ def _check_stageable(
     # unreachable rather than a silent skip, and it stays because a lookup that
     # returns nothing must not decide a safety rule by falling through to it.
     declared = next((vault for vault in config.vaults if vault.name == store), None)
-    if declared is None or STAGING_LABELS.get(declared.type) != STAGING_EMULATED:
+    if declared is None:
         return
-    stage_layout(secret, at=at)
+    check_for_store(secret, declared.type, at=at)
+
+
+def check_for_store(secret: SecretRef, store_type: str, *, at: KeyPath) -> None:
+    """The rules a rotated ref must meet on a store of ``store_type``.
+
+    Called at load for a binding whose store the file names, and by
+    :func:`sopuli.config.binding_stores.complete` for one whose store the run
+    supplies, so the two cannot disagree. Raises :class:`ConfigError`.
+    """
+    if store_type == "oci":
+        check_oci_name(secret, at=at)
+    if store_type in PAYLOAD_RULE_TYPES:
+        stage_layout(secret, at=at)
+
+
+def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
+    """A ref on an OCI store names one OCI secret, exactly (#1137).
+
+    ESO finds an OCI secret by name, so the name must be the one the operator
+    wrote. Translating ``/`` into something OCI allows was rejected, because two
+    different paths could then name one secret. Measured (``oci-name-rules``):
+    letters, digits, ``-``, ``_`` and ``.`` in any position, at most 255
+    characters, case-sensitive. A ref may give at most :data:`OCI_REF_MAX`,
+    which leaves room for its lock record's name.
+    """
+    name = secret.path
+    if OCI_NAME.fullmatch(name) is None:
+        raise ConfigError(
+            f"{name!r} in the secret ref {secret} is not an OCI secret name",
+            at=at,
+            hint=(
+                "an OCI secret name holds only letters, digits, `-`, `_` and `.`, "
+                "with no `/`; write the name the secret has in the vault"
+            ),
+        )
+    if len(name) > OCI_REF_MAX:
+        raise ConfigError(
+            f"the OCI secret name in {secret} is {len(name)} characters, longer than {OCI_REF_MAX}",
+            at=at,
+            hint=(
+                f"OCI refuses a name longer than {OCI_NAME_MAX} characters, and the "
+                f"secret's lock record is named {OCI_RESERVED_PREFIX}<name>, so a ref "
+                f"may give at most {OCI_REF_MAX}"
+            ),
+        )
+    if name.startswith(OCI_RESERVED_PREFIX):
+        raise ConfigError(
+            f"the secret ref {secret} names a secret starting with {OCI_RESERVED_PREFIX!r}",
+            at=at,
+            hint="the tool keeps its lock records under that prefix; choose another name",
+        )
 
 
 # ---------------------------------------------------------------- overrides ---

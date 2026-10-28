@@ -9937,9 +9937,13 @@ def _declared_estate(config: Config) -> Config:
     needs the default and wrong for one that is refused over a binding it excluded.
     Where completing would refuse, the bindings are returned as loaded, and the ones
     left without a store are counted by :func:`_left_out` rather than dropped.
+
+    The ref rules are not applied here (``check_refs=False``) for the same reason:
+    a ref the run excluded is not this run's to refuse, and a refusal here would
+    leave every binding storeless rather than only that one (#1137).
     """
     try:
-        return binding_stores.complete(config, env=os.environ)
+        return binding_stores.complete(config, env=os.environ, check_refs=False)
     except ConfigError:
         return config
 

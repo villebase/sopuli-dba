@@ -180,12 +180,11 @@ def test_one_account_across_many_targets_is_not_a_collision() -> None:
     assert len(config.bindings) == 2
 
 
-def test_native_staging_is_left_alone() -> None:
-    """`_check_stageable`'s own reason: where a store stages natively the
-    stages are versions of the secret, so there is no root `pending` key for two
-    accounts to contend over. Refusing this would reject a correct OCI config to
-    enforce a rule that exists only because HashiCorp KV emulates staging."""
-    assert len(load(template="apps/acme/db#{account}", vault="vault-oci").bindings) == 2
+def test_two_accounts_staging_into_one_oci_document_are_refused() -> None:
+    """An OCI document that holds two accounts stages in payload fields, as on
+    HashiCorp (UC-1 §3), so the root `pending` collides there too (#1137)."""
+    with pytest.raises(ConfigError, match="pending"):
+        load(template="acme-db#{account}", vault="vault-oci")
 
 
 def test_two_accounts_in_two_documents_do_not_collide() -> None:

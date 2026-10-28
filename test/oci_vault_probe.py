@@ -30,6 +30,11 @@ results:
 - **M1** A name may be up to 255 characters. At 256, ``400 InvalidParameter:
   secretName size must be between 0 and 255``. Names are case-sensitive:
   ``acme-…`` and ``ACME-…`` can both exist in one vault.
+- **M1b** (two runs of the check alone, the same day) Letters, digits, ``-``,
+  ``_`` and ``.`` are accepted in any position: leading, trailing and doubled
+  (``-acme…``, ``.acme…``, ``_acme…``, ``…-``, ``….``, ``acme..probe…``). ``/``,
+  ``@``, a space and ``~`` are refused with ``400 InvalidParameter: secretName
+  contains one or more invalid characters``.
 - **M2** After an update with ``stage = PENDING``, version 2 is ``PENDING`` and
   ``LATEST``, and version 1 stays ``CURRENT``. A read by name with no stage
   returns version 1, and so does ``stage=CURRENT``. Only ``stage=PENDING``
@@ -198,6 +203,29 @@ class Probe:
         except oci.exceptions.ServiceError as exc:
             outcome = f"refused: names are case-insensitive ({error(exc)})"
         report("M1", "same name in upper case", outcome)
+
+    def m1b_characters(self) -> None:
+        """Which characters, and which placements, a name may have."""
+        stem = f"{RUN}-{self.counter}"
+        for name in (
+            f"acme_probe.{stem}",
+            f"-acme-probe-{stem}",
+            f".acme-probe-{stem}",
+            f"_acme-probe-{stem}",
+            f"acme-probe-{stem}-",
+            f"acme-probe-{stem}.",
+            f"acme..probe-{stem}",
+            f"acme/probe-{stem}",
+            f"acme@probe-{stem}",
+            f"acme probe-{stem}",
+            f"acme~probe-{stem}",
+        ):
+            try:
+                self.create(name)
+                outcome = "accepted"
+            except oci.exceptions.ServiceError as exc:
+                outcome = f"refused ({error(exc)})"
+            report("M1b", repr(name.replace(stem, "<n>")), outcome)
 
     def m2_pending(self) -> None:
         name = self.name()
@@ -409,6 +437,7 @@ def main() -> int:
     print(f"run {RUN}, oci SDK {oci.__version__}, profile {PROFILE}")
     checks: list[Callable[[], None]] = [
         probe.m1_names,
+        probe.m1b_characters,
         probe.m2_pending,
         probe.m3_etag,
         probe.m4_updating,

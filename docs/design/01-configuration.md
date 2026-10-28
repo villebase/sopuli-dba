@@ -891,10 +891,11 @@ variable is not applied. Reasons: [#891](../decisions/log.md#891).
 `type` is the only key every store needs. The rest depend on the backend: a
 file backend has no address, and an `oci` store requires `vault_id`,
 `compartment_id` and `key_id`. Demanding a HashiCorp shape of every entry would
-be exactly the top-level vendor bias P1 forbids. Each backend's keys are checked
-by type, and a key only another backend reads is refused. An `oci` store also
-refuses HashiCorp's auth methods (`token`, `approle`, `kubernetes`, `oidc`,
-`userpass`) when the file is read.
+be exactly the top-level vendor bias P1 forbids. An `oci` store refuses the keys
+only HashiCorp reads (`addr`, `mount`, `kv_version`, `namespace`, `merge_patch`,
+`tls`) and HashiCorp's auth methods (`token`, `approle`, `kubernetes`, `oidc`,
+`userpass`) when the file is read. A HashiCorp store refuses the OCI keys. Which
+keys a `file` or `keyring` store reads is decided when that backend is built.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -3362,6 +3363,7 @@ match instead:
 | a `for_each`'s inner dimension must be one variable throughout | §4 |
 | a profile may not set a key that changes scope | §5 |
 | `locking.break_expired` beside an `advisory-only` store | yes |
+| an `oci` store requires `vault_id`, `compartment_id` and `key_id`, and refuses HashiCorp's keys and auth methods | §3a |
 | an application's ref must have somewhere to stage into, where the store emulates staging | §7 |
 | the selected `delivery.method` must have a sub-block of the same name | §6 of UC-2 |
 

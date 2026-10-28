@@ -223,6 +223,17 @@ def test_an_oci_store_refuses_a_hashicorp_auth_method(method: str) -> None:
     assert "instance_principal" in rendered
 
 
+def test_a_hashicorp_auth_method_from_a_profile_is_located_at_the_profile() -> None:
+    """The declaration wrote no `auth:`, so pointing at it would send the
+    operator to edit a block that is not there."""
+    written = document(OCI, profiles={"ci": {"vaults": {STORE: {"auth": "token"}}}})
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(written, profile="ci")
+
+    assert f"profiles.ci.vaults.{STORE}.auth" in str(caught.value)
+
+
 def test_an_address_with_a_password_on_an_oci_store_names_the_real_fault() -> None:
     """The address is the fault on an OCI store, so the message about its `@`
     must not come first."""

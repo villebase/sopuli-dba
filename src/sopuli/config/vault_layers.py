@@ -239,21 +239,53 @@ def _refuse_hashicorp_keys(
         )
 
 
-def _refuse_hashicorp_auth(vault: Vault, auth: VaultAuth | None) -> None:
+def _refuse_tls_on_oci(
+    vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
+) -> None:
+    """An OCI store has no ``tls:`` block, from any layer (#1130).
+
+    Its SDK verifies TLS itself. Checked before :func:`_merge_tls`, so that the
+    message is this one and not one of that function's own refusals, and it
+    names the layer that wrote the block.
+    """
+    if vault.type != "oci":
+        return
+    found = next((str(at.key("tls")) for _, at, patch in patches if patch.tls is not None), None)
+    if found is None and vault.tls is not None:
+        found = str(ROOT.key("vaults").key(vault.name).key("tls"))
+    if found is None:
+        found = next(
+            (
+                one.location
+                for key, contributions in from_env.items()
+                if key.startswith("tls.")
+                for one in contributions
+            ),
+            None,
+        )
+    if found is not None:
+        raise ConfigError(
+            f"vault {vault.name!r}: `tls`, from {found}, has no effect on a store of type 'oci'",
+            at=ROOT,
+            hint="it is a HashiCorp Vault key; the OCI SDK verifies TLS itself",
+        )
+
+
+def _refuse_hashicorp_auth(vault: Vault, auth: VaultAuth | None, *, at: KeyPath) -> None:
     """An OCI store authenticates only with OCI's own methods (#1130).
 
     The other way round, an OCI method on a HashiCorp store, is refused when the
     store connects (:mod:`sopuli.store.hashicorp._auth`). This one is refused
     when the file is read, as the HashiCorp keys are, so a store whose ``type``
     was edited to ``oci`` does not keep an ``approle`` block that fails only at
-    the first connection.
+    the first connection. ``at`` is the block in force, which a profile or
+    ``defaults.vaults`` may have written.
     """
     if vault.type != "oci" or auth is None or auth.method in OCI_AUTH_METHODS:
         return
     raise ConfigError(
-        f"vault {vault.name!r}: auth method {auth.method!r} is a HashiCorp Vault method, "
-        f"and this is an OCI store",
-        at=ROOT.key("vaults").key(vault.name).key("auth"),
+        f"auth method {auth.method!r} is a HashiCorp Vault method, and this is an OCI store",
+        at=at,
         hint=f"an OCI store authenticates with one of: {', '.join(OCI_AUTH_METHODS)}",
     )
 
@@ -461,16 +493,25 @@ def _merge(
         if overridden is not None:
             warnings.append(overridden)
 
+    # Before the merge, for the same reason: `_merge_tls` has refusals of its
+    # own, and on an OCI store the block is the fault.
+    _refuse_tls_on_oci(vault, patches, from_env)
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
         values["tls"] = tls
     patched.extend(tls_patched)
     settings.update(tls_settings)
     warnings.extend(tls_warnings)
-    _refuse_hashicorp_keys(vault, values, settings)
 
     auth = _highest(patch.auth for _, _, patch in patches)
-    _refuse_hashicorp_auth(vault, auth or vault.auth)
+    # `_highest` takes the front of the list, so the first patch with a block is
+    # the layer that wrote the one in force.
+    auth_at = next((at for _, at, patch in patches if patch.auth is not None), None)
+    _refuse_hashicorp_auth(
+        vault,
+        auth or vault.auth,
+        at=(auth_at or ROOT.key("vaults").key(vault.name)).key("auth"),
+    )
     if auth is not None:
         # Whole-block replacement, so there is nothing to merge and nothing to
         # keep from the declaration. `replace` leaves the declaration's own block

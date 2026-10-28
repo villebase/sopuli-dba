@@ -146,6 +146,11 @@ OCI_NAME_MAX = 255
 #: stored as ``sopuli-locks.<name>``. A ref may not name one.
 OCI_RESERVED_PREFIX = "sopuli-locks."
 
+#: The longest name a rotated ref may give. Its lock record is named with
+#: :data:`OCI_RESERVED_PREFIX` in front, and that name must fit OCI's limit
+#: too, or the first mutating run would fail at the lock rather than at load.
+OCI_REF_MAX = OCI_NAME_MAX - len(OCI_RESERVED_PREFIX)
+
 #: The methods P2 names, HashiCorp's first and OCI's after, each with the keys it
 #: takes. Which of them a given backend actually supports is the store's business,
 #: not this layer's -- pairing them here would hard-code a matrix P2 does not

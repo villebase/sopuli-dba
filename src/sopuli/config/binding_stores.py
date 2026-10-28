@@ -46,12 +46,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from sopuli.config.bindings import application_locations, check_for_store
+from sopuli.config.bindings import (
+    application_locations,
+    check_for_store,
+    check_stages_do_not_collide,
+)
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Binding, Config
-from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
-from sopuli.config.vaults import PAYLOAD_RULE_TYPES
 
 __all__ = ["NoStoreError", "complete", "refuse_unresolved", "unresolved"]
 
@@ -123,18 +125,16 @@ def _check_completed(candidate: _Candidate, loaded: Config, completed: Config) -
     (:func:`sopuli.config.bindings.check_for_store`: an OCI store's name rule,
     #1137, and the payload rules) and the stage-collision rule could not run on
     it. They run here, before any command reaches a store, with the functions the
-    loader uses, so a ref is refused the same way whichever layer named its store.
+    loader uses. One difference: an error is located at the binding's application
+    entry, because a binding does not keep the key of an override that supplied
+    its ref. The message quotes the ref, so the override is still findable.
     """
     store_type = next(vault.type for vault in loaded.vaults if vault.name == candidate.name)
     where = application_locations(loaded)
     for binding in loaded.bindings:
         if _needs_store(binding) and binding.secret is not None:
             check_for_store(binding.secret, store_type, at=where.get(binding.application, ROOT))
-    if store_type not in PAYLOAD_RULE_TYPES:
-        return
-    on_store = [binding for binding in completed.bindings if binding.vault == candidate.name]
-    for collision in colliding_stages(on_store):
-        raise ConfigError(collision.description, at=ROOT, hint=STAGE_COLLISION_HINT)
+    check_stages_do_not_collide(completed.bindings, completed, where=where)
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

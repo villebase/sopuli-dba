@@ -2789,10 +2789,11 @@ than one account stages in payload fields even on OCI (UC-1 §3), so the reserve
 keys and the collision rule matter there too. A store type P2 gives no capability
 row, `keyring`, is left alone rather than assumed to emulate.
 
-**An application's ref on an `oci` store is the OCI secret name, exactly.** Its path is one
-name of letters, digits, `-`, `_` and `.`, at most 255 characters, with no `/`.
-Names are case-sensitive. A ref may not name a secret starting with
-`sopuli-locks.`, where the tool keeps its lock records. So `acme-prod-db#password`
+**An application's ref on an `oci` store is the OCI secret name, exactly.** Its
+path is one name of letters, digits, `-`, `_` and `.`, with no `/`. Names are
+case-sensitive. OCI allows 255 characters, and a ref may give at most 242: its
+lock record is named `sopuli-locks.<name>`, which must fit too. A ref may not
+name a secret starting with `sopuli-locks.`. So `acme-prod-db#password`
 works and `apps/acme/prod/db#password` is refused when the file is read. ESO and
 other readers find an OCI secret by name, so the name must be the one the
 operator wrote. Translating `/` into a character OCI allows would let two paths

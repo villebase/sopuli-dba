@@ -20,7 +20,7 @@ from sopuli.config import binding_stores
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config
-from sopuli.config.vaults import OCI_NAME_MAX
+from sopuli.config.vaults import OCI_REF_MAX
 
 TARGETS: list[dict[str, Any]] = [
     {
@@ -1408,12 +1408,17 @@ def test_an_oci_name_may_hold_dots_dashes_and_underscores() -> None:
     assert str(config.bindings[0].secret) == "acme.prod-db_1#password"
 
 
-def test_an_oci_name_may_be_255_characters_and_no_more() -> None:
-    """Measured: `oci-name-rules`."""
-    assert on_oci("a" * OCI_NAME_MAX + "#password").bindings
+def test_an_oci_ref_may_be_242_characters_and_no_more() -> None:
+    """OCI's limit is 255 (`oci-name-rules`), less the lock record's prefix."""
+    assert on_oci("a" * OCI_REF_MAX + "#password").bindings
 
-    with pytest.raises(ConfigError, match="longer than 255"):
-        on_oci("a" * (OCI_NAME_MAX + 1) + "#password")
+    with pytest.raises(ConfigError, match=f"longer than {OCI_REF_MAX}"):
+        on_oci("a" * (OCI_REF_MAX + 1) + "#password")
+
+
+def test_the_limit_leaves_room_for_the_lock_record_name() -> None:
+    """The lock is `sopuli-locks.<name>`, and OCI refuses a name over 255."""
+    assert OCI_REF_MAX + len("sopuli-locks.") == 255
 
 
 def test_an_oci_ref_may_not_use_the_reserved_prefix() -> None:
@@ -1506,8 +1511,12 @@ def test_two_accounts_staging_together_on_a_store_the_run_supplies_are_refused()
     """The collision rule runs at completion too, not only in `generate`."""
     config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
 
-    with pytest.raises(ConfigError, match="pending"):
+    with pytest.raises(ConfigError) as caught:
         binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"})
+
+    rendered = str(caught.value)
+    assert "pending" in rendered
+    assert "applications[0]" in rendered
 
 
 def test_the_promotion_gate_completes_without_the_ref_rules() -> None:

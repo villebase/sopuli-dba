@@ -145,10 +145,19 @@ def vault_cli(
     which is the only reason either of those is acceptable here.
     """
     return kubectl(
-        "-n", NS, "exec", "-i", "deploy/vault", "--",
-        "env", "VAULT_ADDR=http://127.0.0.1:8200", f"VAULT_TOKEN={ROOT_TOKEN}",
-        "vault", *args,
-        stdin=stdin, check=check,
+        "-n",
+        NS,
+        "exec",
+        "-i",
+        "deploy/vault",
+        "--",
+        "env",
+        "VAULT_ADDR=http://127.0.0.1:8200",
+        f"VAULT_TOKEN={ROOT_TOKEN}",
+        "vault",
+        *args,
+        stdin=stdin,
+        check=check,
     )
 
 
@@ -210,9 +219,7 @@ def blocks_from_doc() -> dict[str, str]:
     the failure mode worth being noisy about.
     """
     text = DOC.read_text(encoding="utf-8")
-    fenced: list[tuple[str, str]] = [
-        (str(lang), str(body)) for lang, body in FENCE.findall(text)
-    ]
+    fenced: list[tuple[str, str]] = [(str(lang), str(body)) for lang, body in FENCE.findall(text)]
 
     def one(lang: str, needle: str, what: str) -> str:
         pattern = re.compile(needle, re.MULTILINE)
@@ -380,7 +387,8 @@ def configure_vault(policy_hcl: str) -> None:
     # Vault is in the cluster, so it can find the API server's CA and its own
     # token by itself. Only the address has to be told.
     vault_cli(
-        "write", "auth/kubernetes/config",
+        "write",
+        "auth/kubernetes/config",
         "kubernetes_host=https://kubernetes.default.svc:443",
     )
 
@@ -391,7 +399,8 @@ def configure_vault(policy_hcl: str) -> None:
     vault_cli("policy", "write", "acme-reader", "-", stdin=policy_hcl)
 
     vault_cli(
-        "write", "auth/kubernetes/role/acme-reader",
+        "write",
+        "auth/kubernetes/role/acme-reader",
         "bound_service_account_names=acme-secret-reader",
         f"bound_service_account_namespaces={NS}",
         "policies=acme-reader",
@@ -402,7 +411,11 @@ def configure_vault(policy_hcl: str) -> None:
     # lock path that does not require compare-and-set (exit 5). Once per path --
     # UC-1 §8, *What the fence does in this build*, says why.
     vault_cli(
-        "kv", "metadata", "put", "-mount=kv", "-cas-required=true",
+        "kv",
+        "metadata",
+        "put",
+        "-mount=kv",
+        "-cas-required=true",
         f"locks/{SECRET_PATH}",
     )
 
@@ -417,11 +430,19 @@ def render_eso() -> str:
     """
     if shutil.which("docker") is None:
         raise SystemExit("docker is needed to render the Helm chart")
-    return run([
-        "docker", "run", "--rm", HELM_IMAGE,
-        "template", "external-secrets", ESO_CHART,
-        "--namespace", ESO_NS,
-    ]).stdout
+    return run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            HELM_IMAGE,
+            "template",
+            "external-secrets",
+            ESO_CHART,
+            "--namespace",
+            ESO_NS,
+        ]
+    ).stdout
 
 
 def install_eso() -> None:
@@ -451,9 +472,13 @@ def install_eso() -> None:
     step("waiting for the ESO webhook to be answering")
     for _ in range(60):
         got = kubectl(
-            "get", "validatingwebhookconfigurations", "externalsecret-validate",
-            "-o", "jsonpath={.webhooks[0].clientConfig.caBundle}",
-            check=False, quiet=True,
+            "get",
+            "validatingwebhookconfigurations",
+            "externalsecret-validate",
+            "-o",
+            "jsonpath={.webhooks[0].clientConfig.caBundle}",
+            check=False,
+            quiet=True,
         )
         if got.returncode == 0 and got.stdout.strip():
             print("  webhook CA bundle injected")
@@ -550,10 +575,21 @@ def write_credential(workdir: Path) -> None:
         config.chmod(0o600)
         token.chmod(0o600)
 
-    run([
-        sopuli_executable(), "--config", str(config), "--vault-token-file", str(token),
-        "creds", "generate", "--promote", "--offline", "--application", "acme",
-    ])
+    run(
+        [
+            sopuli_executable(),
+            "--config",
+            str(config),
+            "--vault-token-file",
+            str(token),
+            "creds",
+            "generate",
+            "--promote",
+            "--offline",
+            "--application",
+            "acme",
+        ]
+    )
 
 
 def read_vault_document() -> dict[str, object]:
@@ -612,17 +648,19 @@ def check_payload_shape(written: dict[str, object], documented_json: str) -> lis
             f"ExternalSecret's `property` cannot resolve"
         )
     elif not isinstance(creds[ACCOUNT], str):
-        failures.append(
-            "DB_CREDENTIALS/<account> is not a string, which is what ESO reads"
-        )
+        failures.append("DB_CREDENTIALS/<account> is not a string, which is what ESO reads")
     return failures
 
 
 def check_external_secret(expected_password: str) -> list[str]:
     step("does ESO produce the Kubernetes Secret?")
     ready = kubectl(
-        "-n", NS, "wait", "--for=condition=Ready",
-        "externalsecret/acme-db-credentials", "--timeout=120s",
+        "-n",
+        NS,
+        "wait",
+        "--for=condition=Ready",
+        "externalsecret/acme-db-credentials",
+        "--timeout=120s",
         check=False,
     )
     print(ready.stdout.strip() or ready.stderr.strip())
@@ -632,8 +670,14 @@ def check_external_secret(expected_password: str) -> list[str]:
         return ["the ExternalSecret never became Ready"]
 
     got = kubectl(
-        "-n", NS, "get", "secret", "acme-db-credentials",
-        "-o", "jsonpath={.data.DB_PASSWORD}", check=False,
+        "-n",
+        NS,
+        "get",
+        "secret",
+        "acme-db-credentials",
+        "-o",
+        "jsonpath={.data.DB_PASSWORD}",
+        check=False,
     )
     if got.returncode != 0 or not got.stdout.strip():
         return ["the ExternalSecret is Ready but the Secret has no DB_PASSWORD key"]
@@ -678,11 +722,24 @@ def check_policy_is_read_only() -> list[str]:
     """
     step("is ESO's vault role really read-only?")
     jwt = kubectl(
-        "-n", NS, "create", "token", "acme-secret-reader", "--duration=10m",
+        "-n",
+        NS,
+        "create",
+        "token",
+        "acme-secret-reader",
+        "--duration=10m",
     ).stdout.strip()
 
     got = kubectl(
-        "-n", NS, "exec", "-i", "deploy/vault", "--", "sh", "-c", POLICY_SCOPE_PROBE,
+        "-n",
+        NS,
+        "exec",
+        "-i",
+        "deploy/vault",
+        "--",
+        "sh",
+        "-c",
+        POLICY_SCOPE_PROBE,
         stdin=jwt,
     )
     verdicts = got.stdout.split()
@@ -712,8 +769,11 @@ def teardown() -> None:
     kubectl("delete", "namespace", NS, "--ignore-not-found", check=False)
     kubectl("delete", "namespace", ESO_NS, "--ignore-not-found", check=False)
     kubectl(
-        "delete", "clusterrolebinding", f"{NS}-vault-auth-delegator",
-        "--ignore-not-found", check=False,
+        "delete",
+        "clusterrolebinding",
+        f"{NS}-vault-auth-delegator",
+        "--ignore-not-found",
+        check=False,
     )
 
     # ESO's CRDs, cluster roles and webhook configurations are cluster-scoped
@@ -770,8 +830,13 @@ def main() -> int:
     # place for an hour -- the comparison below would be measuring nothing.
     # `creationPolicy: Owner` takes the Secret with it.
     kubectl(
-        "-n", NS, "delete", "externalsecret", "acme-db-credentials",
-        "--ignore-not-found", check=False,
+        "-n",
+        NS,
+        "delete",
+        "externalsecret",
+        "acme-db-credentials",
+        "--ignore-not-found",
+        check=False,
     )
     kubectl("apply", "-f", "-", stdin=blocks["secretstore"])
     kubectl("apply", "-f", "-", stdin=blocks["externalsecret"])

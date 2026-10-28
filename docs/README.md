@@ -563,11 +563,13 @@ such as "from 16", means the one release of it that was measured.
   (T4). The version limit is `oci-version-limit` below. Open: the prices in a
   tenancy's cost analysis after the tier-3 runs (#1135). No OCI store exists
   yet, so nothing depends on this.
-- `verified` `oci-name-rules` (#1129) — **How long can an OCI secret name be,
-  and is it case-sensitive?**
+- `verified` `oci-name-rules` (#1129) — **What may an OCI secret name hold,
+  how long can it be, and is it case-sensitive?**
+  Letters, digits, `-`, `_` and `.`, in any position, leading, trailing or
+  doubled. `/`, `@`, a space and `~` are refused with `400 InvalidParameter`.
   Up to 255 characters; at 256 OCI answers `400 InvalidParameter`. Names are
   case-sensitive: `acme-db` and `ACME-DB` can both exist in one vault. The
-  probe is `test/oci_vault_probe.py`, M1.
+  probe is `test/oci_vault_probe.py`, M1 and M1b.
 - `verified` `oci-pending-stage` (#1129) — **Can a reader see a PENDING
   version?**
   Only by asking for it. After an update with `stage = PENDING`, a read by name

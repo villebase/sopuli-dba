@@ -3413,7 +3413,8 @@ the register.
   `apps/acme/prod/db` holds `/`. How does a ref on an OCI store name its
   secret?
 - **Decision:** The ref's path is the OCI secret name, exactly. A path that is
-  not one valid OCI name, is longer than 255 characters, or starts with the
+  not one valid OCI name, is longer than 242 characters (255 less the lock
+  record's `sopuli-locks.` prefix), or starts with the
   reserved `sopuli-locks.` is refused when the file is read, or when the run
   completes a binding's store. A rotated OCI ref names a field, and the
   payload rules of `01-configuration.md` §7 apply on OCI too.

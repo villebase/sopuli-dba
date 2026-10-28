@@ -108,6 +108,7 @@ from typing import Any
 from sopuli.constraints import AccountConstraints
 from sopuli.driver.oracle.capabilities import Cursor, read
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
+from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.oracle.rollover import days, is_enabled, window_end
 from sopuli.driver.protocol import DriverError, UserState
 
@@ -417,6 +418,15 @@ LCOUNT_QUERY = "select lcount from sys.user$ where name = :name"
 #: Bound unchanged, for :func:`failed_logins`' reason: ``name`` is already the
 #: spelling ``DBA_USERS`` gave back.
 PTIME_QUERY = "select ptime from sys.user$ where name = :name"
+
+#: Whether the account is common, for the ``LCOUNT`` guard and for
+#: :mod:`sopuli.driver.oracle.audit`. ``DBA_USERS`` is in the baseline grant
+#: set. The column exists from 12.1, and only a CDB asks it.
+#: It is read rather than taken from the ``C##`` prefix, because
+#: ``COMMON_USER_PREFIX`` can be changed, and an application-common account in
+#: an application container has no prefix. Bound unchanged, for
+#: :func:`failed_logins`' reason.
+COMMON_QUERY = "select common from dba_users where username = :name"
 
 #: The account's stored password verifiers, for ``check --method hash``.
 #: Behind the same optional grant as :data:`LCOUNT_QUERY`, and gated on the same
@@ -1027,6 +1037,25 @@ def failed_logins(cursor: Cursor, name: str) -> int | None:
     # protect.
     row = read(cursor, LCOUNT_QUERY, name=name)
     return int(row[0]) if row and row[0] is not None else None
+
+
+def is_common(cursor: Cursor, name: str) -> bool | None:
+    """Whether ``DBA_USERS.COMMON`` says ``YES`` for ``name``, or ``None`` if unread.
+
+    ``name`` is the spelling ``DBA_USERS`` gave back, bound unchanged.
+
+    **It fails closed.** ``None`` is any read that did not answer: an error, or
+    no row. :func:`read` is not used, because it turns ``ORA-00942`` and
+    ``ORA-00904`` into an empty answer, and here an empty answer would read as
+    *not common* and give the account a guard that counts the wrong container.
+    The caller reports ``None`` as a gap.
+    """
+    try:
+        cursor.execute(COMMON_QUERY, {"name": name})
+        row = cursor.fetchone()
+    except Exception:  # noqa: BLE001 -- any failure is "could not tell", reported as a gap
+        return None
+    return is_yes(row[0]) if row else None
 
 
 def stored_verifiers(cursor: Cursor, name: str) -> str | None:

@@ -825,6 +825,11 @@ class VerifyResult:
     UC-1 §7's whole point is that a naive check locks production accounts, so
     "we did not attempt this" has to be reportable as its own outcome rather
     than folded into a failure.
+
+    ``failed_logins`` and ``failed_login_limit`` are ``None`` where the guard
+    could not read them for this account: the ``SYS.USER$`` grant is absent,
+    or the account is a common account outside ``CDB$ROOT``, whose count and
+    limit are the root's (#1122). ``detail`` then says which.
     """
 
     method: str

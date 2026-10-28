@@ -1680,7 +1680,12 @@ worse than the drift the check was looking for. All of these mitigations apply:
    `--lockout-margin` (default 2) of the profile's `FAILED_LOGIN_ATTEMPTS`. It
    reports `UNVERIFIABLE` with the reason. Where it is absent, `check` still runs
    on the other runtime mitigations (1, 3 and 6), and says plainly that the guard
-   is not running.
+   is not running. The guard is also not running for a common account
+   (`DBA_USERS.COMMON` is `YES`) on a target that is not `CDB$ROOT`, and
+   `check` says so for the same reason.
+   The account's failed logins are counted in the root, and it locks on its
+   profile's limit there, so the PDB's `LCOUNT` and limit are not the account's
+   ([#1122](../decisions/log.md#1122)).
 3. **A successful login resets the counter.** So the normal path cleans up after
    itself.
 4. **Offer hash mode** (below) as the safe alternative for frequent checks:
@@ -1693,7 +1698,10 @@ worse than the drift the check was looking for. All of these mitigations apply:
    password, a locked account and a wrong password. `check` reads the status
    separately, and reports `LOCKED` and `EXPIRED` as their own states instead
    of folding them into `DRIFT`. A `LOCKED(TIMED)` account is reported as
-   `LOCKED`.
+   `LOCKED`. On a PDB target, a common account that its failed logins locked
+   reads `OPEN`, because the lock is in `CDB$ROOT`. The login then gets
+   `ORA-28000`, and the row is `UNVERIFIABLE`. `--method hash` makes no login,
+   so its row says that a lock from failed logins may not show.
 
 ### `--method hash`: verification without a login attempt
 

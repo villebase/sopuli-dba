@@ -191,7 +191,8 @@ def _from_attempt(user: UserState, verification: VerifyResult, *, version: int |
     if verification.result == PASS:
         # Whatever the driver had to say rides after our own words, and a pass is the
         # branch where that matters most: a login with no lockout guard (the optional
-        # `SYS.USER$` grant is absent) still passes, and the only place that says so is
+        # `SYS.USER$` grant is absent, or a common account is checked outside
+        # `CDB$ROOT`) still passes, and the only place that says so is
         # this detail. Without it an unguarded check would read exactly like a guarded
         # one, which security-model §3 says it never does.
         note = _one_line(verification.detail)

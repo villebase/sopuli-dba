@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -312,7 +313,11 @@ class _Connection:
 
 
 def _offline_session(
-    session_module: Any, capabilities: frozenset[str], *, cloud_service: str | None = None
+    session_module: Any,
+    capabilities: frozenset[str],
+    *,
+    cloud_service: str | None = None,
+    scope_type: str = "pdb",
 ) -> Any:
     """A session with a scope and no server behind it. The refusals below happen
     before anything but `CLOUD_SERVICE` would be asked."""
@@ -326,7 +331,7 @@ def _offline_session(
         ),
         correlation_id=CORRELATION_ID,
     )
-    offline._scope = Scope(type="pdb", capabilities=capabilities)
+    offline._scope = Scope(type=scope_type, capabilities=capabilities)
     return offline
 
 
@@ -395,6 +400,326 @@ def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
     assert refused.value.target == "orders-pdb"
     assert "WE8DEC" in (refused.value.hint or "")
     assert "Ω" not in str(refused.value) + (refused.value.hint or "")
+
+
+COMMON_ACCOUNT = "C##ACME_CHECK_USER"
+IN_ROOT = (
+    f"{COMMON_ACCOUNT} is a common account, and its failed logins are counted in "
+    "CDB$ROOT, which this session cannot read"
+)
+UNGUARDED_IN_ROOT = f"the lockout guard is unavailable: {IN_ROOT}"
+
+
+@dataclass
+class _Dictionary:
+    """What the stubbed dictionary was asked."""
+
+    lcount: list[str] = field(default_factory=list)
+    common: list[str] = field(default_factory=list)
+
+
+def _stub_account(
+    session_module: Any,
+    offline: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str = COMMON_ACCOUNT,
+    common: bool = True,
+    status: str = "OPEN",
+) -> _Dictionary:
+    """An account with a limit of 3, `DBA_USERS.COMMON` as given, a login that
+    passes, and a record of every read. The tier-1 stack holds no common
+    account for the service account to check, so the dictionary is stubbed."""
+    from sopuli.driver.protocol import UserState
+
+    asked = _Dictionary()
+
+    def counted(_cursor: Any, account: str) -> int:
+        asked.lcount.append(account)
+        return 0
+
+    def is_common(_cursor: Any, account: str) -> bool:
+        asked.common.append(account)
+        return common
+
+    monkeypatch.setattr(
+        session_module,
+        "login_state",
+        lambda _cursor, _account: UserState(
+            name=name, status=status, locked="LOCKED" in status, failed_login_limit="3"
+        ),
+    )
+    monkeypatch.setattr(session_module, "failed_logins", counted)
+    monkeypatch.setattr(session_module, "is_common", is_common)
+    monkeypatch.setattr(offline, "_attempt", lambda _name, _secret: (PASS, None, None))
+    return asked
+
+
+def test_a_common_account_in_a_pdb_has_no_lockout_guard(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1122: a common account's failed logins are counted in `CDB$ROOT`, and it
+    locks on the limit of its profile there. In a PDB, `LCOUNT` reads 0 and the
+    profile may not be the one that applies (`17_common_lcount_probe.sql`). So
+    neither is read or reported, and the row says why, even where the grant is
+    held."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    asked = _stub_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert result.result == PASS, "the login still runs"
+    assert asked.lcount == [], "LCOUNT is not read in the wrong container"
+    assert asked.common == [COMMON_ACCOUNT], "DBA_USERS.COMMON decides, not the name"
+    assert result.failed_logins is None
+    assert result.failed_login_limit is None
+    assert result.detail == UNGUARDED_IN_ROOT
+
+
+def test_the_dictionary_decides_for_a_name_without_the_prefix(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`COMMON_USER_PREFIX` can be changed, so a common account need not be
+    spelled `C##`. `DBA_USERS.COMMON` says it is one."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    asked = _stub_account(session_module, offline, monkeypatch, name="ACME_SHARED_USER")
+
+    result = offline.verify_password("acme_shared_user", Secret(CORRECT), method="login")
+
+    assert asked.lcount == []
+    assert result.detail == (
+        "the lockout guard is unavailable: ACME_SHARED_USER is a common account, "
+        "and its failed logins are counted in CDB$ROOT, which this session cannot read"
+    )
+
+
+def test_a_local_account_in_a_pdb_keeps_its_guard(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    asked = _stub_account(
+        session_module, offline, monkeypatch, name="ACME_CHECK_USER", common=False
+    )
+
+    result = offline.verify_password(ACCOUNT, Secret(CORRECT), method="login")
+
+    assert asked.lcount == ["ACME_CHECK_USER"]
+    assert result.failed_logins == 0
+    assert result.failed_login_limit == "3"
+    assert result.detail is None
+
+
+@pytest.mark.parametrize("scope_type", ["app_pdb", "app_root"])
+def test_an_application_common_account_has_no_lockout_guard(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch, scope_type: str
+) -> None:
+    """Where an application container counts a common account's failed logins
+    was not measured, so the guard does not claim to read the right count."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
+    asked = _stub_account(session_module, offline, monkeypatch, name="ACME_APP_USER")
+
+    result = offline.verify_password("acme_app_user", Secret(CORRECT), method="login")
+
+    assert asked.lcount == []
+    assert result.failed_logins is None
+    assert result.detail == (
+        "the lockout guard is unavailable: ACME_APP_USER is a common account, and "
+        "where an application container counts its failed logins has not been measured"
+    )
+
+
+def test_in_an_unknown_scope_the_prefix_decides_and_the_row_says_so(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unresolved scope may be a release with no `COMMON` column, so it is
+    not asked. The row does not claim the session is outside the root."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type="unknown")
+    asked = _stub_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert asked.common == []
+    assert asked.lcount == []
+    assert result.detail == (
+        f"the lockout guard is unavailable: {COMMON_ACCOUNT} is a common account, and "
+        "this session's container was not resolved, so its failed logins may be counted "
+        "in CDB$ROOT"
+    )
+
+
+@pytest.mark.parametrize("scope_type", ["cdb_root", "non_cdb"])
+def test_in_the_root_or_a_non_cdb_the_guard_runs(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch, scope_type: str
+) -> None:
+    """In `CDB$ROOT` the count and the profile are the account's own, and a
+    non-CDB has one container. Neither asks `DBA_USERS.COMMON`."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
+    asked = _stub_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert asked.common == []
+    assert asked.lcount == [COMMON_ACCOUNT]
+    assert result.failed_logins == 0
+    assert result.failed_login_limit == "3"
+    assert result.detail is None
+
+
+def test_an_unread_common_column_is_a_gap_and_not_a_local_account(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read of `DBA_USERS.COMMON` that does not answer must not give the
+    account a guard that counts the wrong container."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    asked = _stub_account(session_module, offline, monkeypatch)
+    monkeypatch.setattr(session_module, "is_common", lambda _cursor, _name: None)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert asked.lcount == []
+    assert result.failed_logins is None
+    assert result.detail == (
+        f"the lockout guard is unavailable: whether {COMMON_ACCOUNT} is a common account "
+        "could not be read from DBA_USERS, so its failed logins may be counted in CDB$ROOT"
+    )
+
+
+class _CommonCursor:
+    """Answers `COMMON_QUERY` with one row, no row, or an error."""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+        self.asked: list[tuple[str, Any]] = []
+
+    def execute(self, statement: str, binds: Any = None) -> None:
+        self.asked.append((statement, binds))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+
+    def fetchone(self) -> Any:
+        return self.answer
+
+    def fetchall(self) -> list[Any]:
+        return [] if self.answer is None else [self.answer]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (("YES",), True),
+        (("NO",), False),
+        ((None,), False),
+        (None, None),
+        (RuntimeError("ORA-00942: table or view does not exist"), None),
+        (RuntimeError("ORA-00904: invalid identifier"), None),
+    ],
+    ids=["yes", "no", "null", "no-row", "ORA-00942", "ORA-00904"],
+)
+def test_is_common_reads_the_column_and_fails_closed(answer: Any, expected: bool | None) -> None:
+    """The real read, which every test above stubs. No row and any error are
+    `None`, which the guard reports as a gap, never `False`."""
+    from sopuli.driver.oracle.accounts import COMMON_QUERY, is_common
+
+    cursor = _CommonCursor(answer)
+
+    assert is_common(cursor, COMMON_ACCOUNT) is expected
+    assert cursor.asked == [(COMMON_QUERY, {"name": COMMON_ACCOUNT})], "the name is bound unchanged"
+
+
+def test_the_scope_sets_name_only_real_scopes(session_module: Any) -> None:
+    """A misspelt scope would never match, and the account would fall to the
+    PDB branch without a sign."""
+    from sopuli.driver.protocol import SCOPE_TYPES
+
+    assert session_module.OWN_COUNT_SCOPES.issubset(SCOPE_TYPES)
+    assert session_module.APPLICATION_SCOPES.issubset(SCOPE_TYPES)
+
+
+def test_a_common_account_without_the_grant_is_told_the_container_reason(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Granting `SELECT ON SYS.USER$` would not give a common account its guard
+    in a PDB, so the row gives the container as the reason, not the grant."""
+    offline = _offline_session(session_module, frozenset())
+    _stub_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert result.detail == UNGUARDED_IN_ROOT
+
+
+def test_a_locked_common_account_says_why_its_counter_is_missing(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock made in the PDB shows there. The row's null counter then needs
+    its reason as much as a login's does."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    _stub_account(session_module, offline, monkeypatch, status="LOCKED")
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert result.result == UNAVAILABLE
+    assert result.detail == (
+        f"the account is locked (LOCKED); no login was attempted; {UNGUARDED_IN_ROOT}"
+    )
+
+
+def _stub_comparison(
+    session_module: Any, offline: Any, monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    from sopuli.passwords import ByteLimit
+
+    offline._limit = ByteLimit(max_bytes=128, encoding="utf-8", charset="AL32UTF8")
+    monkeypatch.setattr(session_module, "stored_verifiers", lambda _cursor, _name: "T:")
+    monkeypatch.setattr(session_module, "compare", lambda *_a, **_k: answer)
+
+
+def test_hash_on_a_common_account_in_a_pdb_says_a_lock_may_not_show(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The comparison spends nothing, but a pass would read as in sync while
+    `ACCOUNT_STATUS` here says `OPEN` for an account locked in the root."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    asked = _stub_account(session_module, offline, monkeypatch)
+    _stub_comparison(session_module, offline, monkeypatch, session_module.NO_MATCH)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert result.result == FAIL
+    assert asked.lcount == []
+    assert result.failed_logins is None
+    assert result.failed_login_limit is None
+    assert result.detail == (
+        f"{session_module._HASH_DETAIL[session_module.NO_MATCH]}; "
+        f"{IN_ROOT}; a lock from failed logins may not show here"
+    )
+
+
+def test_both_on_a_common_account_in_a_pdb_keeps_the_reason_on_each_path(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`both` words its own mismatch, and logs in after a match. Either way the
+    row says why the counter is missing."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    _stub_account(session_module, offline, monkeypatch)
+
+    _stub_comparison(session_module, offline, monkeypatch, session_module.NO_MATCH)
+    mismatched = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="both")
+    assert mismatched.result == FAIL
+    assert mismatched.detail == (
+        "matches none of the account's 12C verifiers, so the login half was not spent; "
+        f"{IN_ROOT}; a lock from failed logins may not show here"
+    )
+
+    answers = session_module._HASH_DETAIL
+    matched_answer = next(key for key in answers if key != session_module.NO_MATCH)
+    _stub_comparison(session_module, offline, monkeypatch, matched_answer)
+    matched = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="both")
+    assert matched.result == PASS
+    assert matched.failed_logins is None
+    assert matched.detail == (
+        f"matches the account's 12C verifier and logs in; {UNGUARDED_IN_ROOT}"
+    )
 
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)

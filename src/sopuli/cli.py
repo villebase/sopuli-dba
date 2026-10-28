@@ -110,6 +110,7 @@ from sopuli.config import delivery as delivery_config
 from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
+from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
@@ -343,7 +344,6 @@ from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
 from sopuli.store.credentials import StoredSecret, read_secret, resolve
 from sopuli.store.credentials import apply_patch as write_credential
-from sopuli.store.scope import refuse_personal_on_named
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -2124,6 +2124,9 @@ def account_reset_password(
     refuse_disallowed_method(run.resolved, delivery.method)
 
     reached = config.expanded_targets
+    # Before the plan, the prompt and any event, `--dry-run` included: a preview
+    # must not say "would be reset" for a run that will be refused.
+    _refuse_personal_delivery_store(config, delivery, reached)
     plan = plan_builder.build_for_accounts(
         config,
         [(account, target.name) for target in reached],
@@ -2519,9 +2522,6 @@ def _record_paths(
     records = config.reset_records
     if records is None:
         return {}
-    # At plan time, before a store or a database is reached: an OCI store
-    # cannot hold reset records in this build (UC-1 only).
-    refuse_personal_on_named(config, records.vault)
     derived: dict[str, str] = {}
     for target in reached:
         try:
@@ -3187,6 +3187,34 @@ def _reset_one(
                 session.close()
 
 
+def _refuse_personal_delivery_store(
+    config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
+) -> None:
+    """An unseen delivery may not reach an OCI store, whichever link names it (#1138).
+
+    A method's own ``vault:`` is checked when the file is read
+    (:mod:`sopuli.config.references`). The rest of :func:`_delivery_store`'s
+    chain, the target's ``vault:`` and ``defaults.vault``, depends on which
+    targets the run reaches, so it is checked here, per target. The seen path
+    and ``one_time_link`` write to no store.
+    """
+    if delivery.is_seen or delivery.one_time_link is not None or delivery.vault is not None:
+        return
+    for target in reached:
+        if target.target.vault is not None:
+            name, at = target.target.vault, declared_at(target, "vault")
+        elif config.defaults.vault is not None:
+            name, at = config.defaults.vault, ROOT.key("defaults").key("vault")
+        else:
+            continue
+        refuse_personal_on(
+            config,
+            name,
+            at=at,
+            what=f"the store `delivery.method: {delivery.method}` delivers into on {target.name}",
+        )
+
+
 def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) -> str:
     """Which `vaults:` entry an unseen delivery writes into.
 
@@ -3216,7 +3244,6 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
                 "wrong one would hand somebody else's vault a working password"
             ),
         )
-    refuse_personal_on_named(config, chosen)
     return chosen
 
 
@@ -3772,7 +3799,6 @@ def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
     records = config.reset_records
     if records is None:
         return None
-    refuse_personal_on_named(config, records.vault)
     opened = _stores_for({records.vault}, config, token_file=run.vault_token_file, cache=run.stores)
     return opened.get(records.vault)
 

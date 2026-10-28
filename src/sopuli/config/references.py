@@ -42,6 +42,7 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
+from sopuli.config.scope import refuse_personal_on
 from sopuli.config.targets import EXTERNAL, POSTGRESQL, VERIFYING_SSLMODES
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
@@ -98,6 +99,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_breaking_locks_without_a_fence(config)
     _check_external_admin(config)
     _check_admin_refs(config)
+    _check_personal_stores(config)
     return (
         *_warn_about_profile_names(config),
         *_warn_about_unverified_transport(config),
@@ -180,6 +182,31 @@ def _vault_references(config: Config) -> list[_Reference]:
         )
 
     return found
+
+
+def _check_personal_stores(config: Config) -> None:
+    """UC-2's journal and delivery store may not be an OCI store (#1138).
+
+    Both names are in the file, so the refusal comes while it is read and
+    `config validate` reports it. A delivery whose store a target or
+    `defaults.vault` supplies is resolved per target, so
+    ``account reset-password`` checks that before it builds a plan.
+    """
+    if config.reset_records is not None:
+        refuse_personal_on(
+            config,
+            config.reset_records.vault,
+            at=ROOT.key("reset_records").key("vault"),
+            what="`reset_records:`",
+        )
+    delivery = config.delivery
+    if delivery is not None and delivery.vault is not None:
+        refuse_personal_on(
+            config,
+            delivery.vault,
+            at=ROOT.key("delivery").key(delivery.method).key("vault"),
+            what=f"`delivery.method: {delivery.method}`'s store",
+        )
 
 
 def _patch_references(patches: Sequence[VaultPatch], *, at: KeyPath) -> list[_Reference]:

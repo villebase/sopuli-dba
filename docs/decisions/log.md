@@ -3441,8 +3441,10 @@ the register.
   what does the tool do with an OCI secret it did not create?
 - **Decision:** The tool creates secrets. An `oci` store therefore declares a
   vault, a compartment and a KMS key, and IAM must allow `manage secrets`
-  there. The first OCI store serves UC-1 only: a personal-account verb that
-  would reach one is refused at plan time with `SOPULI-20005`. A secret the
+  there. The first OCI store serves UC-1 only: a `reset_records:` store or a
+  delivery store that is an OCI store is refused, when the file is read where
+  the file names it, and before the reset's plan where a target or
+  `defaults.vault` supplies it. A secret the
   tool did not create, such as one made by Terraform or ESO PushSecret, is used
   as it is when its content is a JSON object, and refused otherwise. Which KMS
   key encrypts it is not checked.

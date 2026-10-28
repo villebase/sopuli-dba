@@ -690,8 +690,7 @@ class UserState:
     * ``failed_logins`` -- ``None`` where ``SELECT ON SYS.USER$`` was not
       granted, which is the default (decision P2). The ``LCOUNT`` guard is then
       unavailable and `check` must say so plainly rather than run a weaker
-      version of it silently. A :class:`VerifyResult` has ``None`` here also for
-      a common account outside ``CDB$ROOT``, whose count is in the root (#1122).
+      version of it silently.
     * ``vendor_maintained`` -- ``None`` on 11.2, where the column does not
       exist. That is precisely the case the guardrails' literal deny list covers
       (``02-oracle-privileges.md`` §4 check 5), so it must not read as "no".
@@ -826,6 +825,11 @@ class VerifyResult:
     UC-1 §7's whole point is that a naive check locks production accounts, so
     "we did not attempt this" has to be reportable as its own outcome rather
     than folded into a failure.
+
+    ``failed_logins`` and ``failed_login_limit`` are ``None`` where the guard
+    could not read them for this account: the ``SYS.USER$`` grant is absent,
+    or the account is a common account outside ``CDB$ROOT``, whose count and
+    limit are the root's (#1122). ``detail`` then says which.
     """
 
     method: str

@@ -565,6 +565,76 @@ def test_in_the_root_or_a_non_cdb_the_guard_runs(
     assert result.detail is None
 
 
+def test_an_unread_common_column_is_a_gap_and_not_a_local_account(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read of `DBA_USERS.COMMON` that does not answer must not give the
+    account a guard that counts the wrong container."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    asked = _stub_account(session_module, offline, monkeypatch)
+    monkeypatch.setattr(session_module, "is_common", lambda _cursor, _name: None)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert asked.lcount == []
+    assert result.failed_logins is None
+    assert result.detail == (
+        f"the lockout guard is unavailable: whether {COMMON_ACCOUNT} is a common account "
+        "could not be read from DBA_USERS, so its failed logins may be counted in CDB$ROOT"
+    )
+
+
+class _CommonCursor:
+    """Answers `COMMON_QUERY` with one row, no row, or an error."""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+        self.asked: list[tuple[str, Any]] = []
+
+    def execute(self, statement: str, binds: Any = None) -> None:
+        self.asked.append((statement, binds))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+
+    def fetchone(self) -> Any:
+        return self.answer
+
+    def fetchall(self) -> list[Any]:
+        return [] if self.answer is None else [self.answer]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (("YES",), True),
+        (("NO",), False),
+        ((None,), False),
+        (None, None),
+        (RuntimeError("ORA-00942: table or view does not exist"), None),
+        (RuntimeError("ORA-00904: invalid identifier"), None),
+    ],
+    ids=["yes", "no", "null", "no-row", "ORA-00942", "ORA-00904"],
+)
+def test_is_common_reads_the_column_and_fails_closed(answer: Any, expected: bool | None) -> None:
+    """The real read, which every test above stubs. No row and any error are
+    `None`, which the guard reports as a gap, never `False`."""
+    from sopuli.driver.oracle.accounts import COMMON_QUERY, is_common
+
+    cursor = _CommonCursor(answer)
+
+    assert is_common(cursor, COMMON_ACCOUNT) is expected
+    assert cursor.asked == [(COMMON_QUERY, {"name": COMMON_ACCOUNT})], "the name is bound unchanged"
+
+
+def test_the_scope_sets_name_only_real_scopes(session_module: Any) -> None:
+    """A misspelt scope would never match, and the account would fall to the
+    PDB branch without a sign."""
+    from sopuli.driver.protocol import SCOPE_TYPES
+
+    assert session_module.OWN_COUNT_SCOPES.issubset(SCOPE_TYPES)
+    assert session_module.APPLICATION_SCOPES.issubset(SCOPE_TYPES)
+
+
 def test_a_common_account_without_the_grant_is_told_the_container_reason(
     session_module: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -621,7 +691,7 @@ def test_hash_on_a_common_account_in_a_pdb_says_a_lock_may_not_show(
     assert result.failed_login_limit is None
     assert result.detail == (
         f"{session_module._HASH_DETAIL[session_module.NO_MATCH]}; "
-        f"{IN_ROOT}, so a lock from failed logins may not show here"
+        f"{IN_ROOT}; a lock from failed logins may not show here"
     )
 
 
@@ -638,7 +708,7 @@ def test_both_on_a_common_account_in_a_pdb_keeps_the_reason_on_each_path(
     assert mismatched.result == FAIL
     assert mismatched.detail == (
         "matches none of the account's 12C verifiers, so the login half was not spent; "
-        f"{IN_ROOT}, so a lock from failed logins may not show here"
+        f"{IN_ROOT}; a lock from failed logins may not show here"
     )
 
     answers = session_module._HASH_DETAIL

@@ -73,9 +73,10 @@ from sopuli.driver.oracle.client import (
 )
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.limits import resolve as resolve_limit
-from sopuli.driver.oracle.privileges import audit
+from sopuli.driver.oracle.privileges import CDB_ROOT, audit
 from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
 from sopuli.driver.oracle.statements import (
+    COMMON_PREFIX,
     Identifier,
     Statement,
     alter_user_password,
@@ -120,6 +121,7 @@ from sopuli.driver.protocol import (
     ROLLOVER_FINISH,
     SKIPPED,
     UNAVAILABLE,
+    UNKNOWN,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
@@ -160,6 +162,15 @@ _INITIALISING = threading.Lock()
 VERIFIER_12C = "verifier_12c"
 VERIFIER_FORMAT = "verifier_12c_format"
 VERIFIER_CHARSET = "verifier_charset"
+
+#: The scopes where ``SYS.USER$`` holds every account's own failed-login count,
+#: from :data:`~sopuli.driver.protocol.SCOPE_TYPES`. Named rather than compared
+#: inline, for the reason :data:`~sopuli.driver.oracle.privileges.CDB_ROOT`
+#: gives: a string that never matches is wrong and does not look it.
+OWN_COUNT_SCOPES = frozenset({CDB_ROOT, "non_cdb"})
+
+#: Application containers, where the count of a common account was not measured.
+APPLICATION_SCOPES = frozenset({"app_root", "app_pdb"})
 
 #: What a ``hash`` comparison reports, by which verifier the password reproduced.
 #: Every one says no login was attempted, because that is the difference between
@@ -1130,7 +1141,7 @@ class OracleSession:
                 result=UNAVAILABLE,
                 failed_logins=counter,
                 failed_login_limit=limit,
-                detail=locked if gap is None else f"{locked}; {unguarded}",
+                detail=locked if unguarded is None else f"{locked}; {unguarded}",
             )
 
         reason = margin_reason(counter, limit, margin=lockout_margin, attempts=attempts)
@@ -1186,21 +1197,28 @@ class OracleSession:
         An application container was not measured, so an application-common
         account there gets the same reason: the guard cannot show that it
         reads the right container. In an ``unknown`` scope the dictionary may
-        have no ``COMMON`` column, so the ``C##`` prefix decides.
+        have no ``COMMON`` column, so the ``C##`` prefix decides. A read of
+        ``COMMON`` that does not answer is a gap too, never *not common*.
         """
         scope = self.scope().type
-        if scope in ("cdb_root", "non_cdb"):
+        if scope in OWN_COUNT_SCOPES:
             return None
-        if scope == "unknown":
-            if not Identifier(name).is_common:
+        if scope == UNKNOWN:
+            if not name.upper().startswith(COMMON_PREFIX):
                 return None
             return (
                 f"{name} is a common account, and this session's container was not "
                 "resolved, so its failed logins may be counted in CDB$ROOT"
             )
-        if not is_common(cursor, name):
+        common = is_common(cursor, name)
+        if common is None:
+            return (
+                f"whether {name} is a common account could not be read from DBA_USERS, "
+                "so its failed logins may be counted in CDB$ROOT"
+            )
+        if not common:
             return None
-        if scope in ("app_root", "app_pdb"):
+        if scope in APPLICATION_SCOPES:
             return (
                 f"{name} is a common account, and where an application container "
                 "counts its failed logins has not been measured"
@@ -1269,7 +1287,7 @@ class OracleSession:
             # A comparison spends no login, so the guard is not the point here.
             # The lock is: ACCOUNT_STATUS read in this container does not show
             # one held in another, and a pass would otherwise read as in sync.
-            detail = f"{detail}; {gap}, so a lock from failed logins may not show here"
+            detail = f"{detail}; {gap}; a lock from failed logins may not show here"
         return VerifyResult(
             method=VERIFY_HASH,
             result=FAIL if answer == NO_MATCH else PASS,
@@ -1300,8 +1318,6 @@ class OracleSession:
             secret,
             mismatch="matches none of the account's 12C verifiers, so the login half was not spent",
         )
-        if compared.result == FAIL:
-            return replace(compared, method=VERIFY_BOTH)
         if compared.result != PASS:
             return replace(compared, method=VERIFY_BOTH)
         logged = self._login(

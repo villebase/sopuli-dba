@@ -14,11 +14,11 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
+from sopuli.driver.oracle.accounts import COMMON_QUERY
 from sopuli.driver.oracle.audit import (
     ALL_USERS,
     BY_ROLE,
     BY_USER,
-    COMMON_QUERY,
     ENABLED_QUERY,
     EXCEPT_USER,
     MIXED,

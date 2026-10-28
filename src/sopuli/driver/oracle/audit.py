@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from sopuli.driver.oracle.accounts import COMMON_QUERY
 from sopuli.driver.oracle.capabilities import UNREADABLE_CODES, Cursor
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.privileges import is_yes
@@ -68,10 +69,11 @@ ENABLED_OPTIONS = frozenset({BY_USER, EXCEPT_USER, BY_ROLE})
 #: no row at all is a release with no unified auditing (11.2).
 MODE_QUERY = "select value from v$option where parameter = 'Unified Auditing'"
 
-#: Whether the person is a common account. ``COMMON`` came with multitenant, in
-#: 12.1, as did unified auditing, so a database that answers :data:`MODE_QUERY`
-#: has the column.
-COMMON_QUERY = "select common from dba_users where username = :name"
+# Whether the person is a common account is ``accounts.COMMON_QUERY``, shared
+# with the lockout guard. ``COMMON`` came with multitenant, in 12.1, as did
+# unified auditing, so a database that answers MODE_QUERY has the column.
+# ``_is_common`` reads it its own way: a failed read is ``False`` here, the safe
+# reading for coverage.
 
 #: One row per way an enabled policy is enabled.
 ENABLED_QUERY = (

@@ -208,10 +208,12 @@ jobs:
       # would show up as login failures in the personal-path tests.
       # yopass has no healthcheck, because its image has no shell, so `--wait`
       # waits only for it to run. The `yopass_stack` fixture waits on /health.
+      # supabase is in a profile of its own, so that a local tier-1 stack does
+      # not pull its image; this lane runs it (#1111).
       - name: bring up the tier-1 stack
         working-directory: test
         run: |
-          docker compose --profile tier1 up -d --wait vault postgres oracle-free yopass yopass-memcached
+          docker compose --profile tier1 --profile supabase up -d --wait vault postgres supabase oracle-free yopass yopass-memcached
           docker compose --profile tier1 up -d vault-init
           docker compose --profile tier1 wait vault-init
 
@@ -230,7 +232,7 @@ jobs:
       - name: container logs
         if: always()
         working-directory: test
-        run: docker compose --profile tier1 logs --tail 100
+        run: docker compose --profile tier1 --profile supabase logs --tail 100
 
       - name: tear down
         if: always()

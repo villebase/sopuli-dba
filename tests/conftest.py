@@ -483,6 +483,46 @@ def live_postgres() -> PostgresStack:
     return stack
 
 
+# -------------------------------------------------------- tier 1: Supabase ---
+#
+# The `supabase` service of `test/compose.yaml`, in the `supabase` profile,
+# which the tier-1 lane starts. A freely pullable image, so a missing one is a
+# skip (§1).
+
+
+@pytest.fixture(scope="session")
+def live_supabase() -> PostgresStack:
+    """A reachable Supabase database, as `postgres`, or a skip.
+
+    `postgres` is the account a Supabase project hands its owner, and it is not
+    a superuser there. The port follows `SOPULI_TEST_SUPABASE_PORT`, as the
+    compose file's does.
+    """
+    stack = PostgresStack(
+        host="127.0.0.1",
+        port=int(os.environ.get("SOPULI_TEST_SUPABASE_PORT", "5440")),
+        user="postgres",
+        password="sopuli-test",
+    )
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover -- reached only in a base install
+        _missing_environment("psycopg is not installed; `pip install -e '.[postgres]'`")
+    try:
+        psycopg.connect(
+            host=stack.host,
+            port=stack.port,
+            user=stack.user,
+            password=stack.password,
+            dbname="postgres",
+            sslmode="disable",
+            connect_timeout=5,
+        ).close()
+    except psycopg.Error as error:
+        _missing_environment(f"Supabase's database not reachable at {stack.dsn}: {error}")
+    return stack
+
+
 # ---------------------------------------------------------- tier 1: Oracle ---
 #
 # The tier-1 Oracle fixture, and the markers that gate tests on capabilities.

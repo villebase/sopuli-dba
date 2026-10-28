@@ -11,6 +11,7 @@
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
 #   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
+#   docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
 #   docker compose --profile oracle19c-ru up -d # 19.19 EE, arm64 hosts only
 #   docker compose --profile oracle12c up -d # 12.2.0.1 EE, maintainer-only
@@ -304,6 +305,33 @@ services:
     ports:
       - "127.0.0.1:${SOPULI_TEST_PGBOUNCER_IGNORE_PORT:-6433}:6432"
       - "[::1]:${SOPULI_TEST_PGBOUNCER_IGNORE_PORT:-6433}:6432"
+
+  # ------------------------------------------------------------- supabase ---
+  # The PostgreSQL image a Supabase project runs, on its own, for
+  # tests/driver/test_postgres_supabase_live.py (#1111). It preloads supautils,
+  # which refuses a change to a role in supautils.reserved_roles by anyone but a
+  # superuser; guardrail check 8 reads the same setting. The rest of a Supabase
+  # stack (API gateway, auth, storage) is left out: the tool talks to the
+  # database only. POSTGRES_PASSWORD is the password of both `postgres` (not a
+  # superuser on Supabase) and `supabase_admin` (the superuser). Pinned, because
+  # the reserved list changes between releases. CI's tier-1 lane starts it
+  # beside postgres:
+  #   docker compose --profile tier0 --profile supabase up -d
+  # The healthcheck goes over TCP, because the image's init runs a server that
+  # listens on the socket only.
+  supabase:
+    image: public.ecr.aws/supabase/postgres:17.6.1.095
+    profiles: [supabase]
+    environment:
+      POSTGRES_PASSWORD: sopuli-test
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_SUPABASE_PORT:-5440}:5432"
+      - "[::1]:${SOPULI_TEST_SUPABASE_PORT:-5440}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   # --------------------------------------------------------------- oracle ---
   # 23ai/26ai Free: CDB + PDB, common users, gradual password rollover.

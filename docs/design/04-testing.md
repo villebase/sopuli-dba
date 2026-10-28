@@ -36,6 +36,7 @@ This is also why the matrix is keyed on capabilities, not versions (§3).
 | Oracle 18c XE | `gvenzl/oracle-xe:18` | no rollover, which makes it a negative case; passwords limited to 30 bytes |
 | Oracle 11g XE | `gvenzl/oracle-xe:11.2.0.2-slim` | non-CDB, 30-byte passwords, 10G and 11G verifiers, `DBA_AUDIT_TRAIL` |
 | PostgreSQL 13–18 | `postgres:16-alpine`; `postgres:13` to `postgres:18` | the PostgreSQL driver: tiers 0 and 1 use `postgres:16-alpine`, and the `postgres-matrix` profile starts 13 to 18 for the probes in `sql/postgres/`, which are run by hand |
+| Supabase's database | `supabase/postgres`, pinned | supautils and its `supautils.reserved_roles`, which guardrail check 8 reads; a `postgres` account that is not a superuser. Tier 1 runs it in a profile of its own, `supabase`, so that a local tier-1 stack does not pull its image (#1111) |
 | SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a third driver, later |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store |
@@ -289,7 +290,7 @@ order dependency is still there until its issue is fixed.
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
 | 0 | every commit of a pull request that changes code | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
-| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5) |
+| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5). PostgreSQL 16 and Supabase's database: the PostgreSQL driver against a server |
 | 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE |
 | 3 | before a release | maintainer | by hand | 19c and 12.2 EE, OCI DB systems and Autonomous Database, OCI Vault, the release gates in §6 |
 

@@ -16,9 +16,11 @@ from typing import Any
 
 import pytest
 
+from sopuli.config import binding_stores
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.config.model import Binding
+from sopuli.config.model import Binding, Config
+from sopuli.config.vaults import OCI_NAME_MAX
 
 TARGETS: list[dict[str, Any]] = [
     {
@@ -1072,7 +1074,7 @@ def test_a_store_named_beside_a_store_from_the_run_is_left_to_the_run() -> None:
                     "name": name,
                     "targets": ["alpha"],
                     "accounts": [account],
-                    "secret_template": "apps/acme",
+                    "secret_template": "acme-apps#password",
                     **({"vault": "vault-oci"} if name == "acme-web" else {}),
                 }
                 for name, account in (("acme-web", "acme_web_user"), ("acme-api", "acme_api_user"))
@@ -1083,11 +1085,10 @@ def test_a_store_named_beside_a_store_from_the_run_is_left_to_the_run() -> None:
     assert [b.vault for b in config.bindings] == ["vault-oci", None]
 
 
-def test_a_store_that_stages_natively_is_refused_too() -> None:
-    """The stage-collision rule leaves OCI alone, because its stages are
-    versions. Two accounts on one secret are still one password."""
-    with pytest.raises(ConfigError, match="resolve to one password at vault-oci:apps/acme"):
-        build_config(two_entries("apps/acme", vault="vault-oci"))
+def test_two_accounts_on_one_oci_password_are_refused_too() -> None:
+    """Two accounts on one field of one secret are one password, on any store."""
+    with pytest.raises(ConfigError, match="resolve to one password at vault-oci:acme-apps"):
+        build_config(two_entries("acme-apps#password", vault="vault-oci"))
 
 
 def test_two_entries_with_a_field_per_account_load() -> None:
@@ -1366,14 +1367,9 @@ def test_a_field_called_current_is_fine() -> None:
     assert str(bindings[0].secret) == "tenants/alpha#current/acme_web_user"
 
 
-def test_a_store_that_stages_natively_is_left_alone() -> None:
-    """P2: OCI's stages are versions of the secret, not fields in it.
-
-    So a ref naming a whole secret is the natural OCI layout rather than a
-    mistake, and refusing it everywhere would reject a correct config to enforce
-    a rule that exists only because HashiCorp KV has to emulate what OCI has.
-    """
-    config = build_config(
+def on_oci(secret_template: str, **document: Any) -> Config:
+    """One application, one account, bound to the OCI store."""
+    return build_config(
         {
             "version": 1,
             "vaults": {"vault-oci": OCI_VAULT, **VAULTS},
@@ -1385,13 +1381,97 @@ def test_a_store_that_stages_natively_is_left_alone() -> None:
                     "targets": {"group": "app-pdbs"},
                     "accounts": ["acme_web_user"],
                     "vault": "vault-oci",
-                    "secret_template": "apps/{account}",
+                    "secret_template": secret_template,
+                }
+            ],
+            **document,
+        }
+    )
+
+
+@pytest.mark.parametrize("ref", ["apps/acme-db#password", "acme db#password", "acme+db#password"])
+def test_an_oci_ref_must_be_one_oci_name(ref: str) -> None:
+    """ESO finds an OCI secret by name, so the name must be the one the
+    operator wrote (#1128 decision 1). OCI allows letters, digits, `-`, `_`
+    and `.`."""
+    with pytest.raises(ConfigError) as caught:
+        on_oci(ref)
+
+    rendered = str(caught.value)
+    assert "is not an OCI secret name" in rendered
+    assert "applications[0]" in rendered
+
+
+def test_an_oci_name_may_hold_dots_dashes_and_underscores() -> None:
+    config = on_oci("acme.prod-db_1#password")
+
+    assert str(config.bindings[0].secret) == "acme.prod-db_1#password"
+
+
+def test_an_oci_name_may_be_255_characters_and_no_more() -> None:
+    """Measured: `oci-name-rules`."""
+    assert on_oci("a" * OCI_NAME_MAX + "#password").bindings
+
+    with pytest.raises(ConfigError, match="longer than 255"):
+        on_oci("a" * (OCI_NAME_MAX + 1) + "#password")
+
+
+def test_an_oci_ref_may_not_use_the_reserved_prefix() -> None:
+    """The tool keeps its lock records under it."""
+    with pytest.raises(ConfigError, match="sopuli-locks"):
+        on_oci("sopuli-locks.acme#password")
+
+
+def test_a_rotated_oci_ref_names_a_field() -> None:
+    """A version's content holds the password beside the stamps that describe
+    it (#1128 decision 3), so a whole-secret ref has nowhere to put them."""
+    with pytest.raises(ConfigError) as caught:
+        on_oci("acme-{account}")
+
+    assert "names a whole secret" in str(caught.value)
+
+
+def test_an_oci_ref_may_not_stage_into_a_reserved_key() -> None:
+    """A shared OCI document stages in payload fields (UC-1 §3), so `pending`
+    is the mechanism's key there."""
+    with pytest.raises(ConfigError):
+        on_oci("acme-db#pending/{account}")
+
+
+def test_a_path_ref_completed_onto_an_oci_store_by_the_run_is_refused() -> None:
+    """At load the store is unknown. `binding_stores.complete` checks the ref
+    once `SOPULI_VAULT` has named it, before any command reaches a store."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": OCI_VAULT},
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "apps/acme/db#password",
                 }
             ],
         }
     )
+    assert config.bindings[0].vault is None
 
-    assert str(config.bindings[0].secret) == "apps/acme_web_user"
+    with pytest.raises(ConfigError) as caught:
+        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"})
+
+    rendered = str(caught.value)
+    assert "is not an OCI secret name" in rendered
+    assert "applications[0]" in rendered
 
 
 def test_a_store_with_no_capability_row_is_left_alone() -> None:

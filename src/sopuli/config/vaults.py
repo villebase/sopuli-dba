@@ -17,6 +17,7 @@ Oracle-free part of it -- which methods exist, and what each one takes.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sopuli.config.auth import Method, read_material_key, read_method
@@ -132,6 +133,10 @@ VAULT_TYPES = ("hashicorp", "oci", "file", "keyring")
 #: deciding what a single-string-per-entry backend does about staging is P2's
 #: call and not a validation function's. Absent means the check that reads this
 #: does not fire, which is the reversible direction.
+#:
+#: The config checks do not read this. They read :data:`PAYLOAD_RULE_TYPES`,
+#: because a rotated OCI ref names a field and a shared OCI document stages in
+#: payload fields, so those checks apply on OCI too.
 STAGING_NATIVE = "native"
 STAGING_EMULATED = "emulated"
 STAGING_LABELS = {
@@ -139,6 +144,27 @@ STAGING_LABELS = {
     "oci": STAGING_NATIVE,
     "file": STAGING_EMULATED,
 }
+
+#: The store types whose rotated refs must name a field, must not stage into a
+#: key the payload mechanism owns, and must not share a staging place.
+#:
+#: OCI is here although it stages natively. A version's content holds the
+#: password beside the stamps that describe it (#1128 decision 3), so a rotated
+#: OCI ref names a field. And a document holding more than one account stages
+#: in payload fields even on OCI (UC-1 §3), so the reserved keys and the
+#: collision rule apply there. ``keyring`` is absent for the reason it is absent
+#: from :data:`STAGING_LABELS`.
+PAYLOAD_RULE_TYPES = frozenset({"hashicorp", "file", "oci"})
+
+#: What an OCI secret name may hold, and how long it may be. Measured
+#: (``oci-name-rules``, #1136): 255 is accepted and 256 is refused. Names are
+#: case-sensitive, so two refs that differ only in case are two secrets.
+OCI_NAME = re.compile(r"[A-Za-z0-9._-]+")
+OCI_NAME_MAX = 255
+
+#: The prefix of the tool's own secrets in an OCI vault: ``locks/<name>`` is
+#: stored as ``sopuli-locks.<name>``. A ref may not name one.
+OCI_RESERVED_PREFIX = "sopuli-locks."
 
 #: The methods P2 names, HashiCorp's first and OCI's after, each with the keys it
 #: takes. Which of them a given backend actually supports is the store's business,

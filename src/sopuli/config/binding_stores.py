@@ -46,6 +46,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
+from sopuli.config.bindings import check_for_store
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Binding, Config
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
@@ -95,6 +96,7 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
         return config
 
     _refuse_dangling(candidate, config)
+    _check_completed(candidate, config)
     return replace(
         config,
         bindings=tuple(
@@ -102,6 +104,27 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
             for binding in config.bindings
         ),
     )
+
+
+def _check_completed(candidate: _Candidate, config: Config) -> None:
+    """The ref rules the loader could not apply, now that the store is known.
+
+    At load a binding with no store has no backend, so
+    :func:`sopuli.config.bindings.check_for_store` could not run on it. It runs
+    here, before any command reaches a store: an OCI store's name rule
+    (#1137) and the payload rules. The same function the loader calls, so a ref
+    is refused the same way whichever layer named its store.
+    """
+    store_type = next(vault.type for vault in config.vaults if vault.name == candidate.name)
+    # Located as the loader locates a binding: its application entry, or the
+    # root for the inline form.
+    where = {
+        application.name: ROOT if application.is_inline else ROOT.key("applications").index(index)
+        for index, application in enumerate(config.applications)
+    }
+    for binding in config.bindings:
+        if _needs_store(binding) and binding.secret is not None:
+            check_for_store(binding.secret, store_type, at=where.get(binding.application, ROOT))
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

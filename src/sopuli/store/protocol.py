@@ -32,8 +32,10 @@ place to put shared code.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from sopuli.clock import Skew, measure_skew
@@ -78,6 +80,15 @@ MERGE_PATCH = "merge_patch"
 #: query may not -- and the answer for a caller is then to say it could not look
 #: further, never to report an empty listing as though it had looked.
 LIST = "list"
+
+#: Keeping UC-1 §3's three stages as the store's own versions rather than as
+#: fields in the payload, spelled as P2's table spells it. A store that declares
+#: it also offers :class:`NativeStaging`.
+STAGING = "staging_labels"
+
+#: The three stages, as C14 spells them. On a staging store each names at most
+#: one generation.
+STAGES = ("current", "pending", "previous")
 
 
 def bounded_prefix(prefix: str) -> str:
@@ -193,10 +204,24 @@ class MetadataNotPermittedError(StoreError):
 
 @dataclass(frozen=True)
 class Stored:
-    """A document read from a store, and the version it was read at."""
+    """A document read from a store, and the version it was read at.
+
+    ``version`` is the compare-and-set token: what a following write passes as
+    ``cas``. On a staging store it moves on **every** mutation, a promotion and
+    an attributes-only write included, because the lock fences on it. The
+    store's own version number for the content is ``generation``.
+
+    The last three fields are filled by a staging store only, and keep their
+    defaults everywhere else: which stage the read returned, the generation it
+    returned, and the secret's attributes (its secret-level metadata, which
+    describe the CURRENT generation).
+    """
 
     data: Any
     version: int
+    stage: str | None = None
+    generation: int | None = None
+    attributes: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -506,5 +531,54 @@ class SecretStore(Protocol):
         confuse. Which is why this is behind :data:`LIST`: a store that does not
         declare the capability raises :class:`StoreError` when asked, and the
         caller is expected to have checked.
+        """
+        ...
+
+
+@runtime_checkable
+class NativeStaging(Protocol):
+    """The three stages kept as the store's own versions (#1131).
+
+    Offered by a store whose :meth:`SecretStore.supports` includes
+    :data:`STAGING`, and asked of no other. Each method's semantics are the ones
+    measured against OCI Vault (``oci-pending-stage``, ``oci-promote-metadata``,
+    ``oci-pending-replace`` in ``docs/README.md``), and
+    :class:`~sopuli.store.memory.MemoryStore` models them.
+
+    On such a store :meth:`SecretStore.write` adds a generation that is CURRENT
+    at once; the old CURRENT becomes PREVIOUS and a PENDING is left as it was.
+    :meth:`SecretStore.read` returns the CURRENT generation.
+
+    Every method that changes the store returns the new compare-and-set token
+    (:attr:`Stored.version`), takes ``cas`` as :meth:`SecretStore.write` does,
+    and raises :class:`CasConflictError` when the token has moved.
+    """
+
+    def read_stage(self, path: str, stage: str) -> Stored | None:
+        """The generation in ``stage`` (one of :data:`STAGES`), or ``None``.
+
+        ``None`` when nothing is at ``path`` or no generation holds the stage.
+        """
+        ...
+
+    def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
+        """Add a generation in PENDING, leaving CURRENT as it was.
+
+        A generation that held PENDING loses it (OCI makes it DEPRECATED).
+        ``attributes`` replace the secret's attributes whole, as OCI replaces
+        its metadata map whole.
+        """
+        ...
+
+    def promote(
+        self, path: str, generation: int, *, attributes: Mapping[str, Any], cas: int | None
+    ) -> int:
+        """Make ``generation`` CURRENT and replace the attributes whole.
+
+        The old CURRENT becomes PREVIOUS. Promoting the generation that is
+        already CURRENT changes the attributes only. Only a generation that
+        holds CURRENT, PENDING or PREVIOUS may be promoted: OCI would promote a
+        deprecated one, and the store refuses it with :class:`StoreError`, as it
+        refuses a generation that does not exist.
         """
         ...

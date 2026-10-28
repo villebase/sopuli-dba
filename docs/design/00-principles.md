@@ -273,7 +273,24 @@ SecretStore
   metadata(path) -> PathMetadata | None
   require_cas(path) -> None                 # makes the path refuse writes without a CAS
   list(prefix) -> path[]
+
+NativeStaging                               # a store whose supports() has staging_labels
+  read_stage(path, stage) -> Stored | None  # the generation in current, pending or previous
+  stage(path, data, attributes, cas) -> version         # a new generation in pending
+  promote(path, generation, attributes, cas) -> version # makes it current
 ```
+
+**On a staging store the stages are the store's own versions** (#1131). `write`
+adds a generation that is current at once, and the old current becomes
+previous; a pending is left alone. `stage` adds a pending, and a pending already
+there loses the stage. `promote` makes a pending or previous generation current
+and moves the old current to previous; a deprecated generation is refused,
+although OCI would promote one. Both replace the secret's attributes whole, as
+OCI replaces its metadata map. The version they return moves on every call,
+an attributes-only promotion included, because it is the lock's fencing token;
+`Stored.generation` carries the store's own version number. These are the
+behaviours measured against OCI Vault (#1129, the `oci-*` entries in
+[`../README.md`](../README.md) §*Verify before implementing*).
 
 **`write` and `patch` take a compare-and-set version and return the new
 version.** The returned version is the advisory lock's fencing token. A write

@@ -32,7 +32,7 @@ from sopuli.cli import cli
 from sopuli.driver.protocol import Driver, Session
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.palette import Role, role_for_state
-from sopuli.store.protocol import SecretStore
+from sopuli.store.protocol import NativeStaging, SecretStore
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_SCHEMA = ROOT / "docs" / "schemas" / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
@@ -237,7 +237,7 @@ def test_the_driver_sketch_is_the_driver_protocol() -> None:
 
 
 def test_the_store_sketch_is_the_store_protocol() -> None:
-    assert sorted(_sketch_methods("store-protocol")) == sorted(_methods(SecretStore))
+    assert sorted(_sketch_methods("store-protocol")) == sorted(_methods(SecretStore, NativeStaging))
 
 
 def test_the_install_lines_are_the_extras() -> None:

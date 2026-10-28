@@ -1104,8 +1104,9 @@ class OracleSession:
                     result=UNAVAILABLE,
                     detail=f'there is no account "{account}" on this target',
                 )
-            guarded = self.scope().supports(OFFLINE_VERIFY)
-            counter = failed_logins(cursor, state.name) if guarded else None
+            unguarded = self._unguarded_reason(state.name)
+            counter = failed_logins(cursor, state.name) if unguarded is None else None
+        limit = None if self._counted_elsewhere(state.name) else state.failed_login_limit
 
         if state.locked:
             # **Before the margin, not after.** A lock caused by earlier failures
@@ -1118,19 +1119,17 @@ class OracleSession:
                 method=method,
                 result=UNAVAILABLE,
                 failed_logins=counter,
-                failed_login_limit=state.failed_login_limit,
+                failed_login_limit=limit,
                 detail=f"the account is locked ({state.status}); no login was attempted",
             )
 
-        reason = margin_reason(
-            counter, state.failed_login_limit, margin=lockout_margin, attempts=attempts
-        )
+        reason = margin_reason(counter, limit, margin=lockout_margin, attempts=attempts)
         if reason is not None:
             return VerifyResult(
                 method=method,
                 result=SKIPPED,
                 failed_logins=counter,
-                failed_login_limit=state.failed_login_limit,
+                failed_login_limit=limit,
                 lockout_margin_hit=True,
                 detail=skipped_detail(reason),
             )
@@ -1147,24 +1146,48 @@ class OracleSession:
             )
             raise
         LOG.debug("login as %s: %s in %.3fs", state.name, outcome, time.monotonic() - started)
-        if not guarded:
-            detail = "; ".join(
-                part
-                for part in (
-                    detail,
-                    "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted",
-                )
-                if part
-            )
+        if unguarded is not None:
+            detail = "; ".join(part for part in (detail, unguarded) if part)
 
         return VerifyResult(
             method=method,
             result=outcome,
             failed_logins=counter,
-            failed_login_limit=state.failed_login_limit,
+            failed_login_limit=limit,
             detail=detail or None,
             warning=warning,
         )
+
+    def _counted_elsewhere(self, name: str) -> bool:
+        """Whether ``name``'s failed logins are counted in another container.
+
+        Measured by ``sql/oracle/17_common_lcount_probe.sql`` on 23.26.3.0.0,
+        21.3.0.0.0 and 18.4.0.0.0: a common account has one failed-login count,
+        in ``CDB$ROOT``. Its failed logins in a PDB add to it, and it locks the
+        account on the limit of its profile in the root. In the PDB,
+        ``SYS.USER$.LCOUNT`` reads 0 and ``DBA_USERS.PROFILE`` may name a
+        profile that does not apply. So outside the root neither value is the
+        account's (decided in #1122).
+
+        An ``unknown`` scope counts as outside the root, because the guard
+        cannot show that it reads the right container.
+        """
+        return Identifier(name).is_common and self.scope().type not in ("cdb_root", "non_cdb")
+
+    def _unguarded_reason(self, name: str) -> str | None:
+        """Why the lockout guard cannot run for ``name``, or ``None`` if it can.
+
+        A common account outside the root comes first: granting
+        ``SELECT ON SYS.USER$`` would not help it.
+        """
+        if self._counted_elsewhere(name):
+            return (
+                f"the lockout guard is unavailable: {name} is a common account, "
+                "and its failed logins are counted in CDB$ROOT, which this session cannot read"
+            )
+        if not self.scope().supports(OFFLINE_VERIFY):
+            return "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted"
+        return None
 
     def require_verifier(self, account: str, secret: Secret) -> None:
         """Refuse ``hash`` or ``both`` for ``account`` at **plan time**, or say nothing.
@@ -1215,11 +1238,12 @@ class OracleSession:
                 detail=f'there is no account "{account}" on this target',
             )
         state, counter, answer = found
+        limit = None if self._counted_elsewhere(state.name) else state.failed_login_limit
         return VerifyResult(
             method=VERIFY_HASH,
             result=FAIL if answer == NO_MATCH else PASS,
             failed_logins=counter,
-            failed_login_limit=state.failed_login_limit,
+            failed_login_limit=limit,
             detail=_HASH_DETAIL[answer],
         )
 
@@ -1281,7 +1305,9 @@ class OracleSession:
             if state is None:
                 return None
             spare4 = stored_verifiers(cursor, state.name)
-            counter = failed_logins(cursor, state.name)
+            counter = (
+                None if self._counted_elsewhere(state.name) else failed_logins(cursor, state.name)
+            )
 
         try:
             answer = compare(secret, spare4, limit=self.byte_limit())

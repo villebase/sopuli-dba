@@ -3342,3 +3342,34 @@ the register.
     No new check, but `--force` waives check 2, and a forced run would then fail
     at `ALTER ROLE` with the server's error. Check 2's message would not name
     the setting either.
+
+## #1122
+
+- **Decided:** 2026-10-28, #1122
+- **Question:** A common account's failed logins are counted in `CDB$ROOT`.
+  It locks on the limit of its profile in the root. In a PDB, `LCOUNT` reads
+  0, `ACCOUNT_STATUS` reads `OPEN` while the account is locked, and
+  `DBA_USERS.PROFILE` may name a profile that does not apply. Measured by
+  `17_common_lcount_probe.sql` on 23.26.3.0.0, 21.3.0.0.0 and 18.4.0.0.0. What
+  should the `LCOUNT` guard do for a common account on a target that is not
+  the root?
+- **Decision:** Report the guard as unavailable, as when the `SYS.USER$`
+  grant is absent, and say why: the account's failed logins are counted in
+  `CDB$ROOT`. The driver neither reads nor reports `LCOUNT` or the profile
+  limit for it there. The login still runs. A `C##` name marks a common
+  account, as it does for `CONTAINER=ALL` (UC-1 §6.2). An `unknown` scope
+  counts as outside the root.
+- **Why:** The guard read 0 and a limit that may not apply, so it looked
+  satisfied while it protected nothing. Saying that it is absent is UC-1 §7's
+  rule for a guard that is not running. The login itself still shows a lock:
+  the account answers `ORA-28000` to a right or a wrong password. Application
+  accounts are rarely common accounts, so the gap is small.
+- **Rejected:**
+  - Read the root's count with `ALTER SESSION SET CONTAINER = CDB$ROOT`. Only
+    a common tool account that holds `SET CONTAINER` can, so a PDB-mode
+    install would still need this decision. And the driver opens one
+    connection per target and never switches containers (`session.py`).
+  - Skip the login for a common account outside the root. `check` could then
+    never verify such an account by login. A site that wants no login spent
+    on it already has `--method hash`.
+  - Document the gap only. The guard would go on looking satisfied.

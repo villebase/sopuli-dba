@@ -312,7 +312,11 @@ class _Connection:
 
 
 def _offline_session(
-    session_module: Any, capabilities: frozenset[str], *, cloud_service: str | None = None
+    session_module: Any,
+    capabilities: frozenset[str],
+    *,
+    cloud_service: str | None = None,
+    scope_type: str = "pdb",
 ) -> Any:
     """A session with a scope and no server behind it. The refusals below happen
     before anything but `CLOUD_SERVICE` would be asked."""
@@ -326,7 +330,7 @@ def _offline_session(
         ),
         correlation_id=CORRELATION_ID,
     )
-    offline._scope = Scope(type="pdb", capabilities=capabilities)
+    offline._scope = Scope(type=scope_type, capabilities=capabilities)
     return offline
 
 
@@ -395,6 +399,109 @@ def test_hash_of_a_password_the_character_set_cannot_hold_is_refused(
     assert refused.value.target == "orders-pdb"
     assert "WE8DEC" in (refused.value.hint or "")
     assert "Ω" not in str(refused.value) + (refused.value.hint or "")
+
+
+COMMON_ACCOUNT = "C##ACME_CHECK_USER"
+COUNTED_IN_ROOT = (
+    f"the lockout guard is unavailable: {COMMON_ACCOUNT} is a common account, "
+    "and its failed logins are counted in CDB$ROOT, which this session cannot read"
+)
+
+
+def _stub_common_account(
+    session_module: Any, offline: Any, monkeypatch: pytest.MonkeyPatch
+) -> list[str]:
+    """A common account with a limit of 3, a login that passes, and a record of
+    every `LCOUNT` read. The tier-1 stack holds no common account for the
+    service account to check, so the dictionary is stubbed."""
+    from sopuli.driver.protocol import UserState
+
+    reads: list[str] = []
+
+    def counted(_cursor: Any, name: str) -> int:
+        reads.append(name)
+        return 0
+
+    monkeypatch.setattr(
+        session_module,
+        "login_state",
+        lambda _cursor, _account: UserState(
+            name=COMMON_ACCOUNT, status="OPEN", failed_login_limit="3"
+        ),
+    )
+    monkeypatch.setattr(session_module, "failed_logins", counted)
+    monkeypatch.setattr(offline, "_attempt", lambda _name, _secret: (PASS, None, None))
+    return reads
+
+
+@pytest.mark.parametrize("scope_type", ["pdb", "app_pdb", "unknown"])
+def test_a_common_account_outside_the_root_has_no_lockout_guard(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch, scope_type: str
+) -> None:
+    """#1122: a common account's failed logins are counted in `CDB$ROOT`, and it
+    locks on the limit of its profile there. In a PDB, `LCOUNT` reads 0 and the
+    profile may not be the one that applies (`17_common_lcount_probe.sql`). So
+    neither is read or reported, and the row says why, even where the grant is
+    held."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
+    reads = _stub_common_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert result.result == PASS, "the login still runs"
+    assert reads == [], "LCOUNT is not read in the wrong container"
+    assert result.failed_logins is None
+    assert result.failed_login_limit is None
+    assert result.detail == COUNTED_IN_ROOT
+
+
+def test_a_common_account_without_the_grant_is_told_the_container_reason(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Granting `SELECT ON SYS.USER$` would not give a common account its guard
+    in a PDB, so the row gives the container as the reason, not the grant."""
+    offline = _offline_session(session_module, frozenset())
+    _stub_common_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert result.detail == COUNTED_IN_ROOT
+
+
+def test_a_common_account_in_the_root_keeps_its_guard(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In `CDB$ROOT` the count and the profile are the account's own."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type="cdb_root")
+    reads = _stub_common_account(session_module, offline, monkeypatch)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="login")
+
+    assert reads == [COMMON_ACCOUNT]
+    assert result.failed_logins == 0
+    assert result.failed_login_limit == "3"
+    assert result.detail is None
+
+
+def test_hash_reports_no_counter_for_a_common_account_outside_the_root(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The comparison spends nothing, but it reports the counter and the limit
+    beside its answer, and in a PDB neither is the account's."""
+    from sopuli.passwords import ByteLimit
+
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    offline._limit = ByteLimit(max_bytes=128, encoding="utf-8", charset="AL32UTF8")
+    reads = _stub_common_account(session_module, offline, monkeypatch)
+    monkeypatch.setattr(session_module, "stored_verifiers", lambda _cursor, _name: "T:")
+    monkeypatch.setattr(session_module, "compare", lambda *_a, **_k: session_module.NO_MATCH)
+
+    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert result.result == FAIL
+    assert reads == []
+    assert result.failed_logins is None
+    assert result.failed_login_limit is None
 
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)

@@ -11,8 +11,7 @@ are not built yet. §9 lists the
 open questions.
 
 **These commands are experimental in the alpha.** They are the newest part of
-the tool, and the decision on the seen reset's rollover refusal is still open
-(open: #541), so they may change more than the application-credential commands.
+the tool, so they may change more than the application-credential commands.
 
 ---
 
@@ -747,7 +746,8 @@ ALTER USER "<ACCOUNT>" IDENTIFIED BY "<password>"
 --    seen (manual)
 ALTER USER "<ACCOUNT>" IDENTIFIED BY "<password>" PASSWORD EXPIRE
 
--- 3. only where a rollover window is open, and not under --keep-rollover (§4.3)
+-- 3. only where the profile grants a rollover window or one is open, and not
+--    under --keep-rollover, which the seen path refuses (§4.3)
 ALTER USER "<ACCOUNT>" EXPIRE PASSWORD ROLLOVER PERIOD
 ```
 
@@ -795,8 +795,7 @@ print* on the seen one, because what cannot be undone is the DDL on one path and
 the print on the other.
 
 `Session.reset_password` in the driver issues all three statements as one
-operation. `Session.require_no_rollover_window` is §4.3's refusal, asked at plan
-time. These rules apply to the driver:
+operation. These rules apply to the driver:
 
 - **One state read decides all three statements.** Three reads could see three
   different states. An operation that unlocked an account because of a status it
@@ -817,7 +816,9 @@ account `EXPIRED` with the **new password still authenticating**: `ORA-28001` is
 Oracle's change-at-logon flow, not a refusal. An unseen reset on a rollover
 profile leaves the old password answering `ORA-01017` once statement 3 has closed
 the window, while `--keep-rollover` leaves **both** passwords working. That is
-the exposure §4.3's default removes.
+the exposure §4.3's default removes. A seen reset on a rollover profile leaves
+the account `EXPIRED`, the new password answering `ORA-28001` and the old one
+`ORA-01017`.
 
 ### 4.2 The password
 
@@ -880,40 +881,44 @@ These rules follow. The first two are measured on 26ai 23.26.2.0.0
   under this measurement, and necessary on a release where the old password does
   outlive the change. Unmeasured on releases other than 26ai
   (unverified: stale-rollover).
-- **`--keep-rollover` keeps the window**, for a reset where the person *does*
-  still know their old password and a grace period helps them. **A reset after a
-  suspected disclosure must not use it**, because there the old password is known
-  to somebody who should not have it.
+- **`--keep-rollover` keeps the window**, for an unseen reset where the person
+  *does* still know their old password and a grace period helps them. **A reset
+  after a suspected disclosure must not use it**, because there the old password
+  is known to somebody who should not have it. The seen path refuses it (below).
 
-**On the seen path, the rollover profile is refused at plan time.** The seen
+**On the seen path, expiry alone does not end the old password.** The seen
 statement was measured on 26ai 23.26.2.0.0 (Q7) and on 21c 21.3.0.0.0, with the
 same answer on both. `IDENTIFIED BY … PASSWORD EXPIRE` **is** accepted on a
 rollover profile, the resulting `ACCOUNT_STATUS` is `EXPIRED & IN ROLLOVER`, and
 **expiring does not end the old password's window**. The old password answers
 `ORA-28001`, not `ORA-01017`: it still authenticates, and it can itself be used to
-set the new one. So on this path, the expiry that should end the DBA's exposure
-leaves a second working password for the length of the window. 19.32.0.0.0, the
-19c release with rollover, has not been measured.
+set the new one.
 
-**From `EXPIRED`, the answer is different**
-(`sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.2.0.0 and 21c
-21.3.0.0.0). This section's main case, an account whose password expired and
-whose owner no longer knows it, is in that state. There the same statement opens
-no window. Every earlier password gives `ORA-01017`, including the pre-window
-one on an account that started `EXPIRED & IN ROLLOVER`, and the new, expired
-password is the only one that works. `EXPIRED(GRACE)` behaves like `OPEN`,
-because its password still authenticates. So on both releases, the exposure Q7
-found depends on whether the old password still works, not on what the profile
-grants.
+**The close after the set ends it**
+(`sql/oracle/09_reset_from_expired_probe.sql`, 26ai 23.26.3.0.0 and 21c
+21.3.0.0.0, each run twice). From `OPEN` and from `EXPIRED(GRACE)`, where the
+password still authenticates, the set opens a window and
+`EXPIRE PASSWORD ROLLOVER PERIOD` then closes it: the old password answers
+`ORA-01017`, and the new, expired password is the only one that works. From
+`EXPIRED`, `EXPIRED & IN ROLLOVER` and `EXPIRED & LOCKED(TIMED)` (after the
+unlock), the set opens no window, every earlier password already answers
+`ORA-01017`, and the close changes nothing.
 
-**A seen reset of an account whose profile sets a non-zero rollover time is
-refused on that target**, naming the account and the profile, before a password
-is drawn or any DDL is issued. The row is `ERROR`. A `--dry-run` asks the same
-question and reports the same row. The real run asks again, because the profile
-can change between the two. Reasons: [#671](../decisions/log.md#671). The
-refusal keys on the profile. Narrowing it to accounts whose
-old password still authenticates is an open decision (open: #541). The unseen
-path is available for the same account.
+**So the seen reset is allowed on a rollover profile, and closes the window like
+the unseen one** (decided in #541). The statements are §4.1's three. Its safety
+rests on the close, whose effect was checked by logon, and not on reading
+`ACCOUNT_STATUS`. Reasons: [#541](../decisions/log.md#541). These rules follow:
+
+- **`--keep-rollover` is refused with `delivery.method: manual`**, before
+  anything connects, and under `--dry-run` too. Keeping the window would leave
+  the old password working beside a new one the DBA has seen. The driver refuses
+  `expire` with `keep_rollover` as well, before it issues anything.
+- **A close that fails after the set leaves the old password working.** The set
+  and the close commit separately. The row is `ERROR` and the password is still
+  handed over (§6.4). Its detail says that the old password still works until the
+  window ends, and the driver's hint gives the statement that closes it by hand.
+- **19.32.0.0.0, the 19c release with rollover, has not been measured.** The
+  reset keys on the rollover capability, never on a release (invariant 3).
 
 ### 4.4 Guardrails
 
@@ -1256,7 +1261,7 @@ next depends on whether the password was set:
 | Committed | Failed | Password | Handed over | Record and notify |
 |---|---|---|---|---|
 | `ACCOUNT UNLOCK` | the set | unchanged, the old one works | **no** | no |
-| the set | the window close | **live**, and the old one may work until the window ends | **yes** | yes |
+| the set | the window close | **live**, and the old one still works until the window ends | **yes** | yes |
 
 The first is this section's recoverable failure, with one extra step done. The
 token already made would retrieve a value that authenticates nothing, so it is
@@ -1266,10 +1271,11 @@ account untouched.
 The second is handed over, because withholding it is the lockout this section
 orders the steps to avoid. On the seen path, nobody would hold the expired
 password the account now has. On an unseen one, the token has already been made,
-and discarding it leaves a live password nobody can fetch. The state it leaves is
-the one `--keep-rollover` leaves on purpose (§4.3), so it is not a new kind of
-exposure. The row still fails, because the reset promised that the old password
-would stop working, and it may not have. The record is written, because it holds
+and discarding it leaves a live password nobody can fetch. The row still fails,
+because the reset promised that the old password would stop working, and it has
+not. On the seen path that is the exposure the close exists to end (§4.3), so
+the row's detail says the old password still works, and the error's hint gives
+the statement that closes the window by hand. The record is written, because it holds
 what happened, and a password was reset. It has no field for the open window,
 which is in the run document.
 
@@ -1639,8 +1645,9 @@ A test must show:
   deliberately `LOCKED` account is refused and issues no DDL. An account that is
   not locked gets no `ACCOUNT UNLOCK` statement at all, checked by reading
   `SYS.USER$.LCOUNT` across the reset and finding it unchanged. A reset on a
-  rollover profile leaves the old password answering `ORA-01017`, and
-  `--keep-rollover` is the one way to see `OPEN & IN ROLLOVER` afterwards.
+  rollover profile leaves the old password answering `ORA-01017` on either
+  path, and `--keep-rollover` is the one way to see `OPEN & IN ROLLOVER`
+  afterwards.
 - **The record (§3):** it is written after the database confirms, not before. It
   contains no password in any form; that is a tier-0 test on the serialised
   document, not a tier-1 test on what the store received. A reset with no store
@@ -1675,7 +1682,7 @@ absent (`04-testing.md`). They never branch on a version.
 | ~~H10~~ | ~~§1's attribution guarantee holds only where the database audits `ALTER USER` and logons. Does a reset check that, and warn, refuse or record what it found?~~ | **closed** — an unseen reset records `audited` as `true`, `false` or `unknown`, and does not warn or refuse (§1). Reasons: [H10](../decisions/log.md#h10) · #591 |
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6.5): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it and stdin required to be a terminal (#853), and `force_expire: true` required. `CLAUDE.md` invariant 2's fourth exception · #439 |
 | ~~—~~ | ~~When the reset journal's store and the delivery store are different vaults, and the journal's is down, does the run refuse or deliver without a lock and a record (§3.3)?~~ | **closed** — it refuses before any DDL; to reset during a journal outage, remove `reset_records:` and `SOPULI-W024` says so (§3.3). Reasons: [#516](../decisions/log.md#516) · #516 |
-| — | Should the seen reset's rollover refusal narrow to accounts whose old password still authenticates (§4.3)? | #541 |
+| ~~—~~ | ~~Should the seen reset's rollover refusal narrow to accounts whose old password still authenticates (§4.3)?~~ | **closed** — the refusal is removed: the seen reset closes the window after the set, and refuses `--keep-rollover` (§4.3). Reasons: [#541](../decisions/log.md#541) · #541 |
 | — | Should a mutating `account` verb refuse an application's account that a predicate admits (§2)? | #1056 |
 
 §4.4's conflict between guardrail check 4 and DBA accounts is not a question with

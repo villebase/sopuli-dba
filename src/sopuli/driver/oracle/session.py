@@ -655,10 +655,10 @@ class OracleSession:
         somebody else's run.
 
         **Refusals come before anything is issued**, in the order that costs
-        least to be wrong about: read-only, then capability, then the account's
-        existence, then §4.3's rollover refusal, then a deliberate lock. Each is
-        invariant 4's plan-time rule inside one call -- by the time the first
-        statement goes out, nothing left can refuse.
+        least to be wrong about: read-only, then capability, then a seen reset
+        that asks to keep the window (§4.3), then the account's existence, then a
+        deliberate lock. Each is invariant 4's plan-time rule inside one call --
+        by the time the first statement goes out, nothing left can refuse.
 
         The per-statement conditions and their measurements are
         :meth:`~sopuli.driver.protocol.Session.reset_password`'s; this issues
@@ -666,6 +666,17 @@ class OracleSession:
         """
         require_read_write(self.scope(), target=self.target.name)
         require_capability(self.scope(), ACCOUNT_LOCK_STATE, target=self.target.name)
+        if expire and keep_rollover:
+            # The command refuses the flag on the seen path before anything
+            # connects. Asked again here because this is the last point at which
+            # refusing costs nothing.
+            raise DriverError(
+                "a seen reset cannot keep the rollover window",
+                hint=(
+                    "the window would leave the old password working beside the new one, "
+                    "which the DBA has seen (UC-2 §4.3)"
+                ),
+            )
 
         state = self.describe_user(account)
         if state is None:
@@ -676,12 +687,6 @@ class OracleSession:
                     "account name is worth checking against the estate"
                 ),
             )
-        if expire:
-            # Asked again here although the caller is required to have asked at
-            # plan time: this is the last point at which refusing costs nothing,
-            # and a caller that forgot would otherwise expire a password whose
-            # predecessor keeps working (§4.3).
-            self._refuse_rollover_window(state)
         if deliberately_locked(state.status):
             raise DriverError(
                 f'account "{state.name}" is locked, and a reset does not unlock it',
@@ -722,6 +727,19 @@ class OracleSession:
             done = (*done, self._reset_set(state, statement, expire=expire))
             return (*done, self._reset_close_window(state, keep=keep_rollover))
         except DriverError as error:
+            if any(one.action == PASSWORD_SET for one in done):
+                # The close failed. Nothing reads whether the set opened a
+                # window, so the hint says what to assume: the old password
+                # still works. Nothing in the statement is secret.
+                close = finish_rollover(Identifier(state.name), scope=self.scope())
+                raise PartialAccountChangeError(
+                    error,
+                    completed=done,
+                    hint=(
+                        "the old password still works until the rollover window ends. "
+                        f"Close it by hand: {close.redacted}"
+                    ),
+                ) from error
             if any(one.changed for one in done):
                 raise PartialAccountChangeError(error, completed=done) from error
             raise
@@ -925,34 +943,6 @@ class OracleSession:
             changed=True,
             status=state.status,
             detail=f"account was {was}; password expired",
-        )
-
-    def require_no_rollover_window(self, account: str) -> None:
-        """§4.3's plan-time refusal. See the protocol for the measurement."""
-        state = self.describe_user(account)
-        if state is None:
-            raise DriverError(f'account "{account}" does not exist on this target')
-        self._refuse_rollover_window(state)
-
-    def _refuse_rollover_window(self, state: UserState) -> None:
-        """The refusal itself, shared by the plan-time call and the reset.
-
-        One implementation rather than two, because the two would drift and the
-        one that drifted would be the one nobody runs until a password has
-        already been drawn.
-        """
-        if not is_enabled(state.rollover_time):
-            return
-        profile = state.profile or "its profile"
-        raise DriverError(
-            f'account "{state.name}" is on profile {profile}, which grants a password '
-            f"rollover window, and an expiring reset would leave the old password working",
-            hint=(
-                "measured on 26ai: the account goes to `EXPIRED & IN ROLLOVER`, and the old "
-                "password answers ORA-28001 rather than ORA-01017 -- it still authenticates, "
-                "and it is itself a way to set the new one. Use the unseen delivery path for "
-                "this account, or reset one whose profile grants no window (UC-2 §4.3)"
-            ),
         )
 
     def _issue(self, statement: Statement, *, password: bool = False) -> None:

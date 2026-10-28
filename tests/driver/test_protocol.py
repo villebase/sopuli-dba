@@ -323,9 +323,6 @@ class _Session:
             ),
         )
 
-    def require_no_rollover_window(self, account: str) -> None:
-        return None
-
     def audit_coverage(self, account: str) -> AuditCoverage:
         return AuditCoverage(audited=None, detail="not read")
 

@@ -949,10 +949,26 @@ class PartialAccountChangeError(DriverError):
     ran, in order. ``cause`` is the failure itself, whose category, exit code,
     vendor code, hint and ``retryable`` this error carries unchanged, so a caller
     that reports it as an ordinary failure still reports the server's own words.
+
+    ``hint`` goes before the cause's own hint. It is what the driver knows and
+    the server does not: what the committed statements left behind, and how to
+    finish by hand.
     """
 
-    def __init__(self, cause: DriverError, *, completed: tuple[AccountChange, ...]) -> None:
-        super().__init__(cause.message, hint=cause.hint, code=cause.code, retryable=cause.retryable)
+    def __init__(
+        self,
+        cause: DriverError,
+        *,
+        completed: tuple[AccountChange, ...],
+        hint: str | None = None,
+    ) -> None:
+        hints = [one for one in (hint, cause.hint) if one]
+        super().__init__(
+            cause.message,
+            hint="; ".join(hints) or None,
+            code=cause.code,
+            retryable=cause.retryable,
+        )
         self.category = cause.category
         self.exit_code = cause.exit_code
         # Sent if the failing statement carried it, or if one that completed
@@ -1099,17 +1115,23 @@ class Session(Protocol):
         being reset, whose not having it is the premise. ``keep_rollover`` is for
         the reset where they *do* still know it.
 
-        **Callers must ask :meth:`require_no_rollover_window` first** where
-        ``expire`` is true. The refusal belongs at plan time, before a password
-        has been drawn or delivered, and this call raises it too rather than
-        trusting that they did.
+        **On the seen path the close is what makes the expiry end the
+        exposure** (#541). ``IDENTIFIED BY … PASSWORD EXPIRE`` on an account
+        whose password still authenticates opens a window on a rollover profile,
+        and the old password stays live in it (07's Q7). The close ends it:
+        measured from ``OPEN`` and from ``EXPIRED(GRACE)``, on 26ai 23.26.3.0.0
+        and 21c 21.3.0.0.0, the old password then answers ``ORA-01017`` and only
+        the new, expired one authenticates (probe 09's R9 and R12). So
+        ``expire`` with ``keep_rollover`` is refused before anything is issued:
+        it would leave two live passwords, one of them seen by the DBA.
 
         **A failure after a statement committed raises
         :class:`PartialAccountChangeError`**, carrying the rows that ran.
         Two cases, and the caller treats them differently: an unlock followed by
         a failed set leaves the password unchanged and the account open, and a
         set followed by a failed close leaves the new password live and the old
-        one working until the window ends. A failure with nothing committed
+        one working until the window ends. The second carries a hint that says
+        so, and how to close the window by hand. A failure with nothing committed
         before it is raised as it came.
         """
         ...
@@ -1175,31 +1197,6 @@ class Session(Protocol):
 
         ``account`` is the name as the database stores it, from
         :meth:`describe_user`.
-        """
-        ...
-
-    def require_no_rollover_window(self, account: str) -> None:
-        """Refuse an **expiring** reset of ``account`` where its profile grants a
-        password rollover window (UC-2 §4.3), or say nothing.
-
-        :meth:`require_rollover`'s mirror, and the names are opposites because the
-        conditions are: that one refuses where no window can be opened, this one
-        refuses where one would be. Both are plan-time refusals that raise rather
-        than return, so neither can be called and ignored.
-
-        The reason is measured rather than assumed (Q7, on 26ai 23.26.2.0.0 and
-        21c 21.3.0.0.0, identically): ``IDENTIFIED BY … PASSWORD EXPIRE`` is
-        *accepted* on a rollover profile, the resulting status is ``EXPIRED & IN ROLLOVER``, and
-        the old password still authenticates -- it answers ``ORA-28001`` rather
-        than ``ORA-01017``, so it is not merely alive but is itself a way to set
-        the new one. The expiry that is supposed to end the DBA's exposure would
-        leave a second live password behind it for the length of the window.
-
-        **Refused rather than worked around.** From an ``EXPIRED`` start the same
-        statement leaves no second password. Whether the refusal narrows to
-        accounts whose old password still authenticates is an open decision, and
-        not something to loosen here. TODO(#541). 19c is unmeasured. The unseen
-        path remains available for the same account, and the message says so.
         """
         ...
 

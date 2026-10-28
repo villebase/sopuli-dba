@@ -125,7 +125,7 @@ unfinished part. It promises three things:
 | **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. PostgreSQL 12 and earlier, and the commands end to end on any release but 16.15. With a libpq older than 16, which the `postgres` extra does not install, the tool cannot log in as a managed role. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
-| **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, and one of their decisions, about the seen reset, is still open ([#541](https://github.com/villebase/sopuli-dba/issues/541)), so they may change more than the rest |
+| **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, so they may change more than the rest |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).

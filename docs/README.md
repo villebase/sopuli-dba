@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-006 | ADR | Optional dependencies | decided | vendor clients are extras; base opens no sockets | #130 |
 | ADR-007 | ADR | The vault token flag | decided | `--vault-token-file PATH` | #145 |
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
-| — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
 | — | — | Exit non-zero when `doctor` reaches a target and refuses it | open | | #1062 |
@@ -418,13 +417,14 @@ These entries share a setup. The probe is
     earlier password answers `ORA-01017`;
   - from `EXPIRED & LOCKED(TIMED)`: a reset's `ACCOUNT UNLOCK` leaves
     `EXPIRED`, and the statement then behaves as it does from `EXPIRED`;
-  - from `OPEN`, followed by `EXPIRE PASSWORD ROLLOVER PERIOD`: the close ends
-    the window, and the old password answers `ORA-01017`.
+  - from `OPEN` or `EXPIRED(GRACE)`, followed by `EXPIRE PASSWORD ROLLOVER
+    PERIOD`: the close ends the window, and the old password answers
+    `ORA-01017`.
 
   So the exposure depends on whether the old password still authenticates, not
-  on whether the status reads `EXPIRED`. UC-2 §4.3 refuses a seen reset on a
-  rollover profile at plan time. Whether that refusal narrows is #541's
-  decision. Not measured on a 19c release that has rollover.
+  on whether the status reads `EXPIRED`. UC-2 §4.3's seen reset closes the
+  window after the set, so it leaves one live password from every start state
+  measured (#541). Not measured on a 19c release that has rollover.
 - `unverified` `stale-rollover` (#441) — **What does an open rollover window do
   when its profile's `PASSWORD_ROLLOVER_TIME` is set back to zero?**
   On 23.26.2.0.0, `ACCOUNT_STATUS` still reads `OPEN & IN ROLLOVER`, but the old

@@ -297,9 +297,6 @@ class PostgresSession:
             audited=None, detail="the PostgreSQL driver does not read audit settings yet"
         )
 
-    def require_no_rollover_window(self, account: str) -> None:
-        raise self._not_written("check a role for a rollover window")
-
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:

@@ -2004,7 +2004,10 @@ def _unseen_methods_built() -> str:
     "--keep-rollover",
     is_flag=True,
     default=False,
-    help="Leave an open rollover window open, so the old password keeps working.",
+    help=(
+        "Leave an open rollover window open, so the old password keeps working. "
+        "Refused with `delivery.method: manual`."
+    ),
 )
 @click.option(
     "--confirm",
@@ -2065,7 +2068,9 @@ def account_reset_password(
     **The rollover window is closed by default** (UC-2 4.3), so the old password
     stops working at once. `--keep-rollover` leaves it open, which is for the
     reset where the person still knows their old password -- and exactly wrong
-    after a suspected disclosure, where somebody else knows it too.
+    after a suspected disclosure, where somebody else knows it too. It is refused
+    with `{manual}`: there the close is what makes the expiry end your sight of
+    the account.
 
     **One account, named on the command line.** The target selectors narrow where
     it is reset, not who is; each target holds a separate account with a separate
@@ -2082,6 +2087,7 @@ def account_reset_password(
     # watched, must not reach a database at all. UC-2 6.4's ordering is about
     # which failure to prefer once a run is under way; this is about not starting.
     delivery = reset.deliverable(run.config.delivery)
+    reset.refuse_kept_window(delivery, keep_rollover=keep_rollover)
     reset.refuse_seen_path(
         delivery,
         is_json=run.is_json,
@@ -2899,13 +2905,12 @@ def _reset_one(
         assert state is not None
         audited = None if delivery.is_seen else session.audit_coverage(state.name)
 
-        # **Both of a reset's own refusals are asked before the preview returns**
+        # **A reset's own refusals are asked before the preview returns**
         # (#671), so a dry run that says "would be reset" means the real run
-        # gets past them too. Both are reads: UC-2 4.3's rollover refusal, which
-        # the driver asks again inside the reset, and whether the policy can
-        # produce a password inside this target's byte limit, asked without
-        # drawing one. The real run asks them here as well, which is still the
-        # last point before a password is drawn.
+        # gets past them too. Each is a read, and whether the policy can produce
+        # a password inside this target's byte limit is asked without drawing
+        # one. The real run asks them here as well, which is still the last
+        # point before a password is drawn.
         try:
             # The connection the password would cross, read again (#857).
             # `_require_encryption` refused the run before this unless it could
@@ -2917,8 +2922,6 @@ def _reset_one(
                 )
                 if refusal is not None:
                     raise refusal
-            if decision.expire:
-                session.require_no_rollover_window(account)
             policy = _reset_policy(config, account, target.name, state)
             limit = session.byte_limit()
             require_feasible(policy, limit=limit, target=target.name)
@@ -3052,10 +3055,11 @@ def _reset_one(
         # scheduler wants to know which targets were touched.*
         #
         # **A password that is set is handed over, even where closing the window
-        # then failed.** The new password is live and the
-        # old one still works until the window ends -- the state `--keep-rollover`
-        # leaves on purpose, so not a new exposure. Withholding it would be worse
-        # on both paths: on the seen one nobody would hold an expired password that
+        # then failed.** The new password is live and the old one still works
+        # until the window ends. On the seen path that is the exposure the close
+        # exists to end (#541), so the row says so and the driver's hint says how
+        # to close the window by hand. Withholding the password would be worse on
+        # both paths: on the seen one nobody would hold an expired password that
         # is now the account's, and on the unseen one the token already made would
         # be thrown away. The row is still `ERROR` at exit 4, and the record and
         # the notification follow, because both hold what happened.
@@ -3068,8 +3072,9 @@ def _reset_one(
             detail=(
                 decision.detail
                 if unclosed is None
-                else "password set; the rollover window was not closed, so the old "
-                f"password may work until it ends: {unclosed.message}"
+                else "password set, but the rollover window was not closed, so the old "
+                f"password still works until it ends: {unclosed.message}"
+                + (f" -- {unclosed.hint}" if unclosed.hint else "")
             ),
             status=status,
             actions=_reset_actions(changes, unclosed),

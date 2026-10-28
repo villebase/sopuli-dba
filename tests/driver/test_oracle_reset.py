@@ -16,11 +16,12 @@ and the four facts this file exists for are all ones the design turned on:
   working -- and kept where the caller asks, where it does not. §4.3 decided the
   default the opposite way to UC-1 and this is where that claim meets a database.
 
-The fifth is a refusal rather than a behaviour: an expiring reset of an account
-on a rollover profile is refused before any DDL, because
+The fifth is the seen reset on a rollover profile (#541).
 `sql/oracle/07_lock_and_rollover_probe.sql` measured that `PASSWORD EXPIRE` does
-*not* end the window -- the old password answers `ORA-28001` rather than
+*not* end the window: the old password answers `ORA-28001` rather than
 `ORA-01017`, so it still authenticates and is itself a way to set the new one.
+The close after the set ends it (probe 09's R9), so the seen reset closes the
+window and refuses to keep it.
 """
 
 from __future__ import annotations
@@ -290,32 +291,37 @@ def test_keeping_the_window_leaves_the_old_password_working(
 
 
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
-def test_an_expiring_reset_is_refused_on_a_rollover_profile(
+def test_a_seen_reset_on_a_rollover_profile_leaves_one_live_password(
     rollover_account: Any, live_oracle: Environment
 ) -> None:
-    """The rollover probe's finding, as a refusal. Expiring does **not** end the
-    window, so the seen path would leave a second live password behind it.
+    """#541's decision, measured by logon. The set opens a window with the old
+    password live, and the close ends it: probe 09's R9, from `OPEN`.
 
-    Both entry points refuse, and both are asserted: the plan-time call a verb
-    makes before drawing a password, and the reset itself, which asks again
-    because that is the last point at which refusing costs nothing.
+    Without the close the old password would answer `ORA-28001`, which is a
+    password that authenticates.
     """
-    with pytest.raises(DriverError) as planned:
-        rollover_account.require_no_rollover_window(ACCOUNT)
+    changes = _by_action(rollover_account.reset_password(ACCOUNT, NEW, expire=True))
 
-    with pytest.raises(DriverError) as issued:
-        rollover_account.reset_password(ACCOUNT, NEW, expire=True)
-
-    for caught in (planned, issued):
-        assert "rollover window" in str(caught.value)
-        assert ROLLOVER_PROFILE.upper() in str(caught.value)
-    assert _logon(live_oracle, OLD) == "ok", "nothing was issued"
+    assert changes[PASSWORD_SET].changed is True
+    assert changes[ROLLOVER_FINISH].changed is True
+    assert _status(rollover_account) == "EXPIRED"
+    assert _logon(live_oracle, NEW.reveal()) == "ORA-28001"
+    assert _logon(live_oracle, OLD) == "ORA-01017"
 
 
-def test_the_plan_time_call_says_nothing_where_no_window_is_granted(account: Any) -> None:
-    """The other answer, and the one every ordinary account gets. A refusal that
-    fired on `DEFAULT` would make the seen path unreachable everywhere."""
-    assert account.require_no_rollover_window(ACCOUNT) is None
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
+def test_a_seen_reset_cannot_keep_the_window(
+    rollover_account: Any, live_oracle: Environment
+) -> None:
+    """The command refuses the flag first. The driver refuses it again, before
+    anything is issued, because that is the last point at which refusing costs
+    nothing."""
+    with pytest.raises(DriverError) as caught:
+        rollover_account.reset_password(ACCOUNT, NEW, expire=True, keep_rollover=True)
+
+    assert "cannot keep the rollover window" in str(caught.value)
+    assert caught.value.password_sent is False
+    assert _logon(live_oracle, OLD) == "ok", "a statement was issued"
 
 
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
@@ -480,6 +486,28 @@ def test_a_set_that_committed_before_the_close_failed_is_reported(
     assert caught.value.password_sent is True, "the set before the close went out (#697)"
     assert _logon(live_oracle, NEW.reveal()) == "ok"
     assert _logon(live_oracle, OLD) == "ok", "the window closed although its statement failed"
+
+
+@pytest.mark.requires_capability(PASSWORD_ROLLOVER)
+def test_a_seen_reset_whose_close_failed_says_how_to_close_it(
+    rollover_account: Any, live_oracle: Environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#541's third condition. The old password still authenticates, so the
+    error says so, and gives the statement that closes the window by hand. The
+    statement is then run as given, and the old password dies."""
+    _fail_statement(rollover_account, monkeypatch, 2)
+
+    with pytest.raises(PartialAccountChangeError) as caught:
+        rollover_account.reset_password(ACCOUNT, NEW, expire=True)
+
+    hint = caught.value.hint or ""
+    assert "the old password still works" in hint
+    assert _logon(live_oracle, OLD) == "ORA-28001", "the old password does not authenticate"
+
+    close = hint.split("Close it by hand: ")[1].split(";")[0]
+    assert close == f'ALTER USER "{ACCOUNT.upper()}" EXPIRE PASSWORD ROLLOVER PERIOD'
+    _run(rollover_account, close)
+    assert _logon(live_oracle, OLD) == "ORA-01017"
 
 
 def test_resetting_an_account_that_does_not_exist_is_an_error(session: Any) -> None:

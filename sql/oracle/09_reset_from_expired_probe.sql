@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
--- sopuli-dba : setting a password on an EXPIRED rollover account   (v1)
+-- sopuli-dba : setting a password on an EXPIRED rollover account   (v2)
 --
 -- #529. UC-2 sec.4.3 refuses a SEEN reset of any account whose profile grants a
 -- rollover window, for 07's Q7: `IDENTIFIED BY ... PASSWORD EXPIRE` on an OPEN
@@ -23,6 +23,22 @@
 --   R7  from EXPIRED(GRACE), reached on a grace profile and then moved to the
 --       rollover one: whether the move keeps the status, then R1's statement
 --   R8  the same start, R2's statement
+--
+--   v2 (#541) adds the two sequences #541's options B and C each depend on:
+--
+--   R9  from OPEN: R3's pair -- IDENTIFIED BY p3 PASSWORD EXPIRE, then EXPIRE
+--       PASSWORD ROLLOVER PERIOD. The seen reset's full shape on an account
+--       whose old password still works, which option C would allow
+--   R10 from EXPIRED and LOCKED(TIMED): ACCOUNT UNLOCK, the status it leaves,
+--       then R2's statement. A reset unlocks a timed lock first (UC-2 sec.4.1),
+--       so the status the set starts from is the one after the unlock, which
+--       option B's allow-list would have to admit
+--   R11 the same start: ACCOUNT UNLOCK, R2's statement, then the close -- the
+--       driver's whole seen reset on such an account
+--   C3  CONTROL for R10 and R11, from OPEN on their profile: R2's statement.
+--       Must reproduce C2, or that profile grants no window and R10 and R11
+--       show nothing
+--
 --   C1  CONTROL, from OPEN: R1's statement. Must open a window with p1 live, or
 --       nothing below means what it says (07 Q6 step 1)
 --   C2  CONTROL, from OPEN: R2's statement. Must reproduce 07 Q7 -- p1
@@ -39,9 +55,15 @@
 -- different warning code (RESULTS). 18c and 11.2 have no rollover and stop at section 0.
 -- 19c EE 19.3.0.0.0 (2026-09-28, #479, twice) stops at section 0 the same way:
 -- no SOPULI_ROLLOVER, so every section is ABSENT. A 19.12+ release is unrun.
+-- v2 (#541) run on 26ai Free 23.26.3.0.0, FREEPDB1, and on 21c XE 21.3.0.0.0,
+-- XEPDB1, as SYSTEM, 2026-10-28 -- twice on each, exit 0. On each release the
+-- two runs gave the same statuses and the same login results, and the
+-- releases agree in every row of the results table. Only the grace rows'
+-- timestamps differ between runs. Section 2's grace-period logins still send
+-- ORA-28002 on 21c and ORA-28098 on 26ai, as in v1.
 --
--- THROWAWAY DATABASES ONLY. Creates and drops accounts and a profile, expires
--- them, and plants known passwords.
+-- THROWAWAY DATABASES ONLY. Creates and drops accounts and two profiles,
+-- expires and locks the accounts, and plants known passwords.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, as SYSTEM, 2026-09-26
@@ -86,6 +108,32 @@
 --   where 26ai sends ORA-28098 (08's E3, #322). The resulting EXPIRED(GRACE)
 --   status is the same.
 --
+--   v2, 2026-10-28, 26ai Free 23.26.3.0.0 and 21c XE 21.3.0.0.0: every row
+--   above holds unchanged on both releases. The new rows:
+--
+--     start                   statement               status                  p1     p3
+--     OPEN               R9   ... PASSWORD EXPIRE,    EXPIRED and IN ROLLOVER,
+--                             then close              then EXPIRED            01017  28001
+--     EXPIRED and        R10  ACCOUNT UNLOCK,         EXPIRED,
+--       LOCKED(TIMED)         then R2's statement     then EXPIRED            01017  28001
+--     EXPIRED and        R11  unlock, R2's statement, EXPIRED, EXPIRED,
+--       LOCKED(TIMED)         then close              then EXPIRED            01017  28001
+--     OPEN (control C3)       ... PASSWORD EXPIRE     EXPIRED and IN ROLLOVER 28001  28001
+--
+--   R9: from OPEN, the close after the seen form kills the old password. The
+--   set opens a window with p1 live, as C2 does, and EXPIRE PASSWORD ROLLOVER
+--   PERIOD ends it: p1 answers ORA-01017, and only the new password, expired,
+--   authenticates. This is the sequence #541's option C rests on.
+--
+--   R10 and R11: ACCOUNT UNLOCK on EXPIRED and LOCKED(TIMED) leaves plain
+--   EXPIRED, and from there the seen form behaves as R2 does: no window opens,
+--   and p1 is dead. The close in R11 is accepted and changes nothing. C3 shows
+--   the profile they run on does open a window from OPEN, so the absence of
+--   one is the start state's doing. After the three failed logins, both
+--   accounts read EXPIRED and LOCKED(TIMED); the script stops if they do not.
+--   R11's close is the driver's: it closes whenever the profile grants a
+--   window, read before the reset.
+--
 --   G was reached by a login in grace on the probe's own profile and then
 --   ALTER USER ... PROFILE sopuli_rollover. The move kept EXPIRED(GRACE) and the
 --   expiry date unchanged. An account that reaches grace on a rollover profile
@@ -116,6 +164,12 @@
 --   checks, each account with every password it has ever had:
 --
 --     sopuli_rx_xa, _xb, _xc, _ga, _gb, _oa, _ob   p1, p3
+--     sopuli_rx_oc, _la, _lb, _lc                  p1, p3   (v2)
+--
+--   Check each password once, p1 before p3. _la, _lb and _lc are on a
+--   profile that locks after three failed logins, and p1 fails on two of
+--   them: a repeated p1 check locks the account, and p3 then answers
+--   ORA-28000 instead of its real result.
 --     sopuli_rx_wa, _wb, _wc                       p1, p2, p3
 --
 --   printf is a shell builtin, so the password in its arguments reaches no
@@ -134,6 +188,8 @@ DEFINE admin_pwd  = CHANGEME_ADMIN_PASSWORD
 DEFINE p1         = Aq9xProbeOne
 DEFINE p2         = Bq9xProbeTwo
 DEFINE p3         = Cq9xProbeTri
+-- Never any account's password: the failed logins of start state L.
+DEFINE pwrong     = Zq9xNotThePw
 
 SET LINESIZE 200
 SET PAGESIZE 1000
@@ -153,7 +209,7 @@ SET SERVEROUTPUT ON SIZE UNLIMITED
 
 PROMPT
 PROMPT ================================================================
-PROMPT  sopuli-dba #529 probe v1: a password set on an EXPIRED account
+PROMPT  sopuli-dba #529 probe v2: a password set on an EXPIRED account
 PROMPT ================================================================
 SELECT banner_full FROM v$version;
 SELECT SYS_CONTEXT('USERENV','CON_NAME') AS container FROM dual;
@@ -191,14 +247,20 @@ BEGIN
     EXECUTE IMMEDIATE 'DROP USER ' || r.username || ' CASCADE';
     DBMS_OUTPUT.PUT_LINE('dropped a pre-existing ' || r.username);
   END LOOP;
-  FOR r IN (SELECT DISTINCT profile FROM dba_profiles WHERE profile = 'SOPULI_PROBE_RX_GRACE') LOOP
-    EXECUTE IMMEDIATE 'DROP PROFILE sopuli_probe_rx_grace';
-    DBMS_OUTPUT.PUT_LINE('dropped a pre-existing SOPULI_PROBE_RX_GRACE');
+  FOR r IN (SELECT DISTINCT profile FROM dba_profiles
+             WHERE profile IN ('SOPULI_PROBE_RX_GRACE', 'SOPULI_PROBE_RX_LOCK')) LOOP
+    EXECUTE IMMEDIATE 'DROP PROFILE ' || r.profile;
+    DBMS_OUTPUT.PUT_LINE('dropped a pre-existing ' || r.profile);
   END LOOP;
 END;
 /
 -- 08's grace profile: a one-second lifetime and a one-day grace.
 CREATE PROFILE sopuli_probe_rx_grace LIMIT PASSWORD_LIFE_TIME 1/86400 PASSWORD_GRACE_TIME 1;
+-- SOPULI_ROLLOVER's window, with a lockout added: three failures lock the
+-- account for a day. 07's SOPULI_LOCKOUT locks for one minute, which a run can
+-- outlast before R10 and R11 read the lock.
+CREATE PROFILE sopuli_probe_rx_lock LIMIT PASSWORD_ROLLOVER_TIME 1/24
+  FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1;
 
 CREATE USER sopuli_rx_xa IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
 CREATE USER sopuli_rx_xb IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
@@ -208,11 +270,16 @@ CREATE USER sopuli_rx_wb IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
 CREATE USER sopuli_rx_wc IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
 CREATE USER sopuli_rx_oa IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
 CREATE USER sopuli_rx_ob IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
+CREATE USER sopuli_rx_oc IDENTIFIED BY "&p1" PROFILE sopuli_rollover;
 CREATE USER sopuli_rx_ga IDENTIFIED BY "&p1" PROFILE sopuli_probe_rx_grace;
 CREATE USER sopuli_rx_gb IDENTIFIED BY "&p1" PROFILE sopuli_probe_rx_grace;
+CREATE USER sopuli_rx_la IDENTIFIED BY "&p1" PROFILE sopuli_probe_rx_lock;
+CREATE USER sopuli_rx_lb IDENTIFIED BY "&p1" PROFILE sopuli_probe_rx_lock;
+CREATE USER sopuli_rx_lc IDENTIFIED BY "&p1" PROFILE sopuli_probe_rx_lock;
 GRANT CREATE SESSION TO sopuli_rx_xa, sopuli_rx_xb, sopuli_rx_xc,
   sopuli_rx_wa, sopuli_rx_wb, sopuli_rx_wc, sopuli_rx_oa, sopuli_rx_ob,
-  sopuli_rx_ga, sopuli_rx_gb;
+  sopuli_rx_oc, sopuli_rx_ga, sopuli_rx_gb, sopuli_rx_la, sopuli_rx_lb,
+  sopuli_rx_lc;
 PROMPT baseline, every one must read plain OPEN -- a window is opened on purpose
 PROMPT below, never inherited from CREATE USER (07 v1)
 SELECT username, account_status, profile FROM dba_users
@@ -271,6 +338,42 @@ PROMPT after the move to SOPULI_ROLLOVER -- the status R7 and R8 start from:
 SELECT username, account_status, profile, TO_CHAR(expiry_date,'YYYY-MM-DD HH24:MI:SS') AS expiry_date
   FROM dba_users WHERE username IN ('SOPULI_RX_GA','SOPULI_RX_GB') ORDER BY username;
 
+-- L: EXPIRED and LOCKED(TIMED) -- a bare expiry, then three failed logins with
+-- a password the account never had. A wrong password is refused with
+-- ORA-01017 before any expiry prompt, so these can run inside the script.
+PROMPT
+PROMPT ==== 2. start state L: EXPIRED and LOCKED(TIMED) ====
+ALTER USER sopuli_rx_la PASSWORD EXPIRE;
+ALTER USER sopuli_rx_lb PASSWORD EXPIRE;
+WHENEVER SQLERROR CONTINUE NONE
+CONNECT sopuli_rx_la/"&pwrong"@&tns
+CONNECT sopuli_rx_la/"&pwrong"@&tns
+CONNECT sopuli_rx_la/"&pwrong"@&tns
+CONNECT sopuli_rx_lb/"&pwrong"@&tns
+CONNECT sopuli_rx_lb/"&pwrong"@&tns
+CONNECT sopuli_rx_lb/"&pwrong"@&tns
+WHENEVER SQLERROR EXIT FAILURE
+CONNECT &admin_user/"&admin_pwd"@&tns
+SET SERVEROUTPUT ON SIZE UNLIMITED
+PROMPT after the three failures, expecting EXPIRED and LOCKED(TIMED):
+SELECT username, account_status, profile FROM dba_users
+ WHERE username IN ('SOPULI_RX_LA','SOPULI_RX_LB') ORDER BY username;
+-- R10 and R11 mean nothing from any other start, so stop rather than measure
+-- plain EXPIRED under their names. The ampersand is CHR(38): a literal one
+-- here is a substitution variable to SQL*Plus, as in a PROMPT.
+DECLARE
+  l_n PLS_INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO l_n FROM dba_users
+   WHERE username IN ('SOPULI_RX_LA','SOPULI_RX_LB')
+     AND account_status = 'EXPIRED ' || CHR(38) || ' LOCKED(TIMED)';
+  IF l_n <> 2 THEN
+    raise_application_error(-20002,
+      'start state L not reached: R10 and R11 would not start from a timed lock');
+  END IF;
+END;
+/
+
 --------------------------------------------------------------------------------
 -- 3. Controls, from plain OPEN on the same profile. If C1 opens no window or C2
 --    leaves p1 dead, the rows in section 4 cannot be read as a difference
@@ -285,6 +388,11 @@ PROMPT
 PROMPT ==== 3. C2: from OPEN, IDENTIFIED BY p3 PASSWORD EXPIRE ====
 ALTER USER sopuli_rx_ob IDENTIFIED BY "&p3" PASSWORD EXPIRE;
 SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_OB';
+
+PROMPT
+PROMPT ==== 3. C3: from OPEN on SOPULI_PROBE_RX_LOCK, IDENTIFIED BY p3 PASSWORD EXPIRE ====
+ALTER USER sopuli_rx_lc IDENTIFIED BY "&p3" PASSWORD EXPIRE;
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_LC';
 
 --------------------------------------------------------------------------------
 -- 4. The resets, each issued DIRECTLY -- 07's first trap, invariant 13.
@@ -337,6 +445,36 @@ PROMPT ==== 4. R8: from section 2's G state, IDENTIFIED BY p3 PASSWORD EXPIRE ==
 ALTER USER sopuli_rx_gb IDENTIFIED BY "&p3" PASSWORD EXPIRE;
 SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_GB';
 
+PROMPT
+PROMPT ==== 4. R9: from OPEN, IDENTIFIED BY p3 PASSWORD EXPIRE, then the close ====
+ALTER USER sopuli_rx_oc IDENTIFIED BY "&p3" PASSWORD EXPIRE;
+PROMPT after the set:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_OC';
+ALTER USER sopuli_rx_oc EXPIRE PASSWORD ROLLOVER PERIOD;
+PROMPT after the close:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_OC';
+
+PROMPT
+PROMPT ==== 4. R10: from EXPIRED and LOCKED(TIMED), ACCOUNT UNLOCK, then R2's statement ====
+ALTER USER sopuli_rx_la ACCOUNT UNLOCK;
+PROMPT after the unlock -- the status the set starts from:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_LA';
+ALTER USER sopuli_rx_la IDENTIFIED BY "&p3" PASSWORD EXPIRE;
+PROMPT after the set:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_LA';
+
+PROMPT
+PROMPT ==== 4. R11: from EXPIRED and LOCKED(TIMED), unlock, R2's statement, the close ====
+ALTER USER sopuli_rx_lb ACCOUNT UNLOCK;
+PROMPT after the unlock:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_LB';
+ALTER USER sopuli_rx_lb IDENTIFIED BY "&p3" PASSWORD EXPIRE;
+PROMPT after the set:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_LB';
+ALTER USER sopuli_rx_lb EXPIRE PASSWORD ROLLOVER PERIOD;
+PROMPT after the close:
+SELECT username, account_status FROM dba_users WHERE username = 'SOPULI_RX_LB';
+
 --------------------------------------------------------------------------------
 -- 5. Nothing in this file reads SYS.USER$, so the status is the only evidence
 --    the script itself gives. #504 showed the status can disagree with what
@@ -363,6 +501,7 @@ PROMPT section 7 below.
 --     EXECUTE IMMEDIATE 'DROP USER ' || r.username || ' CASCADE';
 --   END LOOP;
 --   EXECUTE IMMEDIATE 'DROP PROFILE sopuli_probe_rx_grace';
+--   EXECUTE IMMEDIATE 'DROP PROFILE sopuli_probe_rx_lock';
 -- END;
 -- /
 --------------------------------------------------------------------------------

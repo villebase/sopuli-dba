@@ -557,13 +557,55 @@ such as "from 16", means the one release of it that was measured.
   the `sopuli-dba[hashicorp]` extra, not in base (ADR-006, E2). The probe is
   `test/vault_auth_probe.py`.
 - `unverified` `oci-vault-cost-limits` (#643) — **Do the OCI Vault tests in
-  tier 3 still cost nothing, and do they stay inside the service limits?**
+  tier 3 still cost nothing?**
   Known: on 2026-10-14 Oracle's pages listed Secret Management as free, a
   software-protected key as free, and API calls to Key Management as not billed
-  (T4). Open: the prices in a tenancy's cost analysis, and the limits that a
-  fixed set of secrets can reach under repeated rotation, such as the versions
-  a secret keeps. The pull request that builds an OCI store answers both. No OCI
-  store exists yet, so nothing depends on this.
+  (T4). The version limit is `oci-version-limit` below. Open: the prices in a
+  tenancy's cost analysis after the tier-3 runs (#1135). No OCI store exists
+  yet, so nothing depends on this.
+- `verified` `oci-name-rules` (#1129) — **How long can an OCI secret name be,
+  and is it case-sensitive?**
+  Up to 255 characters; at 256 OCI answers `400 InvalidParameter`. Names are
+  case-sensitive: `acme-db` and `ACME-DB` can both exist in one vault. The
+  probe is `test/oci_vault_probe.py`, M1.
+- `verified` `oci-pending-stage` (#1129) — **Can a reader see a PENDING
+  version?**
+  Only by asking for it. After an update with `stage = PENDING`, a read by name
+  with no stage, or with `stage=CURRENT`, returns the old CURRENT version. Only
+  `stage=PENDING` returns the new one. M2.
+- `verified` `oci-etag-cas` (#1129) — **Does an ETag guard an OCI secret
+  update?**
+  Yes. An update whose `if_match` is a stale ETag is refused with
+  `409 Conflict`, not 412. A content update, a PENDING update, a promotion and
+  a metadata-only update each change the ETag. M3.
+- `verified` `oci-updating-state` (#1129) — **Can a secret be updated again
+  straight after an update?**
+  No. It is `UPDATING` for a little over 20 seconds, and an update meanwhile
+  is refused with `409 IncorrectState`. The probe measured 19.9 and 21.7
+  seconds from a point after the update returned, so the window is longer than
+  that. M4.
+- `verified` `oci-promote-metadata` (#1129) — **Do a promotion and a metadata
+  change happen in one call?**
+  Yes. `current_version_number=N` with `metadata` in the same update makes N
+  CURRENT, makes the old CURRENT PREVIOUS, and changes the metadata. The
+  metadata sent replaces the whole map, so an update must send every key it
+  keeps. Promoting the CURRENT version changes only the metadata. A version
+  that does not exist
+  is `404 NotAuthorizedOrNotFound`. OCI also promotes a DEPRECATED version
+  without complaint. M5.
+- `verified` `oci-pending-replace` (#1129) — **What happens to a PENDING
+  version, and can it be removed?**
+  A second PENDING makes the first DEPRECATED. A CURRENT update leaves a
+  PENDING in place. Scheduling the deletion of a PENDING version is refused with
+  `409 IncorrectState`. Of the calls tried, only a promotion or a newer PENDING
+  takes the stage off a version, so a secret that has had a PENDING keeps one
+  until it is promoted. M6.
+- `verified` `oci-version-limit` (#1129) — **How many versions does a secret
+  keep?**
+  30. The create makes version 1. The content update that would make version
+  31 is refused with `400 LimitExceeded`, and OCI removes no version by itself. A metadata-only update adds no version.
+  Scheduling the deletion of a DEPRECATED version frees its place at once: the
+  next content update succeeds. M7, M7b and M7c.
 - `unverified` `moto-secrets-manager` (#642) — **Does moto's server image cover
   every Secrets Manager call an AWS store makes?**
   Known: moto is open source, `motoserver/moto` needs no token, and it emulates

@@ -415,7 +415,11 @@ These entries share a setup. The probe is
     becomes `EXPIRED & IN ROLLOVER`, and the expiry does not end the window. The
     old password answers `ORA-28001`, so it still authenticates;
   - from `EXPIRED` or `EXPIRED & IN ROLLOVER`: no window opens, and every
-    earlier password answers `ORA-01017`.
+    earlier password answers `ORA-01017`;
+  - from `EXPIRED & LOCKED(TIMED)`: a reset's `ACCOUNT UNLOCK` leaves
+    `EXPIRED`, and the statement then behaves as it does from `EXPIRED`;
+  - from `OPEN`, followed by `EXPIRE PASSWORD ROLLOVER PERIOD`: the close ends
+    the window, and the old password answers `ORA-01017`.
 
   So the exposure depends on whether the old password still authenticates, not
   on whether the status reads `EXPIRED`. UC-2 §4.3 refuses a seen reset on a

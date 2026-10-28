@@ -203,28 +203,9 @@ class MemoryStore:
         if STAGING in self.capabilities:
             entry = self._guarded(path, cas)
             self._add_generation(entry, data, stage=CURRENT_STAGE)
-            return self._bump(entry)
+            return self._bump(path, entry)
         entry = self.paths.setdefault(path, _Path())
-        if cas is None and entry.metadata is not None and entry.metadata.cas_required:
-            # What the setting is *for*: KV v2 refuses an unguarded write on a
-            # path configured this way, whoever the writer is. A fake that
-            # accepted one would let an implementation pass here and be rejected
-            # by the real thing -- and the lock's pre-flight checks this exact
-            # setting, so the emulation has to mean it.
-            #
-            # `StoreError` and **not** `CasConflictError`. The real backend
-            # raises `StoreError` here too, and the conformance suite holds the
-            # two to the same answer. Nothing raced: the write was refused because
-            # it carried no version, not because the version moved. ADR-005
-            # names the same confusion from the other end -- Vault's message for
-            # this case opens with the same words as the conflict's, and
-            # reporting it as a lost race would have a run announce that
-            # somebody beat it to the path when nobody was there at all.
-            raise StoreError(f"{path!r} requires a compare-and-set and the write did not carry one")
-        if cas is not None and cas != entry.version:
-            raise CasConflictError(
-                f"compare-and-set failed at {path!r}: expected version {cas}, found {entry.version}"
-            )
+        self._check_cas(path, entry, cas)
         if cas == 0 and entry.version != 0:
             # Unreachable through the check above, and kept as the statement of
             # the rule: `cas: 0` means "there must be nothing here", and a path
@@ -251,6 +232,30 @@ class MemoryStore:
             # `src/` and being held to the conformance suite.
             entry.metadata = PathMetadata()
         return entry.version
+
+    @staticmethod
+    def _check_cas(path: str, entry: _Path, cas: int | None) -> None:
+        """The compare-and-set checks every write makes, in either mode."""
+        if cas is None and entry.metadata is not None and entry.metadata.cas_required:
+            # What the setting is *for*: KV v2 refuses an unguarded write on a
+            # path configured this way, whoever the writer is. A fake that
+            # accepted one would let an implementation pass here and be rejected
+            # by the real thing -- and the lock's pre-flight checks this exact
+            # setting, so the emulation has to mean it.
+            #
+            # `StoreError` and **not** `CasConflictError`. The real backend
+            # raises `StoreError` here too, and the conformance suite holds the
+            # two to the same answer. Nothing raced: the write was refused because
+            # it carried no version, not because the version moved. ADR-005
+            # names the same confusion from the other end -- Vault's message for
+            # this case opens with the same words as the conflict's, and
+            # reporting it as a lost race would have a run announce that
+            # somebody beat it to the path when nobody was there at all.
+            raise StoreError(f"{path!r} requires a compare-and-set and the write did not carry one")
+        if cas is not None and cas != entry.version:
+            raise CasConflictError(
+                f"compare-and-set failed at {path!r}: expected version {cas}, found {entry.version}"
+            )
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
         """Apply a merge patch, which here is a read and a write with no gap.
@@ -346,9 +351,17 @@ class MemoryStore:
     def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
         self._require_staging(path)
         entry = self._guarded(path, cas)
+        if CURRENT_STAGE not in entry.stages:
+            # Not measured: whether OCI can create a secret whose only version
+            # is PENDING. Where the answer is unknown the store refuses rather
+            # than guesses, and a caller writes the first generation instead.
+            raise StoreError(
+                f"{path!r} has no CURRENT generation to stage a PENDING beside",
+                hint="write the first generation, which is CURRENT, then stage",
+            )
         self._add_generation(entry, data, stage=PENDING_STAGE)
         entry.attributes = copy.deepcopy(dict(attributes))
-        return self._bump(entry)
+        return self._bump(path, entry)
 
     def promote(
         self, path: str, generation: int, *, attributes: Mapping[str, Any], cas: int | None
@@ -369,9 +382,14 @@ class MemoryStore:
                 entry.stages[PREVIOUS_STAGE] = current
             entry.stages[CURRENT_STAGE] = generation
         entry.attributes = copy.deepcopy(dict(attributes))
-        return self._bump(entry)
+        return self._bump(path, entry)
 
     def _read_native(self, path: str, *, version: int | None) -> Stored | None:
+        if version is not None and VERSIONING not in self.capabilities:
+            raise StoreError(
+                f"this store keeps no versions, and a read of {path!r} asked for version {version}",
+                hint="drop the `@version=` qualifier, or point the ref at a store that versions",
+            )
         entry = self.paths.get(path)
         if entry is None:
             return None
@@ -394,11 +412,14 @@ class MemoryStore:
         )
 
     def _guarded(self, path: str, cas: int | None) -> _Path:
-        entry = self.paths.setdefault(path, _Path())
-        if cas is not None and cas != entry.version:
-            raise CasConflictError(
-                f"compare-and-set failed at {path!r}: expected version {cas}, found {entry.version}"
-            )
+        """The path's entry, after the compare-and-set checks every write makes.
+
+        A path that does not exist yet gets a fresh entry that is **not**
+        stored: :meth:`_bump` stores it once the call has succeeded, so a refused
+        call leaves no empty path behind for :meth:`list` to report.
+        """
+        entry = self.paths.get(path) or _Path()
+        self._check_cas(path, entry, cas)
         return entry
 
     def _add_generation(self, entry: _Path, data: Any, *, stage: str) -> None:
@@ -408,10 +429,11 @@ class MemoryStore:
             entry.stages[PREVIOUS_STAGE] = entry.stages[CURRENT_STAGE]
         entry.stages[stage] = entry.generation
 
-    def _bump(self, entry: _Path) -> int:
+    def _bump(self, path: str, entry: _Path) -> int:
         entry.version += 1
         if entry.metadata is None:
             entry.metadata = PathMetadata()
+        self.paths[path] = entry
         return entry.version
 
     def _require_staging(self, path: str) -> None:

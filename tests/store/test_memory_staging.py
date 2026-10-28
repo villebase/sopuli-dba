@@ -7,6 +7,8 @@ native staging without a tenancy.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from sopuli.store import MemoryStore
@@ -38,8 +40,60 @@ def generations(store: MemoryStore) -> dict[str, int | None]:
 
 
 def test_it_offers_native_staging(store: MemoryStore) -> None:
-    assert isinstance(store, NativeStaging)
+    """Callers gate on the capability; mypy checks the shape."""
+    staging: NativeStaging = store
+    assert staging is store
     assert STAGING in store.supports()
+
+
+@pytest.mark.parametrize("call", ["write", "stage", "promote"])
+def test_a_path_that_requires_a_cas_refuses_a_native_call_without_one(
+    store: MemoryStore, call: str
+) -> None:
+    """The lock's pre-flight sets `cas_required`, so the refusal must hold here too."""
+    token = store.write(PATH, {"password": "a"}, cas=0)
+    store.stage(PATH, {"password": "b"}, attributes={}, cas=token)
+    store.require_cas(PATH)
+    calls: dict[str, Callable[[], int]] = {
+        "write": lambda: store.write(PATH, {"password": "c"}, cas=None),
+        "stage": lambda: store.stage(PATH, {"password": "c"}, attributes={}, cas=None),
+        "promote": lambda: store.promote(PATH, 2, attributes={}, cas=None),
+    }
+
+    with pytest.raises(StoreError, match="requires a compare-and-set"):
+        calls[call]()
+
+
+def test_a_refused_call_leaves_no_path_behind(store: MemoryStore) -> None:
+    with pytest.raises(StoreError):
+        store.promote("never-written", 1, attributes={}, cas=None)
+
+    assert store.list("") == ()
+
+
+def test_staging_onto_a_path_with_no_current_is_refused(store: MemoryStore) -> None:
+    """Unmeasured on OCI, so refused rather than guessed."""
+    with pytest.raises(StoreError, match="no CURRENT generation"):
+        store.stage(PATH, {"password": "a"}, attributes={}, cas=0)
+
+
+def test_a_current_write_keeps_the_attributes(store: MemoryStore) -> None:
+    """As OCI keeps the metadata map when an update sends none."""
+    token = store.write(PATH, {"password": "a"}, cas=0)
+    token = store.promote(PATH, 1, attributes={"targets": ["appdb-alpha"]}, cas=token)
+    store.write(PATH, {"password": "b"}, cas=token)
+
+    stored = store.read(PATH)
+    assert stored is not None
+    assert dict(stored.attributes) == {"targets": ["appdb-alpha"]}
+
+
+def test_a_pinned_read_needs_versioning() -> None:
+    store = MemoryStore(capabilities=frozenset({CAS, STAGING}))
+    store.write(PATH, {"password": "a"}, cas=0)
+
+    with pytest.raises(StoreError, match="keeps no versions"):
+        store.read(PATH, version=1)
 
 
 def test_a_write_is_current_and_generation_one(store: MemoryStore) -> None:

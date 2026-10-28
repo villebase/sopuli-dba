@@ -213,8 +213,10 @@ class Stored:
 
     The last three fields are filled by a staging store only, and keep their
     defaults everywhere else: which stage the read returned, the generation it
-    returned, and the secret's attributes (its secret-level metadata, which
-    describe the CURRENT generation).
+    returned, and the secret's attributes. The attributes are secret-level, as
+    OCI's metadata is: :meth:`NativeStaging.stage` and
+    :meth:`NativeStaging.promote` replace them, and :meth:`SecretStore.write`
+    leaves them as they are. What they mean is the caller's to decide.
     """
 
     data: Any
@@ -535,12 +537,14 @@ class SecretStore(Protocol):
         ...
 
 
-@runtime_checkable
 class NativeStaging(Protocol):
     """The three stages kept as the store's own versions (#1131).
 
     Offered by a store whose :meth:`SecretStore.supports` includes
-    :data:`STAGING`, and asked of no other. Each method's semantics are the ones
+    :data:`STAGING`, and asked of no other. A caller gates on that capability,
+    not on ``isinstance``: an implementation may define these methods and still
+    not stage natively, as :class:`~sopuli.store.memory.MemoryStore` without the
+    capability does. Each method's semantics are the ones
     measured against OCI Vault (``oci-pending-stage``, ``oci-promote-metadata``,
     ``oci-pending-replace`` in ``docs/README.md``), and
     :class:`~sopuli.store.memory.MemoryStore` models them.
@@ -566,7 +570,10 @@ class NativeStaging(Protocol):
 
         A generation that held PENDING loses it (OCI makes it DEPRECATED).
         ``attributes`` replace the secret's attributes whole, as OCI replaces
-        its metadata map whole.
+        its metadata map whole. A path with no CURRENT generation is refused
+        with :class:`StoreError`: whether OCI can hold a secret whose only
+        version is PENDING was not measured, so the first generation is a
+        :meth:`SecretStore.write`.
         """
         ...
 

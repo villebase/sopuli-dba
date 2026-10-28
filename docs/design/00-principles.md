@@ -282,8 +282,9 @@ NativeStaging                               # a store whose supports() has stagi
 
 **On a staging store the stages are the store's own versions** (#1131). `write`
 adds a generation that is current at once, and the old current becomes
-previous; a pending is left alone. `stage` adds a pending, and a pending already
-there loses the stage. `promote` makes a pending or previous generation current
+previous; a pending and the attributes are left alone. `stage` adds a pending,
+and a pending already there loses the stage; on a path with no current it is
+refused, because whether OCI can hold a pending-only secret was not measured. `promote` makes a pending or previous generation current
 and moves the old current to previous; a deprecated generation is refused,
 although OCI would promote one. Both replace the secret's attributes whole, as
 OCI replaces its metadata map. The version they return moves on every call,

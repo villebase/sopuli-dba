@@ -18,6 +18,7 @@ on which Oracle release, and what it showed.
 | [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
 | [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | one password rotation end to end: stage, apply, check, roll back, and close the rollover window |
 | [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | the vault-write side of an External Secrets Operator setup, and the division of responsibility that makes it safe |
+| [scenarios/supabase.md](scenarios/supabase.md) | replacing a shared `postgres` password on Supabase with one vault-managed login role for each service |
 | [../examples/](../examples/) | runnable config files with comments, starting with the smallest one that works |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | what a first-time contributor needs that `workflow.md` and `CLAUDE.md` do not say for that audience |
 | [../SECURITY.md](../SECURITY.md) | reporting a vulnerability privately |
@@ -242,6 +243,8 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
 | — | — | Exit non-zero when `doctor` reaches a target and refuses it | open | | #1062 |
 | — | — | Refuse a libpq older than 16 at plan time | open | | #1076 |
+| — | — | Forecast a single-target guardrail refusal in `--dry-run --preflight` | open | | #1116 |
+| — | — | Keep `creds rotate`'s privilege survey from refusing the run over a role checks 6 or 8 refuse | open | | #1117 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

@@ -16,15 +16,18 @@ import pytest
 from sopuli.driver.guardrails import (
     OWN_ACCOUNT,
     PRIVILEGED_ROLE,
+    RESERVED,
     SUPERUSER,
     VENDOR_MAINTAINED,
     review,
 )
 from sopuli.driver.postgres.roles import (
     NO_CHANGE_DATE,
+    RESERVED_ROLES,
     ROLE_QUERY,
     AmbiguousRoleError,
     describe,
+    reserved_names,
     state_of,
 )
 from sopuli.exit_codes import ExitCode
@@ -46,6 +49,7 @@ def _row(
     valid_until: datetime | None = None,
     expired: bool = False,
     member_of: tuple[str, ...] = (),
+    reserved_roles: str | None = None,
 ) -> tuple[Any, ...]:
     return (
         name,
@@ -59,6 +63,7 @@ def _row(
         valid_until,
         expired,
         list(member_of),
+        reserved_roles,
     )
 
 
@@ -170,6 +175,50 @@ def test_a_monitoring_role_is_ordinary_for_an_application(role: str) -> None:
 
 def test_the_session_s_own_role_is_check_seven() -> None:
     assert _checks(session=True) == {OWN_ACCOUNT}
+
+
+#: The local Supabase stack's value, measured with Supabase CLI 2.78.1 (#1111).
+SUPABASE_RESERVED = (
+    "supabase_admin, supabase_auth_admin, supabase_storage_admin, supabase_read_only_user, "
+    "supabase_realtime_admin, supabase_replication_admin, supabase_etl_admin, dashboard_user, "
+    "pgbouncer, service_role*, authenticator*, authenticated*, anon*"
+)
+
+
+@pytest.mark.parametrize("name", ["pgbouncer", "authenticator", "anon"])
+def test_a_role_supautils_reserves_is_check_eight_and_force_does_not_waive_it(name: str) -> None:
+    """`authenticator*` is reserved too: the `*` lets the privileged role change
+    its settings, not its password."""
+    state = state_of(_row(name, reserved_roles=SUPABASE_RESERVED))
+
+    assert state.reserved_by == RESERVED_ROLES
+    found = review(state, declared=(name,))
+    assert [refusal.check for refusal in found.refusals] == [RESERVED]
+    assert RESERVED_ROLES in found.refusals[0].reason
+    forced = review(state, declared=(name,), force=True)
+    assert not forced.permitted
+    assert forced.overridden == ()
+
+
+@pytest.mark.parametrize("setting", [None, "", SUPABASE_RESERVED])
+def test_a_role_the_setting_does_not_name_is_not_reserved(setting: str | None) -> None:
+    """`None` is a server without supautils, where `current_setting(…, true)`
+    gives `NULL`."""
+    state = state_of(_row(reserved_roles=setting))
+
+    assert state.reserved_by is None
+    assert _checks(reserved_roles=setting) == set()
+
+
+def test_reserved_names_are_compared_exactly_as_supautils_compares_them() -> None:
+    assert reserved_names(SUPABASE_RESERVED) >= {"pgbouncer", "authenticator", "anon"}
+    assert "authenticator*" not in reserved_names(SUPABASE_RESERVED)
+    assert state_of(_row("ANON", reserved_roles="anon*")).reserved_by is None
+    assert reserved_names(" , anon ,") == frozenset({"anon"})
+
+
+def test_the_query_reads_the_setting_without_failing_where_it_is_undefined() -> None:
+    assert f"current_setting('{RESERVED_ROLES}', true)" in ROLE_QUERY
 
 
 # ------------------------------------------------------------- the lookup ---

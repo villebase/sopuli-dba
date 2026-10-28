@@ -1586,6 +1586,26 @@ def test_a_named_superuser_is_not_sent_to_force_or_to_the_whitelist(
     assert "no flag extends the whitelist" not in reported
 
 
+def test_a_named_reserved_role_is_not_sent_to_force_or_to_the_whitelist(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Check 8 is never waived, as check 6 is not (#1111)."""
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=False, reserved_by="supautils.reserved_roles"
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--output", "json")
+
+    reported = json.dumps(document(result))
+    assert "the server reserves this account in supautils.reserved_roles" in reported
+    assert "a reserved role's password is not one this tool changes" in reported
+    assert "--force to override" not in reported
+
+
 def test_the_tool_s_own_account_is_skipped_and_force_changes_it_on_the_record(
     runner: CliRunner,
     write_config: Callable[[str], Path],

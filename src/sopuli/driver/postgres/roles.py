@@ -18,6 +18,8 @@ field                           PostgreSQL
                                 and membership in a role of
                                 :data:`GUARDED_ROLES` (check 4)
 ``session_account``             the role is ``session_user`` (check 7)
+``reserved_by``                 ``supautils.reserved_roles`` names the role
+                                (check 8)
 ``password_file_member``        ``False``: PostgreSQL has no password file
 ``locked``                      ``rolcanlogin`` is false (``NOLOGIN``)
 ``expired``                     ``rolvaliduntil`` is in the past
@@ -33,6 +35,15 @@ not a lock in Oracle's sense, and nothing here unlocks it.
 any password until somebody moves the date, so a new password does not fix it.
 ``-infinity`` is expired with no date, because no ``datetime`` holds it: the
 status still says ``EXPIRED``.
+
+**A role in ``supautils.reserved_roles`` is reserved.** supautils is a
+library Supabase preloads, so it is not in ``pg_extension``. It refuses any
+change to a role on that list by anyone but a superuser, and the tool never
+connects as one. Reading the setting is the capability probe: any role can
+read it, and it is ``NULL`` on a server where nothing defines it (invariant 3).
+An entry may end in ``*``, which lets the privileged role change the role's
+settings. The role is reserved either way, so the ``*`` is dropped. Names are
+compared exactly, as supautils compares them.
 
 **The name is matched by Python's** ``str.upper()``, the comparison the config
 uses (invariant 5), and the role keeps the spelling ``pg_roles`` gives back:
@@ -74,6 +85,9 @@ GUARDED_ATTRIBUTES = ("REPLICATION", "BYPASSRLS", "CREATEROLE")
 #: ``FirstNormalObjectId``: every oid below it was made by ``initdb``.
 FIRST_NORMAL_OID = 16384
 
+#: The supautils setting that lists the roles only a superuser may change.
+RESERVED_ROLES = "supautils.reserved_roles"
+
 #: Why :attr:`UserState.password_changed_at` is always ``None`` here.
 NO_CHANGE_DATE = "PostgreSQL does not record when a role's password was changed"
 
@@ -94,6 +108,9 @@ EXPIRED = "EXPIRED"
 #: rather than asking ``pg_has_role`` of every role in the cluster, costs the
 #: role's own memberships, and does not report a superuser as a member of
 #: everything.
+#:
+#: The last column is :data:`RESERVED_ROLES`, ``missing_ok`` so that a server
+#: without supautils gives ``NULL`` rather than an error.
 ROLE_QUERY = (
     "select r.rolname, r.rolsuper, r.rolcanlogin, r.rolreplication, r.rolbypassrls, "
     f"r.rolcreaterole, r.oid < {FIRST_NORMAL_OID}, r.rolname = session_user, "
@@ -102,7 +119,8 @@ ROLE_QUERY = (
     "array(with recursive held(oid) as ("
     "select m.roleid from pg_auth_members m where m.member = r.oid "
     "union select m.roleid from pg_auth_members m join held on m.member = held.oid"
-    ") select b.rolname from held join pg_roles b on b.oid = held.oid order by b.rolname) "
+    ") select b.rolname from held join pg_roles b on b.oid = held.oid order by b.rolname), "
+    f"current_setting('{RESERVED_ROLES}', true) "
     "from pg_roles r where upper(r.rolname) = upper(%s) "
     "or octet_length(r.rolname) <> char_length(r.rolname)"
 )
@@ -164,6 +182,7 @@ def state_of(row: tuple[Any, ...]) -> UserState:
         valid_until,
         expired,
         member_of,
+        reserved_roles,
     ) = row
     attributes = dict(zip(GUARDED_ATTRIBUTES, (replication, bypassrls, createrole), strict=True))
     held = frozenset(str(role) for role in member_of or ())
@@ -181,7 +200,20 @@ def state_of(row: tuple[Any, ...]) -> UserState:
         | frozenset(role.upper() for role in held & GUARDED_ROLES),
         superuser=bool(superuser),
         session_account=bool(session_account),
+        reserved_by=RESERVED_ROLES if str(name) in reserved_names(reserved_roles) else None,
     )
+
+
+def reserved_names(setting: str | None) -> frozenset[str]:
+    """The role names in a ``supautils.reserved_roles`` value.
+
+    The value is a comma-separated list, such as ``supabase_admin, anon*``.
+    ``None`` and ``''`` reserve nothing.
+    """
+    if not setting:
+        return frozenset()
+    names = (entry.strip().removesuffix("*") for entry in setting.split(","))
+    return frozenset(name for name in names if name)
 
 
 def _status(*, can_login: bool, expired: bool) -> str:

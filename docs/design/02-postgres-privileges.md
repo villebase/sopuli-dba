@@ -267,6 +267,18 @@ The rules are product-neutral. The driver reads the facts from `pg_roles` and
 | 4 | a member of `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`, `pg_read_all_data`, `pg_write_all_data` or `pg_signal_backend`, through any chain of grants | `pg_auth_members`, walked up from the role | waives |
 | 6 | a superuser | `rolsuper` | never |
 | 7 | the tool's own account, the one the session logged in as | `session_user` | waives |
+| 8 | a role the server reserves, so that only a superuser may change it | `current_setting('supautils.reserved_roles', true)` names the role | never |
+
+Check 8 is for a server that preloads supautils, as Supabase does. supautils
+refuses any change to a role on its `reserved_roles` list by anyone but a
+superuser, with `ERROR: "authenticator" is a reserved role, only superusers can
+modify it`. Without check 8 a run would get as far as `ALTER ROLE` and fail
+there. Any role can read the setting, and it is `NULL` on a server without
+supautils, so reading it is the capability probe. An entry that ends in `*`,
+such as `anon*`, is still reserved: the `*` lets supautils' privileged role
+change the role's settings. Names are compared exactly, as supautils compares
+them. Supabase's own roles have oids of 16384 and above, so check 2 does not
+catch them.
 
 Check 3, the password file, does not exist on PostgreSQL, so it always passes
 and leaves no caveat. Check 5 is for an Oracle release with no answer to check 2.

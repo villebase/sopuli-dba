@@ -22,6 +22,7 @@ from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetPostgres
 from sopuli.driver.guardrails import (
     OWN_ACCOUNT,
     PRIVILEGED_ROLE,
+    RESERVED,
     SUPERUSER,
     VENDOR_MAINTAINED,
     review,
@@ -62,6 +63,7 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         "createrole": f"acme_{suffix}_cr_user",
         "reader": f"acme_{suffix}_reader_user",
         "group": f"acme_{suffix}_readers",
+        "reserved": f"acme_{suffix}_reserved_user",
     }
     password = uuid.uuid4().hex
     try:
@@ -83,6 +85,15 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
             admin.execute(f'create role "{names["group"]}" nologin')
             admin.execute(f'grant pg_read_all_data to "{names["group"]}"')
             admin.execute(f'create role "{names["reader"]}" login in role "{names["group"]}"')
+            # No supautils here, but the server keeps an unknown dotted setting
+            # as a placeholder, so the tool account's sessions can read one.
+            admin.execute(f'create role "{names["reserved"]}" login')
+            admin.execute(
+                sql.SQL("alter role {} set supautils.reserved_roles = {}").format(
+                    sql.Identifier(names["tool"]),
+                    sql.Literal(f"acme_{suffix}_other_user, {names['reserved']}*"),
+                )
+            )
         yield {**names, "password": password}
     finally:
         with _superuser(live_postgres) as admin:
@@ -194,3 +205,15 @@ def test_the_tool_s_own_role_is_check_seven(session: Any, roles: dict[str, str])
     # The tool account holds CREATEROLE, as `02-postgres-privileges.md` §2 says
     # it must, so check 4 objects as well.
     assert _checks(session, roles["tool"]) == {OWN_ACCOUNT, PRIVILEGED_ROLE}
+
+
+def test_a_role_in_supautils_reserved_roles_is_check_eight(
+    session: Any, roles: dict[str, str]
+) -> None:
+    """The read, not supautils' own refusal: this server has no supautils.
+    The entry ends in `*`, and the role is reserved all the same."""
+    state = session.describe_user(roles["reserved"])
+
+    assert state.reserved_by == "supautils.reserved_roles"
+    assert _checks(session, roles["reserved"]) == {RESERVED}
+    assert session.describe_user(roles["ordinary"]).reserved_by is None

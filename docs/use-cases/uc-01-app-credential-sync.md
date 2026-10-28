@@ -558,7 +558,7 @@ These rules decide what `apply` does with each account:
   survey. `apply` cannot do what it was run to do.
 
 `--force` waives account guardrails 2 to 5 and 7 in `02-oracle-privileges.md`
-§4, and never checks 1 and 6. The run document records each waiver in `results[].overridden`.
+§4, and never checks 1, 6 and 8. The run document records each waiver in `results[].overridden`.
 `--lockout-margin` sets the lockout guard that §7 describes, for the logins
 `apply` makes.
 

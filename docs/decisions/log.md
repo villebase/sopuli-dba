@@ -488,6 +488,8 @@ the register.
   It is not a setting itself. It is recorded in the audit event and in the run
   document. [#1059](#1059) added check 7, the tool's own account, to the checks
   it overrides, and check 6, a superuser, to the ones it never overrides.
+  [#1111](#1111) added check 8, a role the server reserves, to the ones it never
+  overrides.
 - **Why:** Managing the password of an Oracle-maintained account such as
   `DBSNMP` is ordinary DBA work. A tool with no override does not stop that
   change. It moves it to SQL\*Plus, where nothing records it. An audited
@@ -3292,3 +3294,24 @@ the register.
     only an estate with a second channel gets.
   - A fixed set of `ttl` values in the config. It would refuse values a server
     with `--allow-custom-expiration` accepts.
+
+## #1111
+
+- **Decided:** 2026-10-28, #1111
+- **Question:** On Supabase, supautils refuses a change to any role in
+  `supautils.reserved_roles` by anyone but a superuser. The tool should refuse
+  such a role at plan time, not at `ALTER ROLE` (invariant 4). Can `--force`
+  waive that refusal?
+- **Decision:** No. Check 8 joins `02-oracle-privileges.md` §4. It refuses an
+  account the server reserves, and nothing waives it, as nothing waives check 6.
+  It reads `UserState.reserved_by`, which only the PostgreSQL driver sets, from
+  `current_setting('supautils.reserved_roles', true)`.
+- **Why:** Only a superuser may change a reserved role, and the tool refuses to
+  connect as a superuser. A waiver would only move the refusal to the server,
+  after the run had started, which is the failure check 8 exists to prevent.
+  This is the reason #1059 gives for check 6.
+- **Rejected:**
+  - Reporting a reserved role as vendor-maintained, so that check 2 refuses it.
+    No new check, but `--force` waives check 2, and a forced run would then fail
+    at `ALTER ROLE` with the server's error. Check 2's message would not name
+    the setting either.

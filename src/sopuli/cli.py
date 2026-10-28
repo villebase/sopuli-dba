@@ -1387,7 +1387,10 @@ def account_group() -> None:
     "--force",
     is_flag=True,
     default=False,
-    help="Waive guardrails 2 to 5 and 7. Never the whitelist or a superuser, which nothing waives.",
+    help=(
+        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser or a reserved role, "
+        "which nothing waives."
+    ),
 )
 @global_options
 def account_suspend(
@@ -1684,7 +1687,10 @@ def _suspend_one(
     "--force",
     is_flag=True,
     default=False,
-    help="Waive guardrails 2 to 5 and 7. Never the whitelist or a superuser, which nothing waives.",
+    help=(
+        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser or a reserved role, "
+        "which nothing waives."
+    ),
 )
 @global_options
 def account_expire_password(
@@ -2008,7 +2014,10 @@ def _unseen_methods_built() -> str:
     "--force",
     is_flag=True,
     default=False,
-    help=("Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser, or a deliberate lock."),
+    help=(
+        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser, a reserved role, "
+        "or a deliberate lock."
+    ),
 )
 @global_options
 @help_with(
@@ -6474,8 +6483,9 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
         "Waive the account guardrails of 02-oracle-privileges.md section 4, "
         "checks 2 to 5 and 7: vendor-maintained, password file, admin role, deny "
         "list, the tool's own account. Never check 1 -- an account the config does "
-        "not declare is refused whatever this says -- and never check 6, a superuser. "
-        "Every waiver is recorded in the run document."
+        "not declare is refused whatever this says -- and never check 6, a superuser, "
+        "or check 8, a role the server reserves. Every waiver is recorded in the run "
+        "document."
     ),
 )
 @global_options
@@ -8437,12 +8447,16 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     if not named:
         return reasons
     checks = {refusal.check for refusal in review.refusals}
-    # Checks 1 and 6 are the ones no flag reaches. Saying "--force" there would
-    # send an operator to a flag that is going to refuse them again.
+    # Checks 1, 6 and 8 are the ones no flag reaches. Saying "--force" there
+    # would send an operator to a flag that is going to refuse them again.
     if guardrails.DECLARED in checks:
         remedy = "declare it in `accounts:` first; no flag extends the whitelist"
     elif guardrails.SUPERUSER in checks:
         remedy = "a superuser's password is not one this tool changes; leave it out of the config"
+    elif guardrails.RESERVED in checks:
+        remedy = (
+            "a reserved role's password is not one this tool changes; leave it out of the config"
+        )
     else:
         remedy = "pass --force to override, which is recorded"
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
@@ -10671,8 +10685,9 @@ def _finish_one(
         "Waive the account guardrails of 02-oracle-privileges.md section 4, "
         "checks 2 to 5 and 7: vendor-maintained, password file, admin role, deny "
         "list, the tool's own account. Never check 1 -- an account the config does "
-        "not declare is refused whatever this says -- and never check 6, a superuser. "
-        "Every waiver is recorded in the run document."
+        "not declare is refused whatever this says -- and never check 6, a superuser, "
+        "or check 8, a role the server reserves. Every waiver is recorded in the run "
+        "document."
     ),
 )
 @global_options

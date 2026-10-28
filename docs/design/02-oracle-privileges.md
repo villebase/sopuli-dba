@@ -808,15 +808,19 @@ Before any `ALTER USER`, the tool refuses when the target account:
    (`02-postgres-privileges.md` §5, which gives the PostgreSQL facts for every
    check); Oracle's nearest thing, `SYSDBA`, is check 3;
 7. is the account the session is connected as: the tool's own. Changing it
-   mid-run can lock the tool out of the targets it has not reached yet.
+   mid-run can lock the tool out of the targets it has not reached yet;
+8. is reserved by the server, so that only a superuser may change it. Only the
+   PostgreSQL driver reports one: a role in supautils' `reserved_roles`, as on
+   Supabase.
 
 `--force` overrides checks 2 to 5 and 7, for a DBA who deliberately manages an
 unusual account, or rotates the tool's own password
 ([P3](../decisions/log.md#p3), [#1059](../decisions/log.md#1059)). The audit
 event and the JSON output record the override. It never overrides check 1,
 because acting on an account the config does not declare would make the tool's
-own audit trail meaningless. It never overrides check 6 either: a tool account
-that is not a superuser cannot change a superuser's password.
+own audit trail meaningless. It never overrides check 6 or check 8 either: only
+a superuser can change a superuser's password or a reserved role's, and the
+tool never connects as one ([#1111](../decisions/log.md#1111)).
 
 `src/sopuli/driver/guardrails.py` implements the checks. It reviews; it does
 not decide, as the error mapping does. `creds apply`, `creds rotate`, `account
@@ -1436,7 +1440,7 @@ each header says what it creates and leaves behind.
 |---|---|---|
 | ~~P1~~ | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
 | ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative is #124. Reasons: [P2](../decisions/log.md#p2) |
-| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 of §4, and check 7 since #1059; it never overrides check 1 or check 6. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
+| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 of §4, and check 7 since #1059; it never overrides check 1, check 6 or check 8. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
 | ~~P4~~ | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213); `scope.over_granted` is populated and the exit code is unchanged. Reasons: [P5](../decisions/log.md#p5) |
 | ~~P6~~ | ~~11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases?~~ | **decided** (#615): keep for now, drop if it starts costing real complexity. Reasons: [P6](../decisions/log.md#p6) |

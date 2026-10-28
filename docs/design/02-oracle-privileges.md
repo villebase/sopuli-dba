@@ -324,14 +324,40 @@ reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
 
-Whether to recommend the grant, and whether a narrower grant exists, is not
-decided (open: #124). The Data Pump metadata views `SYS.KU$_USER_VIEW` and
-`SYS.KU$_USER_BASE_VIEW` are granted to `PUBLIC`. A blog post says they show
-`LCOUNT` under `SELECT_CATALOG_ROLE` alone, and hide `SPARE4` unless the session
-also holds `EXP_FULL_DATABASE`. If that is true, a site could enable the `LCOUNT`
-guard without exposing verifiers (unverified: lcount-grant). It comes from a blog
-post, not from Oracle's documentation, so it must be measured before
-`00_install.sql` recommends it.
+Whether to recommend the grant, and whether to offer a narrower one, is not
+decided (open: #124). On the release measured, a narrower source of `LCOUNT`
+exists. The Data Pump metadata view `SYS.KU$_USER_VIEW` is granted to `PUBLIC`.
+To a session with `SELECT_CATALOG_ROLE` enabled, it shows every user's `LCOUNT`
+and `PTIME`, and they equal the values in `SYS.USER$`. It masks the verifiers:
+`SPARE4` is one space on every row, and `PASSWORD` and `SPARE4_12` are NULL.
+`sql/oracle/16_lcount_grant_probe.sql` measured it, and
+[`../measurements.md`](../measurements.md) has the run. The run also showed:
+
+- **The role must be enabled in the session.** With no role, or after
+  `SET ROLE NONE`, the view returns no rows, not even the reader's own.
+- **`EXP_FULL_DATABASE` does not unmask the verifiers** in a SQL session. The
+  blog post that suggested the view says it does.
+- **A grant on `SYS.USER$` does unmask them.** The view shows the verifiers to
+  a session that holds the role and also `SELECT` or `READ` on `SYS.USER$`,
+  directly or through an enabled role. So the role hides the verifiers only from
+  an account that does not also hold that grant.
+- **`SYS.KU$_USER_BASE_VIEW` does not exist** on that release.
+- **A common account's failed logins in a PDB count in `CDB$ROOT`.** After four
+  failed logins in the root and two in the PDB, `SYS.USER$` holds `LCOUNT` 6 in
+  the root and 0 in the PDB. Read in the PDB, by either route, the common
+  account's `LCOUNT` is 0, and its `PTIME` in the view is NULL.
+- **A read through the view is not quieter in the audit trail.** Under a unified
+  audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
+  leaves six `USER$` rows under the reader's name, with the reader's statement.
+  With the role it leaves 74 more, for the recursive statement that checks the
+  grant. Only `SQL_TEXT` tells a read through the view from a direct read.
+- **`SELECT_CATALOG_ROLE` is broad.** It holds 5663 object grants on that
+  release. It hides the verifiers, but it shows the account much of the data
+  dictionary. `00_install.sql` grants explicit views instead of the role for
+  that reason.
+
+The view is not documented by Oracle, and other releases are not measured
+(unverified: lcount-grant-releases).
 
 #### Hash mode
 
@@ -1421,6 +1447,7 @@ the design as it is then.
 | `sql/oracle/13_audit_coverage_probe.sql` | what a service account can read about the enabled audit policies, and what each way of enabling a policy records of the proxy route (§2, §5) |
 | `sql/oracle/14_session_loss_probe.py` | the code the client raises when a held session is lost to a closed PDB or a CDB shutdown, and when a logon meets a CDB that is starting (UC-1 §6.4) |
 | `sql/oracle/15_mixed_mode_trail_probe.sql` | whether, in mixed mode, an enabled unified policy records a logon and an `ALTER USER` under each `AUDIT_TRAIL` setting (§5) |
+| `sql/oracle/16_lcount_grant_probe.sql` | what `SYS.KU$_USER_VIEW` shows of `LCOUNT` and the verifiers under each role combination, in a PDB and in `CDB$ROOT`, and what a read leaves in the audit trail (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

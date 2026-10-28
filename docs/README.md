@@ -279,12 +279,22 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
   time (invariant 4, #433); the gate is a per-account capability, never a
   version. `check --method hash|both` depends on this (#437); the default
   method, `login`, does not (#86). Not claimed on 12.1, which is unmeasured.
-- `unverified` `lcount-grant` (#124) — **Does `SELECT_CATALOG_ROLE`, through
+- `verified` `lcount-grant` (#124) — **Does `SELECT_CATALOG_ROLE`, through
   `SYS.KU$_USER_VIEW`, expose `LCOUNT` without `SPARE4`?**
-  Not run. The idea comes from a blog post, not from Oracle's documentation. If
-  it works, it is a narrower grant than `SELECT ON SYS.USER$` for the `LCOUNT`
-  guard. It affects only what `sql/oracle/00_install.sql` recommends to a site
-  that wants that guard. Nothing in the default path depends on it.
+  Yes, on the one release measured. To a session with the role enabled, the view
+  shows every user's `LCOUNT` and `PTIME`, and `SPARE4` as one space.
+  `EXP_FULL_DATABASE` does not unmask the verifiers; a `SELECT` or `READ` grant
+  on `SYS.USER$` beside the role does. With no role enabled the view shows no
+  rows. `SYS.KU$_USER_BASE_VIEW` does not exist there.
+  `sql/oracle/16_lcount_grant_probe.sql` measures it, and
+  `02-oracle-privileges.md` §2 has the rest of the result. Whether
+  `00_install.sql` recommends the role is a decision (#124). Nothing in the
+  default path depends on it.
+- `unverified` `lcount-grant-releases` (#124) — **Does `SYS.KU$_USER_VIEW`
+  behave the same on the releases not measured?**
+  Not run on any release but one 26ai Free release. The view is not documented
+  by Oracle, so its columns and its role check may differ between releases. The
+  19.3 image is maintainer-only (`maintainer-environments.md` §2).
 
 ### Connections and wallets
 

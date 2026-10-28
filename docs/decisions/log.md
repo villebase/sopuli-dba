@@ -2831,8 +2831,8 @@ the register.
   none.
 - **Decision:** Only under `--preflight`. The survey already reads each account,
   so the pass's question is asked of what it read, and each credential the run
-  would skip everywhere is `SOPULI-W055`. Not under `--force`, where the real run
-  does not ask. A new code, so run schema 1.54 and event schema 1.15. UC-1 §5
+  would skip everywhere is `SOPULI-W055`. Under `--force` only the checks no
+  flag waives refuse, as in the real run ([#1111](#1111)). A new code, so run schema 1.54 and event schema 1.15. UC-1 §5
   states the rule.
 - **Why:** `--preflight` is where an operator asks what the databases will
   say, and it already connects, so the forecast costs no connection. A plain
@@ -3299,13 +3299,16 @@ the register.
 
 - **Decided:** 2026-10-28, #1111
 - **Question:** On Supabase, supautils refuses a change to any role in
-  `supautils.reserved_roles` by anyone but a superuser. The tool should refuse
-  such a role at plan time, not at `ALTER ROLE` (invariant 4). Can `--force`
-  waive that refusal?
+  `supautils.reserved_roles` by anyone but a superuser. The account guardrails
+  should refuse such a role before anything changes, as they refuse a
+  superuser, so that the server does not refuse the `ALTER ROLE` halfway
+  through a run. Can `--force` waive that refusal?
 - **Decision:** No. Check 8 joins `02-oracle-privileges.md` §4. It refuses an
   account the server reserves, and nothing waives it, as nothing waives check 6.
   It reads `UserState.reserved_by`, which only the PostgreSQL driver sets, from
-  `current_setting('supautils.reserved_roles', true)`.
+  `current_setting('supautils.reserved_roles', true)`. Under `--force` the
+  guardrail pass before the first change still runs, with only checks 6 and 8
+  refusing, so a shared credential that one target refuses is changed on none.
 - **Why:** Only a superuser may change a reserved role, and the tool refuses to
   connect as a superuser. A waiver would only move the refusal to the server,
   after the run had started, which is the failure check 8 exists to prevent.

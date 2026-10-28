@@ -6747,15 +6747,10 @@ def creds_apply(
                 findings, document, header=_header(plan, sources), notes=repair_notes
             )
         # The guardrail pass's answer, from the accounts the survey read (#988).
-        # After the refusal: a run the survey stops never reaches the pass. Not
-        # under `--force`, where the real run does not ask: it waives every
-        # check that could refuse an application account.
-        skipped_ahead = (
-            []
-            if force
-            else _guardrail_pass_ahead(
-                _shared_credentials(sources), read, declared=_declared_accounts(run)
-            )
+        # After the refusal: a run the survey stops never reaches the pass. Under
+        # `--force` it is the checks no flag waives (#1111).
+        skipped_ahead = _guardrail_pass_ahead(
+            _shared_credentials(sources), read, declared=_declared_accounts(run), force=force
         )
         document.diagnostics.extend(skipped_ahead)
         repair_notes.extend(one.message for one in skipped_ahead)
@@ -7450,9 +7445,9 @@ def _apply_estate(
     declared = _declared_accounts(run)
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     unreachable: dict[str, BaseException] = {}
-    if ask_first and not force:
-        # Not under `--force`: it waives every check that can refuse an
-        # application account here, so the pass could find nothing.
+    if ask_first:
+        # Under `--force` too: it does not waive a superuser or a reserved role
+        # (#1111), and either can refuse a shared credential on one target.
         shared = _shared_credentials(sources)
         try:
             if surveyed is not None and all(
@@ -7463,11 +7458,17 @@ def _apply_estate(
                 # Every account the pass asks about, read by the survey (#998).
                 # One it did not read sends the pass to read for itself rather
                 # than refuse nothing on it.
-                refused = _refusals(shared, surveyed, declared=declared)
+                refused = _refusals(shared, surveyed, declared=declared, force=force)
                 connected = bool(shared)
             else:
                 refused, unreachable, connected = _refused_somewhere(
-                    sources, by_target, run, config, declared=declared, renew=manager.renew
+                    sources,
+                    by_target,
+                    run,
+                    config,
+                    declared=declared,
+                    force=force,
+                    renew=manager.renew,
                 )
             if connected:
                 # Between taking the lock and the first change sits the survey or
@@ -7564,6 +7565,7 @@ def _guardrail_pass_ahead(
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
+    force: bool,
 ) -> list[Diagnostic]:
     """What the real run's guardrail pass would skip, as `SOPULI-W055` (#988).
 
@@ -7576,7 +7578,7 @@ def _guardrail_pass_ahead(
     as the pass leaves it to the run.
     """
     notices: list[Diagnostic] = []
-    for credential, refusing in _refusals(shared, states, declared=declared).items():
+    for credential, refusing in _refusals(shared, states, declared=declared, force=force).items():
         bound = {binding.target: binding.account for binding in shared[credential]}
         notices.append(
             guardrail_pass_ahead(
@@ -7596,6 +7598,7 @@ def _refusals(
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
+    force: bool,
 ) -> dict[Credential, dict[str, guardrails.Review]]:
     """The guardrail pass's decision, on accounts already read (#872).
 
@@ -7604,6 +7607,9 @@ def _refusals(
     ``states`` was not read, or does not exist, and refuses nothing here: the
     run's own row reports it. The one rule :func:`_refused_somewhere` and the
     dry run's forecast both apply, so the two cannot come to differ.
+
+    ``force`` is the run's: under `--force` only a check no flag waives refuses,
+    a superuser or a reserved role (#1111), as at the point of change.
     """
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     for credential, bindings in shared.items():
@@ -7611,7 +7617,7 @@ def _refusals(
             state = states.get((binding.target, binding.account))
             if state is None:
                 continue
-            review = guardrails.review(state, declared=declared, force=False)
+            review = guardrails.review(state, declared=declared, force=force)
             if not review.permitted:
                 refused.setdefault(credential, {})[binding.target] = review
     return refused
@@ -7622,6 +7628,7 @@ def _skipped_ahead(
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
+    force: bool,
 ) -> dict[Credential, dict[str, guardrails.Review]]:
     """Every credential a rotation's guardrails would skip, before it stages (#1009).
 
@@ -7629,7 +7636,7 @@ def _skipped_ahead(
     asks about: an account bound to one target is skipped by the check at the
     point of change, and staging it would leave a `pending` nothing applies.
     """
-    return _refusals(_by_credential(rotating), states, declared=declared)
+    return _refusals(_by_credential(rotating), states, declared=declared, force=force)
 
 
 def _to_stage(
@@ -7644,9 +7651,9 @@ def _to_stage(
 
     One function for the run and its preview, so the preview decides as the run
     does. Refuses over a `pending` among what it stages (#769). Under `--force`
-    nothing is skipped.
+    only a check no flag waives skips a credential.
     """
-    skipped = {} if force else _skipped_ahead(rotating, states, declared=_declared_accounts(run))
+    skipped = _skipped_ahead(rotating, states, declared=_declared_accounts(run), force=force)
     drawn = [binding for binding in rotating if _credential(binding) not in skipped]
     _refuse_staged_rotation(drawn, documents)
     return drawn, skipped
@@ -7659,6 +7666,7 @@ def _refused_somewhere(
     config: Config,
     *,
     declared: frozenset[str],
+    force: bool,
     renew: Callable[[], None],
 ) -> tuple[dict[Credential, dict[str, guardrails.Review]], dict[str, BaseException], bool]:
     """The credentials a guardrail refuses on some target, before any is changed;
@@ -7726,7 +7734,7 @@ def _refused_somewhere(
         finally:
             with suppress(Exception):
                 session.close()
-    return _refusals(shared, states, declared=declared), unreachable, bool(asked)
+    return _refusals(shared, states, declared=declared, force=force), unreachable, bool(asked)
 
 
 def _apply_target(
@@ -8462,11 +8470,9 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
 #: member of :data:`guardrails.NEVER_WAIVED`, which a test holds it to.
 UNWAIVABLE_REMEDIES = {
     guardrails.DECLARED: "declare it in `accounts:` first; no flag extends the whitelist",
-    guardrails.SUPERUSER: (
-        "a superuser's password is not one this tool changes; leave it out of the config"
-    ),
+    guardrails.SUPERUSER: "this tool does not change a superuser; leave it out of the config",
     guardrails.RESERVED: (
-        "a reserved role's password is not one this tool changes; leave it out of the config"
+        "this tool does not change a role the server reserves; leave it out of the config"
     ),
 }
 
@@ -11251,7 +11257,7 @@ def _rotate_estate(
         selection=selection,
         force=force,
         surveyed=surveyed,
-        decided=None if force else skipped,
+        decided=skipped,
     )
     if into.stolen is not None:
         return None
@@ -11636,10 +11642,8 @@ def _preview_rotation(
     _to_stage(rotating, documents, read, run=run, force=force)
     # After the refusal, as in `apply`: a run the survey stops never reaches the
     # pass.
-    skipped_ahead = (
-        []
-        if force
-        else _guardrail_pass_ahead(_shared_among(rotating), read, declared=_declared_accounts(run))
+    skipped_ahead = _guardrail_pass_ahead(
+        _shared_among(rotating), read, declared=_declared_accounts(run), force=force
     )
     document.diagnostics.extend(skipped_ahead)
 

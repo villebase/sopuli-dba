@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.63.schema.json`](../schemas/sopuli-run-1.63.schema.json),
-[`../schemas/sopuli-event-1.18.schema.json`](../schemas/sopuli-event-1.18.schema.json)
+Schemas: [`../schemas/sopuli-run-1.64.schema.json`](../schemas/sopuli-run-1.64.schema.json),
+[`../schemas/sopuli-event-1.19.schema.json`](../schemas/sopuli-event-1.19.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -1924,8 +1924,8 @@ no re-run at all.
 **`overridden`** lists the account guardrails (`02-oracle-privileges.md` §4) that
 `--force` waived on this row: the check that refused, and what it observed. It is
 absent where nothing was waived, because the field records overrides, not
-intent. Its `check` enum has no `declared` and no `superuser`: checks 1 and 6
-are the refusals `--force` cannot waive, so a document can never carry them
+intent. Its `check` enum has no `declared`, `superuser` or `reserved`: checks 1,
+6 and 8 are the refusals `--force` cannot waive, so a document can never carry them
 here, and an enum that admitted them would advertise an override the tool
 refuses to make. `own_account`, check 7, is in it from run schema 1.62 (#1059).
 
@@ -2016,6 +2016,16 @@ unseen method will have its own kind of handle for the same fact.
   name. The person reads the path with their own Vault identity, so neither
   field retrieves anything, and together they find the person's read in Vault's
   audit device (UC-2 §6.6). Both are absent on every other method.
+- **On `one_time_link`, `id` is the Yopass secret's id**, from run schema 1.64
+  and event schema 1.19. `accessor` is `null`. The id cannot read the secret,
+  because the key is not in it. Like an accessor it can destroy what it names:
+  whoever holds it can fetch the ciphertext, which uses up the one view, or
+  delete the secret, and the person's own fetch then fails. An unlicensed
+  Yopass server keeps no record of the read, so the id is the hand-over's only
+  record. Yopass returns no expiry, so `expires_at` is the `Date` header of the
+  server's answer to the create, plus the `ttl`: the server's clock, as on the
+  Vault methods. It is `null` when the answer has no `Date` header. `id` is
+  absent on every other method (UC-2 §6.6, decided in #445).
 
 **`audited`** says whether the database audits the DBA's routes to acting as the
 person (UC-2 §1): `true`, `false` or `"unknown"`. **`audited_detail`** says why:
@@ -2318,7 +2328,12 @@ sites `CLAUDE.md` invariant 2 lists:
 2. the driver call;
 3. `policy sample --reveal`;
 4. `account reset-password` on the seen (`manual`) path;
-5. the wrapping token that an unseen (`vault_wrapped`) delivery returns.
+5. the retrieval credential an unseen delivery returns: the wrapping token on
+   `vault_wrapped`, and the one-time link, or its key, on `one_time_link`.
+
+On `one_time_link` the password reaches `pysequoia` in the process, and only
+ciphertext goes to the Yopass server. That encryption is the method's store
+write, so it falls under site 1 (decided in #445).
 
 The tool also presents credentials to the services it calls: the vault login,
 the vault token on the wire, and a webhook URL ([C9](../decisions/log.md#c9)).
@@ -2450,6 +2465,13 @@ the full argument.
 | no document can carry it | the run document has no property for it. `results[].handover` carries the token's *accessor*, which names the hand-over and cannot perform it, and its expiry. The `password.delivered` event carries the same `handover` object, and event schema 1.7 closes that payload |
 | it never goes to stdout under a machine format | under `--output json` or `jsonl` it is written to stderr, because stdout carries the document. `vault_wrapped` is not refused with `--output json`, unlike `manual`: the document is what makes a scheduled reset auditable |
 | it is one call site | its one `reveal()` is in `sopuli/output/delivery_view.py`. `delivery/vault_wrapped.py` holds the vault write that creates it, which is site 1 |
+
+**On the `one_time_link` path the same rules hold for the link** (decided in
+#445). What comes back is a link that holds the key, or in split mode the key
+alone. Either is a retrieval credential, kept in a `Secret` and printed by
+`sopuli/output/delivery_view.py` under the rules above. In split mode the link
+without the key is printed beside it in plain text: it holds the secret's id and
+nothing that decrypts. `results[].handover` carries that id.
 
 **No terminal is required**, unlike the seen path. A handover script reads the
 token from a pipe, and requiring a terminal would leave an estate no way to

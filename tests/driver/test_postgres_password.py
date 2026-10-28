@@ -63,7 +63,7 @@ class _Connection:
         self.sent: list[Any] = []
         self.refuse: Exception | None = None
         self.role_rows: list[tuple[Any, ...]] = [
-            (ROLE, False, True, False, False, False, False, False, None, False, [])
+            (ROLE, False, True, False, False, False, False, False, None, False, [], None)
         ]
 
     @contextmanager
@@ -129,7 +129,7 @@ def test_libpq_is_asked_for_scram_whatever_the_server_s_setting() -> None:
 def test_the_role_is_named_as_pg_roles_spells_it() -> None:
     session = _session()
     session.connection.role_rows = [
-        ("Acme_Web_User", False, True, False, False, False, False, False, None, False, [])
+        ("Acme_Web_User", False, True, False, False, False, False, False, None, False, [], None)
     ]
 
     session.set_password(ROLE, Secret(PASSWORD))

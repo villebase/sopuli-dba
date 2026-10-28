@@ -61,7 +61,9 @@ the release you chose.
 
 Without `SOPULI_TEST_TIER1=required`, a stopped container makes the tests skip
 rather than fail. Wait for `healthy` after a start: the listener answers before
-the PDB is open.
+the PDB is open. With it, every service the tier-1 CI lane starts must be up,
+`supabase` among them, which is in a profile of its own:
+`docker compose --profile supabase up -d` from `test/`.
 
 The suite reads these variables for Oracle. Each default is the tier-1 stack's,
 so a run against that stack on your own machine needs none of them. The tier-1

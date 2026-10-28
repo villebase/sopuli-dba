@@ -1,16 +1,19 @@
 """What an unseen delivery tells the operator (UC-2 §6.6).
 
-**The wrapping token is emitted and the password is not**, and that difference is
-the whole of this module. `reset_view.render_password` shows a DBA a working
-password under five structural guards, because on the seen path the exposure *is*
-the delivery. Here the password goes to Vault and to nobody else; what the DBA
-holds is a retrieval credential they pass on out of band, because §6.1 bars it
-from the notify channel and the tool carries no other.
+**The retrieval credential is emitted and the password is not**, and that
+difference is the whole of this module. `reset_view.render_password` shows a DBA a
+working password under five structural guards, because on the seen path the
+exposure *is* the delivery. Here the password goes to the store and to nobody
+else; what the DBA holds is a retrieval credential they pass on out of band,
+because §6.1 bars it from the notify channel and the tool carries no other. It is
+a wrapping token on `vault_wrapped`, and a one-time link, or the key apart from
+its link, on `one_time_link` (decision #445).
 
 **It is still secret-bearing.** §6.1's rule is about reach rather than value —
-"the password, or anything that retrieves it" — so the token is a
-:class:`~sopuli.secrets.Secret`, and this module holds the one ``reveal()`` that
-emits one. `tests/test_reveal_sites.py` records it with that reason.
+"the password, or anything that retrieves it" — so the credential is a
+:class:`~sopuli.secrets.Secret`, and this module holds the ``reveal()`` calls
+that emit one: one for a token, one for a link or a key.
+`tests/test_reveal_sites.py` records the module with that reason.
 
 **Three rules, and the third is the one with no counterpart on the seen path.**
 
@@ -73,9 +76,14 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
     single use is what makes interception detectable, and it only does that if
     whoever receives the token is the person who unwraps it -- so the line saying
     *do not unwrap it yourself* is doing work, not being polite.
+
+    A `one_time_link` receipt gets :func:`_render_link`: the link, or the link
+    and the key as two values.
     """
     if receipt.token is None:
         return _render_path(receipt, account=account, target=target)
+    if receipt.id is not None:
+        return _render_link(receipt, account=account, target=target)
     return "\n".join(
         [
             paint(f"hand this to {account} for {target}; it unwraps once:", Role.HEADING),
@@ -88,6 +96,55 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
             f"It stops working {_expires(receipt.expires_at)}, and the first unwrap is the",
             "last. Do not unwrap it to check -- that spends the person's one read, and",
             "them finding it spent is the only warning either of you gets.",
+        ]
+    )
+
+
+def _render_link(receipt: Receipt, *, account: str, target: str) -> str | None:
+    """A `one_time_link` hand-over: the link, or the link and the key apart.
+
+    The receipt's ``token`` is the full link, or in split mode the key alone,
+    with :attr:`Receipt.link` the link without it (decision #445). Either way it
+    is a retrieval credential, and this is a ``reveal()`` of one, for this
+    module's reasons. The link without the key is not one: it holds the id and
+    nothing that decrypts. ``None`` for a receipt with no token, which a
+    `one_time_link` delivery never returns.
+
+    **The same warning as the wrapping token's**, for the same reason: the
+    first open is the last, so a DBA who opens the link to check uses up the
+    person's one view.
+    """
+    token = receipt.token
+    if token is None:
+        return None
+    warning = [
+        "",
+        f"It stops working {_expires(receipt.expires_at)}, and the first open is the last.",
+        "Do not open it to check -- that uses up the person's one view, and them",
+        "finding it gone is the only warning either of you gets.",
+    ]
+    if receipt.link is None:
+        return "\n".join(
+            [
+                paint(f"hand this link to {account} for {target}; it opens once:", Role.HEADING),
+                "",
+                f"    {token.reveal()}",
+                *warning,
+            ]
+        )
+    return "\n".join(
+        [
+            paint(
+                f"hand these to {account} for {target}, by two different channels:",
+                Role.HEADING,
+            ),
+            "",
+            f"    link:  {receipt.link}",
+            f"    key:   {token.reveal()}",
+            "",
+            "The link asks for the key. Send each one a different way, so that neither",
+            "channel alone can read the password.",
+            *warning,
         ]
     )
 

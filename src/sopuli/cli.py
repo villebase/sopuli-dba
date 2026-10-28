@@ -1387,7 +1387,10 @@ def account_group() -> None:
     "--force",
     is_flag=True,
     default=False,
-    help="Waive guardrails 2 to 5 and 7. Never the whitelist or a superuser, which nothing waives.",
+    help=(
+        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser or a reserved role, "
+        "which nothing waives."
+    ),
 )
 @global_options
 def account_suspend(
@@ -1419,7 +1422,8 @@ def account_suspend(
 
     **The guardrails are the ones every mutating verb uses.** Suspending DBSNMP
     refuses exactly as rotating it would, and `--force` waives checks 2 to 5 and
-    7 and never the whitelist, which is invariant 5's own sentence.
+    7 and never 1, 6 or 8: the whitelist, which is invariant 5's own sentence, a
+    superuser, or a role the server reserves.
 
     **Idempotent.** An account that is already locked reports no change and
     issues nothing -- the driver reads the state first, because Oracle accepts
@@ -1684,7 +1688,10 @@ def _suspend_one(
     "--force",
     is_flag=True,
     default=False,
-    help="Waive guardrails 2 to 5 and 7. Never the whitelist or a superuser, which nothing waives.",
+    help=(
+        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser or a reserved role, "
+        "which nothing waives."
+    ),
 )
 @global_options
 def account_expire_password(
@@ -1712,7 +1719,8 @@ def account_expire_password(
     **One account, named on the command line**, and a predicate in
     `personal_accounts:` never widens it -- `account suspend`'s rules. The
     guardrails are the ones every mutating verb uses, and `--force` waives
-    checks 2 to 5 and 7 and never the whitelist.
+    checks 2 to 5 and 7 and never 1, 6 or 8: the whitelist, a superuser, or a
+    role the server reserves.
 
     **Idempotent.** An account already expired with no window open reports no
     change and issues nothing. `EXPIRED(GRACE)` is not already expired: the
@@ -2008,7 +2016,10 @@ def _unseen_methods_built() -> str:
     "--force",
     is_flag=True,
     default=False,
-    help=("Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser, or a deliberate lock."),
+    help=(
+        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser, a reserved role, "
+        "or a deliberate lock."
+    ),
 )
 @global_options
 @help_with(
@@ -3318,10 +3329,38 @@ def _delivery_backends(
 
     Each backend's ``preflight`` runs here on ``account`` as typed. On
     `vault_path` that is the plan-time check of the store's policy (UC-2 §6.6).
+    On `one_time_link` it reads the Yopass server's `/config`.
+
+    **`one_time_link` has one backend for every target.** It uses no store, so
+    nothing differs by target, and one backend reads the server's `/config` once.
+    It is built here, not in :func:`_delivery_backend`, whose job is to open one
+    store per target.
+
+    **A `--dry-run` still runs `one_time_link`'s preflight.** Reading `/config`
+    needs no credential, and a preview that said "would be reset" for a server
+    the real run refuses would be wrong about what the run will do. Nothing is
+    returned, so nothing is delivered.
     """
-    if delivery.is_seen or run.dry_run:
+    if delivery.is_seen:
         return {}
-    backends = {target.name: _delivery_backend(run, config, delivery, target) for target in reached}
+    if delivery.one_time_link is not None:
+        # Imported here, for `_delivery_backend`'s reason.
+        from sopuli.delivery import yopass
+
+        settings = delivery.one_time_link
+        link = yopass.Yopass(
+            base_url=settings.base_url, ttl=settings.ttl, split_key=settings.split_key
+        )
+        link.preflight(account=account, target=reached[0].name if reached else "")
+        if run.dry_run:
+            return {}
+        backends: dict[str, DeliveryBackend] = {target.name: link for target in reached}
+    elif run.dry_run:
+        return {}
+    else:
+        backends = {
+            target.name: _delivery_backend(run, config, delivery, target) for target in reached
+        }
     for target_name, backend in backends.items():
         backend.preflight(account=account, target=target_name)
     return backends
@@ -3335,8 +3374,9 @@ def _delivery_backend(
     One client per store per run, so a reset whose journal and whose
     cubbyhole live in the same vault authenticates to it once.
 
-    One branch per unseen method this build serves. Each further one adds a
-    branch here (TODO(#445), TODO(#446)).
+    One branch per unseen method this build serves that writes to a store.
+    `one_time_link` writes to none, so :func:`_delivery_backends` builds it.
+    Each further method adds a branch here or there (TODO(#446)).
     """
     # Imported here rather than at module scope, for the reason the store registry
     # imports its backends on first use (ADR-006 rule 1). Nothing above this line
@@ -6445,8 +6485,9 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
         "Waive the account guardrails of 02-oracle-privileges.md section 4, "
         "checks 2 to 5 and 7: vendor-maintained, password file, admin role, deny "
         "list, the tool's own account. Never check 1 -- an account the config does "
-        "not declare is refused whatever this says -- and never check 6, a superuser. "
-        "Every waiver is recorded in the run document."
+        "not declare is refused whatever this says -- and never check 6, a superuser, "
+        "or check 8, a role the server reserves. Every waiver is recorded in the run "
+        "document."
     ),
 )
 @global_options
@@ -6706,15 +6747,10 @@ def creds_apply(
                 findings, document, header=_header(plan, sources), notes=repair_notes
             )
         # The guardrail pass's answer, from the accounts the survey read (#988).
-        # After the refusal: a run the survey stops never reaches the pass. Not
-        # under `--force`, where the real run does not ask: it waives every
-        # check that could refuse an application account.
-        skipped_ahead = (
-            []
-            if force
-            else _guardrail_pass_ahead(
-                _shared_credentials(sources), read, declared=_declared_accounts(run)
-            )
+        # After the refusal: a run the survey stops never reaches the pass. Under
+        # `--force` it is the checks no flag waives (#1111).
+        skipped_ahead = _guardrail_pass_ahead(
+            _shared_credentials(sources), read, declared=_declared_accounts(run), force=force
         )
         document.diagnostics.extend(skipped_ahead)
         repair_notes.extend(one.message for one in skipped_ahead)
@@ -7409,9 +7445,9 @@ def _apply_estate(
     declared = _declared_accounts(run)
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     unreachable: dict[str, BaseException] = {}
-    if ask_first and not force:
-        # Not under `--force`: it waives every check that can refuse an
-        # application account here, so the pass could find nothing.
+    if ask_first:
+        # Under `--force` too: it does not waive a superuser or a reserved role
+        # (#1111), and either can refuse a shared credential on one target.
         shared = _shared_credentials(sources)
         try:
             if surveyed is not None and all(
@@ -7422,11 +7458,17 @@ def _apply_estate(
                 # Every account the pass asks about, read by the survey (#998).
                 # One it did not read sends the pass to read for itself rather
                 # than refuse nothing on it.
-                refused = _refusals(shared, surveyed, declared=declared)
+                refused = _refusals(shared, surveyed, declared=declared, force=force)
                 connected = bool(shared)
             else:
                 refused, unreachable, connected = _refused_somewhere(
-                    sources, by_target, run, config, declared=declared, renew=manager.renew
+                    sources,
+                    by_target,
+                    run,
+                    config,
+                    declared=declared,
+                    force=force,
+                    renew=manager.renew,
                 )
             if connected:
                 # Between taking the lock and the first change sits the survey or
@@ -7523,6 +7565,7 @@ def _guardrail_pass_ahead(
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
+    force: bool,
 ) -> list[Diagnostic]:
     """What the real run's guardrail pass would skip, as `SOPULI-W055` (#988).
 
@@ -7535,7 +7578,7 @@ def _guardrail_pass_ahead(
     as the pass leaves it to the run.
     """
     notices: list[Diagnostic] = []
-    for credential, refusing in _refusals(shared, states, declared=declared).items():
+    for credential, refusing in _refusals(shared, states, declared=declared, force=force).items():
         bound = {binding.target: binding.account for binding in shared[credential]}
         notices.append(
             guardrail_pass_ahead(
@@ -7555,6 +7598,7 @@ def _refusals(
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
+    force: bool,
 ) -> dict[Credential, dict[str, guardrails.Review]]:
     """The guardrail pass's decision, on accounts already read (#872).
 
@@ -7563,6 +7607,9 @@ def _refusals(
     ``states`` was not read, or does not exist, and refuses nothing here: the
     run's own row reports it. The one rule :func:`_refused_somewhere` and the
     dry run's forecast both apply, so the two cannot come to differ.
+
+    ``force`` is the run's: under `--force` only a check no flag waives refuses,
+    a superuser or a reserved role (#1111), as at the point of change.
     """
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     for credential, bindings in shared.items():
@@ -7570,7 +7617,7 @@ def _refusals(
             state = states.get((binding.target, binding.account))
             if state is None:
                 continue
-            review = guardrails.review(state, declared=declared, force=False)
+            review = guardrails.review(state, declared=declared, force=force)
             if not review.permitted:
                 refused.setdefault(credential, {})[binding.target] = review
     return refused
@@ -7581,6 +7628,7 @@ def _skipped_ahead(
     states: Mapping[tuple[str, str], UserState],
     *,
     declared: frozenset[str],
+    force: bool,
 ) -> dict[Credential, dict[str, guardrails.Review]]:
     """Every credential a rotation's guardrails would skip, before it stages (#1009).
 
@@ -7588,7 +7636,7 @@ def _skipped_ahead(
     asks about: an account bound to one target is skipped by the check at the
     point of change, and staging it would leave a `pending` nothing applies.
     """
-    return _refusals(_by_credential(rotating), states, declared=declared)
+    return _refusals(_by_credential(rotating), states, declared=declared, force=force)
 
 
 def _to_stage(
@@ -7603,9 +7651,9 @@ def _to_stage(
 
     One function for the run and its preview, so the preview decides as the run
     does. Refuses over a `pending` among what it stages (#769). Under `--force`
-    nothing is skipped.
+    only a check no flag waives skips a credential.
     """
-    skipped = {} if force else _skipped_ahead(rotating, states, declared=_declared_accounts(run))
+    skipped = _skipped_ahead(rotating, states, declared=_declared_accounts(run), force=force)
     drawn = [binding for binding in rotating if _credential(binding) not in skipped]
     _refuse_staged_rotation(drawn, documents)
     return drawn, skipped
@@ -7618,6 +7666,7 @@ def _refused_somewhere(
     config: Config,
     *,
     declared: frozenset[str],
+    force: bool,
     renew: Callable[[], None],
 ) -> tuple[dict[Credential, dict[str, guardrails.Review]], dict[str, BaseException], bool]:
     """The credentials a guardrail refuses on some target, before any is changed;
@@ -7685,7 +7734,7 @@ def _refused_somewhere(
         finally:
             with suppress(Exception):
                 session.close()
-    return _refusals(shared, states, declared=declared), unreachable, bool(asked)
+    return _refusals(shared, states, declared=declared, force=force), unreachable, bool(asked)
 
 
 def _apply_target(
@@ -8407,16 +8456,25 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     reasons = "; ".join(refusal.reason for refusal in review.refusals)
     if not named:
         return reasons
-    checks = {refusal.check for refusal in review.refusals}
-    # Checks 1 and 6 are the ones no flag reaches. Saying "--force" there would
-    # send an operator to a flag that is going to refuse them again.
-    if guardrails.DECLARED in checks:
-        remedy = "declare it in `accounts:` first; no flag extends the whitelist"
-    elif guardrails.SUPERUSER in checks:
-        remedy = "a superuser's password is not one this tool changes; leave it out of the config"
-    else:
-        remedy = "pass --force to override, which is recorded"
+    # Saying "--force" for a check no flag reaches would send an operator to a
+    # flag that is going to refuse them again. The first such check in §4's
+    # order picks the remedy.
+    remedy = next(
+        (UNWAIVABLE_REMEDIES[one.check] for one in review.refusals if not one.overridable),
+        "pass --force to override, which is recorded",
+    )
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
+
+
+#: What to do about each check that no flag waives, by check. One entry for each
+#: member of :data:`guardrails.NEVER_WAIVED`, which a test holds it to.
+UNWAIVABLE_REMEDIES = {
+    guardrails.DECLARED: "declare it in `accounts:` first; no flag extends the whitelist",
+    guardrails.SUPERUSER: "this tool does not change a superuser; leave it out of the config",
+    guardrails.RESERVED: (
+        "this tool does not change a role the server reserves; leave it out of the config"
+    ),
+}
 
 
 def _with_regime(
@@ -10642,8 +10700,9 @@ def _finish_one(
         "Waive the account guardrails of 02-oracle-privileges.md section 4, "
         "checks 2 to 5 and 7: vendor-maintained, password file, admin role, deny "
         "list, the tool's own account. Never check 1 -- an account the config does "
-        "not declare is refused whatever this says -- and never check 6, a superuser. "
-        "Every waiver is recorded in the run document."
+        "not declare is refused whatever this says -- and never check 6, a superuser, "
+        "or check 8, a role the server reserves. Every waiver is recorded in the run "
+        "document."
     ),
 )
 @global_options
@@ -11198,7 +11257,7 @@ def _rotate_estate(
         selection=selection,
         force=force,
         surveyed=surveyed,
-        decided=None if force else skipped,
+        decided=skipped,
     )
     if into.stolen is not None:
         return None
@@ -11583,10 +11642,8 @@ def _preview_rotation(
     _to_stage(rotating, documents, read, run=run, force=force)
     # After the refusal, as in `apply`: a run the survey stops never reaches the
     # pass.
-    skipped_ahead = (
-        []
-        if force
-        else _guardrail_pass_ahead(_shared_among(rotating), read, declared=_declared_accounts(run))
+    skipped_ahead = _guardrail_pass_ahead(
+        _shared_among(rotating), read, declared=_declared_accounts(run), force=force
     )
     document.diagnostics.extend(skipped_ahead)
 

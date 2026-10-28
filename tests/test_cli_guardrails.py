@@ -25,7 +25,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli.admin import Resolved
 from sopuli.apply import REFUSED, SKIPPED
-from sopuli.cli import cli
+from sopuli.cli import UNWAIVABLE_REMEDIES, cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
@@ -37,6 +37,7 @@ from sopuli.diagnostics import (
     WARNINGS,
     guardrail_pass_ahead,
 )
+from sopuli.driver.guardrails import NEVER_WAIVED
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
@@ -590,6 +591,25 @@ def test_rotate_decides_the_pass_from_its_survey(
     assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
+def test_a_forced_rotation_stages_nothing_for_a_reserved_role(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1111. `--force` does not waive check 8, so the rotation does not stage a
+    `pending` that no target could apply (#1009)."""
+    harness = estate({}, by_target=RESERVED_ON_BETA, document=NOTHING_STAGED)
+    result = runner.invoke(
+        cli,
+        ["creds", "rotate", "--config", str(write_config(TWO_TARGETS)), "--confirm"]
+        + ["--force", "--output", "json"],
+    )
+
+    assert "ACME_WEB_USER" not in changed(harness), result.output
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert "acme_web_user" not in held.data.get("pending", {})
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
 def refused_missing_batch_user(result: Result) -> bool:
     """Whether the survey refused the run because `acme_batch_user` is missing on
     `appdb-alpha`, rather than for some other reason that also exits 1."""
@@ -948,15 +968,66 @@ def test_an_unreachable_target_is_not_tried_twice(
     assert {one["state"] for one in beta} == {"ERROR"}
 
 
-def test_force_runs_no_guardrail_pass(
+#: `acme_web_user` is reserved on `appdb-beta` only, as a Supabase target would
+#: reserve `authenticator` (#1111).
+RESERVED_ON_BETA = {
+    "appdb-alpha": DBA_ON_BETA["appdb-alpha"],
+    "appdb-beta": {
+        "ACME_WEB_USER": account(
+            "ACME_WEB_USER", vendor_maintained=False, reserved_by="supautils.reserved_roles"
+        ),
+        "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+    },
+}
+
+
+def test_under_force_the_pass_lets_a_waived_refusal_through(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """`--force` waives every check that can refuse an application account
-    here, so the pass could find nothing: one connection per target."""
+    """The pass runs under `--force`, and a check the flag waives refuses
+    nothing there: the credential changes on both targets."""
     harness = estate({}, by_target=DBA_ON_BETA)
-    run(runner, write_config(TWO_TARGETS), "--force")
+    result = run(runner, write_config(TWO_TARGETS), "--force", "--output", "json")
 
-    assert len(harness["sessions"]) == 2
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert changed(harness).count("ACME_WEB_USER") == 2
+
+
+def test_under_force_a_reserved_role_on_one_target_changes_the_credential_on_none(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1111. `--force` does not waive check 8, so the pass refuses the shared
+    credential before the first change, and `appdb-alpha` is not moved ahead of
+    `current`."""
+    harness = estate({}, by_target=RESERVED_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--force", "--output", "json")
+
+    assert "ACME_WEB_USER" not in changed(harness)
+    held = harness["store"].read("apps/acme/db")
+    assert held is not None
+    assert held.data["DB_CREDENTIALS"]["acme_web_user"] == LIVE
+    codes = {one.get("code") for one in document(result)["diagnostics"]}
+    assert PROMOTION_SKIPPED not in codes
+
+
+def test_a_forced_dry_run_forecasts_a_reserved_role(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`SOPULI-W055` under `--force` names the refusals no flag waives (#1111)."""
+    estate({}, by_target=RESERVED_ON_BETA)
+    result = run(
+        runner,
+        write_config(TWO_TARGETS),
+        "--dry-run",
+        "--preflight",
+        "--force",
+        "--output",
+        "json",
+    )
+
+    found = ahead(result)
+    assert [(one["account"], one["target"]) for one in found] == [("acme_web_user", "appdb-beta")]
+    assert "supautils.reserved_roles" in found[0]["message"]
 
 
 def test_an_account_skipped_on_one_of_its_targets_is_not_promoted(
@@ -1581,9 +1652,35 @@ def test_a_named_superuser_is_not_sent_to_force_or_to_the_whitelist(
     result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--output", "json")
 
     reported = json.dumps(document(result))
-    assert "a superuser's password is not one this tool changes" in reported
+    assert "this tool does not change a superuser" in reported
     assert "--force to override" not in reported
     assert "no flag extends the whitelist" not in reported
+
+
+def test_every_check_no_flag_waives_has_its_own_remedy() -> None:
+    """Otherwise a named account refused by a new such check would be told to
+    pass --force, which refuses it again."""
+    assert set(UNWAIVABLE_REMEDIES) == NEVER_WAIVED
+
+
+def test_a_named_reserved_role_is_not_sent_to_force_or_to_the_whitelist(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Check 8 is never waived, as check 6 is not (#1111)."""
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=False, reserved_by="supautils.reserved_roles"
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--output", "json")
+
+    reported = json.dumps(document(result))
+    assert "the server reserves this account in supautils.reserved_roles" in reported
+    assert "this tool does not change a role the server reserves" in reported
+    assert "--force to override" not in reported
 
 
 def test_the_tool_s_own_account_is_skipped_and_force_changes_it_on_the_record(

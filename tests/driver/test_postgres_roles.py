@@ -16,15 +16,18 @@ import pytest
 from sopuli.driver.guardrails import (
     OWN_ACCOUNT,
     PRIVILEGED_ROLE,
+    RESERVED,
     SUPERUSER,
     VENDOR_MAINTAINED,
     review,
 )
 from sopuli.driver.postgres.roles import (
     NO_CHANGE_DATE,
+    RESERVED_ROLES,
     ROLE_QUERY,
     AmbiguousRoleError,
     describe,
+    reserved_names,
     state_of,
 )
 from sopuli.exit_codes import ExitCode
@@ -46,6 +49,7 @@ def _row(
     valid_until: datetime | None = None,
     expired: bool = False,
     member_of: tuple[str, ...] = (),
+    reserved_roles: str | None = None,
 ) -> tuple[Any, ...]:
     return (
         name,
@@ -59,6 +63,7 @@ def _row(
         valid_until,
         expired,
         list(member_of),
+        reserved_roles,
     )
 
 
@@ -170,6 +175,80 @@ def test_a_monitoring_role_is_ordinary_for_an_application(role: str) -> None:
 
 def test_the_session_s_own_role_is_check_seven() -> None:
     assert _checks(session=True) == {OWN_ACCOUNT}
+
+
+#: The local Supabase stack's value, measured with Supabase CLI 2.78.1 (#1111).
+SUPABASE_RESERVED = (
+    "supabase_admin, supabase_auth_admin, supabase_storage_admin, supabase_read_only_user, "
+    "supabase_realtime_admin, supabase_replication_admin, supabase_etl_admin, dashboard_user, "
+    "pgbouncer, service_role*, authenticator*, authenticated*, anon*"
+)
+
+
+@pytest.mark.parametrize("name", ["pgbouncer", "authenticator", "anon"])
+def test_a_role_supautils_reserves_is_check_eight_and_force_does_not_waive_it(name: str) -> None:
+    """`authenticator*` is reserved too: the `*` lets the privileged role change
+    its settings, not its password."""
+    state = state_of(_row(name, reserved_roles=SUPABASE_RESERVED))
+
+    assert state.reserved_by == RESERVED_ROLES
+    found = review(state, declared=(name,))
+    assert [refusal.check for refusal in found.refusals] == [RESERVED]
+    assert RESERVED_ROLES in found.refusals[0].reason
+    forced = review(state, declared=(name,), force=True)
+    assert not forced.permitted
+    assert forced.overridden == ()
+
+
+@pytest.mark.parametrize("setting", [None, "", SUPABASE_RESERVED])
+def test_a_role_the_setting_does_not_name_is_not_reserved(setting: str | None) -> None:
+    """`None` is a server without supautils, where `current_setting(…, true)`
+    gives `NULL`."""
+    state = state_of(_row(reserved_roles=setting))
+
+    assert state.reserved_by is None
+    assert _checks(reserved_roles=setting) == set()
+
+
+def test_the_role_name_is_compared_exactly_with_the_name_the_list_gives() -> None:
+    assert "authenticator*" not in reserved_names(SUPABASE_RESERVED)
+    assert state_of(_row("ANON", reserved_roles="anon*")).reserved_by is None
+    assert state_of(_row("ANON", reserved_roles='"ANON"')).reserved_by == RESERVED_ROLES
+
+
+@pytest.mark.parametrize(
+    ("setting", "names"),
+    [
+        ("pgbouncer, authenticator*, anon*", {"pgbouncer", "authenticator", "anon"}),
+        # Unquoted names are lower-cased; quoted ones keep their case and `""`.
+        ("ANON*, Acme_Web_User", {"anon", "acme_web_user"}),
+        ('"Acme_Web_User", "a""b*"', {"Acme_Web_User", 'a"b'}),
+        # One `*` goes, and not from a name that is only `*`.
+        ("anon**, *", {"anon*", "*"}),
+        ("  anon\t,\nacme_web_user  ", {"anon", "acme_web_user"}),
+        # A syntax error stops the split, and the names before it are kept.
+        ("anon, , acme_web_user", {"anon"}),
+        (" , anon", set()),
+        ("anon,", {"anon"}),
+        ('anon, "acme_web_user', {"anon"}),
+        ('"anon"x, acme_web_user', set()),
+        # Only ASCII is lower-cased in UTF-8, and a name stops at 63 bytes.
+        ("ÄNON", {"Änon"}),
+        ("a" * 70, {"a" * 63}),
+        (None, set()),
+        ("", set()),
+    ],
+)
+def test_the_list_is_split_as_postgres_splits_an_identifier_list(
+    setting: str | None, names: set[str]
+) -> None:
+    """supautils reads the setting with `SplitIdentifierString`, then drops
+    one trailing `*` from each name (`remove_ending_wildcard`)."""
+    assert reserved_names(setting) == names
+
+
+def test_the_query_reads_the_setting_without_failing_where_it_is_undefined() -> None:
+    assert f"current_setting('{RESERVED_ROLES}', true)" in ROLE_QUERY
 
 
 # ------------------------------------------------------------- the lookup ---

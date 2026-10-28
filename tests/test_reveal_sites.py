@@ -53,8 +53,9 @@ PERMITTED = {
         "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"
     ),
     "output/delivery_view.py": (
-        "the wrapping token -- not a password, but UC-2 6.1's retrieval credential, "
-        "which the rule covers because it is about reach rather than value (UC-2 §6.6)"
+        "the retrieval credential an unseen delivery returns -- a wrapping token, or a "
+        "one-time link or its key (decision #445). Not a password, but UC-2 6.1's rule "
+        "covers it because it is about reach rather than value (UC-2 §6.6)"
     ),
     "delivery/vault_wrapped.py": (
         "the vault write -- invariant 2's first exception, reached as a wrap rather "
@@ -63,6 +64,12 @@ PERMITTED = {
     "delivery/vault_path.py": (
         "the vault write -- invariant 2's first exception, as a KV v2 put to a path "
         "only the person's own identity reads (UC-2 §6.6, decision #447)"
+    ),
+    "delivery/yopass.py": (
+        "the encryption before a Yopass create -- the method's store write, as the vault "
+        "write is invariant 2's first exception, and only ciphertext leaves the process; "
+        "and the link it returns, which holds the key and is the fifth exception's "
+        "retrieval credential (UC-2 §6.6, decision #445)"
     ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "driver/oracle/verifier.py": (

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.81.0](https://github.com/villebase/sopuli-dba/compare/v0.80.0...v0.81.0) (2026-10-27)
+
+
+### Features
+
+* **apply:** refuse an account attribute a target cannot enforce, at plan time ([#1072](https://github.com/villebase/sopuli-dba/issues/1072)) ([#1074](https://github.com/villebase/sopuli-dba/issues/1074)) ([0ac3603](https://github.com/villebase/sopuli-dba/commit/0ac36039f2b72acebd67c7a039df197e052575c6))
+* **check:** run creds check on a PostgreSQL target ([#1067](https://github.com/villebase/sopuli-dba/issues/1067)) ([#1071](https://github.com/villebase/sopuli-dba/issues/1071)) ([4eb9332](https://github.com/villebase/sopuli-dba/commit/4eb9332e02181e721efcd0c3333aa6be41bec131))
+* **config:** declare a PostgreSQL target ([#1038](https://github.com/villebase/sopuli-dba/issues/1038)) ([#1039](https://github.com/villebase/sopuli-dba/issues/1039)) ([ce78e71](https://github.com/villebase/sopuli-dba/commit/ce78e716c229816dff04336c9b276913d3e79107))
+* **config:** read the one_time_link delivery block ([#445](https://github.com/villebase/sopuli-dba/issues/445)) ([#1109](https://github.com/villebase/sopuli-dba/issues/1109)) ([1215616](https://github.com/villebase/sopuli-dba/commit/1215616a7394987498a2d5cbb2c19d9cdde8de69))
+* **config:** read the vault_path delivery block ([#447](https://github.com/villebase/sopuli-dba/issues/447)) ([#1102](https://github.com/villebase/sopuli-dba/issues/1102)) ([b4b702b](https://github.com/villebase/sopuli-dba/commit/b4b702b0d9068de29912772f1d1e780de47bb5e8))
+* **delivery:** add the Yopass backend for one_time_link ([#445](https://github.com/villebase/sopuli-dba/issues/445)) ([#1110](https://github.com/villebase/sopuli-dba/issues/1110)) ([f010435](https://github.com/villebase/sopuli-dba/commit/f010435a02bcc30526061e64885801dcdac49f59))
+* **delivery:** deliver a personal password by one_time_link ([#445](https://github.com/villebase/sopuli-dba/issues/445)) ([#1112](https://github.com/villebase/sopuli-dba/issues/1112)) ([87b3296](https://github.com/villebase/sopuli-dba/commit/87b3296fee8094d9a0419510cfaaee3ca3f9a333))
+* **delivery:** deliver a personal password by vault_path ([#447](https://github.com/villebase/sopuli-dba/issues/447)) ([#1103](https://github.com/villebase/sopuli-dba/issues/1103)) ([ff0876e](https://github.com/villebase/sopuli-dba/commit/ff0876eb5e6242c081556010dcc32f4e605d3a71))
+* **driver:** audit the PostgreSQL tool account's privileges ([#1047](https://github.com/villebase/sopuli-dba/issues/1047)) ([#1049](https://github.com/villebase/sopuli-dba/issues/1049)) ([575fab5](https://github.com/villebase/sopuli-dba/commit/575fab5b1a2cb878c688ac41dffafe491a605499))
+* **driver:** build the PostgreSQL connection parameters and client lines ([#1040](https://github.com/villebase/sopuli-dba/issues/1040)) ([#1041](https://github.com/villebase/sopuli-dba/issues/1041)) ([d533411](https://github.com/villebase/sopuli-dba/commit/d533411731ed13cd4f508e4658af24391dc4b719))
+* **driver:** connect to a PostgreSQL cluster and report it in doctor ([#1040](https://github.com/villebase/sopuli-dba/issues/1040)) ([#1044](https://github.com/villebase/sopuli-dba/issues/1044)) ([18a0ceb](https://github.com/villebase/sopuli-dba/commit/18a0ceb9bfab1c0aed1dd2b51e545e6ac5827eed))
+* **driver:** describe a PostgreSQL role for the guardrails ([#1059](https://github.com/villebase/sopuli-dba/issues/1059)) ([#1064](https://github.com/villebase/sopuli-dba/issues/1064)) ([d99d2fb](https://github.com/villebase/sopuli-dba/commit/d99d2fb5f61ef102d1280ac434a18e84af3da865))
+* **driver:** map a PostgreSQL SQLSTATE, and recover it from a failed login's message ([#1040](https://github.com/villebase/sopuli-dba/issues/1040)) ([#1042](https://github.com/villebase/sopuli-dba/issues/1042)) ([d2aabfb](https://github.com/villebase/sopuli-dba/commit/d2aabfb6f4bd9c23f1f646491df6889cd168fa95))
+* **driver:** refuse a PostgreSQL superuser and one cluster declared twice ([#1047](https://github.com/villebase/sopuli-dba/issues/1047)) ([#1050](https://github.com/villebase/sopuli-dba/issues/1050)) ([a8c3574](https://github.com/villebase/sopuli-dba/commit/a8c3574a75a739c583ec0a526e1cf3cf91a134ca))
+* **driver:** report a PostgreSQL session's scope as a cluster, in run schema 1.62 ([#1040](https://github.com/villebase/sopuli-dba/issues/1040)) ([#1043](https://github.com/villebase/sopuli-dba/issues/1043)) ([2a99ac8](https://github.com/villebase/sopuli-dba/commit/2a99ac8654205ea66abc971f42e222590d872e90))
+* **driver:** run creds apply on a PostgreSQL target ([#1060](https://github.com/villebase/sopuli-dba/issues/1060)) ([#1073](https://github.com/villebase/sopuli-dba/issues/1073)) ([1574324](https://github.com/villebase/sopuli-dba/commit/1574324430348f8dcefab92db223e2abb3f37963))
+* **driver:** run creds rotate, generate and status on a PostgreSQL target ([#1072](https://github.com/villebase/sopuli-dba/issues/1072)) ([#1075](https://github.com/villebase/sopuli-dba/issues/1075)) ([50ea18d](https://github.com/villebase/sopuli-dba/commit/50ea18de385d22b058cdea116c9ce84a1bab7236))
+* **driver:** set a PostgreSQL role's password with a client-side SCRAM verifier ([#1060](https://github.com/villebase/sopuli-dba/issues/1060)) ([#1070](https://github.com/villebase/sopuli-dba/issues/1070)) ([3a78fe4](https://github.com/villebase/sopuli-dba/commit/3a78fe48ba8185e48f5f32b8bfb175a1bca7095b))
+* **driver:** verify a PostgreSQL role's password by logging in as it ([#1067](https://github.com/villebase/sopuli-dba/issues/1067)) ([#1069](https://github.com/villebase/sopuli-dba/issues/1069)) ([4b96d3a](https://github.com/villebase/sopuli-dba/commit/4b96d3a8d6bfd1aa5041dacb5abfc50020330ed0))
+* **guardrails:** refuse a superuser and the tool's own account ([#1059](https://github.com/villebase/sopuli-dba/issues/1059)) ([#1063](https://github.com/villebase/sopuli-dba/issues/1063)) ([55a7c27](https://github.com/villebase/sopuli-dba/commit/55a7c27ce2fa3bb6c0c40309bb86ec1584545a62))
+* **postgres:** hint that a target is a pooler when PgBouncer refuses a login ([#1105](https://github.com/villebase/sopuli-dba/issues/1105)) ([#1106](https://github.com/villebase/sopuli-dba/issues/1106)) ([e13a116](https://github.com/villebase/sopuli-dba/commit/e13a116d56c22e9914164f88b23577d4d209f591))
+* **preflight:** refuse sslmode disable under require_encryption, and warn on an unverified PostgreSQL server ([#1058](https://github.com/villebase/sopuli-dba/issues/1058)) ([#1065](https://github.com/villebase/sopuli-dba/issues/1065)) ([7ed6b67](https://github.com/villebase/sopuli-dba/commit/7ed6b67207cb8a81b639ade040ccb3b4b3fb38c1))
+
 ## [0.80.0](https://github.com/villebase/sopuli-dba/compare/v0.79.0...v0.80.0) (2026-10-24)
 
 

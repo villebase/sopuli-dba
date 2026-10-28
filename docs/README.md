@@ -18,6 +18,7 @@ on which Oracle release, and what it showed.
 | [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
 | [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | one password rotation end to end: stage, apply, check, roll back, and close the rollover window |
 | [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | the vault-write side of an External Secrets Operator setup, and the division of responsibility that makes it safe |
+| [scenarios/supabase.md](scenarios/supabase.md) | replacing a shared `postgres` password on Supabase with one vault-managed login role for each service |
 | [../examples/](../examples/) | runnable config files with comments, starting with the smallest one that works |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | what a first-time contributor needs that `workflow.md` and `CLAUDE.md` do not say for that audience |
 | [../SECURITY.md](../SECURITY.md) | reporting a vulnerability privately |
@@ -58,8 +59,8 @@ on which Oracle release, and what it showed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-3.3.schema.json](schemas/sopuli-config-3.3.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.63.schema.json](schemas/sopuli-run-1.63.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
-| [schemas/sopuli-event-1.18.schema.json](schemas/sopuli-event-1.18.schema.json) | JSON Schema for `--output jsonl` events |
+| [schemas/sopuli-run-1.64.schema.json](schemas/sopuli-run-1.64.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-event-1.19.schema.json](schemas/sopuli-event-1.19.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | [schemas/example-creds-status-rollover.json](schemas/example-creds-status-rollover.json) | Worked example: `creds status` with a rollover window open, a password in its grace period, and a run-level warning |
 | `../sql/oracle/00_install.sql` | Create and grant the service account — `NONCDB` / `COMMON` / `PDB` modes |
@@ -241,6 +242,9 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
 | — | — | Exit non-zero when `doctor` reaches a target and refuses it | open | | #1062 |
 | — | — | Refuse a libpq older than 16 at plan time | open | | #1076 |
+| — | — | Forecast a single-target guardrail refusal in `--dry-run --preflight` | open | | #1116 |
+| — | — | Keep `creds rotate`'s privilege survey from refusing the run over a role checks 6 or 8 refuse | open | | #1117 |
+| — | — | Make tier 1 a merge gate: `ci ok` passes while tier 1 fails | open | | #1120 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

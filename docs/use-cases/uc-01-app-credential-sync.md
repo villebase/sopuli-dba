@@ -558,7 +558,7 @@ These rules decide what `apply` does with each account:
   survey. `apply` cannot do what it was run to do.
 
 `--force` waives account guardrails 2 to 5 and 7 in `02-oracle-privileges.md`
-§4, and never checks 1 and 6. The run document records each waiver in `results[].overridden`.
+§4, and never checks 1, 6 and 8. The run document records each waiver in `results[].overridden`.
 `--lockout-margin` sets the lockout guard that §7 describes, for the logins
 `apply` makes.
 
@@ -603,8 +603,9 @@ credential and why. A credential bound to one target needs no extra read: the
 run asks the guardrails there before the change anyway. A target this read
 cannot reach is reported on its rows without a second attempt, and an account it
 cannot read is left to the run. The same applies to `creds rotate`, but not to
-`--force`, which waives the checks, or to `--dry-run`, which does not make the
-read. Reasons: [#872](../decisions/log.md#872).
+`--dry-run`, which does not make the read. Under `--force` only the checks no
+flag waives refuse: a superuser and a role the server reserves. Reasons:
+[#872](../decisions/log.md#872), [#1111](../decisions/log.md#1111).
 
 **After a survey, the read is the survey's.** Under `--preflight`, and on every
 `creds rotate`, the survey has just read each of these accounts under the run's
@@ -621,8 +622,8 @@ read, with no connection of its own. Each credential the run would change on no
 target is `SOPULI-W055`, naming the document, the refused account and the reasons
 on each refusing target, and the targets it would be left alone on. It is not
 raised when the survey refuses the run, which then never reaches the pass. A
-plain `--dry-run` opens no connection and does not say it, and nor does
-`--force`, under which the run does not ask. Reasons:
+plain `--dry-run` opens no connection and does not say it. Under `--force` it
+names only the refusals no flag waives. Reasons:
 [#988](../decisions/log.md#988).
 
 **`creds rotate --dry-run` says it too.** Its survey always runs, so it needs no

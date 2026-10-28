@@ -785,6 +785,11 @@ class UserState:
     #: driver never sets it: the nearest thing there, ``SYSDBA``, is a
     #: password-file privilege, which :attr:`password_file_member` reports.
     superuser: bool = False
+    #: The server setting that reserves this account, so that only a superuser
+    #: may change it, or ``None`` where nothing does. On PostgreSQL with
+    #: supautils, as on Supabase, it is ``supautils.reserved_roles``. Guardrail 8
+    #: refuses the account, and no flag waives that (#1111).
+    reserved_by: str | None = None
     #: The account this session is connected as: the tool's own. Guardrail 7
     #: refuses it unless ``--force`` waives it (#1059). A plain ``bool``, unlike
     #: the three-valued fields above, because every driver can answer it: the

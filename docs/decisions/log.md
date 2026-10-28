@@ -3404,3 +3404,28 @@ the register.
     It rests on `ACCOUNT_STATUS`, which #504 showed can disagree with what
     authenticates, and `EXPIRED(GRACE)` starts with `EXPIRED` but behaves like
     `OPEN`. It still refuses the `OPEN` account.
+
+## #1137
+
+- **Decided:** 2026-10-28, #1137
+- **Question:** An OCI secret name allows only letters, digits, `-`, `_` and
+  `.`, and is unique within a vault. A SecretRef path such as
+  `apps/acme/prod/db` holds `/`. How does a ref on an OCI store name its
+  secret?
+- **Decision:** The ref's path is the OCI secret name, exactly. A path that is
+  not one valid OCI name, is longer than 255 characters, or starts with the
+  reserved `sopuli-locks.` is refused when the file is read, or when the run
+  completes a binding's store. A rotated OCI ref names a field, and the
+  payload rules of `01-configuration.md` §7 apply on OCI too.
+- **Why:** External Secrets Operator reads an OCI secret by name
+  (`GetSecretBundleByName`), so the name the tool writes must be the one the
+  operator wrote, and one they can type into an `ExternalSecret`. The limits
+  were measured in #1136 (`oci-name-rules`): 255 characters, and names are
+  case-sensitive. A version's content holds the password beside the stamps
+  that describe it, so a rotated ref needs a field.
+- **Rejected:**
+  - Translate `/` into `.` or another allowed character. `a.b/c` and `a/b.c`
+    would name one secret, and the name in the vault would not be the one in
+    the config.
+  - Encode the path, for example as a hash. Nobody could predict the name to
+    put in an `ExternalSecret`.

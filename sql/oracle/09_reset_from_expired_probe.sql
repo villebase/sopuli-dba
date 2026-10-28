@@ -58,11 +58,12 @@
 -- v2 (#541) run on 26ai Free 23.26.3.0.0, FREEPDB1, and on 21c XE 21.3.0.0.0,
 -- XEPDB1, as SYSTEM, 2026-10-28 -- twice on each, exit 0. On each release the
 -- two runs gave the same statuses and the same login results, and the
--- releases agree with each other in every row. Only the grace rows'
--- timestamps differ between runs.
+-- releases agree in every row of the results table. Only the grace rows'
+-- timestamps differ between runs. Section 2's grace-period logins still send
+-- ORA-28002 on 21c and ORA-28098 on 26ai, as in v1.
 --
--- THROWAWAY DATABASES ONLY. Creates and drops accounts and a profile, expires
--- them, and plants known passwords.
+-- THROWAWAY DATABASES ONLY. Creates and drops accounts and two profiles,
+-- expires and locks the accounts, and plants known passwords.
 --
 --
 -- RESULTS -- 26ai Free 23.26.2.0.0, FREEPDB1, as SYSTEM, 2026-09-26
@@ -128,8 +129,10 @@
 --   EXPIRED, and from there the seen form behaves as R2 does: no window opens,
 --   and p1 is dead. The close in R11 is accepted and changes nothing. C3 shows
 --   the profile they run on does open a window from OPEN, so the absence of
---   one is the start state's doing. The three failed logins locked each
---   account on the third, as FAILED_LOGIN_ATTEMPTS 3 says.
+--   one is the start state's doing. After the three failed logins, both
+--   accounts read EXPIRED and LOCKED(TIMED); the script stops if they do not.
+--   R11's close is the driver's: it closes whenever the profile grants a
+--   window, read before the reset.
 --
 --   G was reached by a login in grace on the probe's own profile and then
 --   ALTER USER ... PROFILE sopuli_rollover. The move kept EXPIRED(GRACE) and the
@@ -162,6 +165,11 @@
 --
 --     sopuli_rx_xa, _xb, _xc, _ga, _gb, _oa, _ob   p1, p3
 --     sopuli_rx_oc, _la, _lb, _lc                  p1, p3   (v2)
+--
+--   Check each password once, p1 before p3. _la, _lb and _lc are on a
+--   profile that locks after three failed logins, and p1 fails on two of
+--   them: a repeated p1 check locks the account, and p3 then answers
+--   ORA-28000 instead of its real result.
 --     sopuli_rx_wa, _wb, _wc                       p1, p2, p3
 --
 --   printf is a shell builtin, so the password in its arguments reaches no
@@ -350,6 +358,21 @@ SET SERVEROUTPUT ON SIZE UNLIMITED
 PROMPT after the three failures, expecting EXPIRED and LOCKED(TIMED):
 SELECT username, account_status, profile FROM dba_users
  WHERE username IN ('SOPULI_RX_LA','SOPULI_RX_LB') ORDER BY username;
+-- R10 and R11 mean nothing from any other start, so stop rather than measure
+-- plain EXPIRED under their names. The ampersand is CHR(38): a literal one
+-- here is a substitution variable to SQL*Plus, as in a PROMPT.
+DECLARE
+  l_n PLS_INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO l_n FROM dba_users
+   WHERE username IN ('SOPULI_RX_LA','SOPULI_RX_LB')
+     AND account_status = 'EXPIRED ' || CHR(38) || ' LOCKED(TIMED)';
+  IF l_n <> 2 THEN
+    raise_application_error(-20002,
+      'start state L not reached: R10 and R11 would not start from a timed lock');
+  END IF;
+END;
+/
 
 --------------------------------------------------------------------------------
 -- 3. Controls, from plain OPEN on the same profile. If C1 opens no window or C2

@@ -343,6 +343,7 @@ from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
 from sopuli.store.credentials import StoredSecret, read_secret, resolve
 from sopuli.store.credentials import apply_patch as write_credential
+from sopuli.store.scope import refuse_personal_on_named
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -2518,6 +2519,9 @@ def _record_paths(
     records = config.reset_records
     if records is None:
         return {}
+    # At plan time, before a store or a database is reached: an OCI store
+    # cannot hold reset records in this build (UC-1 only).
+    refuse_personal_on_named(config, records.vault)
     derived: dict[str, str] = {}
     for target in reached:
         try:
@@ -3212,6 +3216,7 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
                 "wrong one would hand somebody else's vault a working password"
             ),
         )
+    refuse_personal_on_named(config, chosen)
     return chosen
 
 
@@ -3767,6 +3772,7 @@ def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
     records = config.reset_records
     if records is None:
         return None
+    refuse_personal_on_named(config, records.vault)
     opened = _stores_for({records.vault}, config, token_file=run.vault_token_file, cache=run.stores)
     return opened.get(records.vault)
 

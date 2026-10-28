@@ -173,6 +173,41 @@ def test_force_expire_false_is_refused_at_load(
     assert "requires `force_expire: true`" in str(result.exception)
 
 
+OCI_RECORDS = (
+    OFFLINE
+    + """
+vaults:
+  vault-oci:
+    type: oci
+    vault_id: ocid1.vault.oc1..exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id: ocid1.key.oc1..exampleuniqueid
+
+reset_records:
+  vault: vault-oci
+  prefix: sopuli/personal-resets
+"""
+)
+
+
+def test_reset_records_in_an_oci_store_are_refused_at_plan_time(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OCI store serves UC-1 only in this build (#1138), so the reset is
+    refused before any store or database is reached."""
+
+    def no_store(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a store was opened")
+
+    monkeypatch.setattr("sopuli.cli.connect", no_store)
+
+    result = run(runner, write_config(OCI_RECORDS), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert result.exception.code == "SOPULI-20005"
+    assert 'vault "vault-oci" is an OCI store' in str(result.exception)
+
+
 # ------------------------------------------------------ the preview, tier 1 ---
 
 

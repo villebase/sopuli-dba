@@ -3430,3 +3430,33 @@ the register.
     the config.
   - Encode the path, for example as a hash. Nobody could predict the name to
     put in an `ExternalSecret`.
+
+## #1138
+
+- **Decided:** 2026-10-28, #1138
+- **Question:** OCI Vault is the second secret store (#1128). Beyond how a ref
+  names a secret (#1137), three things decide its scope. May the tool create
+  OCI secrets, or only update ones that exist? Does the first OCI store serve
+  personal accounts (UC-2) as well as application credentials (UC-1)? And
+  what does the tool do with an OCI secret it did not create?
+- **Decision:** The tool creates secrets. An `oci` store therefore declares a
+  vault, a compartment and a KMS key, and IAM must allow `manage secrets`
+  there. The first OCI store serves UC-1 only: a personal-account verb that
+  would reach one is refused at plan time with `SOPULI-20005`. A secret the
+  tool did not create, such as one made by Terraform or ESO PushSecret, is used
+  as it is when its content is a JSON object, and refused otherwise. Which KMS
+  key encrypts it is not checked.
+- **Why:** Every path the tool mutates gets a lock record, and nobody can
+  create those ahead of time, so the tool must be able to create secrets; and
+  `creds generate` seeds a new secret on HashiCorp too. UC-2 needs reset
+  records and, for `vault_wrapped`, HashiCorp's response wrapping, which OCI
+  has no equivalent of, so it is separate work. Refusing a foreign secret
+  outright would make a Terraform-managed estate unusable, while content that
+  is not a JSON object has no field for the tool to write.
+- **Rejected:**
+  - Only update secrets that already exist. Lock records cannot be created
+    ahead of time.
+  - UC-1 and UC-2 together. It doubles the first OCI work, and UC-2 needs a
+    delivery design for OCI.
+  - Refuse every secret the tool did not create. It rules out estates where
+    Terraform or ESO creates the secret and the tool rotates it.

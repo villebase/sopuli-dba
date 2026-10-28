@@ -146,7 +146,7 @@ def test_region_is_optional_on_an_oci_store() -> None:
 
 @pytest.mark.parametrize("key", OCI_REQUIRED_KEYS)
 def test_an_oci_store_needs_vault_compartment_and_key(key: str) -> None:
-    """The tool creates secrets (#1128 decision 2), and OCI's CreateSecret
+    """The tool creates secrets (#1138), and OCI's CreateSecret
     needs all three."""
     entry = {name: value for name, value in OCI.items() if name != key}
 

@@ -324,14 +324,47 @@ reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
 
-Whether to recommend the grant, and whether a narrower grant exists, is not
-decided (open: #124). The Data Pump metadata views `SYS.KU$_USER_VIEW` and
-`SYS.KU$_USER_BASE_VIEW` are granted to `PUBLIC`. A blog post says they show
-`LCOUNT` under `SELECT_CATALOG_ROLE` alone, and hide `SPARE4` unless the session
-also holds `EXP_FULL_DATABASE`. If that is true, a site could enable the `LCOUNT`
-guard without exposing verifiers (unverified: lcount-grant). It comes from a blog
-post, not from Oracle's documentation, so it must be measured before
-`00_install.sql` recommends it.
+The tool offers no narrower grant. One was measured and not adopted; the
+reasons are in [#124](../decisions/log.md#124). On the release measured, a
+narrower source of `LCOUNT` exists. The Data Pump metadata view `SYS.KU$_USER_VIEW` is granted to `PUBLIC`.
+To a session with `SELECT_CATALOG_ROLE` enabled, it shows every user's `LCOUNT`
+and `PTIME`, and they equal the values in `SYS.USER$`. It masks the verifiers:
+`SPARE4` is one space on every row, and `SPARE4_12` is NULL. `PASSWORD` is NULL
+too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
+10G verifier, so the run does not show that the view masks it.
+`sql/oracle/16_lcount_grant_probe.sql` measured it, and
+[`../measurements.md`](../measurements.md) has the run. The run also showed:
+
+- **The role must be enabled in the session.** With no role, or after
+  `SET ROLE NONE`, the view returns no rows, not even the reader's own.
+- **`EXP_FULL_DATABASE` does not unmask the verifiers** in a SQL session. The
+  blog post that suggested the view says it does.
+- **A grant on `SYS.USER$` does unmask them.** The view shows the verifiers to
+  a session that holds the role and also a direct `SELECT` grant on
+  `SYS.USER$`. So the role hides the verifiers only from an account that does
+  not also hold that grant. The view's own check, which the audit trail
+  records, also accepts `READ`, and a grant held through an enabled role. The
+  run did not try either.
+- **`SYS.KU$_USER_BASE_VIEW` does not exist** on that release.
+- **A common account's failed logins in a PDB count in `CDB$ROOT`.** After four
+  failed logins in the root and two in the PDB, `SYS.USER$` holds `LCOUNT` 6 in
+  the root and 0 in the PDB. Read in the PDB, by either route, the common
+  account's `LCOUNT` is 0, and its `PTIME` in the view is NULL. So the
+  `LCOUNT` guard does not see a common account's failed logins on a PDB target
+  (open: #1122).
+- **A read through the view is not quieter in the audit trail.** Under a unified
+  audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
+  leaves six `USER$` rows under the reader's name, with the reader's statement.
+  With the role it leaves 74 more, for the recursive statement that checks the
+  grant. A direct read leaves one row. The policy name is the same on both, so
+  `SQL_TEXT` tells them apart: it is the statement on the view, or the
+  recursive check.
+- **`SELECT_CATALOG_ROLE` is broad.** It holds 5663 object grants on that
+  release. It hides the verifiers, but it shows the account much of the data
+  dictionary. `00_install.sql` grants explicit views instead of the role for
+  that reason.
+
+The view is not documented by Oracle, and other releases are not measured.
 
 #### Hash mode
 
@@ -1425,6 +1458,7 @@ the design as it is then.
 | `sql/oracle/13_audit_coverage_probe.sql` | what a service account can read about the enabled audit policies, and what each way of enabling a policy records of the proxy route (§2, §5) |
 | `sql/oracle/14_session_loss_probe.py` | the code the client raises when a held session is lost to a closed PDB or a CDB shutdown, and when a logon meets a CDB that is starting (UC-1 §6.4) |
 | `sql/oracle/15_mixed_mode_trail_probe.sql` | whether, in mixed mode, an enabled unified policy records a logon and an `ALTER USER` under each `AUDIT_TRAIL` setting (§5) |
+| `sql/oracle/16_lcount_grant_probe.sql` | what `SYS.KU$_USER_VIEW` shows of `LCOUNT` and the verifiers under each role combination, in a PDB and in `CDB$ROOT`, and what a read leaves in the audit trail (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 
@@ -1439,7 +1473,7 @@ each header says what it creates and leaves behind.
 | # | Question | Leaning |
 |---|---|---|
 | ~~P1~~ | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
-| ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative is #124. Reasons: [P2](../decisions/log.md#p2) |
+| ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative was not adopted (#124). Reasons: [P2](../decisions/log.md#p2) |
 | ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 of §4, and check 7 since #1059; it never overrides check 1, check 6 or check 8. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
 | ~~P4~~ | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213); `scope.over_granted` is populated and the exit code is unchanged. Reasons: [P5](../decisions/log.md#p5) |

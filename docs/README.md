@@ -237,7 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-006 | ADR | Optional dependencies | decided | vendor clients are extras; base opens no sockets | #130 |
 | ADR-007 | ADR | The vault token flag | decided | `--vault-token-file PATH` | #145 |
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
-| — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
@@ -283,12 +282,17 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
   time (invariant 4, #433); the gate is a per-account capability, never a
   version. `check --method hash|both` depends on this (#437); the default
   method, `login`, does not (#86). Not claimed on 12.1, which is unmeasured.
-- `unverified` `lcount-grant` (#124) — **Does `SELECT_CATALOG_ROLE`, through
+- `verified` `lcount-grant` (#124) — **Does `SELECT_CATALOG_ROLE`, through
   `SYS.KU$_USER_VIEW`, expose `LCOUNT` without `SPARE4`?**
-  Not run. The idea comes from a blog post, not from Oracle's documentation. If
-  it works, it is a narrower grant than `SELECT ON SYS.USER$` for the `LCOUNT`
-  guard. It affects only what `sql/oracle/00_install.sql` recommends to a site
-  that wants that guard. Nothing in the default path depends on it.
+  Yes, on the one release measured. To a session with the role enabled, the view
+  shows every user's `LCOUNT` and `PTIME`, and `SPARE4` as one space.
+  `EXP_FULL_DATABASE` does not unmask the verifiers; a direct `SELECT` grant on
+  `SYS.USER$` beside the role does. With no role enabled the view shows no
+  rows. `SYS.KU$_USER_BASE_VIEW` does not exist there.
+  `sql/oracle/16_lcount_grant_probe.sql` measures it, and
+  `02-oracle-privileges.md` §2 has the rest of the result. The tool does not
+  use the role ([#124](decisions/log.md#124)), so nothing depends on this
+  answer, on this release or any other.
 
 ### Connections and wallets
 

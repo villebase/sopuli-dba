@@ -329,7 +329,9 @@ decided (open: #124). On the release measured, a narrower source of `LCOUNT`
 exists. The Data Pump metadata view `SYS.KU$_USER_VIEW` is granted to `PUBLIC`.
 To a session with `SELECT_CATALOG_ROLE` enabled, it shows every user's `LCOUNT`
 and `PTIME`, and they equal the values in `SYS.USER$`. It masks the verifiers:
-`SPARE4` is one space on every row, and `PASSWORD` and `SPARE4_12` are NULL.
+`SPARE4` is one space on every row, and `SPARE4_12` is NULL. `PASSWORD` is NULL
+too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
+10G verifier, so the run does not show that the view masks it.
 `sql/oracle/16_lcount_grant_probe.sql` measured it, and
 [`../measurements.md`](../measurements.md) has the run. The run also showed:
 
@@ -338,9 +340,11 @@ and `PTIME`, and they equal the values in `SYS.USER$`. It masks the verifiers:
 - **`EXP_FULL_DATABASE` does not unmask the verifiers** in a SQL session. The
   blog post that suggested the view says it does.
 - **A grant on `SYS.USER$` does unmask them.** The view shows the verifiers to
-  a session that holds the role and also `SELECT` or `READ` on `SYS.USER$`,
-  directly or through an enabled role. So the role hides the verifiers only from
-  an account that does not also hold that grant.
+  a session that holds the role and also a direct `SELECT` grant on
+  `SYS.USER$`. So the role hides the verifiers only from an account that does
+  not also hold that grant. The view's own check, which the audit trail
+  records, also accepts `READ`, and a grant held through an enabled role. The
+  run did not try either (unverified: lcount-grant-read-grant).
 - **`SYS.KU$_USER_BASE_VIEW` does not exist** on that release.
 - **A common account's failed logins in a PDB count in `CDB$ROOT`.** After four
   failed logins in the root and two in the PDB, `SYS.USER$` holds `LCOUNT` 6 in
@@ -350,7 +354,9 @@ and `PTIME`, and they equal the values in `SYS.USER$`. It masks the verifiers:
   audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
   leaves six `USER$` rows under the reader's name, with the reader's statement.
   With the role it leaves 74 more, for the recursive statement that checks the
-  grant. Only `SQL_TEXT` tells a read through the view from a direct read.
+  grant. A direct read leaves one row. The policy name is the same on both, so
+  `SQL_TEXT` tells them apart: it is the statement on the view, or the
+  recursive check.
 - **`SELECT_CATALOG_ROLE` is broad.** It holds 5663 object grants on that
   release. It hides the verifiers, but it shows the account much of the data
   dictionary. `00_install.sql` grants explicit views instead of the role for

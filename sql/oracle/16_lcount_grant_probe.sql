@@ -67,13 +67,18 @@
 --        "rows" is every row the account sees, its own included. LCOUNT and
 --        PTIME equal SYS.USER$'s. "one space" is SPARE4 on every row, DUMP
 --        Typ=1 Len=1: 32: one value, not NULL and not absent, and SPARE4_12 is
---        NULL. acme_lc_both sees 38 distinct SPARE4 values and SPARE4_12 with
+--        NULL. PASSWORD is NULL for every reader, but SYS.USER$.PASSWORD is
+--        NULL too (LG1): no account had a 10G verifier, so the run does not
+--        show whether the view masks it. acme_lc_both sees 38 distinct SPARE4
+--        values and SPARE4_12 with
 --        S: and T:, as SYS does. So:
 --          - SELECT_CATALOG_ROLE alone shows LCOUNT and PTIME, and masks the
 --            verifiers;
 --          - EXP_FULL_DATABASE adds nothing in a plain SQL session. It does
 --            not unmask the verifiers, as the blog post says it does;
---          - SELECT ON SYS.USER$ beside the role unmasks them;
+--          - a direct SELECT ON SYS.USER$ beside the role unmasks them. READ,
+--            and a grant held through a role, were not tried; LG4 shows that
+--            the view's check accepts both;
 --          - the role must be enabled in the session. With no role, the view
 --            shows no rows at all, not even the reader's own
 --
@@ -97,8 +102,9 @@
 --            (ROLE_TAB_PRIVS joined to SESSION_ROLES), or for SYS.
 --        A direct read of SYS.USER$ leaves one row. So a policy on SYS.USER$
 --        alone records a read through the view as well as a direct read, both
---        under the reader's name, and only SQL_TEXT tells them apart. It
---        records a read by an account with no role too, which returns no row
+--        under the reader's name and the same policy name. SQL_TEXT tells them
+--        apart: the statement on the view, or the recursive check. It records
+--        a read by an account with no role too, which returns no row
 --
 -- HOW TO RUN
 --   As SYS, in the PDB and in CDB$ROOT. Against the tier-1 stack, whose SYS
@@ -156,31 +162,37 @@ COLUMN spare4_if_constant FORMAT A70
 -- One read of the target accounts through the view, the same for every
 -- account. The tags are the letters before each ':' in a verifier column, such
 -- as S;T for SPARE4; ORA_HASH tells whether two reads returned the same value.
--- The count DUMPs SPARE4 only where every row the reader sees holds the same
--- value, which no real verifier does.
+-- The count DUMPs SPARE4 only where the reader sees more than one row, every
+-- row holds the same value, and that value is shorter than 8 bytes. No real
+-- verifier is.
 -- Each starts after SELECT: SQL*Plus does not substitute the first word of a
 -- command.
 define ku_read = "sys_context('userenv','session_user') who, sys_context('userenv','con_name') con, name, lcount, ptime, nvl2(password,'set','NULL') pw, ora_hash(password) pw_hash, nvl2(spare4,'set','NULL') s4, regexp_replace(spare4,'([A-Za-z]):[^;]*','\1') s4_tags, ora_hash(spare4) s4_hash, regexp_replace(spare4_12,'([A-Za-z]):[^;]*','\1') s4_12_tags FROM sys.ku$_user_view"
-define ku_count = "count(*) rows_seen, count(lcount) lcount_set, count(password) password_set, count(spare4) spare4_set, count(DISTINCT spare4) spare4_distinct, CASE WHEN count(DISTINCT spare4) = 1 THEN dump(max(spare4)) END spare4_if_constant FROM sys.ku$_user_view"
+define ku_count = "count(*) rows_seen, count(lcount) lcount_set, count(password) password_set, count(spare4) spare4_set, count(DISTINCT spare4) spare4_distinct, CASE WHEN count(*) > 1 AND count(DISTINCT spare4) = 1 AND max(length(spare4)) < 8 THEN dump(max(spare4)) END spare4_if_constant FROM sys.ku$_user_view"
 define base_read = "name, lcount FROM sys.ku$_user_base_view WHERE name = 'ACME_LC_TARGET'"
 
 -------------------------------------------------------------------- setup ----
 CONNECT sys/"&pwd"@&pdb AS SYSDBA
 
+-- Each drop swallows its own error, so one failure does not skip the rest.
+-- Policies go first: a policy cannot be dropped while it is enabled.
 BEGIN
-  FOR u IN (SELECT username FROM dba_users WHERE username LIKE 'ACME\_LC\_%' ESCAPE '\') LOOP
-    EXECUTE IMMEDIATE 'DROP USER ' || u.username || ' CASCADE';
-  END LOOP;
   FOR p IN (SELECT policy_name FROM audit_unified_enabled_policies
              WHERE policy_name IN ('ACME_LC_KU_READ','ACME_LC_USER_READ')) LOOP
-    EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
+    BEGIN EXECUTE IMMEDIATE 'NOAUDIT POLICY ' || p.policy_name;
+    EXCEPTION WHEN OTHERS THEN NULL; END;
   END LOOP;
   FOR p IN (SELECT DISTINCT policy_name FROM audit_unified_policies
              WHERE policy_name IN ('ACME_LC_KU_READ','ACME_LC_USER_READ')) LOOP
-    EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
+    BEGIN EXECUTE IMMEDIATE 'DROP AUDIT POLICY ' || p.policy_name;
+    EXCEPTION WHEN OTHERS THEN NULL; END;
   END LOOP;
-  EXECUTE IMMEDIATE 'DROP PROFILE acme_lc_prof CASCADE';
-EXCEPTION WHEN OTHERS THEN NULL;
+  FOR u IN (SELECT username FROM dba_users WHERE username LIKE 'ACME\_LC\_%' ESCAPE '\') LOOP
+    BEGIN EXECUTE IMMEDIATE 'DROP USER ' || u.username || ' CASCADE';
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+  END LOOP;
+  BEGIN EXECUTE IMMEDIATE 'DROP PROFILE acme_lc_prof CASCADE';
+  EXCEPTION WHEN OTHERS THEN NULL; END;
 END;
 /
 
@@ -276,10 +288,11 @@ SELECT &ku_read WHERE name = 'ACME_LC_TARGET';
 CONNECT sys/"&pwd"@&root AS SYSDBA
 BEGIN
   FOR u IN (SELECT username FROM dba_users WHERE username LIKE 'C##ACME\_LC\_%' ESCAPE '\') LOOP
-    EXECUTE IMMEDIATE 'DROP USER ' || u.username || ' CASCADE';
+    BEGIN EXECUTE IMMEDIATE 'DROP USER ' || u.username || ' CASCADE';
+    EXCEPTION WHEN OTHERS THEN NULL; END;
   END LOOP;
-  EXECUTE IMMEDIATE 'DROP PROFILE c##acme_lc_prof CASCADE';
-EXCEPTION WHEN OTHERS THEN NULL;
+  BEGIN EXECUTE IMMEDIATE 'DROP PROFILE c##acme_lc_prof CASCADE';
+  EXCEPTION WHEN OTHERS THEN NULL; END;
 END;
 /
 CREATE PROFILE c##acme_lc_prof LIMIT FAILED_LOGIN_ATTEMPTS 10 PASSWORD_LOCK_TIME 1 CONTAINER = ALL;

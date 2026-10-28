@@ -283,8 +283,8 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
   `SYS.KU$_USER_VIEW`, expose `LCOUNT` without `SPARE4`?**
   Yes, on the one release measured. To a session with the role enabled, the view
   shows every user's `LCOUNT` and `PTIME`, and `SPARE4` as one space.
-  `EXP_FULL_DATABASE` does not unmask the verifiers; a `SELECT` or `READ` grant
-  on `SYS.USER$` beside the role does. With no role enabled the view shows no
+  `EXP_FULL_DATABASE` does not unmask the verifiers; a direct `SELECT` grant on
+  `SYS.USER$` beside the role does. With no role enabled the view shows no
   rows. `SYS.KU$_USER_BASE_VIEW` does not exist there.
   `sql/oracle/16_lcount_grant_probe.sql` measures it, and
   `02-oracle-privileges.md` §2 has the rest of the result. Whether
@@ -295,6 +295,12 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
   Not run on any release but one 26ai Free release. The view is not documented
   by Oracle, so its columns and its role check may differ between releases. The
   19.3 image is maintainer-only (`maintainer-environments.md` §2).
+- `unverified` `lcount-grant-read-grant` (#124) — **Does `READ` on `SYS.USER$`,
+  or a grant on it held through a role, unmask the verifiers in
+  `SYS.KU$_USER_VIEW`?**
+  Not run. The run tried only a direct `SELECT` grant. The view's check, which
+  the audit trail records, accepts `SELECT` or `READ`, held directly or through
+  an enabled role. That is the view's text, not a measured result.
 
 ### Connections and wallets
 

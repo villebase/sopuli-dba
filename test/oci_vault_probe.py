@@ -39,20 +39,27 @@ results:
   ``409 Conflict``, not 412. A content update, a PENDING update, a promotion
   and a metadata-only update each change the ETag.
 - **M4** Straight after an update the secret is ``UPDATING``, and a second
-  update is refused with ``409 IncorrectState``. It was ``ACTIVE`` again after
-  19.9 and 21.7 seconds.
+  update is refused with ``409 IncorrectState``. It was ``ACTIVE`` again 19.9
+  and 21.7 seconds after the refused update. The timer starts after that
+  refusal and polls once a second, so the window is a little longer than that.
 - **M5** ``current_version_number=2`` with ``metadata`` in the same call makes
   version 2 ``CURRENT``, version 1 ``PREVIOUS``, and changes the metadata.
   Promoting the version that is already ``CURRENT`` succeeds and changes only
-  the metadata. Promoting version 99 is ``404 NotAuthorizedOrNotFound``.
-  Promoting a ``DEPRECATED`` version **succeeds**: OCI does not refuse it.
+  the metadata. The metadata sent **replaces the whole map**:
+  ``{"targets": […], "n": 1}`` followed by ``{"n": 2}`` leaves ``{"n": 2}``.
+  Promoting version 99 is ``404 NotAuthorizedOrNotFound``. Promoting a
+  ``DEPRECATED`` version **succeeds**: OCI does not refuse it.
 - **M6** A second PENDING makes the first ``DEPRECATED``. A ``CURRENT`` update
   over a PENDING leaves the PENDING in place. Scheduling the deletion of a
-  PENDING version is refused with ``409 IncorrectState``. No call removes
-  PENDING without a promotion.
-- **M7** The 31st content update is refused with ``400 LimitExceeded: The
-  limit for this tenancy has been exceeded.`` The secret then lists 30
-  versions, 1 to 30. OCI removes none by itself.
+  PENDING version is refused with ``409 IncorrectState``. Of the calls tried,
+  only a promotion or a newer PENDING takes the stage off a version.
+- **M7** A secret holds 30 versions. The create makes version 1, and content
+  updates 1 to 29 make versions 2 to 30. Content update 30, which would make
+  version 31, is refused with ``400 LimitExceeded: The limit for this tenancy
+  has been exceeded.`` (Run 1 and run 2 printed this as "refused at update 31",
+  the version number. A third run of M7 alone, after the label was corrected,
+  printed "content update 30, which would make version 31, refused".) OCI
+  removes no version by itself.
 - **M7b** A metadata-only update adds no version.
 - **M7c** Scheduling the deletion of the oldest ``DEPRECATED`` version
   succeeds. The secret still lists 30 versions, and the next content update
@@ -318,21 +325,34 @@ class Probe:
         self.update(secret.id, metadata={"sopuli_probe": "1"})
         report("M7b", "metadata-only update adds a version", len(self.stages(secret.id)) > before)
 
-        outcome = "no limit reached"
-        for n in range(2, 42):
+        # The create made version 1, so content update `done` makes version
+        # `done + 1`. Only `LimitExceeded` is the limit; anything else stops
+        # the check and is reported as itself.
+        outcome = "no limit reached after 40 content updates"
+        for done in range(1, 41):
             try:
-                self.update(secret.id, secret_content=content(f"probe-{n}"))
+                self.update(secret.id, secret_content=content(f"probe-{done + 1}"))
             except oci.exceptions.ServiceError as exc:
-                outcome = f"refused at update {n} ({error(exc)})"
+                if exc.code != "LimitExceeded":
+                    report("M7", f"content update {done} stopped the check", error(exc))
+                    return
+                outcome = (
+                    f"content update {done}, which would make version {done + 1}, "
+                    f"refused ({error(exc)})"
+                )
                 break
         versions = self.stages(secret.id)
-        report("M7", "after up to 40 content updates", outcome)
+        report("M7", "limit", outcome)
         report("M7", "versions listed", len(versions))
         report("M7", "lowest and highest version listed", (min(versions), max(versions)))
         report("M7", "stages of the lowest version", versions[min(versions)])
 
         when = datetime.now(UTC) + timedelta(days=1, hours=1)
-        oldest = min(n for n, s in versions.items() if s == ["DEPRECATED"])
+        deprecated = [n for n, s in versions.items() if s == ["DEPRECATED"]]
+        if not deprecated:
+            report("M7c", "schedule deletion of the oldest DEPRECATED version", "none to delete")
+            return
+        oldest = min(deprecated)
         try:
             self.vaults.schedule_secret_version_deletion(
                 secret.id,
@@ -357,6 +377,7 @@ class Probe:
 
     def cleanup(self) -> None:
         when = datetime.now(UTC) + timedelta(days=1, hours=1)
+        scheduled = 0
         for secret_id in created:
             try:
                 self.settle(secret_id)
@@ -364,9 +385,10 @@ class Probe:
                     secret_id,
                     oci.vault.models.ScheduleSecretDeletionDetails(time_of_deletion=when),
                 )
+                scheduled += 1
             except (oci.exceptions.ServiceError, RuntimeError) as exc:
                 print(f"cleanup: could not schedule deletion of {secret_id}: {exc}")
-        print(f"cleanup: scheduled deletion of {len(created)} secrets")
+        print(f"cleanup: scheduled deletion of {scheduled} of {len(created)} secrets")
 
 
 def main() -> int:

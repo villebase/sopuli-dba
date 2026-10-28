@@ -66,7 +66,8 @@ What each environment is, and what to know before using it:
   of the Supabase stack. It preloads supautils, which refuses a change to a
   role in `supautils.reserved_roles`. `postgres` / `sopuli-test`, and
   `postgres` is not a superuser there; `supabase_admin` is, with the same
-  password. `tests/driver/test_postgres_supabase_live.py` runs against it. The
+  password. `tests/driver/test_postgres_supabase_live.py` and
+  `sql/postgres/09_supabase_roles_probe.sql` run against it. The
   image is about 345 MiB to pull on amd64 and 1.7 GB unpacked, so the `tier1`
   profile does not include it, and a local tier-1 stack does not pull it. CI's
   tier-1 lane starts both profiles.

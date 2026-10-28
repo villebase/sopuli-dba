@@ -140,9 +140,6 @@ class FakeSession:
     def scope(self) -> Scope:
         return Scope(encryption=self.encryption)
 
-    def require_no_rollover_window(self, account: str) -> None:
-        return None
-
     def audit_coverage(self, account: str) -> AuditCoverage:
         return self.audited
 
@@ -318,8 +315,8 @@ def test_a_set_then_a_failed_close_still_hands_the_token_over(
 ) -> None:
     """UC-2 §6.4: the password is live, so it goes to the person.
 
-    Still exit 4 and still `ERROR`, because the old password may work until the
-    window ends and that is not what a reset promised. The token goes to stderr
+    Still exit 4 and still `ERROR`, because the old password still works until
+    the window ends and that is not what a reset promised. The token goes to stderr
     and never into the document, exactly as on a clean run.
     """
     failure = PartialAccountChangeError(DENIED, completed=(UNLOCKED, SET))
@@ -352,15 +349,21 @@ def test_a_set_then_a_failed_close_still_shows_the_password_on_the_seen_path(
     sent: Sent,
 ) -> None:
     """The seen path's form of the same decision. The account now holds an
-    expired password; withholding it would leave nobody able to log in."""
-    failure = PartialAccountChangeError(DENIED, completed=(SET,))
+    expired password; withholding it would leave nobody able to log in.
+
+    #541: the row says the old password still works, and passes on the
+    driver's hint for closing the window by hand."""
+    failure = PartialAccountChangeError(
+        DENIED, completed=(SET,), hint="Close it by hand: ALTER USER ..."
+    )
     _open(monkeypatch, FakeSession("OPEN", failure), unseen=False)
 
     result = _run(runner, write_config(MANUAL), input="y\n")
 
     assert result.exit_code == ExitCode.PARTIAL, result.output
     assert "ERROR" in result.output
-    assert "the old password may work until it ends" in result.output
+    assert "so assume the old password still works until it ends" in result.output
+    assert "Close it by hand: ALTER USER ..." in result.output
     assert "shown once" in result.output
     assert len(sent.records) == 1
     assert sent.records[0]["expired"] is True
@@ -818,22 +821,9 @@ def test_the_password_block_follows_the_colour_setting(
 
 # ------------------------------------------ a preview asks a reset's refusals ---
 #
-# #671. A reset refuses on a target for two reasons of its own: the account's
-# profile grants a rollover window (UC-2 §4.3), or the policy cannot produce a
-# password inside the target's byte limit. Both are reads, so a `--dry-run` asks
-# them, and its row says what the real run's row says.
-
-ROLLOVER = DriverError(
-    f'account "{ACCOUNT.upper()}" is on profile ACME_ROLLOVER, which grants a password '
-    "rollover window, and an expiring reset would leave the old password working"
-)
-
-
-class OnARolloverProfile(Succeeding):
-    """An account whose profile grants a rollover window."""
-
-    def require_no_rollover_window(self, account: str) -> None:
-        raise ROLLOVER
+# #671. A reset refuses on a target for a reason of its own: the policy cannot
+# produce a password inside the target's byte limit. That is a read, so a
+# `--dry-run` asks it, and its row says what the real run's row says.
 
 
 class TooNarrow(Succeeding):
@@ -847,31 +837,43 @@ def _comparable(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if key != "duration_ms"}
 
 
-def test_a_preview_names_the_seen_paths_rollover_refusal(
+def test_the_seen_path_refuses_to_keep_the_window_before_anything_connects(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:
-    session = OnARolloverProfile("OPEN", DENIED)
-    _open(monkeypatch, session, unseen=False)
+    """#541: the close is what ends a seen reset's exposure on a rollover
+    profile, so the flag that skips it is refused. From the file and argv, so a
+    preview refuses it too, and no target is reached."""
+    _open(monkeypatch, Succeeding("OPEN", DENIED), unseen=False)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "sopuli.cli._open_session", lambda target, run, config: opened.append(target.name)
+    )
     config = write_config(MANUAL)
 
-    preview = _run(runner, config, "--dry-run")
-    real = _run(runner, config, input="y\n")
+    preview = _run(runner, config, "--keep-rollover", "--dry-run")
+    real = _run(runner, config, "--keep-rollover", input="y\n")
 
-    assert preview.exit_code == real.exit_code == ExitCode.PARTIAL, preview.output
-    rows = [
-        [
-            line
-            for line in result.stdout.splitlines()
-            if line.startswith(ACCOUNT) and "ERROR" in line
-        ]
-        for result in (preview, real)
-    ]
-    assert rows[0] == rows[1], "the preview's row is not the real run's"
-    assert len(rows[0]) == 1
-    assert "rollover window" in rows[0][0]
-    assert "would be reset" not in preview.stdout
-    assert "would reset acme_dev_alice on 0 of 1 targets" in preview.stdout
-    assert session.reset == []
+    for result in (preview, real):
+        assert result.exception.exit_code == ExitCode.USAGE
+        assert "--keep-rollover cannot be used with `delivery.method: manual`" in str(
+            result.exception
+        )
+    assert opened == []
+
+
+def test_the_seen_path_asks_the_session_nothing_about_a_window(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """#541: the command has no rollover refusal of its own any more. The fake
+    session has no method for one, and the reset still runs; the driver closes
+    the window (tier 1 measures that)."""
+    session = Succeeding("OPEN", DENIED)
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(MANUAL), input="y\n")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert session.reset == [ACCOUNT]
 
 
 def test_a_preview_names_the_byte_limit_refusal(

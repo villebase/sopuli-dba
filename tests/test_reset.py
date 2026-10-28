@@ -33,6 +33,7 @@ from sopuli.reset import (
     DeliveryUnavailableError,
     decide,
     deliverable,
+    refuse_kept_window,
     refuse_seen_path,
 )
 from sopuli.safety import RefusedError
@@ -262,6 +263,22 @@ def test_no_guard_fires_on_a_dry_run() -> None:
         confirm_given=True,
         preview=True,
     )
+
+
+def test_the_seen_path_refuses_to_keep_the_rollover_window() -> None:
+    """#541: on the seen path the close is what ends the DBA's exposure, so
+    keeping the window is a usage error."""
+    with pytest.raises(ArgumentError) as caught:
+        refuse_kept_window(SEEN, keep_rollover=True)
+
+    assert caught.value.exit_code == ExitCode.USAGE
+    assert "--keep-rollover" in str(caught.value)
+
+
+def test_an_unseen_path_may_keep_the_window_and_the_seen_one_may_close_it() -> None:
+    """Nobody but the owner sees an unseen password, so the flag stays there."""
+    refuse_kept_window(UNSEEN, keep_rollover=True)
+    refuse_kept_window(SEEN, keep_rollover=False)
 
 
 # --------------------------------------------------------------- the decision ---

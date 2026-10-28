@@ -95,8 +95,8 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `09_reset_from_expired_probe.sql` | `23.26.2.0.0` | 2026-09-26 | #529 | From `EXPIRED`, a reset opens no rollover window and every earlier password stops working |
 | `09_reset_from_expired_probe.sql` | `21.3.0.0.0` | 2026-09-26 | #461 | As on 26ai |
 | `09_reset_from_expired_probe.sql` | `19.3.0.0.0` | 2026-09-28 | #479 | No rollover; the script stops at section 0 |
-| `09_reset_from_expired_probe.sql` | `23.26.3.0.0` | 2026-10-28 | #541 | v2. Every v1 row as on 23.26.2.0.0. From `OPEN`, the seen form and then `EXPIRE PASSWORD ROLLOVER PERIOD` leave the old password dead. From `EXPIRED & LOCKED(TIMED)`, `ACCOUNT UNLOCK` leaves `EXPIRED`, and the seen form then opens no window and the old password is dead |
-| `09_reset_from_expired_probe.sql` | `21.3.0.0.0` | 2026-10-28 | #541 | v2. As on 23.26.3.0.0 |
+| `09_reset_from_expired_probe.sql` | `23.26.3.0.0` | 2026-10-28 | #541 | v2 and v3. Every v1 row as on 23.26.2.0.0. From `OPEN` and from `EXPIRED(GRACE)`, the seen form and then `EXPIRE PASSWORD ROLLOVER PERIOD` leave the old password dead. From `EXPIRED & LOCKED(TIMED)`, `ACCOUNT UNLOCK` leaves `EXPIRED`, and the seen form then opens no window and the old password is dead |
+| `09_reset_from_expired_probe.sql` | `21.3.0.0.0` | 2026-10-28 | #541 | v2 and v3. As on 23.26.3.0.0 |
 | `10_awr_snapshot_probe.sql` | `19.32.0.0.0` | 2026-10-01 | #581 | The wrapped literal (C3) reaches `DBA_HIST_SQLTEXT`. C1, C2 and C4 do not |
 | `11_proxy_connect_probe.sql` | `23.26.2.0.0` | 2026-10-01 | #459 | `ALTER USER` alone can grant `CONNECT THROUGH` and connect as the person. With no audit policy, nothing durable records it |
 | `11_proxy_connect_probe.sql` | `23.26.3.0.0` | 2026-10-24 | #1014 | As on 23.26.2.0.0, connecting by EZConnect |

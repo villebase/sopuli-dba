@@ -134,6 +134,35 @@ class DeliveryUnavailableError(RefusedError):
         )
 
 
+def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
+    """Refuse ``--keep-rollover`` on the seen path, before anything connects.
+
+    The seen reset ends the DBA's exposure with expiry, and on a rollover
+    profile the expiry alone does not end it: the set opens a window, and the
+    old password stays live in it (UC-2 §4.3). The close is what ends it
+    (#541). Keeping the window would leave two working passwords, one of them
+    seen by the DBA.
+
+    **Under ``--dry-run`` too**, unlike :func:`refuse_seen_path`'s guards. Those
+    are about a password on a screen, which a preview never shows. This is
+    about the command line, and a preview that said "would be reset" for a
+    command the real run refuses would be wrong.
+
+    Knowable from the file and argv, so it needs no database. On an unseen
+    path the flag is allowed: nobody but the owner sees the new password.
+    """
+    if not delivery.is_seen or not keep_rollover:
+        return
+    raise ArgumentError(
+        "--keep-rollover cannot be used with `delivery.method: manual`",
+        hint=(
+            "the seen reset closes the rollover window because the window would keep the "
+            "old password working beside the new one, which you have seen. Drop "
+            "--keep-rollover, or use an unseen delivery method (UC-2 §4.3)"
+        ),
+    )
+
+
 def refuse_seen_path(
     delivery: Delivery,
     *,

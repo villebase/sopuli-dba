@@ -3377,3 +3377,30 @@ the register.
     never verify such an account by login. A site that wants no login spent
     on it already has `--method hash`.
   - Document the gap only. The guard would go on looking satisfied.
+
+## #541
+
+- **Decided:** 2026-10-28, #541
+- **Question:** UC-2 §4.3 refused a seen (`manual`) reset of any account whose
+  profile grants a rollover window, because `IDENTIFIED BY … PASSWORD EXPIRE`
+  leaves the old password live there (07's Q7). Probe 09 then showed that from
+  `EXPIRED` the same statement opens no window, so the refusal turned away
+  UC-2's main case. Should the refusal narrow, and how?
+- **Decision:** Remove the refusal. The seen reset closes the window after the
+  set, with `EXPIRE PASSWORD ROLLOVER PERIOD`, as the unseen reset does. It
+  refuses `--keep-rollover`, at plan time and again in the driver. A close that
+  fails after the set is reported with the old password still working, and the
+  statement that closes the window by hand.
+- **Why:** The close was checked by logon. Probe 09 measured the set and then the
+  close from `OPEN` and from `EXPIRED(GRACE)`, on 26ai 23.26.3.0.0 and 21c
+  21.3.0.0.0, twice each: the old password answers `ORA-01017`, and only the new,
+  expired one authenticates. From the expired states no window opens. One
+  statement then ends the exposure on both paths. It also serves the `OPEN`
+  account whose owner forgot the password. 19c with rollover is not measured;
+  the reset keys on the capability.
+- **Rejected:**
+  - Keep the refusal. It refuses the expired account UC-2 exists for.
+  - Allow only accounts whose status is `EXPIRED` or `EXPIRED & IN ROLLOVER`.
+    It rests on `ACCOUNT_STATUS`, which #504 showed can disagree with what
+    authenticates, and `EXPIRED(GRACE)` starts with `EXPIRED` but behaves like
+    `OPEN`. It still refuses the `OPEN` account.

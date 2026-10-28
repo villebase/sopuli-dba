@@ -56,6 +56,13 @@ VAULTS: dict[str, Any] = {
     "vault-other": {"type": "hashicorp"},
 }
 
+OCI_VAULT: dict[str, Any] = {
+    "type": "oci",
+    "vault_id": "ocid1.vault.oc1..exampleuniqueid",
+    "compartment_id": "ocid1.compartment.oc1..exampleuniqueid",
+    "key_id": "ocid1.key.oc1..exampleuniqueid",
+}
+
 GROUPS: dict[str, Any] = {"app-pdbs": {"match": {"target_set": "appdb"}}}
 
 
@@ -966,7 +973,7 @@ def test_a_shared_password_under_one_policy_loads() -> None:
 def two_entries(ref: str, *, vault: str | None = None) -> dict[str, Any]:
     """`acme_web_user` and `acme_api_user` in two entries, on one dev PDB."""
     return document(
-        vaults={"vault-oci": {"type": "oci"}, **VAULTS},
+        vaults={"vault-oci": OCI_VAULT, **VAULTS},
         applications=[
             {
                 "name": name,
@@ -1050,7 +1057,7 @@ def test_a_store_named_beside_a_store_from_the_run_is_left_to_the_run() -> None:
     config = build_config(
         {
             "version": 1,
-            "vaults": {"vault-oci": {"type": "oci"}},
+            "vaults": {"vault-oci": OCI_VAULT},
             "targets": [
                 {
                     "name": "alpha",
@@ -1369,7 +1376,7 @@ def test_a_store_that_stages_natively_is_left_alone() -> None:
     config = build_config(
         {
             "version": 1,
-            "vaults": {"vault-oci": {"type": "oci"}, **VAULTS},
+            "vaults": {"vault-oci": OCI_VAULT, **VAULTS},
             "target_sets": {"appdb": APPDB},
             "groups": GROUPS,
             "applications": [

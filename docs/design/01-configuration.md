@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.4.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -456,7 +456,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.4.schema.json
 version: 1
 
 runtime:
@@ -816,13 +816,15 @@ config file can be read without knowing what environment it will be read in.
 | Key | Meaning |
 |---|---|
 | `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
-| `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below |
-| `mount` | KV mount point (HashiCorp) |
-| `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2) |
-| `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace |
+| `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below. Refused on an `oci` store |
+| `mount` | KV mount point (HashiCorp). Refused on an `oci` store |
+| `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` store |
+| `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace. Refused on an `oci` store |
+| `vault_id`, `compartment_id`, `key_id` | `oci` only, and **required** there: the vault's OCID, the compartment new secrets are created in, and the KMS key that encrypts them. The tool creates secrets, and OCI's `CreateSecret` needs all three. They are not credentials, so they are plain strings. Refused on any other store, and no `defaults:` block or profile may change them: a different value is a second store |
+| `region` | `oci` only. Absent means the region the auth method supplies: the config-file profile's, or the instance metadata's. No layer may change it, for the same reason |
 | `timeout_s` | request timeout against this store, in seconds. Absent means the backend's own default; for `hashicorp` that is `DEFAULT_TIMEOUT_S` in `sopuli/store/hashicorp/_transport.py`. There is no unlimited value, because the advisory lock is held while a request is outstanding |
 | `merge_patch` | HashiCorp KV v2 only, and refused on any other store. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
-| `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below |
+| `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below. Refused on an `oci` store, whose SDK verifies TLS itself |
 | `auth` | how to authenticate, and where the material comes from — see below |
 | `non_production` | marks a store that must never master a `prod` target (§10). Absent means production |
 | `locking` | `required` (default) or `advisory-only` — whether this store can hold P5's advisory lock. See below |
@@ -1095,6 +1097,9 @@ vaults:
 
   vault-oci:
     type: oci
+    vault_id:       ocid1.vault.oc1.eu-frankfurt-1.exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id:         ocid1.key.oc1.eu-frankfurt-1.exampleuniqueid
     auth: instance_principal
 ```
 
@@ -3286,7 +3291,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.3.schema.json`](../schemas/sopuli-config-3.3.schema.json),
+[`docs/schemas/sopuli-config-3.4.schema.json`](../schemas/sopuli-config-3.4.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3297,7 +3302,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.3.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.4.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3375,7 +3380,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.4.schema.json
 version: 1
 ```
 
@@ -3386,7 +3391,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.3.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.4.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

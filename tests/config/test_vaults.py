@@ -19,7 +19,13 @@ from typing import Any
 import pytest
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.vaults import AUTH_MATERIAL_KEYS, AUTH_METHODS, build_vaults
+from sopuli.config.vaults import (
+    AUTH_MATERIAL_KEYS,
+    AUTH_METHODS,
+    OCI_KEYS,
+    OCI_REQUIRED_KEYS,
+    build_vaults,
+)
 
 HASHICORP: dict[str, Any] = {
     "type": "hashicorp",
@@ -27,6 +33,13 @@ HASHICORP: dict[str, Any] = {
     "mount": "kv",
     "kv_version": 2,
     "auth": {"method": "token"},
+}
+
+OCI: dict[str, Any] = {
+    "type": "oci",
+    "vault_id": "ocid1.vault.oc1..exampleuniqueid",
+    "compartment_id": "ocid1.compartment.oc1..exampleuniqueid",
+    "key_id": "ocid1.key.oc1..exampleuniqueid",
 }
 
 
@@ -99,7 +112,8 @@ def test_a_backend_that_is_only_planned_is_refused() -> None:
 
 @pytest.mark.parametrize("kind", ["hashicorp", "oci", "file", "keyring"])
 def test_every_backend_p2_puts_in_scope_is_accepted(kind: str) -> None:
-    assert only(**{"store": {"type": kind}}).type == kind
+    entry = OCI if kind == "oci" else {"type": kind}
+    assert only(**{"store": entry}).type == kind
 
 
 def test_only_type_is_required() -> None:
@@ -110,6 +124,50 @@ def test_only_type_is_required() -> None:
 
     assert vault.addr is None
     assert vault.auth is None
+
+
+# --------------------------------------------------------------------- oci ---
+
+
+def test_an_oci_store_reads_its_four_keys() -> None:
+    vault = only(**{"vault-oci": {**OCI, "region": "eu-frankfurt-1"}})
+
+    assert vault.vault_id == OCI["vault_id"]
+    assert vault.compartment_id == OCI["compartment_id"]
+    assert vault.key_id == OCI["key_id"]
+    assert vault.region == "eu-frankfurt-1"
+
+
+def test_region_is_optional_on_an_oci_store() -> None:
+    """The auth method supplies a region: the config-file profile, or the
+    instance metadata."""
+    assert only(**{"vault-oci": OCI}).region is None
+
+
+@pytest.mark.parametrize("key", OCI_REQUIRED_KEYS)
+def test_an_oci_store_needs_vault_compartment_and_key(key: str) -> None:
+    """The tool creates secrets (#1128 decision 2), and OCI's CreateSecret
+    needs all three."""
+    entry = {name: value for name, value in OCI.items() if name != key}
+
+    with pytest.raises(ConfigError) as caught:
+        build_vaults(document(**{"vault-oci": entry}))
+
+    rendered = str(caught.value)
+    assert f"vaults.vault-oci.{key}" in rendered
+    assert "must be given" in rendered
+
+
+@pytest.mark.parametrize("key", OCI_KEYS)
+def test_a_hashicorp_store_refuses_oci_keys(key: str) -> None:
+    """A key nothing would read is refused (P3), so a store whose `type` was
+    edited from `oci` does not keep an OCID that looks as if it matters."""
+    with pytest.raises(ConfigError) as caught:
+        only(**{"vault-dev": {**HASHICORP, key: "x"}})
+
+    rendered = str(caught.value)
+    assert f"vaults.vault-dev.{key}" in rendered
+    assert "OCI" in rendered
 
 
 # -------------------------------------------------------------- kv_version ---

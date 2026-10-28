@@ -256,6 +256,9 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
             "vaults:\n"
             "  vault-hc:\n    type: hashicorp\n    mount: secret\n"
             "  vault-dr:\n    type: oci\n"
+            "    vault_id: ocid1.vault.oc1..exampleuniqueid\n"
+            "    compartment_id: ocid1.compartment.oc1..exampleuniqueid\n"
+            "    key_id: ocid1.key.oc1..exampleuniqueid\n"
             "  vault-local:\n    type: file\n"
             "  vault-desktop:\n    type: keyring\n"
         )

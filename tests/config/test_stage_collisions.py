@@ -24,7 +24,12 @@ from sopuli.config.sharing import colliding_stages
 
 VAULTS: dict[str, Any] = {
     "vault-dev": {"type": "hashicorp"},
-    "vault-oci": {"type": "oci"},
+    "vault-oci": {
+        "type": "oci",
+        "vault_id": "ocid1.vault.oc1..exampleuniqueid",
+        "compartment_id": "ocid1.compartment.oc1..exampleuniqueid",
+        "key_id": "ocid1.key.oc1..exampleuniqueid",
+    },
 }
 
 ACCOUNTS = ["acme_web_user", "acme_batch_user"]

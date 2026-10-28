@@ -81,6 +81,7 @@ from sopuli.config.vault_env import (
     vault_cli_contributions,
     vault_env_contributions,
 )
+from sopuli.config.vaults import HASHICORP_KEYS
 from sopuli.settings import Contribution, Layer, Resolved, ratchet_note, resolve
 
 #: One store's environment contributions, keyed by setting key -- what
@@ -164,6 +165,8 @@ def apply_vault_layers(
         }
         for key, contributions in from_cli.get(vault.name, {}).items():
             supplied.setdefault(key, contributions)
+        if vault.type == "oci":
+            supplied = _without_thirdparty(supplied)
         if "addr" in supplied:
             supplied["addr"], dropped = _drop_userinfo(vault.name, supplied["addr"])
             warnings.extend(dropped)
@@ -171,6 +174,41 @@ def apply_vault_layers(
         merged.append(one)
         warnings.extend(found)
     return tuple(merged), tuple(warnings)
+
+
+def _without_thirdparty(supplied: dict[str, list[Contribution]]) -> dict[str, list[Contribution]]:
+    """``supplied`` without HashiCorp's own variables, for an OCI store.
+
+    ``VAULT_ADDR``, ``VAULT_NAMESPACE`` and ``VAULT_CACERT`` are exported in
+    every shell that has run `vault`, and they mean nothing to an OCI store. §6
+    does not fail a run over another tool's variable, so the run does not apply
+    them here either (#1130). This tool's own ``SOPULI_*`` variables and
+    ``--vault-addr`` stay, and :func:`_refuse_hashicorp_keys` refuses them.
+    """
+    kept = {
+        key: [one for one in contributions if one.layer is not Layer.ENV_THIRDPARTY]
+        for key, contributions in supplied.items()
+    }
+    return {key: contributions for key, contributions in kept.items() if contributions}
+
+
+def _refuse_hashicorp_keys(vault: Vault, values: Mapping[str, Any]) -> None:
+    """An OCI store reads none of HashiCorp's keys, from any layer (#1130).
+
+    Checked on the merged values, so a profile, ``defaults.vaults``, a
+    ``SOPULI_*`` variable or ``--vault-addr`` is refused as the file is. P3
+    refuses a key the tool would ignore. ``merge_patch`` has its own message, in
+    :func:`_refuse_inert_merge_patch`.
+    """
+    if vault.type != "oci":
+        return
+    for key in HASHICORP_KEYS:
+        if values.get(key) is not None:
+            raise ConfigError(
+                f"`{key}` has no effect on a store of type 'oci'",
+                at=ROOT.key("vaults").key(vault.name).key(key),
+                hint="it is a HashiCorp Vault key; remove it from this store",
+            )
 
 
 def _refuse_inert_merge_patch(vault: Vault, values: Mapping[str, Any]) -> None:
@@ -375,6 +413,7 @@ def _merge(
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
         values["tls"] = tls
+    _refuse_hashicorp_keys(vault, values)
     patched.extend(tls_patched)
     settings.update(tls_settings)
     warnings.extend(tls_warnings)

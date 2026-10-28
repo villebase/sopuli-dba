@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.3.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.4.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.3"
+SCHEMA_VERSION = "3.4"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -330,6 +330,30 @@ def _vault_types() -> dict[str, Schema]:
                 "KV v2 only. false turns the server-side merge patch off, so a write "
                 "goes straight to read-modify-write under compare-and-set. For a proxy "
                 "or WAF in front of Vault that blocks the PATCH method. Absent means true."
+            ),
+        },
+        "vault_id": {
+            **STRING,
+            "description": "OCI only, and required there: the vault's OCID.",
+        },
+        "compartment_id": {
+            **STRING,
+            "description": (
+                "OCI only, and required there: the OCID of the compartment new secrets "
+                "are created in."
+            ),
+        },
+        "key_id": {
+            **STRING,
+            "description": (
+                "OCI only, and required there: the OCID of the KMS key that encrypts new secrets."
+            ),
+        },
+        "region": {
+            **STRING,
+            "description": (
+                "OCI only. Absent means the region the auth method supplies: the "
+                "config-file profile's, or the instance metadata's."
             ),
         },
         "tls": _ref("vault_tls"),

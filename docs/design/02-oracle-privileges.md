@@ -351,7 +351,20 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
   the root and 0 in the PDB. Read in the PDB, by either route, the common
   account's `LCOUNT` is 0, and its `PTIME` in the view is NULL. So the
   `LCOUNT` guard does not see a common account's failed logins on a PDB target
-  (open: #1122).
+  (open: #1122). `sql/oracle/17_common_lcount_probe.sql` measured the rest on
+  23.26.3.0.0, 21.3.0.0.0 and 18.4.0.0.0, with the same results on each:
+  - The root's count is the only one. Failed logins in the root and in the PDB
+    add to it, and a good login in the PDB resets it.
+  - It locks the account in every container, on the limit of the profile the
+    account has in the root. A profile given to the account in the PDB does
+    not apply, though the PDB's `DBA_USERS.PROFILE` names it.
+  - In the PDB, the locked account's `ACCOUNT_STATUS` is `OPEN`, and the right
+    password gets `ORA-28000`.
+  - A session in the PDB cannot read the root's count through
+    `CONTAINERS(SYS.USER$)` or `CDB_USERS`: both show only the PDB's row. A
+    common account that holds `SET CONTAINER` and `SELECT ON SYS.USER$` with
+    `CONTAINER = ALL` reads it after `ALTER SESSION SET CONTAINER = CDB$ROOT`.
+    A local account cannot.
 - **A read through the view is not quieter in the audit trail.** Under a unified
   audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
   leaves six `USER$` rows under the reader's name, with the reader's statement.
@@ -1459,6 +1472,7 @@ the design as it is then.
 | `sql/oracle/14_session_loss_probe.py` | the code the client raises when a held session is lost to a closed PDB or a CDB shutdown, and when a logon meets a CDB that is starting (UC-1 §6.4) |
 | `sql/oracle/15_mixed_mode_trail_probe.sql` | whether, in mixed mode, an enabled unified policy records a logon and an `ALTER USER` under each `AUDIT_TRAIL` setting (§5) |
 | `sql/oracle/16_lcount_grant_probe.sql` | what `SYS.KU$_USER_VIEW` shows of `LCOUNT` and the verifiers under each role combination, in a PDB and in `CDB$ROOT`, and what a read leaves in the audit trail (§2) |
+| `sql/oracle/17_common_lcount_probe.sql` | where a common account's failed-login count lives, which profile limit locks it, and what a session in a PDB can read of the count (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

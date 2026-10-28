@@ -1924,8 +1924,8 @@ no re-run at all.
 **`overridden`** lists the account guardrails (`02-oracle-privileges.md` §4) that
 `--force` waived on this row: the check that refused, and what it observed. It is
 absent where nothing was waived, because the field records overrides, not
-intent. Its `check` enum has no `declared` and no `superuser`: checks 1 and 6
-are the refusals `--force` cannot waive, so a document can never carry them
+intent. Its `check` enum has no `declared`, `superuser` or `reserved`: checks 1,
+6 and 8 are the refusals `--force` cannot waive, so a document can never carry them
 here, and an enum that admitted them would advertise an override the tool
 refuses to make. `own_account`, check 7, is in it from run schema 1.62 (#1059).
 

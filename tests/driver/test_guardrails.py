@@ -16,6 +16,7 @@ from sopuli.driver.guardrails import (
     OWN_ACCOUNT,
     PASSWORD_FILE,
     PRIVILEGED_ROLE,
+    RESERVED,
     SUPERUSER,
     VENDOR_MAINTAINED,
     Refusal,
@@ -204,8 +205,8 @@ def test_checks_two_to_five_and_seven_are_overridable(check: str) -> None:
     assert Refusal(check, "ACME_WEB_USER", "…").overridable
 
 
-@pytest.mark.parametrize("check", [DECLARED, SUPERUSER])
-def test_the_whitelist_and_a_superuser_are_never_overridable(check: str) -> None:
+@pytest.mark.parametrize("check", [DECLARED, SUPERUSER, RESERVED])
+def test_the_whitelist_a_superuser_and_a_reserved_role_are_never_overridable(check: str) -> None:
     assert not Refusal(check, "ACME_WEB_USER", "…").overridable
 
 
@@ -242,6 +243,24 @@ def test_the_tool_s_own_account_is_refused_and_force_waives_it_on_the_record() -
 
 def test_an_account_that_is_neither_passes_checks_six_and_seven() -> None:
     assert checks(account()) == set()
+
+
+# ------------------------------------------------------- check 8 (#1111) ---
+
+
+def test_a_reserved_account_is_refused_and_force_does_not_waive_it() -> None:
+    """Check 8. Only a superuser may change a reserved account, and the tool
+    never connects as one, so a waiver would only move the refusal to the
+    server."""
+    state = UserState(name="authenticator", status="OPEN", reserved_by="supautils.reserved_roles")
+
+    refused = review(state, declared=("authenticator",))
+    assert [refusal.check for refusal in refused.refusals] == [RESERVED]
+    assert "supautils.reserved_roles" in refused.refusals[0].reason
+
+    forced = review(state, declared=("authenticator",), force=True)
+    assert not forced.permitted
+    assert forced.overridden == ()
 
 
 # -------------------------------------------------- the third answer (§4.3) ---

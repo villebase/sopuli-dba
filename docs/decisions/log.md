@@ -488,6 +488,8 @@ the register.
   It is not a setting itself. It is recorded in the audit event and in the run
   document. [#1059](#1059) added check 7, the tool's own account, to the checks
   it overrides, and check 6, a superuser, to the ones it never overrides.
+  [#1111](#1111) added check 8, a role the server reserves, to the ones it never
+  overrides.
 - **Why:** Managing the password of an Oracle-maintained account such as
   `DBSNMP` is ordinary DBA work. A tool with no override does not stop that
   change. It moves it to SQL\*Plus, where nothing records it. An audited
@@ -2829,8 +2831,8 @@ the register.
   none.
 - **Decision:** Only under `--preflight`. The survey already reads each account,
   so the pass's question is asked of what it read, and each credential the run
-  would skip everywhere is `SOPULI-W055`. Not under `--force`, where the real run
-  does not ask. A new code, so run schema 1.54 and event schema 1.15. UC-1 §5
+  would skip everywhere is `SOPULI-W055`. Under `--force` only the checks no
+  flag waives refuse, as in the real run ([#1111](#1111)). A new code, so run schema 1.54 and event schema 1.15. UC-1 §5
   states the rule.
 - **Why:** `--preflight` is where an operator asks what the databases will
   say, and it already connects, so the forecast costs no connection. A plain
@@ -3292,3 +3294,27 @@ the register.
     only an estate with a second channel gets.
   - A fixed set of `ttl` values in the config. It would refuse values a server
     with `--allow-custom-expiration` accepts.
+
+## #1111
+
+- **Decided:** 2026-10-28, #1111
+- **Question:** On Supabase, supautils refuses a change to any role in
+  `supautils.reserved_roles` by anyone but a superuser. The account guardrails
+  should refuse such a role before anything changes, as they refuse a
+  superuser, so that the server does not refuse the `ALTER ROLE` halfway
+  through a run. Can `--force` waive that refusal?
+- **Decision:** No. Check 8 joins `02-oracle-privileges.md` §4. It refuses an
+  account the server reserves, and nothing waives it, as nothing waives check 6.
+  It reads `UserState.reserved_by`, which only the PostgreSQL driver sets, from
+  `current_setting('supautils.reserved_roles', true)`. Under `--force` the
+  guardrail pass before the first change still runs, with only checks 6 and 8
+  refusing, so a shared credential that one target refuses is changed on none.
+- **Why:** Only a superuser may change a reserved role, and the tool refuses to
+  connect as a superuser. A waiver would only move the refusal to the server,
+  after the run had started, which is the failure check 8 exists to prevent.
+  This is the reason #1059 gives for check 6.
+- **Rejected:**
+  - Reporting a reserved role as vendor-maintained, so that check 2 refuses it.
+    No new check, but `--force` waives check 2, and a forced run would then fail
+    at `ALTER ROLE` with the server's error. Check 2's message would not name
+    the setting either.

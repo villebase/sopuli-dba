@@ -84,7 +84,8 @@ def decide(
 
     **`--force` waives guardrails 2 to 5 and 7 and never the declaration**, which is
     invariant 5's own sentence: ``--force`` overrides other guardrails, never the
-    whitelist. That is enforced by :func:`~sopuli.driver.guardrails.review` rather
+    whitelist. It does not waive checks 6 and 8 either, a superuser and a role the
+    server reserves. That is enforced by :func:`~sopuli.driver.guardrails.review` rather
     than here, and it is why the declaration is expressed *through* the review's
     check 1 instead of short-circuiting it -- one refusal vocabulary, one place
     that decides what ``--force`` may do.

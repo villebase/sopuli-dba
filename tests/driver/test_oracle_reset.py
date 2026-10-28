@@ -42,6 +42,7 @@ from sopuli.driver.protocol import (
     DriverError,
     PartialAccountChangeError,
 )
+from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
 ACCOUNT = "acme_reset_user"
@@ -320,6 +321,7 @@ def test_a_seen_reset_cannot_keep_the_window(
         rollover_account.reset_password(ACCOUNT, NEW, expire=True, keep_rollover=True)
 
     assert "cannot keep the rollover window" in str(caught.value)
+    assert caught.value.exit_code == ExitCode.USAGE, "a usage refusal, not the server's"
     assert caught.value.password_sent is False
     assert _logon(live_oracle, OLD) == "ok", "a statement was issued"
 
@@ -501,8 +503,8 @@ def test_a_seen_reset_whose_close_failed_says_how_to_close_it(
         rollover_account.reset_password(ACCOUNT, NEW, expire=True)
 
     hint = caught.value.hint or ""
-    assert "the old password still works" in hint
-    assert _logon(live_oracle, OLD) == "ORA-28001", "the old password does not authenticate"
+    assert "assume the old password still works" in hint
+    assert _logon(live_oracle, OLD) == "ORA-28001", "the old password is already dead"
 
     close = hint.split("Close it by hand: ")[1].split(";")[0]
     assert close == f'ALTER USER "{ACCOUNT.upper()}" EXPIRE PASSWORD ROLLOVER PERIOD'

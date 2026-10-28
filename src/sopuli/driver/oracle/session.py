@@ -142,6 +142,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
+from sopuli.exit_codes import ExitCode
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -682,14 +683,18 @@ class OracleSession:
         if expire and keep_rollover:
             # The command refuses the flag on the seen path before anything
             # connects. Asked again here because this is the last point at which
-            # refusing costs nothing.
-            raise DriverError(
+            # refusing costs nothing. A usage refusal, as the command's is: the
+            # server never saw these arguments.
+            refused = DriverError(
                 "a seen reset cannot keep the rollover window",
                 hint=(
                     "the window would leave the old password working beside the new one, "
                     "which the DBA has seen (UC-2 §4.3)"
                 ),
             )
+            refused.category = "config"
+            refused.exit_code = ExitCode.USAGE
+            raise refused
 
         state = self.describe_user(account)
         if state is None:
@@ -734,6 +739,10 @@ class OracleSession:
         # live -- and an exception alone would let the caller report the account
         # as untouched. `done` is the rows so far; a failure with nothing in it
         # that changed anything is an ordinary failure and is raised as one.
+        # The statement a failed close names, built here for `statement`'s
+        # reason: building it inside the handler could raise there and lose the
+        # record of a set that committed. Nothing in it is secret.
+        close = finish_rollover(Identifier(state.name), scope=self.scope())
         done: tuple[AccountChange, ...] = ()
         try:
             done = (self._reset_unlock(state),)
@@ -741,15 +750,14 @@ class OracleSession:
             return (*done, self._reset_close_window(state, keep=keep_rollover))
         except DriverError as error:
             if any(one.action == PASSWORD_SET for one in done):
-                # The close failed. Nothing reads whether the set opened a
-                # window, so the hint says what to assume: the old password
-                # still works. Nothing in the statement is secret.
-                close = finish_rollover(Identifier(state.name), scope=self.scope())
+                # The close failed. Whether the set opened a window depends on
+                # the start state (probe 09: none from `EXPIRED`), and nothing
+                # reads it after the set, so the hint says what to assume.
                 raise PartialAccountChangeError(
                     error,
                     completed=done,
                     hint=(
-                        "the old password still works until the rollover window ends. "
+                        "assume the old password still works until the rollover window ends. "
                         f"Close it by hand: {close.redacted}"
                     ),
                 ) from error

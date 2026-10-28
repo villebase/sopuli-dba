@@ -151,7 +151,7 @@ def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
     Knowable from the file and argv, so it needs no database. On an unseen
     path the flag is allowed: nobody but the owner sees the new password.
     """
-    if delivery.method != MANUAL or not keep_rollover:
+    if not delivery.is_seen or not keep_rollover:
         return
     raise ArgumentError(
         "--keep-rollover cannot be used with `delivery.method: manual`",

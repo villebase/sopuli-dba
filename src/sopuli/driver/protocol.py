@@ -1135,9 +1135,9 @@ class Session(Protocol):
         Two cases, and the caller treats them differently: an unlock followed by
         a failed set leaves the password unchanged and the account open, and a
         set followed by a failed close leaves the new password live and the old
-        one working until the window ends. The second carries a hint that says
-        so, and how to close the window by hand. A failure with nothing committed
-        before it is raised as it came.
+        one possibly working until the window ends. The second carries a hint
+        that says to assume it works, and how to close the window by hand. A
+        failure with nothing committed before it is raised as it came.
         """
         ...
 

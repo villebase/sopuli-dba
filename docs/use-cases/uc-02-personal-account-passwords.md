@@ -913,12 +913,16 @@ rests on the close, whose effect was checked by logon, and not on reading
   anything connects, and under `--dry-run` too. Keeping the window would leave
   the old password working beside a new one the DBA has seen. The driver refuses
   `expire` with `keep_rollover` as well, before it issues anything.
-- **A close that fails after the set leaves the old password working.** The set
-  and the close commit separately. The row is `ERROR` and the password is still
-  handed over (§6.4). Its detail says that the old password still works until the
-  window ends, and the driver's hint gives the statement that closes it by hand.
+- **A close that fails after the set may leave the old password working.** The
+  set and the close commit separately. From `OPEN` or `EXPIRED(GRACE)` the set
+  opened a window, and from an expired state it did not, but nothing reads which
+  after the set. The row is `ERROR` and the password is still handed over (§6.4).
+  Its detail says to assume the old password still works until the window ends,
+  and the driver's hint gives the statement that closes it by hand.
 - **19.32.0.0.0, the 19c release with rollover, has not been measured.** The
-  reset keys on the rollover capability, never on a release (invariant 3).
+  close is issued where the account's profile grants a window or one is open,
+  as on the unseen path. Nothing branches on the release (invariant 3), so a
+  seen reset runs there as it does on 26ai.
 
 ### 4.4 Guardrails
 
@@ -1261,7 +1265,7 @@ next depends on whether the password was set:
 | Committed | Failed | Password | Handed over | Record and notify |
 |---|---|---|---|---|
 | `ACCOUNT UNLOCK` | the set | unchanged, the old one works | **no** | no |
-| the set | the window close | **live**, and the old one still works until the window ends | **yes** | yes |
+| the set | the window close | **live**, and the old one may work until the window ends | **yes** | yes |
 
 The first is this section's recoverable failure, with one extra step done. The
 token already made would retrieve a value that authenticates nothing, so it is
@@ -1272,9 +1276,10 @@ The second is handed over, because withholding it is the lockout this section
 orders the steps to avoid. On the seen path, nobody would hold the expired
 password the account now has. On an unseen one, the token has already been made,
 and discarding it leaves a live password nobody can fetch. The row still fails,
-because the reset promised that the old password would stop working, and it has
-not. On the seen path that is the exposure the close exists to end (§4.3), so
-the row's detail says the old password still works, and the error's hint gives
+because the reset promised that the old password would stop working, and it may
+not have. On the seen path that is the exposure the close exists to end (§4.3),
+so the row's detail says to assume the old password still works, and the error's
+hint gives
 the statement that closes the window by hand. The record is written, because it holds
 what happened, and a password was reset. It has no field for the open window,
 which is in the run document.

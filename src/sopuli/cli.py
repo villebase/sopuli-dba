@@ -2082,9 +2082,10 @@ def account_reset_password(
     action = "resetting a password"
     refuse_if_readonly(run.resolved, action=action)
 
-    # Both delivery gates run before a selector is judged and before anything
-    # connects: a reset with nowhere to deliver, or one whose seen path cannot be
-    # watched, must not reach a database at all. UC-2 6.4's ordering is about
+    # The three delivery gates run before a selector is judged and before
+    # anything connects: a reset with nowhere to deliver, a seen reset asked to
+    # keep the rollover window, or one whose seen path cannot be watched, must
+    # not reach a database at all. UC-2 6.4's ordering is about
     # which failure to prefer once a run is under way; this is about not starting.
     delivery = reset.deliverable(run.config.delivery)
     reset.refuse_kept_window(delivery, keep_rollover=keep_rollover)
@@ -3055,7 +3056,7 @@ def _reset_one(
         # scheduler wants to know which targets were touched.*
         #
         # **A password that is set is handed over, even where closing the window
-        # then failed.** The new password is live and the old one still works
+        # then failed.** The new password is live and the old one may work
         # until the window ends. On the seen path that is the exposure the close
         # exists to end (#541), so the row says so and the driver's hint says how
         # to close the window by hand. Withholding the password would be worse on
@@ -3072,8 +3073,8 @@ def _reset_one(
             detail=(
                 decision.detail
                 if unclosed is None
-                else "password set, but the rollover window was not closed, so the old "
-                f"password still works until it ends: {unclosed.message}"
+                else "password set, but the rollover window was not closed, so assume the "
+                f"old password still works until it ends: {unclosed.message}"
                 + (f" -- {unclosed.hint}" if unclosed.hint else "")
             ),
             status=status,

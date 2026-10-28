@@ -314,8 +314,8 @@ services:
   # stack (API gateway, auth, storage) is left out: the tool talks to the
   # database only. POSTGRES_PASSWORD is the password of both `postgres` (not a
   # superuser on Supabase) and `supabase_admin` (the superuser). Pinned, because
-  # the reserved list changes between releases. CI's tier-1 lane starts it
-  # beside postgres:
+  # the reserved list changes between releases. CI's tier-1 lane starts it with
+  # `--profile tier1 --profile supabase`. Beside a local tier-0 stack:
   #   docker compose --profile tier0 --profile supabase up -d
   # The healthcheck goes over TCP, because the image's init runs a server that
   # listens on the socket only.

@@ -67,8 +67,9 @@ What each environment is, and what to know before using it:
   role in `supautils.reserved_roles`. `postgres` / `sopuli-test`, and
   `postgres` is not a superuser there; `supabase_admin` is, with the same
   password. `tests/driver/test_postgres_supabase_live.py` runs against it. The
-  image is about 345 MiB to pull on amd64 and 1.7 GB unpacked, so tier 1 does
-  not include it.
+  image is about 345 MiB to pull on amd64 and 1.7 GB unpacked, so the `tier1`
+  profile does not include it, and a local tier-1 stack does not pull it. CI's
+  tier-1 lane starts both profiles.
 
 CI starts tier 1 and the `supabase` profile for each pull request, except one
 that changes only files that `.github/workflows/tier1.yml` lists under

@@ -118,6 +118,7 @@ def test_every_role_the_server_reserves_is_check_eight(live_supabase: Any, sessi
     for name in _reserved_roles(live_supabase):
         state = session.describe_user(name)
 
+        assert state is not None, name
         assert state.reserved_by == RESERVED_ROLES, name
         assert RESERVED in _checks(session, name), name
 
@@ -125,16 +126,20 @@ def test_every_role_the_server_reserves_is_check_eight(live_supabase: Any, sessi
 def test_supautils_refuses_every_role_check_eight_refuses(live_supabase: Any) -> None:
     """The tool's reading of the setting against the server's: `postgres`, which
     may change other roles here, is refused each one with supautils' message.
-    Each change is rolled back."""
+    Each change is rolled back, a change the server lets through included, so
+    a failing run leaves no role changed."""
     import psycopg
+    from psycopg import sql
 
     with _owner(live_supabase) as owner:
         for name in _reserved_roles(live_supabase):
             with (
                 pytest.raises(psycopg.errors.InsufficientPrivilege) as refused,
-                owner.transaction(),
+                owner.transaction(force_rollback=True),
             ):
-                owner.execute(f'alter role "{name}" connection limit 5')
+                owner.execute(
+                    sql.SQL("alter role {} connection limit 5").format(sql.Identifier(name))
+                )
 
             assert f'"{name}" is a reserved role' in str(refused.value)
 

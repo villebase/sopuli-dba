@@ -88,6 +88,37 @@ def test_a_current_write_keeps_the_attributes(store: MemoryStore) -> None:
     assert dict(stored.attributes) == {"targets": ["appdb-alpha"]}
 
 
+def test_a_write_based_on_a_pinned_old_generation_conflicts(store: MemoryStore) -> None:
+    """As on a store without staging, where the pinned version is stale."""
+    token = store.write(PATH, {"password": "a"}, cas=0)
+    store.write(PATH, {"password": "b"}, cas=token)
+    old = store.read(PATH, version=1)
+    assert old is not None
+
+    with pytest.raises(CasConflictError):
+        store.write(PATH, {"password": "from-a"}, cas=old.version)
+
+
+def test_a_pinned_read_of_current_carries_the_token(store: MemoryStore) -> None:
+    token = store.write(PATH, {"password": "a"}, cas=0)
+
+    pinned = store.read(PATH, version=1)
+    assert pinned is not None
+    assert pinned.version == token
+
+
+def test_a_deleted_staging_path_reads_as_nothing_and_keeps_its_history(
+    store: MemoryStore,
+) -> None:
+    """The soft-delete trap holds in this mode too: `cas: 0` still fails."""
+    store.write(PATH, {"password": "a"}, cas=0)
+    store.delete(PATH)
+
+    assert store.read(PATH) is None
+    with pytest.raises(CasConflictError):
+        store.write(PATH, {"password": "b"}, cas=0)
+
+
 def test_a_pinned_read_needs_versioning() -> None:
     store = MemoryStore(capabilities=frozenset({CAS, STAGING}))
     store.write(PATH, {"password": "a"}, cas=0)

@@ -39,6 +39,7 @@ from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from sopuli.clock import Skew, measure_skew
+from sopuli.config.secret_refs import STAGES as REF_STAGES
 from sopuli.exit_codes import ExitCode
 
 #: The store capability the lock requires, spelled as P2's table spells it.
@@ -86,9 +87,10 @@ LIST = "list"
 #: it also offers :class:`NativeStaging`.
 STAGING = "staging_labels"
 
-#: The three stages, as C14 spells them. On a staging store each names at most
-#: one generation.
-STAGES = ("current", "pending", "previous")
+#: The three stages, as C14 spells them, defined once in
+#: :mod:`sopuli.config.secret_refs`. On a staging store each names at most one
+#: generation.
+STAGES = REF_STAGES
 
 
 def bounded_prefix(prefix: str) -> str:

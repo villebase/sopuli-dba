@@ -284,12 +284,15 @@ NativeStaging                               # a store whose supports() has stagi
 adds a generation that is current at once, and the old current becomes
 previous; a pending and the attributes are left alone. `stage` adds a pending,
 and a pending already there loses the stage; on a path with no current it is
-refused, because whether OCI can hold a pending-only secret was not measured. `promote` makes a pending or previous generation current
-and moves the old current to previous; a deprecated generation is refused,
-although OCI would promote one. Both replace the secret's attributes whole, as
-OCI replaces its metadata map. The version they return moves on every call,
-an attributes-only promotion included, because it is the lock's fencing token;
-`Stored.generation` carries the store's own version number. These are the
+refused, because whether OCI can hold a pending-only secret was not measured.
+`promote` makes a pending or previous generation current and moves the old
+current to previous; a deprecated generation is refused, although OCI would
+promote one. Both replace the secret's attributes whole, as OCI replaces its
+metadata map. The version they return moves on every call, an attributes-only
+promotion included, because it is the lock's fencing token;
+`Stored.generation` carries the store's own version number. A pinned read of a
+generation that is not current returns version 0, so no write can be based on
+it. These are the
 behaviours measured against OCI Vault (#1129, the `oci-*` entries in
 [`../README.md`](../README.md) §*Verify before implementing*).
 

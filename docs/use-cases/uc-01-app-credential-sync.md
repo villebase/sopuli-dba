@@ -1743,9 +1743,7 @@ Trade-offs:
   (`02-oracle-privileges.md` §2), which some sites will not grant. With no
   `--method`, the default is `login`, and nothing is lost. An *explicit*
   `--method hash` or `--method both` against a target without the grant or the
-  `12C` verifier fails at plan time, instead of silently becoming `login`. The
-  narrower `SELECT_CATALOG_ROLE` route in `02-oracle-privileges.md` §2 shows
-  `LCOUNT` but masks the verifiers, so it cannot serve hash mode.
+  `12C` verifier fails at plan time, instead of silently becoming `login`.
 - It confirms the *stored verifier*, not that a login would succeed. An expired
   password, a locked account or a failed listener still means the application
   cannot connect. `--method both` gives the strongest answer. Lock and expiry

@@ -324,9 +324,9 @@ reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
 
-Whether to recommend the grant, and whether to offer a narrower one, is not
-decided (open: #124). On the release measured, a narrower source of `LCOUNT`
-exists. The Data Pump metadata view `SYS.KU$_USER_VIEW` is granted to `PUBLIC`.
+The tool offers no narrower grant. One was measured and not adopted; the
+reasons are in [#124](../decisions/log.md#124). On the release measured, a
+narrower source of `LCOUNT` exists. The Data Pump metadata view `SYS.KU$_USER_VIEW` is granted to `PUBLIC`.
 To a session with `SELECT_CATALOG_ROLE` enabled, it shows every user's `LCOUNT`
 and `PTIME`, and they equal the values in `SYS.USER$`. It masks the verifiers:
 `SPARE4` is one space on every row, and `SPARE4_12` is NULL. `PASSWORD` is NULL
@@ -344,12 +344,14 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
   `SYS.USER$`. So the role hides the verifiers only from an account that does
   not also hold that grant. The view's own check, which the audit trail
   records, also accepts `READ`, and a grant held through an enabled role. The
-  run did not try either (unverified: lcount-grant-read-grant).
+  run did not try either.
 - **`SYS.KU$_USER_BASE_VIEW` does not exist** on that release.
 - **A common account's failed logins in a PDB count in `CDB$ROOT`.** After four
   failed logins in the root and two in the PDB, `SYS.USER$` holds `LCOUNT` 6 in
   the root and 0 in the PDB. Read in the PDB, by either route, the common
-  account's `LCOUNT` is 0, and its `PTIME` in the view is NULL.
+  account's `LCOUNT` is 0, and its `PTIME` in the view is NULL. So the
+  `LCOUNT` guard does not see a common account's failed logins on a PDB target
+  (open: #1122).
 - **A read through the view is not quieter in the audit trail.** Under a unified
   audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
   leaves six `USER$` rows under the reader's name, with the reader's statement.
@@ -362,8 +364,7 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
   dictionary. `00_install.sql` grants explicit views instead of the role for
   that reason.
 
-The view is not documented by Oracle, and other releases are not measured
-(unverified: lcount-grant-releases).
+The view is not documented by Oracle, and other releases are not measured.
 
 #### Hash mode
 
@@ -1468,7 +1469,7 @@ each header says what it creates and leaves behind.
 | # | Question | Leaning |
 |---|---|---|
 | ~~P1~~ | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
-| ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative is #124. Reasons: [P2](../decisions/log.md#p2) |
+| ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative was not adopted (#124). Reasons: [P2](../decisions/log.md#p2) |
 | ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 of §4, and check 7 since #1059; it never overrides check 1 or check 6. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
 | ~~P4~~ | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213); `scope.over_granted` is populated and the exit code is unchanged. Reasons: [P5](../decisions/log.md#p5) |

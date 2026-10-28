@@ -471,8 +471,7 @@ the register.
   and a verifier can be attacked offline. That is a different kind of exposure
   from what `ALTER USER` already allows, so a site should choose it, not get it
   by default. Without the grant, `check` still runs, with the other lockout
-  guards. Whether to recommend the grant, and whether a narrower grant would do,
-  is still open (#124).
+  guards. A narrower grant was measured and not adopted ([#124](#124)).
 - **Rejected:**
   - Grant by default: every site would expose its verifiers to the service
     account, whether or not it uses the features that need them.
@@ -3291,3 +3290,28 @@ the register.
     only an estate with a second channel gets.
   - A fixed set of `ttl` values in the config. It would refuse values a server
     with `--allow-custom-expiration` accepts.
+
+## #124
+
+- **Decided:** 2026-10-28, #124
+- **Question:** Should the tool offer `SELECT_CATALOG_ROLE` as a narrower
+  source of `LCOUNT` than `SELECT ON SYS.USER$` (P2)? Measured on 26ai Free
+  23.26.3.0.0: to a session with the role enabled, `SYS.KU$_USER_VIEW` shows
+  every user's `LCOUNT` and `PTIME` and masks the password verifiers.
+- **Decision:** No. `SELECT ON SYS.USER$` stays the only source of `LCOUNT`,
+  as an optional grant. `00_install.sql` and the driver do not change. The
+  measurement stays in `02-oracle-privileges.md` §2.
+- **Why:** the role's one gain is that the tool account cannot read the
+  verifiers, so a stolen copy of its credentials gives no offline attack on
+  them. That gain is small. The same account can already run `ALTER USER` on
+  every account it manages. Hash mode needs `SYS.USER$` anyway. The role is not
+  narrow: it holds 5663 object grants and shows much of the data dictionary.
+  The view is not documented by Oracle and has release-specific branches, so
+  every release would need measuring. A read through it leaves more rows in
+  the audit trail, not fewer. And the driver would need a second `LCOUNT` path,
+  a probe that recognises the masked view, and a split capability flag.
+- **Rejected:**
+  - Offer the role in `00_install.sql` beside `grant_user_dollar`, with a
+    second `LCOUNT` path in the driver. The cost above, for the small gain.
+  - Use the role automatically where a site already grants it. The same
+    driver work, and a guard that turns on without the site asking.

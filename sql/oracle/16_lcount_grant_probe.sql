@@ -28,8 +28,8 @@
 --   LG4  in the PDB, what a read leaves in UNIFIED_AUDIT_TRAIL under a policy
 --        on SELECT ON SYS.KU$_USER_VIEW and one on SELECT ON SYS.USER$
 --
--- This MEASURES and decides nothing. What 00_install.sql recommends is #124's
--- decision.
+-- This MEASURES and decides nothing. #124 decided not to adopt the role; the
+-- reasons are in docs/decisions/log.md, record #124.
 --
 -- STATUS: run 2026-10-28 on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest,
 -- FREEPDB1 and CDB$ROOT), twice, with the same results apart from timestamps

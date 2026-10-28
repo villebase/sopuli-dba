@@ -236,7 +236,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-006 | ADR | Optional dependencies | decided | vendor clients are extras; base opens no sockets | #130 |
 | ADR-007 | ADR | The vault token flag | decided | `--vault-token-file PATH` | #145 |
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
-| — | — | A narrower grant than `SYS.USER$` for the `LCOUNT` guard | open | | #124 |
 | — | — | Narrow the seen reset's rollover refusal | open | | #541 |
 | — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
@@ -287,20 +286,9 @@ closed while the measurement is still open: #87, #383 and #387 are. Release-by-r
   `SYS.USER$` beside the role does. With no role enabled the view shows no
   rows. `SYS.KU$_USER_BASE_VIEW` does not exist there.
   `sql/oracle/16_lcount_grant_probe.sql` measures it, and
-  `02-oracle-privileges.md` §2 has the rest of the result. Whether
-  `00_install.sql` recommends the role is a decision (#124). Nothing in the
-  default path depends on it.
-- `unverified` `lcount-grant-releases` (#124) — **Does `SYS.KU$_USER_VIEW`
-  behave the same on the releases not measured?**
-  Not run on any release but one 26ai Free release. The view is not documented
-  by Oracle, so its columns and its role check may differ between releases. The
-  19.3 image is maintainer-only (`maintainer-environments.md` §2).
-- `unverified` `lcount-grant-read-grant` (#124) — **Does `READ` on `SYS.USER$`,
-  or a grant on it held through a role, unmask the verifiers in
-  `SYS.KU$_USER_VIEW`?**
-  Not run. The run tried only a direct `SELECT` grant. The view's check, which
-  the audit trail records, accepts `SELECT` or `READ`, held directly or through
-  an enabled role. That is the view's text, not a measured result.
+  `02-oracle-privileges.md` §2 has the rest of the result. The tool does not
+  use the role ([#124](decisions/log.md#124)), so nothing depends on this
+  answer, on this release or any other.
 
 ### Connections and wallets
 

@@ -2544,7 +2544,7 @@ One string addresses a value in any backend:
 | `vault-dev:apps/orders/prod/db/creds#password` | explicit vault |
 | `tenants/beta#DB_CREDENTIALS/acme_web_user` | one entry in a JSON map held in one property — the layout in §2 |
 | `apps/orders/prod/db/creds#password@version=7` | pinned version (read-only contexts) |
-| `apps/orders/prod/db/creds#password@stage=pending` | staging label (OCI native, emulated elsewhere) |
+| `apps/orders/prod/db/creds#password@stage=pending` | staging label (emulated in the payload; on an `oci` store, a native version stage, and the path is one OCI name such as `orders-prod-db-creds`) |
 
 ### Parsing it
 
@@ -2789,7 +2789,7 @@ than one account stages in payload fields even on OCI (UC-1 §3), so the reserve
 keys and the collision rule matter there too. A store type P2 gives no capability
 row, `keyring`, is left alone rather than assumed to emulate.
 
-**A ref on an `oci` store is the OCI secret name, exactly.** Its path is one
+**An application's ref on an `oci` store is the OCI secret name, exactly.** Its path is one
 name of letters, digits, `-`, `_` and `.`, at most 255 characters, with no `/`.
 Names are case-sensitive. A ref may not name a secret starting with
 `sopuli-locks.`, where the tool keeps its lock records. So `acme-prod-db#password`
@@ -2800,8 +2800,11 @@ name one secret. The limits were measured (`oci-name-rules` in
 [`../README.md`](../README.md) §*Verify before implementing*). Reasons:
 [#1137](../decisions/log.md#1137).
 
-For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks run
-when the run completes the store, before any command reaches it.
+For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
+the collision rule run when the run completes the store, before any command
+reaches it. They cover the bindings the run selects; a binding a selector leaves
+out is not the run's to refuse. An `admin.auth.secret` ref on an `oci` store is
+not checked against the name rule yet (open: #1132).
 
 None of this constrains a ref that is only ever *read*. An `admin.auth.secret` is
 a credential the tool authenticates with and never rotates, so the whole-secret

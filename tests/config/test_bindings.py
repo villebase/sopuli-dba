@@ -1392,7 +1392,7 @@ def on_oci(secret_template: str, **document: Any) -> Config:
 @pytest.mark.parametrize("ref", ["apps/acme-db#password", "acme db#password", "acme+db#password"])
 def test_an_oci_ref_must_be_one_oci_name(ref: str) -> None:
     """ESO finds an OCI secret by name, so the name must be the one the
-    operator wrote (#1128 decision 1). OCI allows letters, digits, `-`, `_`
+    operator wrote (#1137). OCI allows letters, digits, `-`, `_`
     and `.`."""
     with pytest.raises(ConfigError) as caught:
         on_oci(ref)
@@ -1424,7 +1424,7 @@ def test_an_oci_ref_may_not_use_the_reserved_prefix() -> None:
 
 def test_a_rotated_oci_ref_names_a_field() -> None:
     """A version's content holds the password beside the stamps that describe
-    it (#1128 decision 3), so a whole-secret ref has nowhere to put them."""
+    it (#1137), so a whole-secret ref has nowhere to put them."""
     with pytest.raises(ConfigError) as caught:
         on_oci("acme-{account}")
 
@@ -1472,6 +1472,51 @@ def test_a_path_ref_completed_onto_an_oci_store_by_the_run_is_refused() -> None:
     rendered = str(caught.value)
     assert "is not an OCI secret name" in rendered
     assert "applications[0]" in rendered
+
+
+def late_oci(secret_template: str, accounts: list[str]) -> Config:
+    """One application on a target that names no store, so `SOPULI_VAULT`
+    supplies it at run time."""
+    return build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": OCI_VAULT},
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["alpha"],
+                    "accounts": accounts,
+                    "secret_template": secret_template,
+                }
+            ],
+        }
+    )
+
+
+def test_two_accounts_staging_together_on_a_store_the_run_supplies_are_refused() -> None:
+    """The collision rule runs at completion too, not only in `generate`."""
+    config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
+
+    with pytest.raises(ConfigError, match="pending"):
+        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"})
+
+
+def test_the_promotion_gate_completes_without_the_ref_rules() -> None:
+    """It counts bindings a selector left out, which the run does not touch."""
+    config = late_oci("apps/acme/db#password", ["acme_web_user"])
+
+    completed = binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"}, check_refs=False)
+
+    assert completed.bindings[0].vault == "vault-oci"
 
 
 def test_a_store_with_no_capability_row_is_left_alone() -> None:

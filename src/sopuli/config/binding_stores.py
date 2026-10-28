@@ -46,10 +46,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from sopuli.config.bindings import check_for_store
+from sopuli.config.bindings import application_locations, check_for_store
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Binding, Config
+from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
+from sopuli.config.vaults import PAYLOAD_RULE_TYPES
 
 __all__ = ["NoStoreError", "complete", "refuse_unresolved", "unresolved"]
 
@@ -74,7 +76,7 @@ class _Candidate:
     location: str
 
 
-def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
+def complete(config: Config, *, env: Mapping[str, str] = NO_ENV, check_refs: bool = True) -> Config:
     """Fill in the store for bindings that reached load without one.
 
     Returns ``config`` itself when there is nothing to fill, so a caller can run
@@ -88,6 +90,12 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
     caller. Exported variables outlive the shell they were meant for, and
     refusing a run that never consulted one would be this tool taking a position
     on an environment it does not own.
+
+    ``check_refs`` applies the ref rules the loader could not
+    (:func:`_check_completed`). A caller that completes the whole estate only to
+    count bindings a selector left out, as the promotion gate does, passes
+    ``False``: the run does not touch those bindings, and refusing it over one
+    of them would be refusing over something it excluded.
     """
     candidate = _candidate(config, env=env)
     if candidate is None:
@@ -96,35 +104,37 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV) -> Config:
         return config
 
     _refuse_dangling(candidate, config)
-    _check_completed(candidate, config)
-    return replace(
+    completed = replace(
         config,
         bindings=tuple(
             replace(binding, vault=candidate.name) if _needs_store(binding) else binding
             for binding in config.bindings
         ),
     )
+    if check_refs:
+        _check_completed(candidate, config, completed)
+    return completed
 
 
-def _check_completed(candidate: _Candidate, config: Config) -> None:
+def _check_completed(candidate: _Candidate, loaded: Config, completed: Config) -> None:
     """The ref rules the loader could not apply, now that the store is known.
 
-    At load a binding with no store has no backend, so
-    :func:`sopuli.config.bindings.check_for_store` could not run on it. It runs
-    here, before any command reaches a store: an OCI store's name rule
-    (#1137) and the payload rules. The same function the loader calls, so a ref
-    is refused the same way whichever layer named its store.
+    At load a binding with no store has no backend, so the per-binding rules
+    (:func:`sopuli.config.bindings.check_for_store`: an OCI store's name rule,
+    #1137, and the payload rules) and the stage-collision rule could not run on
+    it. They run here, before any command reaches a store, with the functions the
+    loader uses, so a ref is refused the same way whichever layer named its store.
     """
-    store_type = next(vault.type for vault in config.vaults if vault.name == candidate.name)
-    # Located as the loader locates a binding: its application entry, or the
-    # root for the inline form.
-    where = {
-        application.name: ROOT if application.is_inline else ROOT.key("applications").index(index)
-        for index, application in enumerate(config.applications)
-    }
-    for binding in config.bindings:
+    store_type = next(vault.type for vault in loaded.vaults if vault.name == candidate.name)
+    where = application_locations(loaded)
+    for binding in loaded.bindings:
         if _needs_store(binding) and binding.secret is not None:
             check_for_store(binding.secret, store_type, at=where.get(binding.application, ROOT))
+    if store_type not in PAYLOAD_RULE_TYPES:
+        return
+    on_store = [binding for binding in completed.bindings if binding.vault == candidate.name]
+    for collision in colliding_stages(on_store):
+        raise ConfigError(collision.description, at=ROOT, hint=STAGE_COLLISION_HINT)
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

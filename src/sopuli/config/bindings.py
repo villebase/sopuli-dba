@@ -74,6 +74,15 @@ _SCOPE = "a secret template resolves from the account, the target and the target
 _APPLICATIONS = ROOT.key("applications")
 
 
+def application_locations(config: Config) -> dict[str | None, KeyPath]:
+    """Where each application entry is written: its key, or the root for the
+    inline form. One rule for every message about a binding."""
+    return {
+        application.name: ROOT if application.is_inline else _APPLICATIONS.index(index)
+        for index, application in enumerate(config.applications)
+    }
+
+
 def build_bindings(config: Config) -> tuple[Binding, ...]:
     """Every (account, target) the file declares, with its resolved ref.
 
@@ -82,11 +91,9 @@ def build_bindings(config: Config) -> tuple[Binding, ...]:
     stable enough to diff between runs.
     """
     bindings: list[Binding] = []
-    where: dict[str | None, KeyPath] = {}
-    for index, application in enumerate(config.applications):
-        at = ROOT if application.is_inline else _APPLICATIONS.index(index)
-        where[application.name] = at
-        bindings.extend(_bind(config, application, at=at))
+    where = application_locations(config)
+    for application in config.applications:
+        bindings.extend(_bind(config, application, at=where[application.name]))
     # One user at two places first: its message names the user and the target,
     # which is the fault, where the rules below would name a password.
     _check_one_user_per_target(bindings, where=where)
@@ -553,7 +560,7 @@ def _check_stageable(
 
     The store types are :data:`~sopuli.config.vaults.PAYLOAD_RULE_TYPES`. OCI
     is one, although it stages natively: a version's content holds the password
-    beside the stamps that describe it (#1128 decision 3), so a rotated OCI ref
+    beside the stamps that describe it (#1137), so a rotated OCI ref
     names a field too. A store this layer has no capability row for, such as
     ``keyring``, is left alone. An OCI ref must also be an OCI secret name; see
     :func:`check_for_store`.
@@ -585,7 +592,7 @@ def check_for_store(secret: SecretRef, store_type: str, *, at: KeyPath) -> None:
 
 
 def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
-    """A ref on an OCI store names one OCI secret, exactly (#1128 decision 1).
+    """A ref on an OCI store names one OCI secret, exactly (#1137).
 
     ESO finds an OCI secret by name, so the name must be the one the operator
     wrote. Translating ``/`` into something OCI allows was rejected, because two

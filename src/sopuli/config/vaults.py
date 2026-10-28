@@ -118,46 +118,26 @@ PATCHABLE_KEYS = tuple(key for key in VAULT_KEYS if key not in UNPATCHABLE_KEYS)
 #: should fail while it is being written, not at the first rotation.
 VAULT_TYPES = ("hashicorp", "oci", "file", "keyring")
 
-#: P2's ``staging_labels`` row, by store type: whether the three stages of UC-1
-#: §3 are the store's own or emulated in the payload's fields.
-#:
-#: The distinction decides whether a ref needs a field at all. Where staging is
-#: **native**, ``current``/``pending``/``previous`` are versions of the secret,
-#: so a ref naming a whole secret stages perfectly well and a field called
-#: ``pending`` is just a field. Where it is **emulated**, they are keys beside
-#: the container (``sopuli/payload.py``), so a whole-secret ref has nowhere to
-#: put them and a container named after one of them collides with it.
-#:
-#: ``keyring`` is deliberately absent rather than assumed emulated. P2's
-#: capability table does not have a row for it, it has no store adapter, and
-#: deciding what a single-string-per-entry backend does about staging is P2's
-#: call and not a validation function's. Absent means the check that reads this
-#: does not fire, which is the reversible direction.
-#:
-#: The config checks do not read this. They read :data:`PAYLOAD_RULE_TYPES`,
-#: because a rotated OCI ref names a field and a shared OCI document stages in
-#: payload fields, so those checks apply on OCI too.
-STAGING_NATIVE = "native"
-STAGING_EMULATED = "emulated"
-STAGING_LABELS = {
-    "hashicorp": STAGING_EMULATED,
-    "oci": STAGING_NATIVE,
-    "file": STAGING_EMULATED,
-}
-
 #: The store types whose rotated refs must name a field, must not stage into a
-#: key the payload mechanism owns, and must not share a staging place.
+#: key the payload mechanism owns (``sopuli/payload.py``), and must not share a
+#: staging place with another account.
 #:
-#: OCI is here although it stages natively. A version's content holds the
-#: password beside the stamps that describe it (#1128 decision 3), so a rotated
-#: OCI ref names a field. And a document holding more than one account stages
-#: in payload fields even on OCI (UC-1 §3), so the reserved keys and the
-#: collision rule apply there. ``keyring`` is absent for the reason it is absent
-#: from :data:`STAGING_LABELS`.
+#: Where a store emulates the three stages of UC-1 §3, ``pending`` and
+#: ``previous`` are keys beside the container, so a whole-secret ref has nowhere
+#: to put them and a container named after one of them collides with it. OCI is
+#: here although it stages natively. A version's content holds the password
+#: beside the stamps that describe it, so a rotated OCI ref names a field. And a
+#: document holding more than one account stages in payload fields even on OCI
+#: (UC-1 §3), so the reserved keys and the collision rule apply there (#1137).
+#:
+#: ``keyring`` is deliberately absent. P2's capability table has no row for it,
+#: it has no store adapter, and what a single-string-per-entry backend does about
+#: staging is P2's call, not a validation function's. Absent means the checks do
+#: not fire, which is the reversible direction.
 PAYLOAD_RULE_TYPES = frozenset({"hashicorp", "file", "oci"})
 
 #: What an OCI secret name may hold, and how long it may be. Measured
-#: (``oci-name-rules``, #1136): 255 is accepted and 256 is refused. Names are
+#: (``oci-name-rules``, #1129): 255 is accepted and 256 is refused. Names are
 #: case-sensitive, so two refs that differ only in case are two secrets.
 OCI_NAME = re.compile(r"[A-Za-z0-9._-]+")
 OCI_NAME_MAX = 255

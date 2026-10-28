@@ -3420,7 +3420,7 @@ the register.
 - **Why:** External Secrets Operator reads an OCI secret by name
   (`GetSecretBundleByName`), so the name the tool writes must be the one the
   operator wrote, and one they can type into an `ExternalSecret`. The limits
-  were measured in #1136 (`oci-name-rules`): 255 characters, and names are
+  were measured in #1129 (`oci-name-rules`): 255 characters, and names are
   case-sensitive. A version's content holds the password beside the stamps
   that describe it, so a rotated ref needs a field.
 - **Rejected:**

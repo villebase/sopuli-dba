@@ -387,10 +387,10 @@ def _vault() -> Schema:
         types=_vault_types(),
         required=("type",),
         description=(
-            "One named secret store. Only `type` is required: the backends differ "
-            "enough that demanding a HashiCorp shape of every entry would be the "
-            "vendor bias P1 forbids, so per-backend requirements live behind the "
-            "store interface."
+            "One named secret store. `type` is the only key every store needs: the "
+            "backends differ enough that demanding a HashiCorp shape of every entry "
+            "would be the vendor bias P1 forbids. The rest depend on the backend; an "
+            "oci store requires vault_id, compartment_id and key_id."
         ),
     )
 

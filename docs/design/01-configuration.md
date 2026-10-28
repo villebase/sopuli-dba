@@ -888,9 +888,13 @@ keeps the rest of the address. Otherwise the `@` may be part of a path, a query
 or another host, and cutting there could send the token somewhere else, so the
 variable is not applied. Reasons: [#891](../decisions/log.md#891).
 
-Only `type` is required. A file backend has no address, and P2 puts per-backend
-validation behind the store interface, so demanding a HashiCorp shape of every
-entry would be exactly the top-level vendor bias P1 forbids.
+`type` is the only key every store needs. The rest depend on the backend: a
+file backend has no address, and an `oci` store requires `vault_id`,
+`compartment_id` and `key_id`. Demanding a HashiCorp shape of every entry would
+be exactly the top-level vendor bias P1 forbids. Each backend's keys are checked
+by type, and a key only another backend reads is refused. An `oci` store also
+refuses HashiCorp's auth methods (`token`, `approle`, `kubernetes`, `oidc`,
+`userpass`) when the file is read.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -2304,6 +2308,12 @@ Where nothing names a default store, the two halves answer differently:
   failing a run over somebody else's variable would be taking a position on an
   environment the tool does not own. The warning appears in `diagnostics[]`
   as `SOPULI-W038`.
+
+Where the default store is an `oci` store, the same split holds. `VAULT_ADDR`,
+`VAULT_NAMESPACE` and `VAULT_CACERT` are HashiCorp's, so they are not applied to
+it, and each one set warns with `SOPULI-W038`. `SOPULI_VAULT_ADDR`,
+`SOPULI_VAULT__<STORE>__ADDR` and `--vault-addr` aimed at it are refused, with a
+message naming the one that was set.
 
 Where `VAULT_ADDR` is applied and the file declares a different `addr` for that
 store, the variable wins, as P3 says, and every command that loads the file warns

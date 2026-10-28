@@ -162,8 +162,12 @@ def test_an_oci_store_refuses_hashicorp_keys(key: str, value: Any, where: str) -
         build_config(written, profile="ci" if where == "profile" else None)
 
     rendered = str(caught.value)
-    assert f"`{key}` has no effect on a store of type 'oci'" in rendered
+    assert f"`{key}`" in rendered
+    assert "has no effect on a store of type 'oci'" in rendered
     assert "HashiCorp" in rendered
+    if where != "declaration":
+        # The layer that wrote it, not the declaration, which did not.
+        assert f"{where if where == 'defaults' else 'profiles.ci'}.vaults.{STORE}" in rendered
 
 
 @pytest.mark.parametrize("key", ["vault_id", "compartment_id", "key_id", "region"])
@@ -185,8 +189,9 @@ def test_oci_keys_cannot_be_patched(key: str, where: str) -> None:
 @pytest.mark.parametrize("variable", ["VAULT_ADDR", "VAULT_NAMESPACE", "VAULT_CACERT"])
 def test_hashicorp_variables_do_not_reach_an_oci_store(variable: str) -> None:
     """Another tool's variable, exported in every shell that has run `vault`.
-    It means nothing to an OCI store, so the run neither applies it nor fails
-    over it (#1130)."""
+    It means nothing to an OCI store, so the run does not apply it and does not
+    fail over it. It warns, as §6 does for any third-party variable it could not
+    apply (#1130)."""
     config = build_config(
         document(OCI, defaults={"vault": STORE}),
         env={variable: "https://vault.example.com"},
@@ -194,6 +199,42 @@ def test_hashicorp_variables_do_not_reach_an_oci_store(variable: str) -> None:
 
     vault = config.vaults[0]
     assert (vault.addr, vault.namespace, vault.tls) == (None, None, None)
+    [warning] = [one for one in config.warnings if one.code == "SOPULI-W038"]
+    assert variable in warning.message
+    assert "OCI store" in warning.message
+
+
+@pytest.mark.parametrize("method", ["token", "approle", "kubernetes", "oidc", "userpass"])
+def test_an_oci_store_refuses_a_hashicorp_auth_method(method: str) -> None:
+    """A store whose `type` was edited to `oci` must not keep an `approle`
+    block that would fail only when it connects."""
+    required: dict[str, dict[str, Any]] = {
+        "approle": {"role_id": {"env": "R"}, "secret_id": {"env": "S"}},
+        "kubernetes": {"role": "r", "jwt": {"env": "J"}},
+        "userpass": {"username": "u", "password": {"env": "P"}},
+    }
+    keys = required.get(method, {})
+
+    with pytest.raises(ConfigError) as caught:
+        merged({**OCI, "auth": {"method": method, **keys}})
+
+    rendered = str(caught.value)
+    assert f"auth method {method!r} is a HashiCorp Vault method" in rendered
+    assert "instance_principal" in rendered
+
+
+def test_an_address_with_a_password_on_an_oci_store_names_the_real_fault() -> None:
+    """The address is the fault on an OCI store, so the message about its `@`
+    must not come first."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(OCI, defaults={"vault": STORE}),
+            vault_addr="https://ops:s3cret@vault.example.com",
+        )
+
+    rendered = str(caught.value)
+    assert "has no effect on a store of type 'oci'" in rendered
+    assert "s3cret" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -212,7 +253,10 @@ def test_this_tools_own_address_for_an_oci_store_is_refused(
     with pytest.raises(ConfigError) as caught:
         build_config(document(OCI, defaults={"vault": STORE}), env=env, vault_addr=vault_addr)
 
-    assert "`addr` has no effect on a store of type 'oci'" in str(caught.value)
+    rendered = str(caught.value)
+    assert "`addr`, from " in rendered
+    assert "has no effect on a store of type 'oci'" in rendered
+    assert (next(iter(env)) if env else "--vault-addr") in rendered
 
 
 def test_a_patch_is_validated_as_strictly_as_a_declaration() -> None:

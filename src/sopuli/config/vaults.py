@@ -59,10 +59,15 @@ VAULT_KEYS = (
 OCI_KEYS = ("vault_id", "compartment_id", "key_id", "region")
 OCI_REQUIRED_KEYS = ("vault_id", "compartment_id", "key_id")
 
-#: The keys only a HashiCorp store reads. An OCI store refuses each, on the
-#: merged values (:mod:`sopuli.config.vault_layers`), so that no layer can
-#: write one where nothing reads it.
-HASHICORP_KEYS = ("addr", "mount", "kv_version", "namespace", "merge_patch", "tls")
+#: The keys only a HashiCorp store reads, apart from ``merge_patch``. An OCI
+#: store refuses each, on the merged values (:mod:`sopuli.config.vault_layers`),
+#: so that no layer can write one where nothing reads it. ``merge_patch`` has
+#: its own refusal, on every store but HashiCorp KV v2.
+HASHICORP_KEYS = ("addr", "mount", "kv_version", "namespace", "tls")
+
+#: The auth methods an OCI store can perform. The others are HashiCorp's, and an
+#: OCI store refuses them when the file is read.
+OCI_AUTH_METHODS = ("instance_principal", "resource_principal", "config_file", "session_token")
 
 #: Why an OCI key cannot be patched. One reason for all four: each names which
 #: vault this is, as ``type`` names which backend.

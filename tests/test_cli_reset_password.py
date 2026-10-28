@@ -197,7 +197,7 @@ def test_reset_records_in_an_oci_store_are_refused_when_the_file_is_read(
     result = run(runner, write_config(OCI_RECORDS), "--account", ACCOUNT, "--dry-run")
 
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
-    assert '`reset_records:` is vault "vault-oci", an OCI store' in str(result.exception)
+    assert "`reset_records:` is vault \"vault-oci\", of type 'oci'" in str(result.exception)
 
 
 #: `vault_path` with no store of its own, so the target's chain decides it, and
@@ -254,6 +254,22 @@ def test_a_dry_run_refuses_a_delivery_into_an_oci_store(
     assert "`delivery.method: vault_path` delivers into on tier1-oracle" in rendered
     assert "defaults.vault" in rendered
     assert "would be reset" not in result.output
+
+
+def test_a_target_s_own_oci_store_is_refused_for_a_delivery(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """The target's `vault:` is the chain's second link, ahead of `defaults.vault`."""
+    config = OCI_DELIVERY.replace("  vault: vault-oci\n", "").replace(
+        "    environment: dev\n", "    environment: dev\n    vault: vault-oci\n"
+    )
+
+    result = run(runner, write_config(config), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    rendered = str(result.exception)
+    assert "targets[0].vault" in rendered
+    assert "of type 'oci'" in rendered
 
 
 # ------------------------------------------------------ the preview, tier 1 ---

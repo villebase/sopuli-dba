@@ -20,25 +20,29 @@ from __future__ import annotations
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.model import Config
 
-#: Store types that cannot hold UC-2's reset records or receive its deliveries.
-UC1_ONLY_TYPES = ("oci",)
+#: Store types that may hold UC-2's reset records and receive its deliveries.
+#: An allow-list, so that a store type added later is refused for UC-2 until
+#: somebody decides it can serve it. ``file`` and ``keyring`` are on it because
+#: neither has a backend yet; a command that reaches one is refused when it
+#: connects, as before.
+PERSONAL_TYPES = ("hashicorp", "file", "keyring")
 
 HINT = "keep personal accounts, reset records and deliveries in a HashiCorp store"
 
 
 def refuse_personal_on(config: Config, name: str, *, at: KeyPath, what: str) -> None:
-    """Refuse UC-2 use of the store ``name``, if its type serves UC-1 only.
+    """Refuse UC-2 use of the store ``name``, if its type does not serve UC-2.
 
     ``what`` says what would reach it, for the message. A name that matches no
     declared store is left alone: the reference checks refuse it with the
     message every dangling name gets.
     """
     vault = next((vault for vault in config.vaults if vault.name == name), None)
-    if vault is None or vault.type not in UC1_ONLY_TYPES:
+    if vault is None or vault.type in PERSONAL_TYPES:
         return
     raise ConfigError(
-        f'{what} is vault "{vault.name}", an OCI store, and this build supports OCI '
-        f"for application credentials (UC-1) only",
+        f'{what} is vault "{vault.name}", of type {vault.type!r}, and this build '
+        f"supports that type for application credentials (UC-1) only",
         at=at,
         hint=HINT,
     )

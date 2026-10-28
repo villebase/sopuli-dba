@@ -55,7 +55,7 @@ VAULT_KEYS = (
 )
 
 #: The keys only an OCI store reads, and the ones it cannot do without. The
-#: tool creates secrets (#1128), and OCI's CreateSecret needs a vault, a
+#: tool creates secrets (#1138), and OCI's CreateSecret needs a vault, a
 #: compartment and a key. ``region`` defaults to the auth method's.
 OCI_KEYS = ("vault_id", "compartment_id", "key_id", "region")
 OCI_REQUIRED_KEYS = ("vault_id", "compartment_id", "key_id")

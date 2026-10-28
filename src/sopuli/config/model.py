@@ -352,7 +352,7 @@ class Vault:
     #: ``True``.
     merge_patch: bool | None = None
     #: OCI only: the vault's OCID, the compartment new secrets go into, and the
-    #: KMS key that encrypts them. The tool creates secrets (#1128), and OCI's
+    #: KMS key that encrypts them. The tool creates secrets (#1138), and OCI's
     #: CreateSecret needs all three. An OCID names a resource and proves
     #: nothing, so these are plain strings rather than MaterialRefs.
     vault_id: str | None = None

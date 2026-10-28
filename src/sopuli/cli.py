@@ -4842,7 +4842,9 @@ def creds_check(
     refused within `--lockout-margin` of the profile's limit. That grant is
     optional and not part of the default install, so where it is absent the
     guard is *unavailable* rather than passing: the run says so in the row and
-    goes ahead on the remaining mitigations.
+    goes ahead on the remaining mitigations. The same is true of a common
+    account on a target that is not `CDB$ROOT`, whose failed logins are counted
+    in the root.
 
     **Lock, expiry and a missing account are reported as themselves.** A login
     attempt alone conflates an expired password, an already-locked account and a

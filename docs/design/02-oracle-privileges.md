@@ -350,8 +350,10 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
   failed logins in the root and two in the PDB, `SYS.USER$` holds `LCOUNT` 6 in
   the root and 0 in the PDB. Read in the PDB, by either route, the common
   account's `LCOUNT` is 0, and its `PTIME` in the view is NULL. So the
-  `LCOUNT` guard does not see a common account's failed logins on a PDB target
-  (open: #1122). `sql/oracle/17_common_lcount_probe.sql` measured the rest on
+  `LCOUNT` guard does not see a common account's failed logins on a PDB target.
+  It reports itself as unavailable for such an account, and reads neither the
+  count nor the limit ([#1122](../decisions/log.md#1122)).
+  `sql/oracle/17_common_lcount_probe.sql` measured the rest on
   23.26.3.0.0, 21.3.0.0.0 and 18.4.0.0.0, with the same results on each:
   - The root's count is the only one. Failed logins in the root and in the PDB
     add to it, and a good login in the PDB resets it.

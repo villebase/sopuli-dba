@@ -151,11 +151,12 @@ def _verification(result: VerifyResult, *, previous_accepted: bool | None = None
     """The ``verification`` object.
 
     ``lcount`` and ``failed_login_attempts_limit`` are emitted as ``null`` rather
-    than omitted when the grant is absent, because null here is a real answer:
-    ``SELECT ON SYS.USER$`` is an optional grant (decision P2), so "the guard
-    was unavailable" is a thing a scheduled check must be able to report.
-    Omitting the keys would make an ungranted estate indistinguishable from one
-    where nothing looked.
+    than omitted when the guard is unavailable, because null here is a real
+    answer: ``SELECT ON SYS.USER$`` is an optional grant (decision P2), and a
+    common account outside ``CDB$ROOT`` has its count in the root (#1122). So
+    "the guard was unavailable" is a thing a scheduled check must be able to
+    report, and the detail says why. Omitting the keys would make an ungranted
+    estate indistinguishable from one where nothing looked.
     """
     return {
         "method": result.method,

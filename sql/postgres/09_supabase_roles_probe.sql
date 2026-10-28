@@ -20,7 +20,8 @@
 -- Each ALTER ROLE runs in a PL/pgSQL block that raises an error of its own
 -- after an accepted change, so every change is rolled back, an accepted one
 -- included. Each NOTICE names the session's user and the role, then says
--- "accepted", or gives the SQLSTATE and the message. The password is a
+-- "accepted", or gives the SQLSTATE, the message and any DETAIL. The tool
+-- account's own role is left out: guardrail check 7 refuses it. The password is a
 -- marker, sent as plaintext: this is a throwaway server.
 --
 -- This MEASURES and decides nothing.
@@ -48,21 +49,26 @@
 --          supabase_storage_admin, supabase_read_only_user,
 --          supabase_realtime_admin, supabase_replication_admin,
 --          supabase_etl_admin, dashboard_user, pgbouncer, authenticator
---   SR3  refused, 42501, on every role. On each role in reserved_roles:
---        ""<role>" is a reserved role, only superusers can modify it". On
---        postgres and supabase_privileged_role, which are not in it:
---        "permission denied to alter role"
---   SR4  as SR3, the same message on each role. The role the tool account
---        created: accepted
+--   SR3  refused, 42501, on every role. On each of the 11 roles in
+--        reserved_roles: ""<role>" is a reserved role, only superusers can
+--        modify it". On postgres and supabase_privileged_role, which are not
+--        in it: "permission denied to alter role", DETAIL "Only superusers can
+--        alter privileged roles."
+--   SR4  refused, 42501, on every role but one. On the reserved roles, the
+--        supautils message of SR3. On postgres and supabase_privileged_role:
+--        "permission denied to alter role", DETAIL "To change another role's
+--        password, the current user must have the CREATEROLE attribute and
+--        the ADMIN option on the role." The role the tool account created:
+--        accepted
 --   SR5  pg_read_all_data: granted. authenticator: refused, 42501
 --        ""authenticator" role memberships are reserved, only superusers can
 --        grant them"
 --
--- HOW TO RUN, against the stack (test/README.md):
+-- HOW TO RUN, against the stack (test/README.md), from test/:
 --
---     docker exec -i -e PGPASSWORD=sopuli-test sopuli-test-supabase-1 \
+--     docker compose exec -T -e PGPASSWORD=sopuli-test supabase \
 --         psql -h localhost -U postgres -d postgres -X \
---         < sql/postgres/09_supabase_roles_probe.sql
+--         < ../sql/postgres/09_supabase_roles_probe.sql
 --
 -- THROWAWAY SERVERS ONLY. Creates and drops two roles, and grants one of them
 -- pg_read_all_data. The tool account's password is the stack's, so that
@@ -90,7 +96,7 @@ SELECT rolname, oid >= 16384 AS from_16384, rolsuper, rolcreaterole, rolcanlogin
  ORDER BY rolname;
 
 -- The block SR3 and SR4 run, as whoever the session is.
-\set probe 'DO $probe$ DECLARE r text; outcome text; BEGIN FOR r IN SELECT rolname FROM pg_roles WHERE oid >= 16384 AND rolname <> \'sopuli_probe_tool\' ORDER BY rolname LOOP BEGIN EXECUTE format(\'ALTER ROLE %I PASSWORD %L\', r, \'PwProbeMarker7q\'); RAISE EXCEPTION USING ERRCODE = \'P0001\', MESSAGE = \'sopuli_probe_accepted\'; EXCEPTION WHEN OTHERS THEN outcome := CASE WHEN SQLERRM = \'sopuli_probe_accepted\' THEN \'accepted\' ELSE SQLSTATE || \' \' || SQLERRM END; END; RAISE NOTICE \'% %: %\', current_user, r, outcome; END LOOP; END $probe$;'
+\set probe 'DO $probe$ DECLARE r text; outcome text; detail text; BEGIN FOR r IN SELECT rolname FROM pg_roles WHERE oid >= 16384 AND rolname <> \'sopuli_probe_tool\' ORDER BY rolname LOOP BEGIN EXECUTE format(\'ALTER ROLE %I PASSWORD %L\', r, \'PwProbeMarker7q\'); RAISE EXCEPTION USING ERRCODE = \'P0001\', MESSAGE = \'sopuli_probe_accepted\'; EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS detail = PG_EXCEPTION_DETAIL; outcome := CASE WHEN SQLERRM = \'sopuli_probe_accepted\' THEN \'accepted\' ELSE SQLSTATE || \' \' || SQLERRM || CASE WHEN detail <> \'\' THEN \' DETAIL \' || detail ELSE \'\' END END; END; RAISE NOTICE \'% %: %\', current_user, r, outcome; END LOOP; END $probe$;'
 
 -- ---------------------------------------------------------------- SR3 --
 \echo SR3 ALTER ROLE ... PASSWORD on each role, as postgres:
@@ -113,8 +119,8 @@ DROP ROLE sopuli_probe_own;
 -- ---------------------------------------------------------------- SR5 --
 \connect - postgres
 \echo SR5 postgres grants the tool account pg_read_all_data, then authenticator:
-\set ON_ERROR_STOP 0
 GRANT pg_read_all_data TO sopuli_probe_tool;
+\set ON_ERROR_STOP 0
 GRANT authenticator TO sopuli_probe_tool;
 \set ON_ERROR_STOP 1
 

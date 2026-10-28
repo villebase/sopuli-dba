@@ -21,8 +21,9 @@ sopuli-dba to change.
 Two things are out of scope:
 
 - **The `postgres` password.** Supabase manages it. You change it in the
-  dashboard or through Supabase's Management API. `ALTER ROLE postgres
-  PASSWORD` is refused.
+  dashboard or through Supabase's Management API. On the local stack, `ALTER
+  ROLE postgres PASSWORD`, run as `postgres`, fails with `permission denied to
+  alter role` and `Only superusers can alter privileged roles`.
 - **Supabase's API keys** (`sb_secret_…`, `sb_publishable_…`). They are not
   database passwords.
 
@@ -62,13 +63,18 @@ supabase-dev  yes        cluster  -          READ WRITE  0             none
 statement text. [`../design/02-postgres-privileges.md`](../design/02-postgres-privileges.md)
 §3 gives the reason for each.
 
-Create a dedicated tool account instead. Connect as `postgres`, with the SQL
-editor or `psql`, and run:
+Create a dedicated tool account instead. Connect as `postgres` with `psql`, and
+choose its password at the prompt:
 
-```sql
-SET password_encryption = 'scram-sha-256';
-CREATE ROLE sopuli_admin LOGIN CREATEROLE PASSWORD '<a password you keep in the vault>';
 ```
+postgres=> CREATE ROLE sopuli_admin LOGIN CREATEROLE;
+postgres=> \password sopuli_admin
+```
+
+**Do not write the password into a `CREATE ROLE` or `ALTER ROLE` statement.**
+`pg_stat_statements` keeps the statement's text, and the dashboard shows it
+(§7). `\password` computes the SCRAM-SHA-256 verifier in `psql` and sends only
+that. The SQL editor in the dashboard has no `\password`.
 
 `CREATEROLE` is the only attribute the tool account needs
 ([`../design/02-postgres-privileges.md`](../design/02-postgres-privileges.md)
@@ -167,8 +173,8 @@ things:
 Do not point `dsn` at Supabase's connection pooler, Supavisor. The tool does
 not support a pooler: behind one, the encryption checks read the pooler's
 connection to the server, not the tool's
-([#1045](../decisions/log.md#1045)). Whether to support Supavisor is not
-decided (open: #1111).
+([#1045](../decisions/log.md#1045)). Supporting Supavisor would reopen that
+decision, and #1111 asks whether to (open: #1111).
 
 The tool account's password comes from `SOPULI_DB_ADMIN_PASSWORD` here. The
 other ways to supply it are in
@@ -246,10 +252,11 @@ detail.
 
 Each service now logs in as its own role. Its `DATABASE_URL` names that role,
 and its password is the vault's `current` value. This command reads one role's
-password from the vault:
+password from the vault. The field holds every role's password, so `jq` picks
+out the one role's:
 
 ```
-$ vault kv get -format=json -field=DB_CREDENTIALS kv/acme/dev/acme
+$ vault kv get -format=json -field=DB_CREDENTIALS kv/acme/dev/acme | jq -r .acme_web_user
 ```
 
 How the password reaches the service depends on where it runs. For Kubernetes,
@@ -294,9 +301,11 @@ pgbouncer, service_role*, authenticator*, authenticated*, anon*
 The tool reads this setting before it changes anything, and refuses each
 declared role on the list. This is guardrail check 8
 ([`../design/02-postgres-privileges.md`](../design/02-postgres-privileges.md)
-§5). `--force` does not waive it. Here `declared.yaml` is §3's config with
-`authenticator` added to `accounts:`, after `creds generate` staged a password
-for it:
+§5). `--force` does not waive it. This sample used `declared.yaml`, §3's config
+with `authenticator` added to `accounts:`, after `creds generate` staged a
+password for it. Do not repeat it on a real project: `creds generate` writes
+`pending` and `origin` entries for the role into the shared vault document, and
+no run applies or removes them.
 
 ```
 $ sopuli --config declared.yaml creds apply
@@ -314,8 +323,10 @@ check, and asks for `ADMIN OPTION` on `authenticator`. supautils does not allow
 that grant (open: #1117). Take the role out of `accounts:`.
 
 Supabase's other roles, such as `supabase_functions_admin`, are not on the
-local list. The tool account cannot change them anyway, because it has no
-`ADMIN OPTION` on them. Leave them out of the config too.
+local list. On PostgreSQL 16 and later the tool account cannot change them,
+because it has no `ADMIN OPTION` on them. On 15 it can (§2), and only the
+config's list of accounts keeps it away from them. Leave them out of the config
+on every release.
 
 ---
 

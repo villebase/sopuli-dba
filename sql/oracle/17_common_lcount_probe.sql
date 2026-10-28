@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
--- sopuli-dba : where does a common account's failed-login count live?   (v1)
+-- sopuli-dba : where does a common account's failed-login count live?   (v2)
 --
 -- #1122. 16_lcount_grant_probe.sql found that a common account's failed logins
 -- in a PDB are counted in CDB$ROOT's SYS.USER$.LCOUNT, and that the PDB's row
@@ -9,7 +9,8 @@
 --
 --   CL1  which count locks: three failed logins in the PDB on a profile with
 --        FAILED_LOGIN_ATTEMPTS 3, then ACCOUNT_STATUS and LCOUNT in both
---        containers, and a login with the right password in each
+--        containers, a login with the right password in each, and one with a
+--        wrong password in the PDB
 --   CL2  whether the two containers share one count: two failed logins in
 --        CDB$ROOT and one in the PDB, on the same profile
 --   CL3  what a successful login resets: two failed logins in the PDB, then a
@@ -17,6 +18,8 @@
 --   CL4  which limit applies: the common profile allows 10, and the PDB gives
 --        the common account a local profile that allows 2. The guard reads the
 --        limit from DBA_USERS.PROFILE in the PDB
+--   CL4b the other way round: the common profile allows 3, and the PDB's local
+--        profile allows 10
 --   CL5  what a PDB session can read of the root's count, after four failed
 --        logins in the PDB:
 --          acme_cl_svc     local, SELECT ON SYS.USER$, the grant 00_install.sql
@@ -51,8 +54,9 @@
 --          CDB$ROOT   3       4        LOCKED(TIMED)   set
 --          the PDB    0       0        OPEN            NULL
 --
---        The right password then gets ORA-28000 in the PDB and in CDB$ROOT.
---        So the account is locked, and the PDB's dictionary says it is open
+--        The right password then gets ORA-28000 in the PDB and in CDB$ROOT,
+--        and a wrong one gets ORA-28000 in the PDB. So the account is locked,
+--        and the PDB's dictionary says it is open
 --
 --   CL2  two failed logins in CDB$ROOT and one in the PDB lock the account, as
 --        in CL1: LCOUNT 3 and LOCKED(TIMED) in CDB$ROOT, 0 and OPEN in the PDB,
@@ -61,24 +65,30 @@
 --
 --   CL3  the root's LCOUNT goes 2 -> 0 on a good login in the PDB, after two
 --        failed logins in the PDB (CL3a) or in CDB$ROOT (CL3b). The PDB's
---        reads 0 throughout
+--        reads 0 before and after, in both
 --
 --   CL4  two failed logins in the PDB do not lock the account, on the PDB's
 --        limit of 2: the right password then logs in, in the PDB and in
---        CDB$ROOT. The root's profile, limit 10, is the one that applies (CL1
---        shows the root's limit of 3 locking on failed logins in the PDB). The
---        PDB's DBA_USERS.PROFILE names a profile that does not apply. A failed
---        login after the good ones takes the root's LCOUNT to 1
+--        CDB$ROOT. A failed login after the good ones takes the root's LCOUNT
+--        to 1
+--
+--   CL4b three failed logins in the PDB lock the account on the root's limit
+--        of 3, while the PDB's profile allows 10: LCOUNT 3 and LOCKED(TIMED)
+--        in CDB$ROOT, 0 and OPEN in the PDB, and ORA-28000 for the right
+--        password in the PDB. With CL4, the limit that applies is the root
+--        profile's, either way round. The PDB's DBA_USERS.PROFILE names a
+--        profile that does not apply
 --
 --   CL5  after four failed logins in the PDB, the root's LCOUNT is 4. In the
 --        PDB, both readers, local and common, see 0 in SYS.USER$, one row with
 --        CON_ID 3 and LCOUNT 0 from CONTAINERS(SYS.USER$), one row with CON_ID
 --        3 and OPEN from CDB_USERS, and OPEN in DBA_USERS. The common reader,
 --        after ALTER SESSION SET CONTAINER = CDB$ROOT, reads 4 in SYS.USER$,
---        and 0 again after it switches back. So the root's count is readable
---        from a session that starts in the PDB only by a common account that
---        holds SET CONTAINER and SELECT ON SYS.USER$ in the root, and only by
---        leaving the PDB
+--        and 0 again after it switches back. So of the reads tried, only one
+--        reaches the root's count from a session that starts in the PDB: a
+--        common account that holds SET CONTAINER and SELECT ON SYS.USER$, both
+--        CONTAINER = ALL, and leaves the PDB. A database link, the V$ views
+--        and KU$_USER_VIEW were not tried
 --
 -- HOW TO RUN
 --   As SYS, in the PDB and in CDB$ROOT. Against the tier-1 stack, whose SYS
@@ -164,15 +174,18 @@ CREATE USER c##acme_cl_b IDENTIFIED BY "Acme_Cl_B_1" PROFILE c##acme_cl_prof3  C
 CREATE USER c##acme_cl_c IDENTIFIED BY "Acme_Cl_C_1" PROFILE c##acme_cl_prof10 CONTAINER = ALL;
 CREATE USER c##acme_cl_d IDENTIFIED BY "Acme_Cl_D_1" PROFILE c##acme_cl_prof10 CONTAINER = ALL;
 CREATE USER c##acme_cl_e IDENTIFIED BY "Acme_Cl_E_1" PROFILE c##acme_cl_prof10 CONTAINER = ALL;
+CREATE USER c##acme_cl_f IDENTIFIED BY "Acme_Cl_F_1" PROFILE c##acme_cl_prof3  CONTAINER = ALL;
 CREATE USER c##acme_cl_svc IDENTIFIED BY "Acme_Cl_Csvc_1" CONTAINER = ALL;
 GRANT CREATE SESSION TO c##acme_cl_a, c##acme_cl_b, c##acme_cl_c, c##acme_cl_d,
-      c##acme_cl_e, c##acme_cl_svc CONTAINER = ALL;
+      c##acme_cl_e, c##acme_cl_f, c##acme_cl_svc CONTAINER = ALL;
 GRANT SET CONTAINER TO c##acme_cl_svc CONTAINER = ALL;
 GRANT SELECT ON sys.user$ TO c##acme_cl_svc CONTAINER = ALL;
 
 CONNECT sys/"&pwd"@&pdb AS SYSDBA
 CREATE PROFILE acme_cl_prof2 LIMIT FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 1;
+CREATE PROFILE acme_cl_prof10l LIMIT FAILED_LOGIN_ATTEMPTS 10 PASSWORD_LOCK_TIME 1;
 ALTER USER c##acme_cl_d PROFILE acme_cl_prof2;
+ALTER USER c##acme_cl_f PROFILE acme_cl_prof10l;
 CREATE USER acme_cl_svc IDENTIFIED BY "Acme_Cl_Svc_1";
 GRANT CREATE SESSION TO acme_cl_svc;
 GRANT SELECT ON sys.user$ TO acme_cl_svc;
@@ -202,6 +215,8 @@ SELECT &whoami;
 PROMPT -- the right password, in CDB$ROOT
 CONNECT c##acme_cl_a/"Acme_Cl_A_1"@&root
 SELECT &whoami;
+PROMPT -- a wrong password, in the PDB, once locked
+CONNECT c##acme_cl_a/"wrong-4"@&pdb
 
 ----------------------------------------------- CL2: one count, or two ----
 PROMPT
@@ -237,9 +252,17 @@ PROMPT
 PROMPT == CL3b: two failed logins in CDB$ROOT as c##acme_cl_c, then a good one in the PDB
 CONNECT c##acme_cl_c/"wrong-1"@&root
 CONNECT c##acme_cl_c/"wrong-2"@&root
+CONNECT sys/"&pwd"@&root AS SYSDBA
+PROMPT -- before the good login
+SELECT &state &state_from WHERE u.name = 'C##ACME_CL_C';
+CONNECT sys/"&pwd"@&pdb AS SYSDBA
+SELECT &state &state_from WHERE u.name = 'C##ACME_CL_C';
 CONNECT c##acme_cl_c/"Acme_Cl_C_1"@&pdb
 SELECT &whoami;
 CONNECT sys/"&pwd"@&root AS SYSDBA
+PROMPT -- after it
+SELECT &state &state_from WHERE u.name = 'C##ACME_CL_C';
+CONNECT sys/"&pwd"@&pdb AS SYSDBA
 SELECT &state &state_from WHERE u.name = 'C##ACME_CL_C';
 
 ---------------------------------------------- CL4: which limit applies ----
@@ -263,6 +286,19 @@ CONNECT sys/"&pwd"@&root AS SYSDBA
 SELECT &state &state_from WHERE u.name = 'C##ACME_CL_D';
 CONNECT sys/"&pwd"@&pdb AS SYSDBA
 SELECT &state &state_from WHERE u.name = 'C##ACME_CL_D';
+
+PROMPT
+PROMPT == CL4b: c##acme_cl_f, limit 3 in CDB$ROOT and 10 in the PDB; three failed logins in the PDB
+CONNECT c##acme_cl_f/"wrong-1"@&pdb
+CONNECT c##acme_cl_f/"wrong-2"@&pdb
+CONNECT c##acme_cl_f/"wrong-3"@&pdb
+CONNECT sys/"&pwd"@&root AS SYSDBA
+SELECT &state &state_from WHERE u.name = 'C##ACME_CL_F';
+CONNECT sys/"&pwd"@&pdb AS SYSDBA
+SELECT &state &state_from WHERE u.name = 'C##ACME_CL_F';
+PROMPT -- the right password, in the PDB
+CONNECT c##acme_cl_f/"Acme_Cl_F_1"@&pdb
+SELECT &whoami;
 
 ------------------------------- CL5: what a PDB session can read of it ----
 PROMPT
@@ -307,14 +343,15 @@ SELECT name, lcount FROM sys.user$ WHERE name = 'C##ACME_CL_E';
 ----------------------------------------------------------------- teardown ----
 CONNECT sys/"&pwd"@&pdb AS SYSDBA
 DROP USER acme_cl_svc CASCADE;
-ALTER USER c##acme_cl_d PROFILE DEFAULT;
 DROP PROFILE acme_cl_prof2 CASCADE;
+DROP PROFILE acme_cl_prof10l CASCADE;
 CONNECT sys/"&pwd"@&root AS SYSDBA
 DROP USER c##acme_cl_a CASCADE;
 DROP USER c##acme_cl_b CASCADE;
 DROP USER c##acme_cl_c CASCADE;
 DROP USER c##acme_cl_d CASCADE;
 DROP USER c##acme_cl_e CASCADE;
+DROP USER c##acme_cl_f CASCADE;
 DROP USER c##acme_cl_svc CASCADE;
 DROP PROFILE c##acme_cl_prof3 CASCADE;
 DROP PROFILE c##acme_cl_prof10 CASCADE;

@@ -357,14 +357,19 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
     add to it, and a good login in the PDB resets it.
   - It locks the account in every container, on the limit of the profile the
     account has in the root. A profile given to the account in the PDB does
-    not apply, though the PDB's `DBA_USERS.PROFILE` names it.
-  - In the PDB, the locked account's `ACCOUNT_STATUS` is `OPEN`, and the right
-    password gets `ORA-28000`.
-  - A session in the PDB cannot read the root's count through
-    `CONTAINERS(SYS.USER$)` or `CDB_USERS`: both show only the PDB's row. A
-    common account that holds `SET CONTAINER` and `SELECT ON SYS.USER$` with
-    `CONTAINER = ALL` reads it after `ALTER SESSION SET CONTAINER = CDB$ROOT`.
-    A local account cannot.
+    not apply, with a lower limit or a higher one, though the PDB's
+    `DBA_USERS.PROFILE` names it. So on a PDB target the guard reads the
+    limit from a profile that may not apply, as well as a count of 0.
+  - In the PDB, the locked account's `ACCOUNT_STATUS` is `OPEN`. So UC-1 §7
+    mitigation 6 does not see the lock either. A login with the right or a
+    wrong password gets `ORA-28000`, so the login still shows that the
+    account is locked.
+  - A session in the PDB does not read the root's count through `SYS.USER$`,
+    `CONTAINERS(SYS.USER$)`, `CDB_USERS` or `DBA_USERS`: each shows only the
+    PDB's row. A common account that holds `SET CONTAINER` and
+    `SELECT ON SYS.USER$` with `CONTAINER = ALL` reads it after
+    `ALTER SESSION SET CONTAINER = CDB$ROOT`. A database link, the `V$` views
+    and `KU$_USER_VIEW` were not tried.
 - **A read through the view is not quieter in the audit trail.** Under a unified
   audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
   leaves six `USER$` rows under the reader's name, with the reader's statement.

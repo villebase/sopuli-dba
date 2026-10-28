@@ -62,7 +62,7 @@ What each environment is, and what to know before using it:
   SCRAM, and PgBouncer reads the role's verifier with `auth_query`, which needs
   the role and the function that the probe creates.
 - **supabase** (`supabase`, port 5440) is the PostgreSQL image a Supabase
-  project runs, `public.ecr.aws/supabase/postgres:17.6.1.095`, without the rest
+  project runs, `supabase/postgres:17.6.1.095`, without the rest
   of the Supabase stack. It preloads supautils, which refuses a change to a
   role in `supautils.reserved_roles`. `postgres` / `sopuli-test`, and
   `postgres` is not a superuser there; `supabase_admin` is, with the same

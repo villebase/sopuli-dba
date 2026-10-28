@@ -25,7 +25,7 @@ from jsonschema import Draft202012Validator
 
 from sopuli.admin import Resolved
 from sopuli.apply import REFUSED, SKIPPED
-from sopuli.cli import cli
+from sopuli.cli import UNWAIVABLE_REMEDIES, cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
@@ -37,6 +37,7 @@ from sopuli.diagnostics import (
     WARNINGS,
     guardrail_pass_ahead,
 )
+from sopuli.driver.guardrails import NEVER_WAIVED
 from sopuli.driver.protocol import (
     PASS,
     ChangeResult,
@@ -1584,6 +1585,12 @@ def test_a_named_superuser_is_not_sent_to_force_or_to_the_whitelist(
     assert "a superuser's password is not one this tool changes" in reported
     assert "--force to override" not in reported
     assert "no flag extends the whitelist" not in reported
+
+
+def test_every_check_no_flag_waives_has_its_own_remedy() -> None:
+    """Otherwise a named account refused by a new such check would be told to
+    pass --force, which refuses it again."""
+    assert set(UNWAIVABLE_REMEDIES) == NEVER_WAIVED
 
 
 def test_a_named_reserved_role_is_not_sent_to_force_or_to_the_whitelist(

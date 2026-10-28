@@ -65,8 +65,9 @@ safety report must never merge, which is what
 Checks 6 and 8 are never waived because nothing could use the waiver: only a
 superuser can change a superuser's password or a reserved role's, and a tool
 account that is a superuser is refused when it connects. A waiver would only
-move the refusal to the server, after the run had started. Check 7 is waived for the deliberate
-rotation of the tool's own password, which is ordinary work (#1059).
+move the refusal to the server, after the run had started. Check 7 is waived
+for the deliberate rotation of the tool's own password, which is ordinary work
+(#1059).
 
 This is decision P3 in ``docs/decisions/log.md``. `DBSNMP` is the case it exists
 for: rotating its password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a

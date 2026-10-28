@@ -276,8 +276,10 @@ modify it`. Without check 8 a run would get as far as `ALTER ROLE` and fail
 there. Any role can read the setting, and it is `NULL` on a server without
 supautils, so reading it is the capability probe. An entry that ends in `*`,
 such as `anon*`, is still reserved: the `*` lets supautils' privileged role
-change the role's settings. Names are compared exactly, as supautils compares
-them. Supabase's own roles have oids of 16384 and above, so check 2 does not
+change the role's settings. The tool reads the list as supautils does, with
+PostgreSQL's `SplitIdentifierString`: an unquoted name is lower-cased, a name in
+double quotes keeps its case, and the name is then compared exactly. Supabase's
+own roles have oids of 16384 and above, so check 2 does not
 catch them.
 
 Check 3, the password file, does not exist on PostgreSQL, so it always passes

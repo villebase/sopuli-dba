@@ -42,8 +42,10 @@ change to a role on that list by anyone but a superuser, and the tool never
 connects as one. Reading the setting is the capability probe: any role can
 read it, and it is ``NULL`` on a server where nothing defines it (invariant 3).
 An entry may end in ``*``, which lets the privileged role change the role's
-settings. The role is reserved either way, so the ``*`` is dropped. Names are
-compared exactly, as supautils compares them.
+settings. The role is reserved either way, so the ``*`` is dropped. The list is
+read as supautils reads it (:func:`reserved_names`): a list of identifiers, as
+``search_path`` is, so an unquoted name is lower-cased, and the result is
+compared exactly.
 
 **The name is matched by Python's** ``str.upper()``, the comparison the config
 uses (invariant 5), and the role keeps the spelling ``pg_roles`` gives back:
@@ -205,15 +207,91 @@ def state_of(row: tuple[Any, ...]) -> UserState:
 
 
 def reserved_names(setting: str | None) -> frozenset[str]:
-    """The role names in a ``supautils.reserved_roles`` value.
+    """The role names in a ``supautils.reserved_roles`` value, read as
+    supautils reads them.
 
-    The value is a comma-separated list, such as ``supabase_admin, anon*``.
-    ``None`` and ``''`` reserve nothing.
+    supautils splits the value with PostgreSQL's ``SplitIdentifierString``,
+    removes one trailing ``*`` from each name, and compares the result with
+    ``strcmp``. This follows ``SplitIdentifierString``: spaces around a name are
+    dropped, a name in double quotes keeps its case and ``""`` inside it is one
+    quote, and an unquoted name is lower-cased. Only ``A`` to ``Z`` are
+    lower-cased, as the server does in a multibyte encoding such as UTF-8. Each
+    name is cut to 63 bytes. A syntax error stops the split, and supautils keeps
+    the names read before it. ``None`` and ``''`` reserve nothing.
     """
-    if not setting:
-        return frozenset()
-    names = (entry.strip().removesuffix("*") for entry in setting.split(","))
-    return frozenset(name for name in names if name)
+    names: list[str] = []
+    text = setting or ""
+    at = _skip_spaces(text, 0)
+    while at < len(text):
+        if text[at] == '"':
+            name, at = _quoted(text, at)
+            if name is None:
+                break
+        else:
+            end = at
+            while end < len(text) and text[end] != "," and text[end] not in _SPACES:
+                end += 1
+            if end == at:
+                break
+            name, at = _ascii_lower(text[at:end]), end
+        at = _skip_spaces(text, at)
+        if at < len(text) and text[at] != ",":
+            break
+        names.append(_without_wildcard(_truncate(name)))
+        if at == len(text):
+            break
+        at = _skip_spaces(text, at + 1)
+        if at == len(text):
+            break
+    return frozenset(names)
+
+
+#: ``NAMEDATALEN`` less one: the longest name the server keeps, in bytes.
+_NAME_BYTES = 63
+
+#: What the server's ``scanner_isspace`` counts as a space.
+_SPACES = " \t\n\r\f"
+
+
+def _skip_spaces(text: str, at: int) -> int:
+    while at < len(text) and text[at] in _SPACES:
+        at += 1
+    return at
+
+
+def _without_wildcard(name: str) -> str:
+    """supautils' ``remove_ending_wildcard``: one trailing ``*`` goes, except
+    from a name that is only ``*``."""
+    return name[:-1] if len(name.encode("utf-8")) > 1 and name.endswith("*") else name
+
+
+def _quoted(text: str, at: int) -> tuple[str | None, int]:
+    """The name in the double quotes that open at ``at``, and where it ends.
+    ``None`` where the quote is not closed."""
+    parts: list[str] = []
+    start = at + 1
+    while True:
+        close = text.find('"', start)
+        if close == -1:
+            return None, len(text)
+        parts.append(text[start:close])
+        if close + 1 < len(text) and text[close + 1] == '"':
+            parts.append('"')
+            start = close + 2
+            continue
+        return "".join(parts), close + 1
+
+
+def _ascii_lower(name: str) -> str:
+    return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in name)
+
+
+def _truncate(name: str) -> str:
+    """``name`` cut to :data:`_NAME_BYTES` bytes of UTF-8, on a character boundary."""
+    encoded = name.encode("utf-8")
+    if len(encoded) <= _NAME_BYTES:
+        return name
+    return encoded[:_NAME_BYTES].decode("utf-8", errors="ignore")
 
 
 def _status(*, can_login: bool, expired: bool) -> str:

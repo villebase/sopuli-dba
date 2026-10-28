@@ -1422,7 +1422,8 @@ def account_suspend(
 
     **The guardrails are the ones every mutating verb uses.** Suspending DBSNMP
     refuses exactly as rotating it would, and `--force` waives checks 2 to 5 and
-    7 and never the whitelist, which is invariant 5's own sentence.
+    7 and never 1, 6 or 8: the whitelist, which is invariant 5's own sentence, a
+    superuser, or a role the server reserves.
 
     **Idempotent.** An account that is already locked reports no change and
     issues nothing -- the driver reads the state first, because Oracle accepts
@@ -1718,7 +1719,8 @@ def account_expire_password(
     **One account, named on the command line**, and a predicate in
     `personal_accounts:` never widens it -- `account suspend`'s rules. The
     guardrails are the ones every mutating verb uses, and `--force` waives
-    checks 2 to 5 and 7 and never the whitelist.
+    checks 2 to 5 and 7 and never 1, 6 or 8: the whitelist, a superuser, or a
+    role the server reserves.
 
     **Idempotent.** An account already expired with no window open reports no
     change and issues nothing. `EXPIRED(GRACE)` is not already expired: the
@@ -8446,20 +8448,27 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     reasons = "; ".join(refusal.reason for refusal in review.refusals)
     if not named:
         return reasons
-    checks = {refusal.check for refusal in review.refusals}
-    # Checks 1, 6 and 8 are the ones no flag reaches. Saying "--force" there
-    # would send an operator to a flag that is going to refuse them again.
-    if guardrails.DECLARED in checks:
-        remedy = "declare it in `accounts:` first; no flag extends the whitelist"
-    elif guardrails.SUPERUSER in checks:
-        remedy = "a superuser's password is not one this tool changes; leave it out of the config"
-    elif guardrails.RESERVED in checks:
-        remedy = (
-            "a reserved role's password is not one this tool changes; leave it out of the config"
-        )
-    else:
-        remedy = "pass --force to override, which is recorded"
+    # Saying "--force" for a check no flag reaches would send an operator to a
+    # flag that is going to refuse them again. The first such check in §4's
+    # order picks the remedy.
+    remedy = next(
+        (UNWAIVABLE_REMEDIES[one.check] for one in review.refusals if not one.overridable),
+        "pass --force to override, which is recorded",
+    )
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
+
+
+#: What to do about each check that no flag waives, by check. One entry for each
+#: member of :data:`guardrails.NEVER_WAIVED`, which a test holds it to.
+UNWAIVABLE_REMEDIES = {
+    guardrails.DECLARED: "declare it in `accounts:` first; no flag extends the whitelist",
+    guardrails.SUPERUSER: (
+        "a superuser's password is not one this tool changes; leave it out of the config"
+    ),
+    guardrails.RESERVED: (
+        "a reserved role's password is not one this tool changes; leave it out of the config"
+    ),
+}
 
 
 def _with_regime(

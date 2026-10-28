@@ -48,6 +48,7 @@ from sopuli.driver.oracle.accounts import (
     deliberately_locked,
     describe,
     failed_logins,
+    is_common,
     login_state,
     password_constraints,
     resolve_name,
@@ -57,6 +58,7 @@ from sopuli.driver.oracle.accounts import (
 )
 from sopuli.driver.oracle.audit import coverage_of
 from sopuli.driver.oracle.capabilities import (
+    Cursor,
     assert_scope,
     cloud_service_of,
     observe,
@@ -1060,7 +1062,8 @@ class OracleSession:
         ``describe`` -- `check` needs no site-specific grant (decisions P2 and Q1), and
         roles are a guardrail input for mutations, not for reading.
 
-        Where ``SELECT ON SYS.USER$`` was never granted the guard is
+        Where ``SELECT ON SYS.USER$`` was never granted, or the account is a
+        common account outside ``CDB$ROOT`` (:meth:`_guard_gap`), the guard is
         **unavailable**, the attempt still goes ahead, and the result says
         so in ``detail`` rather than letting an absent guard read like a
         satisfied one.
@@ -1104,9 +1107,15 @@ class OracleSession:
                     result=UNAVAILABLE,
                     detail=f'there is no account "{account}" on this target',
                 )
-            unguarded = self._unguarded_reason(state.name)
+            gap = self._guard_gap(cursor, state.name)
+            if gap is not None:
+                unguarded: str | None = f"the lockout guard is unavailable: {gap}"
+            elif not self.scope().supports(OFFLINE_VERIFY):
+                unguarded = "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted"
+            else:
+                unguarded = None
             counter = failed_logins(cursor, state.name) if unguarded is None else None
-        limit = None if self._counted_elsewhere(state.name) else state.failed_login_limit
+        limit = None if gap is not None else state.failed_login_limit
 
         if state.locked:
             # **Before the margin, not after.** A lock caused by earlier failures
@@ -1115,12 +1124,13 @@ class OracleSession:
             # then describe itself differently depending on whether the counter
             # could be read. It is locked either way, and saying so is both
             # consistent and more useful than "we did not try".
+            locked = f"the account is locked ({state.status}); no login was attempted"
             return VerifyResult(
                 method=method,
                 result=UNAVAILABLE,
                 failed_logins=counter,
                 failed_login_limit=limit,
-                detail=f"the account is locked ({state.status}); no login was attempted",
+                detail=locked if gap is None else f"{locked}; {unguarded}",
             )
 
         reason = margin_reason(counter, limit, margin=lockout_margin, attempts=attempts)
@@ -1158,36 +1168,47 @@ class OracleSession:
             warning=warning,
         )
 
-    def _counted_elsewhere(self, name: str) -> bool:
-        """Whether ``name``'s failed logins are counted in another container.
+    def _guard_gap(self, cursor: Cursor, name: str) -> str | None:
+        """Why ``LCOUNT`` and the profile limit read here may not be ``name``'s.
+
+        ``None`` where they are. Otherwise the reason, which every caller
+        reports. Granting ``SELECT ON SYS.USER$`` would not close this gap, so a
+        caller gives this reason before the grant's.
 
         Measured by ``sql/oracle/17_common_lcount_probe.sql`` on 23.26.3.0.0,
         21.3.0.0.0 and 18.4.0.0.0: a common account has one failed-login count,
         in ``CDB$ROOT``. Its failed logins in a PDB add to it, and it locks the
         account on the limit of its profile in the root. In the PDB,
-        ``SYS.USER$.LCOUNT`` reads 0 and ``DBA_USERS.PROFILE`` may name a
-        profile that does not apply. So outside the root neither value is the
-        account's (decided in #1122).
+        ``SYS.USER$.LCOUNT`` reads 0, ``ACCOUNT_STATUS`` reads ``OPEN`` while
+        the account is locked, and ``DBA_USERS.PROFILE`` may name a profile
+        that does not apply (decided in #1122).
 
-        An ``unknown`` scope counts as outside the root, because the guard
-        cannot show that it reads the right container.
+        An application container was not measured, so an application-common
+        account there gets the same reason: the guard cannot show that it
+        reads the right container. In an ``unknown`` scope the dictionary may
+        have no ``COMMON`` column, so the ``C##`` prefix decides.
         """
-        return Identifier(name).is_common and self.scope().type not in ("cdb_root", "non_cdb")
-
-    def _unguarded_reason(self, name: str) -> str | None:
-        """Why the lockout guard cannot run for ``name``, or ``None`` if it can.
-
-        A common account outside the root comes first: granting
-        ``SELECT ON SYS.USER$`` would not help it.
-        """
-        if self._counted_elsewhere(name):
+        scope = self.scope().type
+        if scope in ("cdb_root", "non_cdb"):
+            return None
+        if scope == "unknown":
+            if not Identifier(name).is_common:
+                return None
             return (
-                f"the lockout guard is unavailable: {name} is a common account, "
-                "and its failed logins are counted in CDB$ROOT, which this session cannot read"
+                f"{name} is a common account, and this session's container was not "
+                "resolved, so its failed logins may be counted in CDB$ROOT"
             )
-        if not self.scope().supports(OFFLINE_VERIFY):
-            return "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted"
-        return None
+        if not is_common(cursor, name):
+            return None
+        if scope in ("app_root", "app_pdb"):
+            return (
+                f"{name} is a common account, and where an application container "
+                "counts its failed logins has not been measured"
+            )
+        return (
+            f"{name} is a common account, and its failed logins are counted in "
+            "CDB$ROOT, which this session cannot read"
+        )
 
     def require_verifier(self, account: str, secret: Secret) -> None:
         """Refuse ``hash`` or ``both`` for ``account`` at **plan time**, or say nothing.
@@ -1205,8 +1226,13 @@ class OracleSession:
         """
         self._verifier_answer(account, secret)
 
-    def _compare_verifier(self, account: str, secret: Secret) -> VerifyResult:
+    def _compare_verifier(
+        self, account: str, secret: Secret, *, mismatch: str | None = None
+    ) -> VerifyResult:
         """``method="hash"``: compare with the stored 12C verifier, and log in as nobody.
+
+        ``mismatch`` replaces the detail of a ``fail``, for ``both``, which
+        words its mismatch for itself.
 
         **No authentication attempt**, so none of ``login``'s guards apply: no
         counter moves, nothing is spent, and the lockout margin has nothing to
@@ -1237,14 +1263,19 @@ class OracleSession:
                 result=UNAVAILABLE,
                 detail=f'there is no account "{account}" on this target',
             )
-        state, counter, answer = found
-        limit = None if self._counted_elsewhere(state.name) else state.failed_login_limit
+        state, counter, gap, answer = found
+        detail = mismatch if answer == NO_MATCH and mismatch else _HASH_DETAIL[answer]
+        if gap is not None:
+            # A comparison spends no login, so the guard is not the point here.
+            # The lock is: ACCOUNT_STATUS read in this container does not show
+            # one held in another, and a pass would otherwise read as in sync.
+            detail = f"{detail}; {gap}, so a lock from failed logins may not show here"
         return VerifyResult(
             method=VERIFY_HASH,
             result=FAIL if answer == NO_MATCH else PASS,
             failed_logins=counter,
-            failed_login_limit=limit,
-            detail=_HASH_DETAIL[answer],
+            failed_login_limit=None if gap is not None else state.failed_login_limit,
+            detail=detail,
         )
 
     def _compare_then_login(
@@ -1264,15 +1295,13 @@ class OracleSession:
         reports ``fail`` from the comparison alone has made a weaker claim than
         one that also logged in.
         """
-        compared = self._compare_verifier(account, secret)
+        compared = self._compare_verifier(
+            account,
+            secret,
+            mismatch="matches none of the account's 12C verifiers, so the login half was not spent",
+        )
         if compared.result == FAIL:
-            return replace(
-                compared,
-                method=VERIFY_BOTH,
-                detail=(
-                    "matches none of the account's 12C verifiers, so the login half was not spent"
-                ),
-            )
+            return replace(compared, method=VERIFY_BOTH)
         if compared.result != PASS:
             return replace(compared, method=VERIFY_BOTH)
         logged = self._login(
@@ -1291,8 +1320,12 @@ class OracleSession:
 
     def _verifier_answer(
         self, account: str, secret: Secret
-    ) -> tuple[UserState, int | None, str] | None:
-        """Read the verifiers and compare, raising every refusal; ``None`` if no account."""
+    ) -> tuple[UserState, int | None, str | None, str] | None:
+        """Read the verifiers and compare, raising every refusal; ``None`` if no account.
+
+        Returns the account, its ``LCOUNT``, :meth:`_guard_gap`'s reason, and the
+        comparison's answer. ``LCOUNT`` is ``None`` where there is a gap.
+        """
         if not self.scope().supports(OFFLINE_VERIFY):
             raise UnsupportedCapabilityError(
                 OFFLINE_VERIFY,
@@ -1305,9 +1338,8 @@ class OracleSession:
             if state is None:
                 return None
             spare4 = stored_verifiers(cursor, state.name)
-            counter = (
-                None if self._counted_elsewhere(state.name) else failed_logins(cursor, state.name)
-            )
+            gap = self._guard_gap(cursor, state.name)
+            counter = None if gap is not None else failed_logins(cursor, state.name)
 
         try:
             answer = compare(secret, spare4, limit=self.byte_limit())
@@ -1343,7 +1375,7 @@ class OracleSession:
                 ),
             )
 
-        return state, counter, answer
+        return state, counter, gap, answer
 
     def _unreadable_verifier_hint(self) -> str:
         """Why ``SYS.USER$`` cannot be read here, in the words that fit this target.

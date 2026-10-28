@@ -418,6 +418,14 @@ LCOUNT_QUERY = "select lcount from sys.user$ where name = :name"
 #: spelling ``DBA_USERS`` gave back.
 PTIME_QUERY = "select ptime from sys.user$ where name = :name"
 
+#: Whether the account is common, for the ``LCOUNT`` guard. ``DBA_USERS`` is in
+#: the baseline grant set. The column exists from 12.1, and only a CDB asks it.
+#: It is read rather than taken from the ``C##`` prefix, because
+#: ``COMMON_USER_PREFIX`` can be changed, and an application-common account in
+#: an application container has no prefix. Bound unchanged, for
+#: :func:`failed_logins`' reason.
+COMMON_QUERY = "select common from dba_users where username = :name"
+
 #: The account's stored password verifiers, for ``check --method hash``.
 #: Behind the same optional grant as :data:`LCOUNT_QUERY`, and gated on the same
 #: capability.
@@ -1027,6 +1035,16 @@ def failed_logins(cursor: Cursor, name: str) -> int | None:
     # protect.
     row = read(cursor, LCOUNT_QUERY, name=name)
     return int(row[0]) if row and row[0] is not None else None
+
+
+def is_common(cursor: Cursor, name: str) -> bool:
+    """Whether ``DBA_USERS.COMMON`` says ``YES`` for ``name``.
+
+    ``name`` is the spelling ``DBA_USERS`` gave back, bound unchanged. No row
+    is ``False``: the caller has just read the account from the same view.
+    """
+    row = read(cursor, COMMON_QUERY, name=name)
+    return bool(row) and str(row[0] or "").upper() == "YES"
 
 
 def stored_verifiers(cursor: Cursor, name: str) -> str | None:

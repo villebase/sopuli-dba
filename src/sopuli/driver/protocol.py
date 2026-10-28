@@ -690,7 +690,8 @@ class UserState:
     * ``failed_logins`` -- ``None`` where ``SELECT ON SYS.USER$`` was not
       granted, which is the default (decision P2). The ``LCOUNT`` guard is then
       unavailable and `check` must say so plainly rather than run a weaker
-      version of it silently.
+      version of it silently. A :class:`VerifyResult` has ``None`` here also for
+      a common account outside ``CDB$ROOT``, whose count is in the root (#1122).
     * ``vendor_maintained`` -- ``None`` on 11.2, where the column does not
       exist. That is precisely the case the guardrails' literal deny list covers
       (``02-oracle-privileges.md`` §4 check 5), so it must not read as "no".

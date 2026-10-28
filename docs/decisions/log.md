@@ -3356,9 +3356,13 @@ the register.
 - **Decision:** Report the guard as unavailable, as when the `SYS.USER$`
   grant is absent, and say why: the account's failed logins are counted in
   `CDB$ROOT`. The driver neither reads nor reports `LCOUNT` or the profile
-  limit for it there. The login still runs. A `C##` name marks a common
-  account, as it does for `CONTAINER=ALL` (UC-1 §6.2). An `unknown` scope
-  counts as outside the root.
+  limit for it there. The login still runs. `DBA_USERS.COMMON` says whether
+  the account is common, because `COMMON_USER_PREFIX` can be changed. An
+  application-common account in an application container gets the same
+  answer, because where its failed logins are counted was not measured. In an
+  `unknown` scope, which may have no `COMMON` column, a `C##` name decides. A
+  `--method hash` row says that a lock from failed logins may not show, since
+  `ACCOUNT_STATUS` in the PDB reads `OPEN`.
 - **Why:** The guard read 0 and a limit that may not apply, so it looked
   satisfied while it protected nothing. Saying that it is absent is UC-1 §7's
   rule for a guard that is not running. The login itself still shows a lock:

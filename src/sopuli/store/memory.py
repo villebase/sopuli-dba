@@ -36,18 +36,24 @@ What it gets right on purpose, because the lock depends on each:
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any
 
 from sopuli.clock import utc_now
+from sopuli.payload import CURRENT as CURRENT_STAGE
+from sopuli.payload import PENDING as PENDING_STAGE
+from sopuli.payload import PREVIOUS as PREVIOUS_STAGE
 from sopuli.payload import apply_patch
 from sopuli.store.protocol import (
     CAS,
     LIST,
     MERGE_PATCH,
     OK,
+    STAGES,
+    STAGING,
     VERSIONING,
     CasConflictError,
     PathMetadata,
@@ -79,6 +85,13 @@ class _Path:
     #: pre-flight reads the setting and nothing in tier 0 depends on the pruning
     #: itself happening.
     history: dict[int, Any] = field(default_factory=dict)
+    #: Native staging only. ``version`` stays the compare-and-set token, moved
+    #: by every mutation; the content's own version numbers are generations,
+    #: and each stage names at most one of them.
+    generation: int = 0
+    generations: dict[int, Any] = field(default_factory=dict)
+    stages: dict[str, int] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -161,6 +174,8 @@ class MemoryStore:
                 f"this store keeps no versions, and a read of {path!r} asked for version {version}",
                 hint="drop the `@version=` qualifier, or point the ref at a store that versions",
             )
+        if STAGING in self.capabilities:
+            return self._read_native(path, version=version)
         entry = self.paths.get(path)
         if entry is None:
             return None
@@ -186,7 +201,47 @@ class MemoryStore:
         return Stored(data=copy.deepcopy(entry.data), version=entry.version)
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
+        if STAGING in self.capabilities:
+            entry = self._guarded(path, cas)
+            self._add_generation(entry, data, stage=CURRENT_STAGE)
+            return self._bump(path, entry)
         entry = self.paths.setdefault(path, _Path())
+        self._check_cas(path, entry, cas)
+        if cas == 0 and entry.version != 0:
+            # Unreachable through the check above, and kept as the statement of
+            # the rule: `cas: 0` means "there must be nothing here", and a path
+            # that once held something is not nothing.
+            raise CasConflictError(f"compare-and-set failed at {path!r}: the path has a history")
+        entry.version += 1
+        entry.data = copy.deepcopy(data)
+        entry.history[entry.version] = entry.data
+        entry.deleted = False
+        self._create_metadata(entry)
+        return entry.version
+
+    @staticmethod
+    def _create_metadata(entry: _Path) -> None:
+        """A write creates the path's metadata, with nothing set on it.
+
+        Measured against Vault 2.0.4: `vault kv metadata get` on a path that has
+        only ever been written answers `cas_required: false`, where before the
+        write it answers nothing at all. Both modes do this.
+
+        **A fake that skipped this would hide a bug in tier 0.** The lock's
+        pre-flight reads "no metadata" as "new path, nothing to check", so
+        against such a store every run on a path would look like the first one.
+        A pre-flight that left a first acquisition to create the metadata would
+        then pass here, though against Vault its second run is refused, for
+        metadata the first run created. A fake that is wrong in the direction of
+        *nothing going wrong* is the expensive kind, which is the argument for
+        this module living in `src/` and being held to the conformance suite.
+        """
+        if entry.metadata is None:
+            entry.metadata = PathMetadata()
+
+    @staticmethod
+    def _check_cas(path: str, entry: _Path, cas: int | None) -> None:
+        """The compare-and-set checks every write makes, in either mode."""
         if cas is None and entry.metadata is not None and entry.metadata.cas_required:
             # What the setting is *for*: KV v2 refuses an unguarded write on a
             # path configured this way, whoever the writer is. A fake that
@@ -207,32 +262,6 @@ class MemoryStore:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {entry.version}"
             )
-        if cas == 0 and entry.version != 0:
-            # Unreachable through the check above, and kept as the statement of
-            # the rule: `cas: 0` means "there must be nothing here", and a path
-            # that once held something is not nothing.
-            raise CasConflictError(f"compare-and-set failed at {path!r}: the path has a history")
-        entry.version += 1
-        entry.data = copy.deepcopy(data)
-        entry.history[entry.version] = entry.data
-        entry.deleted = False
-        if entry.metadata is None:
-            # A write creates the path's metadata, with nothing set on it.
-            # Measured against Vault 2.0.4: `vault kv metadata get` on a path
-            # that has only ever been written answers `cas_required: false`,
-            # where before the write it answers nothing at all.
-            #
-            # **A fake that skipped this would hide a bug in tier 0.** The
-            # lock's pre-flight reads "no metadata" as "new path, nothing to
-            # check", so against such a store every run on a path would look
-            # like the first one. A pre-flight that left a first acquisition to
-            # create the metadata would then pass here, though against Vault its
-            # second run is refused, for metadata the first run created. A fake
-            # that is wrong in the direction of *nothing going wrong* is the
-            # expensive kind, which is the argument for this module living in
-            # `src/` and being held to the conformance suite.
-            entry.metadata = PathMetadata()
-        return entry.version
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
         """Apply a merge patch, which here is a read and a write with no gap.
@@ -310,6 +339,121 @@ class MemoryStore:
         under = bounded_prefix(prefix)
         return tuple(sorted(path for path in self.paths if path.startswith(under)))
 
+    # ------------------------------------------------------ native staging ---
+    #
+    # The semantics OCI Vault was measured to have (#1129): a CURRENT write
+    # leaves a PENDING alone, a new PENDING displaces the old one, a promotion
+    # moves the old CURRENT to PREVIOUS, and the attributes are replaced whole.
+
+    def read_stage(self, path: str, stage: str) -> Stored | None:
+        self._require_staging(path)
+        if stage not in STAGES:
+            raise StoreError(f"{stage!r} is not a stage; the stages are {', '.join(STAGES)}")
+        entry = self.paths.get(path)
+        if entry is None or stage not in entry.stages:
+            return None
+        return self._stored(entry, entry.stages[stage], stage)
+
+    def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
+        self._require_staging(path)
+        entry = self._guarded(path, cas)
+        if CURRENT_STAGE not in entry.stages:
+            # Not measured: whether OCI can create a secret whose only version
+            # is PENDING. Where the answer is unknown the store refuses rather
+            # than guesses, and a caller writes the first generation instead.
+            raise StoreError(
+                f"{path!r} has no CURRENT generation to stage a PENDING beside",
+                hint="write the first generation, which is CURRENT, then stage",
+            )
+        self._add_generation(entry, data, stage=PENDING_STAGE)
+        entry.attributes = copy.deepcopy(dict(attributes))
+        return self._bump(path, entry)
+
+    def promote(
+        self, path: str, generation: int, *, attributes: Mapping[str, Any], cas: int | None
+    ) -> int:
+        self._require_staging(path)
+        entry = self._guarded(path, cas)
+        held = [stage for stage, number in entry.stages.items() if number == generation]
+        if not held:
+            raise StoreError(
+                f"generation {generation} of {path!r} is not CURRENT, PENDING or PREVIOUS, "
+                f"so it cannot be promoted",
+                hint="a deprecated generation is never brought back; stage a new one",
+            )
+        current = entry.stages.get(CURRENT_STAGE)
+        if current != generation:
+            entry.stages = {s: n for s, n in entry.stages.items() if n != generation}
+            if current is not None:
+                entry.stages[PREVIOUS_STAGE] = current
+            entry.stages[CURRENT_STAGE] = generation
+        entry.attributes = copy.deepcopy(dict(attributes))
+        return self._bump(path, entry)
+
+    def _read_native(self, path: str, *, version: int | None) -> Stored | None:
+        entry = self.paths.get(path)
+        if entry is None:
+            return None
+        if version is not None:
+            if version not in entry.generations:
+                return None
+            stage = next((s for s, n in entry.stages.items() if n == version), None)
+            return self._stored(entry, version, stage, pinned=True)
+        if CURRENT_STAGE not in entry.stages:
+            return None
+        return self._stored(entry, entry.stages[CURRENT_STAGE], CURRENT_STAGE)
+
+    def _stored(
+        self, entry: _Path, generation: int, stage: str | None, *, pinned: bool = False
+    ) -> Stored:
+        # A read of a stage carries the secret's token, which `stage` and
+        # `promote` need. A pinned read of a generation that is not CURRENT gets
+        # 0, which no write to an existing path accepts: content derived from
+        # an old generation must not replace CURRENT. On a store without
+        # staging a pinned read returns that old version, and its write
+        # conflicts the same way.
+        current = entry.stages.get(CURRENT_STAGE) == generation
+        token = 0 if pinned and not current else entry.version
+        return Stored(
+            data=copy.deepcopy(entry.generations[generation]),
+            version=token,
+            stage=stage,
+            generation=generation,
+            attributes=MappingProxyType(copy.deepcopy(entry.attributes)),
+        )
+
+    def _guarded(self, path: str, cas: int | None) -> _Path:
+        """The path's entry, after the compare-and-set checks every write makes.
+
+        A path that does not exist yet gets a fresh entry that is **not**
+        stored: :meth:`_bump` stores it once the call has succeeded, so a refused
+        call leaves no empty path behind for :meth:`list` to report.
+        """
+        entry = self.paths.get(path) or _Path()
+        self._check_cas(path, entry, cas)
+        return entry
+
+    def _add_generation(self, entry: _Path, data: Any, *, stage: str) -> None:
+        entry.generation += 1
+        entry.generations[entry.generation] = copy.deepcopy(data)
+        if stage == CURRENT_STAGE and CURRENT_STAGE in entry.stages:
+            entry.stages[PREVIOUS_STAGE] = entry.stages[CURRENT_STAGE]
+        entry.stages[stage] = entry.generation
+
+    def _bump(self, path: str, entry: _Path) -> int:
+        entry.version += 1
+        self._create_metadata(entry)
+        self.paths[path] = entry
+        return entry.version
+
+    def _require_staging(self, path: str) -> None:
+        if STAGING not in self.capabilities:
+            raise StoreError(
+                f"this store keeps the stages in the payload, and a call on {path!r} asked "
+                f"for native staging",
+                hint="check `staging_labels` in supports() before using NativeStaging",
+            )
+
     # ------------------------------------------------ test-facing helpers ---
 
     def configure(self, path: str, metadata: PathMetadata) -> None:
@@ -328,3 +472,7 @@ class MemoryStore:
         if entry is not None:
             entry.deleted = True
             entry.data = None
+            # On a staging store the content lives in generations: dropping the
+            # stages makes `read` answer nothing, and the token and the
+            # generations stand, as the version counter does above.
+            entry.stages = {}

@@ -173,6 +173,105 @@ def test_force_expire_false_is_refused_at_load(
     assert "requires `force_expire: true`" in str(result.exception)
 
 
+OCI_RECORDS = (
+    OFFLINE
+    + """
+vaults:
+  vault-oci:
+    type: oci
+    vault_id: ocid1.vault.oc1..exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id: ocid1.key.oc1..exampleuniqueid
+
+reset_records:
+  vault: vault-oci
+  prefix: sopuli/personal-resets
+"""
+)
+
+
+def test_reset_records_in_an_oci_store_are_refused_when_the_file_is_read(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """An OCI store serves UC-1 only in this build (#1138)."""
+    result = run(runner, write_config(OCI_RECORDS), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "`reset_records:` is vault \"vault-oci\", of type 'oci'" in str(result.exception)
+
+
+#: `vault_path` with no store of its own, so the target's chain decides it, and
+#: `defaults.vault` is an OCI store.
+OCI_DELIVERY = (
+    MANUAL.replace(
+        """delivery:
+  method: manual
+  manual:
+    force_expire: true
+""",
+        """delivery:
+  method: vault_path
+  vault_path:
+    ttl: 1h
+    prefix: handover
+
+vaults:
+  vault-oci:
+    type: oci
+    vault_id: ocid1.vault.oc1..exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id: ocid1.key.oc1..exampleuniqueid
+""",
+    )
+    .replace(
+        """defaults:
+  policy: personal-standard
+""",
+        """defaults:
+  policy: personal-standard
+  vault: vault-oci
+""",
+    )
+    .format(dsn="192.0.2.10:1521/ALPHA", user="SOPULI_SVC", account=ACCOUNT)
+)
+
+
+def test_a_dry_run_refuses_a_delivery_into_an_oci_store(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preview must not say "would be reset" for a run that will be refused,
+    so the delivery store is checked before the plan, `--dry-run` included."""
+
+    def no_store(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a store was opened")
+
+    monkeypatch.setattr("sopuli.cli.connect", no_store)
+
+    result = run(runner, write_config(OCI_DELIVERY), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    rendered = str(result.exception)
+    assert "`delivery.method: vault_path` delivers into on tier1-oracle" in rendered
+    assert "defaults.vault" in rendered
+    assert "would be reset" not in result.output
+
+
+def test_a_target_s_own_oci_store_is_refused_for_a_delivery(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    """The target's `vault:` is the chain's second link, ahead of `defaults.vault`."""
+    config = OCI_DELIVERY.replace("  vault: vault-oci\n", "").replace(
+        "    environment: dev\n", "    environment: dev\n    vault: vault-oci\n"
+    )
+
+    result = run(runner, write_config(config), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    rendered = str(result.exception)
+    assert "targets[0].vault" in rendered
+    assert "of type 'oci'" in rendered
+
+
 # ------------------------------------------------------ the preview, tier 1 ---
 
 

@@ -107,9 +107,11 @@ from sopuli.config import (
     refuse_unknown_vaults,
 )
 from sopuli.config import delivery as delivery_config
+from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
+from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
@@ -2123,6 +2125,9 @@ def account_reset_password(
     refuse_disallowed_method(run.resolved, delivery.method)
 
     reached = config.expanded_targets
+    # Before the plan, the prompt and any event, `--dry-run` included: a preview
+    # must not say "would be reset" for a run that will be refused.
+    _refuse_personal_delivery_store(config, delivery, reached)
     plan = plan_builder.build_for_accounts(
         config,
         [(account, target.name) for target in reached],
@@ -3183,6 +3188,49 @@ def _reset_one(
                 session.close()
 
 
+def _refuse_personal_delivery_store(
+    config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
+) -> None:
+    """An unseen delivery may not reach an OCI store, whichever link names it (#1138).
+
+    A method's own ``vault:`` is checked when the file is read
+    (:mod:`sopuli.config.references`). The rest of :func:`_delivery_store`'s
+    chain, the target's ``vault:`` and ``defaults.vault``, depends on which
+    targets the run reaches, so it is checked here, per target. The seen path
+    and ``one_time_link`` write to no store.
+    """
+    if delivery.is_seen or delivery.one_time_link is not None:
+        return
+    checked: set[str] = set()
+    for target in reached:
+        link = _delivery_store_link(config, delivery, target)
+        if link is None or link[0] in checked:
+            continue
+        name, at = link
+        checked.add(name)
+        refuse_personal_on(
+            config,
+            name,
+            at=at,
+            what=f"the store `delivery.method: {delivery.method}` delivers into on {target.name}",
+        )
+
+
+def _delivery_store_link(
+    config: Config, delivery: Delivery, target: ExpandedTarget
+) -> tuple[str, KeyPath] | None:
+    """The store :func:`_delivery_store`'s chain picks for ``target``, and the key
+    that named it, or ``None`` when the chain runs out. One chain for the
+    delivery and for :func:`_refuse_personal_delivery_store`."""
+    if delivery.vault:
+        return delivery.vault, ROOT.key("delivery").key(delivery.method).key("vault")
+    if target.target.vault:
+        return target.target.vault, declared_at(target, "vault")
+    if config.defaults.vault:
+        return config.defaults.vault, ROOT.key("defaults").key("vault")
+    return None
+
+
 def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) -> str:
     """Which `vaults:` entry an unseen delivery writes into.
 
@@ -3201,8 +3249,8 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
     for a store: a delivery with nowhere to deliver is knowable before a password
     is drawn.
     """
-    chosen = delivery.vault or target.target.vault or config.defaults.vault
-    if chosen is None:
+    link = _delivery_store_link(config, delivery, target)
+    if link is None:
         raise RefusedError(
             f"`delivery.method: {delivery.method}` has no store to deliver into",
             at=ROOT.key("delivery").key(delivery.method).key("vault"),
@@ -3212,7 +3260,7 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
                 "wrong one would hand somebody else's vault a working password"
             ),
         )
-    return chosen
+    return link[0]
 
 
 @dataclass(frozen=True)

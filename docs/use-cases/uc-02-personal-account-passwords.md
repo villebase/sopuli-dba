@@ -525,6 +525,12 @@ rules apply:
 - **The store name is resolved at load**, with every other store reference, so a
   misspelled `vault:` is refused while the file is read. If the verb resolved it,
   that failure would come *after* a password had already changed.
+- **The store must not be an `oci` store.** This build supports OCI for
+  application credentials (UC-1) only. A `reset_records:` store, or a delivery
+  method's own `vault:`, that names an OCI store is refused when the file is
+  read. An unseen delivery whose store a target or `defaults.vault` supplies is
+  refused before the reset builds its plan, `--dry-run` included. Both are
+  config errors, exit 9. Reasons: [#1138](../decisions/log.md#1138).
 - **The account is case-folded into the path, and the target is not.** An Oracle
   account name is matched case-insensitively everywhere else. A path that did not
   fold would let one account own two records that never find each other, so two

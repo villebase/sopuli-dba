@@ -3385,6 +3385,7 @@ match instead:
 | an `oci` store requires `vault_id`, `compartment_id` and `key_id`, and refuses HashiCorp's keys and auth methods | §3a |
 | an application's ref must have somewhere to stage into, on a `hashicorp`, `file` or `oci` store | §7 |
 | a ref on an `oci` store is one OCI secret name | §7 |
+| `reset_records:` and a delivery method's `vault:` may not name an `oci` store | UC-2 §3.1 |
 | the selected `delivery.method` must have a sub-block of the same name | §6 of UC-2 |
 
 So a file the schema accepts may still be refused by `sopuli config validate`,

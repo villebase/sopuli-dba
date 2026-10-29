@@ -34,6 +34,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
+from native_estate import FIELD, OCI_VAULT, seed, staging_store
 from sopuli.admin import Resolved
 from sopuli.cli import _reach, cli
 from sopuli.clock import to_rfc3339, utc_now
@@ -1888,3 +1889,37 @@ def test_a_profile_that_cannot_answer_refuses_even_at_a_terminal(
     assert "the active profile says nobody is here to answer" in str(refused.exception)
     assert getattr(refused.exception, "exit_code", None) == ExitCode.ABORTED
     assert answered.exit_code == ExitCode.SUCCESS, answered.output
+
+
+# ------------------------------------------- native staging (#1134) ---
+
+
+def test_a_native_rotation_promotes_the_version_it_staged(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """One secret per target on an OCI-typed store: the drawn password is
+    staged as a version, applied, then promoted, and the old one is PREVIOUS."""
+    config = (
+        CONFIG.replace(
+            "vaults:\n  vault-prod:\n    type: hashicorp\n"
+            "    addr: https://vault-prod.example.com:8200\n",
+            OCI_VAULT,
+        )
+        .replace("vault: vault-prod", "vault: vault-oci")
+        .replace('"apps/acme/{target}#DB_CREDENTIALS/{account}"', '"acme-{target}#password"')
+    )
+    store = staging_store()
+    seed(store, "acme-appdb-alpha", {FIELD: LIVE})
+    harness = estate(store=store)
+
+    result = run(runner, write_config(config), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    issued = changed(harness)
+    current = store.read_stage("acme-appdb-alpha", "current")
+    previous = store.read_stage("acme-appdb-alpha", "previous")
+    assert current is not None
+    assert previous is not None
+    assert [current.data[FIELD]] == [password for _, password in issued]
+    assert previous.data[FIELD] == LIVE
+    assert "pending" not in current.data

@@ -40,6 +40,7 @@ from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.payload import CURRENT, PREVIOUS
+from sopuli.store.credentials import staging_of
 
 __all__ = [
     "HELD_NARROWED",
@@ -164,6 +165,8 @@ def build_result(
     if redraws:
         entry["redraws"] = redraws
     secret = _secret(binding, source=source, version=version, promoted_to=promoted_to)
+    if secret is not None and promoted_to is not None and mechanism is not None:
+        secret["staging"] = staging_of(mechanism)
     if secret is not None:
         entry["secret"] = secret
     entry["actions"] = _actions(

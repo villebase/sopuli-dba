@@ -2764,7 +2764,7 @@ be rotated:
 | Refused | Why |
 |---|---|
 | `apps/orders/prod/db/creds` | no field: nowhere to put `pending` and `previous`. The "single-field" reading in the table above only holds until the first rotation, which makes the document three-field |
-| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `origin`, `rotated_at`, `rotated_by`, `policy` and `targets` are all reserved; `current` is not, because the ref already points at it |
+| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `origin`, `rotated_at`, `rotated_by`, `policy`, `targets`, `generated_at` and `generated_by` are all reserved; `current` is not, because the ref already points at it |
 
 Both are refused **while the file is read** rather than at the first rotation —
 §1 calls this binding the safety-critical part, and invariant 4 wants a command
@@ -2867,9 +2867,14 @@ say so. The whole metadata map is limited to about 5,100 characters
 (`oci-metadata-limits`), and the tool refuses a write that would pass that
 before it is sent.
 
-**Stages and versions on an OCI store.** A pending password is an OCI version
-in the PENDING stage, and promoting it makes it CURRENT and the old CURRENT
-PREVIOUS, in one call that also replaces the secret's metadata. The tool never
+**Stages and versions on an OCI store.** A secret that holds one account's
+credential uses native staging (UC-1 §3): its pending password is an OCI
+version in the PENDING stage, and promoting it makes it CURRENT and the old
+CURRENT PREVIOUS, in one call that also replaces the secret's metadata. A
+secret that holds several accounts keeps `pending` and `previous` as fields in
+its current version, as on HashiCorp. Which one a secret uses follows from the
+accounts the config declares for it, so a change that moves a secret between
+the two while it holds a live pending is refused. The tool never
 promotes a DEPRECATED version, though OCI would. A secret holds at most 30
 versions, not counting those scheduled for deletion, and OCI removes none by
 itself (`oci-version-limit`). So when OCI refuses a write or a stage as over

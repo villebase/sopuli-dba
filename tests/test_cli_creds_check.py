@@ -16,7 +16,7 @@ place and quietly test nothing.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
+from native_estate import OCI_VAULT, seed, staging_store
 from sopuli import check
 from sopuli.admin import ENV, Resolved
 from sopuli.cli import cli
@@ -164,10 +165,15 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         answers: Mapping[str, VerifyResult] | None = None,
         connect_error: Exception | None = None,
         refusal: Exception | None = None,
+        native: Sequence[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        store = MemoryStore()
-        if stored is not None:
-            for target in ("appdb-alpha", "appdb-beta"):
+        # `native` is each target's documents, seeded as versions for
+        # `NATIVE_CONFIG`.
+        store = MemoryStore() if native is None else staging_store()
+        for target in ("appdb-alpha", "appdb-beta"):
+            if native is not None:
+                seed(store, f"acme-{target}", *native)
+            elif stored is not None:
                 store.write(f"apps/acme/{target}", {"password": stored}, cas=0)
 
         sessions: list[FakeSession] = []
@@ -575,6 +581,53 @@ def test_no_previous_password_reports_null_rather_than_false(
     body = document(run(runner, write_config(CONFIG), "--include-previous", "--output", "json"))
 
     assert body["results"][0]["verification"]["previous_password_accepted"] is None
+
+
+#: One secret per target on an OCI-typed store: native staging (#1134).
+NATIVE_CONFIG = (
+    CONFIG.replace(
+        "vaults:\n  vault-prod:\n    type: hashicorp\n"
+        "    addr: https://vault-prod.example.com:8200\n",
+        OCI_VAULT,
+    )
+    .replace("vault: vault-prod", "vault: vault-oci")
+    .replace('"apps/acme/{target}#password"', '"acme-{target}#password"')
+)
+
+
+def test_a_previous_version_is_asked_about(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """On native staging `previous` is the PREVIOUS version, read by the same
+    `--include-previous` as the field."""
+    estate(
+        native=[
+            {"password": "Old-Horse-Battery-8"},
+            {"password": STORED, "previous": "Old-Horse-Battery-8"},
+        ]
+    )
+    body = document(
+        run(runner, write_config(NATIVE_CONFIG), "--include-previous", "--output", "json")
+    )
+
+    assert body["results"][0]["verification"]["previous_password_accepted"] is True
+    assert body["results"][0]["state"] == check.IN_SYNC
+
+
+def test_a_layout_change_is_reported_on_the_row(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A one-account secret still holding a `pending` field, from when it was
+    shared: `check` reports it for the account and spends no login on it."""
+    harness = estate(native=[])
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(
+            f"acme-{target}", {"password": STORED, "pending": "Staged-Horse-Battery-7"}, cas=0
+        )
+    body = document(run(runner, write_config(NATIVE_CONFIG), "--output", "json"))
+
+    assert "acme-appdb-alpha" in body["results"][0]["error"]["message"]
+    assert all(session.attempts == [] for session in harness["sessions"])
 
 
 def test_a_binding_with_no_ref_says_so_rather_than_blaming_a_ref(

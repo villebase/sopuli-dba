@@ -18,6 +18,7 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
+from native_estate import FIELD, OCI_VAULT, seed, staging_store
 from sopuli import check, status
 from sopuli.admin import Resolved
 from sopuli.cli import cli
@@ -121,9 +122,14 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         users: Mapping[str, UserState | None] | None = None,
         connect_error: Exception | None = None,
         rollover: bool = True,
+        native: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        store = MemoryStore()
-        store.write("apps/acme/db", document if document is not None else _rotated(), cas=0)
+        # `native` is one secret's document, seeded as versions for `NATIVE_CONFIG`.
+        store = MemoryStore() if native is None else staging_store()
+        if native is None:
+            store.write("apps/acme/db", document if document is not None else _rotated(), cas=0)
+        else:
+            seed(store, NATIVE_PATH, native)
 
         sessions: list[FakeSession] = []
 
@@ -441,6 +447,32 @@ def test_a_staged_rotation_is_surfaced(
         }
     )
     result = run(runner, write_config(CONFIG))
+
+    assert status.PENDING_APPLY in result.output
+    assert "1 awaiting apply" in result.output
+
+
+#: One account in one secret on an OCI-typed store: native staging (#1134).
+NATIVE_CONFIG = (
+    CONFIG.replace(
+        "vaults:\n  vault-prod:\n    type: hashicorp\n"
+        "    addr: https://vault-prod.example.com:8200\n",
+        OCI_VAULT,
+    )
+    .replace("vault: vault-prod", "vault: vault-oci")
+    .replace("[acme_web_user, acme_batch_user]", "[acme_web_user]")
+    .replace('"apps/acme/db#DB_CREDENTIALS/{account}"', '"acme-db#password"')
+)
+
+NATIVE_PATH = "acme-db"
+
+
+def test_a_staged_version_is_surfaced(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A PENDING version is a staged rotation, as a `pending` field is."""
+    estate(native={FIELD: LIVE, "pending": "staged", "origin": "generated"})
+    result = run(runner, write_config(NATIVE_CONFIG))
 
     assert status.PENDING_APPLY in result.output
     assert "1 awaiting apply" in result.output

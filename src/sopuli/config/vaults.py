@@ -136,6 +136,12 @@ VAULT_TYPES = ("hashicorp", "oci", "file", "keyring")
 #: not fire, which is the reversible direction.
 PAYLOAD_RULE_TYPES = frozenset({"hashicorp", "file", "oci"})
 
+#: The store types that keep UC-1's stages as their own versions (P2's
+#: ``staging_labels``). Read from the type, not from the opened store, so the
+#: plan and ``--dry-run`` can say which documents use native staging before any
+#: store is reached. Each one's store declares ``staging_labels``.
+STAGING_TYPES = frozenset({"oci"})
+
 #: What an OCI secret name may hold, and how long it may be. Measured
 #: (``oci-name-rules``, #1129): 255 is accepted and 256 is refused. Names are
 #: case-sensitive, so two refs that differ only in case are two secrets.

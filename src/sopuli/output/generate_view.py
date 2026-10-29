@@ -29,6 +29,7 @@ from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.payload import PENDING
+from sopuli.store.credentials import staging_of
 
 __all__ = [
     "VAULT_ONLY",
@@ -103,6 +104,8 @@ def build_result(
         "changed": changed,
     }
     secret = _secret(candidate, stage=stage, version=version)
+    if secret is not None and mechanism is not None:
+        secret["staging"] = staging_of(mechanism)
     if secret is not None:
         entry["secret"] = secret
     entry["actions"] = [

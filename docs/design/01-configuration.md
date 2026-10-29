@@ -1073,13 +1073,24 @@ Python client provides. The four OCI methods parse here too, because §3a is one
 grammar with two vocabularies, and are refused against a HashiCorp store with a
 message saying they authenticate to a different vendor.
 
-**An OCI store can perform** `config_file`. The other three OCI methods parse
-and are refused when the store is opened, with a message saying *not
-implemented yet*. An OCI store with no `auth:` block uses `config_file` with
-the profile `DEFAULT`, as the OCI CLI does. The file is `~/.oci/config`, or the
-one `OCI_CONFIG_FILE` names. That is the OCI SDK's variable; the OCI CLI's
-`OCI_CLI_CONFIG_FILE` is not read. The store's `region`, when set, replaces the
-profile's.
+**An OCI store can perform** all four OCI methods:
+
+- `config_file` signs with the user's API key, from a profile in the OCI config
+  file. An OCI store with no `auth:` block uses it with the profile `DEFAULT`,
+  as the OCI CLI does.
+- `session_token` signs with the session that `oci session authenticate` wrote
+  into a profile. A profile with no `security_token_file` is refused, with a
+  hint to create the session. The tool reads the token once, when it opens the
+  store. A session lasts an hour unless it is refreshed, so run
+  `oci session refresh` before a long run; a session that expires during a run
+  makes the next request fail.
+- `instance_principal` and `resource_principal` sign as the OCI instance or
+  function the tool runs on, and take the region from it. Elsewhere they are
+  refused as an authentication failure, exit 6.
+
+The config file is `~/.oci/config`, or the one `OCI_CONFIG_FILE` names. That is
+the OCI SDK's variable; the OCI CLI's `OCI_CLI_CONFIG_FILE` is not read. The
+store's `region`, when set, replaces the region any method supplies.
 
 A key belongs to the method that uses it: `role_id` under `method: token` is an
 error naming the method in force, because it is a leftover from an edit that

@@ -7,6 +7,7 @@ file or reaches the network.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import oci
@@ -15,7 +16,13 @@ import pytest
 from sopuli.config.model import Vault, VaultAuth
 from sopuli.config.vaults import OCI_AUTH_METHODS
 from sopuli.exit_codes import ExitCode
-from sopuli.store.oci._auth import CONFIG_FILE, build_clients
+from sopuli.store.oci._auth import (
+    CONFIG_FILE,
+    INSTANCE_PRINCIPAL,
+    RESOURCE_PRINCIPAL,
+    SESSION_TOKEN,
+    build_clients,
+)
 from sopuli.store.protocol import StoreError
 
 #: Passes `oci.config.validate_config`, which therefore is not replaced: the
@@ -166,14 +173,177 @@ def test_timeout_s_is_the_request_timeout(sdk: Sdk) -> None:
     assert {kwargs["timeout"] for _, _, kwargs in sdk.clients} == {7.0}
 
 
-@pytest.mark.parametrize("method", sorted(set(OCI_AUTH_METHODS) - {CONFIG_FILE}))
-def test_the_other_oci_methods_are_refused_as_not_built(sdk: Sdk, method: str) -> None:
-    with pytest.raises(StoreError, match="not implemented in this build yet") as error:
-        build_clients(vault(VaultAuth(method=method)), env={})
+class FakeSigner:
+    region = "eu-amsterdam-1"
 
-    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+
+class FakeSessionSigner:
+    """A class, not a function: `validate_config` passes it to `isinstance`."""
+
+    def __init__(self, token: str, key: Any) -> None:
+        self.token = token
+        self.key = key
+
+
+@pytest.mark.parametrize(
+    ("method", "factory"),
+    [
+        ("instance_principal", "InstancePrincipalsSecurityTokenSigner"),
+        ("resource_principal", "get_resource_principals_signer"),
+    ],
+)
+def test_a_principal_takes_the_signers_region(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, method: str, factory: str
+) -> None:
+    monkeypatch.setattr(oci.auth.signers, factory, FakeSigner)
+
+    build_clients(vault(VaultAuth(method=method)), env={})
+
+    assert sdk.files == []
+    for _, config, kwargs in sdk.clients:
+        assert config == {"region": "eu-amsterdam-1"}
+        assert isinstance(kwargs["signer"], FakeSigner)
+
+
+def test_an_instance_principal_does_not_retry_the_metadata_service(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured: with the SDK's retries a laptop waited 4 m 28 s for the refusal."""
+    monkeypatch.setattr(oci.auth.signers, "InstancePrincipalsSecurityTokenSigner", FakeSigner)
+
+    build_clients(vault(VaultAuth(method="instance_principal")), env={})
+
+    signer = sdk.clients[0][2]["signer"]
+    # Only the startup probe: token refreshes during a run keep the SDK's retries.
+    assert set(signer.kwargs) == {"retry_strategy"}
+    assert isinstance(signer.kwargs["retry_strategy"], oci.retry.NoneRetryStrategy)
+
+
+def test_a_principal_takes_the_stores_region_when_set(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oci.auth.signers, "InstancePrincipalsSecurityTokenSigner", FakeSigner)
+
+    build_clients(vault(VaultAuth(method="instance_principal"), region="eu-stockholm-1"), env={})
+
+    assert {config["region"] for _, config, _ in sdk.clients} == {"eu-stockholm-1"}
+
+
+def test_a_principal_that_cannot_get_credentials_is_an_auth_failure(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_metadata_service(**kwargs: Any) -> None:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(
+        oci.auth.signers, "InstancePrincipalsSecurityTokenSigner", no_metadata_service
+    )
+
+    with pytest.raises(StoreError, match="connection refused") as error:
+        build_clients(vault(VaultAuth(method="instance_principal")), env={})
+
+    assert (error.value.category, error.value.exit_code) == (
+        "authentication",
+        ExitCode.AUTH_FAILURE,
+    )
     assert sdk.clients == []
 
 
-def test_config_file_is_an_oci_method() -> None:
-    assert CONFIG_FILE in OCI_AUTH_METHODS
+def test_session_token_signs_with_the_session(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("session-token\n", encoding="utf-8")
+    profile = {**PROFILE, "security_token_file": str(token)}
+    monkeypatch.setattr(oci.config, "from_file", lambda file_location, profile_name: profile)
+    monkeypatch.setattr(oci.signer, "load_private_key_from_file", lambda path, phrase: "key")
+    monkeypatch.setattr(oci.auth.signers, "SecurityTokenSigner", FakeSessionSigner)
+
+    build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    signers = [kwargs["signer"] for _, _, kwargs in sdk.clients]
+    assert [(one.token, one.key) for one in signers] == [("session-token", "key")] * 3
+
+
+def test_a_profile_with_no_session_says_how_to_make_one(sdk: Sdk) -> None:
+    with pytest.raises(StoreError, match="security_token_file") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+    assert error.value.hint is not None
+    assert "oci session authenticate" in error.value.hint
+
+
+def test_an_unreadable_session_token_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile = {**PROFILE, "security_token_file": str(tmp_path / "gone")}
+    monkeypatch.setattr(oci.config, "from_file", lambda file_location, profile_name: profile)
+
+    with pytest.raises(StoreError, match="gone") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def session_profile(monkeypatch: pytest.MonkeyPatch, **fields: Any) -> None:
+    profile = {key: value for key, value in {**PROFILE, **fields}.items() if value is not None}
+    monkeypatch.setattr(oci.config, "from_file", lambda file_location, profile_name: profile)
+
+
+def test_a_session_profile_with_no_region_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`validate_config` skips a session signer; the client would raise ValueError."""
+    token = tmp_path / "token"
+    token.write_text("session-token", encoding="utf-8")
+    session_profile(monkeypatch, region=None, security_token_file=str(token))
+    monkeypatch.delenv("OCI_REGION", raising=False)
+
+    with pytest.raises(StoreError, match="has no region") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_session_profile_with_no_key_file_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("session-token", encoding="utf-8")
+    session_profile(monkeypatch, key_file=None, security_token_file=str(token))
+
+    with pytest.raises(StoreError, match="no key_file") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+@pytest.mark.parametrize(
+    ("content", "message"), [(b"", "is empty"), (b"\xff\xfe\x00", "is not a session token")]
+)
+def test_a_token_file_that_holds_no_token_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: bytes, message: str
+) -> None:
+    token = tmp_path / "token"
+    token.write_bytes(content)
+    session_profile(monkeypatch, security_token_file=str(token))
+
+    with pytest.raises(StoreError, match=message) as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_hashicorp_method_is_refused(sdk: Sdk) -> None:
+    """Unreachable through a config file, which refuses it at load (#1130)."""
+    with pytest.raises(StoreError, match="not an auth method for an OCI store"):
+        build_clients(vault(VaultAuth(method="token")), env={})
+
+
+def test_the_method_names_match_the_config_layer() -> None:
+    names = {CONFIG_FILE, SESSION_TOKEN, INSTANCE_PRINCIPAL, RESOURCE_PRINCIPAL}
+    assert names == set(OCI_AUTH_METHODS)

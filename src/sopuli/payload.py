@@ -92,11 +92,17 @@ ORIGIN = "origin"
 #: password an external system owns. It self-heals on the next `creds generate`.
 GENERATED, SUPPLIED = "generated", "supplied"
 
-#: Root keys the mirror rule generates, and therefore names a container may not
-#: take. ``current`` is absent on purpose: it is not a root key -- the container
-#: *is* the current stage -- so a field genuinely called ``current`` collides
-#: with nothing.
-RESERVED = (PENDING, PREVIOUS, ORIGIN, *STAMPS)
+#: When and by whom a version's password was made. Written into each version's
+#: content under native staging (decision 3, #1158), beside ``origin``.
+GENERATED_AT, GENERATED_BY = "generated_at", "generated_by"
+
+#: Root keys the tool writes, and therefore names a container may not take: the
+#: ones the mirror rule generates, and the two native staging adds to a
+#: version's content, where a field of the same name would be overwritten.
+#: ``current`` is absent on purpose: it is not a root key -- the container *is*
+#: the current stage -- so a field genuinely called ``current`` collides with
+#: nothing.
+RESERVED = (PENDING, PREVIOUS, ORIGIN, *STAMPS, GENERATED_AT, GENERATED_BY)
 
 #: What a JSON merge patch (RFC 7396) uses to remove a key, which is how
 #: ``pending`` is cleared at promotion. Named because ``None`` in a patch means
@@ -106,6 +112,8 @@ REMOVE = None
 __all__ = [
     "CURRENT",
     "GENERATED",
+    "GENERATED_AT",
+    "GENERATED_BY",
     "ORIGIN",
     "PENDING",
     "PREVIOUS",

@@ -65,6 +65,7 @@ from sopuli.store.protocol import (
     PatchNotPermittedError,
     SecretStore,
     StoreError,
+    WriteMechanism,
 )
 
 __all__ = [
@@ -319,7 +320,12 @@ def apply_patch(
         )
     document = None if stored is None else stored.data
     merged = payload_apply(document, _plaintext(patch))
-    return Written(version=store.write(path, merged, cas=cas), mechanism=READ_MODIFY_WRITE)
+    # A store may write the whole document some other way, as the
+    # native-staging adapter does with store versions, and the run says which.
+    mechanism = store.mechanism_for(path) if isinstance(store, WriteMechanism) else None
+    return Written(
+        version=store.write(path, merged, cas=cas), mechanism=mechanism or READ_MODIFY_WRITE
+    )
 
 
 # ----------------------------------------------------------------- helpers ---

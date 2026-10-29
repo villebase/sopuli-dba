@@ -181,21 +181,31 @@ def ignored_patterns(workflow: Path) -> list[str]:
     array inside a `run:` block, not a YAML key -- #375 moved it there so the
     required checks keep reporting -- and the question here is what the file
     *says*.
+
+    **A list it cannot find is an error, not an empty list.** Moving or
+    renaming a marker would otherwise give zero patterns, and with them a run
+    that reports no conflict having measured nothing.
     """
     text = workflow.read_text(encoding="utf-8")
     block = re.search(r"# prose-list-start\n(.*?)\n *# prose-list-end", text, re.S)
-    return re.findall(r"'([^']+)'", block.group(1)) if block else []
+    if block is None:
+        raise SystemExit(f"no prose-list markers found in {workflow}")
+    patterns = re.findall(r"'([^']+)'", block.group(1))
+    if not patterns:
+        raise SystemExit(f"the prose list in {workflow} has no entries")
+    return patterns
 
 
 def matches(pattern: str, path: str) -> bool:
-    """Does a `paths-ignore` pattern cover this path?
+    """Does a prose-list pattern cover this path, as the `changes` job reads it?
 
-    `**` matches across separators and `*` does not, which is GitHub's rule and
-    not `fnmatch`'s -- `fnmatch` would call `docs/*` a match for
-    `docs/design/01-configuration.md` and report a conflict that is not there.
+    The job compares with bash's `[[ $file == $pattern ]]`, where `*` and `**`
+    both match across `/`. So does this: a probe that used GitHub's
+    `paths-ignore` rule, where `*` stops at `/`, would call `docs/*` safe while
+    the job skipped every lane for `docs/design/01-configuration.md`.
     """
-    expression = re.escape(pattern).replace(r"\*\*", "\x00").replace(r"\*", "[^/]*")
-    return re.fullmatch(expression.replace("\x00", ".*"), path) is not None
+    expression = re.escape(pattern).replace(r"\*\*", r"\*").replace(r"\*", ".*")
+    return re.fullmatch(expression, path) is not None
 
 
 def main() -> int:

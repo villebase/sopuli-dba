@@ -413,6 +413,10 @@ jobs:
     name: tier 1 (Oracle Free + Vault)
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # Only `contents: read`. The workflow's `pull-requests: read` is for the
+    # `changes` job, and this job runs the pull request's own code.
+    permissions:
+      contents: read
     # amd64, and not incidentally: the 11g XE image in tier 2 is published for
     # linux/amd64 only, and Oracle's containers are unsupported under emulation.
     runs-on: ubuntu-latest

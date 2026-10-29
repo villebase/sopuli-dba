@@ -60,9 +60,9 @@ PROBES: dict[str, str] = {
 class Environment:
     """One database the suite can run against."""
 
-    name: str  # "oracle-free", "oci-19c", …
+    name: str                       # "oracle-free", "oci-19c", …
     dsn: str
-    tier: int  # 0-3, see 04-testing.md §4
+    tier: int                       # 0-3, see 04-testing.md §4
     capabilities: set[str] = field(default_factory=set)
     version: str | None = None
     max_password_bytes: int | None = None
@@ -89,7 +89,9 @@ def probe(env: Environment, connect) -> Environment:
     with conn:
         cur = conn.cursor()
 
-        (env.version,) = cur.execute("select version_full from v$instance").fetchone() or (None,)
+        (env.version,) = cur.execute(
+            "select version_full from v$instance"
+        ).fetchone() or (None,)
 
         # Byte limit is version-dependent and worth knowing explicitly, because
         # a generated password longer than the target allows fails late and
@@ -118,7 +120,6 @@ def _below(version: str | None, floor: str) -> bool:
 # --------------------------------------------------------------------------
 # pytest integration
 # --------------------------------------------------------------------------
-
 
 def requires_capability(*names: str):
     """Skip unless the target under test reports every named capability."""
@@ -169,7 +170,8 @@ def session_matrix(envs: list[Environment]) -> str:
     rows = [header]
     for cap in caps:
         cells = "".join(
-            f"{('yes' if cap in e.capabilities else '-') if e.available else '?':>12}" for e in envs
+            f"{('yes' if cap in e.capabilities else '-') if e.available else '?':>12}"
+            for e in envs
         )
         rows.append(f"{cap:<{width}}{cells}")
     return "\n".join(rows)

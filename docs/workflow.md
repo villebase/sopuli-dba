@@ -175,18 +175,19 @@ anything but `success` or `skipped`.
 It closes the other edge too: because a skipped required check *passes*, a
 `changes` job that failed would skip everything downstream and wave the pull
 request through. `ci ok` needs `changes` like any other lane, so a failure there
-is a failure here. Tier 1 needs none of this — it is not among the required
-checks, so it can keep filtering on the trigger.
+is a failure here. The same holds for `tier1`: it is in `ci ok`'s `needs`, so a
+red tier 1 is a red `ci ok`.
 
-**`ci` and `tier 1` do not run on a push to `main`.** Because a `pull_request`
+**`ci` does not run on a push to `main`.** Because a `pull_request`
 run tests the merge result, the commit that lands on `main` has already been
 tested, as long as the branch was current when it merged. Two pull requests open
 at once is where that stops being true: the second one's last run predates the
 first one landing. The ruleset does not require branches to be up to date
 (`strict_required_status_checks_policy` is `false`), so a pull request whose
 last run is older than `main` can merge. Merging one pull request at a time is
-the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
-`tier 1` checks `main` by hand when that pattern was not followed.
+the working pattern, not an enforced rule. `workflow_dispatch` on `ci` checks
+`main` by hand when that pattern was not followed. A dispatched run has no pull
+request, so `changes` reports code and every lane runs, tier 1 included.
 
 ## Releases
 

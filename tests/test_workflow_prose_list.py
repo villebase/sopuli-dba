@@ -34,16 +34,19 @@ def _prose_array(text: str) -> list[str]:
     return re.findall(r"^ *'([^']+)'$", block.group(1), re.MULTILINE)
 
 
-def test_no_workflow_filters_pull_requests_with_paths_ignore() -> None:
+def test_no_workflow_filters_on_paths() -> None:
     """The trap the `changes` job exists to avoid, asserted rather than described.
 
-    A `paths-ignore` on a `pull_request` trigger makes a whole workflow skip, and
-    its checks then never report. While tier 1 had a workflow of its own, that
-    is how it skipped prose, and why `ci ok` could not see it (#1120).
+    A `paths-ignore` or `paths` filter on a trigger makes a whole workflow skip,
+    and its checks then never report. While tier 1 had a workflow of its own,
+    that is how it skipped prose, and why `ci ok` could not see it (#1120). No
+    workflow here filters on paths for any trigger, so the check is on the key.
     """
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+    workflows = sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
+    assert workflows, f"no workflows found under {WORKFLOWS}"
+    for workflow in workflows:
         text = workflow.read_text(encoding="utf-8")
-        assert not re.search(r"^ *paths-ignore:", text, re.MULTILINE), workflow.name
+        assert not re.search(r"^ *paths(-ignore)?:", text, re.MULTILINE), workflow.name
 
 
 def test_the_list_is_not_empty() -> None:

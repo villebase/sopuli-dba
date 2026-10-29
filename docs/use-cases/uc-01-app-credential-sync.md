@@ -312,8 +312,10 @@ sopuli creds generate --application acme [--account acme_web_user]
    and under `--offline` nothing is read, so nothing is skipped. `creds apply`
    then finds no password for the account, and reports it `SKIPPED` with the
    refusal, not a request to run `generate` first. On a target that does not
-   refuse it, the guardrail pass (§5) finds the target that does, and the row
-   names it (#1180).
+   refuse it, the guardrail pass (§5) reads the target that does, and the row
+   names it (#1180). Where the pass cannot reach or read that target, the row
+   still asks for `generate`. `--dry-run --preflight` does not forecast this
+   case, because its survey reads only accounts with a password to apply.
 3. Generate from a CSPRNG. Reject and regenerate candidates that break the
    charset, first-character, length-in-bytes or composition rules. The retries
    are bounded.

@@ -1744,6 +1744,76 @@ def test_a_password_skipped_for_another_target_is_skipped_on_this_one(
     assert "appdb-beta" in json.dumps(rows[("acme_web_user", "appdb-alpha")])
 
 
+#: `acme_web_user`'s password, shared by both targets, has never been generated.
+NOT_GENERATED = {
+    "DB_CREDENTIALS": {"acme_batch_user": LIVE},
+    "pending": {"acme_batch_user": STAGED},
+}
+
+
+@pytest.mark.parametrize(
+    "by_target",
+    [
+        {
+            "appdb-alpha": DBA_ON_BETA["appdb-alpha"],
+            "appdb-beta": DBA_ON_BETA["appdb-alpha"],
+        },
+        DBA_ON_BETA,
+    ],
+    ids=["no-refusal", "waivable-refusal-on-beta"],
+)
+def test_a_shared_password_never_generated_still_asks_for_generate(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    by_target: Mapping[str, Mapping[str, UserState]],
+) -> None:
+    """#1180 covers only a password `generate` skipped: refused somewhere by a
+    check no flag waives. With no refusal, or one `--force` could waive,
+    `generate` would stage it, so "run `sopuli creds generate` first" is the
+    right row, and the run does not exit 0 (4 here: `acme_batch_user` was
+    applied beside it)."""
+    estate({}, by_target=by_target, document=NOT_GENERATED)
+
+    result = run(runner, write_config(TWO_TARGETS), "--confirm", "--output", "json")
+
+    assert result.exit_code != ExitCode.SUCCESS, result.output
+    alpha = next(
+        entry
+        for entry in document(result)["results"]
+        if entry["account"] == "acme_web_user" and entry["target"] == "appdb-alpha"
+    )
+    assert alpha["state"] == "ERROR"
+    assert "run `sopuli creds generate` first" in json.dumps(alpha)
+
+
+def test_a_missing_account_beside_a_refusing_target_is_not_hidden_as_skipped(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The account does not exist on `appdb-alpha`, and `appdb-beta` reserves
+    it. Alpha's row is not turned into a `SKIPPED` naming beta: it is what it
+    was before #1180, the missing password reported first, as
+    `settled_before_acting` orders it."""
+    estate(
+        {},
+        by_target={
+            "appdb-alpha": {"ACME_BATCH_USER": ordinary("ACME_BATCH_USER")},
+            "appdb-beta": RESERVED_ON_BETA["appdb-beta"],
+        },
+        document=NOT_GENERATED,
+    )
+
+    result = run(runner, write_config(TWO_TARGETS), "--confirm", "--output", "json")
+
+    alpha = next(
+        entry
+        for entry in document(result)["results"]
+        if entry["account"] == "acme_web_user" and entry["target"] == "appdb-alpha"
+    )
+    assert alpha["state"] == "ERROR"
+    assert "appdb-beta" not in json.dumps(alpha)
+
+
 def test_the_tool_s_own_account_is_skipped_and_force_changes_it_on_the_record(
     runner: CliRunner,
     write_config: Callable[[str], Path],

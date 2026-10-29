@@ -139,6 +139,8 @@ class OciStore:
         self._key_id = vault.key_id
         self._settle_s = vault.timeout_s or SETTLE_TIMEOUT_S
         self._vault_seen = False
+        #: Secret ids by name, from this run's reads and creates (:meth:`_live`).
+        self._ids: dict[str, str] = {}
         self._vaults = vaults
         self._secrets = secrets
         self._kms = kms
@@ -259,7 +261,11 @@ class OciStore:
                 hint="this version can write an application secret on an OCI store, not a lock",
             )
         name = _names.to_oci(path)
-        what = self._what(name)
+        return self._write(name, path, data, cas=cas, what=self._what(name), raced=False)
+
+    def _write(
+        self, name: str, path: str, data: Any, *, cas: int | None, what: str, raced: bool
+    ) -> int:
         live = self._live(name, what=what)
         if live is None:
             if cas not in (0, None):
@@ -269,9 +275,10 @@ class OciStore:
             try:
                 self._create(name, data, what=what)
             except CasConflictError:
-                if cas is not None:
+                # An unguarded write overwrites whoever created it first, once.
+                if cas is not None or raced:
                     raise
-                return self.write(path, data, cas=None)
+                return self._write(name, path, data, cas=None, what=what, raced=True)
             return 1
         token = _token(live.metadata, what=what)
         # `cas: 0` asserts that nothing is there, and a token is never below 1.
@@ -279,14 +286,16 @@ class OciStore:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {token}"
             )
-        self._update(
+        return self._update(
             live,
             what=what,
             guarded=cas is not None,
-            secret_content=_encode(data),
-            metadata={**live.metadata, _names.CAS_KEY: str(token + 1)},
+            content={"secret_content": _encode(data)},
+            metadata=lambda now: {
+                **now.metadata,
+                _names.CAS_KEY: str(_token(now.metadata, what=what) + 1),
+            },
         )
-        return token + 1
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
         """OCI has no merge patch, so the store does not declare ``merge_patch``,
@@ -320,17 +329,33 @@ class OciStore:
 
     def _live(self, name: str, *, what: str) -> _Live | None:
         """The secret called ``name`` as ``GetSecret`` sees it once ACTIVE, or
-        ``None`` if there is none that is not being deleted."""
-        summary = next(
-            (one for one in self._summaries(name) if one.lifecycle_state not in GONE), None
-        )
-        if summary is None:
-            self._check_vault()
-            return None
-        response = self._get(summary.id, what=what)
+        ``None`` if there is none that is not being deleted.
+
+        A secret read or created earlier in the run is asked for by the id
+        remembered then, which saves a ``ListSecrets`` per write: OCI throttles
+        (``429``), and a write usually follows a read of the same secret.
+        """
+        response = None
+        secret_id = self._ids.get(name)
+        if secret_id is not None:
+            response = self._get(secret_id, what=what, missing_ok=True)
+            if response is None or response.data.lifecycle_state in GONE:
+                response = None
+                del self._ids[name]
+        if response is None:
+            summary = next(
+                (one for one in self._summaries(name) if one.lifecycle_state not in GONE), None
+            )
+            if summary is None:
+                self._check_vault()
+                return None
+            secret_id = summary.id
+            response = self._get(secret_id, what=what)
+            self._ids[name] = secret_id
+        assert secret_id is not None
         if response.data.lifecycle_state != ACTIVE:
-            response = self._settle(summary.id, name=name, written=False, what=what, first=response)
-        return self._as_live(summary.id, name, response, what=what)
+            response = self._settle(secret_id, name=name, written=False, what=what, first=response)
+        return self._as_live(secret_id, name, response, what=what)
 
     def _as_live(self, secret_id: str, name: str, response: Any, *, what: str) -> _Live:
         etag = (response.headers or {}).get("etag")
@@ -367,6 +392,7 @@ class OciStore:
             _errors.raise_for(exc, what=what)
         except NO_ANSWER as exc:
             raise _errors.unreachable(exc, what=what, maybe_written=True) from exc
+        self._ids[name] = created.id
         self._settle(created.id, name=name, written=True, what=what)
 
     def _taken(self, name: str, exc: Any, *, what: str) -> NoReturn:
@@ -400,45 +426,73 @@ class OciStore:
             ),
         ) from exc
 
-    def _update(self, live: _Live, *, what: str, guarded: bool, **details: Any) -> None:
-        """``UpdateSecret`` under ``live``'s ETag, and the wait for ACTIVE.
+    def _update(
+        self,
+        live: _Live,
+        *,
+        what: str,
+        guarded: bool,
+        content: Mapping[str, Any],
+        metadata: Callable[[_Live], dict[str, Any]],
+    ) -> int:
+        """``UpdateSecret`` under ``live``'s ETag, the wait for ACTIVE, and the
+        new token.
 
-        ``guarded=False`` sends no ETag: the protocol's unguarded write.
+        ``metadata`` builds the whole map to send from the secret as last
+        read, the counter moved. ``guarded=False`` sends no ETag: the
+        protocol's unguarded write.
 
         A ``409 IncorrectState`` means another writer made the secret busy
-        after :meth:`_live` saw it ACTIVE. The store waits that out and sends
-        the update once more with the same ETag: if the other writer changed
-        the secret, OCI answers ``409 Conflict``, a lost compare-and-set.
+        after :meth:`_live` saw it ACTIVE, and the store waits that out. A
+        guarded write then sends the same ETag again: if the other writer
+        changed the secret, OCI answers ``409 Conflict``, a lost
+        compare-and-set. An unguarded write builds its metadata again from the
+        secret as it now is, so the counter still moves forward.
 
         A ``409 Conflict`` is a lost compare-and-set unless a read straight
         afterwards shows that nothing changed (:data:`CHURN_WINDOW_S`). Then
         only OCI's ETag moved, and the update is sent again with the new one.
         """
-        update = oci.vault.models.UpdateSecretDetails(**details)
         current = live
+        last = ""
         for _ in range(CHURN_RETRIES + 1):
+            sent = metadata(current)
+            update = oci.vault.models.UpdateSecretDetails(metadata=sent, **content)
             try:
                 self._send_update(current, update, guarded=guarded, what=what)
                 break
             except oci.exceptions.ServiceError as exc:
                 if exc.status != 409 or not exc.request_id:
                     _errors.raise_for(exc, what=what)
+                last = exc.code
                 if exc.code == INCORRECT_STATE:
-                    self._settle(current.id, name=current.name, written=False, what=what)
-                    # Somebody else wrote: no later Conflict is only churn.
-                    current = replace(current, read_at=float("-inf"))
+                    response = self._settle(current.id, name=current.name, written=False, what=what)
+                    if guarded:
+                        # Somebody else wrote: no later Conflict is only churn.
+                        current = replace(current, read_at=float("-inf"))
+                    else:
+                        current = self._as_live(current.id, current.name, response, what=what)
                     continue
-                churned = self._churned(current, what=what)
+                churned = None
+                if exc.code == _errors.CONFLICT:
+                    churned = self._churned(current, what=what)
                 if churned is None:
                     _errors.raise_for(exc, what=what)
                 current = churned
         else:
+            if last == INCORRECT_STATE:
+                raise _errors.OciUnavailableError(
+                    f"{what}: the secret was busy with other writes {CHURN_RETRIES + 1} times, "
+                    f"so nothing was written",
+                    hint="run again once the other writers have finished",
+                )
             raise CasConflictError(
                 f"{what}: OCI refused the update {CHURN_RETRIES + 1} times with a changing ETag, "
                 f"and the secret did not change in between",
                 hint="run again; if it keeps happening, the OCI request ids in a debug run help",
             )
         self._settle(live.id, name=live.name, written=True, what=what)
+        return int(sent[_names.CAS_KEY])
 
     def _churned(self, live: _Live, *, what: str) -> _Live | None:
         """The secret with a fresh ETag, if only its ETag has moved since ``live``.
@@ -492,7 +546,7 @@ class OciStore:
         with waiting(f"Waiting for OCI secret `{name}` to finish updating"):
             while True:
                 if response is None:
-                    response = self._poll(secret_id, what=what, made=made)
+                    response = self._get(secret_id, what=what, made=made, throttled_ok=True)
                 if response is not None:
                     state = response.data.lifecycle_state
                     if state == ACTIVE:
@@ -514,30 +568,34 @@ class OciStore:
                 self._sleep(POLL_S if response is not None else 2 * POLL_S)
                 response = None
 
-    def _poll(self, secret_id: str, *, what: str, made: str) -> Any:
-        """One ``GetSecret`` while waiting, or ``None`` if OCI throttled it.
+    def _get(
+        self,
+        secret_id: str,
+        *,
+        what: str,
+        made: str = "",
+        throttled_ok: bool = False,
+        missing_ok: bool = False,
+    ) -> Any:
+        """One ``GetSecret``.
 
-        Any other failure ends the wait, saying whether the write was made.
+        ``None`` for a throttled answer (``429``) when ``throttled_ok``, and
+        for a 404 when ``missing_ok``. Any other failure raises, saying first
+        that the write was made when ``made`` says so.
         """
         try:
             return self._vaults.get_secret(secret_id)
         except oci.exceptions.ServiceError as exc:
-            if exc.status == 429 and exc.request_id:
+            if exc.request_id and (
+                (throttled_ok and exc.status == 429) or (missing_ok and exc.status == 404)
+            ):
                 return None
             try:
                 _errors.raise_for(exc, what=what)
             except StoreError as failed:
-                raise _restated(failed, made) from exc
+                raise _restated(failed, what, made) from exc
         except NO_ANSWER as exc:
-            raise _restated(_errors.unreachable(exc, what=what), made) from exc
-
-    def _get(self, secret_id: str, *, what: str) -> Any:
-        try:
-            return self._vaults.get_secret(secret_id)
-        except oci.exceptions.ServiceError as exc:
-            _errors.raise_for(exc, what=what)
-        except NO_ANSWER as exc:
-            raise _errors.unreachable(exc, what=what) from exc
+            raise _restated(_errors.unreachable(exc, what=what), what, made) from exc
 
     def _bundle(self, path: str, **which: Any) -> Stored | None:
         """One ``GetSecretBundleByName``, as a :class:`Stored`, or ``None``."""
@@ -555,6 +613,8 @@ class OciStore:
         except NO_ANSWER as exc:
             raise _errors.unreachable(exc, what=what) from exc
 
+        if getattr(bundle, "secret_id", None):
+            self._ids[name] = bundle.secret_id
         metadata = dict(bundle.metadata or {})
         if _names.is_lock(path):
             # Decision 5: the record is in the metadata, so updating it adds no
@@ -666,12 +726,15 @@ def _content(bundle: Any, *, what: str) -> str:
         raise StoreError(f"{what} has content that is not UTF-8 text") from None
 
 
-def _restated(error: StoreError, made: str) -> StoreError:
-    """``error``, saying first that the write was made, when it was."""
+def _restated(error: StoreError, what: str, made: str) -> StoreError:
+    """``error``, saying first that the write was made, when it was.
+
+    The original message follows whole: it may or may not start with
+    ``what``, and cutting it apart would garble the one that does not.
+    """
     if not made:
         return error
-    what, _, rest = error.message.partition(": ")
-    return type(error)(f"{what}: {made}waiting for it failed: {rest}", hint=error.hint)
+    return type(error)(f"{what}: {made}waiting for it failed. {error.message}", hint=error.hint)
 
 
 def _name_taken(exc: Any) -> bool:

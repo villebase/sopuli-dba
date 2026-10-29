@@ -214,13 +214,17 @@ def test_an_etag_that_keeps_moving_gives_up(fake: FakeOci, clock: Clock) -> None
 
 
 def test_a_moved_etag_on_a_busy_secret_is_a_conflict(fake: FakeOci, clock: Clock) -> None:
-    """Busy means a write was accepted since the first read, whatever it changed."""
+    """Busy means a write was accepted since the first read, whatever it changed:
+    the same ETag is sent again once it settles, and its Conflict is final."""
     fake.put("acme-db", {"password": "a"})
+    once: list[bool] = []
 
     def other_writer(secret: FakeSecret) -> None:
-        secret.etag += 1
-        secret.lifecycle_state = "UPDATING"
-        secret.busy = 5
+        if not once:
+            once.append(True)
+            secret.etag += 1
+            secret.lifecycle_state = "UPDATING"
+            secret.busy = 2
 
     fake.before_update = other_writer
 
@@ -240,6 +244,78 @@ def test_a_moved_etag_found_too_late_is_a_conflict(fake: FakeOci, clock: Clock) 
 
     with pytest.raises(CasConflictError):
         store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_a_409_that_is_neither_conflict_nor_busy_is_not_retried(
+    fake: FakeOci, clock: Clock
+) -> None:
+    fake.put("acme-db", {"password": "a"})
+
+    def other(secret: FakeSecret) -> None:
+        secret.etag += 1
+        raise refused(409, "NotAllowed", "Not allowed")
+
+    fake.before_update = other
+
+    with pytest.raises(StoreError, match="409 NotAllowed"):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+    assert len(fake.updates) == 1
+
+
+def test_a_secret_busy_every_time_says_so(fake: FakeOci, clock: Clock) -> None:
+    fake.put("acme-db", {"password": "a"})
+
+    def busy(secret: FakeSecret) -> None:
+        secret.lifecycle_state = "UPDATING"
+        secret.busy = 1
+
+    fake.before_update = busy
+
+    with pytest.raises(OciUnavailableError, match="busy with other writes"):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_an_unguarded_write_after_another_writer_moves_the_counter_on(
+    fake: FakeOci, clock: Clock
+) -> None:
+    """Built from the old read, the counter would repeat the other writer's."""
+    fake.put("acme-db", {"password": "a"}, metadata={CAS_KEY: "1"})
+    once: list[bool] = []
+
+    def other_writer(secret: FakeSecret) -> None:
+        if not once:
+            once.append(True)
+            secret.metadata = {CAS_KEY: "2", "theirs": "kept"}
+            secret.lifecycle_state = "UPDATING"
+            secret.busy = 1
+
+    fake.before_update = other_writer
+
+    assert store(fake, clock).write("acme-db", {"password": "b"}, cas=None) == 3
+    assert fake.secrets["acme-db"].metadata == {CAS_KEY: "3", "theirs": "kept"}
+
+
+def test_a_write_after_a_read_does_not_list_the_secrets_again(fake: FakeOci, clock: Clock) -> None:
+    """OCI throttles; the read already gave the secret's id."""
+    fake.put("acme-db", {"password": "a"})
+    oci_store = store(fake, clock)
+    oci_store.read("acme-db")
+    fake.calls.clear()
+
+    oci_store.write("acme-db", {"password": "b"}, cas=1)
+
+    assert "list_secrets" not in fake.calls
+
+
+def test_a_remembered_secret_being_deleted_is_looked_up_again(fake: FakeOci, clock: Clock) -> None:
+    secret = fake.put("acme-db", {"password": "a"})
+    oci_store = store(fake, clock)
+    oci_store.read("acme-db")
+    secret.lifecycle_state = "PENDING_DELETION"
+
+    with pytest.raises(StoreError, match="scheduled for deletion"):
+        oci_store.write("acme-db", {"password": "b"}, cas=0)
 
 
 def test_an_unguarded_write_sends_no_etag(fake: FakeOci, clock: Clock) -> None:
@@ -425,6 +501,25 @@ def test_an_error_while_waiting_after_a_write_says_the_write_was_made(
 
     with pytest.raises(OciUnavailableError, match="the write was made, and waiting for it failed"):
         store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_a_secret_gone_while_waiting_after_a_write_reads_whole(fake: FakeOci, clock: Clock) -> None:
+    """A 404 message has no ': ' after the subject, and must not be cut apart."""
+    fake.put("acme-db", {"password": "a"})
+
+    def gone(secret: FakeSecret) -> None:
+        if secret.busy:
+            raise refused(404, "NotAuthorizedOrNotFound", "not found")
+
+    fake.before_get = gone
+
+    with pytest.raises(StoreError) as caught:
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+    assert caught.value.message.startswith(
+        'secret "acme-db" in vault "vault-oci": the write was made, and waiting for it failed. '
+        'secret "acme-db" in vault "vault-oci" was not found'
+    )
 
 
 def test_a_secret_that_fails_after_the_write_says_the_write_was_made(

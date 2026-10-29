@@ -2823,8 +2823,9 @@ taken as absent.
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command
 reaches it. They cover the bindings the run selects; a binding a selector leaves
-out is not the run's to refuse. An `admin.auth.secret` ref on an `oci` store is
-not checked against the name rule yet (open: #1132).
+out is not the run's to refuse. An `admin.auth.secret` ref on an `oci` store
+must be an OCI secret name too, checked before the store is opened. It is only
+read and never locked, so it may use all 255 characters (#1145).
 
 None of this constrains a ref that is only ever *read*. An `admin.auth.secret` is
 a credential the tool authenticates with and never rotates, so the whole-secret

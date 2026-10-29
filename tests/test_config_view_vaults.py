@@ -253,6 +253,40 @@ def test_the_effective_settings_reach_json_in_both_shapes() -> None:
         assert store["settings"]["addr"]["value"] == "https://standby.example.com"
 
 
+OCI = {
+    "type": "oci",
+    "vault_id": "ocid1.vault.oc1.eu-frankfurt-1.exampleuniqueid",
+    "compartment_id": "ocid1.compartment.oc1..exampleuniqueid",
+    "key_id": "ocid1.key.oc1.eu-frankfurt-1.exampleuniqueid",
+    "region": "eu-frankfurt-1",
+}
+
+
+def with_oci() -> Config:
+    """The usual estate, and an OCI store beside it that no binding uses."""
+    shape = document()
+    shape["vaults"]["vault-oci"] = dict(OCI)
+    return build_config(shape)
+
+
+def test_an_oci_stores_ocids_reach_json_with_their_location() -> None:
+    """#1145: an OCI store has no address. These four name it."""
+    store = next(one for one in json_vaults(with_oci()) if one["name"] == "vault-oci")
+
+    assert {key: value["value"] for key, value in store["settings"].items()} == {
+        key: value for key, value in OCI.items() if key != "type"
+    }
+    assert store["settings"]["vault_id"]["source_detail"] == "vaults.vault-oci.vault_id"
+
+
+def test_an_oci_stores_ocids_are_printed_whole_under_the_table() -> None:
+    """An OCID is longer than the ADDRESS column, and its end is what differs."""
+    text = click.unstyle(render_text([Path("estate.yaml")], with_oci(), resolved=False))
+
+    assert "  vault-oci  vault_id        ocid1.vault.oc1.eu-frankfurt-1.exampleuniqueid" in text
+    assert "             region          eu-frankfurt-1" in text
+
+
 def test_a_setting_carries_the_layer_and_the_location() -> None:
     """The same `value` / `source` / `source_detail` triple `invocation.options`
     carries, pointed at the same `$defs/resolved_setting`: one question about one

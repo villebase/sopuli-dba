@@ -99,10 +99,62 @@ def test_a_wrong_vault_id_is_a_config_error_not_an_empty_vault(fake: FakeOci) ->
     """Otherwise every secret reads as absent, and a run plans to create them."""
     fake.put("acme-db", {"password": "a"})
 
-    with pytest.raises(StoreError, match="vault_id was not found") as error:
+    with pytest.raises(StoreError, match="the vault_id of vault .* was not found") as error:
         store(fake, vault_id="ocid1.vault.oc1..wrongone").read("acme-db")
 
     assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_wrong_vault_id_is_not_listed_as_an_empty_vault(fake: FakeOci) -> None:
+    with pytest.raises(StoreError, match="the vault_id of vault .* was not found") as error:
+        store(fake, vault_id="ocid1.vault.oc1..wrongone").list("")
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_secret_this_principal_may_not_read_is_refused_not_absent(fake: FakeOci) -> None:
+    """OCI's 404 means "missing" and "not allowed" alike; absent would plan a create."""
+    fake.put("acme-db", {"password": "a"})
+    fake.unreadable.add("acme-db")
+
+    with pytest.raises(StoreError, match="exists, and this principal may not read") as error:
+        store(fake).read("acme-db")
+
+    assert error.value.exit_code == ExitCode.AUTH_FAILURE
+
+
+def test_a_stage_of_an_unreadable_secret_is_refused_too(fake: FakeOci) -> None:
+    fake.put("acme-db", {"password": "a"})
+    fake.unreadable.add("acme-db")
+
+    with pytest.raises(StoreError, match="may not read"):
+        store(fake).read_stage("acme-db", "pending")
+
+
+def test_a_secret_being_deleted_reads_as_absent_when_oci_says_not_found(fake: FakeOci) -> None:
+    fake.put("acme-db", {"password": "a"}, lifecycle_state="PENDING_DELETION")
+    fake.unreadable.add("acme-db")
+
+    assert store(fake).read("acme-db") is None
+
+
+@pytest.mark.parametrize("value", [True, 2.9, " 3", "-1", "0", "٣"])
+def test_a_write_counter_must_be_the_digits_the_tool_writes(fake: FakeOci, value: Any) -> None:
+    fake.put("acme-db", {"password": "a"}, metadata={CAS_KEY: value})
+
+    with pytest.raises(StoreError, match="write counter"):
+        store(fake).read("acme-db")
+
+
+def test_content_that_is_not_text_does_not_quote_it(fake: FakeOci) -> None:
+    """A UnicodeDecodeError quotes a byte of the content, which is a secret."""
+    fake.put("acme-db", b"caf\xe9")
+
+    with pytest.raises(StoreError, match="not UTF-8 text") as error:
+        store(fake).read("acme-db")
+
+    assert "0xe9" not in str(error.value)
+    assert error.value.__cause__ is None
 
 
 def test_a_pinned_read_of_current_carries_the_token(fake: FakeOci) -> None:

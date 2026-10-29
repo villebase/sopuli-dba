@@ -43,10 +43,12 @@ def describe(exc: Any) -> str:
     return f"OCI {exc.status} {exc.code}, opc-request-id {exc.request_id or '-'}"
 
 
-def raise_for(exc: Any, *, what: str) -> NoReturn:
+def raise_for(exc: Any, *, what: str, missing: type[StoreError] = StoreError) -> NoReturn:
     """Raise the store error for an ``oci.exceptions.ServiceError``.
 
     ``what`` names the thing asked about, such as ``secret "acme-db"``.
+    ``missing`` is the class for a 404, for a caller to whom a missing thing
+    means something more specific, such as a wrong ``vault_id``.
     """
     message = f"{what}: {exc.message or 'refused'} ({describe(exc)})"
     if not exc.request_id:
@@ -62,7 +64,7 @@ def raise_for(exc: Any, *, what: str) -> NoReturn:
             hint="check the OCI config profile, its key, and that a session has not expired",
         ) from exc
     if exc.status == 404:
-        raise StoreError(
+        raise missing(
             f"{what} was not found, or this principal may not see it ({describe(exc)})",
             hint="check the OCID, the region, and the IAM policy for this principal",
         ) from exc

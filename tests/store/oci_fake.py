@@ -26,6 +26,13 @@ VAULT_ID = "ocid1.vault.oc1..exampleuniqueid"
 COMPARTMENT_ID = "ocid1.compartment.oc1..exampleuniqueid"
 
 
+def _raw(content: Any) -> bytes:
+    if isinstance(content, bytes):
+        return content
+    text = content if isinstance(content, str) else json.dumps(content)
+    return text.encode("utf-8")
+
+
 def not_found(message: str) -> Any:
     return oci.exceptions.ServiceError(
         404, "NotAuthorizedOrNotFound", {"opc-request-id": "req-404"}, message
@@ -35,7 +42,7 @@ def not_found(message: str) -> Any:
 @dataclass
 class FakeVersion:
     number: int
-    content: str
+    content: bytes
     stages: set[str]
 
 
@@ -55,6 +62,9 @@ class FakeOci:
         self.page_size = page_size
         self.vault_id = VAULT_ID
         self.calls: list[str] = []
+        #: Secrets this principal may list and not read: OCI answers their
+        #: content reads with the same 404 as a missing secret.
+        self.unreadable: set[str] = set()
 
     def put(
         self,
@@ -64,7 +74,8 @@ class FakeOci:
         metadata: dict[str, Any] | None = None,
         lifecycle_state: str = "ACTIVE",
     ) -> FakeSecret:
-        """Seed a secret. Each content is a version; a non-string is JSON.
+        """Seed a secret. Each content is a version: bytes as they are, a
+        string as UTF-8, and anything else as JSON.
 
         Without ``stages``, the last version is CURRENT, the one before it
         PREVIOUS, and the rest DEPRECATED, as OCI leaves them after updates.
@@ -84,7 +95,7 @@ class FakeOci:
             versions=[
                 FakeVersion(
                     number=number,
-                    content=one if isinstance(one, str) else json.dumps(one),
+                    content=_raw(one),
                     stages=set(stage),
                 )
                 for number, (one, stage) in enumerate(zip(contents, stages, strict=True), 1)
@@ -106,7 +117,7 @@ class FakeOci:
     ) -> Any:
         self.calls.append("get_secret_bundle_by_name")
         secret = self.secrets.get(secret_name)
-        if vault_id != self.vault_id or secret is None:
+        if vault_id != self.vault_id or secret is None or secret_name in self.unreadable:
             raise not_found(f"secret {secret_name} not found")
         if version_number is not None:
             found = [one for one in secret.versions if one.number == version_number]
@@ -120,7 +131,7 @@ class FakeOci:
             data=SimpleNamespace(
                 secret_bundle_content=SimpleNamespace(
                     content_type="BASE64",
-                    content=base64.b64encode(version.content.encode("utf-8")).decode("ascii"),
+                    content=base64.b64encode(version.content).decode("ascii"),
                 ),
                 stages=sorted(version.stages),
                 version_number=version.number,
@@ -131,7 +142,11 @@ class FakeOci:
     # -- VaultsClient -------------------------------------------------------
 
     def list_secrets(
-        self, compartment_id: str, vault_id: str | None = None, page: str | None = None
+        self,
+        compartment_id: str,
+        vault_id: str | None = None,
+        page: str | None = None,
+        name: str | None = None,
     ) -> Any:
         self.calls.append("list_secrets")
         everything = (
@@ -139,6 +154,8 @@ class FakeOci:
             if compartment_id == COMPARTMENT_ID and vault_id == self.vault_id
             else []
         )
+        if name is not None:
+            everything = [one for one in everything if one.name == name]
         start = int(page or 0)
         chunk = everything[start : start + self.page_size]
         more = start + self.page_size < len(everything)

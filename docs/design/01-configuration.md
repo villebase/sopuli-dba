@@ -2813,9 +2813,12 @@ name one secret. The limits were measured (`oci-name-rules` in
 Operator does, by name, so it sees what an application sees. The content must
 be a JSON object; a secret holding plain text or any other JSON value is
 refused, naming the secret. A secret the tool did not create, by Terraform or
-by hand, is used as it is when its content is a JSON object (#1138).
-`@version=N` names OCI's own version number. A secret being deleted is not
-listed and reads as absent.
+by hand, is used as it is when its content is a JSON object
+([#1138](../decisions/log.md#1138)). `@version=N` names OCI's own version
+number. The tool lists the secrets in the store's compartment, and leaves out
+a secret being deleted. OCI answers "not found" for a secret the principal may
+not read, so a secret that is listed and cannot be read is refused, never
+taken as absent.
 
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command

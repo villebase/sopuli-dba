@@ -151,10 +151,15 @@ class OciStore:
     def list(self, prefix: str) -> tuple[str, ...]:
         """Every secret in the store's compartment and vault below ``prefix``.
 
+        ``ListSecrets`` takes a compartment, so a secret in this vault and
+        another compartment can be read by name and is not listed. The tool
+        creates its secrets in the store's compartment.
+
         OCI names are flat, so the only paths with a ``/`` are the locks'
         (:mod:`._names`). Secrets being deleted are left out: OCI keeps them
-        for up to 30 days, and none of them can be read or written.
+        for up to 30 days.
         """
+        self._check_vault()
         bounded = bounded_prefix(prefix)
         found: list[str] = []
         page = None
@@ -213,7 +218,7 @@ class OciStore:
             ).data
         except oci.exceptions.ServiceError as exc:
             if exc.status == 404 and exc.request_id:
-                self._check_vault()
+                self._absent_or_refused(name, which, exc, what=what)
                 return None
             _errors.raise_for(exc, what=what)
         except NO_ANSWER as exc:
@@ -240,26 +245,67 @@ class OciStore:
             ),
         )
 
-    def _check_vault(self) -> None:
-        """Tell a missing secret from a missing vault, once per store.
+    def _absent_or_refused(
+        self, name: str, which: Mapping[str, Any], exc: Any, *, what: str
+    ) -> None:
+        """Return if a 404 on a content read means "nothing there"; raise if not.
 
-        OCI answers 404 for both. A wrong ``vault_id`` would otherwise make
-        every secret read as absent, and a run would plan to create them.
+        OCI answers 404 ``NotAuthorizedOrNotFound`` for a missing secret, a
+        missing version or stage, a missing vault, **and** a secret this
+        principal may list but not read. Reading the last as absent would make
+        a run plan to create a secret that exists, so the cases are told apart:
+
+        * the secret is not listed: it is absent, once the vault is known;
+        * it is listed and CURRENT was asked for: the principal may not read it;
+        * it is listed and a stage or a version was asked for: a CURRENT read
+          says which. If that is refused too, the principal may not read it;
+          otherwise the stage or version is just not there.
+        """
+        if not self._listed(name):
+            self._check_vault()
+            return
+        if which.get("stage") != CURRENT:
+            try:
+                self._secrets.get_secret_bundle_by_name(
+                    secret_name=name, vault_id=self._vault_id, stage=CURRENT
+                )
+                return
+            except oci.exceptions.ServiceError as again:
+                if again.status != 404:
+                    _errors.raise_for(again, what=what)
+        raise _errors.OciAuthError(
+            f"{what} exists, and this principal may not read its content ({_errors.describe(exc)})",
+            hint="the IAM policy must allow reading secret bundles in this vault",
+        )
+
+    def _listed(self, name: str) -> bool:
+        """Whether a secret of that name, not being deleted, is in the store's compartment."""
+        try:
+            response = self._vaults.list_secrets(
+                self._compartment_id, vault_id=self._vault_id, name=name
+            )
+        except oci.exceptions.ServiceError as exc:
+            _errors.raise_for(exc, what=f'secret "{name}" in vault "{self._name}"')
+        except NO_ANSWER as exc:
+            raise _errors.unreachable(exc, what=f'vault "{self._name}"') from exc
+        return any(one.lifecycle_state not in GONE for one in response.data)
+
+    def _check_vault(self) -> None:
+        """Tell an empty answer from a missing vault, once per store.
+
+        OCI answers 404 for a missing vault, and ``ListSecrets`` answers an
+        empty list. A wrong ``vault_id`` would otherwise make every secret read
+        as absent, and a run would plan to create them.
         """
         if self._vault_seen:
             return
+        what = f'the vault_id of vault "{self._name}"'
         try:
             self._kms.get_vault(self._vault_id)
         except oci.exceptions.ServiceError as exc:
-            if exc.status == 404:
-                raise OciVaultError(
-                    f'vault "{self._name}": its vault_id was not found, or this principal '
-                    f"may not see it ({_errors.describe(exc)})",
-                    hint="check vault_id, the region, and the IAM policy for this principal",
-                ) from exc
-            _errors.raise_for(exc, what=f'vault "{self._name}"')
+            _errors.raise_for(exc, what=what, missing=OciVaultError)
         except NO_ANSWER as exc:
-            raise _errors.unreachable(exc, what=f'vault "{self._name}"') from exc
+            raise _errors.unreachable(exc, what=what) from exc
         self._vault_seen = True
 
 
@@ -277,8 +323,10 @@ def _content(bundle: Any, *, what: str) -> str:
         raise StoreError(f"{what} has content this build cannot read")
     try:
         return base64.b64decode(content.content, validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError) as exc:
-        raise StoreError(f"{what} has content that is not UTF-8 text: {exc}") from exc
+    except (binascii.Error, UnicodeDecodeError):
+        # Not `from exc`, and not its text: a UnicodeDecodeError quotes a byte
+        # of the content, and the content is a secret.
+        raise StoreError(f"{what} has content that is not UTF-8 text") from None
 
 
 def _json_object(text: str, *, what: str) -> dict[str, Any]:
@@ -297,11 +345,12 @@ def _json_object(text: str, *, what: str) -> dict[str, Any]:
 
 def _token(metadata: Mapping[str, Any], *, what: str) -> int:
     """The write counter. A secret the tool never wrote has none, and reads as 1."""
-    value = metadata.get(_names.CAS_KEY, 1)
-    try:
-        token = int(value)
-    except (TypeError, ValueError):
-        token = 0
+    value = metadata.get(_names.CAS_KEY, "1")
+    # The tool writes the counter as a string of digits. Anything else, a
+    # bool or a float included, was written by something else.
+    if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+        raise StoreError(f"{what} has a write counter this tool did not write: {value!r}")
+    token = int(value)
     if token < 1:
         raise StoreError(f"{what} has a write counter this tool did not write: {value!r}")
     return token

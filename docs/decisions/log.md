@@ -1096,9 +1096,9 @@ the register.
     capabilities on the person's path. If they include `read` or `root`, the
     reset is refused at plan time.
 
-  `vault_path` is not built yet. How long its stored copy lives is decided
-  together with the method itself. [#447](#447) later decided it: Vault
-  deletes the copy when the method's `ttl` runs out.
+  `vault_path` was not built then, so how long its stored copy lives was left
+  to the method itself. [#447](#447) later decided it: Vault deletes the copy
+  when the method's `ttl` runs out.
 - **Why:** "The DBA cannot read it" has to be checked, not assumed. A DBA token
   that can read the path lets the DBA learn the password, and then act as the
   person while the database audit trail shows only the person's name. A root
@@ -3624,6 +3624,28 @@ the register.
     the placeholder by its look, not by the account, and says nothing about an
     application container.
   - Document only. The hint would still name the wrong cause.
+
+## #1120
+
+- **Decided:** 2026-10-29, #1120
+- **Question:** Tier 1 ran in its own workflow, `tier1.yml`, so `ci ok`, the
+  one check the `main` ruleset requires, did not wait for it. On PR #1119
+  tier 1 failed, an image pull refused for its rate limit, while `ci ok`
+  passed. How does tier 1 become a merge gate?
+- **Decision:** Tier 1 is the `tier1` job in `ci.yml`, gated on the `changes`
+  job's output like the tier-0 lanes, and in `ci ok`'s `needs`. `tier1.yml` and
+  its `paths-ignore` list are gone. The ruleset still requires only `ci ok`.
+- **Why:** It is the pattern `ci.yml` already uses. A job skipped by an `if:`
+  reports `skipped`, which protection accepts, so a prose-only pull request
+  still merges. The prose list now exists once, so it cannot drift from a
+  second copy. Tier 0 still reports in a minute, because the jobs run in
+  parallel. One cost: the two lanes share `ci.yml`'s `concurrency` group, so a
+  new push cancels both.
+- **Rejected:**
+  - Keep `tier1.yml`, drop its `paths-ignore`, give it its own change check,
+    and add its check to the ruleset. The ruleset would name two checks, and
+    the change logic would exist twice.
+  - Document the gap. Only care would close it.
 
 ## #1076
 

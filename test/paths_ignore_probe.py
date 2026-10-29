@@ -1,6 +1,6 @@
 """Probe: which files under `docs/`, `sql/` and `examples/` -- and the root
-`README.md` and `CLAUDE.md` -- does a **skipped lane** open, and does either
-workflow's `paths-ignore` list one of them?
+`README.md` and `CLAUDE.md` -- does a **skipped lane** open, and does `ci.yml`'s
+prose list name one of them?
 
 **"A skipped lane", not "the suite", and the distinction is #458's.** `ci.yml`'s
 `docs` job runs :data:`DOCS_LANE` on exactly the pull requests where the other
@@ -10,13 +10,12 @@ therefore a file that *nothing* would check on a prose-only pull request. Before
 that job existed the two questions had the same answer; they do not any more.
 
 Written for issue #375, where the list had drifted seven patterns behind the
-tree and every documentation pull request was starting both lanes. The
-`paths-ignore` allowlists in `.github/workflows/ci.yml` and `tier1.yml` are
-measured, not guessed: `docs/design/00-principles.md`,
-`docs/design/01-configuration.md`, every `docs/schemas/*.json`, every
-`examples/*.yaml` and `sql/oracle/00_install.sql` are read by tests, so a
-blanket `docs/**` would silently stop testing them. Keeping that true needs a
-measurement, and this is it.
+tree and every documentation pull request was starting both lanes. The prose
+list in `.github/workflows/ci.yml`'s `changes` job is measured, not guessed:
+`docs/design/00-principles.md`, `docs/design/01-configuration.md`, every
+`docs/schemas/*.json`, every `examples/*.yaml` and `sql/oracle/00_install.sql`
+are read by tests, so a blanket `docs/**` would silently stop testing them.
+Keeping that true needs a measurement, and this is it.
 
 It replaces a one-liner the workflow comments used to carry::
 
@@ -49,8 +48,8 @@ script says which it was, and refuses to call the answer complete without them::
     docker compose --profile tier1 up -d   # from test/
     python test/paths_ignore_probe.py       # from the repository root
 
-Exit status is 0 when nothing the **non-docs-lane** suite opens is ignored by
-either workflow, and 1 when something is -- so it can be read by a human or by a
+Exit status is 0 when nothing the **non-docs-lane** suite opens is in the prose
+list, and 1 when something is -- so it can be read by a human or by a
 shell. A green run says the prose list is safe *given* that `ci.yml`'s `docs` job
 still runs :data:`DOCS_LANE`; `tests/test_workflow_prose_list.py` is what holds
 that second half, since this script cannot see whether the job exists.
@@ -118,10 +117,7 @@ DOCS_LANE = (
     "tests/test_warning_codes.py",
 )
 
-WORKFLOWS = (
-    ROOT / ".github" / "workflows" / "ci.yml",
-    ROOT / ".github" / "workflows" / "tier1.yml",
-)
+WORKFLOWS = (ROOT / ".github" / "workflows" / "ci.yml",)
 
 
 def measure() -> tuple[set[str], str]:
@@ -179,34 +175,37 @@ sys.exit(pytest.main(["tests/"] + {ignores!r}))
 
 
 def ignored_patterns(workflow: Path) -> list[str]:
-    """The `paths-ignore` list, or the `changes` job's `prose` array, as written.
+    """The `changes` job's `prose` array, as written.
 
-    Read with a regex rather than a YAML parser on purpose: `ci.yml` no longer
-    has a `paths-ignore` key at all -- #375 moved the same list into a bash
-    array so the required checks keep reporting -- and the question here is what
-    the file *says*, in either shape. Both shapes single-quote their entries,
-    which is what makes one extractor enough.
+    Read with a regex rather than a YAML parser on purpose: the list is a bash
+    array inside a `run:` block, not a YAML key -- #375 moved it there so the
+    required checks keep reporting -- and the question here is what the file
+    *says*.
 
-    `tests/test_workflow_prose_list.py` is what keeps the two copies equal. This
-    reads both anyway rather than trusting that, because a probe that reported a
-    list the workflow does not have would be worse than no probe.
+    **A list it cannot find is an error, not an empty list.** Moving or
+    renaming a marker would otherwise give zero patterns, and with them a run
+    that reports no conflict having measured nothing.
     """
     text = workflow.read_text(encoding="utf-8")
-    block = re.search(r"^ *paths-ignore:\n((?: *- '[^']+'\n)+)", text, re.MULTILINE)
+    block = re.search(r"# prose-list-start\n(.*?)\n *# prose-list-end", text, re.S)
     if block is None:
-        block = re.search(r"# prose-list-start\n(.*?)\n *# prose-list-end", text, re.S)
-    return re.findall(r"'([^']+)'", block.group(1)) if block else []
+        raise SystemExit(f"no prose-list markers found in {workflow}")
+    patterns = re.findall(r"'([^']+)'", block.group(1))
+    if not patterns:
+        raise SystemExit(f"the prose list in {workflow} has no entries")
+    return patterns
 
 
 def matches(pattern: str, path: str) -> bool:
-    """Does a `paths-ignore` pattern cover this path?
+    """Does a prose-list pattern cover this path, as the `changes` job reads it?
 
-    `**` matches across separators and `*` does not, which is GitHub's rule and
-    not `fnmatch`'s -- `fnmatch` would call `docs/*` a match for
-    `docs/design/01-configuration.md` and report a conflict that is not there.
+    The job compares with bash's `[[ $file == $pattern ]]`, where `*` and `**`
+    both match across `/`. So does this: a probe that used GitHub's
+    `paths-ignore` rule, where `*` stops at `/`, would call `docs/*` safe while
+    the job skipped every lane for `docs/design/01-configuration.md`.
     """
-    expression = re.escape(pattern).replace(r"\*\*", "\x00").replace(r"\*", "[^/]*")
-    return re.fullmatch(expression.replace("\x00", ".*"), path) is not None
+    expression = re.escape(pattern).replace(r"\*\*", r"\*").replace(r"\*", ".*")
+    return re.fullmatch(expression, path) is not None
 
 
 def main() -> int:

@@ -86,8 +86,9 @@ defaults:
     # trusting every file that inherits from this one.
     #
     # `account reset-password` reads this set, and refuses a method that is not
-    # in it. This build implements `manual` and `vault_wrapped`, so of the two
-    # named here only `vault_wrapped` can deliver.
+    # in it. Both methods named here are built. Whichever method a config
+    # selects needs its own block under `delivery:`, such as `vault_wrapped:`
+    # with its `ttl`.
     delivery:
       allowed_methods: [vault_wrapped, one_time_link]
 

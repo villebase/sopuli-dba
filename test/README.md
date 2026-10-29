@@ -73,8 +73,8 @@ What each environment is, and what to know before using it:
   tier-1 lane starts both profiles.
 
 CI starts tier 1 and the `supabase` profile for each pull request, except one
-that changes only files that `.github/workflows/tier1.yml` lists under
-`paths-ignore`. Every other profile is started by hand.
+that changes only files in the prose list of `.github/workflows/ci.yml`'s
+`changes` job. Every other profile is started by hand.
 
 The releases each environment was measured on are in
 [`../docs/measurements.md`](../docs/measurements.md).
@@ -286,7 +286,7 @@ The public test suite must be green using only what a contributor can pull —
 | `vault_cas_probe.py` | exploratory spike: what a real Vault CAS conflict looks like on the wire (#103, #104). Run by hand; the regression it found lives in `../tests/store/test_hashicorp_cas_conflict.py` instead |
 | `oci_vault_probe.py` | what OCI Vault does with the calls the OCI store makes: name rules, PENDING, ETag compare-and-set, the UPDATING window, promotion, and the version limit (#1129). Needs an OCI tenancy and the `[oci]` extra rather than compose. Run by hand; the results are in its docstring |
 | `vault_auth_probe.py` | exploratory spike behind [ADR-005](../docs/decisions/adr-005-vault-client.md): whether `hvac`'s auth surface was worth the dependency (#103) — it wasn't. Run by hand |
-| `paths_ignore_probe.py` | which files under `docs/`, `sql/` and `examples/` — **and the root `README.md` and `CLAUDE.md`** — a **skipped lane** actually opens, and whether either workflow's prose allowlist covers one of them. Not "the suite": it deselects the modules `ci.yml`'s `docs` job runs, because what that job covers is not a hole in the list. Run by hand with tier 1 up — with no containers ~100 tests skip and whatever they read is invisible to it. Exits non-zero on a conflict, so `ci.yml`'s and `tier1.yml`'s lists stay measured rather than guessed. It watches the two root files because both are on the prose list and `tests/test_verification_register.py` scans both. It **deselects** the `DOCS_LANE` modules because `ci.yml`'s `docs` job runs those on exactly the pull requests where the other lanes are skipped, so the question is what a *skipped lane* reads, not what the suite reads. Adding a test that reads prose means adding it to `DOCS_LANE` **and** to that job, or this goes quiet about whatever it reads |
+| `paths_ignore_probe.py` | which files under `docs/`, `sql/` and `examples/` — **and the root `README.md` and `CLAUDE.md`** — a **skipped lane** actually opens, and whether `ci.yml`'s prose list covers one of them. Not "the suite": it deselects the modules `ci.yml`'s `docs` job runs, because what that job covers is not a hole in the list. Run by hand with tier 1 up — with no containers ~100 tests skip and whatever they read is invisible to it. Exits non-zero on a conflict, so the list stays measured rather than guessed. It watches the two root files because both are on the prose list and `tests/test_verification_register.py` scans both. It **deselects** the `DOCS_LANE` modules because `ci.yml`'s `docs` job runs those on exactly the pull requests where the other lanes are skipped, so the question is what a *skipped lane* reads, not what the suite reads. Adding a test that reads prose means adding it to `DOCS_LANE` **and** to that job, or this goes quiet about whatever it reads |
 | `k8s_eso_probe.py` | the evidence behind [`../docs/scenarios/kubernetes-eso.md`](../docs/scenarios/kubernetes-eso.md) §7: stands up Vault, the External Secrets Operator and the document's own manifests on a throwaway cluster, and checks that ESO reads what sopuli wrote. Needs Kubernetes rather than compose — see below. Run by hand |
 
 Test accounts are created and dropped per test under a per-run prefix. Only the

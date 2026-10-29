@@ -1398,7 +1398,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.62 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
+1.66 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 `acme_batch_user` is `ROLLOVER_ACTIVE` because the `apply` in §10 opened its
@@ -1413,9 +1413,9 @@ it. The last event carries the summary and the exit code:
 
 ```
 $ sopuli --config sopuli.yaml creds check --output jsonl
-{"schema_version":"1.17","event":"run.started","seq":0,"ts":"2026-10-27T06:32:46.882197Z","correlation_id":"dbddf924-3728-4bc8-b78e-549c2a1c6663","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.19","event":"run.started","seq":0,"ts":"2026-10-29T19:22:44.035132Z","correlation_id":"06079ed6-f71a-402c-b40f-f75541363294","data":{"command":"creds.check","dry_run":false}}
 ...
-{"schema_version":"1.17","event":"run.finished","seq":6,"ts":"2026-10-27T06:32:47.678313Z","correlation_id":"dbddf924-3728-4bc8-b78e-549c2a1c6663","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
+{"schema_version":"1.19","event":"run.finished","seq":6,"ts":"2026-10-29T19:22:45.013889Z","correlation_id":"06079ed6-f71a-402c-b40f-f75541363294","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
 ```
 
 Other commands refuse it:

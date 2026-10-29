@@ -3,7 +3,7 @@
 # and grouped, so each ecosystem's updates are one pull request a week that CI
 # checks like any other. ci.yml's `release-build` job installs and builds from
 # the updated release.txt, so a bad update fails there and not at a release.
-# The Instant Client in tier1.yml has no ecosystem; docs/workflow.md says how
+# The Instant Client in ci.yml's tier1 job has no ecosystem; docs/workflow.md says how
 # to move it.
 version: 2
 updates:

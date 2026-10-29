@@ -1980,7 +1980,10 @@ exits 1, and nothing is applied to any database.
 
 Step 3 makes the common failures (wrong privileges, closed PDB, unreachable host)
 happen *before* anything is written anywhere. `creds apply` offers the same
-survey as `--preflight` (§5). Step 5 begins by asking the guardrails on every
+survey as `--preflight` (§5). A grant step 3 finds missing on an account that
+guardrail check 6 or 8 refuses whatever is granted is not a failure: no grant
+could make the account changeable, and step 5 skips it
+([#1117](../decisions/log.md#1117)). Step 5 begins by asking the guardrails on every
 target a credential is bound to, before the first database is changed, so a
 credential that one target refuses is changed on none (§5). Its `pending` from
 step 4 stays staged.

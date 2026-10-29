@@ -227,6 +227,15 @@ superuser. So the built-in roles are read from `pg_auth_members` instead, and a
 superuser's managed roles are not reported one by one: its `SUPERUSER` finding
 covers them.
 
+`creds rotate` and `creds apply --preflight` run the same audit before they
+change anything, and refuse the run over a grant it reports missing. They
+ignore a missing `ADMIN OPTION` on a role that guardrail check 6 (a superuser)
+or check 8 (a role the server reserves) refuses (§5). No grant would let the
+tool change such a role, and the guardrails skip it in the run. The role stays
+in the audit, so an over-grant on it is still reported
+([#1117](../decisions/log.md#1117)). `doctor --check-privileges` reports the
+missing grant, because it reports what the tool account holds.
+
 ---
 
 ## 3. What must not be granted

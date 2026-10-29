@@ -173,6 +173,7 @@ def classify(
     found |= {name for name in FORBIDDEN_ROLES if memberships.get(name)}
     held = [CREATEROLE] if CREATEROLE in attributes else []
     missing = [] if held else [CREATEROLE]
+    missing_for: list[tuple[str, str]] = []
     remedies: list[str] = []
 
     exact = {role.name: role for role in managed}
@@ -188,7 +189,10 @@ def classify(
             )
             continue
         if grant_options:
-            (held if role.admin else missing).append(f"ADMIN OPTION ON {role.name}")
+            entry = f"ADMIN OPTION ON {role.name}"
+            (held if role.admin else missing).append(entry)
+            if not role.admin:
+                missing_for.append((account, entry))
         if SUPERUSER in attributes:
             continue
         over = _over_granted(role, grant_options=grant_options)
@@ -200,6 +204,7 @@ def classify(
         over_granted=tuple(sorted(found)),
         held=tuple(sorted(held)),
         missing=tuple(sorted(missing)),
+        missing_for=tuple(sorted(missing_for)),
         roles=tuple(sorted(memberships)),
         remedies=tuple(remedies),
         hint=f"{DOCUMENT} section 2 has the grants for the tool account `{user}`",

@@ -9175,8 +9175,9 @@ def _preflight_target(
     missing_accounts: list[str] = []
     missing_profiles: list[tuple[str, str]] = []
     unreadable: list[Finding] = []
-    # Accounts check 6 or 8 refuses whatever is granted (#1117), left out of the
-    # privilege audit below. The guardrails skip each one in the run itself.
+    # Accounts the guardrails refuse whatever is granted (#1117), case-folded.
+    # The privilege audit below asks for no grant on them; the guardrails skip
+    # each one in the run itself.
     reserved: set[str] = set()
     for binding in bindings:
         try:
@@ -9189,7 +9190,7 @@ def _preflight_target(
             # and take every finding gathered so far with it, which is the
             # opposite of what a run asking "tell me everything first" wants.
             #
-            # Blocking, unlike the privilege audit above, and the asymmetry is
+            # Blocking, unlike the privilege audit below, and the asymmetry is
             # the point: that one establishes nothing either way, while this one
             # is the input guardrail 4 refuses on, and treating an unreadable
             # answer as "holds no admin role" is the silent success
@@ -9212,7 +9213,7 @@ def _preflight_target(
             missing_accounts.append(binding.account)
             continue
         if guardrails.server_reserved(state):
-            reserved.add(binding.account)
+            reserved.add(binding.account.casefold())
 
         # §5's profile assignment, asked before anything is written (decision #301).
         # Only where the policy declares one and the account is not already on it:
@@ -9245,7 +9246,7 @@ def _preflight_target(
             raise
         except Exception as error:  # noqa: BLE001 -- a finding about this account
             # Reported and **not** blocking, on the rule this function states and
-            # the privilege audit above already follows: a dictionary read that
+            # the privilege audit below also follows: a dictionary read that
             # failed has established nothing either way, and refusing over it
             # would mean an estate that will not grant `DBA_PROFILES` can never
             # run a pre-flight. The run still cannot move an account onto a
@@ -9275,15 +9276,14 @@ def _preflight_target(
 
     try:
         # The accounts this run surveys, not every one declared: a grant missing
-        # for an account the selectors left out does not block this run. Nor for
-        # one that check 6 or 8 refuses: no grant could change it, and asking
-        # for one would refuse the whole run over an account the guardrails
-        # skip (#1117).
-        surveyed = tuple(
-            account for account in _declared_on(bindings, target.name) if account not in reserved
-        )
-        audit = session.privileges(accounts=surveyed)
-        missing_privileges = tuple(audit.missing)
+        # for an account the selectors left out does not block this run.
+        audit = session.privileges(accounts=_declared_on(bindings, target.name))
+        # Nor does a grant missing on an account the guardrails refuse whatever
+        # is granted: no grant could change it, and asking for one refused the
+        # whole run over an account the guardrails skip (#1117). The account
+        # stays in the audit, so an over-grant on it is still reported.
+        unasked = {entry for account, entry in audit.missing_for if account.casefold() in reserved}
+        missing_privileges = tuple(entry for entry in audit.missing if entry not in unasked)
         privileges_hint = audit.hint
     except Exception as error:  # noqa: BLE001 -- likewise
         # Reported and **not** blocking. The audit establishes nothing either

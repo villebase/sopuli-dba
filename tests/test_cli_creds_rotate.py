@@ -720,8 +720,10 @@ def test_a_preflight_caveat_is_printed_in_the_text(
 
 def _admin_option_on(accounts: tuple[str, ...]) -> PrivilegeAudit:
     """PostgreSQL's audit, as the tool account sees it: `ADMIN OPTION` missing on
-    every account it is asked about. A reserved role is one no grant can reach."""
-    return PrivilegeAudit(missing=tuple(f"ADMIN OPTION ON {account}" for account in accounts))
+    every account it is asked about, each entry tied to its account. A reserved
+    role is one no grant can reach."""
+    pairs = tuple((account, f"ADMIN OPTION ON {account}") for account in accounts)
+    return PrivilegeAudit(missing=tuple(entry for _, entry in pairs), missing_for=pairs)
 
 
 @pytest.mark.parametrize(
@@ -737,8 +739,9 @@ def test_the_survey_leaves_out_an_account_no_flag_would_let_it_change(
 ) -> None:
     """#1117: a role supautils reserves, or a superuser, is refused by guardrail
     check 8 or 6, which no flag waives and no grant to the tool account changes.
-    The privilege survey does not ask about it, so the run is not refused over a
-    grant that could never be made, and the guardrails skip the account."""
+    The pre-flight ignores a grant missing on it, so the run is not refused over
+    a grant that could never be made, and the guardrails skip the account. The
+    account stays in the audit, so an over-grant on it would still be seen."""
     harness = estate(
         users={"ACME_WEB_USER": user(**refusing)},
         audits={"appdb-alpha": _admin_option_on, "appdb-beta": _admin_option_on},
@@ -747,7 +750,9 @@ def test_the_survey_leaves_out_an_account_no_flag_would_let_it_change(
     result = run(runner, write_config(CONFIG), "--output", "json")
 
     assert "missing ADMIN OPTION" not in result.output
-    assert all(asked == () for session in harness["sessions"] for asked in session.audited)
+    audited = [asked for session in harness["sessions"] for asked in session.audited]
+    assert audited, "the pre-flight ran no privilege audit at all"
+    assert all(asked == ("acme_web_user",) for asked in audited)
     rows = document(result)["results"]
     assert rows
     assert {row["state"] for row in rows} == {"SKIPPED"}

@@ -336,7 +336,7 @@
               },
               "settings": {
                 "type": "object",
-                "description": "Merged keys by name -- `addr`, `mount`, `kv_version`, `namespace`, `timeout_s`, `merge_patch`, `tls.verify` and the rest of `tls:`, and on an OCI store `vault_id`, `compartment_id`, `key_id` and `region`, which only the declaration sets -- each with the layer that supplied it. A key no layer wrote is absent rather than null. `auth:` is absent entirely: it is replaced whole rather than resolved key by key, so no layer `won` it.",
+                "description": "Merged keys by name -- `addr`, `mount`, `kv_version`, `namespace`, `timeout_s`, `merge_patch`, `tls.verify` and the rest of `tls:` -- each with the layer that supplied it. A key no layer wrote is absent rather than null. `auth:` is absent entirely: it is replaced whole rather than resolved key by key, so no layer `won` it.",
                 "additionalProperties": {
                   "$ref": "#/$defs/resolved_setting"
                 }

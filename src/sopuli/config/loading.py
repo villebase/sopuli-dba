@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from sopuli.config.applications import build_applications
-from sopuli.config.bindings import build_bindings
+from sopuli.config.bindings import build_bindings, check_admin_refs
 from sopuli.config.codes import (
     DELIVERY_UNSERVICEABLE,
     NOTIFY_UNSERVICEABLE,
@@ -599,6 +599,7 @@ def build_config(
     # silently selecting nothing and producing no bindings at all.
     warnings = check_references(config)
     config = replace(config, bindings=build_bindings(config))
+    check_admin_refs(config)
     return replace(
         config,
         warnings=(*layered, *warnings, *_delivery_warnings(config)),

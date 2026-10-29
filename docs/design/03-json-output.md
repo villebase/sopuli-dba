@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.64.schema.json`](../schemas/sopuli-run-1.64.schema.json),
+Schemas: [`../schemas/sopuli-run-1.65.schema.json`](../schemas/sopuli-run-1.65.schema.json),
 [`../schemas/sopuli-event-1.19.schema.json`](../schemas/sopuli-event-1.19.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -576,8 +576,8 @@ This is one entry, from a run with `--vault-addr` set:
 You cannot report where `addr` came from without reporting what it is, so each
 entry carries the value with its provenance.
 
-An OCI store has no `addr`. Its `settings` carry `vault_id`, `compartment_id`,
-`key_id` and `region` instead, which only the declaration can set, so their
+An OCI store has no `addr`. From run schema 1.65, its `settings` carry
+`vault_id`, `compartment_id`, `key_id` and `region` instead, which only the declaration can set, so their
 `source` is always `object`. The text view prints them whole under the table,
 one to a line, because an OCID is longer than the `ADDRESS` column.
 

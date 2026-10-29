@@ -163,6 +163,15 @@ def consumers(names: set[str]) -> dict[str, list[str]]:
     return found
 
 
+def test_the_registry_has_every_oci_store_key() -> None:
+    """The registry is a literal, so the OCI keys are spelled out there. A key
+    added to `OCI_KEYS` alone would be resolved against a setting that does not
+    exist (#1145)."""
+    registered = {name for name in SETTINGS if name.startswith("vaults.*.")}
+
+    assert {setting_name(key) for key in OCI_KEYS} <= registered
+
+
 def test_every_setting_that_is_not_declared_inert_has_a_consumer() -> None:
     """A key nobody reads is a key that lies about what it does."""
     wired = consumers(set(SETTINGS))

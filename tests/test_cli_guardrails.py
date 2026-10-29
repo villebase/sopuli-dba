@@ -1787,6 +1787,24 @@ def test_a_shared_password_never_generated_still_asks_for_generate(
     assert "run `sopuli creds generate` first" in json.dumps(alpha)
 
 
+def test_a_target_that_refuses_an_ungenerated_password_itself_skips_it(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A waivable refusal on the account's own target still gives that target
+    `SKIPPED`, as before #1180, with or without a password in the vault."""
+    estate({}, by_target=DBA_ON_BETA, document=NOT_GENERATED)
+
+    result = run(runner, write_config(TWO_TARGETS), "--confirm", "--output", "json")
+
+    beta = next(
+        entry
+        for entry in document(result)["results"]
+        if entry["account"] == "acme_web_user" and entry["target"] == "appdb-beta"
+    )
+    assert beta["state"] == SKIPPED
+    assert "run `sopuli creds generate` first" not in json.dumps(beta)
+
+
 def test_a_missing_account_beside_a_refusing_target_is_not_hidden_as_skipped(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

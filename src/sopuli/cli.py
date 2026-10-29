@@ -8316,7 +8316,11 @@ def _apply_target(
             if (
                 refusing
                 and (password in everywhere or binding.target in refusing)
-                and (source is not None or _skipped_by_generate(refusing))
+                and (
+                    source is not None
+                    or binding.target in refusing
+                    or _skipped_by_generate(refusing)
+                )
             ):
                 turned_away = _refused_row(binding, source, refusing, selection=selection)
                 out.append(turned_away)

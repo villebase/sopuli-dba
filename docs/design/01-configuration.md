@@ -2843,6 +2843,19 @@ update is sent again with the new ETag, at most three more times. A name still
 held by a secret scheduled for deletion cannot be used again until OCI deletes
 it, and the error says so.
 
+**The lock on an OCI store.** The advisory lock on a secret `acme-db` lives in
+a secret the tool creates, `sopuli-locks.acme-db`, in the same compartment.
+Its content is `{}`; the lock record is in its metadata, under
+`sopuli_record`, so taking and releasing the lock adds no version
+([#1152](../decisions/log.md#1152)). OCI has no setting that makes a secret
+refuse a write without a compare-and-set, as HashiCorp's `cas_required` does.
+Only IAM keeps other writers off a secret, so grant the right to manage
+secrets in the store's compartment to the tool's principal alone. Every run
+that takes a lock on an OCI store reports `SOPULI-W019` for each lock path, to
+say so. The whole
+metadata map is limited to about 5,100 characters (`oci-metadata-limits`), and
+the tool refuses a write that would pass that before it is sent.
+
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command
 reaches it. They cover the bindings the run selects; a binding a selector leaves

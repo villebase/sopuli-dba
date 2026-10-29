@@ -113,6 +113,15 @@ same results apart from the timings:
   update: 2.2 and 3.0 s). An update sent with the ETag read at the moment of
   ACTIVE is refused with ``409 Conflict``, the answer a lost compare-and-set
   gets.
+
+M15 was added for #1152, after its review asked what a second run reading a
+just-created lock sees. Two runs, 2026-10-29, the same vault, key, region and
+SDK, with the same results:
+
+- **M15** A read by name while the new secret is ``CREATING`` (state read on
+  both sides) is refused with ``404 NotAuthorizedOrNotFound``, though the
+  secret is already listed, as ``CREATING``. Once ``ACTIVE``, the read returns
+  version 1.
 """
 
 from __future__ import annotations
@@ -689,6 +698,23 @@ class Probe:
                 outcome = f"refused ({error(exc)})"
             report("M14", f"update with the ETag read at ACTIVE after the {label}", outcome)
 
+    def m15_read_while_creating(self) -> None:
+        """What does a read by name return while a new secret is CREATING?"""
+        name = self.name()
+        secret = self.create(name, settle=False)
+        before = self.state(secret.id)
+        read = self.bundle(name)
+        after = self.state(secret.id)
+        listed = [
+            one.lifecycle_state
+            for one in self.vaults.list_secrets(COMPARTMENT_ID, vault_id=VAULT_ID, name=name).data
+        ]
+        report("M15", "state before and after the read", (before, after))
+        report("M15", "read with no stage while creating", read)
+        report("M15", "listed as", listed)
+        self.settle(secret.id)
+        report("M15", "read with no stage once ACTIVE", self.bundle(name))
+
     # -------------------------------------------------------------- cleanup ---
 
     def cleanup(self) -> None:
@@ -738,6 +764,7 @@ def main() -> int:
         probe.m12_metadata,
         probe.m13_read_while_updating,
         probe.m14_etag_settle,
+        probe.m15_read_while_creating,
     ]
     wanted = {one.lower() for one in sys.argv[1:]}
     known = {check.__name__.split("_")[0] for check in checks}

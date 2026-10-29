@@ -3490,3 +3490,39 @@ the register.
     output layer, and the HashiCorp backend has nothing to wait for.
   - A separate setting for the wait. `timeout_s` already bounds how long the
     run may stall on this store, and the lock is held throughout either way.
+
+## #1152
+
+- **Decided:** 2026-10-28, #1152
+- **Question:** Decision 5 on #1128. Every mutated path gets a lock record,
+  written at least twice a run. An OCI secret holds at most 30 versions, and
+  OCI removes none by itself (#1136). Where does an OCI store keep the record?
+  And OCI has nothing like HashiCorp's `cas_required`: what does the lock's
+  pre-flight say about other writers on an OCI store?
+- **Decision:** In the lock secret's metadata, under `sopuli_record`, as a
+  JSON string. The lock secret is `sopuli-locks.<name>`, created by the tool
+  with `{}` as its content, and its content never changes. A metadata-only
+  update adds no version and changes the ETag (#1136, M3 and M7b), so the
+  compare-and-set still guards it. The whole metadata map is limited to about
+  5,100 characters (#1151, M12), and a lock record is well under 1,000. A lock
+  secret whose record cannot be read is still a lock, so `lock break` can
+  clear it. On the second question, decided by the maintainer on 2026-10-29
+  in the review of #1156: OCI's `require_cas` refuses, so every run that takes
+  a lock on an OCI store reports `SOPULI-W019` for each lock path, and goes
+  ahead.
+- **Why:** A record in the content would add a version per write and fill a
+  lock secret after about 15 runs. The metadata holds it without ever reaching
+  that limit, and the store needs nothing to clean up. P2 says the tool does
+  not claim a guarantee it cannot check, and on OCI only IAM keeps other
+  writers off a secret.
+- **Rejected:**
+  - The record in the content, deleting old DEPRECATED lock versions as the
+    limit nears. It works, but it deletes on every few runs, and each deletion
+    keeps the secret busy for about 20 seconds (#1151, M11).
+  - One lock secret for the whole store. Two runs on different secrets would
+    contend for it, and P5's locks are per path.
+  - No warning, with IAM described in the docs. Quieter, but an exception to
+    P2's rule that a run says when a guarantee is missing.
+  - Requiring `locking: advisory-only` on an OCI store. The tool's own writes
+    are fenced, so it would understate what OCI gives, and add a key to every
+    OCI config.

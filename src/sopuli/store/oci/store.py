@@ -1,8 +1,8 @@
 """P2's store interface over one OCI vault.
 
-This build connects, answers :meth:`OciStore.health`, reads, lists, and
-writes an application secret. Lock records come with #1152, and staging with
-#1153; until then each refuses with a :class:`StoreError`.
+This build connects, answers :meth:`OciStore.health`, reads, lists, writes,
+and holds lock records in metadata. Staging comes with #1153, and until then
+it refuses with a :class:`StoreError`.
 
 Content is read with ``GetSecretBundleByName``, the call External Secrets
 Operator makes, so the tool reads exactly what an application would. One call
@@ -41,6 +41,7 @@ from sopuli.config.model import Vault
 from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import _errors, _names
 from sopuli.store.protocol import (
+    CAS,
     DEGRADED,
     LIST,
     OK,
@@ -48,6 +49,7 @@ from sopuli.store.protocol import (
     UNREACHABLE,
     VERSIONING,
     CasConflictError,
+    MetadataNotPermittedError,
     PathMetadata,
     Stored,
     StoreError,
@@ -80,6 +82,11 @@ SETTLE_TIMEOUT_S = 120
 #: Seconds between two reads of a busy secret.
 POLL_S = 2.0
 
+#: The largest metadata map the store sends, in characters of keys and values
+#: (:func:`_check_size`). A little under the 5,113 measured to be accepted
+#: (``oci-metadata-limits``).
+METADATA_MAX = 5100
+
 #: OCI's answer to a write the secret's state does not allow: it is busy.
 INCORRECT_STATE = "IncorrectState"
 
@@ -94,6 +101,11 @@ CHURN_WINDOW_S = 15.0
 
 #: How many times a write is retried for that reason before it gives up.
 CHURN_RETRIES = 3
+
+#: How many times a content read is tried when OCI answers 404 for a secret
+#: it lists: once, again after waiting out ``CREATING``, and once more after
+#: a poll, in case the read lags behind the state (``oci-read-while-creating``).
+READ_ATTEMPTS = 3
 
 #: The errors a request raises when no answer came back at all.
 NO_ANSWER = (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout)
@@ -149,10 +161,9 @@ class OciStore:
         self._monotonic = monotonic
 
     def supports(self) -> frozenset[str]:
-        """What works in this build. Each capability arrives with its methods:
-        ``cas`` with the lock records (#1152), and ``staging_labels`` with
-        staging (#1153). There is no ``merge_patch``: OCI has none."""
-        return frozenset({LIST, VERSIONING})
+        """What works in this build. ``staging_labels`` arrives with staging
+        (#1153). There is no ``merge_patch``: OCI has none."""
+        return frozenset({CAS, LIST, VERSIONING})
 
     def health(self) -> StoreHealth:
         """One read-only ``GetVault``, which proves the auth, region and vault id.
@@ -254,18 +265,21 @@ class OciStore:
 
         ``cas=None`` is the protocol's unguarded write: the update carries no
         ETag, and a create that loses a race becomes an update.
+
+        A lock record is the exception (decision 5): it goes in the lock
+        secret's metadata under :data:`._names.RECORD_KEY`, and the content is
+        left alone, so updating a lock adds no version (#1136, M7b). The
+        first lock on a path creates its secret with ``{}`` as the content,
+        because OCI will not create a secret without one.
         """
-        if _names.is_lock(path):
-            raise StoreError(
-                f'vault "{self._name}": lock records on an OCI store are not built in this version',
-                hint="this version can write an application secret on an OCI store, not a lock",
-            )
         name = _names.to_oci(path)
         return self._write(name, path, data, cas=cas, what=self._what(name), raced=False)
 
     def _write(
         self, name: str, path: str, data: Any, *, cas: int | None, what: str, raced: bool
     ) -> int:
+        lock = _names.is_lock(path)
+        record = {_names.RECORD_KEY: _compact(data)} if lock else {}
         live = self._live(name, what=what)
         if live is None:
             if cas not in (0, None):
@@ -273,7 +287,9 @@ class OciStore:
                     f"compare-and-set failed at {path!r}: expected version {cas}, found nothing"
                 )
             try:
-                self._create(name, data, what=what)
+                self._create(
+                    name, {} if lock else data, metadata={_names.CAS_KEY: "1", **record}, what=what
+                )
             except CasConflictError:
                 # An unguarded write overwrites whoever created it first, once.
                 if cas is not None or raced:
@@ -290,10 +306,11 @@ class OciStore:
             live,
             what=what,
             guarded=cas is not None,
-            content={"secret_content": _encode(data)},
+            content={} if lock else {"secret_content": _encode(data)},
             metadata=lambda now: {
                 **now.metadata,
                 _names.CAS_KEY: str(_token(now.metadata, what=what) + 1),
+                **record,
             },
         )
 
@@ -303,10 +320,32 @@ class OciStore:
         raise StoreError(f'vault "{self._name}": an OCI store has no merge patch')
 
     def metadata(self, path: str) -> PathMetadata | None:
-        self._not_built("reading")
+        """Nothing: OCI has no setting that makes a secret refuse an update
+        without ``if_match``, so there is no ``cas_required`` to report.
+
+        Who may write a secret is IAM's to say. The tool's own writes always
+        carry the counter and the ETag; keeping other writers out is the IAM
+        policy's job, which ``01-configuration.md`` §7 describes.
+        """
+        return None
 
     def require_cas(self, path: str) -> None:
-        self._not_built("writing")
+        """Refuse, saying why: OCI cannot make a secret refuse a write without
+        a compare-and-set.
+
+        The lock's pre-flight calls this for a path it found no metadata for,
+        which on OCI is every path, and records the refusal as
+        ``SOPULI-W019``. So every run that takes a lock on an OCI store says
+        that only IAM keeps other writers off it: the tool does not claim a
+        guarantee it cannot check (P2). Nothing is sent.
+        """
+        name = _names.to_oci(path)
+        raise MetadataNotPermittedError(
+            f"OCI has no setting that makes {self._what(name)} refuse a write without a "
+            f"compare-and-set, so only IAM keeps other writers off it",
+            hint="grant the right to manage secrets in the store's compartment to this "
+            "tool's principal alone",
+        )
 
     def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
         self._not_built("writing")
@@ -371,18 +410,19 @@ class OciStore:
             read_at=self._monotonic(),
         )
 
-    def _create(self, name: str, data: Any, *, what: str) -> None:
-        """``CreateSecret``, at token 1, and the wait for ACTIVE."""
+    def _create(self, name: str, data: Any, *, metadata: dict[str, Any], what: str) -> None:
+        """``CreateSecret`` with ``data`` as the first version, and the wait for ACTIVE."""
         if self._key_id is None:
             # Unreachable through a config file, which requires the key.
             raise StoreError(f'vault "{self._name}" needs a key_id to create {what}')
+        _check_size(metadata, what=what)
         details = oci.vault.models.CreateSecretDetails(
             compartment_id=self._compartment_id,
             vault_id=self._vault_id,
             key_id=self._key_id,
             secret_name=name,
             secret_content=_encode(data),
-            metadata={_names.CAS_KEY: "1"},
+            metadata=metadata,
         )
         try:
             created = self._vaults.create_secret(details).data
@@ -457,6 +497,7 @@ class OciStore:
         last = ""
         for _ in range(CHURN_RETRIES + 1):
             sent = metadata(current)
+            _check_size(sent, what=what)
             update = oci.vault.models.UpdateSecretDetails(metadata=sent, **content)
             try:
                 self._send_update(current, update, guarded=guarded, what=what)
@@ -525,7 +566,14 @@ class OciStore:
             raise _errors.unreachable(exc, what=what, maybe_written=True) from exc
 
     def _settle(
-        self, secret_id: str, *, name: str, written: bool, what: str, first: Any = None
+        self,
+        secret_id: str,
+        *,
+        name: str,
+        written: bool,
+        what: str,
+        first: Any = None,
+        doing: str = "written",
     ) -> Any:
         """Wait until the secret is ACTIVE, and return that ``GetSecret`` answer.
 
@@ -533,7 +581,8 @@ class OciStore:
         poll. Each wait is bounded by the store's ``timeout_s``, or
         :data:`SETTLE_TIMEOUT_S`. ``written`` says whether this run's write was
         already accepted, which every error here must say: the write is made
-        either way.
+        either way. ``doing`` is what the secret was waited for, ``"written"``
+        or ``"read"``, for the error when it never gets there.
 
         A poll OCI throttles (``429``, seen in a real run straight after a
         write) is one more reason to wait, not a failure: the wait goes on,
@@ -554,15 +603,15 @@ class OciStore:
                     if state not in BUSY:
                         raise StoreError(
                             f"{what}: {made}the secret is {state}"
-                            + ("" if written else ", so it cannot be written")
+                            + ("" if written else f", so it cannot be {doing}")
                         )
                 waited = self._monotonic() - start
                 if waited >= self._settle_s:
                     raise _errors.OciUnavailableError(
                         f"{what}: {made}the secret is still {state} after {waited:.0f} s",
                         hint=(
-                            f"OCI keeps a secret busy for about 20 seconds after a write; "
-                            f'`timeout_s` on vault "{self._name}" bounds this wait'
+                            f"OCI keeps a secret busy for about 20 seconds after it is created "
+                            f'or written; `timeout_s` on vault "{self._name}" bounds this wait'
                         ),
                     )
                 self._sleep(POLL_S if response is not None else 2 * POLL_S)
@@ -601,27 +650,32 @@ class OciStore:
         """One ``GetSecretBundleByName``, as a :class:`Stored`, or ``None``."""
         name = _names.to_oci(path)
         what = self._what(name)
-        try:
-            bundle = self._secrets.get_secret_bundle_by_name(
-                secret_name=name, vault_id=self._vault_id, **which
-            ).data
-        except oci.exceptions.ServiceError as exc:
-            if exc.status == 404 and exc.request_id:
-                self._absent_or_refused(name, which, exc, what=what)
-                return None
-            _errors.raise_for(exc, what=what)
-        except NO_ANSWER as exc:
-            raise _errors.unreachable(exc, what=what) from exc
+        attempt = 0
+        while True:
+            try:
+                bundle = self._secrets.get_secret_bundle_by_name(
+                    secret_name=name, vault_id=self._vault_id, **which
+                ).data
+                break
+            except oci.exceptions.ServiceError as exc:
+                if exc.status != 404 or not exc.request_id:
+                    _errors.raise_for(exc, what=what)
+                attempt += 1
+                if not self._absent_or_refused(name, which, exc, what=what, attempt=attempt):
+                    return None
+            except NO_ANSWER as exc:
+                raise _errors.unreachable(exc, what=what) from exc
 
         if getattr(bundle, "secret_id", None):
             self._ids[name] = bundle.secret_id
         metadata = dict(bundle.metadata or {})
         if _names.is_lock(path):
             # Decision 5: the record is in the metadata, so updating it adds no
-            # version. A lock secret with no record holds nothing to read.
-            if _names.RECORD_KEY not in metadata:
-                return None
-            data = _json_object(metadata[_names.RECORD_KEY], what=what)
+            # version. A lock secret with no readable record is still a lock,
+            # at its token: `LockRecord.from_dict` makes a held, expired record
+            # of it, which `lock break` can clear. Read as nothing, every later
+            # `cas: 0` acquisition would fail for good.
+            data = _record(metadata.get(_names.RECORD_KEY))
         else:
             data = _json_object(_content(bundle, what=what), what=what)
         stages = set(bundle.stages or ())
@@ -637,9 +691,13 @@ class OciStore:
         )
 
     def _absent_or_refused(
-        self, name: str, which: Mapping[str, Any], exc: Any, *, what: str
-    ) -> None:
-        """Return if a 404 on a content read means "nothing there"; raise if not.
+        self, name: str, which: Mapping[str, Any], exc: Any, *, what: str, attempt: int
+    ) -> bool:
+        """After a 404 on a content read: ``False`` if it means "nothing there",
+        ``True`` if the caller should read again; raise if it means neither.
+
+        ``attempt`` counts the 404s so far. The caller reads again at most
+        :data:`READ_ATTEMPTS` times in all.
 
         OCI answers 404 ``NotAuthorizedOrNotFound`` for a missing secret, a
         missing version or stage, a missing vault, **and** a secret this
@@ -647,20 +705,35 @@ class OciStore:
         a run plan to create a secret that exists, so the cases are told apart:
 
         * the secret is not listed: it is absent, once the vault is known;
+        * it is listed and still ``CREATING``: OCI answers a read by name with
+          404 until it is ACTIVE (``oci-read-while-creating``), as when a
+          second run reads the lock a first run has just created. The store
+          waits, and the caller reads again;
+        * it was just waited out, and the read still lags behind: the store
+          waits one poll, and the caller reads again;
         * it is listed and CURRENT was asked for: the principal may not read it;
         * it is listed and a stage or a version was asked for: a CURRENT read
           says which. If that is refused too, the principal may not read it;
           otherwise the stage or version is just not there.
         """
-        if not self._listed(name):
+        live = [one for one in self._summaries(name) if one.lifecycle_state not in GONE]
+        if not live:
             self._check_vault()
-            return
+            return False
+        if attempt < READ_ATTEMPTS:
+            if live[0].lifecycle_state == "CREATING":
+                self._settle(live[0].id, name=name, written=False, what=what, doing="read")
+                return True
+            if attempt > 1:
+                # The secret was CREATING a moment ago: give the read a poll to catch up.
+                self._sleep(POLL_S)
+                return True
         if which.get("stage") != CURRENT:
             try:
                 self._secrets.get_secret_bundle_by_name(
                     secret_name=name, vault_id=self._vault_id, stage=CURRENT
                 )
-                return
+                return False
             except oci.exceptions.ServiceError as again:
                 if again.status != 404:
                     _errors.raise_for(again, what=what)
@@ -668,10 +741,6 @@ class OciStore:
             f"{what} exists, and this principal may not read its content ({_errors.describe(exc)})",
             hint="the IAM policy must allow reading secret bundles in this vault",
         )
-
-    def _listed(self, name: str) -> bool:
-        """Whether a secret of that name, not being deleted, is in the store's compartment."""
-        return any(one.lifecycle_state not in GONE for one in self._summaries(name))
 
     def _summaries(self, name: str) -> tuple[Any, ...]:
         """Every secret called ``name`` in the store's compartment, deleting ones
@@ -726,6 +795,10 @@ def _content(bundle: Any, *, what: str) -> str:
         raise StoreError(f"{what} has content that is not UTF-8 text") from None
 
 
+def _compact(data: Any) -> str:
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
 def _restated(error: StoreError, what: str, made: str) -> StoreError:
     """``error``, saying first that the write was made, when it was.
 
@@ -756,21 +829,65 @@ def _encode(data: Any) -> Any:
 
     The one place a password leaves the process on an OCI store (invariant 2).
     """
-    text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     return oci.vault.models.Base64SecretContentDetails(
         content_type="BASE64",
-        content=base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        content=base64.b64encode(_compact(data).encode("utf-8")).decode("ascii"),
         stage=CURRENT,
     )
 
 
-def _json_object(text: str, *, what: str) -> dict[str, Any]:
-    """Decision 6: a secret is used when its content is a JSON object."""
+def _check_size(metadata: Mapping[str, Any], *, what: str) -> None:
+    """Refuse a metadata map OCI would refuse, before it is sent.
+
+    OCI limits the whole map (``oci-metadata-limits``), in characters rather
+    than bytes: a 12-character key with a 5,101-character value was accepted,
+    5,113 in all, and with 5,159, refused. So the size is counted as OCI was
+    measured, keys and string values as they are, and a list or an object as
+    compact JSON. The lock record is a string already, and is not escaped
+    again. The lock record and the promotion stamps share the map, and a
+    secret the tool did not create may bring keys of its own.
+
+    Characters are counted as UTF-16 code units, so one outside the Basic
+    Multilingual Plane counts twice. Only ASCII and two-byte text were
+    measured, and counting high is the side that refuses before OCI does.
+    """
+    size = sum(
+        _units(key) + _units(value if isinstance(value, str) else _compact(value))
+        for key, value in metadata.items()
+    )
+    if size > METADATA_MAX:
+        raise StoreError(
+            f"{what}: its metadata would be {size} characters, and OCI allows about {METADATA_MAX}",
+            hint="remove metadata keys this tool does not use from the secret",
+        )
+
+
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _object_or_none(text: Any) -> dict[str, Any] | None:
+    """``text`` parsed, if it is a JSON object; otherwise ``None``."""
+    if not isinstance(text, str):
+        return None
     try:
         value = json.loads(text)
     except json.JSONDecodeError:
-        value = None
-    if not isinstance(value, dict):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _record(value: Any) -> Any:
+    """A lock record from the metadata: the object, or ``None`` if there is no
+    readable one. Never a refusal, for the reason ``LockRecord.from_dict``
+    gives: a lock nobody can read must still be a lock somebody can break."""
+    return _object_or_none(value)
+
+
+def _json_object(text: str, *, what: str) -> dict[str, Any]:
+    """Decision 6: a secret is used when its content is a JSON object."""
+    value = _object_or_none(text)
+    if value is None:
         raise StoreError(
             f"{what} does not hold a JSON object, so this tool cannot use it",
             hint="the tool keeps fields in a JSON object; store one, or name another secret",

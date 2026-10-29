@@ -391,11 +391,16 @@ def test_patch_is_refused(fake: FakeOci, clock: Clock) -> None:
         store(fake, clock).patch("acme-db", {"password": "b"}, cas=1)
 
 
-def test_a_lock_path_is_refused_in_this_build(fake: FakeOci, clock: Clock) -> None:
-    with pytest.raises(StoreError, match="lock records"):
-        store(fake, clock).write("locks/acme-db", {"state": "held"}, cas=0)
+def test_metadata_over_oci_s_limit_is_refused_before_it_is_sent(
+    fake: FakeOci, clock: Clock
+) -> None:
+    """`oci-metadata-limits`: about 5,100 characters for the whole map."""
+    fake.put("acme-db", {"password": "a"}, metadata={"terraform_note": "x" * 5100})
 
-    assert fake.created == []
+    with pytest.raises(StoreError, match="metadata would be"):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+    assert fake.updates == []
 
 
 # ------------------------------------------------------------------- wait ---

@@ -58,6 +58,8 @@ def sdk(monkeypatch: pytest.MonkeyPatch) -> Sdk:
         seen.files.append((file_location, profile_name))
         if profile_name == "MISSING":
             raise oci.exceptions.ProfileNotFound(f"Profile '{profile_name}' not found")
+        if profile_name == "NO-REGION":
+            return {key: value for key, value in PROFILE.items() if key != "region"}
         return dict(PROFILE)
 
     def client(kind: str) -> Any:
@@ -109,6 +111,40 @@ def test_the_profiles_region_is_used_when_the_store_names_none(sdk: Sdk) -> None
     assert {config["region"] for _, config, _ in sdk.clients} == {"eu-frankfurt-1"}
 
 
+def test_the_stores_region_completes_a_profile_that_has_none(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`validate_config` requires a region, so the store's is applied first."""
+    monkeypatch.delenv("OCI_REGION", raising=False)
+
+    build_clients(
+        vault(VaultAuth(method="config_file", profile="NO-REGION"), region="eu-stockholm-1"),
+        env={},
+    )
+
+    assert {config["region"] for _, config, _ in sdk.clients} == {"eu-stockholm-1"}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [FileNotFoundError("acme.pem"), oci.exceptions.InvalidPrivateKey("bad pass phrase")],
+)
+def test_a_key_that_cannot_be_loaded_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """A client loads the key when it is built, after `from_file` succeeded."""
+
+    def build(config: dict[str, Any], **kwargs: Any) -> None:
+        raise failure
+
+    monkeypatch.setattr(oci.vault, "VaultsClient", build)
+
+    with pytest.raises(StoreError, match=str(failure)) as error:
+        build_clients(vault(), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
 def test_a_missing_profile_is_a_config_error_naming_it(sdk: Sdk) -> None:
     with pytest.raises(StoreError, match="'MISSING'") as error:
         build_clients(vault(VaultAuth(method="config_file", profile="MISSING")), env={})
@@ -132,7 +168,7 @@ def test_timeout_s_is_the_request_timeout(sdk: Sdk) -> None:
 
 @pytest.mark.parametrize("method", sorted(set(OCI_AUTH_METHODS) - {CONFIG_FILE}))
 def test_the_other_oci_methods_are_refused_as_not_built(sdk: Sdk, method: str) -> None:
-    with pytest.raises(StoreError, match="not built in this version") as error:
+    with pytest.raises(StoreError, match="not implemented in this build yet") as error:
         build_clients(vault(VaultAuth(method=method)), env={})
 
     assert error.value.exit_code == ExitCode.CONFIG_INVALID

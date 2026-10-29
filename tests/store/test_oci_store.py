@@ -21,7 +21,7 @@ VAULT_ID = "ocid1.vault.oc1..exampleuniqueid"
 DATE = "Thu, 29 Oct 2026 10:15:30 GMT"
 
 
-def service_error(status: int, code: str, message: str = "refused") -> Any:
+def service_error(status: int, code: str, message: str | None = "refused") -> Any:
     return oci.exceptions.ServiceError(status, code, {"opc-request-id": "req-1"}, message)
 
 
@@ -132,4 +132,31 @@ def test_reading_is_refused_until_it_is_built() -> None:
         oci_store.read("acme-db")
     with pytest.raises(StoreError, match="not built"):
         oci_store.list("")
+    with pytest.raises(StoreError, match="not built"):
+        oci_store.metadata("locks/acme-db")
     assert oci_store.supports() == frozenset()
+
+
+def test_a_reply_without_a_request_id_did_not_come_from_oci() -> None:
+    """A proxy's 502: no evidence about the store, so unreachable, not degraded."""
+    oci_store, _ = store(oci.exceptions.ServiceError(502, None, {}, None))
+
+    health = oci_store.health()
+
+    assert (health.status, health.detail) == (
+        UNREACHABLE,
+        "answered HTTP 502, which did not come from OCI",
+    )
+
+
+def test_an_error_with_no_message_still_reads() -> None:
+    oci_store, _ = store(service_error(403, "Forbidden", message=None))
+
+    assert oci_store.health().detail == "refused (OCI 403 Forbidden, opc-request-id req-1)"
+
+
+def test_a_date_in_unknown_zone_is_utc() -> None:
+    """`-0000` parses as naive; it must not be read as this host's local time."""
+    oci_store, _ = store(vault_reply(headers={"date": "Thu, 29 Oct 2026 10:15:30 -0000"}))
+
+    assert oci_store.health().server_time == datetime(2026, 10, 29, 10, 15, 30, tzinfo=UTC)

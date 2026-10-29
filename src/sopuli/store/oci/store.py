@@ -78,9 +78,18 @@ class OciStore:
         try:
             response = self._kms.get_vault(self._vault_id)
         except oci.exceptions.ServiceError as exc:
+            if not exc.request_id:
+                # OCI sends an opc-request-id with every answer. A reply without
+                # one came from something in between, such as a proxy's 502, and
+                # is not evidence about the store: fail closed, as
+                # `UNREACHABLE` says.
+                return StoreHealth(
+                    status=UNREACHABLE,
+                    detail=f"answered HTTP {exc.status}, which did not come from OCI",
+                )
             return StoreHealth(
                 status=DEGRADED,
-                detail=f"{exc.message} ({_errors.describe(exc)})",
+                detail=f"{exc.message or 'refused'} ({_errors.describe(exc)})",
                 authenticated=False if exc.status == 401 else None,
             )
         except NO_ANSWER as exc:
@@ -108,7 +117,7 @@ class OciStore:
         self._not_built("writing")
 
     def metadata(self, path: str) -> PathMetadata | None:
-        return None
+        self._not_built("reading")
 
     def require_cas(self, path: str) -> None:
         self._not_built("writing")
@@ -143,4 +152,7 @@ def _server_time(headers: Mapping[str, str] | None) -> datetime | None:
         parsed = parsedate_to_datetime(value)
     except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is None:
+        # `-0000` parses as naive: RFC 5322's "UTC, source unknown".
+        return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)

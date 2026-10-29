@@ -25,7 +25,8 @@ CONFIG_FILE = "config_file"
 
 DEFAULT_PROFILE = "DEFAULT"
 
-#: Where the OCI CLI and SDK look for their config file when it is not set.
+#: The OCI SDK's variable for its config file. The OCI CLI reads
+#: ``OCI_CLI_CONFIG_FILE`` instead, and this store does not.
 CONFIG_FILE_VARIABLE = "OCI_CONFIG_FILE"
 
 
@@ -59,19 +60,32 @@ def build_clients(vault: Vault, *, env: Mapping[str, str]) -> Clients:
     profile = vault.auth.profile if vault.auth is not None else None
     where = f"vaults.{vault.name}.auth"
     if method != CONFIG_FILE:
+        # As the HashiCorp backend words `oidc`: not yet, rather than unsupported.
         raise OciConfigError(
-            f"{where}: `{method}` is not built in this version for an OCI store",
-            hint="use auth method config_file",
+            f"{where}: `{method}` is not implemented in this build yet for an OCI store",
+            hint="config_file is the OCI auth method this build can perform",
         )
 
-    config = _config_file(env, profile or DEFAULT_PROFILE, where=where)
-    if vault.region is not None:
-        config = {**config, "region": vault.region}
-    return Clients(
-        vaults=oci.vault.VaultsClient(config, **_options(vault)),
-        secrets=oci.secrets.SecretsClient(config, **_options(vault)),
-        kms=oci.key_management.KmsVaultClient(config, **_options(vault)),
-    )
+    location = env.get(CONFIG_FILE_VARIABLE, oci.config.DEFAULT_LOCATION)
+    profile = profile or DEFAULT_PROFILE
+    try:
+        config: dict[str, Any] = oci.config.from_file(file_location=location, profile_name=profile)
+        # Before the check, which requires a region: the store's may be the only one.
+        if vault.region is not None:
+            config["region"] = vault.region
+        oci.config.validate_config(config)
+        # Building a client loads the profile's private key, so a missing key
+        # file or a wrong pass phrase fails here and not in `from_file`.
+        return Clients(
+            vaults=oci.vault.VaultsClient(config, **_options(vault)),
+            secrets=oci.secrets.SecretsClient(config, **_options(vault)),
+            kms=oci.key_management.KmsVaultClient(config, **_options(vault)),
+        )
+    except (oci.exceptions.ClientError, OSError) as exc:
+        raise OciConfigError(
+            f"{where}: cannot use profile {profile!r} in the OCI config file {location}: {exc}",
+            hint=f"check the file and its key_file, or set {CONFIG_FILE_VARIABLE} to another file",
+        ) from exc
 
 
 def _options(vault: Vault) -> dict[str, Any]:
@@ -84,16 +98,3 @@ def _options(vault: Vault) -> dict[str, Any]:
     if vault.timeout_s is not None:
         options["timeout"] = float(vault.timeout_s)
     return options
-
-
-def _config_file(env: Mapping[str, str], profile: str, *, where: str) -> dict[str, Any]:
-    location = env.get(CONFIG_FILE_VARIABLE, oci.config.DEFAULT_LOCATION)
-    try:
-        config: dict[str, Any] = oci.config.from_file(file_location=location, profile_name=profile)
-        oci.config.validate_config(config)
-    except oci.exceptions.ClientError as exc:
-        raise OciConfigError(
-            f"{where}: cannot use profile {profile!r} in the OCI config file {location}: {exc}",
-            hint=f"check the file, or set {CONFIG_FILE_VARIABLE} to the one to use",
-        ) from exc
-    return config

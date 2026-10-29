@@ -588,12 +588,13 @@ sopuli --config sopuli.yaml doctor
 ```
 ```
 install
-  KIND     NAME       STATUS           CONFIGURED
-  backend  file       not_implemented  -
-  backend  hashicorp  installed        vault-dev
-  backend  keyring    not_implemented  -
-  backend  oci        installed        -
-  driver   oracle     installed        1 target
+  KIND     NAME        STATUS           CONFIGURED
+  backend  file        not_implemented  -
+  backend  hashicorp   installed        vault-dev
+  backend  keyring     not_implemented  -
+  backend  oci         not_installed    -
+  driver   oracle      installed        1 target
+  driver   postgresql  not_installed    -
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
@@ -617,7 +618,9 @@ it in five parts:
 
 - **install** — which backends this machine has code for, against which your
   config asks for. `not_implemented` means this build has no module for that
-  backend yet, not that you installed something wrong.
+  backend yet, not that you installed something wrong. `not_installed` means
+  you did not install that extra, which is fine for a store or database your
+  config does not use.
 - **vaults** — whether the store answered, whether your token authenticated, and
   how far its clock is from yours.
 - **client** — whether Instant Client loaded, and which Oracle versions it can

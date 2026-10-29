@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.65.schema.json`](../schemas/sopuli-run-1.65.schema.json),
+Schemas: [`../schemas/sopuli-run-1.66.schema.json`](../schemas/sopuli-run-1.66.schema.json),
 [`../schemas/sopuli-event-1.19.schema.json`](../schemas/sopuli-event-1.19.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -2362,7 +2362,12 @@ These consequences show in the schema:
   document is emitted. `vault` is required here, although a written ref may omit
   the prefix: this object is emitted after resolution, when the store is known,
   and a plan that named a secret without its store would make the reader work
-  out precedence again.
+  out precedence again. From run schema 1.66, the `secret` of a `creds
+  generate` result, and of a result whose promotion was written, also carries
+  `staging`: `native` where the secret keeps its stages as the store's own
+  versions, `payload` where they are fields in the document (UC-1 §3). It is
+  absent on every other result, including a `rotate` result whose promotion
+  was held back after its pending was staged.
 - A `sample` object has no value property either, for the same reason.
 - `error.message` and `diagnostic.message` carry the server's own message, and a
   server message can hold the password. A password verify function is site-written

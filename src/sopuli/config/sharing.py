@@ -55,15 +55,24 @@ consequences, both deliberate:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from sopuli.config.model import Binding
-from sopuli.config.secret_refs import normalise_path
-from sopuli.payload import PENDING, stage_layout
+from sopuli.config.errors import ConfigError
+from sopuli.config.model import Binding, Vault
+from sopuli.config.secret_refs import SecretRef, normalise_path
+from sopuli.config.vaults import STAGING_TYPES
+from sopuli.payload import PENDING, StageLayout, stage_layout
 
-__all__ = ["SharedSecret", "StageCollision", "colliding_stages", "shared_secrets"]
+__all__ = [
+    "SharedSecret",
+    "StageCollision",
+    "colliding_stages",
+    "native_layouts",
+    "shared_secrets",
+    "unsure_layouts",
+]
 
 
 @dataclass(frozen=True)
@@ -240,6 +249,79 @@ def colliding_stages(
                 vault=key[0], path=key[1], location=where, accounts=(first, binding.account)
             )
     return tuple(collisions.values())
+
+
+def native_layouts(
+    bindings: Collection[Binding],
+    vaults: Collection[Vault],
+    *,
+    unsure: Collection[tuple[str, str]] | None = None,
+) -> dict[tuple[str, str], StageLayout]:
+    """The documents that use native staging, keyed as :func:`shared_secrets` keys them.
+
+    A document uses native staging when its store's type keeps stages as
+    versions (:data:`~sopuli.config.vaults.STAGING_TYPES`) and every binding on
+    it addresses one place, so it holds one credential: one account, on as many
+    targets as share it. A document of several accounts keeps its stages in
+    payload fields, because a store version holds one ``pending`` for the whole
+    document (UC-1 §3).
+
+    ``bindings`` must be every binding the file declares, not a selection: a
+    selector that left out the second account of a shared document would
+    otherwise turn it native for one run.
+
+    A document with a ref that has nowhere to stage keeps payload fields: this
+    is called over bindings a run may have excluded, so it must not refuse. A
+    document :func:`unsure_layouts` names is not native either; the adapter
+    refuses it instead.
+    """
+    staging = {vault.name for vault in vaults if vault.type in STAGING_TYPES}
+    if unsure is None:
+        unsure = unsure_layouts(bindings, vaults)
+    found: dict[tuple[str, str], StageLayout | None] = {}
+    for binding in bindings:
+        if binding.secret is None or binding.vault is None or binding.vault not in staging:
+            continue
+        key = (binding.vault, normalise_path(binding.secret.path))
+        layout = None if key in unsure else _layout_or_none(binding.secret)
+        if key in found and found[key] != layout:
+            layout = None
+        found[key] = layout
+    return {key: layout for key, layout in found.items() if layout is not None}
+
+
+def unsure_layouts(
+    bindings: Collection[Binding], vaults: Collection[Vault]
+) -> set[tuple[str, str]]:
+    """Documents on a staging store whose path a binding with no store also names.
+
+    That binding's store could not be completed, so it may be the same
+    document, and the config cannot say whether it holds one account or
+    several. Payload fields could put a pending in what applications read, and
+    native staging could put one account's pending in a shared secret, so a run
+    that touches such a document is refused rather than guessed for.
+    """
+    staging = {vault.name for vault in vaults if vault.type in STAGING_TYPES}
+    storeless = {
+        normalise_path(binding.secret.path)
+        for binding in bindings
+        if binding.secret is not None and binding.vault is None
+    }
+    return {
+        (binding.vault, path)
+        for binding in bindings
+        if binding.secret is not None
+        and binding.vault is not None
+        and binding.vault in staging
+        and (path := normalise_path(binding.secret.path)) in storeless
+    }
+
+
+def _layout_or_none(ref: SecretRef) -> StageLayout | None:
+    try:
+        return stage_layout(ref)
+    except ConfigError:
+        return None
 
 
 @dataclass

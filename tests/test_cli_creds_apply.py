@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,6 +31,7 @@ import yaml
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
+from native_estate import FIELD, OCI_VAULT, seed, staging_store, view
 from sopuli import apply, check
 from sopuli.admin import Resolved
 from sopuli.cli import _Applied, _left_out, _splice, cli
@@ -91,6 +92,7 @@ from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.native_view import PENDING_VERSION
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -612,9 +614,14 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         describe_error: Exception | None = None,
         profile_error: Exception | None = None,
         encryption: Encryption = TLS,
+        native: Mapping[str, Sequence[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
-        store = MemoryStore()
-        for path, body in (documents or _staged_two_targets()).items():
+        # `native` seeds a store with OCI's capabilities, each path's documents
+        # written in turn as versions, for `NATIVE_CONFIG`.
+        store = MemoryStore() if native is None else staging_store()
+        for path, bodies in (native or {}).items():
+            seed(store, path, *bodies)
+        for path, body in (documents or ({} if native else _staged_two_targets())).items():
             store.write(path, body, cas=0)
 
         sessions: list[FakeSession] = []
@@ -4834,3 +4841,113 @@ def test_the_redraw_codes_are_registered() -> None:
     assert (PASSWORD_REDRAWN, PASSWORD_NOT_REDRAWN) == ("SOPULI-W029", "SOPULI-W030")
     assert PASSWORD_REDRAWN in WARNINGS
     assert PASSWORD_NOT_REDRAWN in WARNINGS
+
+
+# ------------------------------------------- native staging (#1134) ---
+#
+# The same estate on an OCI-typed store, one secret per target and one account
+# in each, so the stages are the store's own versions. What is checked is where
+# each stage ends up, read through the adapter as the verbs read it.
+
+NATIVE_CONFIG = (
+    CONFIG.replace(
+        "vaults:\n  vault-prod:\n    type: hashicorp\n"
+        "    addr: https://vault-prod.example.com:8200\n",
+        OCI_VAULT,
+    )
+    .replace("vault: vault-prod", "vault: vault-oci")
+    .replace('"apps/acme/{target}#DB_CREDENTIALS/{account}"', '"acme-{target}#password"')
+)
+
+NATIVE_ALPHA = "acme-appdb-alpha"
+
+
+def _native_staged() -> dict[str, list[dict[str, Any]]]:
+    return {
+        f"acme-{target}": [{FIELD: LIVE, "pending": STAGED, "origin": "generated"}]
+        for target in ("appdb-alpha", "appdb-beta")
+    }
+
+
+def test_native_a_staged_version_is_applied_and_promoted(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    harness = estate(native=_native_staged())
+    result = run(runner, write_config(NATIVE_CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    store = harness["store"]
+    current = store.read_stage(NATIVE_ALPHA, "current")
+    previous = store.read_stage(NATIVE_ALPHA, "previous")
+    assert current.data[FIELD] == STAGED
+    assert previous.data[FIELD] == LIVE
+    assert PENDING_VERSION not in current.attributes
+    assert current.attributes["targets"] == ["appdb-alpha"]
+    assert "pending" not in view(store, NATIVE_ALPHA)
+    body = document(result)
+    validator.validate(body)
+    assert {entry["secret"]["staging"] for entry in body["results"]} == {"native"}
+
+
+def test_native_a_second_run_changes_nothing(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    harness = estate(native={NATIVE_ALPHA: [{FIELD: LIVE}]}, answers={"ACME_WEB_USER": passes(1)})
+    before = harness["store"].read(NATIVE_ALPHA).version
+
+    result = run(runner, write_config(NATIVE_CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["sessions"][0].changed == []
+    assert harness["store"].read(NATIVE_ALPHA).version == before
+
+
+def test_native_a_rollback_promotes_the_previous_version(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """UC-1 §8 on native staging: PREVIOUS is promoted back by its number, so
+    the content is the one the database had, not a copy of it."""
+    harness = estate(
+        native={
+            NATIVE_ALPHA: [
+                {FIELD: "The-One-Before-2025"},
+                {FIELD: LIVE, "previous": "The-One-Before-2025"},
+            ]
+        },
+        answers={"ACME_WEB_USER": drifted()},
+    )
+    store = harness["store"]
+    old = store.read_stage(NATIVE_ALPHA, "previous")
+
+    result = run(
+        runner,
+        write_config(NATIVE_CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--source",
+        "previous",
+        "--confirm",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", "The-One-Before-2025")]
+    current = store.read_stage(NATIVE_ALPHA, "current")
+    assert current.generation == old.generation
+    assert store.read_stage(NATIVE_ALPHA, "previous").data[FIELD] == LIVE
+
+
+def test_native_a_layout_change_is_refused_before_any_ddl(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A one-account secret still holding a `pending` field, from when it was
+    shared: applying it natively would lose the field, so nothing is issued."""
+    harness = estate(native={}, documents={NATIVE_ALPHA: {FIELD: LIVE, "pending": STAGED}})
+
+    result = run(runner, write_config(NATIVE_CONFIG), "--select", "tenant=alpha")
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
+    assert all(session.changed == [] for session in harness["sessions"])
+    assert harness["store"].read(NATIVE_ALPHA).version == 1

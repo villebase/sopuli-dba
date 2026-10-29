@@ -115,6 +115,7 @@ from sopuli.config.password_keys import place_of
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
+from sopuli.config.sharing import native_layouts, unsure_layouts
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
@@ -344,8 +345,16 @@ from sopuli.safety import (
 from sopuli.secrets import Secret
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
-from sopuli.store.credentials import StoredSecret, read_secret, resolve
+from sopuli.store.credentials import (
+    StoredSecret,
+    read_secret,
+    resolve,
+    shown_version,
+    stage_version,
+)
 from sopuli.store.credentials import apply_patch as write_credential
+from sopuli.store.native_view import LayoutChangedError
+from sopuli.store.native_view import wrap as native_staged
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -4651,6 +4660,27 @@ def _stores_for(
     return {name: opened[name] for name in sorted(names)}
 
 
+def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mapping[str, SecretStore]:
+    """``stores`` as the UC-1 verbs read and write them (#1134).
+
+    A store that keeps stages as its own versions is seen through the
+    native-staging adapter, so a one-credential document reads with
+    ``pending``, ``previous`` and the stamps where every verb looks for them.
+    Which documents are native is decided from every binding the file declares,
+    not the run's selection (:func:`~sopuli.config.sharing.native_layouts`),
+    completed as the promotion gate completes them, which never refuses.
+    """
+    everything = _declared_estate(run.config)
+    unsure = unsure_layouts(everything.bindings, everything.vaults)
+    return native_staged(
+        stores,
+        native_layouts(everything.bindings, everything.vaults, unsure=unsure),
+        by=_rotated_by(),
+        now=utc_now,
+        unsure=unsure,
+    )
+
+
 @config_group.command("validate")
 @global_options
 def config_validate(
@@ -4939,11 +4969,14 @@ def creds_check(
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
 
-    stores = _stores_for(
-        {binding.vault for binding in config.bindings if binding.vault is not None},
-        config,
-        token_file=run.vault_token_file,
-        cache=run.stores,
+    stores = _staged_stores(
+        _stores_for(
+            {binding.vault for binding in config.bindings if binding.vault is not None},
+            config,
+            token_file=run.vault_token_file,
+            cache=run.stores,
+        ),
+        run,
     )
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
 
@@ -5581,8 +5614,11 @@ def creds_generate(
         noun="generation",
         confirmation_required=asks,
     )
-    stores = _stores_for(
-        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    stores = _staged_stores(
+        _stores_for(
+            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+        ),
+        run,
     )
     found, unread = _plan_documents(keys, stores)
     plan = _with_stages(plan, keyed, found, promote=promote)
@@ -6007,6 +6043,9 @@ def _plan_documents(
             continue
         try:
             found[key] = store.read(key.path)
+        except LayoutChangedError:
+            # Not an outage: the plan refuses it, before the lock.
+            raise
         except Exception as error:  # noqa: BLE001 -- see the docstring: the write reports it
             errors[key] = _finding(error).message
     return found, errors
@@ -6287,16 +6326,16 @@ def _promote_document(
     emitter.event(
         run.document,
         "vault.promote",
-        data={"vault": write.key.store, "path": write.key.path, "promoted_to": written.version},
+        data={"vault": write.key.store, "path": write.key.path, "promoted_to": written.reported},
     )
 
     return _reported(
         write,
         VAULT_ONLY,
-        f"promoted to v{written.version}",
+        f"promoted to v{written.reported}",
         out=out,
         stage=CURRENT,
-        version=written.version,
+        version=written.reported,
         # The `pending` this promotion cleared, warned about as the staging
         # path warns: anything holding it is now stale.
         replaced=staged,
@@ -6388,7 +6427,7 @@ def _stage(
         data={
             "vault": write.key.store,
             "path": write.key.path,
-            "version": written.version,
+            "version": written.reported,
             "stage": PENDING,
         },
     )
@@ -6396,9 +6435,9 @@ def _stage(
     return _reported(
         write,
         STAGED,
-        f"staged v{written.version}",
+        f"staged v{written.reported}",
         out=out,
-        version=written.version,
+        version=written.reported,
         replaced=replaced,
         mechanism=written.mechanism,
     )
@@ -6467,10 +6506,12 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     accounts it was never true of.
 
     The version is the document's own -- there is one per document, and it is
-    what an operator would go and read the old value back from.
+    what an operator would go and read the old value back from. Under native
+    staging the pending is a version of its own, recorded in the attributes, so
+    that number is the one to read it back from (#1134).
     """
     return {
-        candidate.binding.account: int(existing.version)
+        candidate.binding.account: stage_version(existing, PENDING)
         for candidate in write.candidates
         if _is_staged(existing, candidate.binding.secret)
     }
@@ -6753,8 +6794,11 @@ def creds_apply(
         )
 
     keys = _document_keys(bindings)
-    stores = _stores_for(
-        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    stores = _staged_stores(
+        _stores_for(
+            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+        ),
+        run,
     )
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
@@ -7391,7 +7435,7 @@ def _vault_event(key: LockKey, stored: Any) -> dict[str, Any]:
     return {
         "vault": key.store,
         "path": key.path,
-        "version": None if stored is None else int(stored.version),
+        "version": None if stored is None else shown_version(stored),
     }
 
 
@@ -7414,7 +7458,7 @@ def _sources(
             else apply_states.source_for(stored.data, binding.secret, stage=stage)
         )
         if source is not None:
-            source = replace(source, version=int(stored.version))
+            source = replace(source, version=stage_version(stored, source.stage))
         found.append((binding, source))
     return found
 
@@ -9711,7 +9755,7 @@ def _restage(
                     level="warning",
                     message=(
                         "the server refused this password, so another was drawn and staged as "
-                        f"v{written.version}: {record.outcome.detail or 'no message was given'}"
+                        f"v{written.reported}: {record.outcome.detail or 'no message was given'}"
                     ),
                     code=PASSWORD_REDRAWN,
                     account=record.binding.account,
@@ -10243,8 +10287,8 @@ def _write_promotion(
             conflict=isinstance(error, CasConflictError),
         )
     return _Promotion(
-        written.version,
-        f"promoted to v{written.version}",
+        written.reported,
+        f"promoted to v{written.reported}",
         promotable=True,
         mechanism=written.mechanism,
     )
@@ -10465,8 +10509,11 @@ def creds_finish_rollover(
         return render_plan(plan, noun="window") + "\n\nnothing to end"
 
     keys = _document_keys(bindings)
-    stores = _stores_for(
-        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    stores = _staged_stores(
+        _stores_for(
+            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+        ),
+        run,
     )
     # No lock: this verb writes to no store. The documents are read for one
     # reason -- to know whether a `pending` is staged, and to have something to
@@ -10902,8 +10949,11 @@ def creds_rotate(
         return render_plan(plan, noun="rotation") + "\n\nnothing to rotate"
 
     keys = _document_keys(bindings)
-    stores = _stores_for(
-        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    stores = _staged_stores(
+        _stores_for(
+            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+        ),
+        run,
     )
 
     # Before the preview and before the lock (#857), so a refusal is the same for
@@ -11842,8 +11892,11 @@ def creds_status(
         return render_plan(plan, noun="account") + "\n\nnothing to inventory"
 
     keys = _document_keys(bindings)
-    stores = _stores_for(
-        {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+    stores = _staged_stores(
+        _stores_for(
+            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
+        ),
+        run,
     )
     documents = _read_documents(keys, stores, run=run)
 
@@ -12027,7 +12080,7 @@ def _row(
     return Row(
         binding=binding,
         outcome=outcome or status_states.decide(user, credential, data, binding),
-        version=None if stored is None else int(stored.version),
+        version=None if stored is None else shown_version(stored),
         age=age,
         user=user,
         over_age=status_states.exceeds(age, max_age_days),

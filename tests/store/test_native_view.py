@@ -27,11 +27,12 @@ from sopuli.payload import (
     stage_layout,
 )
 from sopuli.store import MemoryStore
-from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, resolve
+from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, read_secret, resolve
 from sopuli.store.native_view import (
     NATIVE,
     PENDING_VERSION,
     LayoutChangedError,
+    LayoutUnknownError,
     NativeStagedStore,
 )
 from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError, StoreError
@@ -138,6 +139,150 @@ def test_a_pending_that_is_not_the_recorded_one_is_not_a_pending(
 
     assert stored is not None
     assert stored.data == {"password": "a"}
+    assert PENDING_VERSION not in stored.attributes
+
+
+def test_each_stage_is_read_back_under_its_own_version_number(
+    view: NativeStagedStore,
+) -> None:
+    """A pending and a previous are versions of their own, so a run names
+    them by their numbers, the ones `@version=N` pins (#1134)."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, promotion("b", "a"), cas=token(view))
+    apply_patch(view, PATH, stage_patch("c"), cas=token(view))
+
+    pending = read_secret(view, parse_secret_ref(f"{PATH}#password@stage=pending"))
+    previous = read_secret(view, parse_secret_ref(f"{PATH}#password@stage=previous"))
+    current = read_secret(view, parse_secret_ref(f"{PATH}#password"))
+
+    assert pending is not None
+    assert current is not None
+    assert previous is not None
+    assert (pending.version, current.version, previous.version) == (3, 2, 1)
+
+
+def test_a_record_left_from_native_staging_names_no_pending_in_payload_fields(
+    inner: MemoryStore,
+) -> None:
+    """Read in payload fields, a `pending_version` that names no live PENDING
+    version is dropped, so no reader takes it for the pending's number."""
+    inner.write(PATH, {"password": "a"}, cas=0)
+    inner.promote(PATH, 1, attributes={PENDING_VERSION: 9}, cas=1)
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+
+    stored = view.read(PATH)
+
+    assert stored is not None
+    assert PENDING_VERSION not in stored.attributes
+
+
+def test_a_path_whose_layout_is_unknown_is_refused(inner: MemoryStore) -> None:
+    inner.write(PATH, {"password": "a"}, cas=0)
+    view = NativeStagedStore(
+        inner, native=lambda path: None, by="x", now=lambda: NOW, unsure=lambda path: path == PATH
+    )
+
+    with pytest.raises(LayoutUnknownError) as raised:
+        view.read(PATH)
+    with pytest.raises(LayoutUnknownError):
+        view.write(PATH, {"password": "a", "pending": "b"}, cas=1)
+
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
+    stored = inner.read(PATH)
+    assert stored is not None
+    assert stored.data == {"password": "a"}
+
+
+def test_a_payload_write_reports_no_number_another_writer_moved(
+    inner: MemoryStore,
+) -> None:
+    """The number is read back after the write; if the token found is not the
+    write's own, someone else wrote in between and the number is theirs."""
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+    token = view.write(PATH, {"password": "a"}, cas=0)
+    inner.write(PATH, {"password": "z"}, cas=token)
+
+    assert view.generation_of(PATH) is None
+
+
+def test_a_payload_write_whose_read_back_fails_still_counts(
+    inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write landed, so a failed read for its number gives no number,
+    never an error that would report the write as failed."""
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+    view.write(PATH, {"password": "a"}, cas=0)
+
+    def failing(path: str, *, version: int | None = None) -> None:
+        raise StoreError("throttled")
+
+    monkeypatch.setattr(inner, "read", failing)
+
+    assert view.generation_of(PATH) is None
+
+
+def test_stamps_in_the_content_are_not_carried_into_native_versions(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """A secret that held several accounts, cut to one: its payload stamps
+    are neither shown nor copied, and no promotion is made to clear them."""
+    inner.write(PATH, {"password": "a", "rotated_at": {"acme_web_user": "x"}}, cas=0)
+
+    shown = view.read(PATH)
+    assert shown is not None
+    assert "rotated_at" not in shown.data
+    apply_patch(view, PATH, stage_patch("b"), cas=shown.version)
+
+    staged = inner.read_stage(PATH, "pending")
+    assert staged is not None
+    assert "rotated_at" not in staged.data
+
+
+def test_native_residue_is_dropped_from_a_document_read_in_payload_fields(
+    inner: MemoryStore,
+) -> None:
+    """A secret that held one account, now shared: the version stamps and the
+    bare `origin` native staging left are nobody's data in payload fields."""
+    inner.write(
+        PATH,
+        {
+            "DB": {"acme_web_user": "a"},
+            "origin": "generated",
+            "generated_at": "t",
+            "generated_by": "u",
+        },
+        cas=0,
+    )
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+
+    stored = view.read(PATH)
+
+    assert stored is not None
+    assert stored.data == {"DB": {"acme_web_user": "a"}}
+
+
+def test_a_read_back_that_raises_anything_still_gives_no_number(
+    inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+    view.write(PATH, {"password": "a"}, cas=0)
+
+    def failing(path: str, *, version: int | None = None) -> None:
+        raise RuntimeError("an unmapped SDK error")
+
+    monkeypatch.setattr(inner, "read", failing)
+
+    assert view.generation_of(PATH) is None
+
+
+def test_a_write_clears_a_version_a_failed_one_left(view: NativeStagedStore) -> None:
+    seeded(view)
+    view._written[PATH] = 99
+    with pytest.raises(StoreError):
+        view.write(PATH, {"password": "z"}, cas=12345)
+
+    assert view.generation_of(PATH) is None
 
 
 def test_a_pinned_old_generation_reads_at_token_zero(view: NativeStagedStore) -> None:
@@ -296,10 +441,11 @@ def test_a_stale_token_still_conflicts(view: NativeStagedStore) -> None:
 def test_payload_stages_in_a_native_secret_are_a_layout_change(
     view: NativeStagedStore, inner: MemoryStore
 ) -> None:
-    """A secret staged in payload fields by an older build, now used natively."""
+    """A secret staged in payload fields while it held several accounts, now
+    used natively."""
     inner.write(PATH, {"password": "a", "pending": "b", "origin": "generated"}, cas=0)
 
-    with pytest.raises(LayoutChangedError, match="finish or discard"):
+    with pytest.raises(LayoutChangedError, match="finish the rotation"):
         view.read(PATH)
     with pytest.raises(LayoutChangedError):
         view.write(PATH, {"password": "a"}, cas=1)

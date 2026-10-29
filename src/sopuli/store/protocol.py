@@ -601,6 +601,13 @@ class WriteMechanism(Protocol):
     write. A store that writes a path some other way than a merge patch or a
     whole document, as the native-staging adapter does, says so here; ``None``
     leaves the usual answer.
+
+    ``generation_of`` gives the store's own version number of what the last
+    write to ``path`` left current or staged, where that differs from the
+    compare-and-set token (OCI's), so a run reports a number ``@version=N`` can
+    pin (#1134). ``None`` where the store has no such number.
     """
 
     def mechanism_for(self, path: str) -> str | None: ...
+
+    def generation_of(self, path: str) -> int | None: ...

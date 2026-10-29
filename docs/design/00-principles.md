@@ -299,12 +299,13 @@ behaviours measured against OCI Vault (#1129, the `oci-*` entries in
 
 **The UC-1 verbs reach native staging through an adapter**
 (`sopuli/store/native_view.py`, #1158), so none of them has a second code
-path. For a path that uses native staging, the adapter shows the document the
-verbs already read, with `pending`, `previous` and the stamps where the mirror
-rule puts them, built from the store's versions and attributes. It turns each
-write back into `stage`, `promote` or `write`, and such a write's mechanism
-is `native_staging`; the run document carries it from #1134. Decision 3 says
-what goes where
+path. The verbs see every store of a type that stages natively through it,
+and a path uses native staging when its document holds one credential (UC-1
+§3). For such a path, the adapter shows the document the verbs already read,
+with `pending`, `previous` and the stamps where the mirror rule puts them,
+built from the store's versions and attributes. It turns each write back into
+`stage`, `promote` or `write`, and the run reports such a write as
+`secret.staging: native`. Decision 3 says what goes where
 ([#1158](../decisions/log.md#1158)).
 
 **`write` and `patch` take a compare-and-set version and return the new

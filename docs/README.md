@@ -616,24 +616,35 @@ such as "from 16", means the one release of it that was measured.
 - `verified` `oci-create-taken` (#1151) — **What does a create answer for a
   name that is already held?**
   `400 InvalidParameter: name already exists`, not a 409. The answer is the same
-  when the name belongs to a secret scheduled for deletion, which is
-  `SCHEDULING_DELETION` straight afterwards. M10.
+  when the name belongs to a secret scheduled for deletion, both while it is
+  `SCHEDULING_DELETION` and once it is `PENDING_DELETION`, which followed
+  within 20 seconds. M10.
 - `verified` `oci-create-state` (#1151) — **Is a new secret ready at once?**
   No. A create answers `CREATING`, and an update in that state is refused with
-  `409 IncorrectState`. It was `ACTIVE` 18.1 and 20.2 seconds later. Scheduling
-  a version's deletion makes the secret `UPDATING` for about 20 seconds too.
-  M11.
+  `409 IncorrectState`. It was `ACTIVE` 20.8 and 18.7 seconds after the create
+  answered. Scheduling a version's deletion makes the secret `UPDATING`, and it
+  was `ACTIVE` 19.7 and 21.8 seconds later. M11.
 - `verified` `oci-metadata-limits` (#1151) — **What may a secret's metadata
   hold?**
-  A string value of 4,000 characters is accepted; 16,000 is refused with
+  About 5,100 characters for the whole map, counted in characters, not bytes.
+  Under a 12-character key, one ASCII value of 5,101 characters is accepted
+  and 5,159 is refused; two values of 2,629 characters each are refused
+  together; 5,101 two-byte characters are accepted. The refusal is
   `400 InvalidParameter: metadata exceeds max allowed size`. A list, a nested
   object and an integer are accepted and read back as sent. A read by name
-  carries the metadata. M12.
+  carries the same metadata as `GetSecret`. M12.
 - `verified` `oci-read-while-updating` (#1151) — **Does a read see a write
   straight away?**
-  No. While the secret is `UPDATING` after a content update, a read by name
-  returns the old version. Once it is `ACTIVE`, the read returns the new one.
-  M13.
+  No. A read by name made while the secret is `UPDATING`, after an update that
+  changed the content and the metadata, returns the old version and the old
+  metadata. Once it is `ACTIVE`, the read returns both new. So a read's content
+  and its write counter always belong together. M13.
+- `verified` `oci-etag-settle` (#1133) — **Is the ETag read when a secret
+  turns ACTIVE the one the next update must send?**
+  Not always. The ETag moves once more 2.2 to 5.4 seconds after the secret is
+  `ACTIVE`, with no field of the secret changing, and an update sent with the
+  ETag read at the moment of `ACTIVE` is refused with `409 Conflict`. So a
+  `409 Conflict` alone does not prove that somebody else wrote. M14.
 - `unverified` `moto-secrets-manager` (#642) — **Does moto's server image cover
   every Secrets Manager call an AWS store makes?**
   Known: moto is open source, `motoserver/moto` needs no token, and it emulates

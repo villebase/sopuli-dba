@@ -116,8 +116,10 @@ class FakeOci:
         #: Secrets this principal may list and not read: OCI answers their
         #: content reads with the same 404 as a missing secret.
         self.unreadable: set[str] = set()
-        #: How many ``GetSecret`` reads find a secret busy after a write.
+        #: How many ``GetSecret`` reads find a secret busy after a write, and
+        #: the state it settles in.
         self.settle_polls = settle_polls
+        self.final_state = "ACTIVE"
         #: Every ``CreateSecret`` and ``UpdateSecret`` sent, refused or not.
         self.created: list[Any] = []
         self.updates: list[tuple[str, Any, str | None]] = []
@@ -125,6 +127,8 @@ class FakeOci:
         #: writer: with the secret for an update, with the name for a create.
         self.before_update: Callable[[FakeSecret], object] | None = None
         self.before_create: Callable[[str], object] | None = None
+        #: Called before each ``GetSecret``, so a test can make one fail.
+        self.before_get: Callable[[FakeSecret], object] | None = None
 
     def put(
         self,
@@ -255,11 +259,13 @@ class FakeOci:
         """The secret, with its ETag. Each read of a busy secret counts down."""
         self.calls.append("get_secret")
         secret = self._by_id(secret_id)
+        if self.before_get is not None:
+            self.before_get(secret)
         data = self._data(secret)
         if secret.busy:
             secret.busy -= 1
             if not secret.busy:
-                secret.lifecycle_state = "ACTIVE"
+                secret.lifecycle_state = self.final_state
         return SimpleNamespace(data=data, headers={"etag": str(secret.etag)})
 
     def create_secret(self, create_secret_details: Any) -> Any:

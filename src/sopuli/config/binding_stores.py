@@ -81,9 +81,9 @@ class _Candidate:
 def complete(
     config: Config,
     *,
+    estate: Config,
     env: Mapping[str, str] = NO_ENV,
     check_refs: bool = True,
-    estate: Config | None = None,
 ) -> Config:
     """Fill in the store for bindings that reached load without one.
 
@@ -105,30 +105,25 @@ def complete(
     ``False``: the run does not touch those bindings, and refusing it over one
     of them would be refusing over something it excluded.
 
-    ``estate`` is the config before the selectors narrowed it, when ``config``
-    is the narrowed one. The stage-collision rule runs over the estate (#1141).
-    Two accounts that share a root ``pending`` collide across two runs as well as
-    in one: ``--account acme_web_user`` stages web's password, and a later
+    ``estate`` is the config before the selectors narrowed it, or ``config``
+    itself where nothing narrowed it. It is required, so that a new caller
+    cannot leave it out. The stage-collision rule runs over the estate (#1141).
+    Two accounts that share a root ``pending`` collide across two runs as well
+    as in one: ``--account acme_web_user`` stages web's password, and a later
     ``--account acme_api_user`` writes over it before it is promoted. The loader
     refuses a file that names the store whatever the selection, and this refuses
     a run that supplies the store the same way. The other ref rules stay on
     ``config``, because they are about one binding and the run uses only these.
     """
     candidate = _candidate(config, env=env)
-    if candidate is None:
-        return config
-    whole = config if estate is None else estate
-    if not any(_needs_store(binding) for binding in whole.bindings):
+    if candidate is None or not any(_needs_store(binding) for binding in config.bindings):
         return config
 
-    completed = config
-    if any(_needs_store(binding) for binding in config.bindings):
-        _refuse_dangling(candidate, config)
-        completed = _filled(config, candidate)
-        if check_refs:
-            _check_completed(candidate, config)
-    if check_refs and any(vault.name == candidate.name for vault in whole.vaults):
-        _check_estate_stages(candidate, whole)
+    _refuse_dangling(candidate, config)
+    completed = _filled(config, candidate)
+    if check_refs:
+        _check_completed(candidate, config)
+        _check_estate_stages(candidate, estate)
     return completed
 
 
@@ -164,16 +159,29 @@ def _check_estate_stages(candidate: _Candidate, estate: Config) -> None:
     """The stage-collision rule over every binding the file declares.
 
     The loader could not run it on a binding with no store, so it runs here once
-    the run supplies one. It runs even when the selected bindings all named their
-    store in the file: a selected account that stages at a document's root
-    collides with an account left out whose store this run supplies.
+    the run supplies one. Only when a selected binding needs the store: a run
+    that does not use it has not consulted the variable or the profile, and
+    :func:`complete` says why that run is not refused over one.
 
-    Only where the run's store is declared. An undeclared ``SOPULI_VAULT`` is
-    refused by :func:`_refuse_dangling` when the run needs it, and is not this
-    run's concern when it does not.
+    An account the selectors left out is given this run's store. A later run may
+    supply that account another store, and nothing here can know that. Giving it
+    this one is the reading that cannot lose a password, and the remedy, a
+    pointer per account, is right under any store.
+
+    The hint says where the store came from, because the file alone does not
+    show the collision.
     """
     completed = _filled(estate, candidate)
-    check_stages_do_not_collide(completed.bindings, completed, where=application_locations(estate))
+    try:
+        check_stages_do_not_collide(
+            completed.bindings, completed, where=application_locations(estate)
+        )
+    except ConfigError as error:
+        raise ConfigError(
+            error.message,
+            at=error.at,
+            hint=f"{error.hint}; the store is {candidate.name!r}, from {candidate.location}",
+        ) from error
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

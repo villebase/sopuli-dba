@@ -4057,9 +4057,10 @@ def lock_status(
     # promotion gate does: a SOPULI_VAULT naming an undeclared store is wrong
     # only for a binding this run surveys, and the narrowed estate refuses that.
     everything = resolvable_locks(_declared_estate(config))
-    keys = declared_locks(
-        binding_stores.complete(filter_estate(config, selection), env=os.environ, estate=config)
-    )
+    # The narrowed estate is its own estate here: `lock status` stages nothing,
+    # so a stage collision among bindings it does not survey is not its to refuse.
+    surveyed = filter_estate(config, selection)
+    keys = declared_locks(binding_stores.complete(surveyed, env=os.environ, estate=surveyed))
     # UC-2's locks are keyed on the reset record's path, which no binding
     # produces. The prefix is declared and the keys under it are not enumerable
     # offline -- a predicate-declared personal account has no name until a
@@ -10003,7 +10004,7 @@ def _declared_estate(config: Config) -> Config:
     leave every binding storeless rather than only that one (#1137).
     """
     try:
-        return binding_stores.complete(config, env=os.environ, check_refs=False)
+        return binding_stores.complete(config, env=os.environ, check_refs=False, estate=config)
     except ConfigError:
         return config
 

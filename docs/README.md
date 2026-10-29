@@ -616,24 +616,27 @@ such as "from 16", means the one release of it that was measured.
 - `verified` `oci-create-taken` (#1151) — **What does a create answer for a
   name that is already held?**
   `400 InvalidParameter: name already exists`, not a 409. The answer is the same
-  when the name belongs to a secret scheduled for deletion, which is
-  `SCHEDULING_DELETION` straight afterwards. M10.
+  when the name belongs to a secret scheduled for deletion, both while it is
+  `SCHEDULING_DELETION` and once it is `PENDING_DELETION`, the state it stays
+  in until it is deleted. M10.
 - `verified` `oci-create-state` (#1151) — **Is a new secret ready at once?**
   No. A create answers `CREATING`, and an update in that state is refused with
-  `409 IncorrectState`. It was `ACTIVE` 18.1 and 20.2 seconds later. Scheduling
-  a version's deletion makes the secret `UPDATING` for about 20 seconds too.
-  M11.
+  `409 IncorrectState`. It was `ACTIVE` 19.8 and 19.0 seconds after the create
+  answered. Scheduling a version's deletion makes the secret `UPDATING`, and it
+  was `ACTIVE` 22.8 and 20.1 seconds later. M11.
 - `verified` `oci-metadata-limits` (#1151) — **What may a secret's metadata
   hold?**
-  A string value of 4,000 characters is accepted; 16,000 is refused with
-  `400 InvalidParameter: metadata exceeds max allowed size`. A list, a nested
-  object and an integer are accepted and read back as sent. A read by name
-  carries the metadata. M12.
+  About 5 KB in all. The limit is on the whole map: one string value of 5,031
+  characters is accepted and 5,125 is refused, and two values of 3,354
+  characters each are refused together, with `400 InvalidParameter: metadata
+  exceeds max allowed size`. A list, a nested object and an integer are
+  accepted and read back as sent. A read by name carries the same metadata as
+  `GetSecret`. M12.
 - `verified` `oci-read-while-updating` (#1151) — **Does a read see a write
   straight away?**
-  No. While the secret is `UPDATING` after a content update, a read by name
-  returns the old version. Once it is `ACTIVE`, the read returns the new one.
-  M13.
+  No. A read by name made while the secret is `UPDATING` after a content
+  update returns the old version. Once it is `ACTIVE`, the read returns the new
+  one. M13.
 - `unverified` `moto-secrets-manager` (#642) — **Does moto's server image cover
   every Secrets Manager call an AWS store makes?**
   Known: moto is open source, `motoserver/moto` needs no token, and it emulates

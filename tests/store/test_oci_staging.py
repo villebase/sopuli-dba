@@ -171,15 +171,67 @@ def test_current_pending_and_previous_are_never_deleted(store: OciStore, fake: F
 
 
 def test_a_full_secret_with_nothing_deprecated_is_refused(store: OciStore, fake: FakeOci) -> None:
-    """Versions 1 to 27 are already scheduled for deletion and do not count;
-    the rest is full only in this test's arithmetic, so it is built directly."""
+    """The measurements never showed OCI leaving a counted version with no
+    stage, so this state is built by hand. Whatever leads to it, the store
+    deletes nothing it cannot prove unreachable, and refuses."""
     stages = [{"PREVIOUS"}, {"CURRENT"}, {"PENDING"}] + [set()] * (VERSION_LIMIT - 3)
-    full(fake, stages)
+    secret = full(fake, stages)
 
     with pytest.raises(StoreError, match="none of them is DEPRECATED"):
         store.write("acme-db", {"password": "new"}, cas=1)
 
-    assert fake.updates == []
+    assert len(secret.versions) == VERSION_LIMIT
+    assert all(one.time_of_deletion is None for one in secret.versions)
+
+
+def test_a_write_to_a_secret_with_room_lists_no_versions(store: OciStore, fake: FakeOci) -> None:
+    """Room is made only when OCI says the secret is full."""
+    fake.put("acme-db", {"password": "a"})
+
+    store.write("acme-db", {"password": "b"}, cas=1)
+
+    assert "list_secret_versions" not in fake.calls
+
+
+def test_a_write_that_fails_otherwise_deletes_nothing(store: OciStore, fake: FakeOci) -> None:
+    """A full secret whose write is refused on its size never reaches OCI's
+    limit answer, so no version is scheduled for deletion."""
+    secret = full(fake)
+    secret.metadata["terraform_note"] = "x" * 5100
+
+    with pytest.raises(StoreError, match="metadata would be"):
+        store.write("acme-db", {"password": "new"}, cas=1)
+
+    assert all(one.time_of_deletion is None for one in secret.versions)
+    assert store.pruned == []
+
+
+def test_an_unguarded_write_after_making_room_builds_on_the_new_state(
+    store: OciStore, fake: FakeOci, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While room is made, another writer moves the counter. A guarded write
+    refuses; an unguarded one moves the counter past it."""
+    secret = full(fake)
+    real = fake.schedule_secret_version_deletion
+
+    def schedule_then_another_writer(secret_id: str, number: int, details: object) -> object:
+        result = real(secret_id, number, details)
+        secret.metadata[CAS_KEY] = "5"
+        return result
+
+    monkeypatch.setattr(fake, "schedule_secret_version_deletion", schedule_then_another_writer)
+
+    assert store.write("acme-db", {"password": "new"}, cas=None) == 6
+
+
+def test_an_unguarded_promotion_still_sends_the_etag(store: OciStore, fake: FakeOci) -> None:
+    """The stage check is only good for the read it was made on."""
+    token = store.write("acme-db", {"password": "a"}, cas=0)
+    store.stage("acme-db", {"password": "b"}, attributes={}, cas=token)
+
+    store.promote("acme-db", 2, attributes={}, cas=None)
+
+    assert fake.updates[-1][2] is not None
 
 
 def test_a_lock_write_never_counts_versions(store: OciStore, fake: FakeOci) -> None:

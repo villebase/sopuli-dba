@@ -3535,13 +3535,14 @@ the register.
   refused with `400 LimitExceeded` (#1136, M7). An application secret gains a
   version at each rotation, so it would stop rotating after about 30. What does
   the tool do at the limit?
-- **Decision:** Before a write or a stage that would add a version to a full
-  secret, the tool schedules the deletion of its oldest DEPRECATED version, a
-  day and an hour ahead. A version scheduled for deletion stops counting at
-  once (M7c), so the write fits. CURRENT, PENDING and PREVIOUS are never
-  touched. A full secret with no DEPRECATED version is refused. The store
-  records each deletion, and exposes how full a secret is, so the plan,
-  `--dry-run` and the run can say so (#1134).
+- **Decision:** When OCI refuses a write or a stage as over the limit, the
+  tool schedules the deletion of the secret's oldest DEPRECATED version, two
+  days ahead, and sends the write again. A version scheduled for deletion stops
+  counting at once (M7c), so the write fits. A write that fails for any other
+  reason deletes nothing. CURRENT, PENDING and PREVIOUS are never touched. A
+  full secret with no DEPRECATED version is refused. The store records each
+  deletion, and exposes how full a secret is, so the plan, `--dry-run` and the
+  run can say so (#1134).
 - **Why:** A rotation must not stop working after about 30 runs, and a
   DEPRECATED version is one no stage, rollback or reader can reach. The tool
   deletes nothing else, and never a whole secret.
@@ -3550,5 +3551,11 @@ the register.
     application secret would need hand care twice a year at a monthly rotation.
   - Deleting every DEPRECATED version at once. It keeps the secret busy longer
     and removes history nobody asked to lose; one at a time is enough.
-  - Waiting for the shortest deletion delay OCI allows, which is not
-    documented. The probe's day and an hour was measured to work.
+  - Making room before every write that would fill the secret. Found in the
+    review of #1157: a write that then failed, on the size check or a lost
+    compare-and-set, would have deleted history for nothing, and every write
+    would have listed the secret's versions first.
+  - A deletion delay of exactly a day, OCI's documented shortest. OCI checks it
+    against its own clock, so a host clock running behind would make every
+    deletion refused. The probe's day and an hour worked; two days leaves
+    margin and costs nothing.

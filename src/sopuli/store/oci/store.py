@@ -126,9 +126,11 @@ PROMOTABLE = frozenset({CURRENT, PENDING, "PREVIOUS"})
 #: deletion (``oci-version-limit``).
 VERSION_LIMIT = 30
 
-#: How far ahead a version's deletion is scheduled: the wait the probe used,
-#: a little over OCI's shortest. The version stops counting at once.
-DELETION_DELAY = timedelta(days=1, hours=1)
+#: How far ahead a version's deletion is scheduled. OCI documents a day as the
+#: shortest, checked against its own clock; the probe used a day and an hour. Two days
+#: leaves room for a host clock that runs behind, and costs nothing: the
+#: version stops counting at once, whenever it is deleted (#1136, M7c).
+DELETION_DELAY = timedelta(days=2)
 
 
 @dataclass(frozen=True)
@@ -348,12 +350,11 @@ class OciStore:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {token}"
             )
-        if not lock:
-            live = self._make_room(live, path=path, what=what)
         return self._update(
             live,
             what=what,
             guarded=cas is not None,
+            room_for=None if lock else path,
             content={} if lock else {"secret_content": _encode(data)},
             metadata=lambda now: {
                 **now.metadata,
@@ -403,11 +404,11 @@ class OciStore:
         PENDING already there becomes DEPRECATED (``oci-pending-replace``).
         """
         _, what, live = self._native(path, attributes, cas=cas, doing="stage")
-        live = self._make_room(live, path=path, what=what)
         return self._update(
             live,
             what=what,
             guarded=cas is not None,
+            room_for=path,
             content={"secret_content": _encode(data, stage=PENDING)},
             metadata=lambda now: _with_token(attributes, now, what=what),
         )
@@ -421,6 +422,11 @@ class OciStore:
         (``oci-promote-metadata``), so the store checks first that the
         generation holds CURRENT, PENDING or PREVIOUS, and refuses any other.
         Promoting the CURRENT generation changes only the attributes.
+
+        The update always carries the ETag of the read the check was made
+        against, ``cas=None`` included: without it, another writer's stage
+        could deprecate the generation between the check and the promotion,
+        and OCI would promote it anyway.
         """
         _, what, live = self._native(path, attributes, cas=cas, doing="promote")
         try:
@@ -440,7 +446,8 @@ class OciStore:
         return self._update(
             live,
             what=what,
-            guarded=cas is not None,
+            guarded=True,
+            room_for=None,
             content={"current_version_number": generation},
             metadata=lambda now: _with_token(attributes, now, what=what),
         )
@@ -506,18 +513,20 @@ class OciStore:
                 return Room(versions=counted, oldest_deprecated=min(deprecated, default=None))
 
     def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:
-        """Decision 7: before adding a version to a full secret, delete its
-        oldest DEPRECATED version, so the write fits.
+        """Decision 7: OCI refused a version because the secret is full, so
+        delete its oldest DEPRECATED version, and return the secret as it is
+        afterwards.
 
-        A version scheduled for deletion stops counting at once (#1136, M7c).
-        Scheduling it makes the secret busy for about 20 seconds (#1151, M11),
-        so the store waits, reads the secret again, and checks that the counter
-        has not moved meanwhile. CURRENT, PENDING and PREVIOUS are never
-        touched, so a rollback still works.
+        Called only once OCI has answered ``400 LimitExceeded``, so a write
+        that fails for any other reason (the size check, a lost
+        compare-and-set) never deletes anything, and a write to a secret with
+        room makes no extra call. A version scheduled for deletion stops
+        counting at once (#1136, M7c). Scheduling it makes the secret busy for
+        about 20 seconds (#1151, M11), so the store waits and reads the secret
+        again; the caller checks the counter. CURRENT, PENDING and PREVIOUS
+        are never touched, so a rollback still works.
         """
         room = self._room(live.id, what=what)
-        if not room.full:
-            return live
         if room.oldest_deprecated is None:
             raise StoreError(
                 f"{what} holds {room.versions} versions, OCI's limit, and none of them is "
@@ -537,12 +546,7 @@ class OciStore:
             raise _errors.unreachable(exc, what=what) from exc
         self.pruned.append(Pruned(path=path, generation=room.oldest_deprecated))
         response = self._settle(live.id, name=live.name, written=False, what=what)
-        fresh = self._as_live(live.id, live.name, response, what=what)
-        if _token(fresh.metadata, what=what) != _token(live.metadata, what=what):
-            raise CasConflictError(
-                f"{what} was written by another writer while this run made room in it"
-            )
-        return fresh
+        return self._as_live(live.id, live.name, response, what=what)
 
     def _what(self, name: str) -> str:
         return f'secret "{name}" in vault "{self._name}"'
@@ -655,6 +659,7 @@ class OciStore:
         *,
         what: str,
         guarded: bool,
+        room_for: str | None,
         content: Mapping[str, Any],
         metadata: Callable[[_Live], dict[str, Any]],
     ) -> int:
@@ -664,6 +669,12 @@ class OciStore:
         ``metadata`` builds the whole map to send from the secret as last
         read, the counter moved. ``guarded=False`` sends no ETag: the
         protocol's unguarded write.
+
+        ``room_for`` is the path, for an update that adds a version. If OCI
+        answers ``400 LimitExceeded``, the store makes room (decision 7,
+        :meth:`_make_room`) and sends the update again. A guarded write then
+        refuses if the counter moved meanwhile; an unguarded one builds its
+        metadata again.
 
         A ``409 IncorrectState`` means another writer made the secret busy
         after :meth:`_live` saw it ACTIVE, and the store waits that out. A
@@ -686,6 +697,17 @@ class OciStore:
                 self._send_update(current, update, guarded=guarded, what=what)
                 break
             except oci.exceptions.ServiceError as exc:
+                if room_for is not None and _limit_exceeded(exc):
+                    fresh = self._make_room(current, path=room_for, what=what)
+                    if guarded and _token(fresh.metadata, what=what) != _token(
+                        current.metadata, what=what
+                    ):
+                        raise CasConflictError(
+                            f"{what} was written by another writer while this run made room in it"
+                        ) from exc
+                    current = fresh
+                    last = exc.code
+                    continue
                 if exc.status != 409 or not exc.request_id:
                     _errors.raise_for(exc, what=what)
                 last = exc.code
@@ -704,6 +726,12 @@ class OciStore:
                     _errors.raise_for(exc, what=what)
                 current = churned
         else:
+            if last == "LimitExceeded":
+                raise StoreError(
+                    f"{what}: OCI still refused a new version as over its limit after the "
+                    f"store removed {CHURN_RETRIES + 1} DEPRECATED ones, so nothing was written",
+                    hint="look at the secret's versions in OCI",
+                )
             if last == INCORRECT_STATE:
                 raise _errors.OciUnavailableError(
                     f"{what}: the secret was busy with other writes {CHURN_RETRIES + 1} times, "
@@ -1021,6 +1049,11 @@ def _restated(error: StoreError, what: str, made: str) -> StoreError:
     if not made:
         return error
     return type(error)(f"{what}: {made}waiting for it failed. {error.message}", hint=error.hint)
+
+
+def _limit_exceeded(exc: Any) -> bool:
+    """OCI's answer to a version past the limit (``oci-version-limit``)."""
+    return exc.status == 400 and exc.code == "LimitExceeded" and bool(exc.request_id)
 
 
 def _name_taken(exc: Any) -> bool:

@@ -139,6 +139,8 @@ class FakeOci:
         #: writer: with the secret for an update, with the name for a create.
         self.before_update: Callable[[FakeSecret], object] | None = None
         self.before_create: Callable[[str], object] | None = None
+        #: Reads by name of an ACTIVE secret still to answer 404.
+        self.lagging_reads = 0
         #: Called before each ``GetSecret``, so a test can make one fail.
         self.before_get: Callable[[FakeSecret], object] | None = None
 
@@ -219,6 +221,10 @@ class FakeOci:
             raise not_found(f"secret {secret_name} not found")
         if secret.lifecycle_state == "CREATING":
             # Measured: 404 until the new secret is ACTIVE, though it is listed.
+            raise not_found(f"secret {secret_name} not found")
+        if self.lagging_reads:
+            # A read that lags behind the state, for a test to play.
+            self.lagging_reads -= 1
             raise not_found(f"secret {secret_name} not found")
         if version_number is not None:
             found = [one for one in secret.versions if one.number == version_number]

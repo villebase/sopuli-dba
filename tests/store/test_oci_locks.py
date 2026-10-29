@@ -15,8 +15,9 @@ from oci_fake import COMPARTMENT_ID, KEY_ID, VAULT_ID, FakeOci
 from sopuli.config.model import Vault
 from sopuli.lock import Holder, LockableStore, LockKey, LockManager, lock_path
 from sopuli.store.oci import OciStore
+from sopuli.store.oci._errors import OciAuthError
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
-from sopuli.store.protocol import CasConflictError, MetadataNotPermittedError
+from sopuli.store.protocol import CasConflictError, MetadataNotPermittedError, StoreError
 
 RECORD = {"state": "held", "correlation_id": "01JACME", "command": "creds rotate"}
 
@@ -114,6 +115,44 @@ def test_a_lock_being_created_is_waited_for_not_refused(fake: FakeOci) -> None:
 
     assert stored is not None
     assert stored.data == RECORD
+
+
+def test_a_read_that_lags_behind_the_creation_is_tried_once_more(fake: FakeOci) -> None:
+    secret = fake.put(
+        "sopuli-locks.acme-db",
+        {},
+        metadata={CAS_KEY: "1", RECORD_KEY: json.dumps(RECORD)},
+        lifecycle_state="CREATING",
+    )
+    secret.busy = 1
+    fake.lagging_reads = 1
+
+    stored = store(fake).read("locks/acme-db")
+
+    assert stored is not None
+    assert stored.data == RECORD
+
+
+def test_a_created_secret_that_stays_unreadable_is_refused_after_three_reads(
+    fake: FakeOci,
+) -> None:
+    """Bounded: no loop of ListSecrets and reads against a throttling OCI."""
+    secret = fake.put("sopuli-locks.acme-db", {}, lifecycle_state="CREATING")
+    secret.busy = 1
+    fake.unreadable.add("sopuli-locks.acme-db")
+
+    with pytest.raises(OciAuthError, match="may not read its content"):
+        store(fake).read("locks/acme-db")
+
+    assert fake.calls.count("get_secret_bundle_by_name") == 3
+
+
+def test_a_character_outside_the_bmp_counts_twice(fake: FakeOci) -> None:
+    """Only ASCII and two-byte text were measured; count on the safe side."""
+    oci_store = store(fake)
+
+    with pytest.raises(StoreError, match="metadata would be"):
+        oci_store.write("locks/acme-db", {"note": "\U0001f512" * 2600}, cas=0)
 
 
 def test_the_record_is_counted_as_it_is_not_escaped_again(fake: FakeOci) -> None:

@@ -3465,8 +3465,8 @@ the register.
 
 ## #1133
 
-- **Decided:** 2026-10-28, on #1128 (decision 8)
-- **Question:** OCI keeps a secret busy for about 20 seconds after every write,
+- **Decided:** 2026-10-28, #1133
+- **Question:** Decision 8 on #1128. OCI keeps a secret busy for about 20 seconds after every write,
   refuses another write meanwhile with `409 IncorrectState`, and answers a read
   meanwhile with the old content (#1136, #1151). Does the store wait, and what
   does the operator see while it does?

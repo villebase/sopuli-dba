@@ -1780,6 +1780,14 @@ because its failed logins are counted in the root. An application-common
 account in an application container is refused too, because where its
 verifiers are held was not measured. Its refusal offers only `login`.
 
+Two more cases are refused, because the tool cannot tell where the account's
+verifiers are. These are the same rules as the lockout guard's (#1122). The
+first is a `C##` account where the session's container could not be read. The
+session may be in `CDB$ROOT`, and the refusal says to run `sopuli doctor`. The
+second is an account whose `DBA_USERS.COMMON` could not be read, even if the
+account is local. Either refusal is made at plan time, so `creds check
+--method hash` exits 5 and checks no account. `--method login` checks them.
+
 **`--method both` compares first** (decided in #437). A mismatch is reported as
 drift from the comparison alone, and no login is attempted, because spending
 lockout budget on a value already shown to be wrong gains nothing. Only a value

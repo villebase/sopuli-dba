@@ -517,8 +517,10 @@ the account name and nothing else, and compares in
 `src/sopuli/driver/oracle/verifier.py`. It refuses, and names the target, when:
 
 - the session cannot read `SYS.USER$` (`offline_verify`);
-- the account is common and the target is not `CDB$ROOT`, so the row read
-  holds a placeholder, not its verifiers (`verifier_container`, §2);
+- the row read cannot be shown to hold the account's verifiers: the account
+  is common and the target is not `CDB$ROOT`, so the row holds a placeholder,
+  or the container or the account's `COMMON` column could not be read
+  (`verifier_container`, §2);
 - the account has no `12C` verifier (`verifier_12c`);
 - a `T:` or `t:` token is not the measured 160 hex characters
   (`verifier_12c_format`);

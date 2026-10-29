@@ -3598,9 +3598,11 @@ the register.
   Measured by `18_common_spare4_probe.sql` on 23.26.3.0.0, 21.3.0.0.0 and
   18.4.0.0.0. What should hash mode do for such an account?
 - **Decision:** Refuse it at plan time, exit 5, with its own capability name,
-  `verifier_container`, and a hint that names the container. Where the
-  verifiers may be in `CDB$ROOT`, the hint offers a target that connects there
-  first. It always offers `login`, and says that `login` has no lockout guard
+  `verifier_container`, and a hint that names the container. For a common
+  account in a PDB, the hint offers a target that connects to `CDB$ROOT`
+  first. Where the container was not resolved, it offers `sopuli doctor`
+  instead, because a root target through the same account would not resolve
+  either. It always offers `login`, and says that `login` has no lockout guard
   for this account. Whether the account is common, and whether the container
   holds its row, is decided as for the `LCOUNT` guard (#1122):
   `DBA_USERS.COMMON` in a PDB, the `C##` prefix in an `unknown` scope, a

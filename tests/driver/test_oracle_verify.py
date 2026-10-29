@@ -718,7 +718,6 @@ def test_the_plan_time_check_makes_the_same_refusal(
 
 
 UNGUARDED_LOGIN = "verify by `login`, which has no lockout guard for this account here"
-IN_ROOT_REMEDY = f"check the account on a target that connects to CDB$ROOT, or {UNGUARDED_LOGIN}"
 
 
 @pytest.mark.parametrize(
@@ -766,7 +765,10 @@ def test_hash_refuses_a_common_name_where_the_container_is_unresolved(
     session_module: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unresolved scope is not assumed to be the root, and the `C##` prefix
-    decides, because the dictionary there may have no `COMMON` column."""
+    decides, because the dictionary there may have no `COMMON` column. The
+    remedy is `doctor`, not a root target: the container went unread on this
+    connection, and a root target through the same account would not resolve
+    either."""
     offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type="unknown")
     asked = _stub_account(session_module, offline, monkeypatch)
 
@@ -776,7 +778,8 @@ def test_hash_refuses_a_common_name_where_the_container_is_unresolved(
     assert refused.value.capability == session_module.VERIFIER_CONTAINER
     assert refused.value.hint == (
         f"{COMMON_ACCOUNT} is a common account, and this session's container was "
-        f"not resolved, so its verifiers may be held in CDB$ROOT; {IN_ROOT_REMEDY}"
+        "not resolved, so its verifiers may be held in CDB$ROOT; run `sopuli doctor` "
+        f"to see why the container was not read, or {UNGUARDED_LOGIN}"
     )
     assert asked.common == []
 

@@ -181,12 +181,14 @@ _UNREAD = "unread"
 _APPLICATION = "application"
 _COMMON_IN_PDB = "common_in_pdb"
 
-#: Each answer worded for the lockout guard, for the verifiers, and the remedy
-#: a ``hash`` refusal offers. Keyed by the answer, so an answer with no wording
-#: is a ``KeyError`` rather than another answer's wording. ``CDB$ROOT`` is
-#: offered only where the verifiers may be there. ``login`` is offered last and
-#: says it is unguarded, because the account's failed logins are counted where
-#: this session cannot read them (#1122).
+#: Each answer worded for the lockout guard, and for the verifiers with the
+#: remedy a ``hash`` refusal offers. Keyed by the answer, so an answer with no
+#: wording is a ``KeyError`` rather than another answer's wording. A target on
+#: ``CDB$ROOT`` is offered only where the verifiers are known to be there; an
+#: unresolved container is the connection's, and a root target through the same
+#: account would not resolve either. ``login`` is offered last and says it is
+#: unguarded, because the account's failed logins are counted where this
+#: session cannot read them (#1122).
 _GUARD_GAP = {
     _UNRESOLVED: (
         "{name} is a common account, and this session's container was not "
@@ -205,31 +207,28 @@ _GUARD_GAP = {
         "CDB$ROOT, which this session cannot read"
     ),
 }
+_UNGUARDED_LOGIN = "verify by `login`, which has no lockout guard for this account here"
 _VERIFIER_GAP = {
     _UNRESOLVED: (
         "{name} is a common account, and this session's container was not "
-        "resolved, so its verifiers may be held in CDB$ROOT"
+        "resolved, so its verifiers may be held in CDB$ROOT",
+        f"run `sopuli doctor` to see why the container was not read, or {_UNGUARDED_LOGIN}",
     ),
     _UNREAD: (
         "whether {name} is a common account could not be read from DBA_USERS, "
-        "so its verifiers may be held in CDB$ROOT"
+        "so its verifiers may be held in CDB$ROOT",
+        _UNGUARDED_LOGIN,
     ),
     _APPLICATION: (
         "{name} is a common account, and where an application container "
-        "holds its verifiers has not been measured"
+        "holds its verifiers has not been measured",
+        _UNGUARDED_LOGIN,
     ),
     _COMMON_IN_PDB: (
         "{name} is a common account, and its verifiers are held in CDB$ROOT; "
-        "this container holds a blank placeholder in their place"
+        "this container holds a blank placeholder in their place",
+        f"check the account on a target that connects to CDB$ROOT, or {_UNGUARDED_LOGIN}",
     ),
-}
-_UNGUARDED_LOGIN = "verify by `login`, which has no lockout guard for this account here"
-_IN_ROOT_REMEDY = f"check the account on a target that connects to CDB$ROOT, or {_UNGUARDED_LOGIN}"
-_VERIFIER_REMEDY = {
-    _UNRESOLVED: _IN_ROOT_REMEDY,
-    _UNREAD: _UNGUARDED_LOGIN,
-    _APPLICATION: _UNGUARDED_LOGIN,
-    _COMMON_IN_PDB: _IN_ROOT_REMEDY,
 }
 
 #: What a ``hash`` comparison reports, by which verifier the password reproduced.
@@ -1280,7 +1279,8 @@ class OracleSession:
         held = self._held_elsewhere(cursor, name)
         if held is None:
             return None
-        return _VERIFIER_GAP[held].format(name=name), _VERIFIER_REMEDY[held]
+        reason, remedy = _VERIFIER_GAP[held]
+        return reason.format(name=name), remedy
 
     def _held_elsewhere(self, cursor: Cursor, name: str) -> str | None:
         """Whether ``name``'s own ``SYS.USER$`` row may be in another container.

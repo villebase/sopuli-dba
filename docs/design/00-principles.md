@@ -284,7 +284,8 @@ NativeStaging                               # a store whose supports() has stagi
 adds a generation that is current at once, and the old current becomes
 previous; a pending and the attributes are left alone. `stage` adds a pending,
 and a pending already there loses the stage; on a path with no current it is
-refused, because whether OCI can hold a pending-only secret was not measured.
+refused, because OCI refuses to create a secret whose only version is pending
+(`oci-create-pending`).
 `promote` makes a pending or previous generation current and moves the old
 current to previous; a deprecated generation is refused, although OCI would
 promote one. Both replace the secret's attributes whole, as OCI replaces its
@@ -302,7 +303,12 @@ that returned only "ok" would leave the lock nothing to fence with.
 
 **`metadata` reads what a store knows about a path apart from its contents.**
 Pre-flight uses it to check that a lock path does not accept writes without a
-compare-and-set. The tool does not claim a guarantee it cannot check.
+compare-and-set. The tool does not claim a guarantee it cannot check. OCI has
+no such setting: its `metadata` answers nothing, and its `require_cas` refuses,
+so every run that takes a lock on an OCI store reports `SOPULI-W019` and goes
+ahead. Only the IAM policy keeps other writers off an OCI secret
+(`01-configuration.md` §7). The tool's own writes still carry a
+compare-and-set, the write counter and the ETag.
 
 **`list` has these properties.** A backend's own listing endpoint gives none of
 them directly, and without them two adapters would disagree:

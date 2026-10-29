@@ -37,6 +37,7 @@ from collections.abc import Mapping, Sequence
 
 from sopuli.config.applications import ACCOUNT_TOKEN
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
+from sopuli.config.expansion import declared_at
 from sopuli.config.model import (
     Application,
     Binding,
@@ -593,7 +594,29 @@ def check_for_store(secret: SecretRef, store_type: str, *, at: KeyPath) -> None:
         stage_layout(secret, at=at)
 
 
-def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
+def check_admin_refs(config: Config) -> None:
+    """An ``admin.auth.secret`` ref on an OCI store the file names is an OCI name.
+
+    The store is the admin ref's chain as far as the file goes: the ref's
+    prefix, the target's ``vault:``, ``defaults.vault``
+    (:func:`sopuli.admin.store_name`). A store that only a profile or
+    ``SOPULI_VAULT`` supplies is checked where the run resolves it, before
+    it is opened (#1145).
+    """
+    types = {vault.name: vault.type for vault in config.vaults}
+    for expanded in config.expanded_targets:
+        admin = expanded.target.admin
+        ref = None if admin is None or admin.auth is None else admin.auth.secret
+        if ref is None:
+            continue
+        name = ref.vault or expanded.target.vault or config.defaults.vault
+        if name is not None and types.get(name) == "oci":
+            check_oci_name(
+                ref, at=declared_at(expanded, "admin").key("auth").key("secret"), read_only=True
+            )
+
+
+def check_oci_name(secret: SecretRef, *, at: KeyPath, read_only: bool = False) -> None:
     """A ref on an OCI store names one OCI secret, exactly (#1137).
 
     ESO finds an OCI secret by name, so the name must be the one the operator
@@ -602,6 +625,10 @@ def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
     letters, digits, ``-``, ``_`` and ``.`` in any position, at most 255
     characters, case-sensitive. A ref may give at most :data:`OCI_REF_MAX`,
     which leaves room for its lock record's name.
+
+    ``read_only`` is for a ref the tool only reads, such as
+    ``admin.auth.secret`` (#1145). Nothing locks it, so it may use all of
+    OCI's :data:`OCI_NAME_MAX`.
     """
     name = secret.path
     if OCI_NAME.fullmatch(name) is None:
@@ -613,14 +640,19 @@ def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
                 "with no `/`; write the name the secret has in the vault"
             ),
         )
-    if len(name) > OCI_REF_MAX:
+    limit = OCI_NAME_MAX if read_only else OCI_REF_MAX
+    if len(name) > limit:
         raise ConfigError(
-            f"the OCI secret name in {secret} is {len(name)} characters, longer than {OCI_REF_MAX}",
+            f"the OCI secret name in {secret} is {len(name)} characters, longer than {limit}",
             at=at,
             hint=(
-                f"OCI refuses a name longer than {OCI_NAME_MAX} characters, and the "
-                f"secret's lock record is named {OCI_RESERVED_PREFIX}<name>, so a ref "
-                f"may give at most {OCI_REF_MAX}"
+                f"OCI refuses a name longer than {OCI_NAME_MAX} characters"
+                if read_only
+                else (
+                    f"OCI refuses a name longer than {OCI_NAME_MAX} characters, and the "
+                    f"secret's lock record is named {OCI_RESERVED_PREFIX}<name>, so a ref "
+                    f"may give at most {OCI_REF_MAX}"
+                )
             ),
         )
     if name.startswith(OCI_RESERVED_PREFIX):

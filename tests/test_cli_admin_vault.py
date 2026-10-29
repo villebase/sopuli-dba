@@ -38,6 +38,7 @@ from click.testing import CliRunner, Result
 
 from sopuli.admin import store_name
 from sopuli.cli import cli
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import load_layers
 from sopuli.config.model import Config
 from sopuli.config.secret_refs import parse_secret_ref
@@ -379,6 +380,89 @@ def test_nothing_says_which_store(
     assert entry["reachable"] is False
     assert "nothing says which one" in entry["error"]["message"]
     assert harness["opened"] == []
+
+
+def _oci_admin(secret: str, *, target_vault: bool = True) -> str:
+    """A target whose admin ref is on an OCI store: named by the target's
+    `vault:`, or with ``target_vault=False`` supplied by the profile `oci`."""
+    return (
+        VAULTS
+        + """  vault-oci:
+    type: oci
+    vault_id: ocid1.vault.oc1..exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id: ocid1.key.oc1..exampleuniqueid
+profiles:
+  oci:
+    vault: vault-oci
+targets:
+  - name: orders-pdb
+    type: oracle
+    dsn: "db.example.com:1521/orders"
+"""
+        + ("    vault: vault-oci\n" if target_vault else "")
+        + """    admin:
+      username: C##SOPULI_SVC
+"""
+        + f'      auth: {{ method: vault, secret: "{secret}" }}\n'
+    )
+
+
+def test_an_admin_ref_on_an_oci_store_the_file_names_is_refused_at_load(
+    runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
+) -> None:
+    """#1145: as a binding's ref is, when the file itself names the store."""
+    harness = estate()
+    config = write_config(_oci_admin("ops/dba#password"))
+
+    result = runner.invoke(cli, ["--config", str(config), "config", "validate"])
+
+    assert isinstance(result.exception, ConfigError)
+    assert "is not an OCI secret name" in str(result.exception)
+    assert str(result.exception.at) == "targets[0].admin.auth.secret"
+    assert harness["opened"] == []
+
+
+def test_an_admin_ref_on_an_oci_store_a_profile_supplies_is_refused_before_opening(
+    runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
+) -> None:
+    """The file cannot know the store, so the run checks it where it resolves it."""
+    harness = estate()
+    config = write_config(_oci_admin("ops/dba#password", target_vault=False))
+
+    result = _doctor(runner, config, "--profile", "oci", "--output", "json")
+    entry = json.loads(result.output)["targets"][0]
+
+    assert entry["reachable"] is False
+    assert "is not an OCI secret name" in entry["error"]["message"]
+    assert harness["opened"] == []
+
+
+def test_an_admin_ref_may_use_the_whole_oci_name_length(
+    runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
+) -> None:
+    """Only read, never locked, so the 242 limit for a rotated ref does not apply."""
+    name = "a" * 255
+    harness = estate()
+    harness["store"].write(name, {"password": STORED}, cas=0)
+    config = write_config(_oci_admin(f"{name}#password"))
+
+    result = _doctor(runner, config, "--output", "json")
+    entry = json.loads(result.output)["targets"][0]
+
+    assert entry["reachable"] is True
+    assert harness["opened"] == ["vault-oci"]
+
+
+def test_an_admin_ref_one_longer_than_oci_allows_is_refused(
+    runner: CliRunner, write_config: WriteConfig
+) -> None:
+    config = write_config(_oci_admin(f"{'a' * 256}#password"))
+
+    result = runner.invoke(cli, ["--config", str(config), "config", "validate"])
+
+    assert isinstance(result.exception, ConfigError)
+    assert "256 characters, longer than 255" in str(result.exception)
 
 
 def test_an_empty_path_says_the_store_answered(

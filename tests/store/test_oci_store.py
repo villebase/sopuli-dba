@@ -11,11 +11,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import oci
-import pytest
 
 from sopuli.config.model import Vault
 from sopuli.store.oci import OciStore
-from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE, SecretStore, StoreError
+from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE, SecretStore
 
 VAULT_ID = "ocid1.vault.oc1..exampleuniqueid"
 DATE = "Thu, 29 Oct 2026 10:15:30 GMT"
@@ -56,7 +55,12 @@ def ticking() -> Iterator[datetime]:
 def store(reply: Any) -> tuple[OciStore, FakeKms]:
     kms = FakeKms(reply)
     clock = ticking()
-    entry = Vault(name="vault-oci", type="oci", vault_id=VAULT_ID)
+    entry = Vault(
+        name="vault-oci",
+        type="oci",
+        vault_id=VAULT_ID,
+        compartment_id="ocid1.compartment.oc1..exampleuniqueid",
+    )
     return OciStore(entry, vaults=None, secrets=None, kms=kms, now=lambda: next(clock)), kms
 
 
@@ -122,19 +126,6 @@ def test_no_answer_is_unreachable() -> None:
     assert health.status == UNREACHABLE
     assert health.detail is not None
     assert "connection refused" in health.detail
-
-
-def test_reading_is_refused_until_it_is_built() -> None:
-    """Never an empty answer, which would read as "no secret here"."""
-    oci_store, _ = store(vault_reply())
-
-    with pytest.raises(StoreError, match="not built"):
-        oci_store.read("acme-db")
-    with pytest.raises(StoreError, match="not built"):
-        oci_store.list("")
-    with pytest.raises(StoreError, match="not built"):
-        oci_store.metadata("locks/acme-db")
-    assert oci_store.supports() == frozenset()
 
 
 def test_a_reply_without_a_request_id_did_not_come_from_oci() -> None:

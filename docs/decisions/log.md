@@ -3462,3 +3462,100 @@ the register.
     delivery design for OCI.
   - Refuse every secret the tool did not create. It rules out estates where
     Terraform or ESO creates the secret and the tool rotates it.
+
+## #1133
+
+- **Decided:** 2026-10-28, #1133
+- **Question:** Decision 8 on #1128. OCI keeps a secret busy for about 20 seconds after every write,
+  refuses another write meanwhile with `409 IncorrectState`, and answers a read
+  meanwhile with the old content (#1136, #1151). Does the store wait, and what
+  does the operator see while it does?
+- **Decision:** Each OCI write waits until the secret is `ACTIVE` again before
+  it returns, polling every 2 seconds, bounded by the store's `timeout_s`
+  (120 seconds when it is not set). The wait runs under the existing spinner,
+  naming the secret. The spinner is the terminal's only: JSON output, a stream
+  that is not a terminal, and `--debug` are unchanged. The store layer writes
+  to no stream, so the CLI hands it the spinner for the length of a verb
+  (`sopuli/store/waiting.py`), and outside a verb the wait shows nothing. If
+  the wait gives up, the error says the write was made.
+- **Why:** Without the wait, a `check` straight after `apply` reads the old
+  password and reports a mismatch, and the next write to the same secret fails.
+  Twenty silent seconds per write look like a hang. Handing the store a notice
+  keeps the rule that the store layer neither prints nor imports the output
+  layer.
+- **Rejected:**
+  - Wait only before the next write to the same secret. A read straight after
+    the write would still see the old content.
+  - Pass the emitter to every store. Each backend would then depend on the
+    output layer, and the HashiCorp backend has nothing to wait for.
+  - A separate setting for the wait. `timeout_s` already bounds how long the
+    run may stall on this store, and the lock is held throughout either way.
+
+## #1152
+
+- **Decided:** 2026-10-28, #1152
+- **Question:** Decision 5 on #1128. Every mutated path gets a lock record,
+  written at least twice a run. An OCI secret holds at most 30 versions, and
+  OCI removes none by itself (#1136). Where does an OCI store keep the record?
+  And OCI has nothing like HashiCorp's `cas_required`: what does the lock's
+  pre-flight say about other writers on an OCI store?
+- **Decision:** In the lock secret's metadata, under `sopuli_record`, as a
+  JSON string. The lock secret is `sopuli-locks.<name>`, created by the tool
+  with `{}` as its content, and its content never changes. A metadata-only
+  update adds no version and changes the ETag (#1136, M3 and M7b), so the
+  compare-and-set still guards it. The whole metadata map is limited to about
+  5,100 characters (#1151, M12), and a lock record is well under 1,000. A lock
+  secret whose record cannot be read is still a lock, so `lock break` can
+  clear it. On the second question, decided by the maintainer on 2026-10-29
+  in the review of #1156: OCI's `require_cas` refuses, so every run that takes
+  a lock on an OCI store reports `SOPULI-W019` for each lock path, and goes
+  ahead.
+- **Why:** A record in the content would add a version per write and fill a
+  lock secret after about 15 runs. The metadata holds it without ever reaching
+  that limit, and the store needs nothing to clean up. P2 says the tool does
+  not claim a guarantee it cannot check, and on OCI only IAM keeps other
+  writers off a secret.
+- **Rejected:**
+  - The record in the content, deleting old DEPRECATED lock versions as the
+    limit nears. It works, but it deletes on every few runs, and each deletion
+    keeps the secret busy for about 20 seconds (#1151, M11).
+  - One lock secret for the whole store. Two runs on different secrets would
+    contend for it, and P5's locks are per path.
+  - No warning, with IAM described in the docs. Quieter, but an exception to
+    P2's rule that a run says when a guarantee is missing.
+  - Requiring `locking: advisory-only` on an OCI store. The tool's own writes
+    are fenced, so it would understate what OCI gives, and add a key to every
+    OCI config.
+
+## #1153
+
+- **Decided:** 2026-10-28, #1153
+- **Question:** Decision 7 on #1128. An OCI secret holds at most 30 versions,
+  OCI removes none by itself, and the content update that would make a 31st is
+  refused with `400 LimitExceeded` (#1136, M7). An application secret gains a
+  version at each rotation, so it would stop rotating after about 30. What does
+  the tool do at the limit?
+- **Decision:** When OCI refuses a write or a stage as over the limit, the
+  tool schedules the deletion of the secret's oldest DEPRECATED version, two
+  days ahead, and sends the write again. A version scheduled for deletion stops
+  counting at once (M7c), so the write fits. A write that fails for any other
+  reason deletes nothing. CURRENT, PENDING and PREVIOUS are never touched. A
+  full secret with no DEPRECATED version is refused. The store records each
+  deletion, and exposes how full a secret is, so the plan, `--dry-run` and the
+  run can say so (#1134).
+- **Why:** A rotation must not stop working after about 30 runs, and a
+  DEPRECATED version is one no stage, rollback or reader can reach. The tool
+  deletes nothing else, and never a whole secret.
+- **Rejected:**
+  - Refusing at the limit and leaving the clean-up to the operator. Every
+    application secret would need hand care twice a year at a monthly rotation.
+  - Deleting every DEPRECATED version at once. It keeps the secret busy longer
+    and removes history nobody asked to lose; one at a time is enough.
+  - Making room before every write that would fill the secret. Found in the
+    review of #1157: a write that then failed, on the size check or a lost
+    compare-and-set, would have deleted history for nothing, and every write
+    would have listed the secret's versions first.
+  - A deletion delay of exactly a day, OCI's documented shortest. OCI checks it
+    against its own clock, so a host clock running behind would make every
+    deletion refused. The probe's day and an hour worked; two days leaves
+    margin and costs nothing.

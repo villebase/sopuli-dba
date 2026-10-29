@@ -602,6 +602,16 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             _vault_setting("tls.client_cert", type=str),
             _vault_setting("tls.client_key", type=str),
             _vault_setting("tls.server_name", type=str),
+            # An OCI store's identity (#1130): which vault, compartment, key and
+            # region. The declaration is the only layer, because a profile that
+            # changed one would name a second store, as `type` does. Registered
+            # so that `config show` reports where each came from (#1145).
+            *(
+                _setting(
+                    f"vaults.*.{key}", type=str, layers=(Layer.OBJECT,), policy=MergePolicy.OVERRIDE
+                )
+                for key in ("vault_id", "compartment_id", "key_id", "region")
+            ),
             _setting(
                 # The one vault key invariant 10 governs, and the reason the
                 # merge goes through this resolver at all. Certificate

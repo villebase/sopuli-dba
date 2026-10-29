@@ -358,9 +358,8 @@ class MemoryStore:
         self._require_staging(path)
         entry = self._guarded(path, cas)
         if CURRENT_STAGE not in entry.stages:
-            # Not measured: whether OCI can create a secret whose only version
-            # is PENDING. Where the answer is unknown the store refuses rather
-            # than guesses, and a caller writes the first generation instead.
+            # OCI refuses to create a secret whose only version is PENDING
+            # (`oci-create-pending`), so a caller writes the first generation.
             raise StoreError(
                 f"{path!r} has no CURRENT generation to stage a PENDING beside",
                 hint="write the first generation, which is CURRENT, then stage",

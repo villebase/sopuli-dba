@@ -207,7 +207,8 @@ class LockManager:
         until somebody set it by hand. So the guarantee is arranged here, with
         :meth:`~sopuli.store.protocol.SecretStore.require_cas`, and the refusal
         above is left for the case it is about: a path somebody else configured
-        without one.
+        without one. An OCI store has no such metadata on any path, so it is
+        asked every run, and refuses every run (#1152).
 
         **Where the store will not let it, the run goes ahead and says so**
         (:data:`~sopuli.diagnostics.LOCK_PATH_UNGUARDED`). Setting metadata is a
@@ -271,10 +272,11 @@ class LockManager:
     def _require_cas(self, entry: LockableStore, key: LockKey) -> None:
         """Arrange the guarantee on a path that has never been locked.
 
-        Called only where :meth:`preflight` found no metadata, which on a store
-        that can fence means the path is new: this run is about to create it, and
-        the metadata it creates it with is the one every later run will be
-        judged against.
+        Called only where :meth:`preflight` found no metadata. On HashiCorp that
+        means the path is new: this run is about to create it, and the metadata
+        it creates it with is the one every later run will be judged against. On
+        OCI it is every path on every run, and the store refuses, because it has
+        no setting to arrange; the refusal becomes ``SOPULI-W019`` (#1152).
 
         A refusal is recorded rather than raised, and only that one -- anything
         else is a store failing at a write it accepted the shape of, which is not

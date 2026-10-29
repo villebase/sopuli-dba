@@ -103,6 +103,7 @@ from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
 from sopuli.store.protocol import StoreError
+from sopuli.store.waiting import showing
 from sopuli.version import get_version
 
 if TYPE_CHECKING:  # a type only -- importing the registry here would widen the
@@ -1037,7 +1038,11 @@ def _pass_invocation(func: F) -> F:
             invocation = replace(invocation, prompt=terminal_prompter(sys.stdin))
             _debug_settings(invocation)
             kwargs[INVOCATION_PARAM] = invocation
-            text = ctx.invoke(func, **kwargs)
+            # A store that has to wait, as an OCI write does for about 20
+            # seconds, shows it under this run's spinner (decision 8). The
+            # emitter decides whether a spinner may be drawn at all.
+            with showing(invocation.emitter().spinner):
+                text = ctx.invoke(func, **kwargs)
         except click.Abort as exc:
             # click would print "Aborted!" and exit 1. P5 puts "aborted by user /
             # confirmation declined" on 8, and an abort raised from inside a verb

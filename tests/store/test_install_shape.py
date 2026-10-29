@@ -26,7 +26,8 @@ import sys
 from pathlib import Path
 
 #: The clients the extras install, as ADR-006 names them: ``httpx``, the OCI SDK,
-#: ``python-oracledb`` and ``pysequoia``. Kept here as a literal rather than
+#: ``python-oracledb`` and ``pysequoia``. TODO(#1168): ``psycopg`` too, once the
+#: walk can block it. Kept here as a literal rather than
 #: derived from ``BACKENDS`` on purpose: this test is the check *on* that table,
 #: and a check that reads its expectation out of the thing it is checking would
 #: pass an empty table.

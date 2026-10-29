@@ -16,10 +16,10 @@ has to be installed either way.
 shares with :mod:`sopuli.store.registry` and :mod:`sopuli.notify.registry` --
 looking a module up without importing it, and the three-way reading of a
 ``ModuleNotFoundError``. What stays here is the noun and the wording: a store is
-named by ``vaults:`` and a driver by a target's ``type:``, and a message that
-tried to serve both would name neither. The
-subtlety is shared because it is subtle; the sentences are not shared because
-they are not the same sentence.
+named by ``vaults:``, a driver by a target's ``type:`` and a channel by
+``notify.method``, and a message that tried to serve all three would name none
+of them. The subtlety is shared because it is subtle; the sentences are not
+shared because they are not the same sentence.
 
 **Not a plugin system** (D6). The mapping below is a literal, in-tree dict.
 Extras control which dependencies are installed, not which modules exist, so

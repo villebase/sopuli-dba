@@ -108,6 +108,9 @@ CHURN_RETRIES = 3
 #: a poll, in case the read lags behind the state (``oci-read-while-creating``).
 READ_ATTEMPTS = 3
 
+#: Seconds to wait before each retry of a read OCI throttled (``429``).
+THROTTLE_WAITS = (2.0, 4.0, 8.0)
+
 #: The errors a request raises when no answer came back at all.
 NO_ANSWER = (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout)
 
@@ -278,8 +281,11 @@ class OciStore:
         page = None
         while True:
             try:
-                response = self._vaults.list_secrets(
-                    self._compartment_id, vault_id=self._vault_id, page=page
+                response = self._read(
+                    self._vaults.list_secrets,
+                    self._compartment_id,
+                    vault_id=self._vault_id,
+                    page=page,
                 )
             except oci.exceptions.ServiceError as exc:
                 _errors.raise_for(exc, what=f'the secrets of vault "{self._name}"')
@@ -418,7 +424,7 @@ class OciStore:
         """
         _, what, live = self._native(path, attributes, cas=cas, doing="promote")
         try:
-            version = self._vaults.get_secret_version(live.id, generation).data
+            version = self._read(self._vaults.get_secret_version, live.id, generation).data
         except oci.exceptions.ServiceError as exc:
             if exc.status != 404 or not exc.request_id:
                 _errors.raise_for(exc, what=what)
@@ -484,7 +490,7 @@ class OciStore:
         page = None
         while True:
             try:
-                response = self._vaults.list_secret_versions(secret_id, page=page)
+                response = self._read(self._vaults.list_secret_versions, secret_id, page=page)
             except oci.exceptions.ServiceError as exc:
                 _errors.raise_for(exc, what=what)
             except NO_ANSWER as exc:
@@ -794,6 +800,26 @@ class OciStore:
                 self._sleep(POLL_S if response is not None else 2 * POLL_S)
                 response = None
 
+    def _read(self, call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """``call(*args, **kwargs)``, an SDK call that only reads, retried when
+        OCI throttles it.
+
+        OCI answers ``429 TooManyRequests`` when a principal polls or lists
+        too fast; real runs met it on ``GetSecret`` and ``ListSecretVersions``
+        (#1133, #1153). A read changes nothing, so it is tried again after
+        :data:`THROTTLE_WAITS`, and the last ``429`` goes to the caller.
+        Writes are not retried here: a refused write changed nothing either,
+        but each carries its own compare-and-set reasoning.
+        """
+        for wait in (*THROTTLE_WAITS, None):
+            try:
+                return call(*args, **kwargs)
+            except oci.exceptions.ServiceError as exc:
+                if exc.status != 429 or not exc.request_id or wait is None:
+                    raise
+                self._sleep(wait)
+        raise AssertionError("unreachable")  # pragma: no cover
+
     def _get(
         self,
         secret_id: str,
@@ -805,12 +831,16 @@ class OciStore:
     ) -> Any:
         """One ``GetSecret``.
 
-        ``None`` for a throttled answer (``429``) when ``throttled_ok``, and
-        for a 404 when ``missing_ok``. Any other failure raises, saying first
-        that the write was made when ``made`` says so.
+        ``None`` for a throttled answer (``429``) when ``throttled_ok``, which
+        is the wait's own back-off, and for a 404 when ``missing_ok``.
+        Otherwise a throttled answer is retried by :meth:`_read`. Any other
+        failure raises, saying first that the write was made when ``made``
+        says so.
         """
         try:
-            return self._vaults.get_secret(secret_id)
+            if throttled_ok:
+                return self._vaults.get_secret(secret_id)
+            return self._read(self._vaults.get_secret, secret_id)
         except oci.exceptions.ServiceError as exc:
             if exc.request_id and (
                 (throttled_ok and exc.status == 429) or (missing_ok and exc.status == 404)
@@ -830,8 +860,11 @@ class OciStore:
         attempt = 0
         while True:
             try:
-                bundle = self._secrets.get_secret_bundle_by_name(
-                    secret_name=name, vault_id=self._vault_id, **which
+                bundle = self._read(
+                    self._secrets.get_secret_bundle_by_name,
+                    secret_name=name,
+                    vault_id=self._vault_id,
+                    **which,
                 ).data
                 break
             except oci.exceptions.ServiceError as exc:
@@ -907,8 +940,11 @@ class OciStore:
                 return True
         if which.get("stage") != CURRENT:
             try:
-                self._secrets.get_secret_bundle_by_name(
-                    secret_name=name, vault_id=self._vault_id, stage=CURRENT
+                self._read(
+                    self._secrets.get_secret_bundle_by_name,
+                    secret_name=name,
+                    vault_id=self._vault_id,
+                    stage=CURRENT,
                 )
                 return False
             except oci.exceptions.ServiceError as again:
@@ -924,8 +960,8 @@ class OciStore:
         included. Names are unique in a vault, so there is one at most, unless
         an old one is still on its way out."""
         try:
-            response = self._vaults.list_secrets(
-                self._compartment_id, vault_id=self._vault_id, name=name
+            response = self._read(
+                self._vaults.list_secrets, self._compartment_id, vault_id=self._vault_id, name=name
             )
         except oci.exceptions.ServiceError as exc:
             _errors.raise_for(exc, what=self._what(name))
@@ -944,7 +980,7 @@ class OciStore:
             return
         what = f'the vault_id of vault "{self._name}"'
         try:
-            self._kms.get_vault(self._vault_id)
+            self._read(self._kms.get_vault, self._vault_id)
         except oci.exceptions.ServiceError as exc:
             _errors.raise_for(exc, what=what, missing=OciVaultError)
         except NO_ANSWER as exc:

@@ -141,6 +141,8 @@ class FakeOci:
         self.before_create: Callable[[str], object] | None = None
         #: Reads by name of an ACTIVE secret still to answer 404.
         self.lagging_reads = 0
+        #: How many more times each call answers ``429 TooManyRequests``.
+        self.throttle: dict[str, int] = {}
         #: Called before each ``GetSecret``, so a test can make one fail.
         self.before_get: Callable[[FakeSecret], object] | None = None
 
@@ -184,6 +186,13 @@ class FakeOci:
         self.secrets[name] = secret
         return secret
 
+    def _note(self, call: str) -> None:
+        """Record a call, and answer 429 if the test throttles it (#1153)."""
+        self.calls.append(call)
+        if self.throttle.get(call):
+            self.throttle[call] -= 1
+            raise refused(429, "TooManyRequests", "User-rate limit exceeded.")
+
     def _by_id(self, secret_id: str) -> FakeSecret:
         for secret in self.secrets.values():
             if secret.id == secret_id:
@@ -215,7 +224,7 @@ class FakeOci:
         stage: str | None = None,
         version_number: int | None = None,
     ) -> Any:
-        self.calls.append("get_secret_bundle_by_name")
+        self._note("get_secret_bundle_by_name")
         secret = self.secrets.get(secret_name)
         if vault_id != self.vault_id or secret is None or secret_name in self.unreadable:
             raise not_found(f"secret {secret_name} not found")
@@ -256,7 +265,7 @@ class FakeOci:
         page: str | None = None,
         name: str | None = None,
     ) -> Any:
-        self.calls.append("list_secrets")
+        self._note("list_secrets")
         everything = (
             sorted(self.secrets.values(), key=lambda one: one.name)
             if compartment_id == COMPARTMENT_ID and vault_id == self.vault_id
@@ -349,7 +358,7 @@ class FakeOci:
         )
 
     def list_secret_versions(self, secret_id: str, page: str | None = None) -> Any:
-        self.calls.append("list_secret_versions")
+        self._note("list_secret_versions")
         everything = self._by_id(secret_id).versions
         start = int(page or 0)
         chunk = everything[start : start + self.page_size]

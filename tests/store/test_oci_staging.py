@@ -33,8 +33,9 @@ from test_memory_staging import (  # noqa: F401 -- collected and run with `store
 
 from sopuli.config.model import Vault
 from sopuli.store.oci import OciStore
+from sopuli.store.oci._errors import OciUnavailableError
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
-from sopuli.store.oci.store import VERSION_LIMIT, Pruned, Room
+from sopuli.store.oci.store import THROTTLE_WAITS, VERSION_LIMIT, Pruned, Room
 from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError, StoreError
 
 
@@ -204,3 +205,41 @@ def test_a_write_while_room_was_made_conflicts(
 
     with pytest.raises(CasConflictError, match="while this run made room"):
         store.write("acme-db", {"password": "new"}, cas=1)
+
+
+# ---------------------------------------------------------- throttling ---
+
+
+def throttled_store(fake: FakeOci, sleeps: list[float]) -> OciStore:
+    entry = Vault(
+        name="vault-oci",
+        type="oci",
+        vault_id=VAULT_ID,
+        compartment_id=COMPARTMENT_ID,
+        key_id=KEY_ID,
+    )
+    return OciStore(
+        entry, vaults=fake, secrets=fake, kms=fake, sleep=sleeps.append, monotonic=lambda: 0.0
+    )
+
+
+def test_a_throttled_read_is_tried_again(fake: FakeOci) -> None:
+    """A real run met `429` on ListSecretVersions while counting versions."""
+    fake.put("acme-db", {"p": 1}, {"p": 2})
+    fake.throttle["list_secret_versions"] = 2
+    sleeps: list[float] = []
+
+    assert throttled_store(fake, sleeps).room("acme-db") == Room(versions=2, oldest_deprecated=None)
+    assert sleeps == list(THROTTLE_WAITS[:2])
+
+
+def test_a_read_throttled_every_time_gives_up(fake: FakeOci) -> None:
+    fake.put("acme-db", {"p": 1})
+    fake.throttle["get_secret_bundle_by_name"] = 99
+    sleeps: list[float] = []
+
+    with pytest.raises(OciUnavailableError, match="429 TooManyRequests"):
+        throttled_store(fake, sleeps).read("acme-db")
+
+    assert sleeps == list(THROTTLE_WAITS)
+    assert fake.calls.count("get_secret_bundle_by_name") == len(THROTTLE_WAITS) + 1

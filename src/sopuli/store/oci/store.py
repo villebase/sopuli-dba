@@ -188,6 +188,9 @@ class OciStore:
         #: The versions a ref in the configuration pins, by OCI name, which
         #: making room must never delete (#1159). Filled by :meth:`protect`.
         self._pinned: dict[str, set[int]] = {}
+        #: The version number each :meth:`write` made CURRENT, by OCI name,
+        #: for :meth:`generation_of` (#1164).
+        self._generations: dict[str, int] = {}
         self._vaults = vaults
         self._secrets = secrets
         self._kms = kms
@@ -310,7 +313,21 @@ class OciStore:
         because OCI will not create a secret without one.
         """
         name = _names.to_oci(path)
+        # A write that raised leaves no number for this one to report.
+        self._generations.pop(name, None)
         return self._write(name, path, data, cas=cas, what=self._what(name), raced=False)
+
+    def mechanism_for(self, path: str) -> str | None:
+        """:class:`~sopuli.store.protocol.WriteMechanism`: a write is the usual
+        whole document, so nothing to add."""
+        return None
+
+    def generation_of(self, path: str) -> int | None:
+        """:class:`~sopuli.store.protocol.WriteMechanism`: the version number
+        the last :meth:`write` to ``path`` made CURRENT, from OCI's own answer
+        once the secret was ACTIVE again, so no further call (#1164). ``None``
+        for a lock record, which adds no version."""
+        return self._generations.pop(_names.to_oci(path), None)
 
     def _write(
         self, name: str, path: str, data: Any, *, cas: int | None, what: str, raced: bool
@@ -332,6 +349,9 @@ class OciStore:
                 if cas is not None or raced:
                     raise
                 return self._write(name, path, data, cas=None, what=what, raced=True)
+            if lock:
+                # Its `{}` is not a credential's version.
+                self._generations.pop(name, None)
             return 1
         token = _token(live.metadata, what=what)
         # `cas: 0` asserts that nothing is there, and a token is never below 1.
@@ -350,6 +370,9 @@ class OciStore:
                 _names.CAS_KEY: str(_token(now.metadata, what=what) + 1),
                 **record,
             },
+            # A new CURRENT, whose number `generation_of` reports; a lock
+            # record moves no version.
+            remember=not lock,
         )
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
@@ -657,7 +680,8 @@ class OciStore:
         except NO_ANSWER as exc:
             raise _errors.unreachable(exc, what=what, maybe_written=True) from exc
         self._ids[name] = created.id
-        self._settle(created.id, name=name, written=True, what=what)
+        settled = self._settle(created.id, name=name, written=True, what=what)
+        self._generations[name] = settled.data.current_version_number
 
     def _taken(self, name: str, exc: Any, *, what: str) -> NoReturn:
         """Say why OCI refused a create for a name that is held.
@@ -699,6 +723,7 @@ class OciStore:
         room_for: str | None,
         content: Mapping[str, Any],
         metadata: Callable[[_Live], dict[str, Any]],
+        remember: bool = False,
     ) -> int:
         """``UpdateSecret`` under ``live``'s ETag, the wait for ACTIVE, and the
         new token.
@@ -777,7 +802,9 @@ class OciStore:
                         "run help",
                     ) from exc
                 current = churned
-        self._settle(live.id, name=live.name, written=True, what=what)
+        settled = self._settle(live.id, name=live.name, written=True, what=what)
+        if remember:
+            self._generations[live.name] = settled.data.current_version_number
         return int(sent[_names.CAS_KEY])
 
     def _room_for(self, current: _Live, *, path: str, guarded: bool, what: str) -> _Live:

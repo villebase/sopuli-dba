@@ -18,7 +18,10 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.config.sharing import SharedSecret, shared_secrets
+from sopuli.config.model import Binding, Vault
+from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.config.sharing import SharedSecret, native_layouts, shared_secrets
+from sopuli.payload import StageLayout
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}, "vault-other": {"type": "hashicorp"}}
 
@@ -294,3 +297,46 @@ def test_a_document_no_store_is_named_for_still_reports() -> None:
     (entry,) = shared_secrets(config.bindings)
     assert entry.vault is None
     assert entry.as_json()["secret"] == {"vault": None, "path": "apps/acme/db"}
+
+
+# ------------------------------------------------- native staging (#1134) ---
+
+STORES = (Vault(name="vault-oci", type="oci"), Vault(name="vault-prod", type="hashicorp"))
+
+
+def bound(account: str, ref: str, vault: str | None = "vault-oci", target: str = "t1") -> Binding:
+    return Binding(account=account, target=target, secret=parse_secret_ref(ref), vault=vault)
+
+
+def test_native_staging_needs_a_staging_store_and_one_credential() -> None:
+    layouts = native_layouts(
+        [
+            bound("acme_web_user", "acme-web#password"),
+            bound("acme_web_user", "acme-web#password", target="t2"),
+            bound("acme_web_user", "acme-db#DB_CREDENTIALS/acme_web_user"),
+            bound("acme_batch_user", "acme-db#DB_CREDENTIALS/acme_batch_user"),
+            bound("acme_web_user", "apps/acme/web#password", vault="vault-prod"),
+        ],
+        STORES,
+    )
+
+    assert layouts == {("vault-oci", "acme-web"): StageLayout("password")}
+
+
+def test_a_ref_with_nowhere_to_stage_is_not_native_and_does_not_refuse() -> None:
+    """Called over bindings a run may have excluded, so it must not raise."""
+    assert native_layouts([bound("acme_web_user", "acme-web#pending")], STORES) == {}
+
+
+def test_a_path_a_storeless_binding_also_names_is_not_native() -> None:
+    """The binding without a store may be in the same document, which would
+    make it shared, so the document keeps payload fields."""
+    layouts = native_layouts(
+        [
+            bound("acme_web_user", "acme-db#DB_CREDENTIALS/acme_web_user"),
+            bound("acme_batch_user", "acme-db#DB_CREDENTIALS/acme_batch_user", vault=None),
+        ],
+        STORES,
+    )
+
+    assert layouts == {}

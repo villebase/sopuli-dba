@@ -59,8 +59,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import Binding, Vault
-from sopuli.config.secret_refs import normalise_path
+from sopuli.config.secret_refs import SecretRef, normalise_path
 from sopuli.config.vaults import STAGING_TYPES
 from sopuli.payload import PENDING, StageLayout, stage_layout
 
@@ -264,18 +265,35 @@ def native_layouts(
     ``bindings`` must be every binding the file declares, not a selection: a
     selector that left out the second account of a shared document would
     otherwise turn it native for one run.
+
+    Doubt keeps payload fields, the layout every store can hold. A path that a
+    binding without a known store also names may be the same document, so it
+    is not native. Nor is a document with a ref that has nowhere to stage: this
+    is called over bindings a run may have excluded, so it must not refuse.
     """
     staging = {vault.name for vault in vaults if vault.type in STAGING_TYPES}
+    storeless = {
+        normalise_path(binding.secret.path)
+        for binding in bindings
+        if binding.secret is not None and binding.vault is None
+    }
     found: dict[tuple[str, str], StageLayout | None] = {}
     for binding in bindings:
         if binding.secret is None or binding.vault is None or binding.vault not in staging:
             continue
         key = (binding.vault, normalise_path(binding.secret.path))
-        layout = None if binding.secret.field is None else stage_layout(binding.secret)
+        layout = None if key[1] in storeless else _layout_or_none(binding.secret)
         if key in found and found[key] != layout:
             layout = None
         found[key] = layout
     return {key: layout for key, layout in found.items() if layout is not None}
+
+
+def _layout_or_none(ref: SecretRef) -> StageLayout | None:
+    try:
+        return stage_layout(ref)
+    except ConfigError:
+        return None
 
 
 @dataclass

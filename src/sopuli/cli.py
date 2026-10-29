@@ -345,9 +345,15 @@ from sopuli.safety import (
 from sopuli.secrets import Secret
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
-from sopuli.store.credentials import StoredSecret, read_secret, resolve, shown_version
+from sopuli.store.credentials import (
+    StoredSecret,
+    read_secret,
+    resolve,
+    shown_version,
+    stage_version,
+)
 from sopuli.store.credentials import apply_patch as write_credential
-from sopuli.store.native_view import PENDING_VERSION, LayoutChangedError
+from sopuli.store.native_view import LayoutChangedError
 from sopuli.store.native_view import wrap as native_staged
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
@@ -6499,7 +6505,7 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     that number is the one to read it back from (#1134).
     """
     return {
-        candidate.binding.account: int(existing.attributes.get(PENDING_VERSION) or existing.version)
+        candidate.binding.account: stage_version(existing, PENDING)
         for candidate in write.candidates
         if _is_staged(existing, candidate.binding.secret)
     }
@@ -7446,7 +7452,7 @@ def _sources(
             else apply_states.source_for(stored.data, binding.secret, stage=stage)
         )
         if source is not None:
-            source = replace(source, version=shown_version(stored))
+            source = replace(source, version=stage_version(stored, source.stage))
         found.append((binding, source))
     return found
 

@@ -34,6 +34,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Protocol, cast
 
 from sopuli.clock import to_rfc3339
@@ -70,6 +71,10 @@ NATIVE = "native_staging"
 #: version with another number is not a pending for any verb: OCI cannot drop
 #: the stage from a version without promoting it (``oci-pending-replace``).
 PENDING_VERSION = "pending_version"
+
+#: Where a read through the adapter names the PREVIOUS version's number. Only
+#: ever read: the store does not keep it, since PREVIOUS is a stage OCI moves.
+PREVIOUS_VERSION = "previous_version"
 
 #: What the tool adds to each version's content besides the password
 #: (decision 3). Not part of the secret's own keys, so neither shown nor
@@ -134,6 +139,18 @@ class _View:
         for stamp in STAMPS:
             found[stamp] = self.attributes.get(stamp)
         return found
+
+    def numbers(self) -> Mapping[str, Any]:
+        """The attributes a read returns: the secret's own, with
+        ``pending_version`` only while that pending is live, and
+        ``previous_version``, so a reader can name the version each stage
+        came from (:func:`~sopuli.store.credentials.stage_version`)."""
+        found = dict(_without(self.attributes, PENDING_VERSION))
+        if self.pending is not None and self.pending.generation is not None:
+            found[PENDING_VERSION] = self.pending.generation
+        if self.previous is not None and self.previous.generation is not None:
+            found[PREVIOUS_VERSION] = self.previous.generation
+        return MappingProxyType(found)
 
     def document(self) -> dict[str, Any]:
         return merge(
@@ -225,9 +242,13 @@ class NativeStagedStore:
         layout = self._native(path)
         if layout is None:
             stored = self.inner.read(path, version=version)
-            if stored is not None and version is None:
+            if stored is None:
+                return None
+            if version is None:
                 self._refuse_a_native_pending(path, stored)
-            return stored
+            # A record left from when the secret was native names no pending
+            # here, so a reader must not take it for one.
+            return replace(stored, attributes=_without(stored.attributes, PENDING_VERSION))
         if version is not None:
             stored = self.inner.read(path, version=version)
             if stored is None:
@@ -239,7 +260,7 @@ class NativeStagedStore:
             self._seen.pop(path, None)
             return None
         self._seen[path] = view
-        return replace(view.current, data=view.document())
+        return replace(view.current, data=view.document(), attributes=view.numbers())
 
     def _view(self, path: str, layout: StageLayout) -> _View | None:
         current = self.inner.read_stage(path, CURRENT)
@@ -284,6 +305,8 @@ class NativeStagedStore:
     # -- writing ------------------------------------------------------------
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
+        # A write that raised after recording leaves nothing for this one.
+        self._written.pop(path, None)
         layout = self._native(path)
         if layout is None:
             return self.inner.write(path, data, cas=cas)
@@ -489,6 +512,10 @@ def _lookup(layouts: Mapping[str, StageLayout]) -> Callable[[str], StageLayout |
         return layouts.get(normalise_path(path))
 
     return native
+
+
+def _without(attributes: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    return MappingProxyType({name: value for name, value in attributes.items() if name != key})
 
 
 def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:

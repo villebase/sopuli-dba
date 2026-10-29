@@ -27,7 +27,7 @@ from sopuli.payload import (
     stage_layout,
 )
 from sopuli.store import MemoryStore
-from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, resolve
+from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, read_secret, resolve
 from sopuli.store.native_view import (
     NATIVE,
     PENDING_VERSION,
@@ -138,6 +138,51 @@ def test_a_pending_that_is_not_the_recorded_one_is_not_a_pending(
 
     assert stored is not None
     assert stored.data == {"password": "a"}
+    assert PENDING_VERSION not in stored.attributes
+
+
+def test_each_stage_is_read_back_under_its_own_version_number(
+    view: NativeStagedStore,
+) -> None:
+    """A pending and a previous are versions of their own, so a run names
+    them by their numbers, the ones `@version=N` pins (#1134)."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, promotion("b", "a"), cas=token(view))
+    apply_patch(view, PATH, stage_patch("c"), cas=token(view))
+
+    pending = read_secret(view, parse_secret_ref(f"{PATH}#password@stage=pending"))
+    previous = read_secret(view, parse_secret_ref(f"{PATH}#password@stage=previous"))
+    current = read_secret(view, parse_secret_ref(f"{PATH}#password"))
+
+    assert pending is not None
+    assert current is not None
+    assert previous is not None
+    assert (pending.version, current.version, previous.version) == (3, 2, 1)
+
+
+def test_a_record_left_from_native_staging_names_no_pending_in_payload_fields(
+    inner: MemoryStore,
+) -> None:
+    """Read in payload fields, a `pending_version` that names no live PENDING
+    version is dropped, so no reader takes it for the pending's number."""
+    inner.write(PATH, {"password": "a"}, cas=0)
+    inner.promote(PATH, 1, attributes={PENDING_VERSION: 9}, cas=1)
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+
+    stored = view.read(PATH)
+
+    assert stored is not None
+    assert PENDING_VERSION not in stored.attributes
+
+
+def test_a_write_clears_a_version_a_failed_one_left(view: NativeStagedStore) -> None:
+    seeded(view)
+    view._written[PATH] = 99
+    with pytest.raises(StoreError):
+        view.write(PATH, {"password": "z"}, cas=12345)
+
+    assert view.generation_of(PATH) is None
 
 
 def test_a_pinned_old_generation_reads_at_token_zero(view: NativeStagedStore) -> None:

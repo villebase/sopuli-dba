@@ -53,6 +53,7 @@ from sopuli.config.bindings import (
 )
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Binding, Config
+from sopuli.config.secret_refs import normalise_path
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
 
 __all__ = ["NoStoreError", "complete", "refuse_unresolved", "unresolved"]
@@ -78,7 +79,13 @@ class _Candidate:
     location: str
 
 
-def complete(config: Config, *, env: Mapping[str, str] = NO_ENV, check_refs: bool = True) -> Config:
+def complete(
+    config: Config,
+    *,
+    estate: Config,
+    env: Mapping[str, str] = NO_ENV,
+    check_refs: bool = True,
+) -> Config:
     """Fill in the store for bindings that reached load without one.
 
     Returns ``config`` itself when there is nothing to fill, so a caller can run
@@ -98,43 +105,97 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV, check_refs: boo
     count bindings a selector left out, as the promotion gate does, passes
     ``False``: the run does not touch those bindings, and refusing it over one
     of them would be refusing over something it excluded.
+
+    ``estate`` is the config before the selectors narrowed it, or ``config``
+    itself where nothing narrowed it. It is required, so that a new caller
+    cannot leave it out. The stage-collision rule runs over the estate (#1141).
+    Two accounts that share a root ``pending`` collide across two runs as well
+    as in one: ``--account acme_web_user`` stages web's password, and a later
+    ``--account acme_api_user`` writes over it before it is promoted. The loader
+    refuses a file that names the store whatever the selection, and this refuses
+    a run that supplies the store the same way. The other ref rules stay on
+    ``config``, because they are about one binding and the run uses only these.
     """
     candidate = _candidate(config, env=env)
-    if candidate is None:
-        return config
-    if not any(_needs_store(binding) for binding in config.bindings):
+    if candidate is None or not any(_needs_store(binding) for binding in config.bindings):
         return config
 
     _refuse_dangling(candidate, config)
-    completed = replace(
+    completed = _filled(config, candidate)
+    if check_refs:
+        _check_completed(candidate, config)
+        _check_estate_stages(candidate, estate, completed)
+    return completed
+
+
+def _filled(config: Config, candidate: _Candidate) -> Config:
+    return replace(
         config,
         bindings=tuple(
             replace(binding, vault=candidate.name) if _needs_store(binding) else binding
             for binding in config.bindings
         ),
     )
-    if check_refs:
-        _check_completed(candidate, config, completed)
-    return completed
 
 
-def _check_completed(candidate: _Candidate, loaded: Config, completed: Config) -> None:
-    """The ref rules the loader could not apply, now that the store is known.
+def _check_completed(candidate: _Candidate, loaded: Config) -> None:
+    """The per-binding ref rules the loader could not apply, now that the store is known.
 
     At load a binding with no store has no backend, so the per-binding rules
     (:func:`sopuli.config.bindings.check_for_store`: an OCI store's name rule,
-    #1137, and the payload rules) and the stage-collision rule could not run on
-    it. They run here, before any command reaches a store, with the functions the
-    loader uses. One difference: an error is located at the binding's application
-    entry, because a binding does not keep the key of an override that supplied
-    its ref. The message quotes the ref, so the override is still findable.
+    #1137, and the payload rules) could not run on it. They run here, before any
+    command reaches a store, with the functions the loader uses. One difference:
+    an error is located at the binding's application entry, because a binding
+    does not keep the key of an override that supplied its ref. The message
+    quotes the ref, so the override is still findable.
     """
     store_type = next(vault.type for vault in loaded.vaults if vault.name == candidate.name)
     where = application_locations(loaded)
     for binding in loaded.bindings:
         if _needs_store(binding) and binding.secret is not None:
             check_for_store(binding.secret, store_type, at=where.get(binding.application, ROOT))
-    check_stages_do_not_collide(completed.bindings, completed, where=where)
+
+
+def _check_estate_stages(candidate: _Candidate, estate: Config, selected: Config) -> None:
+    """The stage-collision rule over the documents this run stages into.
+
+    The loader could not run it on a binding with no store, so it runs here once
+    the run supplies one. Only when a selected binding needs the store: a run
+    that does not use it has not consulted the variable or the profile, and
+    :func:`complete` says why that run is not refused over one.
+
+    **Every binding of the estate in a document a selected binding uses**, so
+    an account the selectors left out is counted where it shares a document with
+    this run. A collision in a document this run does not touch is not refused:
+    this run cannot lose either password there, and the run that does touch it
+    refuses.
+
+    An account left out is given this run's store. A later run may supply that
+    account another store, and nothing here can know that. Giving it this one is
+    the reading that cannot lose a password, and the remedy, a pointer per
+    account, is right under any store.
+
+    The hint says where the store came from, because the file alone does not
+    show the collision.
+    """
+    touched = {
+        (binding.vault, normalise_path(binding.secret.path))
+        for binding in selected.bindings
+        if binding.secret is not None
+    }
+    whole = _filled(estate, candidate)
+    sharing = [
+        binding
+        for binding in whole.bindings
+        if binding.secret is not None
+        and (binding.vault, normalise_path(binding.secret.path)) in touched
+    ]
+    try:
+        check_stages_do_not_collide(sharing, whole, where=application_locations(estate))
+    except ConfigError as error:
+        source = f"the store is {candidate.name!r}, from {candidate.location}"
+        error.hint = source if error.hint is None else f"{error.hint}; {source}"
+        raise
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

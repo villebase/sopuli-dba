@@ -20,6 +20,7 @@ from sopuli.config import binding_stores
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config
+from sopuli.config.selection import Selection, filter_estate
 from sopuli.config.vaults import OCI_REF_MAX
 
 TARGETS: list[dict[str, Any]] = [
@@ -1472,7 +1473,7 @@ def test_a_path_ref_completed_onto_an_oci_store_by_the_run_is_refused() -> None:
     assert config.bindings[0].vault is None
 
     with pytest.raises(ConfigError) as caught:
-        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"})
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-oci"})
 
     rendered = str(caught.value)
     assert "is not an OCI secret name" in rendered
@@ -1512,18 +1513,156 @@ def test_two_accounts_staging_together_on_a_store_the_run_supplies_are_refused()
     config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
 
     with pytest.raises(ConfigError) as caught:
-        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"})
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-oci"})
 
     rendered = str(caught.value)
     assert "pending" in rendered
     assert "applications[0]" in rendered
 
 
+def test_a_collision_with_an_account_the_selectors_left_out_is_refused() -> None:
+    """#1141: `--account acme_web_user` stages web's password at the root, and
+    a later `--account acme_api_user` run writes over it. The selection does
+    not make the collision go away, so the whole estate is checked."""
+    config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
+    narrowed = filter_estate(config, Selection(accounts=("acme_web_user",)))
+    assert [binding.account for binding in narrowed.bindings] == ["acme_web_user"]
+
+    with pytest.raises(ConfigError) as caught:
+        binding_stores.complete(narrowed, env={"SOPULI_VAULT": "vault-oci"}, estate=config)
+
+    rendered = str(caught.value)
+    assert "acme_web_user" in rendered
+    assert "acme_api_user" in rendered
+
+
+def test_the_refusal_says_where_the_store_came_from() -> None:
+    """The file alone does not show the collision, so the hint names the
+    variable that supplied the store."""
+    config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
+    narrowed = filter_estate(config, Selection(accounts=("acme_web_user",)))
+
+    with pytest.raises(ConfigError) as caught:
+        binding_stores.complete(narrowed, env={"SOPULI_VAULT": "vault-oci"}, estate=config)
+
+    assert "'vault-oci', from SOPULI_VAULT" in str(caught.value.hint)
+
+
+def test_a_run_that_does_not_use_the_store_is_not_refused_over_the_estate() -> None:
+    """The selected account names its store in the file, so the run never
+    consults `SOPULI_VAULT`. A collision among the accounts left out, under that
+    variable, is not this run's to refuse."""
+    named = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": OCI_VAULT},
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_web_user", "acme_api_user"],
+                    "secret_template": "acme-db#{account}",
+                },
+                {
+                    "name": "other",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_batch_user"],
+                    "secret_template": "other-db#DB/{account}",
+                    "vault": "vault-oci",
+                },
+            ],
+        }
+    )
+    narrowed = filter_estate(named, Selection(applications=("other",)))
+
+    completed = binding_stores.complete(narrowed, env={"SOPULI_VAULT": "vault-oci"}, estate=named)
+
+    assert completed is narrowed
+
+
+def test_a_collision_in_a_document_the_run_does_not_touch_is_not_refused() -> None:
+    """Two left-out accounts share a root `pending` in `legacy-db`. This run
+    stages only into `acme-db`, so it cannot lose either of their passwords,
+    and the run that does stage into `legacy-db` refuses."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": OCI_VAULT},
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "acme-db#DB/{account}",
+                },
+                {
+                    "name": "legacy",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_old_user", "acme_older_user"],
+                    "secret_template": "legacy-db#{account}",
+                },
+            ],
+        }
+    )
+    env = {"SOPULI_VAULT": "vault-oci"}
+    narrowed = filter_estate(config, Selection(applications=("acme",)))
+
+    completed = binding_stores.complete(narrowed, env=env, estate=config)
+
+    assert [binding.vault for binding in completed.bindings] == ["vault-oci"]
+    legacy = filter_estate(config, Selection(applications=("legacy",)))
+    with pytest.raises(ConfigError, match="acme_old_user"):
+        binding_stores.complete(legacy, env=env, estate=config)
+
+
+def test_the_whole_estate_does_not_refuse_accounts_that_stage_apart() -> None:
+    """The estate check refuses only a real collision: a pointer per account
+    stages each account in its own place."""
+    config = late_oci("acme-db#DB/{account}", ["acme_web_user", "acme_api_user"])
+    narrowed = filter_estate(config, Selection(accounts=("acme_web_user",)))
+
+    completed = binding_stores.complete(narrowed, env={"SOPULI_VAULT": "vault-oci"}, estate=config)
+
+    assert [binding.vault for binding in completed.bindings] == ["vault-oci"]
+
+
+def test_the_promotion_gate_does_not_check_the_estate_either() -> None:
+    """`check_refs=False` counts bindings and refuses nothing, the collision
+    rule included."""
+    config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
+
+    completed = binding_stores.complete(
+        config, env={"SOPULI_VAULT": "vault-oci"}, check_refs=False, estate=config
+    )
+
+    assert {binding.vault for binding in completed.bindings} == {"vault-oci"}
+
+
 def test_the_promotion_gate_completes_without_the_ref_rules() -> None:
     """It counts bindings a selector left out, which the run does not touch."""
     config = late_oci("apps/acme/db#password", ["acme_web_user"])
 
-    completed = binding_stores.complete(config, env={"SOPULI_VAULT": "vault-oci"}, check_refs=False)
+    completed = binding_stores.complete(
+        config, estate=config, env={"SOPULI_VAULT": "vault-oci"}, check_refs=False
+    )
 
     assert completed.bindings[0].vault == "vault-oci"
 

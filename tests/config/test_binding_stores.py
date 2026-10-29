@@ -80,9 +80,9 @@ def test_the_environment_supplies_a_store_the_file_left_open() -> None:
     config = estate()
     assert store_of(config) is None
 
-    assert store_of(binding_stores.complete(config, env={"SOPULI_VAULT": "vault-ci"})) == (
-        "vault-ci"
-    )
+    assert store_of(
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"})
+    ) == ("vault-ci")
 
 
 def test_a_profile_supplies_one_too() -> None:
@@ -90,7 +90,7 @@ def test_a_profile_supplies_one_too() -> None:
     from, and C15 keeps it out of the load-time chain."""
     config = estate(profile="ci", profiles={"ci": {"vault": "vault-ci"}})
 
-    assert store_of(binding_stores.complete(config)) == "vault-ci"
+    assert store_of(binding_stores.complete(config, estate=config)) == "vault-ci"
 
 
 def test_the_environment_outranks_the_profile() -> None:
@@ -99,15 +99,15 @@ def test_the_environment_outranks_the_profile() -> None:
     the order is worth a test of its own rather than trusting the resolver."""
     config = estate(profile="ci", profiles={"ci": {"vault": "vault-ci"}})
 
-    assert store_of(binding_stores.complete(config, env={"SOPULI_VAULT": "vault-dev"})) == (
-        "vault-dev"
-    )
+    assert store_of(
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-dev"})
+    ) == ("vault-dev")
 
 
 def test_a_profile_that_names_no_vault_supplies_nothing() -> None:
     config = estate(profile="ci", profiles={"ci": {"output": "json"}})
 
-    assert store_of(binding_stores.complete(config)) is None
+    assert store_of(binding_stores.complete(config, estate=config)) is None
 
 
 # ------------------------------------------------- gaps only, never override ---
@@ -120,9 +120,9 @@ def test_a_target_that_names_its_own_store_is_left_alone() -> None:
     config = estate(target={"vault": "vault-dev"})
     assert store_of(config) == "vault-dev"
 
-    assert store_of(binding_stores.complete(config, env={"SOPULI_VAULT": "vault-ci"})) == (
-        "vault-dev"
-    )
+    assert store_of(
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"})
+    ) == ("vault-dev")
 
 
 def test_defaults_vault_is_left_alone_too() -> None:
@@ -132,9 +132,9 @@ def test_defaults_vault_is_left_alone_too() -> None:
     config = estate(defaults={"vault": "vault-dev"})
     assert store_of(config) == "vault-dev"
 
-    assert store_of(binding_stores.complete(config, env={"SOPULI_VAULT": "vault-ci"})) == (
-        "vault-dev"
-    )
+    assert store_of(
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"})
+    ) == ("vault-dev")
 
 
 def test_a_ref_with_its_own_prefix_is_left_alone() -> None:
@@ -142,16 +142,16 @@ def test_a_ref_with_its_own_prefix_is_left_alone() -> None:
     the load-time chain."""
     config = estate(application={"secret_template": f"vault-dev:{REF}"})
 
-    assert store_of(binding_stores.complete(config, env={"SOPULI_VAULT": "vault-ci"})) == (
-        "vault-dev"
-    )
+    assert store_of(
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"})
+    ) == ("vault-dev")
 
 
 def test_a_binding_with_no_ref_is_not_given_a_store() -> None:
     """§3 makes `secret` optional. An application declaring no ref has nothing to
     resolve, and giving it a store would invent a relationship the file denies."""
     config = estate(application={"secret_template": None})
-    config = binding_stores.complete(config, env={"SOPULI_VAULT": "vault-ci"})
+    config = binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"})
 
     (binding,) = config.bindings
     assert binding.secret is None
@@ -166,13 +166,15 @@ def test_nothing_to_fill_returns_the_same_object() -> None:
     its stores. That case must allocate nothing."""
     config = estate(target={"vault": "vault-dev"})
 
-    assert binding_stores.complete(config, env={"SOPULI_VAULT": "vault-ci"}) is config
+    assert (
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"}) is config
+    )
 
 
 def test_no_candidate_returns_the_same_object() -> None:
     config = estate()
 
-    assert binding_stores.complete(config) is config
+    assert binding_stores.complete(config, estate=config) is config
 
 
 # ------------------------------------------------------------- a bad name ---
@@ -183,7 +185,7 @@ def test_a_selected_store_that_is_not_declared_is_refused() -> None:
     config = estate()
 
     with pytest.raises(NoStoreError) as raised:
-        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-nope"})
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-nope"})
 
     assert "'vault-nope'" in str(raised.value)
 
@@ -194,7 +196,7 @@ def test_the_refusal_names_where_the_name_came_from() -> None:
     config = estate()
 
     with pytest.raises(NoStoreError) as raised:
-        binding_stores.complete(config, env={"SOPULI_VAULT": "vault-nope"})
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-nope"})
 
     assert "SOPULI_VAULT" in str(raised.value)
 
@@ -214,7 +216,9 @@ def test_a_bad_name_nothing_needed_is_not_refused() -> None:
     outlive the shell they were meant for."""
     config = estate(target={"vault": "vault-dev"})
 
-    assert binding_stores.complete(config, env={"SOPULI_VAULT": "vault-nope"}) is config
+    assert (
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-nope"}) is config
+    )
 
 
 # ----------------------------------------------------------- what is left ---
@@ -250,6 +254,7 @@ def test_refusing_counts_the_rest_rather_than_listing_them() -> None:
 
 
 def test_refusing_passes_once_everything_resolves() -> None:
-    config = binding_stores.complete(estate(), env={"SOPULI_VAULT": "vault-ci"})
+    loaded = estate()
+    config = binding_stores.complete(loaded, estate=loaded, env={"SOPULI_VAULT": "vault-ci"})
 
     binding_stores.refuse_unresolved(config, action="checking credentials")

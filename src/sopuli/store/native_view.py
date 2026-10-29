@@ -228,10 +228,11 @@ class NativeStagedStore:
         number of what the last write to ``path`` left, for the run to report.
 
         A path in payload fields asks the store, which knows the number from
-        its own write (the OCI store, #1164). A store that cannot say is read
-        again for it. The write has already landed, so this never raises: a
-        failed read, or a read that finds another token because some other
-        writer came in between, gives ``None``, and the run shows the token.
+        its own write and gives ``None`` where another writer came in between
+        (the OCI store, #1164). A store that cannot say is read again for it,
+        and the same holds: a read that finds another token gives ``None``. The
+        write has already landed, so this never raises: a failed read gives
+        ``None`` too, and the run then shows the token.
         """
         if self.is_native(path):
             return self._written.pop(path, None)

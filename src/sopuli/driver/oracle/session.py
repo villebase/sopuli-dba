@@ -181,6 +181,57 @@ _UNREAD = "unread"
 _APPLICATION = "application"
 _COMMON_IN_PDB = "common_in_pdb"
 
+#: Each answer worded for the lockout guard, for the verifiers, and the remedy
+#: a ``hash`` refusal offers. Keyed by the answer, so an answer with no wording
+#: is a ``KeyError`` rather than another answer's wording. ``CDB$ROOT`` is
+#: offered only where the verifiers may be there. ``login`` is offered last and
+#: says it is unguarded, because the account's failed logins are counted where
+#: this session cannot read them (#1122).
+_GUARD_GAP = {
+    _UNRESOLVED: (
+        "{name} is a common account, and this session's container was not "
+        "resolved, so its failed logins may be counted in CDB$ROOT"
+    ),
+    _UNREAD: (
+        "whether {name} is a common account could not be read from DBA_USERS, "
+        "so its failed logins may be counted in CDB$ROOT"
+    ),
+    _APPLICATION: (
+        "{name} is a common account, and where an application container "
+        "counts its failed logins has not been measured"
+    ),
+    _COMMON_IN_PDB: (
+        "{name} is a common account, and its failed logins are counted in "
+        "CDB$ROOT, which this session cannot read"
+    ),
+}
+_VERIFIER_GAP = {
+    _UNRESOLVED: (
+        "{name} is a common account, and this session's container was not "
+        "resolved, so its verifiers may be held in CDB$ROOT"
+    ),
+    _UNREAD: (
+        "whether {name} is a common account could not be read from DBA_USERS, "
+        "so its verifiers may be held in CDB$ROOT"
+    ),
+    _APPLICATION: (
+        "{name} is a common account, and where an application container "
+        "holds its verifiers has not been measured"
+    ),
+    _COMMON_IN_PDB: (
+        "{name} is a common account, and its verifiers are held in CDB$ROOT; "
+        "this container holds a blank placeholder in their place"
+    ),
+}
+_UNGUARDED_LOGIN = "verify by `login`, which has no lockout guard for this account here"
+_IN_ROOT_REMEDY = f"check the account on a target that connects to CDB$ROOT, or {_UNGUARDED_LOGIN}"
+_VERIFIER_REMEDY = {
+    _UNRESOLVED: _IN_ROOT_REMEDY,
+    _UNREAD: _UNGUARDED_LOGIN,
+    _APPLICATION: _UNGUARDED_LOGIN,
+    _COMMON_IN_PDB: _IN_ROOT_REMEDY,
+}
+
 #: What a ``hash`` comparison reports, by which verifier the password reproduced.
 #: Every one says no login was attempted, because that is the difference between
 #: this result and a ``login`` one with the same word in ``result``.
@@ -1080,10 +1131,12 @@ class OracleSession:
         roles are a guardrail input for mutations, not for reading.
 
         Where ``SELECT ON SYS.USER$`` was never granted, or the account is a
-        common account outside ``CDB$ROOT`` (:meth:`_guard_gap`), the guard is
-        **unavailable**, the attempt still goes ahead, and the result says
-        so in ``detail`` rather than letting an absent guard read like a
-        satisfied one.
+        common account outside ``CDB$ROOT`` (:meth:`_guard_gap`), a ``login``'s
+        guard is **unavailable**, the attempt still goes ahead, and the result
+        says so in ``detail`` rather than letting an absent guard read like a
+        satisfied one. ``hash`` and ``both`` refuse such a common account
+        instead, because the row read here does not hold its verifiers
+        (:meth:`_verifier_gap`).
         """
         if method == VERIFY_HASH:
             return self._compare_verifier(account, secret)
@@ -1207,30 +1260,12 @@ class OracleSession:
         ``COMMON`` that does not answer is a gap too, never *not common*.
         """
         held = self._held_elsewhere(cursor, name)
-        if held is None:
-            return None
-        if held == _UNRESOLVED:
-            return (
-                f"{name} is a common account, and this session's container was not "
-                "resolved, so its failed logins may be counted in CDB$ROOT"
-            )
-        if held == _UNREAD:
-            return (
-                f"whether {name} is a common account could not be read from DBA_USERS, "
-                "so its failed logins may be counted in CDB$ROOT"
-            )
-        if held == _APPLICATION:
-            return (
-                f"{name} is a common account, and where an application container "
-                "counts its failed logins has not been measured"
-            )
-        return (
-            f"{name} is a common account, and its failed logins are counted in "
-            "CDB$ROOT, which this session cannot read"
-        )
+        return None if held is None else _GUARD_GAP[held].format(name=name)
 
-    def _verifier_gap(self, cursor: Cursor, name: str) -> str | None:
-        """Why ``SPARE4`` read here is not ``name``'s verifiers, or ``None``.
+    def _verifier_gap(self, cursor: Cursor, name: str) -> tuple[str, str] | None:
+        """Why ``SPARE4`` read here is not ``name``'s verifiers, and what to do instead.
+
+        ``None`` where it is.
 
         Measured by ``sql/oracle/18_common_spare4_probe.sql`` on 23.26.3.0.0,
         21.3.0.0.0 and 18.4.0.0.0: in a PDB, a common account's ``SPARE4`` is a
@@ -1239,29 +1274,13 @@ class OracleSession:
         leaves the PDB's row as it was (decided in #1126). The other reasons
         follow :meth:`_guard_gap`'s: an application container was not measured,
         and a container that could not be told is not assumed to be the root.
+        So in an ``unknown`` scope a ``C##`` account is refused even where the
+        session is in fact in the root.
         """
         held = self._held_elsewhere(cursor, name)
         if held is None:
             return None
-        if held == _UNRESOLVED:
-            return (
-                f"{name} is a common account, and this session's container was not "
-                "resolved, so its verifiers may be held in CDB$ROOT"
-            )
-        if held == _UNREAD:
-            return (
-                f"whether {name} is a common account could not be read from DBA_USERS, "
-                "so its verifiers may be held in CDB$ROOT"
-            )
-        if held == _APPLICATION:
-            return (
-                f"{name} is a common account, and where an application container "
-                "holds its verifiers has not been measured"
-            )
-        return (
-            f"{name} is a common account, and its verifiers are held in CDB$ROOT; "
-            "this container holds a blank placeholder in their place"
-        )
+        return _VERIFIER_GAP[held].format(name=name), _VERIFIER_REMEDY[held]
 
     def _held_elsewhere(self, cursor: Cursor, name: str) -> str | None:
         """Whether ``name``'s own ``SYS.USER$`` row may be in another container.
@@ -1409,13 +1428,9 @@ class OracleSession:
                 return None
             gap = self._verifier_gap(cursor, state.name)
             if gap is not None:
+                reason, remedy = gap
                 raise UnsupportedCapabilityError(
-                    VERIFIER_CONTAINER,
-                    target=self.target.name,
-                    hint=(
-                        f"{gap}; verify by `login`, or check the account on a target "
-                        "that connects to CDB$ROOT"
-                    ),
+                    VERIFIER_CONTAINER, target=self.target.name, hint=f"{reason}; {remedy}"
                 )
             spare4 = stored_verifiers(cursor, state.name)
             counter = failed_logins(cursor, state.name)

@@ -1774,9 +1774,11 @@ depends on the value.
 #1126). In a PDB, its `SPARE4` holds a placeholder of the right shape, `S:` and
 `T:` followed by blanks. Its verifiers are held in `CDB$ROOT`, and a password
 change there leaves the PDB's row as it was. The refusal names the container,
-and says to verify by `login` or on a target that connects to `CDB$ROOT`. An
-application-common account in an application container is refused too, because
-where its verifiers are held was not measured.
+and says to check the account on a target that connects to `CDB$ROOT`. It also
+offers `login`, and says that `login` has no lockout guard for this account,
+because its failed logins are counted in the root. An application-common
+account in an application container is refused too, because where its
+verifiers are held was not measured. Its refusal offers only `login`.
 
 **`--method both` compares first** (decided in #437). A mismatch is reported as
 drift from the comparison alone, and no login is attempted, because spending

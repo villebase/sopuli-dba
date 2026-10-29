@@ -694,8 +694,9 @@ def test_hash_refuses_a_common_account_in_a_pdb_naming_the_container(
     assert refused.value.target == "orders-pdb"
     assert refused.value.hint == (
         f"{COMMON_ACCOUNT} is a common account, and its verifiers are held in "
-        "CDB$ROOT; this container holds a blank placeholder in their place; verify "
-        "by `login`, or check the account on a target that connects to CDB$ROOT"
+        "CDB$ROOT; this container holds a blank placeholder in their place; check "
+        "the account on a target that connects to CDB$ROOT, or verify by `login`, "
+        "which has no lockout guard for this account here"
     )
     assert asked.common == [COMMON_ACCOUNT], "DBA_USERS.COMMON decides, not the name"
     assert read == []
@@ -716,26 +717,26 @@ def test_the_plan_time_check_makes_the_same_refusal(
     assert refused.value.capability == session_module.VERIFIER_CONTAINER
 
 
+UNGUARDED_LOGIN = "verify by `login`, which has no lockout guard for this account here"
+IN_ROOT_REMEDY = f"check the account on a target that connects to CDB$ROOT, or {UNGUARDED_LOGIN}"
+
+
 @pytest.mark.parametrize(
-    ("scope_type", "common", "reason"),
+    ("scope_type", "common", "reason", "remedy"),
     [
         (
             "app_pdb",
             True,
             f"{COMMON_ACCOUNT} is a common account, and where an application container "
             "holds its verifiers has not been measured",
-        ),
-        (
-            "unknown",
-            True,
-            f"{COMMON_ACCOUNT} is a common account, and this session's container was "
-            "not resolved, so its verifiers may be held in CDB$ROOT",
+            UNGUARDED_LOGIN,
         ),
         (
             "pdb",
             None,
             f"whether {COMMON_ACCOUNT} is a common account could not be read from "
             "DBA_USERS, so its verifiers may be held in CDB$ROOT",
+            UNGUARDED_LOGIN,
         ),
     ],
 )
@@ -745,10 +746,11 @@ def test_hash_refuses_where_the_container_cannot_be_shown_to_hold_the_verifiers(
     scope_type: str,
     common: bool | None,
     reason: str,
+    remedy: str,
 ) -> None:
-    """An application container was not measured, an unresolved scope is not
-    assumed to be the root, and a `COMMON` read that does not answer is never
-    *not common*: the same rules as the lockout guard's."""
+    """An application container was not measured, and a `COMMON` read that does
+    not answer is never *not common*: the same rules as the lockout guard's.
+    Neither offers `CDB$ROOT`, which may not be where the verifiers are."""
     offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
     _stub_account(session_module, offline, monkeypatch)
     monkeypatch.setattr(session_module, "is_common", lambda _cursor, _name: common)
@@ -757,26 +759,60 @@ def test_hash_refuses_where_the_container_cannot_be_shown_to_hold_the_verifiers(
         offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
 
     assert refused.value.capability == session_module.VERIFIER_CONTAINER
-    assert (refused.value.hint or "").startswith(f"{reason}; verify by `login`")
+    assert refused.value.hint == f"{reason}; {remedy}"
 
 
+def test_hash_refuses_a_common_name_where_the_container_is_unresolved(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unresolved scope is not assumed to be the root, and the `C##` prefix
+    decides, because the dictionary there may have no `COMMON` column."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type="unknown")
+    asked = _stub_account(session_module, offline, monkeypatch)
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert refused.value.capability == session_module.VERIFIER_CONTAINER
+    assert refused.value.hint == (
+        f"{COMMON_ACCOUNT} is a common account, and this session's container was "
+        f"not resolved, so its verifiers may be held in CDB$ROOT; {IN_ROOT_REMEDY}"
+    )
+    assert asked.common == []
+
+
+@pytest.mark.parametrize("method", ["hash", "both"])
 @pytest.mark.parametrize(
-    ("scope_type", "common"), [("cdb_root", True), ("non_cdb", True), ("pdb", False)]
+    ("scope_type", "name", "common"),
+    [
+        ("cdb_root", COMMON_ACCOUNT, True),
+        ("non_cdb", COMMON_ACCOUNT, True),
+        ("pdb", COMMON_ACCOUNT, False),
+        ("app_pdb", COMMON_ACCOUNT, False),
+        ("unknown", "ACME_CHECK_USER", False),
+    ],
 )
 def test_hash_compares_where_the_container_holds_the_verifiers(
-    session_module: Any, monkeypatch: pytest.MonkeyPatch, scope_type: str, common: bool
+    session_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    scope_type: str,
+    name: str,
+    common: bool,
 ) -> None:
     """In `CDB$ROOT` and a non-CDB every account's row is its own, and so is a
-    local account's in a PDB. The comparison runs, and the guard's figures are
-    the account's."""
+    local account's in a PDB or an application PDB, and a name without the
+    `C##` prefix where the container is unresolved. The comparison runs, and
+    the guard's figures are the account's."""
     offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
-    asked = _stub_account(session_module, offline, monkeypatch, common=common)
+    asked = _stub_account(session_module, offline, monkeypatch, name=name, common=common)
     _stub_comparison(session_module, offline, monkeypatch, session_module.NO_MATCH)
 
-    result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
+    result = offline.verify_password(name, Secret(CORRECT), method=method)
 
+    assert result.method == method
     assert result.result == FAIL
-    assert asked.lcount == [COMMON_ACCOUNT]
+    assert asked.lcount == [name]
     assert result.failed_logins == 0
     assert result.failed_login_limit == "3"
 

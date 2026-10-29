@@ -68,12 +68,16 @@ def build_target(
     ``reachable`` from ``scope is not None`` reported those as connectivity
     failures, which sends somebody to the listener over a grant.
 
-    So there are three shapes and not two:
+    So there are four shapes and not two:
 
     * **not connected** -- no scope, and ``error`` says why;
     * **connected, not described** -- ``reachable: true``, no scope, and
       ``error`` says what failed after the session opened;
-    * **connected and described** -- ``reachable: true`` and a scope.
+    * **connected and described** -- ``reachable: true`` and a scope;
+    * **described, then failed** -- a scope and an ``error``: the scope was
+      read and what came after it, ``--check-privileges``' audit, failed. The
+      scope stays, so ``asserted`` still says whether the target is what it
+      claims, which decides ``doctor``'s exit code (#1062).
 
     ``privileges`` is ``None`` unless ``--check-privileges`` asked, and the
     section is then emitted **whole**, empty arrays included. That is E6's

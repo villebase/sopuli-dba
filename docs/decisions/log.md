@@ -3625,6 +3625,41 @@ the register.
     application container.
   - Document only. The hint would still name the wrong cause.
 
+## #1062
+
+- **Decided:** 2026-10-29, #1062
+- **Question:** `doctor` reaches a target, and the driver then refuses it for
+  its setup: a PostgreSQL admin that is a superuser (`SOPULI-20007`), or two
+  targets on one cluster (`SOPULI-20008`). `doctor` exited 0, because its rule
+  was that a target it cannot use is that target's finding. Should it exit
+  non-zero?
+- **Decision:** Yes. After surveying every target, `doctor` exits 9 if any
+  target it reached carries an error that exits 9, or an `asserted` that does
+  not match: a target that claims a scope or container it is not, which
+  `doctor` reports rather than refuses. It takes precedence over exit 1 for an
+  unreachable target or store, and the target counts in `summary.failed`.
+  Another error on a target that answered, such as a view the account cannot
+  read, leaves the exit code alone. A server that refuses the login is the
+  same case (decided on #1062 after the first build): an error that exits 9
+  and carries the server's own code, such as ORA-28009 (SYS as the admin) or
+  3D000 (no such database). An error at login with no server code, such as an
+  unset admin password or a `DPI-` code from the Oracle client, stays exit 1,
+  because no server was asked.
+- **Why:** A script that runs `doctor` as a gate passed a setup that a
+  mutating verb refuses at exit 9. A read verb such as `creds check` reports
+  the target and exits 1; `doctor` is the check of the setup, and exit 9 says
+  to fix the configuration, which is the fix for each of these. The survey
+  still reports every target, so nothing is hidden by stopping early. Both
+  findings are in the document whatever the exit, so the exit names the one
+  that no retry clears, as install shape already does.
+- **Rejected:**
+  - Keep exit 0. A gate would have to parse the JSON to see the refusal.
+  - A `doctor --strict` flag for the gate case. One more flag, and the
+    default would stay the one that passes a refused setup.
+  - Count every login error that exits 9. An unset admin password asks for 9
+    too, and it would then fail `doctor` as a refused setup when no server
+    was asked; the server's code is what tells the two apart.
+
 ## #1120
 
 - **Decided:** 2026-10-29, #1120

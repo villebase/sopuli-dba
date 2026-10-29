@@ -28,18 +28,24 @@ PASSWORD_ENV = "SOPULI_TEST_POSTGRES_DOCTOR_PASSWORD"
 
 
 def _config(
-    path: Path, dsn: str, user: str, *, names: tuple[str, ...] = ("tier1-postgres",)
+    path: Path,
+    dsn: str,
+    user: str,
+    *,
+    names: tuple[str, ...] = ("tier1-postgres",),
+    database: str | None = None,
 ) -> Path:
     """No `vaults:` block, for `test_oracle_doctor.py`'s reason: `doctor` fails on
     a declared store it cannot reach, and these tests bind no account. One
     target per name, all on ``dsn``."""
+    named = f", database: {database}" if database else ""
     targets = "".join(
         f"""
   - name: {name}
     type: postgresql
     dsn: "{dsn}"
     environment: dev
-    postgres: {{ sslmode: disable }}
+    postgres: {{ sslmode: disable{named} }}
     admin:
       username: {user}
       auth: {{ method: env, password_env: {PASSWORD_ENV} }}"""
@@ -88,19 +94,62 @@ def test_a_superuser_is_refused(
     live_postgres: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The stack's `postgres` is the bootstrap superuser. Connecting works, and
-    the run refuses it. `doctor` fails only for a target it cannot reach, so
-    the refusal is the entry's error and the exit is 0."""
+    the run refuses it. The refusal is the entry's error, and the exit is 9, as a
+    mutating verb's is over the same target (#1062)."""
     monkeypatch.setenv(PASSWORD_ENV, live_postgres.password)
     config = _config(tmp_path / "doctor.yaml", live_postgres.dsn, live_postgres.user)
 
     result = _doctor(CliRunner(), config, "--output", "json")
 
-    assert result.exit_code == 0, result.output
-    (entry,) = json.loads(result.stdout)["targets"]
+    assert result.exit_code == 9, result.output
+    document = json.loads(result.stdout)
+    (entry,) = document["targets"]
     assert entry["reachable"] is True
     assert entry["error"]["code"] == "SOPULI-20007"
     assert entry["error"]["category"] == "config"
     assert '"postgres", a superuser' in entry["error"]["message"]
+    assert document["summary"]["failed"] == 1
+    assert document["summary"]["ok"] == 0
+
+
+def test_a_database_the_server_does_not_have_is_refused_at_login(
+    live_postgres: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server refuses the login with 3D000. The target is not reached, and
+    the exit is 9, because the server answered and the fix is in the config
+    (#1062). The bootstrap superuser is the login, so the password is right and
+    the database is the one thing wrong."""
+    monkeypatch.setenv(PASSWORD_ENV, live_postgres.password)
+    config = _config(
+        tmp_path / "doctor.yaml",
+        live_postgres.dsn,
+        live_postgres.user,
+        database="acme_no_such_db",
+    )
+
+    result = _doctor(CliRunner(), config, "--output", "json")
+
+    assert result.exit_code == 9, result.output
+    document = json.loads(result.stdout)
+    (entry,) = document["targets"]
+    assert entry["reachable"] is False
+    assert entry["error"]["code"] == "3D000"
+    assert document["summary"]["failed"] == 1
+
+
+def test_an_admin_password_that_is_not_set_stays_exit_1(
+    live_postgres: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The credential error asks for exit 9 too, but no server was asked, so
+    the target is unreachable and the run exits 1 (#1062)."""
+    monkeypatch.delenv(PASSWORD_ENV, raising=False)
+    config = _config(tmp_path / "doctor.yaml", live_postgres.dsn, live_postgres.user)
+
+    result = _doctor(CliRunner(), config, "--output", "json")
+
+    assert result.exit_code == 1, result.output
+    (entry,) = json.loads(result.stdout)["targets"]
+    assert entry["reachable"] is False
 
 
 def test_a_superuser_login_whose_role_default_is_ordinary_is_refused(
@@ -225,7 +274,7 @@ def test_two_targets_on_one_cluster_are_refused(
 
     result = _doctor(runner, config, "--output", "json")
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 9, result.output
     first, second = json.loads(result.stdout)["targets"]
     assert first.get("error") is None
     assert first["scope"]["type"] == "cluster"

@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -849,6 +850,10 @@ def doctor(
     Each failure lands in its own ``targets[]`` entry with the vendor code and
     the server's own message. An unreachable target fails the run at exit 1,
     unless a configured driver or backend is missing, which is exit 9 (below).
+    A target refused over its setup fails the run at exit 9 once every target
+    is surveyed: one the server refused at login, such as SYS as the admin, or
+    one that answered and was then refused, such as a PostgreSQL admin that is
+    a superuser (decision #1062).
 
     **Install shape is reported on every run, not only when it is wrong**
     (ADR-006 E6). Which backends and drivers this build can serve, which the
@@ -931,18 +936,26 @@ def doctor(
     document.diagnostics.extend(vault_diagnostics(vaults))
 
     client = _client_report(config)
-    entries = [
+    examined = [
         _examine(target, run, config, privileges=check_privileges)
         for target in config.expanded_targets
     ]
+    entries = [entry for entry, _ in examined]
 
     document.targets = entries
-    reachable = sum(1 for entry in entries if entry["reachable"])
-    failed = len(entries) - reachable
+    refused = sum(1 for _, was_refused in examined if was_refused)
+    # A target the server refused at login is refused, not unreachable: each
+    # target is counted once.
+    unreachable = sum(
+        1 for entry, was_refused in examined if not entry["reachable"] and not was_refused
+    )
     unreachable_vaults = sum(1 for report in vaults if not report.reachable)
+    # A refused target cannot be used either, so it is a target that failed.
+    # `failed` counts both kinds; the exit code tells them apart.
+    failed = unreachable + refused
     document.finish(
-        _doctor_exit(shape.missing, failed, unreachable_vaults),
-        Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
+        _doctor_exit(shape.missing, unreachable, unreachable_vaults, refused=refused),
+        Summary(total=len(entries), ok=len(entries) - failed, changed=0, failed=failed),
     )
     sections = [*render_install(shape)]
     if wallet is not None:
@@ -971,7 +984,66 @@ def _vault_error(report: VaultReport) -> Error | None:
     return _finding(report.failure)
 
 
-def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0) -> ExitCode:
+def _refused_for_setup(entry: dict[str, Any], error: Exception | None = None) -> bool:
+    """Whether the server refused this target over its setup (#1062).
+
+    Three cases, each of which a mutating verb refuses at exit 9; ``doctor`` is
+    the check of the setup, so it says *fix the configuration* too:
+
+    * an error that asks for exit 9 after the session opened, such as
+      ``SOPULI-20007`` (a superuser admin);
+    * an error that asks for exit 9 at login and carries the server's own code,
+      such as ORA-28009 (SYS as the admin) or PostgreSQL's 3D000 (no such
+      database) -- :func:`_server_answered`;
+    * an assertion that does not hold: a target that claims a scope or
+      container it is not, which ``doctor`` reports rather than raises.
+
+    An error at login with no server code stays exit 1's case, whatever it asks
+    for: an admin password that is not set, or an Instant Client that will not
+    load, happens before any server is asked.
+
+    Decided from the exception, not from the serialised ``category``: an error
+    says for itself which exit it is, and a ``config`` category does not always
+    mean exit 9.
+    """
+    asks_for_9 = error is not None and getattr(error, "exit_code", None) == ExitCode.CONFIG_INVALID
+    if not entry["reachable"]:
+        return asks_for_9 and _server_answered(error)
+    if asks_for_9:
+        return True
+    asserted = entry.get("asserted")
+    return bool(asserted and asserted.get("matches") is False)
+
+
+#: A code the server itself sends: Oracle's ``ORA-nnnnn``, or a five-character
+#: PostgreSQL SQLSTATE. Not ``DPI-`` or ``DPY-``, which the Oracle client
+#: library raises on this side of the wire, and not the tool's ``SOPULI-``.
+_SERVER_CODE = re.compile(r"ORA-\d{5}|[0-9A-Z]{5}")
+
+#: The two SQLSTATEs the PostgreSQL driver assigns itself, for a connection with
+#: no reply to read: ``08001`` where none was established, ``08006`` where one
+#: was lost (`driver/postgres/errors.py`). Every other code there is the
+#: server's, sent or read from its own message. Neither exits 9 today; they are
+#: named so that one never could count as a server's answer.
+_CLIENT_SQLSTATES = frozenset({"08001", "08006"})
+
+
+def _server_answered(error: Exception | None) -> bool:
+    """Whether ``error`` carries a code the server sent, so the server was asked.
+
+    A driver keeps the vendor code on the error (CLAUDE.md: an ORA- code is never
+    swallowed). A failure before any server is asked, such as an unset admin
+    password, has none.
+    """
+    code = getattr(error, "code", None)
+    if not isinstance(code, str) or code in _CLIENT_SQLSTATES:
+        return False
+    return _SERVER_CODE.fullmatch(code) is not None
+
+
+def _doctor_exit(
+    missing: Sequence[Component], unreachable: int, vaults_down: int = 0, *, refused: int = 0
+) -> ExitCode:
     """Which failure this run is, when it is several.
 
     **Install shape wins over everything else**, and the order is most of this
@@ -1013,10 +1085,20 @@ def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0
     in the document that no entry in ``targets[]`` accounts for. So the exit code
     is deliberately not a function of the summary, and a consumer that wants to
     know why a run failed reads the sections rather than the arithmetic.
+
+    **A target refused over its setup is exit 9 too** (#1062), after every
+    target is surveyed, whether the server refused the login or the target
+    answered first (:func:`_refused_for_setup`). A mutating verb refuses that target at exit
+    9, so a ``doctor`` used as a gate must not pass it, and exit 9 says *fix the
+    configuration*, which is the fix. It wins over exit 1 for an unreachable
+    target or store, as install shape does: both are in the document either
+    way, and the exit names the one that no retry will clear. Unlike the other
+    two, a refused target is a target that failed, so ``summary.failed`` counts
+    it.
     """
-    if missing:
+    if missing or refused:
         return ExitCode.CONFIG_INVALID
-    return ExitCode.SUCCESS if failed == 0 and vaults_down == 0 else ExitCode.FAILURE
+    return ExitCode.SUCCESS if unreachable == 0 and vaults_down == 0 else ExitCode.FAILURE
 
 
 def _client_report(config: Config) -> dict[str, Any]:
@@ -1071,8 +1153,14 @@ def _declared_on(bindings: Iterable[Binding], target: str) -> tuple[str, ...]:
 
 def _examine(
     target: ExpandedTarget, run: Invocation, config: Config, *, privileges: bool = False
-) -> dict[str, Any]:
-    """One target: connect, report what it is, and always close."""
+) -> tuple[dict[str, Any], bool]:
+    """One target: connect, report what it is, and always close.
+
+    Returns the ``targets[]`` entry, and whether the target was refused for its
+    setup (:func:`_refused_for_setup`). The second is decided here, where the
+    exception is still in hand, because the entry keeps only its serialised
+    form.
+    """
     started = time.monotonic()
     session = None
     try:
@@ -1080,13 +1168,14 @@ def _examine(
         try:
             session = _open_session(target, run, config, scope_only=True)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return build_target(
+            unreached = build_target(
                 target,
                 connected=False,
                 error=_finding(error),
                 duration_ms=_elapsed(started),
                 warnings=_reach_warning(error),
             )
+            return unreached, _refused_for_setup(unreached, error)
 
         # Finding out what it is, which can fail on a connection that is fine:
         # a dictionary view this account cannot read, or a probe that could not
@@ -1096,8 +1185,13 @@ def _examine(
         # failed claim is about a target that answered.
         warnings: tuple[str, ...] = ()
         audit = None
+        # The scope as read, kept for an entry whose audit then fails: its
+        # `asserted` must still say whether the target is the container it
+        # claims, because that decides the exit code.
+        found: Scope | None = None
         try:
             scope, caveats = scope_and_claim(session, target.name, run.clusters)
+            found = scope
             warnings += caveats
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
@@ -1114,19 +1208,21 @@ def _examine(
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             # With what was found before the failure: a skipped cluster check
             # is still worth saying when the audit after it failed.
-            return build_target(
+            failed = build_target(
                 target,
                 connected=True,
+                scope=found,
                 error=_finding(error),
                 duration_ms=_elapsed(started),
                 warnings=warnings,
             )
+            return failed, _refused_for_setup(failed, error)
     finally:
         if session is not None:
             with suppress(Exception):
                 session.close()
 
-    return build_target(
+    entry = build_target(
         target,
         connected=True,
         scope=scope,
@@ -1134,6 +1230,7 @@ def _examine(
         warnings=warnings,
         privileges=audit,
     )
+    return entry, _refused_for_setup(entry)
 
 
 def _timeouts(run: Invocation) -> Timeouts:

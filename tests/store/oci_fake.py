@@ -221,6 +221,7 @@ class FakeOci:
                 ),
                 stages=sorted(version.stages),
                 version_number=version.number,
+                secret_id=secret.id,
                 metadata=dict(secret.metadata) or None,
             )
         )

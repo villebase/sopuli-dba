@@ -639,6 +639,12 @@ such as "from 16", means the one release of it that was measured.
   changed the content and the metadata, returns the old version and the old
   metadata. Once it is `ACTIVE`, the read returns both new. So a read's content
   and its write counter always belong together. M13.
+- `verified` `oci-etag-settle` (#1133) — **Is the ETag read when a secret
+  turns ACTIVE the one the next update must send?**
+  Not always. The ETag moves once more 2.2 to 5.4 seconds after the secret is
+  `ACTIVE`, with no field of the secret changing, and an update sent with the
+  ETag read at the moment of `ACTIVE` is refused with `409 Conflict`. So a
+  `409 Conflict` alone does not prove that somebody else wrote. M14.
 - `unverified` `moto-secrets-manager` (#642) — **Does moto's server image cover
   every Secrets Manager call an AWS store makes?**
   Known: moto is open source, `motoserver/moto` needs no token, and it emulates

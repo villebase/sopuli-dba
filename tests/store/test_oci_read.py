@@ -265,9 +265,12 @@ def test_a_write_counter_the_tool_did_not_write_is_refused(fake: FakeOci) -> Non
         store(fake).read("acme-db")
 
 
-def test_writes_are_refused_until_they_are_built(fake: FakeOci) -> None:
+def test_staging_is_refused_until_it_is_built(fake: FakeOci) -> None:
+    """Staging comes with #1153; writing an application secret is in `test_oci_write.py`."""
+    fake.put("acme-db", {"password": "a"})
+
     with pytest.raises(StoreError, match="not built"):
-        store(fake).write("acme-db", {"password": "a"}, cas=0)
+        store(fake).stage("acme-db", {"password": "b"}, attributes={}, cas=1)
 
 
 # ---------------------------------------------------------------- listing ---

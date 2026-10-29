@@ -822,7 +822,7 @@ config file can be read without knowing what environment it will be read in.
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace. Refused on an `oci` store |
 | `vault_id`, `compartment_id`, `key_id` | `oci` only, and **required** there: the vault's OCID, the compartment new secrets are created in, and the KMS key that encrypts them. The tool creates secrets, and OCI's `CreateSecret` needs all three. They are not credentials, so they are plain strings. Refused on any other store, and no `defaults:` block or profile may change them: a different value is a second store |
 | `region` | `oci` only. Absent means the region the auth method supplies: the config-file profile's, or the instance metadata's. No layer may change it, for the same reason |
-| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's own default; for `hashicorp` that is `DEFAULT_TIMEOUT_S` in `sopuli/store/hashicorp/_transport.py`. There is no unlimited value, because the advisory lock is held while a request is outstanding |
+| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's own default; for `hashicorp` that is `DEFAULT_TIMEOUT_S` in `sopuli/store/hashicorp/_transport.py`. On `oci` it also bounds each wait for a secret to be ready again, after a write and before one (§7), and absent means 120 seconds for each wait. OCI keeps a secret busy for about 20 seconds after a write, so a value under about 30 makes writes fail. There is no unlimited value, because the advisory lock is held while a request is outstanding |
 | `merge_patch` | HashiCorp KV v2 only, and refused on any other store. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
 | `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below. Refused on an `oci` store, whose SDK verifies TLS itself |
 | `auth` | how to authenticate, and where the material comes from — see below |
@@ -2819,6 +2819,29 @@ number. The tool lists the secrets in the store's compartment, and leaves out
 a secret being deleted. OCI answers "not found" for a secret the principal may
 not read, so a secret that is listed and cannot be read is refused, never
 taken as absent.
+
+**What the tool writes to an OCI secret.** A secret that does not exist is
+created in the store's compartment, encrypted with its `key_id`, so the
+tool's principal needs IAM permission to manage secrets in that compartment
+and to use that key. Each write adds a version that becomes current. The
+secret's metadata keeps the tool's write counter under `sopuli_cas`, and
+every other metadata key is kept as it was. A write is a compare-and-set: the
+counter must match what the run read, and OCI refuses the update if the secret
+changed since, so a second writer makes the run stop rather than be
+overwritten. OCI has no merge patch, so a document shared by several accounts
+is read, changed and written back under that compare-and-set. After a write,
+OCI keeps the secret busy for about 20 seconds, and a read meanwhile returns
+the old content (`oci-read-while-updating` in
+[`../README.md`](../README.md)). So each write waits until the secret is ready
+again, under the spinner on a terminal, and each wait is bounded by the
+store's `timeout_s`. If the wait gives up, the error says the write was made.
+OCI's ETag also moves once more a few seconds after a secret is ready, with
+nothing in it changing (`oci-etag-settle`). So when OCI refuses an update as
+stale, the store reads the secret again: if it is still ready and its metadata
+and current version are the same, no write was accepted in between, and the
+update is sent again with the new ETag, at most three more times. A name still
+held by a secret scheduled for deletion cannot be used again until OCI deletes
+it, and the error says so.
 
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command

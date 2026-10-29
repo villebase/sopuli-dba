@@ -55,7 +55,7 @@ class LimitedStore(MemoryStore):
     def room(self, path: str) -> Room | None:
         if self.read(path) is None:
             return None
-        return self.rooms.get(path, Room(versions=1, oldest_deprecated=None, full=False))
+        return self.rooms.get(path, Room(versions=1, deprecated=(), limit=30))
 
     def name_held(self, path: str) -> bool:
         return path in self.held

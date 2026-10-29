@@ -618,10 +618,25 @@ class Room:
     """How full a secret is, as its store counts versions (decision 7)."""
 
     versions: int
-    #: The lowest-numbered DEPRECATED version still counted, or ``None``.
-    oldest_deprecated: int | None
-    #: Whether the store will refuse another version until one goes.
-    full: bool
+    #: The DEPRECATED versions still counted, oldest first: the ones the store
+    #: deletes to make room, in that order.
+    deprecated: tuple[int, ...]
+    #: How many versions the store holds before it refuses another.
+    limit: int
+
+    @property
+    def full(self) -> bool:
+        return self.versions >= self.limit
+
+    @property
+    def oldest_deprecated(self) -> int | None:
+        return self.deprecated[0] if self.deprecated else None
+
+    def making_room_for(self, added: int) -> tuple[int, ...] | None:
+        """The versions the store would delete to add ``added`` more, oldest
+        first, or ``None`` if it cannot: too few are DEPRECATED."""
+        excess = max(0, self.versions + added - self.limit)
+        return self.deprecated[:excess] if excess <= len(self.deprecated) else None
 
 
 @dataclass(frozen=True)

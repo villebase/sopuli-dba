@@ -510,9 +510,7 @@ class OciStore:
             page = response.next_page
             if not page:
                 return Room(
-                    versions=counted,
-                    oldest_deprecated=min(deprecated, default=None),
-                    full=counted >= VERSION_LIMIT,
+                    versions=counted, deprecated=tuple(sorted(deprecated)), limit=VERSION_LIMIT
                 )
 
     def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:

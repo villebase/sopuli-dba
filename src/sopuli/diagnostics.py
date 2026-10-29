@@ -724,10 +724,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         VERSION_PRUNED: (
             "A secret is at its store's version limit (30 on OCI), so a write makes the store "
             "schedule the deletion of the secret's oldest DEPRECATED version, two days ahead, "
-            "to make room (decision 7). In the plan and under `--dry-run` it says which version "
-            "may go; after the run, which version went. CURRENT, PENDING and PREVIOUS are never "
-            "deleted. A ref pinned to that version with `@version=N` stops resolving once it is "
-            "deleted, so the plan refuses a run where the config pins it. One entry per secret."
+            "to make room (decision 7). In the plan and under `--dry-run` it says which versions "
+            "may go; after the run, which went. CURRENT, PENDING and PREVIOUS are never "
+            "deleted. A ref pinned to such a version with `@version=N` stops resolving once it "
+            "is deleted, so the plan refuses a run where the config pins it. One entry per "
+            "secret in the plan, and per deleted version after the run."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

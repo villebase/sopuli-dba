@@ -19,16 +19,18 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from native_estate import FIELD, OCI_VAULT, LimitedStore, limited_store, seed, view
-from sopuli.cli import cli
+from native_estate import FIELD, NOW, OCI_VAULT, LimitedStore, limited_store, seed, view
+from sopuli.cli import _adding, cli
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.diagnostics import VERSION_PRUNED
 from sopuli.exit_codes import ExitCode
+from sopuli.lock.keys import LockKey
 from sopuli.output.document import SCHEMA_VERSION
-from sopuli.payload import CURRENT, PENDING, PREVIOUS
+from sopuli.payload import CURRENT, PENDING, PREVIOUS, StageLayout
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.native_view import PENDING_VERSION, LayoutChangedError
+from sopuli.store.native_view import wrap as native_staged
 from sopuli.store.protocol import Pruned, Room, StoreError
 
 RUN_SCHEMA = (
@@ -266,7 +268,7 @@ def test_a_full_secret_says_which_version_a_write_may_delete(
     runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
 ) -> None:
     seed(store, PATH, {FIELD: LIVE})
-    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
 
     result = run(runner, write_config(CONFIG), "generate")
 
@@ -280,7 +282,7 @@ def test_the_dry_run_says_it_too(
     runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
 ) -> None:
     seed(store, PATH, {FIELD: LIVE})
-    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
 
     result = run(runner, write_config(CONFIG), "generate", "--dry-run")
 
@@ -293,12 +295,12 @@ def test_a_full_secret_with_nothing_deprecated_is_refused_before_the_write(
     runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
 ) -> None:
     seed(store, PATH, {FIELD: LIVE})
-    store.rooms[PATH] = Room(versions=30, oldest_deprecated=None, full=True)
+    store.rooms[PATH] = Room(versions=30, deprecated=(), limit=30)
 
     result = run(runner, write_config(CONFIG), "generate")
 
     assert isinstance(result.exception, StoreError)
-    assert "none of them is DEPRECATED" in str(result.exception)
+    assert "too few of them are DEPRECATED" in str(result.exception)
     assert store.read_stage(PATH, PENDING) is None
 
 
@@ -308,7 +310,7 @@ def test_a_write_that_would_delete_a_pinned_version_is_refused(
     """A ref in the file pins the version making room would delete, so it
     would stop resolving: refused at plan time, nothing written."""
     seed(store, PATH, {FIELD: LIVE})
-    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
     pinned = CONFIG.replace(
         "    vault: vault-oci\n",
         "    vault: vault-oci\n"
@@ -363,7 +365,7 @@ def test_the_text_of_a_dry_run_names_the_version_a_write_may_delete(
     """Found by the real run: the verb's own notes do not include it, so it
     goes where every verb's text prints warnings."""
     seed(store, PATH, {FIELD: LIVE})
-    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
 
     output = text(runner, write_config(CONFIG), "generate", "--dry-run")
 
@@ -379,3 +381,21 @@ def test_the_text_of_a_run_names_each_version_the_store_deleted(
     output = text(runner, write_config(CONFIG), "generate")
 
     assert "version 4, its oldest DEPRECATED one, was scheduled for deletion" in output
+
+
+def test_a_native_promotion_adds_no_version_and_one_in_payload_fields_does() -> None:
+    """What the plan counts against the limit: a native promotion moves a
+    stage, and a payload-field one writes the document again (#1159)."""
+    stores = native_staged(
+        {"vault-oci": limited_store()},
+        {("vault-oci", PATH): StageLayout(FIELD)},
+        by="x",
+        now=lambda: NOW,
+    )
+    native, shared = LockKey("vault-oci", PATH), LockKey("vault-oci", SHARED_PATH)
+
+    promoting = _adding(stores, stage=False, promote=True)
+    rotating = _adding(stores, stage=True, promote=True)
+
+    assert (promoting(native), promoting(shared)) == (0, 1)
+    assert (rotating(native), rotating(shared)) == (1, 2)

@@ -354,7 +354,7 @@ from sopuli.store.credentials import (
     stage_version,
 )
 from sopuli.store.credentials import apply_patch as write_credential
-from sopuli.store.native_view import LayoutChangedError
+from sopuli.store.native_view import LayoutChangedError, NativeStagedStore
 from sopuli.store.native_view import wrap as native_staged
 from sopuli.store.protocol import VersionLimited
 from sopuli.store.survey import VaultReport
@@ -4684,62 +4684,121 @@ def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mappin
 
 
 def _plan_version_limits(
-    keys: Iterable[LockKey], stores: Mapping[str, SecretStore], run: Invocation
+    keys: Iterable[LockKey],
+    stores: Mapping[str, SecretStore],
+    run: Invocation,
+    *,
+    adds: Callable[[LockKey], int],
+    creates: bool = False,
 ) -> None:
     """What a store that limits versions will do to each document, said before
     the lock (decision 7, #1159).
 
+    ``adds`` is how many versions the verb may add to the document: a stage
+    adds one, a promotion in payload fields adds one, and a native promotion
+    adds none, since it moves a stage. ``creates`` is whether the verb may
+    create a secret that is not there, which only ``creds generate`` does.
+
     Refused, before anything is written:
 
     * a create on a name that a secret scheduled for deletion still holds,
-      which OCI refuses (``oci-create-taken``);
-    * a write to a full secret with no DEPRECATED version to delete;
-    * a write that would delete a version a ref in the file pins.
+      which the store refuses (``oci-create-taken``);
+    * writes to a full secret with too few DEPRECATED versions to delete;
+    * writes that would delete a version a ref in the file pins.
 
-    Otherwise a full secret is a ``SOPULI-W059`` saying which version a write
-    may delete: "may", because a write that fails for another reason deletes
-    nothing. One read of the secret's versions per document, on such a store
-    only.
+    Otherwise a secret the writes would overfill is a ``SOPULI-W059`` naming
+    the versions they may delete: "may", because a write that fails for
+    another reason deletes nothing. One read of the secret's versions per
+    document, on such a store only.
     """
-    pins = pinned_versions(_declared_estate(run.config))
+    pins = _pinned(run)
     for key in keys:
         store = stores.get(key.store)
         if not isinstance(store, VersionLimited):
             continue
+        added = adds(key)
+        if added == 0 and not creates:
+            continue
         where = f"{key.store}:{key.path}"
         room = store.room(key.path)
         if room is None:
-            if store.name_held(key.path):
+            if creates and store.name_held(key.path):
                 raise StoreError(
                     f"{where} would be created, and a secret of that name is scheduled for "
-                    f"deletion; OCI keeps the name until it is deleted",
-                    hint="cancel the deletion in OCI to use that secret again, or name another one",
+                    f"deletion; the store keeps the name until it is deleted",
+                    hint="cancel the deletion to use that secret again, or name another one",
                 )
             continue
-        if not room.full:
-            continue
-        oldest = room.oldest_deprecated
-        if oldest is None:
+        going = room.making_room_for(added)
+        if going is None:
             raise StoreError(
-                f"{where} holds {room.versions} versions, its store's limit, and none of them "
-                f"is DEPRECATED, so no room can be made without breaking a rollback",
+                f"{where} holds {room.versions} versions, its store's limit is {room.limit}, "
+                f"and too few of them are DEPRECATED to make room for {added} more without "
+                f"breaking a rollback",
                 hint="finish or discard the rotation in progress, then run again",
             )
-        if (key.store, normalise_path(key.path), oldest) in pins:
+        if not going:
+            continue
+        path = normalise_path(key.path)
+        pinned = [n for n in going if (key.store, path, n) in pins or (None, path, n) in pins]
+        if pinned:
+            spelled = ", ".join(f"`@version={n}`" for n in pinned)
             raise ConfigError(
-                f"{where} is full, and making room would delete version {oldest}, which a ref "
-                f"in the configuration pins with `@version={oldest}`",
+                f"{where} is full, and making room would delete version "
+                f"{', '.join(map(str, pinned))}, which a ref in the configuration pins with "
+                f"{spelled}",
                 hint="pin a newer version, or remove the pin, then run again",
             )
         message = (
-            f"{where} holds {room.versions} versions, its store's limit, so a write may "
-            f"delete version {oldest}, its oldest DEPRECATED one, to make room"
+            f"{where} holds {room.versions} versions, its store's limit is {room.limit}, so "
+            f"this run's writes may delete version {', '.join(map(str, going))}, the oldest "
+            f"DEPRECATED, to make room"
         )
         run.document.diagnostics.append(
             Diagnostic(level="warning", code=VERSION_PRUNED, message=message)
         )
         # Every verb's text prints these, a dry run's included; its own notes do not.
         run.document.warnings_text.append(message)
+
+
+def _pinned(run: Invocation) -> set[tuple[str | None, str, int]]:
+    """Every version a ref in the file pins, by store and normalised path.
+
+    The applications' refs, and each target's admin ref, whose store is found
+    as the run finds it (:func:`sopuli.admin.store_name`, the run's own layers
+    included). A store that cannot be told is ``None``, which a pin holds on
+    every store.
+    """
+    config = run.config
+    pins = pinned_versions(_declared_estate(config).bindings)
+    for expanded in config.expanded_targets:
+        admin = expanded.target.admin
+        ref = None if admin is None or admin.auth is None else admin.auth.secret
+        if ref is None or ref.version is None:
+            continue
+        name: str | None = None
+        with suppress(ConfigError):
+            name = admin_store_name(expanded, ref, config=config, env=os.environ)
+        pins.add((name, normalise_path(ref.path), ref.version))
+    return pins
+
+
+def _adding(
+    stores: Mapping[str, SecretStore], *, stage: bool, promote: bool
+) -> Callable[[LockKey], int]:
+    """How many versions a verb that stages and/or promotes may add to a document.
+
+    A stage adds one either way. A promotion adds one in payload fields, where
+    it writes the document again, and none under native staging, where it
+    moves a stage.
+    """
+
+    def adds(key: LockKey) -> int:
+        store = stores.get(key.store)
+        native = isinstance(store, NativeStagedStore) and store.is_native(key.path)
+        return int(stage) + (int(promote) if not native else 0)
+
+    return adds
 
 
 @config_group.command("validate")
@@ -5682,7 +5741,9 @@ def creds_generate(
         run,
     )
     found, unread = _plan_documents(keys, stores)
-    _plan_version_limits(keys, stores, run)
+    # One write per document: a stage, or a new current, which native staging
+    # stages and then promotes.
+    _plan_version_limits(keys, stores, run, adds=lambda key: 1, creates=True)
     plan = _with_stages(plan, keyed, found, promote=promote)
     _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.
@@ -6862,7 +6923,7 @@ def creds_apply(
         ),
         run,
     )
-    _plan_version_limits(keys, stores, run)
+    _plan_version_limits(keys, stores, run, adds=_adding(stores, stage=False, promote=True))
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
     # nothing staged is checked too, which can only refuse more. The two checks
@@ -11018,7 +11079,7 @@ def creds_rotate(
         ),
         run,
     )
-    _plan_version_limits(keys, stores, run)
+    _plan_version_limits(keys, stores, run, adds=_adding(stores, stage=True, promote=True))
 
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target

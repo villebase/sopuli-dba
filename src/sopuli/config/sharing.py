@@ -60,7 +60,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.model import Binding, Config, Vault
+from sopuli.config.model import Binding, Vault
 from sopuli.config.secret_refs import SecretRef, normalise_path
 from sopuli.config.vaults import STAGING_TYPES
 from sopuli.payload import PENDING, StageLayout, stage_layout
@@ -76,32 +76,23 @@ __all__ = [
 ]
 
 
-def pinned_versions(config: Config) -> set[tuple[str, str, int]]:
-    """Every ``(store, normalised path, version)`` a ref in ``config`` pins
-    with ``@version=N``: an application's, and a target's admin ref.
+def pinned_versions(bindings: Iterable[Binding]) -> set[tuple[str | None, str, int]]:
+    """Every ``(store, normalised path, version)`` an application's ref pins
+    with ``@version=N``.
 
     For the plan (#1159). A store that deletes old versions to make room
     (decision 7) would leave such a ref resolving to nothing, so a run that
-    would delete a pinned version is refused. ``config`` should hold every
-    binding the file declares, since a ref the run did not select still
-    reads that version. A ref whose store is not known is left out: it
-    cannot name a store the run writes to by name.
+    would delete a pinned version is refused. ``bindings`` should be every
+    binding the file declares, since a ref the run did not select still reads
+    that version. The store is ``None`` where it is not known, and such a pin
+    holds on every store, since it may be any of them. A target's admin ref is
+    the caller's to add: its store chain reaches the run's own layers.
     """
-    found: set[tuple[str, str, int]] = set()
-    for binding in config.bindings:
-        ref = binding.secret
-        if ref is not None and ref.version is not None and binding.vault is not None:
-            found.add((binding.vault, normalise_path(ref.path), ref.version))
-    for expanded in config.expanded_targets:
-        admin = expanded.target.admin
-        ref = None if admin is None or admin.auth is None else admin.auth.secret
-        if ref is None or ref.version is None:
-            continue
-        # The admin ref's store chain as the file gives it (sopuli.admin.store_name).
-        name = ref.vault or expanded.target.vault or config.defaults.vault
-        if name is not None:
-            found.add((name, normalise_path(ref.path), ref.version))
-    return found
+    return {
+        (binding.vault, normalise_path(binding.secret.path), binding.secret.version)
+        for binding in bindings
+        if binding.secret is not None and binding.secret.version is not None
+    }
 
 
 @dataclass(frozen=True)

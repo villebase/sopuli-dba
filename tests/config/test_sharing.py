@@ -18,7 +18,7 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.config.model import Binding, Config, Vault
+from sopuli.config.model import Binding, Vault
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.config.sharing import (
     SharedSecret,
@@ -349,14 +349,14 @@ def test_a_path_a_storeless_binding_also_names_is_unsure() -> None:
 
 def test_a_pin_is_found_by_store_path_and_version() -> None:
     """For the plan's check before a store deletes a version (#1159). A ref
-    whose store is not known is left out."""
-    config = Config(
-        version=1,
-        bindings=(
-            bound("acme_web_user", "acme-web#password@version=4"),
-            bound("acme_web_user", "acme-web#password", target="t2"),
-            bound("acme_batch_user", "acme-batch#password@version=2", vault=None),
-        ),
-    )
+    whose store is not known keeps ``None``, which holds on every store."""
+    bindings = [
+        bound("acme_web_user", "acme-web#password@version=4"),
+        bound("acme_web_user", "acme-web#password", target="t2"),
+        bound("acme_batch_user", "acme-batch#password@version=2", vault=None),
+    ]
 
-    assert pinned_versions(config) == {("vault-oci", "acme-web", 4)}
+    assert pinned_versions(bindings) == {
+        ("vault-oci", "acme-web", 4),
+        (None, "acme-batch", 2),
+    }

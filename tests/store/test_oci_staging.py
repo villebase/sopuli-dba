@@ -142,8 +142,20 @@ def test_room_counts_versions_not_scheduled_for_deletion(store: OciStore, fake: 
     secret = fake.put("acme-db", {"p": 1}, {"p": 2}, {"p": 3}, {"p": 4})
     secret.versions[0].time_of_deletion = "2026-10-30T12:00:00Z"
 
-    assert store.room("acme-db") == Room(versions=3, oldest_deprecated=2, full=False)
+    assert store.room("acme-db") == Room(versions=3, deprecated=(2,), limit=VERSION_LIMIT)
     assert store.room("acme-nothing") is None
+
+
+def test_room_says_which_versions_each_write_would_delete() -> None:
+    """A rotation in payload fields writes twice, so a secret one short of
+    full still loses a version, and a full one loses two (#1159)."""
+    room = Room(versions=29, deprecated=(3, 4, 5), limit=30)
+
+    assert room.making_room_for(0) == ()
+    assert room.making_room_for(1) == ()
+    assert room.making_room_for(2) == (3,)
+    assert Room(versions=30, deprecated=(3, 4), limit=30).making_room_for(2) == (3, 4)
+    assert Room(versions=30, deprecated=(3,), limit=30).making_room_for(2) is None
 
 
 def test_a_name_held_only_by_a_deleting_secret_is_held(store: OciStore, fake: FakeOci) -> None:
@@ -356,7 +368,7 @@ def test_a_throttled_read_is_tried_again(fake: FakeOci) -> None:
     sleeps: list[float] = []
 
     assert throttled_store(fake, sleeps).room("acme-db") == Room(
-        versions=2, oldest_deprecated=None, full=False
+        versions=2, deprecated=(), limit=VERSION_LIMIT
     )
     assert sleeps == list(THROTTLE_WAITS[:2])
 

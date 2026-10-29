@@ -1238,6 +1238,10 @@ def _report_pruned(invocation: Invocation) -> None:
                 Diagnostic(level="warning", code=VERSION_PRUNED, message=message)
             )
             invocation.document.warnings_text.append(message)
+            # A run that prompted has printed its warnings already, and the
+            # handler prints them for a failed run only if it has not. A
+            # deletion must be seen, so it prints them again, earlier ones too.
+            invocation.document.warnings_shown = False
 
 
 def _abort(invocation: Invocation) -> None:

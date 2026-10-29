@@ -2886,11 +2886,14 @@ reason deletes nothing. It never touches CURRENT, PENDING or PREVIOUS, so a
 rollback still works.
 
 `creds generate`, `apply` and `rotate` check each secret they will write
-before they take the lock (#1159). A full secret with nothing DEPRECATED is
-refused. So is a write that would delete a version a ref in the file pins with
-`@version=N`, which would stop resolving (exit 9). Otherwise the plan and
-`--dry-run` report `SOPULI-W059` naming the version a write may delete, and
-the run reports it again for each version a store did delete.
+before they take the lock (#1159). They count the versions each run may add: a
+stage adds one, a promotion in payload fields adds one, and a native promotion
+adds none, so `rotate` on a shared secret adds two. Writes to a secret with too
+few DEPRECATED versions to make room are refused. So are writes that would
+delete a version a ref in the file pins with `@version=N`, application or
+admin, which would stop resolving (exit 9). Otherwise the plan and `--dry-run`
+report `SOPULI-W059` naming the versions the writes may delete, and the run
+reports it again for each version a store did delete.
 
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command

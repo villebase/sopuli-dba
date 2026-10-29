@@ -19,19 +19,25 @@ The longest password, 1024 bytes of UTF-8, is in
 
 The role's name is quoted as ``pg_roles`` spells it, and the verifier is a
 literal: ``ALTER ROLE`` is a utility statement and takes no bind parameters.
+
+**psycopg is imported where it is used**, not at the top (ADR-006 rule 1). The
+driver's registered module is :mod:`sopuli.driver.postgres.session`, and only
+that module may load the client at import. So this one imports without psycopg
+installed, and ``tests/store/test_install_shape.py`` can hold that no module
+outside the session loads it (#1168).
 """
 
 from __future__ import annotations
 
-from typing import Protocol
-
-import psycopg
-from psycopg import sql
+from typing import TYPE_CHECKING, Protocol
 
 from sopuli.config import charsets
 from sopuli.driver.postgres.limits import LIMIT
 from sopuli.driver.protocol import DriverError
 from sopuli.secrets import Secret
+
+if TYPE_CHECKING:
+    from psycopg import sql
 
 #: The algorithm libpq is asked for, named, so the server's
 #: ``password_encryption`` setting cannot turn it into ``md5``.
@@ -109,6 +115,8 @@ def verifier(pgconn: PasswordConnection, role: str, secret: Secret) -> str:
     never echo the password. What libpq returned on success is never quoted,
     because a malformed answer may be part of a verifier.
     """
+    import psycopg
+
     try:
         answer = pgconn.encrypt_password(
             secret.reveal().encode("utf-8"), role.encode("utf-8"), ALGORITHM
@@ -136,4 +144,6 @@ def alter_role(role: str, computed: str) -> sql.Composed:
     statement by mistake."""
     if not computed.startswith(PREFIX):
         raise ValueError("refusing to send a password that is not a SCRAM-SHA-256 verifier")
+    from psycopg import sql
+
     return sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(computed))

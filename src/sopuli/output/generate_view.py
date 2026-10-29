@@ -322,10 +322,18 @@ def render_generate(rows: Sequence[tuple[Candidate, str, str]]) -> str:
     result names the targets. The closing line counts passwords, so one shared
     password is "1 staged", as `creds check` counts it as one secret.
     `results[]` keeps one entry per binding (`03-json-output.md`).
+
+    **A row that wrote nothing is its own row.** A skipped or refused binding
+    (#1174) carries its own target's reason, and grouping it would put one
+    target's reason under every target of the password.
     """
     grouped: dict[object, tuple[Candidate, str, str, list[str]]] = {}
     for candidate, state, detail in rows:
-        key = password_key(candidate.binding) or id(candidate)
+        key = (
+            password_key(candidate.binding) or id(candidate)
+            if state in WRITTEN or state == FAILED
+            else id(candidate)
+        )
         found = grouped.setdefault(key, (candidate, state, detail, []))
         found[3].append(candidate.binding.target)
     table = render_table(

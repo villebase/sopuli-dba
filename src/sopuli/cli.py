@@ -5929,8 +5929,7 @@ def creds_generate(
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
 
     supplied = _password_from_stdin() if from_stdin else None
-    reserved: dict[tuple[str, str], str] = {}
-    limits, unanswered = _constraints_for(bindings, run, config, offline=offline, reserved=reserved)
+    limits, unanswered, reserved = _constraints_for(bindings, run, config, offline=offline)
     document.constraints = build_constraints(limits, unanswered)
     notices = constraint_diagnostics(limits, supplied=supplied is not None)
     document.diagnostics.extend(notices)
@@ -6011,7 +6010,7 @@ def creds_generate(
         # Invariant 8: print the plan, write nothing, take no lock. No `results`
         # either -- `plan` already says what would happen, at the same grain, and
         # a second vocabulary for "would have" would be a state nobody can act on.
-        document.finish(ExitCode.SUCCESS, Summary(total=len(candidates)))
+        document.finish(ExitCode.SUCCESS, Summary(total=len(candidates) + len(skipped)))
         return f"{header}\n\nnothing was written (--dry-run)"
 
     manager = LockManager(
@@ -6059,31 +6058,40 @@ def creds_generate(
         raise
 
     _record_locks(document, manager)
-    # Each skipped account as its own row, `SKIPPED` and unchanged, with the
-    # reason: the plan named it, and a result that left it out would leave the
-    # reader to work out why it was never staged (#1174).
+    written = bool(rows)
+    # Each skipped account as its own row, unchanged, with the reason: the plan
+    # named it, and a result that left it out would leave the reader to work out
+    # why it was never staged (#1174). `REFUSED` where the operator named the
+    # account, as `creds apply` reports it: they asked for something the tool
+    # will not do, and the run must not exit 0 over it.
     for candidate, detail in skipped:
+        state = (
+            apply_states.REFUSED
+            if selection.names(candidate.binding.account)
+            else apply_states.SKIPPED
+        )
         results.append(
             build_generate_result(
                 candidate,
-                state=apply_states.SKIPPED,
+                state=state,
                 stage=CURRENT if promote else PENDING,
                 changed=False,
                 detail=detail,
             )
         )
-        rows.append((candidate, apply_states.SKIPPED, detail))
+        rows.append((candidate, state, detail))
     document.results = results
     _stream_results(run)
     states = [state for _, state, _ in rows]
     if stolen is not None:
         # The same split `creds apply` makes, for the same reason: 7 asserts
         # nothing happened, which is a lie once a document has been staged.
+        # Only a write counts: a skipped row is not one.
         document.diagnostics.append(
             Diagnostic(level="error", message=stolen.message, code=LOCK_LOST)
         )
         document.finish(
-            ExitCode.PARTIAL if rows else ExitCode.LOCK_HELD, summarise_generate(states)
+            ExitCode.PARTIAL if written else ExitCode.LOCK_HELD, summarise_generate(states)
         )
         body = f"{header}\n\n{render_generate(rows)}\n\n{stolen}"
         return "\n".join([body, *render_notices(_lock_notices(manager))])
@@ -6150,15 +6158,12 @@ def _constraints_for(
     config: Config,
     *,
     offline: bool,
-    reserved: dict[tuple[str, str], str] | None = None,
-) -> tuple[Constraints, dict[str, Error]]:
-    """What the selected targets say a password may be (UC-1 §4 step 2), and why
-    each target that did not answer did not.
-
-    ``reserved``, where given, is filled with each ``(target, account)`` that a
-    guardrail check no flag waives refuses whatever is granted, and the reason
-    (:func:`_reserved_on`). Read over the same connection, for the reason the
-    limit is.
+) -> tuple[Constraints, dict[str, Error], dict[tuple[str, str], str]]:
+    """What the selected targets say a password may be (UC-1 §4 step 2), why
+    each target that did not answer did not, and each ``(target, account)``
+    that a guardrail check no flag waives refuses whatever is granted, with the
+    reason (:func:`_reserved_on`, #1174). The last is read over the same
+    connection, for the reason the limit is.
 
     **One connection per target, not per account** (§4 step 2). A selection
     routinely puts several accounts on one database, so each distinct target is
@@ -6179,19 +6184,19 @@ def _constraints_for(
     from the one the real run makes.
     """
     if offline:
-        return Constraints(source=constraint_source.UNREAD), {}
+        return Constraints(source=constraint_source.UNREAD), {}, {}
 
     readings: list[tuple[str, ByteLimit]] = []
     accounts: list[tuple[str, AccountConstraints]] = []
     errors: dict[str, Error] = {}
+    reserved: dict[tuple[str, str], str] = {}
     for name in dict.fromkeys(binding.target for binding in bindings):
         session = None
         try:
             session = _open_session(_expanded(config, name), run, config)
             readings.append((name, session.byte_limit()))
             accounts.extend(_profile_readings(session, name, bindings))
-            if reserved is not None:
-                reserved.update(_reserved_on(session, name, bindings))
+            reserved.update(_reserved_on(session, name, bindings))
         except Exception as error:  # noqa: BLE001 -- every failure takes the same fallback
             # The fallback is the same for every failure; the reason is kept.
             errors[name] = _finding(error)
@@ -6200,7 +6205,7 @@ def _constraints_for(
                 with suppress(Exception):
                     session.close()
     found = constraint_source.survey(readings, unreachable=list(errors), accounts=accounts)
-    return found, errors
+    return found, errors, reserved
 
 
 def _reserved_on(

@@ -2192,6 +2192,32 @@ def test_the_skip_is_shown_before_anything_is_written(
     assert "acme_web_user on appdb-alpha: the server reserves this account" in result.output
     assert store.read(PATH) is None
 
+    previewed = run(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+    assert document(previewed)["summary"]["total"] == 2, "the preview counts the skipped one too"
+
+
+def test_a_named_account_no_run_could_apply_is_refused(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Named with `--account`, the account is `REFUSED` and the run fails, as
+    `creds apply` treats it: the operator asked for something the tool will not
+    do. Nothing is staged."""
+    _describing(
+        monkeypatch,
+        {"ACME_WEB_USER": _user("ACME_WEB_USER", reserved_by="supautils.reserved_roles")},
+    )
+
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--output", "json")
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    (row,) = document(result)["results"]
+    assert row["state"] == "ERROR"
+    assert row["changed"] is False
+    assert store.read(PATH) is None
+
 
 def test_an_account_whose_state_cannot_be_read_is_staged(
     runner: CliRunner,

@@ -292,7 +292,7 @@ order dependency is still there until its issue is fixed.
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
 | 0 | every commit of a pull request that changes code | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
-| 1 | every pull request that changes code | public CI (`tier1.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5). PostgreSQL 16 and Supabase's database: the PostgreSQL driver against a server |
+| 1 | every pull request that changes code | public CI (the `tier1` job in `ci.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5). PostgreSQL 16 and Supabase's database: the PostgreSQL driver against a server |
 | 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE |
 | 3 | before a release | maintainer | by hand | 19c and 12.2 EE, OCI DB systems and Autonomous Database, OCI Vault, the release gates in §6 |
 

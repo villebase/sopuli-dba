@@ -44,29 +44,29 @@ commits are not.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs tier 0 (`design/04-testing.md` §4) on every pull
-request: `ruff check`, `ruff format --check`, `mypy`, `pytest`, and a smoke check
-that the installed `sopuli` binary runs. No containers, under a minute.
-`.github/workflows/tier1.yml` is the container lane and runs on the same trigger.
+`.github/workflows/ci.yml` runs tiers 0 and 1 (`design/04-testing.md` §4) on
+every pull request. Tier 0 is `ruff check`, `ruff format --check`, `mypy`,
+`pytest`, and a smoke check that the installed `sopuli` binary runs: no
+containers, under a minute. Tier 1 is the `tier1` job, the container lane. The
+jobs run in parallel, and `ci ok` waits for all of them, so a red tier 1 fails
+the one required check (#1120).
 
 - **Pull requests only, not the push to `main` as well.** A `pull_request` run
   checks out `refs/pull/N/merge` — the head *already merged into the base* — so it
   tests the tree the squash merge is about to produce, not the branch in
   isolation. A run on `main` afterwards would test an identical tree a second
   time.
-- **A prose-only pull request runs neither *heavy* lane** — no tier 1, and no
-  `lint`, `test`, `release build` or `install shape` — and the two workflows
-  arrange that differently. `tier1.yml` filters on the trigger with `paths-ignore`; `ci.yml`
-  filters in a `changes` job that every other job carries an `if:` on, for the
-  branch-protection reason below. It does still run the cheap `docs` job, which
-  is the bullet after this one. **Both lists are measured, not "docs"** — the
-  suite reads `docs/design/00-principles.md`, `docs/design/01-configuration.md`,
-  every `docs/schemas/*.json`, every `examples/*.yaml` and
+- **A prose-only pull request runs no *heavy* lane**: no `tier1`, `lint`,
+  `test`, `release build` or `install shape`. A `changes` job decides, and each
+  of those jobs carries an `if:` on it, for the branch-protection reason below.
+  It does still run the cheap `docs` job, which is the bullet after this one.
+  **The prose list is measured, not "docs"**: the suite reads
+  `docs/design/00-principles.md`, `docs/design/01-configuration.md`, every
+  `docs/schemas/*.json`, every `examples/*.yaml` and
   `sql/oracle/00_install.sql`, so a blanket `docs/**` or an `examples/**` would
   switch off a test while leaving it green. `test/paths_ignore_probe.py` measures
-  what the **skipped** lanes open — it deselects the modules the `docs` job
-  runs, since those are covered — and `tests/test_workflow_prose_list.py` keeps
-  the two copies of the list equal.
+  what the **skipped** lanes open. It deselects the modules the `docs` job runs,
+  since those are covered.
 - **A prose-only pull request still runs the `docs` job**, and that is what makes
   the skipping above safe (#458). Its tier-0 tests read the files the prose list
   ignores:
@@ -118,9 +118,9 @@ that the installed `sopuli` binary runs. No containers, under a minute.
   Two consequences worth knowing before touching any of this. The probe
   **deselects** those modules, because the question is what a *skipped lane*
   reads rather than what the suite reads, and `tests/test_workflow_prose_list.py`
-  asserts the job and the probe name the same modules. And `tier1.yml` needs no
-  change at all: no container test reads an ignored path, which the same
-  measurement established.
+  asserts the job and the probe name the same modules. And no container test
+  reads an ignored path, which the same measurement established, so tier 1 can
+  skip prose like the tier-0 lanes.
 - **`ruff` runs once**, on Linux. It is deterministic — same answer on every OS
   and interpreter — so six identical failures would be noise, not coverage.
 - **`mypy` runs on the whole matrix**, unlike `ruff`, because it is not
@@ -156,12 +156,13 @@ It applies to the default branch, has no bypass actors, and has these rules:
 - the branch cannot be force-pushed.
 
 `ci.yml` skips its lanes on a prose-only
-pull request — `changes` decides, and `lint`, `test`, `release build` and
-`install shape` carry
+pull request — `changes` decides, and `lint`, `test`, `release build`,
+`install shape` and `tier1` carry
 `if: needs.changes.outputs.code == 'true'` — because a job skipped by an `if:`
 reports `skipped`, which protection accepts, while a whole workflow skipped by
 `paths-ignore` never creates its contexts at all and a required one stays pending
-forever. That is why `ci.yml` has no `paths-ignore` and `tier1.yml` still does.
+forever. That is why no workflow filters pull requests with `paths-ignore`, and
+why tier 1 is a job in `ci.yml` rather than a workflow `ci ok` cannot see.
 
 But **a skipped matrix job never expands.** Instead of seven contexts named
 `test (ubuntu-latest, py3.11)` and so on, it publishes exactly one, named with
@@ -346,7 +347,8 @@ the working pattern, not an enforced rule. `workflow_dispatch` on `ci` and
   merge by itself.
 - The tier-1 job downloads one named Instant Client release and checks it
   against the SHA-256 Oracle publishes. To move to a new release, take both
-  URLs and both hashes from Oracle's download page; `tier1.yml` names it.
+  URLs and both hashes from Oracle's download page; the `tier1` job in `ci.yml`
+  names it.
 - No manual tagging.
 
 ## Documentation drift audit

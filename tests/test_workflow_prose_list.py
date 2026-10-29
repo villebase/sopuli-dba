@@ -1,24 +1,18 @@
-"""The two CI workflows agree about what counts as prose.
+"""What `ci.yml` treats as prose, and the lanes that depend on it.
 
-Tier 0 (04-testing.md §4): reads two files, runs nothing.
+Tier 0 (04-testing.md §4): reads files, runs nothing.
 
-`tier1.yml` skips a prose-only pull request with `paths-ignore` on the trigger.
-`ci.yml` cannot -- a workflow skipped that way never creates its check contexts,
-and a required context that was never created leaves every prose-only pull
-request pending forever. It filters in a `changes` job instead, whose skipped
-dependants report `skipped` and satisfy the requirement, with `ci ok` as the one
-check `workflow.md` says to require.
-
-The cost of that is the list existing twice, in two syntaxes. This is what makes
-the second copy safe: a pattern added to one and not the other is a failing test
-rather than a lane that quietly stopped skipping. Drift is the failure this test
-exists to catch: a pattern added to one list that the other never hears about,
-because nothing looked.
+`ci.yml` skips its heavy lanes on a prose-only pull request with a `changes`
+job, not with `paths-ignore` on the trigger. A workflow skipped that way never
+creates its check contexts, and a required context that was never created
+leaves every prose-only pull request pending forever. A job skipped by an `if:`
+reports `skipped` and satisfies the requirement, with `ci ok` as the one check
+`workflow.md` says to require. Tier 1 is one of those jobs, so `ci ok` waits for
+it (#1120).
 
 It does **not** check that the list is *correct*. What the suite actually opens
 under `docs/`, `sql/` and `examples/` is a property of running the suite, and
-`test/paths_ignore_probe.py` is what measures it. This only checks that the two
-copies say the same thing.
+`test/paths_ignore_probe.py` is what measures it.
 """
 
 from __future__ import annotations
@@ -27,13 +21,6 @@ import re
 from pathlib import Path
 
 WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
-
-
-def _paths_ignore(text: str) -> list[str]:
-    """The `paths-ignore:` list of a workflow trigger, in file order."""
-    block = re.search(r"^ *paths-ignore:\n((?: *- '[^']+'\n)+)", text, re.MULTILINE)
-    assert block is not None, "no paths-ignore block found"
-    return re.findall(r"- '([^']+)'", block.group(1))
 
 
 def _prose_array(text: str) -> list[str]:
@@ -47,32 +34,28 @@ def _prose_array(text: str) -> list[str]:
     return re.findall(r"^ *'([^']+)'$", block.group(1), re.MULTILINE)
 
 
-def test_the_two_prose_lists_are_identical() -> None:
-    """Same patterns, same order.
+def test_no_workflow_filters_pull_requests_with_paths_ignore() -> None:
+    """The trap the `changes` job exists to avoid, asserted rather than described.
 
-    Order is asserted too, and not out of tidiness: the lists are read side by
-    side when either changes, and a diff against a reordered copy is unreadable
-    at exactly the moment somebody needs to read it.
+    A `paths-ignore` on a `pull_request` trigger makes a whole workflow skip, and
+    its checks then never report. While tier 1 had a workflow of its own, that
+    is how it skipped prose, and why `ci ok` could not see it (#1120).
     """
-    tier1 = _paths_ignore((WORKFLOWS / "tier1.yml").read_text(encoding="utf-8"))
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        text = workflow.read_text(encoding="utf-8")
+        assert not re.search(r"^ *paths-ignore:", text, re.MULTILINE), workflow.name
+
+
+def test_the_list_is_not_empty() -> None:
+    """A regex that found its block but nothing in it would pass the test below.
+
+    The extractor asserts when it cannot find the block at all, so a workflow
+    reorganised out from under it fails loudly. The quieter failure is a block
+    that is still found and no longer yields entries: reformat the list to
+    double quotes, say, and `findall` returns `[]`.
+    """
     ci = _prose_array((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
 
-    assert ci == tier1
-
-
-def test_neither_list_is_empty() -> None:
-    """A regex that found its block but nothing in it would pass the test above.
-
-    The extractors assert when they cannot find the block at all, so a workflow
-    reorganised out from under them fails loudly. The quieter failure is a block
-    that is still found and no longer yields entries -- reformat either list to
-    double quotes, say, and `findall` returns `[]` for both. Two empty lists
-    compare equal, and this file becomes a test of nothing while staying green.
-    """
-    tier1 = _paths_ignore((WORKFLOWS / "tier1.yml").read_text(encoding="utf-8"))
-    ci = _prose_array((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
-
-    assert len(tier1) > 10
     assert len(ci) > 10
 
 
@@ -87,10 +70,9 @@ def test_examples_is_not_ignored() -> None:
     It is the exact trap the workflow comments describe, so it gets an assertion
     rather than a sentence.
     """
-    tier1 = _paths_ignore((WORKFLOWS / "tier1.yml").read_text(encoding="utf-8"))
     ci = _prose_array((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
 
-    for pattern in tier1 + ci:
+    for pattern in ci:
         assert not pattern.startswith("examples/"), pattern
         assert not pattern.startswith("sql/"), pattern
 
@@ -188,15 +170,31 @@ def test_the_docs_job_is_gated_on_prose_only() -> None:
     assert re.search(r"^    needs: changes$", block, re.MULTILINE), block
 
 
-def test_ci_ok_requires_the_docs_job() -> None:
+def test_ci_ok_requires_the_docs_job_and_tier_1() -> None:
     """A lane missing from `ci ok`'s `needs` is a lane whose failure merges.
 
     `ci ok` is the one required check (`workflow.md`), and it judges
     `join(needs.*.result, ' ')` — so a job absent from that list is invisible to
-    it however red it goes.
+    it however red it goes. Tier 1 was, for that reason, until #1120.
     """
     text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
     needs = re.search(r"^    needs: \[([^\]]+)\]$", text, re.MULTILINE)
     assert needs is not None, "ci ok has no needs list"
 
-    assert "docs" in [name.strip() for name in needs.group(1).split(",")]
+    names = [name.strip() for name in needs.group(1).split(",")]
+    assert "docs" in names
+    assert "tier1" in names
+
+
+def test_tier_1_is_gated_on_code() -> None:
+    """Tier 1 runs on a pull request that changes code, and reports `skipped` on
+    prose, which `ci ok` accepts. Without the `if:` it would start Oracle for
+    every documentation pull request; without `needs: changes` the condition
+    reads an output that does not exist and is never true."""
+    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    job = re.search(r"\n  tier1:\n(.*?)(?=\n  [a-z0-9-]+:\n)", text, re.DOTALL)
+    assert job is not None, "ci.yml has no `tier1:` job"
+
+    assert "if: needs.changes.outputs.code == 'true'" in job.group(1)
+    assert re.search(r"^    needs: changes$", job.group(1), re.MULTILINE)
+    assert "SOPULI_TEST_TIER1: required" in job.group(1)

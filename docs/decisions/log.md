@@ -3493,8 +3493,8 @@ the register.
 
 ## #1152
 
-- **Decided:** 2026-10-28, on #1128 (decision 5)
-- **Question:** Every mutated path gets a lock record, written at least twice
+- **Decided:** 2026-10-28, #1152
+- **Question:** Decision 5 on #1128. Every mutated path gets a lock record, written at least twice
   a run. An OCI secret holds at most 30 versions, and OCI removes none by
   itself (#1136). Where does an OCI store keep the record?
 - **Decision:** In the lock secret's metadata, under `sopuli_record`, as a

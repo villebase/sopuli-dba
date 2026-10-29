@@ -241,7 +241,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
 | — | — | Forecast a single-target guardrail refusal in `--dry-run --preflight` | open | | #1116 |
 | — | — | Keep `creds rotate`'s privilege survey from refusing the run over a role checks 6 or 8 refuse | open | | #1117 |
-| — | — | Make tier 1 a merge gate: `ci ok` passes while tier 1 fails | open | | #1120 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

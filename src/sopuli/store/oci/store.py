@@ -108,6 +108,10 @@ CHURN_RETRIES = 3
 #: a poll, in case the read lags behind the state (``oci-read-while-creating``).
 READ_ATTEMPTS = 3
 
+#: How many DEPRECATED versions one write may remove when OCI keeps refusing
+#: it as over the limit. One is enough when OCI counts as measured.
+ROOM_ATTEMPTS = 2
+
 #: Seconds to wait before each retry of a read OCI throttled (``429``).
 THROTTLE_WAITS = (2.0, 4.0, 8.0)
 
@@ -455,8 +459,11 @@ class OciStore:
     def room(self, path: str) -> Room | None:
         """How full the secret at ``path`` is, or ``None`` if there is none.
 
-        For the plan (#1134): a write or a stage to a full secret first deletes
-        its oldest DEPRECATED version, and one with none is refused.
+        For the plan (#1134). When ``full``, a write or a stage that OCI then
+        refuses as over the limit makes the store delete ``oldest_deprecated``
+        and send it again; with none, it is refused. A write that fails for
+        another reason, such as the size check or a lost compare-and-set,
+        deletes nothing, so a plan should say "may delete", not "will delete".
         """
         name = _names.to_oci(path)
         what = self._what(name)
@@ -545,7 +552,15 @@ class OciStore:
         except NO_ANSWER as exc:
             raise _errors.unreachable(exc, what=what) from exc
         self.pruned.append(Pruned(path=path, generation=room.oldest_deprecated))
-        response = self._settle(live.id, name=live.name, written=False, what=what)
+        try:
+            response = self._settle(live.id, name=live.name, written=False, what=what)
+        except StoreError as failed:
+            # Whatever went wrong, the deletion is scheduled: the operator must hear it.
+            raise type(failed)(
+                f"{what}: version {room.oldest_deprecated} was scheduled for deletion to make "
+                f"room, and waiting for the secret failed. {failed.message}",
+                hint=failed.hint,
+            ) from failed
         return self._as_live(live.id, live.name, response, what=what)
 
     def _what(self, name: str) -> str:
@@ -688,8 +703,9 @@ class OciStore:
         only OCI's ETag moved, and the update is sent again with the new one.
         """
         current = live
-        last = ""
-        for _ in range(CHURN_RETRIES + 1):
+        retries = 0
+        removed = 0
+        while True:
             sent = metadata(current)
             _check_size(sent, what=what)
             update = oci.vault.models.UpdateSecretDetails(metadata=sent, **content)
@@ -698,20 +714,26 @@ class OciStore:
                 break
             except oci.exceptions.ServiceError as exc:
                 if room_for is not None and _limit_exceeded(exc):
-                    fresh = self._make_room(current, path=room_for, what=what)
-                    if guarded and _token(fresh.metadata, what=what) != _token(
-                        current.metadata, what=what
-                    ):
-                        raise CasConflictError(
-                            f"{what} was written by another writer while this run made room in it"
+                    # Its own budget, so making room is always followed by a resend.
+                    if removed == ROOM_ATTEMPTS:
+                        raise StoreError(
+                            f"{what}: OCI still refused a new version as over its limit after "
+                            f"the store removed {removed} DEPRECATED ones, so nothing was written",
+                            hint="look at the secret's versions in OCI",
                         ) from exc
-                    current = fresh
-                    last = exc.code
+                    current = self._room_for(current, path=room_for, guarded=guarded, what=what)
+                    removed += 1
                     continue
                 if exc.status != 409 or not exc.request_id:
                     _errors.raise_for(exc, what=what)
-                last = exc.code
                 if exc.code == INCORRECT_STATE:
+                    retries += 1
+                    if retries > CHURN_RETRIES:
+                        raise _errors.OciUnavailableError(
+                            f"{what}: the secret was busy with other writes {retries} times, "
+                            f"so nothing was written",
+                            hint="run again once the other writers have finished",
+                        ) from exc
                     response = self._settle(current.id, name=current.name, written=False, what=what)
                     if guarded:
                         # Somebody else wrote: no later Conflict is only churn.
@@ -724,27 +746,43 @@ class OciStore:
                     churned = self._churned(current, what=what)
                 if churned is None:
                     _errors.raise_for(exc, what=what)
+                retries += 1
+                if retries > CHURN_RETRIES:
+                    raise CasConflictError(
+                        f"{what}: OCI refused the update {retries} times with a changing ETag, "
+                        f"and the secret did not change in between",
+                        hint="run again; if it keeps happening, the OCI request ids in a debug "
+                        "run help",
+                    ) from exc
                 current = churned
-        else:
-            if last == "LimitExceeded":
-                raise StoreError(
-                    f"{what}: OCI still refused a new version as over its limit after the "
-                    f"store removed {CHURN_RETRIES + 1} DEPRECATED ones, so nothing was written",
-                    hint="look at the secret's versions in OCI",
-                )
-            if last == INCORRECT_STATE:
-                raise _errors.OciUnavailableError(
-                    f"{what}: the secret was busy with other writes {CHURN_RETRIES + 1} times, "
-                    f"so nothing was written",
-                    hint="run again once the other writers have finished",
-                )
-            raise CasConflictError(
-                f"{what}: OCI refused the update {CHURN_RETRIES + 1} times with a changing ETag, "
-                f"and the secret did not change in between",
-                hint="run again; if it keeps happening, the OCI request ids in a debug run help",
-            )
         self._settle(live.id, name=live.name, written=True, what=what)
         return int(sent[_names.CAS_KEY])
+
+    def _room_for(self, current: _Live, *, path: str, guarded: bool, what: str) -> _Live:
+        """Make room for a version OCI refused as over the limit, and return the
+        secret to send the update against again.
+
+        A guarded write checks first that nobody moved the counter since its
+        read, so a version is never deleted for a write that would lose its
+        compare-and-set anyway, and checks again after the wait. A secret
+        marked as written by somebody else stays marked (:meth:`_update`).
+        """
+        if guarded:
+            response = self._get(current.id, what=what)
+            if _token(dict(response.data.metadata or {}), what=what) != _token(
+                current.metadata, what=what
+            ):
+                raise CasConflictError(
+                    f"{what} was written by another writer since this run read it"
+                )
+        fresh = self._make_room(current, path=path, what=what)
+        if guarded and _token(fresh.metadata, what=what) != _token(current.metadata, what=what):
+            raise CasConflictError(
+                f"{what} was written by another writer while this run made room in it"
+            )
+        if current.read_at == float("-inf"):
+            fresh = replace(fresh, read_at=current.read_at)
+        return fresh
 
     def _churned(self, live: _Live, *, what: str) -> _Live | None:
         """The secret with a fresh ETag, if only its ETag has moved since ``live``.

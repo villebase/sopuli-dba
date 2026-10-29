@@ -259,6 +259,60 @@ def test_a_write_while_room_was_made_conflicts(
         store.write("acme-db", {"password": "new"}, cas=1)
 
 
+def test_making_room_is_always_followed_by_a_resend(store: OciStore, fake: FakeOci) -> None:
+    """Busy three times, then full: the room made is used, not wasted."""
+    secret = full(fake)
+    busy: list[int] = []
+
+    def other_writers(target: FakeSecret) -> None:
+        if len(busy) < 3:
+            busy.append(1)
+            target.lifecycle_state = "UPDATING"
+            target.busy = 1
+
+    fake.before_update = other_writers
+
+    assert store.write("acme-db", {"password": "new"}, cas=1) == 2
+    assert store.pruned == [Pruned(path="acme-db", generation=1)]
+    assert len(secret.versions) == VERSION_LIMIT + 1
+
+
+def test_a_guarded_write_checks_the_counter_before_deleting(store: OciStore, fake: FakeOci) -> None:
+    """Another writer moved the counter, and OCI answers the limit before the
+    ETag: nothing may be deleted for a write that has already lost."""
+    secret = full(fake)
+    once: list[bool] = []
+
+    def other_writer(target: FakeSecret) -> None:
+        if not once:
+            once.append(True)
+            target.metadata[CAS_KEY] = "5"
+
+    fake.before_update = other_writer
+
+    with pytest.raises(CasConflictError, match="since this run read it"):
+        store.write("acme-db", {"password": "new"}, cas=1)
+
+    assert all(one.time_of_deletion is None for one in secret.versions)
+
+
+def test_a_failed_wait_after_making_room_says_a_deletion_was_scheduled(
+    store: OciStore, fake: FakeOci, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full(fake)
+    real = fake.schedule_secret_version_deletion
+
+    def schedule_then_fail(secret_id: str, number: int, details: object) -> object:
+        result = real(secret_id, number, details)
+        fake.final_state = "FAILED"
+        return result
+
+    monkeypatch.setattr(fake, "schedule_secret_version_deletion", schedule_then_fail)
+
+    with pytest.raises(StoreError, match="version 1 was scheduled for deletion to make room"):
+        store.write("acme-db", {"password": "new"}, cas=1)
+
+
 # ---------------------------------------------------------- throttling ---
 
 

@@ -217,9 +217,9 @@ def test_an_instance_principal_does_not_retry_the_metadata_service(
     build_clients(vault(VaultAuth(method="instance_principal")), env={})
 
     signer = sdk.clients[0][2]["signer"]
-    assert set(signer.kwargs) == {"retry_strategy", "federation_client_retry_strategy"}
-    for strategy in signer.kwargs.values():
-        assert isinstance(strategy, oci.retry.NoneRetryStrategy)
+    # Only the startup probe: token refreshes during a run keep the SDK's retries.
+    assert set(signer.kwargs) == {"retry_strategy"}
+    assert isinstance(signer.kwargs["retry_strategy"], oci.retry.NoneRetryStrategy)
 
 
 def test_a_principal_takes_the_stores_region_when_set(
@@ -284,6 +284,55 @@ def test_an_unreadable_session_token_is_a_config_error(
     monkeypatch.setattr(oci.config, "from_file", lambda file_location, profile_name: profile)
 
     with pytest.raises(StoreError, match="gone") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def session_profile(monkeypatch: pytest.MonkeyPatch, **fields: Any) -> None:
+    profile = {key: value for key, value in {**PROFILE, **fields}.items() if value is not None}
+    monkeypatch.setattr(oci.config, "from_file", lambda file_location, profile_name: profile)
+
+
+def test_a_session_profile_with_no_region_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`validate_config` skips a session signer; the client would raise ValueError."""
+    token = tmp_path / "token"
+    token.write_text("session-token", encoding="utf-8")
+    session_profile(monkeypatch, region=None, security_token_file=str(token))
+    monkeypatch.delenv("OCI_REGION", raising=False)
+
+    with pytest.raises(StoreError, match="has no region") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_session_profile_with_no_key_file_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("session-token", encoding="utf-8")
+    session_profile(monkeypatch, key_file=None, security_token_file=str(token))
+
+    with pytest.raises(StoreError, match="no key_file") as error:
+        build_clients(vault(VaultAuth(method="session_token")), env={})
+
+    assert error.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+@pytest.mark.parametrize(
+    ("content", "message"), [(b"", "is empty"), (b"\xff\xfe\x00", "is not a session token")]
+)
+def test_a_token_file_that_holds_no_token_is_a_config_error(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: bytes, message: str
+) -> None:
+    token = tmp_path / "token"
+    token.write_bytes(content)
+    session_profile(monkeypatch, security_token_file=str(token))
+
+    with pytest.raises(StoreError, match=message) as error:
         build_clients(vault(VaultAuth(method="session_token")), env={})
 
     assert error.value.exit_code == ExitCode.CONFIG_INVALID

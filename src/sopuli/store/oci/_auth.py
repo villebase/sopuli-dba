@@ -65,7 +65,9 @@ def build_clients(vault: Vault, *, env: Mapping[str, str]) -> Clients:
     """The three clients for ``vault``, signed by its auth method.
 
     ``env`` is passed in rather than read here, as everywhere else in the tool:
-    it is where ``OCI_CONFIG_FILE`` comes from.
+    it is where ``OCI_CONFIG_FILE`` comes from. One exception: the SDK's
+    resource-principal signer reads its ``OCI_RESOURCE_PRINCIPAL_*`` variables
+    from the process environment itself, and takes no mapping.
     """
     method = vault.auth.method if vault.auth is not None else CONFIG_FILE
     where = f"vaults.{vault.name}.auth"
@@ -73,19 +75,24 @@ def build_clients(vault: Vault, *, env: Mapping[str, str]) -> Clients:
         profile = (vault.auth.profile if vault.auth is not None else None) or DEFAULT_PROFILE
         return _from_config_file(vault, env, profile, session=method == SESSION_TOKEN, where=where)
     if method == INSTANCE_PRINCIPAL:
-        # Without these the signer retries the metadata service for minutes
+        # Without this the signer retries the metadata service for minutes
         # (measured: 4 m 28 s on a laptop) before it says this is no instance.
+        # Its token refreshes during a run keep the SDK's retries: a refresh
+        # is no write, and failing one between a pending write and its
+        # promotion would cost more than a retry.
         factory = functools.partial(
             oci.auth.signers.InstancePrincipalsSecurityTokenSigner,
             retry_strategy=oci.retry.NoneRetryStrategy(),
-            federation_client_retry_strategy=oci.retry.NoneRetryStrategy(),
         )
     elif method == RESOURCE_PRINCIPAL:
         factory = oci.auth.signers.get_resource_principals_signer
     else:
         # Unreachable through a config file: the loader refuses any other
         # method on an OCI store (#1130). Kept because this is reachable from code.
-        raise OciConfigError(f"{where}: `{method}` is not an auth method for an OCI store")
+        raise OciConfigError(
+            f"{where}: `{method}` is not an auth method for an OCI store",
+            hint="use config_file, session_token, instance_principal or resource_principal",
+        )
 
     signer = _principal(factory, where=where)
     region = vault.region if vault.region is not None else signer.region
@@ -106,6 +113,13 @@ def _from_config_file(
         # Before the check, which requires a region: the store's may be the only one.
         if vault.region is not None:
             config["region"] = vault.region
+        if not config.get("region"):
+            # `validate_config` checks nothing once it has a session signer,
+            # and the client then fails with a bare ValueError.
+            raise OciConfigError(
+                f"{where}: profile {profile!r} in the OCI config file {location} has no region",
+                hint="add a region line to the profile, or set region on the store",
+            )
         signer = _security_token_signer(config, where=where) if session else None
         oci.config.validate_config(config, signer=signer)
         # Building a client loads the profile's private key, so a missing key
@@ -126,9 +140,26 @@ def _security_token_signer(config: Mapping[str, Any], *, where: str) -> Any:
             f"{where}: the profile has no security_token_file, so it is not a session profile",
             hint="create the session with:  oci session authenticate",
         )
-    with open(os.path.expanduser(token_file), encoding="utf-8") as handle:
-        token = handle.read().strip()
-    key = oci.signer.load_private_key_from_file(config["key_file"], config.get("pass_phrase"))
+    key_file = config.get("key_file")
+    if not key_file:
+        raise OciConfigError(
+            f"{where}: the session profile has no key_file",
+            hint="create the session again with:  oci session authenticate",
+        )
+    try:
+        with open(os.path.expanduser(token_file), encoding="utf-8") as handle:
+            token = handle.read().strip()
+    except UnicodeDecodeError as exc:
+        raise OciConfigError(
+            f"{where}: the security_token_file {token_file} is not a session token: {exc}",
+            hint="create the session again with:  oci session authenticate",
+        ) from exc
+    if not token:
+        raise OciConfigError(
+            f"{where}: the security_token_file {token_file} is empty",
+            hint="create the session again with:  oci session authenticate",
+        )
+    key = oci.signer.load_private_key_from_file(key_file, config.get("pass_phrase"))
     return oci.auth.signers.SecurityTokenSigner(token, key)
 
 
@@ -137,11 +168,14 @@ def _principal(factory: Any, *, where: str) -> Any:
     try:
         return factory()
     except Exception as exc:
-        # The SDK raises a mix of its own errors and `requests`' here, and each
-        # of them means the same thing: this host is not that principal.
+        # The SDK raises a mix of its own errors and `requests`' here, with no
+        # common base, and the message keeps whichever it was.
         raise OciSignerError(
             f"{where}: cannot get credentials for the principal: {exc}",
-            hint="run on an OCI instance or function, or use auth method config_file",
+            hint=(
+                "on an OCI instance or function, check its metadata service and its "
+                "dynamic group; elsewhere, use auth method config_file"
+            ),
         ) from exc
 
 

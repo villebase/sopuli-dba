@@ -1080,7 +1080,10 @@ message saying they authenticate to a different vendor.
   as the OCI CLI does.
 - `session_token` signs with the session that `oci session authenticate` wrote
   into a profile. A profile with no `security_token_file` is refused, with a
-  hint to create the session.
+  hint to create the session. The tool reads the token once, when it opens the
+  store. A session lasts an hour unless it is refreshed, so run
+  `oci session refresh` before a long run; a session that expires during a run
+  makes the next request fail.
 - `instance_principal` and `resource_principal` sign as the OCI instance or
   function the tool runs on, and take the region from it. Elsewhere they are
   refused as an authentication failure, exit 6.

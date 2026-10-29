@@ -190,11 +190,10 @@ same holds for `SOPULI_TEST_PGBOUNCER_PORT` and
 `pgbouncer` profile. A second clone that starts the `supabase` profile sets
 `SOPULI_TEST_SUPABASE_PORT`, default 5440, which the suite does read.
 
-Measured on 2026-10-14: a healthy tier1 stack uses about 2.5 GB of memory in
-its containers, and about 2.9 GB while the suite runs against it. Oracle Free is
-most of it, 2.25 GB idle and 2.8 GB under the suite. `yopass` and
-`yopass-memcached` joined every tier later. Measured on 2026-10-27, idle, they
-used about 6 MiB and 4 MiB.
+A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
+2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
+idle and 2.8 GB under the suite; `yopass` and `yopass-memcached` add about
+10 MiB.
 
 | Service | Port | Notes |
 |---|---|---|

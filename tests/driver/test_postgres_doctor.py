@@ -88,14 +88,14 @@ def test_a_superuser_is_refused(
     live_postgres: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The stack's `postgres` is the bootstrap superuser. Connecting works, and
-    the run refuses it. `doctor` fails only for a target it cannot reach, so
-    the refusal is the entry's error and the exit is 0."""
+    the run refuses it. The refusal is the entry's error, and the exit is 9, as
+    every other verb's is over the same target (#1062)."""
     monkeypatch.setenv(PASSWORD_ENV, live_postgres.password)
     config = _config(tmp_path / "doctor.yaml", live_postgres.dsn, live_postgres.user)
 
     result = _doctor(CliRunner(), config, "--output", "json")
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 9, result.output
     (entry,) = json.loads(result.stdout)["targets"]
     assert entry["reachable"] is True
     assert entry["error"]["code"] == "SOPULI-20007"
@@ -225,7 +225,7 @@ def test_two_targets_on_one_cluster_are_refused(
 
     result = _doctor(runner, config, "--output", "json")
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 9, result.output
     first, second = json.loads(result.stdout)["targets"]
     assert first.get("error") is None
     assert first["scope"]["type"] == "cluster"

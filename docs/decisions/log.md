@@ -3624,3 +3624,25 @@ the register.
     the placeholder by its look, not by the account, and says nothing about an
     application container.
   - Document only. The hint would still name the wrong cause.
+
+## #1062
+
+- **Decided:** 2026-10-29, #1062
+- **Question:** `doctor` reaches a target, and the driver then refuses it for
+  its setup: a PostgreSQL admin that is a superuser (`SOPULI-20007`), or two
+  targets on one cluster (`SOPULI-20008`). `doctor` exited 0, because its rule
+  was that a target it cannot use is that target's finding. Should it exit
+  non-zero?
+- **Decision:** Yes. After surveying every target, `doctor` exits 9 if any
+  target it reached carries an error whose category is `config`, the category
+  every other verb exits 9 over. It takes precedence over exit 1 for an
+  unreachable target or store. Another error on a target that answered, such
+  as a view the account cannot read, leaves the exit code alone.
+- **Why:** A script that runs `doctor` as a gate passed a setup that every
+  other verb refuses. Exit 9 says to fix the configuration, which is the fix
+  for each of these. The survey still reports every target, so nothing is
+  hidden by stopping early.
+- **Rejected:**
+  - Keep exit 0. A gate would have to parse the JSON to see the refusal.
+  - A `doctor --strict` flag for the gate case. One more flag, and the
+    default would stay the one that passes a refused setup.

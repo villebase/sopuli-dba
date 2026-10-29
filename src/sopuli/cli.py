@@ -847,6 +847,9 @@ def doctor(
     Each failure lands in its own ``targets[]`` entry with the vendor code and
     the server's own message. An unreachable target fails the run at exit 1,
     unless a configured driver or backend is missing, which is exit 9 (below).
+    A target that answered and was then refused over its setup, such as a
+    PostgreSQL admin that is a superuser, fails the run at exit 9 once every
+    target is surveyed, because every other verb refuses it there (#1062).
 
     **Install shape is reported on every run, not only when it is wrong**
     (ADR-006 E6). Which backends and drivers this build can serve, which the
@@ -938,8 +941,9 @@ def doctor(
     reachable = sum(1 for entry in entries if entry["reachable"])
     failed = len(entries) - reachable
     unreachable_vaults = sum(1 for report in vaults if not report.reachable)
+    refused = sum(1 for entry in entries if _refused_for_setup(entry))
     document.finish(
-        _doctor_exit(shape.missing, failed, unreachable_vaults),
+        _doctor_exit(shape.missing, failed, unreachable_vaults, refused=refused),
         Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
     )
     sections = [*render_install(shape)]
@@ -969,7 +973,23 @@ def _vault_error(report: VaultReport) -> Error | None:
     return _finding(report.failure)
 
 
-def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0) -> ExitCode:
+def _refused_for_setup(entry: dict[str, Any]) -> bool:
+    """Whether ``doctor`` reached this target and then refused it over its setup.
+
+    A ``config`` error on a target that answered, such as ``SOPULI-20007`` (a
+    PostgreSQL admin that is a superuser), ``SOPULI-20008`` (two targets on one
+    cluster) or a scope the target asserts and is not. Every other verb exits 9
+    over the same error (#1062). An error on a target that answered and is not
+    ``config``, such as a dictionary view the account cannot read, is a finding
+    about grants and leaves the exit code alone.
+    """
+    error = entry.get("error")
+    return bool(entry["reachable"] and error and error.get("category") == "config")
+
+
+def _doctor_exit(
+    missing: Sequence[Component], failed: int, vaults_down: int = 0, *, refused: int = 0
+) -> ExitCode:
     """Which failure this run is, when it is several.
 
     **Install shape wins over everything else**, and the order is most of this
@@ -1011,8 +1031,13 @@ def _doctor_exit(missing: Sequence[Component], failed: int, vaults_down: int = 0
     in the document that no entry in ``targets[]`` accounts for. So the exit code
     is deliberately not a function of the summary, and a consumer that wants to
     know why a run failed reads the sections rather than the arithmetic.
+
+    **A target it reached and refused over its setup is exit 9 too** (#1062),
+    after every target is surveyed, and it wins over an unreachable target. Each
+    other verb refuses that target at exit 9, so a ``doctor`` used as a gate
+    must not pass it. Exit 9 says *fix the configuration*, which is the fix.
     """
-    if missing:
+    if missing or refused:
         return ExitCode.CONFIG_INVALID
     return ExitCode.SUCCESS if failed == 0 and vaults_down == 0 else ExitCode.FAILURE
 

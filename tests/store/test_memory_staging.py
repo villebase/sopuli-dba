@@ -72,7 +72,7 @@ def test_a_refused_call_leaves_no_path_behind(store: MemoryStore) -> None:
 
 
 def test_staging_onto_a_path_with_no_current_is_refused(store: MemoryStore) -> None:
-    """Unmeasured on OCI, so refused rather than guessed."""
+    """OCI refuses a secret whose only version is PENDING (`oci-create-pending`)."""
     with pytest.raises(StoreError, match="no CURRENT generation"):
         store.stage(PATH, {"password": "a"}, attributes={}, cas=0)
 

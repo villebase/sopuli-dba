@@ -240,11 +240,12 @@ commands: `creds generate`, `apply`, `check`, `rotate`, `status` and
 `finish-rollover`. Every
 other command but `doctor` refuses a PostgreSQL target. What PostgreSQL lacks,
 such as a rollover window or an account lock, is refused at plan time by
-capability, not by product. The driver registry and the store
-registry share `sopuli/extras.py`, which finds a module without importing it and
-reads a `ModuleNotFoundError` three ways. That logic is subtle, so it has one
-copy. The error messages stay separate: a store is named by `vaults:` and a
-driver by a target's `type:`, and one message for both would name neither.
+capability, not by product. The driver, store and notify registries share
+`sopuli/extras.py`, which finds a module without importing it and reads a
+`ModuleNotFoundError` three ways. That logic is subtle, so it has one copy. The
+error messages stay separate: a store is named by `vaults:`, a driver by a
+target's `type:` and a channel by `notify.method`, and one message for all three
+would name none of them.
 Instant Client must be installed to reach Oracle anyway (D3), so making the
 driver an extra adds no new condition. See P2's *Backends are install extras*
 and [ADR-006](../decisions/adr-006-optional-dependencies.md). D6 is unaffected:

@@ -72,9 +72,9 @@ results:
   succeeds: a version scheduled for deletion does not count against the limit.
 
 M9 to M13 were added for #1151, before the store's writes (#1133). Results,
-2026-10-29, the same vault, key, region and SDK. M9 ran twice, and M10 to M13
-twice more after the review of #1154 corrected them, each pair with the same
-results:
+2026-10-29, the same vault, key, region and SDK. M9 ran twice. M10 to M13
+ran twice in their final form, after two reviews of #1154 corrected them, with
+the same results apart from the timings:
 
 - **M9** A create with ``stage = PENDING`` is refused with ``400
   InvalidParameter: stage must be one of CURRENT.`` A secret's first version is
@@ -82,23 +82,26 @@ results:
 - **M10** A create with the name of an ACTIVE secret is refused with ``400
   InvalidParameter: name already exists``, not a 409. A secret scheduled for
   deletion is ``SCHEDULING_DELETION`` straight afterwards and
-  ``PENDING_DELETION`` 22.6 and 16.3 seconds later. A create with its name gets
+  ``PENDING_DELETION`` 16.4 and 14.2 seconds later. A create with its name gets
   the same answer in both states.
 - **M11** A create answers ``CREATING``, and the secret is still ``CREATING``
   when read straight afterwards. An update then is refused with ``409
-  IncorrectState``. It was ``ACTIVE`` 19.8 and 19.0 seconds after the create
+  IncorrectState``. It was ``ACTIVE`` 20.8 and 18.7 seconds after the create
   answered. Scheduling a version's deletion makes the secret ``UPDATING``, and
-  it was ``ACTIVE`` 22.8 and 20.1 seconds after that call answered. The
+  it was ``ACTIVE`` 19.7 and 21.8 seconds after that call answered. The
   version listing then shows a ``time_of_deletion`` on that version only.
 - **M12** A list, a nested object and an integer are accepted and read back as
-  they were sent. The size limit is on the **whole map**: one string value of
-  5,031 characters is accepted and 5,125 is refused, while two values of 3,354
-  characters each are refused together, with ``400 InvalidParameter: metadata
-  exceeds max allowed size``. A read by name carries the same metadata as
-  ``GetSecret``.
+  they were sent. The size limit is on the **whole map**, and counts
+  characters: under the 12-character key ``sopuli_probe``, one ASCII value of
+  5,101 characters is accepted and 5,159 is refused; two values of 2,629
+  characters each, together just over that, are refused; one value of 5,101
+  two-byte characters (``ä``) is accepted. The refusal is ``400
+  InvalidParameter: metadata exceeds max allowed size``. A read by name
+  carries the same metadata as ``GetSecret``.
 - **M13** A read by name, with the secret ``UPDATING`` both before and after
-  it, returns the **old** version after a content update. Once ``ACTIVE``, it
-  returns the new one.
+  it, returns the **old** version and the **old** metadata after an update
+  that changed both. Once ``ACTIVE``, it returns the new version and the new
+  metadata. So a read's content and write counter always belong together.
 """
 
 from __future__ import annotations
@@ -161,30 +164,40 @@ class Probe:
         self.counter += 1
         return f"acme-probe-{RUN}-{self.counter}{suffix}"
 
-    def create(self, name: str, value: str = "probe-1") -> Any:
+    def create(
+        self,
+        name: str,
+        value: str = "probe-1",
+        *,
+        secret_content: Any = None,
+        settle: bool = True,
+    ) -> Any:
+        """Create a secret, and by default wait until it is ACTIVE."""
         secret = self.vaults.create_secret(
             oci.vault.models.CreateSecretDetails(
                 compartment_id=COMPARTMENT_ID,
                 vault_id=VAULT_ID,
                 key_id=KEY_ID,
                 secret_name=name,
-                secret_content=content(value),
+                secret_content=secret_content or content(value),
             )
         ).data
         created.append(secret.id)
-        self.settle(secret.id)
+        if settle:
+            self.settle(secret.id)
         return secret
+
+    def try_create(self, name: str) -> str:
+        """Create a secret; say whether OCI accepted it."""
+        try:
+            self.create(name)
+        except oci.exceptions.ServiceError as exc:
+            return f"refused ({error(exc)})"
+        return "accepted"
 
     def settle(self, secret_id: str) -> float:
         """Wait until the secret is ACTIVE, and return how long that took."""
-        start = time.monotonic()
-        while True:
-            state = self.vaults.get_secret(secret_id).data.lifecycle_state
-            if state == "ACTIVE":
-                return time.monotonic() - start
-            if time.monotonic() - start > SETTLE_S:
-                raise RuntimeError(f"secret {secret_id} still {state} after {SETTLE_S}s")
-            time.sleep(1)
+        return self.wait_for(secret_id, "ACTIVE", time.monotonic())
 
     def state(self, secret_id: str) -> str:
         return str(self.vaults.get_secret(secret_id).data.lifecycle_state)
@@ -240,12 +253,7 @@ class Probe:
         stem = f"acme-probe-{RUN}-len-"
         for length in (100, 255, 256, 1000):
             name = (stem + "x" * length)[:length]
-            try:
-                self.create(name)
-                outcome = "accepted"
-            except oci.exceptions.ServiceError as exc:
-                outcome = f"refused ({error(exc)})"
-            report("M1", f"name of {length} characters", outcome)
+            report("M1", f"name of {length} characters", self.try_create(name))
 
         lower = self.name("-case")
         self.create(lower)
@@ -272,12 +280,7 @@ class Probe:
             f"acme probe-{stem}",
             f"acme~probe-{stem}",
         ):
-            try:
-                self.create(name)
-                outcome = "accepted"
-            except oci.exceptions.ServiceError as exc:
-                outcome = f"refused ({error(exc)})"
-            report("M1b", repr(name.replace(stem, "<n>")), outcome)
+            report("M1b", repr(name.replace(stem, "<n>")), self.try_create(name))
 
     def m2_pending(self) -> None:
         name = self.name()
@@ -457,20 +460,10 @@ class Probe:
         """Can a secret be created with its only version in PENDING?"""
         name = self.name()
         try:
-            secret = self.vaults.create_secret(
-                oci.vault.models.CreateSecretDetails(
-                    compartment_id=COMPARTMENT_ID,
-                    vault_id=VAULT_ID,
-                    key_id=KEY_ID,
-                    secret_name=name,
-                    secret_content=staged("probe-1", "PENDING"),
-                )
-            ).data
+            secret = self.create(name, secret_content=staged("probe-1", "PENDING"))
         except oci.exceptions.ServiceError as exc:
             report("M9", "create with stage PENDING", f"refused ({error(exc)})")
             return
-        created.append(secret.id)
-        self.settle(secret.id)
         report("M9", "create with stage PENDING", "accepted")
         report("M9", "version stages", self.stages(secret.id))
         report("M9", "read with no stage", self.bundle(name))
@@ -480,12 +473,7 @@ class Probe:
         """What a create answers for a name that is already held."""
         name = self.name()
         self.create(name)
-        try:
-            self.create(name)
-            outcome = "accepted"
-        except oci.exceptions.ServiceError as exc:
-            outcome = f"refused ({error(exc)})"
-        report("M10", "create over an ACTIVE secret's name", outcome)
+        report("M10", "create over an ACTIVE secret's name", self.try_create(name))
 
         name = self.name()
         secret = self.create(name)
@@ -497,22 +485,11 @@ class Probe:
         )
         created.remove(secret.id)
         report("M10", "state after scheduling deletion", self.state(secret.id))
-        try:
-            self.create(name)
-            outcome = "accepted"
-        except oci.exceptions.ServiceError as exc:
-            outcome = f"refused ({error(exc)})"
-        report("M10", "create during SCHEDULING_DELETION", outcome)
-        # SCHEDULING_DELETION is brief. PENDING_DELETION is the state a name
-        # stays in for days, so that is the one that matters.
+        report("M10", "create during SCHEDULING_DELETION", self.try_create(name))
+        # SCHEDULING_DELETION is brief, and PENDING_DELETION follows it.
         waited = self.wait_for(secret.id, "PENDING_DELETION", time.monotonic())
         report("M10", "seconds until PENDING_DELETION", round(waited, 1))
-        try:
-            self.create(name)
-            outcome = "accepted"
-        except oci.exceptions.ServiceError as exc:
-            outcome = f"refused ({error(exc)})"
-        report("M10", "create during PENDING_DELETION", outcome)
+        report("M10", "create during PENDING_DELETION", self.try_create(name))
 
     def m11_states(self) -> None:
         """The state after a create and after scheduling a version's deletion.
@@ -520,29 +497,23 @@ class Probe:
         Each clock starts when the call that made the secret busy returns, so
         the time reported is the whole window a writer would wait out.
         """
-        secret = self.vaults.create_secret(
-            oci.vault.models.CreateSecretDetails(
-                compartment_id=COMPARTMENT_ID,
-                vault_id=VAULT_ID,
-                key_id=KEY_ID,
-                secret_name=self.name(),
-                secret_content=content("probe-1"),
-            )
-        ).data
+        secret = self.create(self.name(), settle=False)
         start = time.monotonic()
-        created.append(secret.id)
         report("M11", "state in the create's answer", secret.lifecycle_state)
         report("M11", "state read straight after the create", self.state(secret.id))
         try:
             self.vaults.update_secret(
                 secret.id, oci.vault.models.UpdateSecretDetails(metadata={"sopuli_probe": "1"})
             )
-            outcome = "accepted"
         except oci.exceptions.ServiceError as exc:
-            outcome = f"refused ({error(exc)})"
-        report("M11", "update straight after the create", outcome)
-        waited = self.wait_for(secret.id, "ACTIVE", start)
-        report("M11", "seconds from the create's answer until ACTIVE", round(waited, 1))
+            report("M11", "update straight after the create", f"refused ({error(exc)})")
+            waited = self.wait_for(secret.id, "ACTIVE", start)
+            report("M11", "seconds from the create's answer until ACTIVE", round(waited, 1))
+        else:
+            # The update started a window of its own, so the create's window
+            # cannot be timed from here.
+            report("M11", "update straight after the create", "accepted; create window not timed")
+            self.settle(secret.id)
 
         self.update(secret.id, secret_content=content("probe-2"))
         self.update(secret.id, secret_content=content("probe-3"))
@@ -577,23 +548,38 @@ class Probe:
         for label, value in values:
             report("M12", label, self.try_metadata(secret.id, {"sopuli_probe": value}))
 
-        # The largest single string value, to within 100 characters. 4,000 was
-        # accepted and 16,000 refused in the first runs.
-        low, high = 4000, 16000
+        # The largest single ASCII value under a 12-character key, to within
+        # 100 characters. Both bounds are checked first, so a limit outside
+        # them is reported as that rather than as a measurement.
+        def fits(size: int) -> bool:
+            return self.try_metadata(secret.id, {"sopuli_probe": "x" * size}).startswith("accepted")
+
+        low, high = 1000, 16000
+        if not fits(low) or fits(high):
+            report("M12", "largest single string value", f"outside {low} to {high}")
+            return
         while high - low > 100:
             middle = (low + high) // 2
-            if self.try_metadata(secret.id, {"sopuli_probe": "x" * middle}).startswith("accepted"):
+            if fits(middle):
                 low = middle
             else:
                 high = middle
         report("M12", "largest single string value accepted", f"{low} (refused at {high})")
 
-        # Two values that are each well inside that, and together are not.
-        each = low * 2 // 3
+        # Two values that together are a little over the single limit, each
+        # well under it. Refused: the limit is on the whole map. Accepted: it
+        # is per value, or the map's limit is larger.
+        each = high // 2 + 50
         report(
             "M12",
             f"two values of {each} characters each",
             self.try_metadata(secret.id, {"sopuli_a": "x" * each, "sopuli_b": "y" * each}),
+        )
+        # Multi-byte text: is the limit in characters or in bytes?
+        report(
+            "M12",
+            f"one value of {low} two-byte characters",
+            self.try_metadata(secret.id, {"sopuli_probe": "ä" * low}),
         )
 
         stamps = {"sopuli_cas": "3", "targets": ["appdb-alpha"], "rotated_by": "probe"}
@@ -607,23 +593,39 @@ class Probe:
         )
 
     def m13_read_while_updating(self) -> None:
-        """Does a read during UPDATING see the old version or the new one?
+        """Does a read during UPDATING see the old version or the new one, and
+        the old metadata or the new?
 
-        The state is read before and after the bundle. Only a read with
-        UPDATING on both sides of it was certainly made during the window.
+        The update changes content and metadata in one call, as the store's
+        writes do: the metadata holds the write counter. The state is read
+        before and after the bundle. Only a read with UPDATING on both sides of
+        it was certainly made during the window.
         """
         name = self.name()
         secret = self.create(name)
+        self.update(secret.id, metadata={"sopuli_cas": "1"})
         self.vaults.update_secret(
-            secret.id, oci.vault.models.UpdateSecretDetails(secret_content=content("probe-2"))
+            secret.id,
+            oci.vault.models.UpdateSecretDetails(
+                secret_content=content("probe-2"), metadata={"sopuli_cas": "2"}
+            ),
         )
         before = self.state(secret.id)
-        read = self.bundle(name)
+        read = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
         after = self.state(secret.id)
         report("M13", "state before and after the read", (before, after))
-        report("M13", "read with no stage while updating", read)
+        report(
+            "M13",
+            "read with no stage while updating",
+            f"version {read.version_number}, metadata {read.metadata}",
+        )
         self.settle(secret.id)
-        report("M13", "read with no stage once ACTIVE", self.bundle(name))
+        read = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
+        report(
+            "M13",
+            "read with no stage once ACTIVE",
+            f"version {read.version_number}, metadata {read.metadata}",
+        )
 
     # -------------------------------------------------------------- cleanup ---
 
@@ -676,9 +678,10 @@ def main() -> int:
     ]
     wanted = {one.lower() for one in sys.argv[1:]}
     known = {check.__name__.split("_")[0] for check in checks}
-    if wanted - known:
+    unknown = wanted - known
+    if unknown:
         print(
-            f"no such check: {', '.join(sorted(wanted - known))}; "
+            f"no such check: {', '.join(sorted(unknown))}; "
             f"the checks are {', '.join(sorted(known))}",
             file=sys.stderr,
         )

@@ -240,11 +240,10 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
 def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
     """The report `config validate` owes its reader.
 
-    Three of the four types in ``01-configuration.md`` §3a have no module, so a
-    config declaring all four is a config whose stores are three-quarters
-    unusable. A narrow reading would report **one** warning -- and which one would
-    depend on whether the machine happened to have the OCI SDK, which is a fact about
-    the laptop and not about the file.
+    Two of the four types in ``01-configuration.md`` §3a have no module, so a
+    config declaring all four is a config whose stores are half unusable. A
+    narrow reading would report **one** warning. The OCI store has a module, and
+    the tests run with its SDK installed, so it is not named.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by
     backend name, and pinning it here would be pinning `doctor`'s table through a
@@ -269,7 +268,7 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
         if any(f'"{name}"' in entry["message"] for entry in document["diagnostics"])
     }
 
-    assert named == {"vault-dr", "vault-local", "vault-desktop"}
+    assert named == {"vault-local", "vault-desktop"}
     assert document["exit_code"] == ExitCode.SUCCESS
 
 

@@ -1493,7 +1493,7 @@ declares one Oracle target and one HashiCorp store, laid out one row to a line:
     { "name": "file",      "status": "not_implemented", "vaults": [] },
     { "name": "hashicorp", "status": "installed",       "vaults": ["vault-dev"] },
     { "name": "keyring",   "status": "not_implemented", "vaults": [] },
-    { "name": "oci",       "status": "not_implemented", "vaults": [] }
+    { "name": "oci",       "status": "installed",       "vaults": [] }
   ],
   "drivers": [
     { "name": "oracle",     "status": "installed", "targets": 1 },

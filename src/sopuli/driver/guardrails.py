@@ -247,6 +247,20 @@ def is_declared(account: str, declared: Collection[str]) -> bool:
     return account.casefold() in folded
 
 
+def server_reserved(state: UserState) -> bool:
+    """Whether check 6 or check 8 refuses the account: a superuser, or a role the
+    server reserves.
+
+    No flag waives either (:data:`NEVER_WAIVED`), and no grant to the tool
+    account changes either, because the server is what refuses the change. So
+    the pre-flight's privilege survey leaves such an account out (#1117): a
+    missing grant it could ask for is one that could never be made, and the
+    guardrails skip the account anyway. Check 1 is not here: an undeclared
+    account never reaches the survey.
+    """
+    return bool(state.superuser or state.reserved_by)
+
+
 def review(state: UserState, *, declared: Collection[str], force: bool = False) -> Review:
     """Every §4 check, against one account.
 

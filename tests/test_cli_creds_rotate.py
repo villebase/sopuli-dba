@@ -194,7 +194,10 @@ class FakeSession:
         set_error: Exception | None = None,
         capabilities: frozenset[str] = frozenset(),
         on_call: Callable[[str], None] | None = None,
-        audit: PrivilegeAudit | Exception | None = None,
+        audit: PrivilegeAudit
+        | Exception
+        | Callable[[tuple[str, ...]], PrivilegeAudit]
+        | None = None,
         scope: Scope | None = None,
         encryption: Encryption = TLS,
     ) -> None:
@@ -203,6 +206,8 @@ class FakeSession:
         self.capabilities = capabilities
         self.on_call = on_call
         self.audit = audit
+        #: The accounts each privilege audit was asked about, in order.
+        self.audited: list[tuple[str, ...]] = []
         self.given_scope = scope
         self.encryption = encryption
         self.attempts: list[tuple[str, str]] = []
@@ -224,8 +229,12 @@ class FakeSession:
         )
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
+        self.audited.append(accounts)
         if isinstance(self.audit, Exception):
             raise self.audit
+        if callable(self.audit):
+            # Per account, as PostgreSQL's `ADMIN OPTION` audit is.
+            return self.audit(accounts)
         return self.audit if self.audit is not None else PrivilegeAudit()
 
     def describe_user(self, account: str) -> UserState | None:
@@ -305,7 +314,10 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         set_error: Exception | None = None,
         capabilities: frozenset[str] = frozenset(),
         on_call: Callable[[dict[str, Any], str], None] | None = None,
-        audits: Mapping[str, PrivilegeAudit | Exception] | None = None,
+        audits: Mapping[
+            str, PrivilegeAudit | Exception | Callable[[tuple[str, ...]], PrivilegeAudit]
+        ]
+        | None = None,
         scopes: Mapping[str, Scope] | None = None,
         store: MemoryStore | None = None,
         encryption: Encryption = TLS,
@@ -704,6 +716,58 @@ def test_a_preflight_caveat_is_printed_in_the_text(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert "pre-flight on appdb-alpha could not establish" in result.output
+
+
+def _admin_option_on(accounts: tuple[str, ...]) -> PrivilegeAudit:
+    """PostgreSQL's audit, as the tool account sees it: `ADMIN OPTION` missing on
+    every account it is asked about. A reserved role is one no grant can reach."""
+    return PrivilegeAudit(missing=tuple(f"ADMIN OPTION ON {account}" for account in accounts))
+
+
+@pytest.mark.parametrize(
+    "refusing",
+    [{"reserved_by": "supautils.reserved_roles"}, {"superuser": True}],
+    ids=["check-8-reserved", "check-6-superuser"],
+)
+def test_the_survey_leaves_out_an_account_no_flag_would_let_it_change(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    refusing: dict[str, Any],
+) -> None:
+    """#1117: a role supautils reserves, or a superuser, is refused by guardrail
+    check 8 or 6, which no flag waives and no grant to the tool account changes.
+    The privilege survey does not ask about it, so the run is not refused over a
+    grant that could never be made, and the guardrails skip the account."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(**refusing)},
+        audits={"appdb-alpha": _admin_option_on, "appdb-beta": _admin_option_on},
+    )
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert "missing ADMIN OPTION" not in result.output
+    assert all(asked == () for session in harness["sessions"] for asked in session.audited)
+    rows = document(result)["results"]
+    assert rows
+    assert {row["state"] for row in rows} == {"SKIPPED"}
+    assert not [change for session in harness["sessions"] for change in session.changed]
+
+
+def test_the_survey_still_asks_about_every_other_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Only the refused account is left out: a grant missing on an ordinary one
+    still refuses the run before anything is written."""
+    harness = estate(audits={"appdb-alpha": _admin_option_on, "appdb-beta": _admin_option_on})
+
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "missing ADMIN OPTION ON acme_web_user" in result.output
+    assert ("acme_web_user",) in [
+        asked for session in harness["sessions"] for asked in session.audited
+    ]
 
 
 # -------------------------------------------------------- §8 step 1, confirm ---

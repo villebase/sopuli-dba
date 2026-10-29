@@ -9172,37 +9172,12 @@ def _preflight_target(
             ),
         )
 
-    try:
-        # The accounts this run surveys, not every one declared: a grant missing
-        # for an account the selectors left out does not block this run.
-        audit = session.privileges(accounts=_declared_on(bindings, target.name))
-        missing_privileges = tuple(audit.missing)
-        privileges_hint = audit.hint
-    except Exception as error:  # noqa: BLE001 -- likewise
-        # Reported and **not** blocking. The audit establishes nothing either
-        # way when it cannot be read, and refusing over it would mean an estate
-        # that will not grant the view can never run a pre-flight -- while
-        # staying silent would be the guard that is not running and does not say
-        # so, which UC-1 §7 rules out for `check`'s LCOUNT guard by name.
-        missing_privileges = ()
-        privileges_hint = None
-        privilege_finding: tuple[Finding, ...] = (
-            Finding(
-                target=target.name,
-                check=preflight.PRIVILEGES,
-                message=f"the privilege audit could not be read: {_finding(error).message}",
-                hint="nothing about this target's grants was established, either way",
-                category="authorization",
-                blocking=False,
-                code=PRIVILEGE_AUDIT_UNREAD,
-            ),
-        )
-    else:
-        privilege_finding = ()
-
     missing_accounts: list[str] = []
     missing_profiles: list[tuple[str, str]] = []
     unreadable: list[Finding] = []
+    # Accounts check 6 or 8 refuses whatever is granted (#1117), left out of the
+    # privilege audit below. The guardrails skip each one in the run itself.
+    reserved: set[str] = set()
     for binding in bindings:
         try:
             state = session.describe_user(binding.account)
@@ -9236,6 +9211,8 @@ def _preflight_target(
         if state is None:
             missing_accounts.append(binding.account)
             continue
+        if guardrails.server_reserved(state):
+            reserved.add(binding.account)
 
         # §5's profile assignment, asked before anything is written (decision #301).
         # Only where the policy declares one and the account is not already on it:
@@ -9295,6 +9272,40 @@ def _preflight_target(
             continue
         if found is None:
             missing_profiles.append((binding.account, moving))
+
+    try:
+        # The accounts this run surveys, not every one declared: a grant missing
+        # for an account the selectors left out does not block this run. Nor for
+        # one that check 6 or 8 refuses: no grant could change it, and asking
+        # for one would refuse the whole run over an account the guardrails
+        # skip (#1117).
+        surveyed = tuple(
+            account for account in _declared_on(bindings, target.name) if account not in reserved
+        )
+        audit = session.privileges(accounts=surveyed)
+        missing_privileges = tuple(audit.missing)
+        privileges_hint = audit.hint
+    except Exception as error:  # noqa: BLE001 -- likewise
+        # Reported and **not** blocking. The audit establishes nothing either
+        # way when it cannot be read, and refusing over it would mean an estate
+        # that will not grant the view can never run a pre-flight -- while
+        # staying silent would be the guard that is not running and does not say
+        # so, which UC-1 §7 rules out for `check`'s LCOUNT guard by name.
+        missing_privileges = ()
+        privileges_hint = None
+        privilege_finding: tuple[Finding, ...] = (
+            Finding(
+                target=target.name,
+                check=preflight.PRIVILEGES,
+                message=f"the privilege audit could not be read: {_finding(error).message}",
+                hint="nothing about this target's grants was established, either way",
+                category="authorization",
+                blocking=False,
+                code=PRIVILEGE_AUDIT_UNREAD,
+            ),
+        )
+    else:
+        privilege_finding = ()
 
     declared = target.target.oracle
     return (

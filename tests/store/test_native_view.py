@@ -296,10 +296,11 @@ def test_a_stale_token_still_conflicts(view: NativeStagedStore) -> None:
 def test_payload_stages_in_a_native_secret_are_a_layout_change(
     view: NativeStagedStore, inner: MemoryStore
 ) -> None:
-    """A secret staged in payload fields by an older build, now used natively."""
+    """A secret staged in payload fields while it held several accounts, now
+    used natively."""
     inner.write(PATH, {"password": "a", "pending": "b", "origin": "generated"}, cas=0)
 
-    with pytest.raises(LayoutChangedError, match="finish or discard"):
+    with pytest.raises(LayoutChangedError, match="finish the rotation"):
         view.read(PATH)
     with pytest.raises(LayoutChangedError):
         view.write(PATH, {"password": "a"}, cas=1)

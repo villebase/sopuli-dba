@@ -58,12 +58,14 @@ from sopuli.exit_codes import ExitCode
 from sopuli.payload import CURRENT, StageLayout, stage_layout
 from sopuli.payload import apply_patch as payload_apply
 from sopuli.secrets import Secret
+from sopuli.store.native_view import NATIVE
 from sopuli.store.protocol import (
     MERGE_PATCH,
     VERSIONING,
     CasConflictError,
     PatchNotPermittedError,
     SecretStore,
+    Stored,
     StoreError,
     WriteMechanism,
 )
@@ -215,7 +217,14 @@ def read_secret(store: SecretStore, ref: SecretRef) -> StoredSecret | None:
     value = resolve(stored.data, ref)
     if value is None:
         return None
-    return StoredSecret(value=value, version=stored.version, stage=ref.stage or CURRENT)
+    return StoredSecret(value=value, version=shown_version(stored), stage=ref.stage or CURRENT)
+
+
+def shown_version(stored: Stored) -> int:
+    """The version a run shows for ``stored``: the store's own number where it
+    has one apart from the compare-and-set token (OCI's), so ``@version=N`` can
+    pin it (#1134). Never a fence: compare-and-set takes ``stored.version``."""
+    return stored.version if stored.generation is None else stored.generation
 
 
 # ------------------------------------------------------------------- write ---
@@ -258,6 +267,14 @@ class Written:
     version: int
     #: :data:`MERGE_PATCH` or :data:`READ_MODIFY_WRITE`.
     mechanism: str
+    #: The store's own version number of what the write left, where it is not
+    #: ``version`` (:class:`~sopuli.store.protocol.WriteMechanism`).
+    generation: int | None = None
+
+    @property
+    def reported(self) -> int:
+        """The version a run shows: the one ``@version=N`` can pin."""
+        return self.version if self.generation is None else self.generation
 
 
 #: The fallback ``01-configuration.md`` §7 names: read the document, apply the
@@ -265,6 +282,13 @@ class Written:
 #: concurrent writer -- the CAS is what makes it so -- and wider than a merge
 #: patch, because every key in the document is sent whether it changed or not.
 READ_MODIFY_WRITE = "read_modify_write"
+
+
+def staging_of(mechanism: str) -> str:
+    """The run schema's ``secret_ref.staging`` for a write made by ``mechanism``:
+    ``native`` where the stages are the store's own versions, ``payload``
+    where they are fields in the document."""
+    return "native" if mechanism == NATIVE else "payload"
 
 
 def apply_patch(
@@ -322,9 +346,13 @@ def apply_patch(
     merged = payload_apply(document, _plaintext(patch))
     # A store may write the whole document some other way, as the
     # native-staging adapter does with store versions, and the run says which.
-    mechanism = store.mechanism_for(path) if isinstance(store, WriteMechanism) else None
+    if not isinstance(store, WriteMechanism):
+        return Written(version=store.write(path, merged, cas=cas), mechanism=READ_MODIFY_WRITE)
+    version = store.write(path, merged, cas=cas)
     return Written(
-        version=store.write(path, merged, cas=cas), mechanism=mechanism or READ_MODIFY_WRITE
+        version=version,
+        mechanism=store.mechanism_for(path) or READ_MODIFY_WRITE,
+        generation=store.generation_of(path),
     )
 
 

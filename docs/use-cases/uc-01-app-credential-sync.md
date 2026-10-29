@@ -123,9 +123,28 @@ rotation mechanism:
 `creds rotate` write it when they promote. §4 says what `creds generate
 --promote` does with it.
 
-On a store with native staging (OCI, AWSSM), these map to version stages instead
-of extra fields. The tool hides that difference, but reports which mechanism it
-used. There is one exception, below.
+On an OCI store, a secret that holds one account's credential keeps the stages
+as the secret's own versions instead. This is native staging (#1134). The
+pending password is a version in stage PENDING, so an application that reads
+the current version never sees it. Promotion moves that version to CURRENT, and
+OCI moves the old CURRENT to PREVIOUS. A rollback promotes the PREVIOUS version
+by its number.
+
+A version's content cannot change after it is written, so the fields above are
+split by when they become true (decision 3 in
+[`../decisions/log.md`](../decisions/log.md#1158)). The content holds the
+password, `origin`, `generated_at` and `generated_by`. `rotated_at`,
+`rotated_by`, `policy` and `targets` go in the secret's metadata, written in the
+same call that moves CURRENT. The metadata also records `pending_version`, the
+number of the version that is the live pending. A PENDING version with another
+number is not a pending for any verb, because OCI cannot drop a stage without
+promoting it.
+
+Every verb reads and writes the same document on both mechanisms. Each written
+result says which one it used, in `secret.staging`: `native` or `payload`. A
+version the run reports on an OCI store is OCI's own version number, the one
+`@version=N` pins.
+There is one exception, below.
 
 ### The layout, and the rule that covers both (Q7, decided in #85)
 
@@ -171,12 +190,29 @@ The rule has these consequences:
   The document has no `username` key. In the shared layout the map key is the
   username, and a second copy could disagree with it.
 
-**Native staging is the exception.** An OCI or AWSSM version stage belongs to
-the whole secret. It cannot promote one account's `pending` without promoting
-every account's. So a document that holds more than one account's credential
-keeps the three stages in payload fields, even on a store that has native
-stages. The run reports that mechanism. Where each account has its own secret,
-the tool uses native staging.
+**Native staging is the exception.** An OCI version stage belongs to the whole
+secret. It cannot promote one account's `pending` without promoting every
+account's. So a document that holds more than one account's credential keeps
+the three stages in payload fields, even on an OCI store. Where each account
+has its own secret, the tool uses native staging. The config decides which,
+from every account it declares for the secret, so a run narrowed to one account
+of a shared secret still uses payload fields.
+
+**A secret that changes layout is refused.** When an application entry gains
+or loses an account that shares a secret, the stages the secret holds are in
+the other mechanism's place. The tool does not move them. A verb that would
+lose them refuses with exit 9 and names the secret:
+
+- a one-account secret whose content still holds `pending` or `previous`
+  fields;
+- a shared secret with a live PENDING version.
+
+Finish the rotation under the config it was started with, then change the
+config. `creds generate` refuses before it takes the lock, and the other
+mutating verbs before they write anything. `creds status` refuses the same way.
+`creds check` reports it on the account's row and spends no login on it. A
+PREVIOUS version alone does not block the change, because OCI cannot drop one.
+It stays readable with `@version=N`.
 
 **Two accounts in one document share a lock, on purpose.** Q2 keys the lock on
 the path. A second run on the same document loses on the lock and exits 7,

@@ -34,9 +34,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from sopuli.clock import to_rfc3339
+from sopuli.config.secret_refs import normalise_path
 from sopuli.exit_codes import ExitCode
 from sopuli.payload import (
     CURRENT,
@@ -172,6 +173,9 @@ class NativeStagedStore:
         #: writes, and the write is computed from that read; reading the
         #: versions again would cost several more round trips on OCI.
         self._seen: dict[str, _View] = {}
+        #: The version number each native path's last write left current or
+        #: staged, for :meth:`generation_of`.
+        self._written: dict[str, int] = {}
 
     def is_native(self, path: str) -> bool:
         return self._native(path) is not None
@@ -180,6 +184,16 @@ class NativeStagedStore:
         """:class:`~sopuli.store.protocol.WriteMechanism`: how a write to
         ``path`` reaches the store, for the run to report."""
         return NATIVE if self.is_native(path) else None
+
+    def generation_of(self, path: str) -> int | None:
+        """:class:`~sopuli.store.protocol.WriteMechanism`: the store's version
+        number of what the last write to ``path`` left, for the run to report.
+        A path in payload fields is read again for it, since a write returns
+        only the token."""
+        if self.is_native(path):
+            return self._written.pop(path, None)
+        stored = self.inner.read(path)
+        return None if stored is None else stored.generation
 
     # -- the protocol, passed through --------------------------------------
 
@@ -210,7 +224,10 @@ class NativeStagedStore:
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
         layout = self._native(path)
         if layout is None:
-            return self.inner.read(path, version=version)
+            stored = self.inner.read(path, version=version)
+            if stored is not None and version is None:
+                self._refuse_a_native_pending(path, stored)
+            return stored
         if version is not None:
             stored = self.inner.read(path, version=version)
             if stored is None:
@@ -232,15 +249,37 @@ class NativeStagedStore:
             PENDING in current.data or PREVIOUS in current.data
         ):
             raise LayoutChangedError(
-                f"{path!r} holds `pending` or `previous` as fields, from when it was staged in "
-                f"payload fields, and is now used with native staging",
-                hint="finish or discard the rotation it holds with the build that staged it, "
-                "or move the fields out by hand",
+                f"{path!r} holds `pending` or `previous` as fields, from when it held several "
+                f"accounts, and now holds one, which uses native staging",
+                hint="finish the rotation under the config it was started with, or remove the "
+                "fields by hand, then change the config",
             )
         staged = self.inner.read_stage(path, PENDING)
         live = staged is not None and staged.generation == current.attributes.get(PENDING_VERSION)
         previous = self.inner.read_stage(path, PREVIOUS)
         return _View(layout, current, staged if live else None, previous, staged)
+
+    def _refuse_a_native_pending(self, path: str, stored: Stored) -> None:
+        """Refuse a path read in payload fields that holds a live native pending.
+
+        The other direction of the layout change: a secret that held one
+        account, staged a pending as a version, and now holds several. Read in
+        payload fields it has no ``pending``, and the next write would leave
+        the staged password unreachable. A PREVIOUS version alone is not
+        refused: OCI cannot drop one, so refusing it would refuse the secret
+        for good. It stays readable as ``@version=N``.
+        """
+        recorded = stored.attributes.get(PENDING_VERSION)
+        if recorded is None:
+            return
+        staged = self.inner.read_stage(path, PENDING)
+        if staged is not None and staged.generation == recorded:
+            raise LayoutChangedError(
+                f"{path!r} holds a pending password as version {recorded}, from when it "
+                f"held one account, and is now shared by several",
+                hint="finish the rotation with `sopuli creds apply` under the config it was "
+                "staged with, then add the account",
+            )
 
     # -- writing ------------------------------------------------------------
 
@@ -310,7 +349,12 @@ class NativeStagedStore:
                 f"compare-and-set failed at {path!r}: expected version {cas}, "
                 f"found {view.current.version}"
             )
+        self._wrote(path, view.current)
         return view.current.version
+
+    def _wrote(self, path: str, left: Stored) -> None:
+        if left.generation is not None:
+            self._written[path] = left.generation
 
     def _replace(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
         """A new CURRENT, as ``creds generate --promote`` writes one.
@@ -351,7 +395,9 @@ class NativeStagedStore:
         if pending:
             attributes[PENDING_VERSION] = target.attributes[PENDING_VERSION]
         assert target.generation is not None
-        return self.inner.promote(path, target.generation, attributes=attributes, cas=cas)
+        token = self.inner.promote(path, target.generation, attributes=attributes, cas=cas)
+        self._wrote(path, target)
+        return token
 
     def _stage(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
         """A new PENDING version, recorded as the live one.
@@ -368,6 +414,7 @@ class NativeStagedStore:
         staged = self.inner.read_stage(path, PENDING)
         assert staged is not None
         assert staged.generation is not None
+        self._wrote(path, staged)
         if staged.generation == expected:
             return token
         attributes[PENDING_VERSION] = staged.generation
@@ -407,6 +454,41 @@ class NativeStagedStore:
     @staticmethod
     def _unsupported(path: str, what: str) -> StoreError:
         return StoreError(f"{path!r} uses native staging, which cannot do {what} in one write")
+
+
+def wrap(
+    stores: Mapping[str, SecretStore],
+    layouts: Mapping[tuple[str, str], StageLayout],
+    *,
+    by: str,
+    now: Callable[[], datetime],
+) -> dict[str, SecretStore]:
+    """``stores``, with each one that declares ``staging_labels`` seen through
+    :class:`NativeStagedStore`.
+
+    ``layouts`` is :func:`~sopuli.config.sharing.native_layouts`: the documents
+    that use native staging, keyed by store name and normalised path. A staging
+    store is wrapped even with none of its documents native, so a document read
+    in payload fields is still checked for a native pending.
+    """
+    wrapped: dict[str, SecretStore] = {}
+    for name, store in stores.items():
+        if STAGING not in store.supports():
+            wrapped[name] = store
+            continue
+        own = {path: layout for (vault, path), layout in layouts.items() if vault == name}
+        adapter = NativeStagedStore(cast(StagingStore, store), native=_lookup(own), by=by, now=now)
+        wrapped[name] = cast(SecretStore, adapter)
+    return wrapped
+
+
+def _lookup(layouts: Mapping[str, StageLayout]) -> Callable[[str], StageLayout | None]:
+    """A path's layout, found under the path's normalised spelling."""
+
+    def native(path: str) -> StageLayout | None:
+        return layouts.get(normalise_path(path))
+
+    return native
 
 
 def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:

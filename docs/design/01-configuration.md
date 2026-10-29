@@ -2852,9 +2852,21 @@ refuse a write without a compare-and-set, as HashiCorp's `cas_required` does.
 Only IAM keeps other writers off a secret, so grant the right to manage
 secrets in the store's compartment to the tool's principal alone. Every run
 that takes a lock on an OCI store reports `SOPULI-W019` for each lock path, to
-say so. The whole
-metadata map is limited to about 5,100 characters (`oci-metadata-limits`), and
-the tool refuses a write that would pass that before it is sent.
+say so. The whole metadata map is limited to about 5,100 characters
+(`oci-metadata-limits`), and the tool refuses a write that would pass that
+before it is sent.
+
+**Stages and versions on an OCI store.** A pending password is an OCI version
+in the PENDING stage, and promoting it makes it CURRENT and the old CURRENT
+PREVIOUS, in one call that also replaces the secret's metadata. The tool never
+promotes a DEPRECATED version, though OCI would. A secret holds at most 30
+versions, not counting those scheduled for deletion, and OCI removes none by
+itself (`oci-version-limit`). So before a write or a stage that would add a
+31st, the tool schedules the deletion of the secret's oldest DEPRECATED
+version, a day ahead, which frees the place at once
+([#1153](../decisions/log.md#1153)). It never touches CURRENT, PENDING or
+PREVIOUS, so a rollback still works. A full secret with nothing DEPRECATED is
+refused.
 
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command

@@ -188,21 +188,19 @@ def test_a_lock_write_never_counts_versions(store: OciStore, fake: FakeOci) -> N
     assert "list_secret_versions" not in fake.calls
 
 
-def test_a_write_while_room_was_made_conflicts(store: OciStore, fake: FakeOci) -> None:
+def test_a_write_while_room_was_made_conflicts(
+    store: OciStore, fake: FakeOci, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The counter is checked again after the deletion's wait."""
     secret = full(fake)
-
-    def other_writer(secret_id: str, number: int, details: object) -> None:
-        secret.metadata[CAS_KEY] = "2"
-
     real = fake.schedule_secret_version_deletion
 
-    def schedule(secret_id: str, number: int, details: object) -> object:
+    def schedule_then_another_writer(secret_id: str, number: int, details: object) -> object:
         result = real(secret_id, number, details)
-        other_writer(secret_id, number, details)
+        secret.metadata[CAS_KEY] = "2"
         return result
 
-    fake.schedule_secret_version_deletion = schedule  # type: ignore[method-assign]
+    monkeypatch.setattr(fake, "schedule_secret_version_deletion", schedule_then_another_writer)
 
     with pytest.raises(CasConflictError, match="while this run made room"):
         store.write("acme-db", {"password": "new"}, cas=1)

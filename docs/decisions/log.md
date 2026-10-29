@@ -3526,3 +3526,29 @@ the register.
   - Requiring `locking: advisory-only` on an OCI store. The tool's own writes
     are fenced, so it would understate what OCI gives, and add a key to every
     OCI config.
+
+## #1153
+
+- **Decided:** 2026-10-28, #1153
+- **Question:** Decision 7 on #1128. An OCI secret holds at most 30 versions,
+  OCI removes none by itself, and the content update that would make a 31st is
+  refused with `400 LimitExceeded` (#1136, M7). An application secret gains a
+  version at each rotation, so it would stop rotating after about 30. What does
+  the tool do at the limit?
+- **Decision:** Before a write or a stage that would add a version to a full
+  secret, the tool schedules the deletion of its oldest DEPRECATED version, a
+  day and an hour ahead. A version scheduled for deletion stops counting at
+  once (M7c), so the write fits. CURRENT, PENDING and PREVIOUS are never
+  touched. A full secret with no DEPRECATED version is refused. The store
+  records each deletion, and exposes how full a secret is, so the plan,
+  `--dry-run` and the run can say so (#1134).
+- **Why:** A rotation must not stop working after about 30 runs, and a
+  DEPRECATED version is one no stage, rollback or reader can reach. The tool
+  deletes nothing else, and never a whole secret.
+- **Rejected:**
+  - Refusing at the limit and leaving the clean-up to the operator. Every
+    application secret would need hand care twice a year at a monthly rotation.
+  - Deleting every DEPRECATED version at once. It keeps the secret busy longer
+    and removes history nobody asked to lose; one at a time is enough.
+  - Waiting for the shortest deletion delay OCI allows, which is not
+    documented. The probe's day and an hour was measured to work.

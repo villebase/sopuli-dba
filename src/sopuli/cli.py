@@ -976,15 +976,22 @@ def _vault_error(report: VaultReport) -> Error | None:
 def _refused_for_setup(entry: dict[str, Any]) -> bool:
     """Whether ``doctor`` reached this target and then refused it over its setup.
 
-    A ``config`` error on a target that answered, such as ``SOPULI-20007`` (a
-    PostgreSQL admin that is a superuser), ``SOPULI-20008`` (two targets on one
-    cluster) or a scope the target asserts and is not. Every other verb exits 9
-    over the same error (#1062). An error on a target that answered and is not
+    Either a ``config`` error on a target that answered, such as
+    ``SOPULI-20007`` (a PostgreSQL admin that is a superuser) or
+    ``SOPULI-20008`` (two targets on one cluster), or an ``asserted`` that does
+    not match: a target that claims a scope or container it is not. ``doctor``
+    reports the second rather than raising it, and every other verb refuses
+    both at exit 9 (#1062). An error on a target that answered and is not
     ``config``, such as a dictionary view the account cannot read, is a finding
     about grants and leaves the exit code alone.
     """
+    if not entry["reachable"]:
+        return False
     error = entry.get("error")
-    return bool(entry["reachable"] and error and error.get("category") == "config")
+    if error and error.get("category") == "config":
+        return True
+    asserted = entry.get("asserted")
+    return bool(asserted and asserted.get("matches") is False)
 
 
 def _doctor_exit(

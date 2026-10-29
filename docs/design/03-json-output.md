@@ -1398,8 +1398,10 @@ claim than "nobody could reach it".
 **A target that answered and was then refused has `reachable: true` and an
 `error`.** Where the error's `category` is `config`, such as `SOPULI-20007` or
 `SOPULI-20008` (§3), `doctor` surveys every other target and then exits 9, as
-any other verb exits over that target (#1062). This takes precedence over exit 1
-for an unreachable target or store. Another error on a target that answered,
+any other verb exits over that target (#1062). An `asserted` with
+`matches: false` does the same: `doctor` reports a target that claims a scope or
+container it is not, and every other verb refuses it. This takes precedence over
+exit 1 for an unreachable target or store. Another error on a target that answered,
 such as a dictionary view the account cannot read, is a finding about grants
 and does not change the exit code.
 

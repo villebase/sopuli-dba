@@ -3635,8 +3635,10 @@ the register.
   non-zero?
 - **Decision:** Yes. After surveying every target, `doctor` exits 9 if any
   target it reached carries an error whose category is `config`, the category
-  every other verb exits 9 over. It takes precedence over exit 1 for an
-  unreachable target or store. Another error on a target that answered, such
+  every other verb exits 9 over, or an `asserted` that does not match. `doctor`
+  reports a target that claims a scope or container it is not, where every
+  other verb refuses it. It takes precedence over exit 1 for an unreachable
+  target or store. Another error on a target that answered, such
   as a view the account cannot read, leaves the exit code alone.
 - **Why:** A script that runs `doctor` as a gate passed a setup that every
   other verb refuses. Exit 9 says to fix the configuration, which is the fix

@@ -41,6 +41,15 @@ def test_only_a_config_error_on_a_reached_target_is_a_refusal(
     assert _refused_for_setup(entry) is refused
 
 
+@pytest.mark.parametrize(("matches", "refused"), [(False, True), (True, False)])
+def test_a_scope_the_target_asserts_and_is_not_is_a_refusal(matches: bool, refused: bool) -> None:
+    """`doctor` reports an assertion that does not match as `asserted` rather
+    than raising it. Every other verb refuses that target at exit 9."""
+    entry = _entry(reachable=True)
+    entry["asserted"] = {"scope": "pdb", "container": "ORDERS", "matches": matches}
+    assert _refused_for_setup(entry) is refused
+
+
 def test_a_refused_target_is_exit_9() -> None:
     assert _doctor_exit((), failed=0, refused=1) == ExitCode.CONFIG_INVALID
 

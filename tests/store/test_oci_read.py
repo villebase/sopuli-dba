@@ -17,7 +17,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._errors import raise_for
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY, from_oci, to_oci
-from sopuli.store.protocol import LIST, VERSIONING, CasConflictError, StoreError
+from sopuli.store.protocol import CAS, LIST, VERSIONING, CasConflictError, StoreError
 
 
 @pytest.fixture
@@ -51,9 +51,9 @@ def test_any_other_path_with_a_separator_is_refused() -> None:
 # ------------------------------------------------------------------ reads ---
 
 
-def test_it_declares_list_and_versioning_only() -> None:
-    """`cas` and `staging_labels` arrive with the writes (#1133)."""
-    assert store(FakeOci()).supports() == frozenset({LIST, VERSIONING})
+def test_it_declares_cas_list_and_versioning() -> None:
+    """`staging_labels` arrives with staging (#1153), and OCI has no merge patch."""
+    assert store(FakeOci()).supports() == frozenset({CAS, LIST, VERSIONING})
 
 
 def test_a_read_returns_current_with_its_stamps(fake: FakeOci) -> None:

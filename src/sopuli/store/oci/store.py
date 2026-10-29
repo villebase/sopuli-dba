@@ -1,8 +1,8 @@
 """P2's store interface over one OCI vault.
 
-This build connects, answers :meth:`OciStore.health`, reads, lists, and
-writes an application secret. Lock records come with #1152, and staging with
-#1153; until then each refuses with a :class:`StoreError`.
+This build connects, answers :meth:`OciStore.health`, reads, lists, writes,
+and holds lock records in metadata. Staging comes with #1153, and until then
+it refuses with a :class:`StoreError`.
 
 Content is read with ``GetSecretBundleByName``, the call External Secrets
 Operator makes, so the tool reads exactly what an application would. One call
@@ -41,6 +41,7 @@ from sopuli.config.model import Vault
 from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import _errors, _names
 from sopuli.store.protocol import (
+    CAS,
     DEGRADED,
     LIST,
     OK,
@@ -79,6 +80,10 @@ SETTLE_TIMEOUT_S = 120
 
 #: Seconds between two reads of a busy secret.
 POLL_S = 2.0
+
+#: The largest metadata map, as compact JSON characters, the store sends. A
+#: little under the 5,120 measured to be accepted (``oci-metadata-limits``).
+METADATA_MAX = 5100
 
 #: OCI's answer to a write the secret's state does not allow: it is busy.
 INCORRECT_STATE = "IncorrectState"
@@ -133,10 +138,9 @@ class OciStore:
         self._monotonic = monotonic
 
     def supports(self) -> frozenset[str]:
-        """What works in this build. Each capability arrives with its methods:
-        ``cas`` with the lock records (#1152), and ``staging_labels`` with
-        staging (#1153). There is no ``merge_patch``: OCI has none."""
-        return frozenset({LIST, VERSIONING})
+        """What works in this build. ``staging_labels`` arrives with staging
+        (#1153). There is no ``merge_patch``: OCI has none."""
+        return frozenset({CAS, LIST, VERSIONING})
 
     def health(self) -> StoreHealth:
         """One read-only ``GetVault``, which proves the auth, region and vault id.
@@ -235,21 +239,26 @@ class OciStore:
         token 1. ``cas`` is compared with the write counter before anything is
         sent, and the ETag guards the update itself. The call returns once the
         secret is ACTIVE again, so a read straight afterwards sees ``data``.
+
+        A lock record is the exception (decision 5): it goes in the lock
+        secret's metadata under :data:`._names.RECORD_KEY`, and the content is
+        left alone, so updating a lock adds no version (#1136, M7b). The
+        first lock on a path creates its secret with ``{}`` as the content,
+        because OCI will not create a secret without one.
         """
-        if _names.is_lock(path):
-            raise StoreError(
-                f'vault "{self._name}": lock records on an OCI store are not built in this version',
-                hint="this version can write an application secret on an OCI store, not a lock",
-            )
         name = _names.to_oci(path)
         what = self._what(name)
+        lock = _names.is_lock(path)
+        record = {_names.RECORD_KEY: _compact(data)} if lock else {}
         live = self._live(name, what=what)
         if live is None:
             if cas not in (0, None):
                 raise CasConflictError(
                     f"compare-and-set failed at {path!r}: expected version {cas}, found nothing"
                 )
-            self._create(name, data, what=what)
+            self._create(
+                name, {} if lock else data, metadata={_names.CAS_KEY: "1", **record}, what=what
+            )
             return 1
         token = _token(live.metadata, what=what)
         # `cas: 0` asserts that nothing is there, and a token is never below 1.
@@ -257,11 +266,12 @@ class OciStore:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {token}"
             )
+        content = {} if lock else {"secret_content": _encode(data)}
         self._update(
             live,
             what=what,
-            secret_content=_encode(data),
-            metadata={**live.metadata, _names.CAS_KEY: str(token + 1)},
+            metadata={**live.metadata, _names.CAS_KEY: str(token + 1), **record},
+            **content,
         )
         return token + 1
 
@@ -271,10 +281,19 @@ class OciStore:
         raise StoreError(f'vault "{self._name}": an OCI store has no merge patch')
 
     def metadata(self, path: str) -> PathMetadata | None:
-        self._not_built("reading")
+        """Nothing: OCI has no setting that makes a secret refuse an update
+        without ``if_match``, so there is no ``cas_required`` to report.
+
+        Who may write a secret is IAM's to say. The tool's own writes always
+        carry the counter and the ETag; keeping other writers out is the IAM
+        policy's job, which ``01-configuration.md`` §7 describes.
+        """
+        return None
 
     def require_cas(self, path: str) -> None:
-        self._not_built("writing")
+        """Nothing to arrange, for the reason :meth:`metadata` gives. The lock's
+        pre-flight calls this for a path it found no metadata for, which on
+        OCI is every path; it sends nothing."""
 
     def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
         self._not_built("writing")
@@ -315,18 +334,19 @@ class OciStore:
             id=summary.id, name=name, etag=etag, metadata=dict(response.data.metadata or {})
         )
 
-    def _create(self, name: str, data: Any, *, what: str) -> None:
-        """``CreateSecret``, at token 1, and the wait for ACTIVE."""
+    def _create(self, name: str, data: Any, *, metadata: dict[str, Any], what: str) -> None:
+        """``CreateSecret`` with ``data`` as the first version, and the wait for ACTIVE."""
         if self._key_id is None:
             # Unreachable through a config file, which requires the key.
             raise StoreError(f'vault "{self._name}" needs a key_id to create {what}')
+        _check_size(metadata, what=what)
         details = oci.vault.models.CreateSecretDetails(
             compartment_id=self._compartment_id,
             vault_id=self._vault_id,
             key_id=self._key_id,
             secret_name=name,
             secret_content=_encode(data),
-            metadata={_names.CAS_KEY: "1"},
+            metadata=metadata,
         )
         try:
             created = self._vaults.create_secret(details).data
@@ -369,6 +389,7 @@ class OciStore:
         the update once more with the same ETag: if the other writer changed
         the secret, OCI answers ``409 Conflict``, a lost compare-and-set.
         """
+        _check_size(details["metadata"], what=what)
         update = oci.vault.models.UpdateSecretDetails(**details)
         try:
             self._send_update(live, update, what=what)
@@ -551,17 +572,38 @@ def _content(bundle: Any, *, what: str) -> str:
         raise StoreError(f"{what} has content that is not UTF-8 text") from None
 
 
+def _compact(data: Any) -> str:
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
 def _encode(data: Any) -> Any:
     """``data`` as a CURRENT version's content: JSON, UTF-8, base64.
 
     The one place a password leaves the process on an OCI store (invariant 2).
     """
-    text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     return oci.vault.models.Base64SecretContentDetails(
         content_type="BASE64",
-        content=base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        content=base64.b64encode(_compact(data).encode("utf-8")).decode("ascii"),
         stage=CURRENT,
     )
+
+
+def _check_size(metadata: Mapping[str, Any], *, what: str) -> None:
+    """Refuse a metadata map OCI would refuse, before it is sent.
+
+    OCI limits the whole map (``oci-metadata-limits``): one key and value of
+    5,120 characters as compact JSON was accepted, and 5,178 refused, in
+    characters rather than bytes. The lock record and the promotion stamps
+    share the map, and a secret the tool did not create may bring keys of its
+    own.
+    """
+    size = len(_compact(dict(metadata)))
+    if size > METADATA_MAX:
+        raise StoreError(
+            f"{what}: its metadata would be {size} characters as JSON, and OCI allows "
+            f"about {METADATA_MAX}",
+            hint="remove metadata keys this tool does not use from the secret",
+        )
 
 
 def _json_object(text: str, *, what: str) -> dict[str, Any]:

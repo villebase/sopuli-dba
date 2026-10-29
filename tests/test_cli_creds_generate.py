@@ -2078,3 +2078,28 @@ def test_a_promotion_refused_before_its_write_still_announces_the_draws(
     assert "vault.promote" not in names(lines)
     states = [line["data"]["state"] for line in lines if line["event"] == "target.finished"]
     assert states == ["ERROR", "ERROR"]
+
+
+#: `CONFIG` with the store left to the run, and a field per account with no
+#: pointer, so both accounts would stage at the document root.
+ROOT_STAGE_NO_STORE = CONFIG.replace("    vault: vault-prod\n", "").replace(
+    "#DB_CREDENTIALS/{account}", "#{account}"
+)
+
+
+def test_a_selection_does_not_hide_a_collision_on_a_store_the_run_supplies(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1141: staging only web's password still collides with batch's, because a
+    later `--account acme_batch_user` run writes the same root `pending`."""
+    monkeypatch.setenv("SOPULI_VAULT", "vault-prod")
+
+    result = run(runner, write_config(ROOT_STAGE_NO_STORE), "--account", "acme_web_user")
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "acme_batch_user" in str(result.exception)
+    assert store.read(PATH) is None

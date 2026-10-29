@@ -2784,10 +2784,12 @@ than reported.
 
 It is a property of the **set** of bindings for one document rather than of any
 single ref, so it runs once every binding exists; that is still load time, and
-still before a command has done anything. `sopuli/generate.py` keeps the same
-guard at the write boundary, because a binding whose store C15 completes later
-(§6) has no known backend while the file is being read, and the rule below is
-why that matters.
+still before a command has done anything. A binding whose store C15 completes
+later (§6) has no known backend while the file is being read, and the rule below
+is why that matters. For such a binding the rule runs when the run supplies the
+store, over **every** binding the file declares, not only the ones the selectors
+kept: two accounts that share a root `pending` collide across two runs as well
+as in one. `sopuli/generate.py` keeps the same guard at the write boundary.
 
 **The rules apply on `hashicorp`, `file` and `oci` stores.** OCI stages
 natively (P2's `staging_labels` row), and the rules still apply there, for two

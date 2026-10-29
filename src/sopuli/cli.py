@@ -4057,7 +4057,9 @@ def lock_status(
     # promotion gate does: a SOPULI_VAULT naming an undeclared store is wrong
     # only for a binding this run surveys, and the narrowed estate refuses that.
     everything = resolvable_locks(_declared_estate(config))
-    keys = declared_locks(binding_stores.complete(filter_estate(config, selection), env=os.environ))
+    keys = declared_locks(
+        binding_stores.complete(filter_estate(config, selection), env=os.environ, estate=config)
+    )
     # UC-2's locks are keyed on the reset record's path, which no binding
     # produces. The prefix is declared and the keys under it are not enumerable
     # offline -- a predicate-declared personal account has no name until a
@@ -4927,7 +4929,7 @@ def creds_check(
     # built, so this is the first moment a binding's store can be complete. The
     # refusal follows immediately because reading a credential is the whole
     # command -- invariant 4 wants it here and not partway through the estate.
-    config = binding_stores.complete(config, env=os.environ)
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
     binding_stores.refuse_unresolved(config, action="checking credentials")
 
     run = _with_estate_safety(run, config)
@@ -5547,7 +5549,7 @@ def creds_generate(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    config = binding_stores.complete(config, env=os.environ)
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
     binding_stores.refuse_unresolved(
         config, action="promoting a password" if promote else "staging a password"
     )
@@ -6693,7 +6695,7 @@ def creds_apply(
             repair_notes.append(stale.message)
     document.selection = selection.as_json() or None
 
-    config = binding_stores.complete(config, env=os.environ)
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
     binding_stores.refuse_unresolved(config, action="applying a password")
 
     run = _with_estate_safety(run, config)
@@ -10441,7 +10443,7 @@ def creds_finish_rollover(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    config = binding_stores.complete(config, env=os.environ)
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
     binding_stores.refuse_unresolved(config, action="ending a rollover window")
 
     run = _with_estate_safety(run, config)
@@ -10872,7 +10874,7 @@ def creds_rotate(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    config = binding_stores.complete(config, env=os.environ)
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
     binding_stores.refuse_unresolved(config, action="rotating a password")
 
     run = _with_estate_safety(run, config)
@@ -11828,7 +11830,7 @@ def creds_status(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    config = binding_stores.complete(config, env=os.environ)
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
     binding_stores.refuse_unresolved(config, action="taking an inventory")
 
     run = _with_estate_safety(run, config)

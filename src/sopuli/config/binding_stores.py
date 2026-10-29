@@ -78,7 +78,13 @@ class _Candidate:
     location: str
 
 
-def complete(config: Config, *, env: Mapping[str, str] = NO_ENV, check_refs: bool = True) -> Config:
+def complete(
+    config: Config,
+    *,
+    env: Mapping[str, str] = NO_ENV,
+    check_refs: bool = True,
+    estate: Config | None = None,
+) -> Config:
     """Fill in the store for bindings that reached load without one.
 
     Returns ``config`` itself when there is nothing to fill, so a caller can run
@@ -98,43 +104,76 @@ def complete(config: Config, *, env: Mapping[str, str] = NO_ENV, check_refs: boo
     count bindings a selector left out, as the promotion gate does, passes
     ``False``: the run does not touch those bindings, and refusing it over one
     of them would be refusing over something it excluded.
+
+    ``estate`` is the config before the selectors narrowed it, when ``config``
+    is the narrowed one. The stage-collision rule runs over the estate (#1141).
+    Two accounts that share a root ``pending`` collide across two runs as well as
+    in one: ``--account acme_web_user`` stages web's password, and a later
+    ``--account acme_api_user`` writes over it before it is promoted. The loader
+    refuses a file that names the store whatever the selection, and this refuses
+    a run that supplies the store the same way. The other ref rules stay on
+    ``config``, because they are about one binding and the run uses only these.
     """
     candidate = _candidate(config, env=env)
     if candidate is None:
         return config
-    if not any(_needs_store(binding) for binding in config.bindings):
+    whole = config if estate is None else estate
+    if not any(_needs_store(binding) for binding in whole.bindings):
         return config
 
-    _refuse_dangling(candidate, config)
-    completed = replace(
+    completed = config
+    if any(_needs_store(binding) for binding in config.bindings):
+        _refuse_dangling(candidate, config)
+        completed = _filled(config, candidate)
+        if check_refs:
+            _check_completed(candidate, config)
+    if check_refs and any(vault.name == candidate.name for vault in whole.vaults):
+        _check_estate_stages(candidate, whole)
+    return completed
+
+
+def _filled(config: Config, candidate: _Candidate) -> Config:
+    return replace(
         config,
         bindings=tuple(
             replace(binding, vault=candidate.name) if _needs_store(binding) else binding
             for binding in config.bindings
         ),
     )
-    if check_refs:
-        _check_completed(candidate, config, completed)
-    return completed
 
 
-def _check_completed(candidate: _Candidate, loaded: Config, completed: Config) -> None:
-    """The ref rules the loader could not apply, now that the store is known.
+def _check_completed(candidate: _Candidate, loaded: Config) -> None:
+    """The per-binding ref rules the loader could not apply, now that the store is known.
 
     At load a binding with no store has no backend, so the per-binding rules
     (:func:`sopuli.config.bindings.check_for_store`: an OCI store's name rule,
-    #1137, and the payload rules) and the stage-collision rule could not run on
-    it. They run here, before any command reaches a store, with the functions the
-    loader uses. One difference: an error is located at the binding's application
-    entry, because a binding does not keep the key of an override that supplied
-    its ref. The message quotes the ref, so the override is still findable.
+    #1137, and the payload rules) could not run on it. They run here, before any
+    command reaches a store, with the functions the loader uses. One difference:
+    an error is located at the binding's application entry, because a binding
+    does not keep the key of an override that supplied its ref. The message
+    quotes the ref, so the override is still findable.
     """
     store_type = next(vault.type for vault in loaded.vaults if vault.name == candidate.name)
     where = application_locations(loaded)
     for binding in loaded.bindings:
         if _needs_store(binding) and binding.secret is not None:
             check_for_store(binding.secret, store_type, at=where.get(binding.application, ROOT))
-    check_stages_do_not_collide(completed.bindings, completed, where=where)
+
+
+def _check_estate_stages(candidate: _Candidate, estate: Config) -> None:
+    """The stage-collision rule over every binding the file declares.
+
+    The loader could not run it on a binding with no store, so it runs here once
+    the run supplies one. It runs even when the selected bindings all named their
+    store in the file: a selected account that stages at a document's root
+    collides with an account left out whose store this run supplies.
+
+    Only where the run's store is declared. An undeclared ``SOPULI_VAULT`` is
+    refused by :func:`_refuse_dangling` when the run needs it, and is not this
+    run's concern when it does not.
+    """
+    completed = _filled(estate, candidate)
+    check_stages_do_not_collide(completed.bindings, completed, where=application_locations(estate))
 
 
 def unresolved(config: Config) -> tuple[Binding, ...]:

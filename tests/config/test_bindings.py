@@ -20,6 +20,7 @@ from sopuli.config import binding_stores
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config
+from sopuli.config.selection import Selection, filter_estate
 from sopuli.config.vaults import OCI_REF_MAX
 
 TARGETS: list[dict[str, Any]] = [
@@ -1517,6 +1518,45 @@ def test_two_accounts_staging_together_on_a_store_the_run_supplies_are_refused()
     rendered = str(caught.value)
     assert "pending" in rendered
     assert "applications[0]" in rendered
+
+
+def test_a_collision_with_an_account_the_selectors_left_out_is_refused() -> None:
+    """#1141: `--account acme_web_user` stages web's password at the root, and
+    a later `--account acme_api_user` run writes over it. The selection does
+    not make the collision go away, so the whole estate is checked."""
+    config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
+    narrowed = filter_estate(config, Selection(accounts=("acme_web_user",)))
+    assert [binding.account for binding in narrowed.bindings] == ["acme_web_user"]
+
+    with pytest.raises(ConfigError) as caught:
+        binding_stores.complete(narrowed, env={"SOPULI_VAULT": "vault-oci"}, estate=config)
+
+    rendered = str(caught.value)
+    assert "acme_web_user" in rendered
+    assert "acme_api_user" in rendered
+
+
+def test_the_whole_estate_does_not_refuse_accounts_that_stage_apart() -> None:
+    """The estate check refuses only a real collision: a pointer per account
+    stages each account in its own place."""
+    config = late_oci("acme-db#DB/{account}", ["acme_web_user", "acme_api_user"])
+    narrowed = filter_estate(config, Selection(accounts=("acme_web_user",)))
+
+    completed = binding_stores.complete(narrowed, env={"SOPULI_VAULT": "vault-oci"}, estate=config)
+
+    assert [binding.vault for binding in completed.bindings] == ["vault-oci"]
+
+
+def test_the_promotion_gate_does_not_check_the_estate_either() -> None:
+    """`check_refs=False` counts bindings and refuses nothing, the collision
+    rule included."""
+    config = late_oci("acme-db#{account}", ["acme_web_user", "acme_api_user"])
+
+    completed = binding_stores.complete(
+        config, env={"SOPULI_VAULT": "vault-oci"}, check_refs=False, estate=config
+    )
+
+    assert {binding.vault for binding in completed.bindings} == {"vault-oci"}
 
 
 def test_the_promotion_gate_completes_without_the_ref_rules() -> None:

@@ -727,8 +727,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "to make room (decision 7). In the plan and under `--dry-run` it says which versions "
             "may go; after the run, which went. CURRENT, PENDING and PREVIOUS are never "
             "deleted. A ref pinned to such a version with `@version=N` would stop resolving, "
-            "so the store refuses that deletion, and `creds generate` refuses the run at plan "
-            "time; under `apply` and `rotate` the plan's entry says the store will refuse the "
+            "so the store refuses that deletion, and `creds generate` and `rotate` refuse the "
+            "run at plan time; under `apply` the plan's entry says the store will refuse the "
             "write. One entry per secret in the plan, and per deleted version after the run."
         ),
         CONSTRAINTS_UNREAD: (

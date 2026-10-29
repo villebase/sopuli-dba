@@ -4701,17 +4701,19 @@ def _plan_version_limits(
     **The guarantee is the store's.** Every version a ref in the file pins is
     passed to it (``protect``), and it refuses to delete one to make room, at
     the deletion, whatever this plan could see. What the plan adds is saying so
-    early. ``refuse`` is for ``creds generate``, which writes every document it
-    plans exactly once and alone creates secrets, so its count is exact and it
-    refuses, before anything is written:
+    early. With ``refuse``, it refuses, before anything is written:
 
     * a create on a name that a secret scheduled for deletion still holds
       (``oci-create-taken``);
     * writes to a full secret with too few DEPRECATED versions to delete;
     * writes that would delete a pinned version.
 
-    ``apply`` and ``rotate`` may write fewer documents than they plan
-    (narrowed, guarded, not due), so for them the last two are a
+    ``creds generate`` refuses: it writes every document it plans exactly
+    once. So does ``creds rotate``, whose count is of the due documents: it
+    stages before its guardrail pass and changes the databases before it
+    promotes, so a promotion the store refuses would leave it half done.
+    ``apply`` warns: a narrowed run withholds its promotions (#406), so it may
+    write fewer documents than it plans, and for it the last two are a
     ``SOPULI-W059`` saying the write will be refused, and the store refuses it.
     Otherwise a secret the writes would overfill is a ``SOPULI-W059`` naming
     the versions they may delete: "may", because a write that fails for
@@ -4771,7 +4773,7 @@ def _plan_version_limits(
             continue
         if refuse:
             raise problem
-        _warn_version(run, f"{problem}, so the store will refuse that write")
+        _warn_version(run, f"{problem.message}, so the store will refuse that write")
 
 
 def _warn_version(run: Invocation, message: str) -> None:
@@ -11173,8 +11175,11 @@ def creds_rotate(
             )
             if one.due
         }
+    # Refused here, not warned: the stage is written before the guardrail pass
+    # and the databases change before the promotion, so a promotion the store
+    # refuses would leave the rotation half done.
     _plan_version_limits(
-        keys, stores, run, adds=_adding(stores, stage=True, promote=True, writes=due)
+        keys, stores, run, adds=_adding(stores, stage=True, promote=True, writes=due), refuse=True
     )
 
     # Before the preview and before the lock (#857), so a refusal is the same for

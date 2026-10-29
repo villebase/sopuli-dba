@@ -167,6 +167,9 @@ def test_room_says_which_versions_each_write_would_delete() -> None:
     assert full.making_room_for(2, demoting=False) is None
     nothing = Room(versions=30, deprecated=(), limit=30, previous=29, current=30)
     assert nothing.making_room_for(1, demoting=True) is None
+    # With no PREVIOUS, the first write makes CURRENT PREVIOUS, not DEPRECATED.
+    no_previous = Room(versions=30, deprecated=(5,), limit=30, previous=None, current=30)
+    assert no_previous.making_room_for(2, demoting=True) is None
 
 
 def test_a_name_held_only_by_a_deleting_secret_is_held(store: OciStore, fake: FakeOci) -> None:

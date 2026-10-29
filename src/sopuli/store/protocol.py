@@ -658,7 +658,7 @@ class Room:
         demoted. A native stage adds a PENDING version and demotes nothing.
         """
         pool = list(self.deprecated)
-        upcoming = [one for one in (self.previous, self.current) if one is not None]
+        previous, current = self.previous, self.current
         versions, going = self.versions, []
         for _ in range(added):
             if versions >= self.limit:
@@ -667,8 +667,13 @@ class Room:
                 going.append(pool.pop(0))
             else:
                 versions += 1
-            if demoting and upcoming:
-                pool.append(upcoming.pop(0))
+            if demoting:
+                # Each stage moves down one: PREVIOUS to DEPRECATED, CURRENT
+                # to PREVIOUS. The new version's number is not known yet,
+                # and it is not deleted within the writes one run makes.
+                if previous is not None:
+                    pool.append(previous)
+                previous, current = current, None
         return tuple(going)
 
 

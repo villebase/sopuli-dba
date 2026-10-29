@@ -2852,8 +2852,8 @@ stale, the store reads the secret again: if it is still ready and its metadata
 and current version are the same, no write was accepted in between, and the
 update is sent again with the new ETag, at most three more times. A name still
 held by a secret scheduled for deletion cannot be used again until OCI deletes
-it. `creds generate`, `apply` and `rotate` refuse a run that would create such
-a secret before they take the lock, and a create that meets one anyway says so.
+it. `creds generate` and `rotate` refuse a run that would create such a secret
+before they take the lock, and a create that meets one anyway says so.
 
 **The lock on an OCI store.** The advisory lock on a secret `acme-db` lives in
 a secret the tool creates, `sopuli-locks.acme-db`, in the same compartment.
@@ -2894,8 +2894,11 @@ stage adds one, a promotion in payload fields adds one, and a native promotion
 adds none, so `rotate` on a shared secret adds two. `apply` counts only a
 document with something to promote, and `rotate --max-age-days` only a due one.
 `creds generate` writes every document it plans exactly once, so it refuses
-such a write before the lock. `apply` and `rotate` may write fewer than they
-plan, so they report it as `SOPULI-W059` and leave the refusal to the store.
+such a write before the lock. So does `rotate`: it changes the databases before
+it promotes, and a promotion the store refused would leave it half done.
+`apply` may write fewer documents than it plans, since a narrowed run withholds
+its promotions, so it reports such a write as `SOPULI-W059` and leaves the
+refusal to the store.
 Otherwise the plan and `--dry-run` report `SOPULI-W059` naming the versions the
 writes may delete, and the run reports it again for each version a store did
 delete.

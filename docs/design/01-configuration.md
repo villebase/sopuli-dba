@@ -2856,7 +2856,8 @@ stale, the store reads the secret again: if it is still ready and its metadata
 and current version are the same, no write was accepted in between, and the
 update is sent again with the new ETag, at most three more times. A name still
 held by a secret scheduled for deletion cannot be used again until OCI deletes
-it, and the error says so.
+it. `creds generate` and `rotate` refuse a run that would create such a secret
+before they take the lock, and a create that meets one anyway says so.
 
 **The lock on an OCI store.** The advisory lock on a secret `acme-db` lives in
 a secret the tool creates, `sopuli-locks.acme-db`, in the same compartment.
@@ -2886,7 +2887,25 @@ that limit, the tool schedules the deletion of the secret's oldest DEPRECATED
 version, two days ahead, which frees the place at once, and sends the write
 again ([#1153](../decisions/log.md#1153)). A write that fails for any other
 reason deletes nothing. It never touches CURRENT, PENDING or PREVIOUS, so a
-rollback still works. A full secret with nothing DEPRECATED is refused.
+rollback still works. A full secret with nothing DEPRECATED is refused. So is
+a write whose room would be made by deleting a version a ref in the file pins
+with `@version=N`, application or admin, since that ref would stop resolving
+(exit 9). The store refuses both at the deletion, whatever a plan saw.
+
+`creds generate`, `apply` and `rotate` also check each secret they will write
+before they take the lock (#1159). They count the versions each run may add: a
+stage adds one, a promotion in payload fields adds one, and a native promotion
+adds none, so `rotate` on a shared secret adds two. `apply` counts only a
+document with something to promote, and `rotate --max-age-days` only a due one.
+`creds generate` writes every document it plans exactly once, so it refuses
+such a write before the lock. So does `rotate`: it changes the databases before
+it promotes, and a promotion the store refused would leave it half done.
+`apply` may write fewer documents than it plans, since a narrowed run withholds
+its promotions, so it reports such a write as `SOPULI-W059` and leaves the
+refusal to the store.
+Otherwise the plan and `--dry-run` report `SOPULI-W059` naming the versions the
+writes may delete, and the run reports it again for each version a store did
+delete.
 
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command

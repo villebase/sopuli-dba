@@ -19,14 +19,18 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from native_estate import FIELD, OCI_VAULT, seed, staging_store, view
-from sopuli.cli import cli
+from native_estate import FIELD, NOW, OCI_VAULT, LimitedStore, limited_store, seed, view
+from sopuli.cli import _adding, cli
 from sopuli.config.model import Vault
+from sopuli.diagnostics import VERSION_PRUNED
 from sopuli.exit_codes import ExitCode
+from sopuli.lock.keys import LockKey
 from sopuli.output.document import SCHEMA_VERSION
-from sopuli.payload import CURRENT, PENDING, PREVIOUS
+from sopuli.payload import CURRENT, PENDING, PREVIOUS, StageLayout
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.native_view import PENDING_VERSION, LayoutChangedError
+from sopuli.store.native_view import wrap as native_staged
+from sopuli.store.protocol import PinnedVersionError, Pruned, Room, StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -84,8 +88,8 @@ def validator() -> Draft202012Validator:
 
 
 @pytest.fixture
-def store(monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
-    memory = staging_store()
+def store(monkeypatch: pytest.MonkeyPatch) -> LimitedStore:
+    memory = limited_store()
 
     def fake_connect(
         vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
@@ -243,3 +247,177 @@ def test_a_previous_version_alone_does_not_block_sharing(
     result = run(runner, write_config(SHARED), "generate")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+# ------------------------------------------------ version limits (#1159) ---
+
+
+def codes(result: Result) -> list[str | None]:
+    return [one.get("code") for one in json.loads(result.output).get("diagnostics", [])]
+
+
+def pruned_warning(result: Result) -> dict[str, Any]:
+    (warning,) = [
+        one for one in json.loads(result.output)["diagnostics"] if one.get("code") == VERSION_PRUNED
+    ]
+    return dict(warning)
+
+
+def test_a_full_secret_says_which_version_a_write_may_delete(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    message = pruned_warning(result)["message"]
+    assert "may delete version 4" in message
+    assert PATH in message
+
+
+def test_a_store_the_plan_cannot_ask_still_gets_a_plan(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: LimitedStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store that will not answer how full a secret is leaves the dry run
+    as it was: the plan is printed, and the write would say what failed."""
+    seed(store, PATH, {FIELD: LIVE})
+
+    def refused(path: str) -> None:
+        raise StoreError("throttled")
+
+    monkeypatch.setattr(store, "room", refused)
+
+    result = run(runner, write_config(CONFIG), "generate", "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+def test_the_dry_run_says_it_too(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
+
+    result = run(runner, write_config(CONFIG), "generate", "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert VERSION_PRUNED in codes(result)
+    assert store.read_stage(PATH, PENDING) is None
+
+
+def test_a_full_secret_with_nothing_deprecated_is_refused_before_the_write(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, deprecated=(), limit=30)
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    assert isinstance(result.exception, StoreError)
+    assert "too few of them are DEPRECATED" in str(result.exception)
+    assert store.read_stage(PATH, PENDING) is None
+
+
+def test_a_write_that_would_delete_a_pinned_version_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """A ref in the file pins the version making room would delete, so it
+    would stop resolving: refused at plan time, nothing written."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
+    pinned = CONFIG.replace(
+        "    vault: vault-oci\n",
+        "    vault: vault-oci\n"
+        f'    admin: {{ username: SYSTEM, auth: {{ method: vault, secret: "{PATH}#password'
+        '@version=4" } }\n',
+    )
+
+    result = run(runner, write_config(pinned), "generate")
+
+    assert isinstance(result.exception, PinnedVersionError)
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    assert "`@version=4`" in str(result.exception)
+    assert store.read_stage(PATH, PENDING) is None
+    # And the store is told, so the deletion itself would refuse too.
+    assert store.protected == {PATH: {4}}
+
+
+def test_a_create_on_a_name_a_deleting_secret_holds_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    store.held.add(PATH)
+
+    result = run(runner, write_config(CONFIG), "generate", "--promote")
+
+    assert isinstance(result.exception, StoreError)
+    assert "scheduled for deletion" in str(result.exception)
+    assert store.read(PATH) is None
+
+
+def test_each_version_the_store_deleted_is_reported_after_the_run(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """What the store deleted while the run wrote is said once the run is
+    over, whichever verb ran."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.pruned.append(Pruned(path=PATH, generation=4))
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    message = pruned_warning(result)["message"]
+    assert f"vault-oci:{PATH}" in message
+    assert "version 4" in message
+    assert "was scheduled for deletion" in message
+
+
+def text(runner: CliRunner, config: Path, *args: str) -> str:
+    result = runner.invoke(cli, ["creds", *args, "--config", str(config)])
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    return result.output
+
+
+def test_the_text_of_a_dry_run_names_the_version_a_write_may_delete(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """Found by the real run: the verb's own notes do not include it, so it
+    goes where every verb's text prints warnings."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, deprecated=(4, 5), limit=30)
+
+    output = text(runner, write_config(CONFIG), "generate", "--dry-run")
+
+    assert "may delete version 4" in output
+
+
+def test_the_text_of_a_run_names_each_version_the_store_deleted(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.pruned.append(Pruned(path=PATH, generation=4))
+
+    output = text(runner, write_config(CONFIG), "generate")
+
+    assert "version 4, its oldest DEPRECATED one, was scheduled for deletion" in output
+
+
+def test_a_native_promotion_adds_no_version_and_one_in_payload_fields_does() -> None:
+    """What the plan counts against the limit: a native promotion moves a
+    stage, and a payload-field one writes the document again (#1159)."""
+    stores = native_staged(
+        {"vault-oci": limited_store()},
+        {("vault-oci", PATH): StageLayout(FIELD)},
+        by="x",
+        now=lambda: NOW,
+    )
+    native, shared = LockKey("vault-oci", PATH), LockKey("vault-oci", SHARED_PATH)
+
+    promoting = _adding(stores, stage=False, promote=True)
+    rotating = _adding(stores, stage=True, promote=True)
+
+    assert (promoting(native), promoting(shared)) == (0, 1)
+    assert (rotating(native), rotating(shared)) == (1, 2)

@@ -32,7 +32,7 @@ place to put shared code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import MappingProxyType
@@ -147,6 +147,18 @@ class CasConflictError(StoreError):
     computed from is gone -- retrying would recompute against a document that has
     changed for a reason this run knows nothing about.
     """
+
+
+class PinnedVersionError(StoreError):
+    """Making room would delete a version a ref in the configuration pins
+    with ``@version=N``, which would then stop resolving (#1159).
+
+    A configuration error, as the plan's refusal of the same thing is: the
+    file pins a version the store must delete to go on.
+    """
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
 
 
 class PatchNotPermittedError(StoreError):
@@ -611,3 +623,85 @@ class WriteMechanism(Protocol):
     def mechanism_for(self, path: str) -> str | None: ...
 
     def generation_of(self, path: str) -> int | None: ...
+
+
+@dataclass(frozen=True)
+class Room:
+    """How full a secret is, as its store counts versions (decision 7)."""
+
+    versions: int
+    #: The DEPRECATED versions still counted, oldest first: the ones the store
+    #: deletes to make room, in that order.
+    deprecated: tuple[int, ...]
+    #: How many versions the store holds before it refuses another.
+    limit: int
+    #: The PREVIOUS and CURRENT versions, which a write that makes a new
+    #: CURRENT moves down a stage each, oldest first; ``None`` where none.
+    previous: int | None = None
+    current: int | None = None
+
+    @property
+    def full(self) -> bool:
+        return self.versions >= self.limit
+
+    @property
+    def oldest_deprecated(self) -> int | None:
+        return self.deprecated[0] if self.deprecated else None
+
+    def making_room_for(self, added: int, *, demoting: bool) -> tuple[int, ...] | None:
+        """The versions the store would delete to add ``added`` more, oldest
+        first, or ``None`` if too few are DEPRECATED when one must go.
+
+        ``demoting`` is whether each new version becomes CURRENT, as a write in
+        payload fields does: the old PREVIOUS then becomes DEPRECATED, and the
+        old CURRENT PREVIOUS, so the next write can delete what the last one
+        demoted. A native stage adds a PENDING version and demotes nothing.
+        """
+        pool = list(self.deprecated)
+        previous, current = self.previous, self.current
+        versions, going = self.versions, []
+        for _ in range(added):
+            if versions >= self.limit:
+                if not pool:
+                    return None
+                going.append(pool.pop(0))
+            else:
+                versions += 1
+            if demoting:
+                # Each stage moves down one: PREVIOUS to DEPRECATED, CURRENT
+                # to PREVIOUS. The new version's number is not known yet,
+                # and it is not deleted within the writes one run makes.
+                if previous is not None:
+                    pool.append(previous)
+                previous, current = current, None
+        return tuple(going)
+
+
+@dataclass(frozen=True)
+class Pruned:
+    """A DEPRECATED version a run scheduled for deletion to make room."""
+
+    path: str
+    generation: int
+
+
+@runtime_checkable
+class VersionLimited(Protocol):
+    """A store that holds a limited number of versions per secret, and makes
+    room by deleting old ones (OCI, decision 7), so a plan can say so (#1159).
+
+    ``room`` is ``None`` where nothing is at ``path``. ``name_held`` says
+    whether a secret being deleted still holds ``path``'s name, so a create
+    there would be refused. ``pruned`` lists each version this client has
+    scheduled for deletion, in order. ``protect`` names versions a ref pins,
+    which making room refuses to delete (:class:`PinnedVersionError`): the
+    guarantee holds at the deletion, whatever the plan could see.
+    """
+
+    pruned: list[Pruned]
+
+    def room(self, path: str) -> Room | None: ...
+
+    def name_held(self, path: str) -> bool: ...
+
+    def protect(self, path: str, versions: Iterable[int]) -> None: ...

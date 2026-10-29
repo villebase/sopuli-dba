@@ -27,7 +27,7 @@ import base64
 import binascii
 import json
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -52,6 +52,9 @@ from sopuli.store.protocol import (
     CasConflictError,
     MetadataNotPermittedError,
     PathMetadata,
+    PinnedVersionError,
+    Pruned,
+    Room,
     Stored,
     StoreError,
     StoreHealth,
@@ -138,27 +141,6 @@ DELETION_DELAY = timedelta(days=2)
 
 
 @dataclass(frozen=True)
-class Room:
-    """How full a secret is, as OCI counts it (decision 7)."""
-
-    versions: int
-    #: The lowest-numbered DEPRECATED version still counted, or ``None``.
-    oldest_deprecated: int | None
-
-    @property
-    def full(self) -> bool:
-        return self.versions >= VERSION_LIMIT
-
-
-@dataclass(frozen=True)
-class Pruned:
-    """A DEPRECATED version this run scheduled for deletion to make room."""
-
-    path: str
-    generation: int
-
-
-@dataclass(frozen=True)
 class _Live:
     """A secret as ``GetSecret`` answered, once it was ACTIVE, and when."""
 
@@ -203,6 +185,9 @@ class OciStore:
         #: Each version this run deleted to make room (decision 7), for the
         #: run to report.
         self.pruned: list[Pruned] = []
+        #: The versions a ref in the configuration pins, by OCI name, which
+        #: making room must never delete (#1159). Filled by :meth:`protect`.
+        self._pinned: dict[str, set[int]] = {}
         self._vaults = vaults
         self._secrets = secrets
         self._kms = kms
@@ -470,6 +455,24 @@ class OciStore:
         live = self._live(name, what=what)
         return None if live is None else self._room(live.id, what=what)
 
+    def protect(self, path: str, versions: Iterable[int]) -> None:
+        """Never delete ``versions`` of the secret at ``path`` to make room:
+        a ref in the configuration pins them (#1159)."""
+        self._pinned.setdefault(_names.to_oci(path), set()).update(versions)
+
+    def name_held(self, path: str) -> bool:
+        """Whether a secret scheduled for deletion holds the name at ``path``.
+
+        For the plan (#1159). OCI keeps the name until the deletion, reads
+        report the secret as absent, and a create there is refused
+        (``oci-create-taken``). ``False`` where a live secret has the name,
+        since nothing is created then, and where the only one left is DELETED,
+        which holds it no longer.
+        """
+        held = [one.lifecycle_state for one in self._summaries(_names.to_oci(path))]
+        holding = [state for state in held if state != "DELETED"]
+        return bool(holding) and all(state in GONE for state in holding)
+
     def _native(
         self, path: str, attributes: Mapping[str, Any], *, cas: int | None, doing: str
     ) -> tuple[str, str, _Live]:
@@ -501,6 +504,7 @@ class OciStore:
         """``ListSecretVersions``, counted as OCI counts them (``oci-version-limit``)."""
         counted = 0
         deprecated: list[int] = []
+        at: dict[str, int] = {}
         page = None
         while True:
             try:
@@ -513,11 +517,20 @@ class OciStore:
                 if version.time_of_deletion is not None:
                     continue
                 counted += 1
-                if set(version.stages or ()) - {"LATEST"} == {DEPRECATED}:
+                stages = set(version.stages or ()) - {"LATEST"}
+                if stages == {DEPRECATED}:
                     deprecated.append(version.version_number)
+                for stage in stages & {"CURRENT", "PREVIOUS"}:
+                    at[stage] = version.version_number
             page = response.next_page
             if not page:
-                return Room(versions=counted, oldest_deprecated=min(deprecated, default=None))
+                return Room(
+                    versions=counted,
+                    deprecated=tuple(sorted(deprecated)),
+                    limit=VERSION_LIMIT,
+                    previous=at.get("PREVIOUS"),
+                    current=at.get("CURRENT"),
+                )
 
     def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:
         """Decision 7: OCI refused a version because the secret is full, so
@@ -539,6 +552,15 @@ class OciStore:
                 f"{what} holds {room.versions} versions, OCI's limit, and none of them is "
                 f"DEPRECATED, so none can be removed without breaking a rollback",
                 hint="finish or discard the rotation in progress, then run again",
+            )
+        if room.oldest_deprecated in self._pinned.get(live.name, ()):
+            # Here and not only in the plan: the plan may not have been able
+            # to ask, or the secret may have filled since it did.
+            raise PinnedVersionError(
+                f"{what} is full, and making room would delete version "
+                f"{room.oldest_deprecated}, which a ref in the configuration pins with "
+                f"`@version={room.oldest_deprecated}`",
+                hint="pin a newer version, or remove the pin, then run again",
             )
         when = self._now() + DELETION_DELAY
         try:

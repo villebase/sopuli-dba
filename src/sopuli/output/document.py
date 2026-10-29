@@ -27,7 +27,7 @@ from typing import Any, Literal
 # `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.66"
+SCHEMA_VERSION = "1.67"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -379,11 +379,12 @@ class RunDocument:
     plan_text: str | None = None
     #: Whether the plan has already gone to stderr, before a prompt.
     plan_shown: bool = False
-    #: The config's warnings as text output prints them, never serialised
-    #: (#897): ``diagnostics`` carries them in the JSON. The command handler
-    #: fills both once the file has loaded (#918). The emitter prints them under
-    #: every verb's text, and the handler prints them to stderr for a run that
-    #: fails, so no verb has to remember to.
+    #: Warnings as text output prints them, never serialised (#897):
+    #: ``diagnostics`` carries them in the JSON. The config's, which the
+    #: command handler fills once the file has loaded (#918), and
+    #: ``SOPULI-W059``, which a verb's own notes do not cover (#1159). The
+    #: emitter prints them under every verb's text, and the handler prints them
+    #: to stderr for a run that fails, so no verb has to remember to.
     warnings_text: list[str] = field(default_factory=list)
     #: Whether the warnings have already been printed, by a verb that printed its
     #: text before it stopped.
@@ -503,6 +504,12 @@ class RunDocument:
             dry_run=dry_run,
             options=options or {},
         )
+
+    def warn_in_text(self, warning: Diagnostic) -> None:
+        """Add ``warning`` to ``diagnostics``, and to ``warnings_text``, which
+        every verb's text prints: for a warning no verb's own notes cover."""
+        self.diagnostics.append(warning)
+        self.warnings_text.append(warning.message)
 
     def finish(self, exit_code: int, summary: Summary | None = None) -> RunDocument:
         """Close the run. Returns self so callers can chain into an emitter."""

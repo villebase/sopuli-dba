@@ -70,9 +70,29 @@ __all__ = [
     "StageCollision",
     "colliding_stages",
     "native_layouts",
+    "pinned_versions",
     "shared_secrets",
     "unsure_layouts",
 ]
+
+
+def pinned_versions(bindings: Iterable[Binding]) -> set[tuple[str | None, str, int]]:
+    """Every ``(store, normalised path, version)`` an application's ref pins
+    with ``@version=N``.
+
+    For the plan (#1159). A store that deletes old versions to make room
+    (decision 7) would leave such a ref resolving to nothing, so a run that
+    would delete a pinned version is refused. ``bindings`` should be every
+    binding the file declares, since a ref the run did not select still reads
+    that version. The store is ``None`` where it is not known, and such a pin
+    holds on every store, since it may be any of them. A target's admin ref is
+    the caller's to add: its store chain reaches the run's own layers.
+    """
+    return {
+        (binding.vault, normalise_path(binding.secret.path), binding.secret.version)
+        for binding in bindings
+        if binding.secret is not None and binding.secret.version is not None
+    }
 
 
 @dataclass(frozen=True)

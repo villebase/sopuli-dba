@@ -538,6 +538,11 @@ GUARDRAIL_PASS_AHEAD = "SOPULI-W055"
 #: they are orphans (#999).
 ORPHANS_UNREAD = "SOPULI-W056"
 
+#: A secret is at its store's version limit, so a write makes the store delete
+#: its oldest DEPRECATED version (decision 7, #1159). In a plan, that it may;
+#: after the run, that it did.
+VERSION_PRUNED = "SOPULI-W059"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -715,6 +720,16 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "a listing, and the rest of it was not looked at. One entry per store, "
             "with the count, the first path, and the store's message. Everything reported "
             "is accurate; a record among these would not appear."
+        ),
+        VERSION_PRUNED: (
+            "A secret is at its store's version limit (30 on OCI), so a write makes the store "
+            "schedule the deletion of the secret's oldest DEPRECATED version, two days ahead, "
+            "to make room (decision 7). In the plan and under `--dry-run` it says which versions "
+            "may go; after the run, which went. CURRENT, PENDING and PREVIOUS are never "
+            "deleted. A ref pinned to such a version with `@version=N` would stop resolving, "
+            "so the store refuses that deletion, and `creds generate` and `rotate` refuse the "
+            "run at plan time; under `apply` the plan's entry says the store will refuse the "
+            "write. One entry per secret in the plan, and per deleted version after the run."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

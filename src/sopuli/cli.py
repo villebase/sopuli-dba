@@ -115,7 +115,7 @@ from sopuli.config.password_keys import place_of
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
-from sopuli.config.sharing import native_layouts, unsure_layouts
+from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
@@ -136,6 +136,7 @@ from sopuli.diagnostics import (
     PROFILE_UNREAD,
     ROLLOVER_LEFT_OPEN,
     ROTATION_UNCONFIRMED,
+    VERSION_PRUNED,
     admin_diagnostics,
     constraint_diagnostics,
     encryption_diagnostics,
@@ -353,8 +354,9 @@ from sopuli.store.credentials import (
     stage_version,
 )
 from sopuli.store.credentials import apply_patch as write_credential
-from sopuli.store.native_view import LayoutChangedError
+from sopuli.store.native_view import LayoutChangedError, NativeStagedStore
 from sopuli.store.native_view import wrap as native_staged
+from sopuli.store.protocol import PinnedVersionError, VersionLimited
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -4683,6 +4685,193 @@ def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mappin
     )
 
 
+def _plan_version_limits(
+    keys: Iterable[LockKey],
+    stores: Mapping[str, SecretStore],
+    run: Invocation,
+    *,
+    adds: Callable[[LockKey], int],
+    refuse: bool = False,
+) -> None:
+    """What a store that limits versions will do to each document, said before
+    the lock (decision 7, #1159).
+
+    ``adds`` is how many versions the verb may add to the document: a stage
+    adds one, a promotion in payload fields adds one, and a native promotion
+    adds none, since it moves a stage.
+
+    **The guarantee is the store's.** Every version a ref in the file pins is
+    passed to it (``protect``), and it refuses to delete one to make room, at
+    the deletion, whatever this plan could see. What the plan adds is saying so
+    early. With ``refuse``, it refuses, before anything is written:
+
+    * a create on a name that a secret scheduled for deletion still holds
+      (``oci-create-taken``);
+    * writes to a full secret with too few DEPRECATED versions to delete;
+    * writes that would delete a pinned version.
+
+    ``creds generate`` refuses: it writes every document it plans exactly
+    once. So does ``creds rotate``, whose count is of the due documents: it
+    stages before its guardrail pass and changes the databases before it
+    promotes, so a promotion the store refuses would leave it half done.
+    ``apply`` warns: a narrowed run withholds its promotions (#406), so it may
+    write fewer documents than it plans, and for it the last two are a
+    ``SOPULI-W059`` saying the write will be refused, and the store refuses it.
+    Otherwise a secret the writes would overfill is a ``SOPULI-W059`` naming
+    the versions they may delete: "may", because a write that fails for
+    another reason deletes nothing.
+    """
+    pins = _pinned(run)
+    _protect(stores, pins)
+    for key in keys:
+        limited = _limits(stores.get(key.store))
+        if limited is None:
+            continue
+        added = adds(key)
+        if added == 0 and not refuse:
+            continue
+        where = f"{key.store}:{key.path}"
+        try:
+            room = limited.room(key.path)
+            held = room is None and refuse and limited.name_held(key.path)
+        except StoreError:
+            # A store that cannot be read here fails the write too, and says
+            # why there; the plan says nothing it does not know.
+            continue
+        if held:
+            raise StoreError(
+                f"{where} would be created, and a secret of that name is scheduled for "
+                f"deletion; the store keeps the name until it is deleted",
+                hint="cancel the deletion to use that secret again, or name another one",
+            )
+        if room is None or added == 0:
+            continue
+        going = room.making_room_for(added, demoting=not _is_native(stores, key))
+        path = normalise_path(key.path)
+        pinned = [n for n in going or () if (key.store, path, n) in pins or (None, path, n) in pins]
+        if going is None:
+            problem: StoreError = StoreError(
+                f"{where} holds {room.versions} versions, its store's limit is {room.limit}, "
+                f"and too few of them are DEPRECATED to make room for {added} more without "
+                f"breaking a rollback",
+                hint="finish or discard the rotation in progress, then run again",
+            )
+        elif pinned:
+            problem = PinnedVersionError(
+                f"{where} is full, and making room would delete version "
+                f"{', '.join(map(str, pinned))}, which a ref in the configuration pins with "
+                f"{', '.join(f'`@version={n}`' for n in pinned)}",
+                hint="pin a newer version, or remove the pin, then run again",
+            )
+        elif going:
+            _warn_version(
+                run,
+                f"{where} holds {room.versions} versions, its store's limit is {room.limit}, "
+                f"so this run's writes may delete version {', '.join(map(str, going))}, the "
+                f"oldest DEPRECATED, to make room",
+            )
+            continue
+        else:
+            continue
+        if refuse:
+            raise problem
+        _warn_version(run, f"{problem.message}, so the store will refuse that write")
+
+
+def _warn_version(run: Invocation, message: str) -> None:
+    # Every verb's text prints it, a dry run's included; its own notes do not.
+    run.document.warn_in_text(Diagnostic(level="warning", code=VERSION_PRUNED, message=message))
+
+
+def _limits(store: SecretStore | None) -> VersionLimited | None:
+    """The store under ``store`` that limits versions, or ``None``: the
+    native-staging adapter is seen through, since it limits nothing itself."""
+    inner = store.inner if isinstance(store, NativeStagedStore) else store
+    return inner if isinstance(inner, VersionLimited) else None
+
+
+def _protect(
+    stores: Mapping[str, SecretStore], pins: Collection[tuple[str | None, str, int]]
+) -> None:
+    """Hand each pin to the store it may be in, which then never deletes it."""
+    for name, store in stores.items():
+        limited = _limits(store)
+        if limited is None:
+            continue
+        for where, path, version in pins:
+            if where is None or where == name:
+                limited.protect(path, [version])
+
+
+def _pinned(run: Invocation) -> set[tuple[str | None, str, int]]:
+    """Every version a ref in the file pins, by store and normalised path.
+
+    The applications' refs, and each target's admin ref, whose store is found
+    as the run finds it (:func:`sopuli.admin.store_name`, the run's own layers
+    included). A store that cannot be told is ``None``, which a pin holds on
+    every store.
+    """
+    config = run.config
+    pins = pinned_versions(_declared_estate(config).bindings)
+    for expanded in config.expanded_targets:
+        admin = expanded.target.admin
+        ref = None if admin is None or admin.auth is None else admin.auth.secret
+        if ref is None or ref.version is None:
+            continue
+        name: str | None = None
+        with suppress(ConfigError):
+            name = admin_store_name(expanded, ref, config=config, env=os.environ)
+        pins.add((name, normalise_path(ref.path), ref.version))
+    return pins
+
+
+def _is_native(stores: Mapping[str, SecretStore], key: LockKey) -> bool:
+    store = stores.get(key.store)
+    return isinstance(store, NativeStagedStore) and store.is_native(key.path)
+
+
+def _adding(
+    stores: Mapping[str, SecretStore],
+    *,
+    stage: bool,
+    promote: bool,
+    writes: Collection[LockKey] | None = None,
+) -> Callable[[LockKey], int]:
+    """How many versions a verb that stages and/or promotes may add to a document.
+
+    A stage adds one either way. A promotion adds one in payload fields, where
+    it writes the document again, and none under native staging, where it
+    moves a stage. ``writes`` narrows it to the documents the run will write,
+    where the verb can tell before the lock; ``None`` is every one.
+    """
+
+    def adds(key: LockKey) -> int:
+        if writes is not None and key not in writes:
+            return 0
+        return int(stage) + (0 if _is_native(stores, key) else int(promote))
+
+    return adds
+
+
+def _limited_documents(
+    keys: Iterable[LockKey], stores: Mapping[str, SecretStore]
+) -> dict[LockKey, Any]:
+    """Each document on a store that limits versions, as read before the lock,
+    for the plan to tell which of them the run will write (#1159).
+
+    A document that cannot be read is left out: the plan then says nothing
+    about it, and the run's own read fails and reports it.
+    """
+    found: dict[LockKey, Any] = {}
+    for key in keys:
+        store = stores.get(key.store)
+        if store is None or _limits(store) is None:
+            continue
+        with suppress(StoreError):
+            found[key] = store.read(key.path)
+    return found
+
+
 @config_group.command("validate")
 @global_options
 def config_validate(
@@ -5623,6 +5812,9 @@ def creds_generate(
         run,
     )
     found, unread = _plan_documents(keys, stores)
+    # One write per document: a stage, or a new current, which native staging
+    # stages and then promotes.
+    _plan_version_limits(keys, stores, run, adds=lambda key: 1, refuse=True)
     plan = _with_stages(plan, keyed, found, promote=promote)
     _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.
@@ -6801,6 +6993,17 @@ def creds_apply(
             {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
         ),
         run,
+    )
+    # Only a document with something to promote is written, and a native
+    # promotion adds no version, so only payload-field documents are read.
+    limited = _limited_documents([key for key in keys if not _is_native(stores, key)], stores)
+    promoting = {
+        _lock_key(binding)
+        for binding, source in _sources(bindings, limited, stage=source_stage)
+        if source is not None and apply_states.promotes(source.stage)
+    }
+    _plan_version_limits(
+        keys, stores, run, adds=_adding(stores, stage=False, promote=True, writes=promoting)
     )
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
@@ -10956,6 +11159,29 @@ def creds_rotate(
             {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
         ),
         run,
+    )
+    # `--max-age-days` leaves a document that is not due unwritten, so it is
+    # not counted; telling which are due takes a read before the lock.
+    due: set[LockKey] | None = None
+    if max_age_days is not None:
+        limited = _limited_documents(keys, stores)
+        due = {
+            _lock_key(one.binding)
+            for one in rotation.select(
+                [
+                    (binding, _document_data(binding, limited))
+                    for binding in bindings
+                    if _lock_key(binding) in limited
+                ],
+                max_age_days=max_age_days,
+            )
+            if one.due
+        }
+    # Refused here, not warned: the stage is written before the guardrail pass
+    # and the databases change before the promotion, so a promotion the store
+    # refuses would leave the rotation half done.
+    _plan_version_limits(
+        keys, stores, run, adds=_adding(stores, stage=True, promote=True, writes=due), refuse=True
     )
 
     # Before the preview and before the lock (#857), so a refusal is the same for

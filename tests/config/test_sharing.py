@@ -20,7 +20,13 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Vault
 from sopuli.config.secret_refs import parse_secret_ref
-from sopuli.config.sharing import SharedSecret, native_layouts, shared_secrets, unsure_layouts
+from sopuli.config.sharing import (
+    SharedSecret,
+    native_layouts,
+    pinned_versions,
+    shared_secrets,
+    unsure_layouts,
+)
 from sopuli.payload import StageLayout
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}, "vault-other": {"type": "hashicorp"}}
@@ -339,3 +345,18 @@ def test_a_path_a_storeless_binding_also_names_is_unsure() -> None:
 
     assert native_layouts(bindings, STORES) == {("vault-oci", "acme-web"): StageLayout("password")}
     assert unsure_layouts(bindings, STORES) == {("vault-oci", "acme-db")}
+
+
+def test_a_pin_is_found_by_store_path_and_version() -> None:
+    """For the plan's check before a store deletes a version (#1159). A ref
+    whose store is not known keeps ``None``, which holds on every store."""
+    bindings = [
+        bound("acme_web_user", "acme-web#password@version=4"),
+        bound("acme_web_user", "acme-web#password", target="t2"),
+        bound("acme_batch_user", "acme-batch#password@version=2", vault=None),
+    ]
+
+    assert pinned_versions(bindings) == {
+        ("vault-oci", "acme-web", 4),
+        (None, "acme-batch", 2),
+    }

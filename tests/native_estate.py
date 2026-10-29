@@ -8,13 +8,15 @@ in for it, seeded and read through the adapter the verbs use.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from sopuli.payload import StageLayout
 from sopuli.store import MemoryStore
 from sopuli.store.native_view import NativeStagedStore
-from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING
+from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, Pruned, Room
 
 #: A ``vaults:`` entry of a type that stages natively. The OCIDs are the
 #: documentation's placeholders; nothing connects to them.
@@ -36,6 +38,37 @@ NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 def staging_store() -> MemoryStore:
     """A store with OCI's capabilities: no merge patch, stages as versions."""
     return MemoryStore(capabilities=frozenset({CAS, LIST, VERSIONING, STAGING}))
+
+
+@dataclass
+class LimitedStore(MemoryStore):
+    """A staging store that also limits versions, as OCI does (#1159).
+
+    ``rooms`` is what :meth:`room` answers per path, for a path that holds
+    something; ``held`` the names a deleting secret holds. Neither is derived
+    from the versions: a test says what the store would report.
+    """
+
+    rooms: dict[str, Room] = field(default_factory=dict)
+    held: set[str] = field(default_factory=set)
+    pruned: list[Pruned] = field(default_factory=list)
+    #: What the run handed :meth:`protect`, by path.
+    protected: dict[str, set[int]] = field(default_factory=dict)
+
+    def room(self, path: str) -> Room | None:
+        if self.read(path) is None:
+            return None
+        return self.rooms.get(path, Room(versions=1, deprecated=(), limit=30))
+
+    def name_held(self, path: str) -> bool:
+        return path in self.held
+
+    def protect(self, path: str, versions: Iterable[int]) -> None:
+        self.protected.setdefault(path, set()).update(versions)
+
+
+def limited_store() -> LimitedStore:
+    return LimitedStore(capabilities=frozenset({CAS, LIST, VERSIONING, STAGING}))
 
 
 def adapter(store: MemoryStore, path: str, *, field: str = FIELD) -> NativeStagedStore:

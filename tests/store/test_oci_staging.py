@@ -32,11 +32,22 @@ from test_memory_staging import (  # noqa: F401 -- collected and run with `store
 )
 
 from sopuli.config.model import Vault
+from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._errors import OciUnavailableError
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
-from sopuli.store.oci.store import THROTTLE_WAITS, VERSION_LIMIT, Pruned, Room
-from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError, StoreError
+from sopuli.store.oci.store import THROTTLE_WAITS, VERSION_LIMIT
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    STAGING,
+    VERSIONING,
+    CasConflictError,
+    PinnedVersionError,
+    Pruned,
+    Room,
+    StoreError,
+)
 
 
 @pytest.fixture
@@ -133,8 +144,45 @@ def test_room_counts_versions_not_scheduled_for_deletion(store: OciStore, fake: 
     secret = fake.put("acme-db", {"p": 1}, {"p": 2}, {"p": 3}, {"p": 4})
     secret.versions[0].time_of_deletion = "2026-10-30T12:00:00Z"
 
-    assert store.room("acme-db") == Room(versions=3, oldest_deprecated=2)
+    assert store.room("acme-db") == Room(
+        versions=3, deprecated=(2,), limit=VERSION_LIMIT, previous=3, current=4
+    )
     assert store.room("acme-nothing") is None
+
+
+def test_room_says_which_versions_each_write_would_delete() -> None:
+    """A rotation in payload fields writes twice, so a secret one short of
+    full still loses a version, and a full one loses two (#1159). Each such
+    write demotes the old PREVIOUS to DEPRECATED, so the second can delete
+    what the first demoted; a native stage demotes nothing."""
+    room = Room(versions=29, deprecated=(3, 4, 5), limit=30, previous=29, current=30)
+
+    assert room.making_room_for(0, demoting=True) == ()
+    assert room.making_room_for(1, demoting=True) == ()
+    assert room.making_room_for(2, demoting=True) == (3,)
+
+    full = Room(versions=30, deprecated=(3,), limit=30, previous=29, current=30)
+    assert full.making_room_for(2, demoting=True) == (3, 29)
+    assert full.making_room_for(1, demoting=False) == (3,)
+    assert full.making_room_for(2, demoting=False) is None
+    nothing = Room(versions=30, deprecated=(), limit=30, previous=29, current=30)
+    assert nothing.making_room_for(1, demoting=True) is None
+    # With no PREVIOUS, the first write makes CURRENT PREVIOUS, not DEPRECATED.
+    no_previous = Room(versions=30, deprecated=(5,), limit=30, previous=None, current=30)
+    assert no_previous.making_room_for(2, demoting=True) is None
+
+
+def test_a_name_held_only_by_a_deleting_secret_is_held(store: OciStore, fake: FakeOci) -> None:
+    """``oci-create-taken``: a name a secret scheduled for deletion holds
+    cannot be created, though reads report nothing there (#1159)."""
+    fake.put("acme-gone", {"p": 1}, lifecycle_state="PENDING_DELETION")
+    fake.put("acme-live", {"p": 1})
+    fake.put("acme-deleted", {"p": 1}, lifecycle_state="DELETED")
+
+    assert store.name_held("acme-gone") is True
+    assert store.name_held("acme-live") is False
+    assert store.name_held("acme-nothing") is False
+    assert store.name_held("acme-deleted") is False
 
 
 def test_a_write_to_a_full_secret_deletes_its_oldest_deprecated_version_first(
@@ -148,6 +196,20 @@ def test_a_write_to_a_full_secret_deletes_its_oldest_deprecated_version_first(
     assert all(one.time_of_deletion is None for one in secret.versions[1:])
     assert store.pruned == [Pruned(path="acme-db", generation=1)]
     assert len(secret.versions) == VERSION_LIMIT + 1
+
+
+def test_making_room_never_deletes_a_pinned_version(store: OciStore, fake: FakeOci) -> None:
+    """The guarantee is the store's, at the deletion, whatever the plan saw
+    (#1159): a ref pinning the oldest DEPRECATED version refuses the write."""
+    secret = full(fake)
+    store.protect("acme-db", [1])
+
+    with pytest.raises(PinnedVersionError, match="`@version=1`") as raised:
+        store.write("acme-db", {"password": "new"}, cas=1)
+
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
+    assert all(one.time_of_deletion is None for one in secret.versions)
+    assert store.pruned == []
 
 
 def test_a_stage_to_a_full_secret_makes_room_too(store: OciStore, fake: FakeOci) -> None:
@@ -335,7 +397,9 @@ def test_a_throttled_read_is_tried_again(fake: FakeOci) -> None:
     fake.throttle["list_secret_versions"] = 2
     sleeps: list[float] = []
 
-    assert throttled_store(fake, sleeps).room("acme-db") == Room(versions=2, oldest_deprecated=None)
+    assert throttled_store(fake, sleeps).room("acme-db") == Room(
+        versions=2, deprecated=(), limit=VERSION_LIMIT, previous=1, current=2
+    )
     assert sleeps == list(THROTTLE_WAITS[:2])
 
 

@@ -355,5 +355,7 @@ longer password is refused before anything is sent.
 | `sql/postgres/05_psycopg_libpq_probe.py` | which libpq each psycopg wheel bundles, and whether it accepts `require_auth` |
 | `sql/postgres/06_saslprep_probe.py` | whether a verifier computed on the client and the server's SASLprep agree on a non-ASCII password (`pg-saslprep`) |
 | `sql/postgres/07_password_length_probe.py` | the longest password that sets as a verifier and logs in (`pg-password-length`) |
+| `sql/postgres/08_pgbouncer_probe.py` | what PgBouncer does with the query budget the driver sends, and how it refuses a login |
+| `sql/postgres/09_supabase_roles_probe.sql` | which roles a Supabase database lets the tool account change, and what supautils refuses |
 
 The probes are for throwaway servers only: each header says what it creates.

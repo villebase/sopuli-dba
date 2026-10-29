@@ -1096,9 +1096,9 @@ the register.
     capabilities on the person's path. If they include `read` or `root`, the
     reset is refused at plan time.
 
-  `vault_path` is not built yet. How long its stored copy lives is decided
-  together with the method itself. [#447](#447) later decided it: Vault
-  deletes the copy when the method's `ttl` runs out.
+  `vault_path` was not built then, so how long its stored copy lives was left
+  to the method itself. [#447](#447) later decided it: Vault deletes the copy
+  when the method's `ttl` runs out.
 - **Why:** "The DBA cannot read it" has to be checked, not assumed. A DBA token
   that can read the path lets the DBA learn the password, and then act as the
   person while the database audit trail shows only the person's name. A root

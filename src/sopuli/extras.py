@@ -3,14 +3,15 @@
 ADR-006 makes every dependency that exists only to reach one vendor an install
 extra, and rules 1 and 2 say what that means at run time: a vendor client is
 imported inside its own module on first use, and a missing one is a diagnosable
-condition rather than a traceback. Two registries implement that now -- stores
-and drivers -- and this is what they share.
+condition rather than a traceback. Three registries implement that -- stores,
+drivers and notify channels -- and this is what they share.
 
 **What is shared is the mechanism, not the message.** The wording of a refusal
-belongs to the thing being refused: a store is named by ``vaults:`` and a driver
-by a target's ``type:``, and a message that tried to serve both would name
-neither. So each registry keeps its own dataclass, its own error classes and its
-own sentences, and takes from here the two pieces that are genuinely one piece:
+belongs to the thing being refused: a store is named by ``vaults:``, a driver
+by a target's ``type:`` and a channel by ``notify.method``, and a message that
+tried to serve all three would name none of them. So each registry keeps its
+own dataclass, its own error classes and its own sentences, and takes from here
+the two pieces that are genuinely one piece:
 
 * :func:`installed`, which answers *without importing*;
 * :func:`missing_kind`, which is the three-way reading of a
@@ -20,7 +21,7 @@ The second is the reason this module exists at all. Three different failures
 arrive as the same exception and only one of them is "install the extra" -- and
 the expensive mistake, a bare ``except ImportError`` that sends somebody to `pip`
 forever over a typo of ours, is exactly the kind of subtlety that rots when it is
-written down twice. One copy, two callers, one place to be right.
+written down twice. One copy, three callers, one place to be right.
 """
 
 from __future__ import annotations

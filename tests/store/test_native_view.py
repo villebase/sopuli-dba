@@ -13,8 +13,18 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.errors import ConfigError
 from sopuli.config.secret_refs import parse_secret_ref
-from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, REMOVE, StageLayout, merge
+from sopuli.payload import (
+    CURRENT,
+    ORIGIN,
+    PENDING,
+    PREVIOUS,
+    REMOVE,
+    StageLayout,
+    merge,
+    stage_layout,
+)
 from sopuli.store import MemoryStore
 from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, resolve
 from sopuli.store.native_view import (
@@ -298,3 +308,99 @@ def test_a_write_outside_the_view_is_read_modify_write(view: NativeStagedStore) 
     written = apply_patch(view, "acme-dw", {"password": "x"}, cas=0)
 
     assert written.mechanism == READ_MODIFY_WRITE
+
+
+# ------------------------------------------------------------- the review ---
+
+
+def test_the_secrets_other_keys_are_kept_and_shown(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """Decision 6: a secret made by Terraform keeps its `username`, through a
+    stage and a promotion, and `#username` still reads."""
+    inner.write(PATH, {"username": "acme_web_user", "password": "a"}, cas=0)
+
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, promotion("b", "a"), cas=token(view))
+
+    current = inner.read(PATH)
+    assert current is not None
+    assert current.data["username"] == "acme_web_user"
+    assert current.data["password"] == "b"
+    stored = view.read(PATH)
+    assert stored is not None
+    found = resolve(stored.data, parse_secret_ref("acme-db#username"))
+    assert found is not None
+    assert found.reveal() == "acme_web_user"
+
+
+def test_a_wrong_guess_at_the_next_version_is_corrected(
+    view: NativeStagedStore, inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the store numbers the new pending otherwise, the record follows it,
+    and the secret can be staged again."""
+    seeded(view)
+    monkeypatch.setattr(view, "_next_generation", lambda path, view: 9)
+
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+
+    current = inner.read(PATH)
+    assert current is not None
+    assert current.attributes[PENDING_VERSION] == 2
+    stored = view.read(PATH)
+    assert stored is not None
+    assert stored.data["pending"] == "b"
+
+
+def test_a_new_current_that_fails_halfway_leaves_no_live_pending(
+    view: NativeStagedStore, inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`generate --promote` over a pending, with the promotion refused: CURRENT
+    is untouched and the discarded pending does not read as live."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+
+    def refused(*args: Any, **kwargs: Any) -> int:
+        raise CasConflictError("refused")
+
+    monkeypatch.setattr(inner, "promote", refused)
+    with pytest.raises(CasConflictError):
+        apply_patch(view, PATH, promotion("c", "a"), cas=token(view))
+    monkeypatch.undo()
+
+    stored = view.read(PATH)
+    assert stored is not None
+    assert stored.data == {"password": "a"}
+
+
+def test_the_names_a_version_holds_are_reserved() -> None:
+    for field in ("generated_at", "generated_by"):
+        with pytest.raises(ConfigError, match="reserved field name"):
+            stage_layout(parse_secret_ref(f"acme-db#{field}"))
+
+
+def test_restaging_the_same_password_with_another_origin_is_written(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+
+    supplied = merge(LAYOUT.patch(PENDING, "b"), LAYOUT.patch(ORIGIN, "supplied"))
+    apply_patch(view, PATH, supplied, cas=token(view))
+
+    pending = inner.read_stage(PATH, "pending")
+    assert pending is not None
+    assert pending.data[ORIGIN] == "supplied"
+
+
+def test_a_pending_equal_to_current_is_still_promoted(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """Told by `previous` moving: otherwise it would read as a cleared pending,
+    and a later rollback would go back two generations."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("a"), cas=token(view))
+
+    apply_patch(view, PATH, promotion("a", "a"), cas=token(view))
+
+    assert stages(inner) == {"current": 2, "pending": None, "previous": 1}

@@ -591,3 +591,16 @@ class NativeStaging(Protocol):
         refuses a generation that does not exist.
         """
         ...
+
+
+@runtime_checkable
+class WriteMechanism(Protocol):
+    """A store that says how a write to a path reaches it.
+
+    :func:`sopuli.store.credentials.apply_patch` reports the mechanism of each
+    write. A store that writes a path some other way than a merge patch or a
+    whole document, as the native-staging adapter does, says so here; ``None``
+    leaves the usual answer.
+    """
+
+    def mechanism_for(self, path: str) -> str | None: ...

@@ -39,6 +39,8 @@ from typing import Any, Protocol, cast
 from sopuli.clock import to_rfc3339
 from sopuli.payload import (
     CURRENT,
+    GENERATED_AT,
+    GENERATED_BY,
     ORIGIN,
     PENDING,
     PREVIOUS,
@@ -67,8 +69,10 @@ NATIVE = "native_staging"
 #: the stage from a version without promoting it (``oci-pending-replace``).
 PENDING_VERSION = "pending_version"
 
-#: What a version's content holds besides the password (decision 3).
-GENERATED_AT, GENERATED_BY = "generated_at", "generated_by"
+#: What the tool adds to each version's content besides the password
+#: (decision 3). Not part of the secret's own keys, so neither shown nor
+#: carried from one version to the next.
+OWN_KEYS = frozenset({ORIGIN, GENERATED_AT, GENERATED_BY})
 
 
 class StagingStore(SecretStore, NativeStaging, Protocol):
@@ -88,12 +92,18 @@ class LayoutChangedError(StoreError):
 
 @dataclass(frozen=True)
 class _View:
-    """One native secret as its stages and attributes stand."""
+    """One native secret as its stages and attributes stand.
+
+    ``pending`` is the live pending, the PENDING version ``pending_version``
+    names; ``staged`` is whatever version holds PENDING, live or not, which
+    only the next version number needs.
+    """
 
     layout: StageLayout
     current: Stored
     pending: Stored | None
     previous: Stored | None
+    staged: Stored | None
 
     @property
     def attributes(self) -> Mapping[str, Any]:
@@ -101,6 +111,14 @@ class _View:
 
     def value(self, stored: Stored | None) -> Any:
         return None if stored is None else self.layout.read(stored.data, CURRENT)
+
+    def base(self) -> dict[str, Any]:
+        """CURRENT's content without what the tool adds to each version: every
+        key a secret the tool did not create brings with it (decision 6), such
+        as a ``username`` beside the ``password``, or another account in a
+        document of several."""
+        data = self.current.data if isinstance(self.current.data, Mapping) else {}
+        return {key: value for key, value in data.items() if key not in OWN_KEYS}
 
     def keys(self) -> dict[str, Any]:
         """What the assembled document holds at each key the verbs use."""
@@ -116,11 +134,12 @@ class _View:
 
     def document(self) -> dict[str, Any]:
         return merge(
+            self.base(),
             *(
                 self.layout.patch(key, value)
                 for key, value in self.keys().items()
                 if value is not None
-            )
+            ),
         )
 
 
@@ -147,9 +166,18 @@ class NativeStagedStore:
         self._native = native
         self._by = by
         self._now = now
+        #: The last view each path was read at. ``apply_patch`` reads, then
+        #: writes, and the write is computed from that read; reading the
+        #: versions again would cost several more round trips on OCI.
+        self._seen: dict[str, _View] = {}
 
     def is_native(self, path: str) -> bool:
         return self._native(path) is not None
+
+    def mechanism_for(self, path: str) -> str | None:
+        """:class:`~sopuli.store.protocol.WriteMechanism`: how a write to
+        ``path`` reaches the store, for the run to report."""
+        return NATIVE if self.is_native(path) else None
 
     # -- the protocol, passed through --------------------------------------
 
@@ -185,10 +213,13 @@ class NativeStagedStore:
             stored = self.inner.read(path, version=version)
             if stored is None:
                 return None
-            return replace(stored, data=layout.patch(CURRENT, layout.read(stored.data, CURRENT)))
+            data = stored.data if isinstance(stored.data, Mapping) else {}
+            return replace(stored, data={k: v for k, v in data.items() if k not in OWN_KEYS})
         view = self._view(path, layout)
         if view is None:
+            self._seen.pop(path, None)
             return None
+        self._seen[path] = view
         return replace(view.current, data=view.document())
 
     def _view(self, path: str, layout: StageLayout) -> _View | None:
@@ -204,10 +235,10 @@ class NativeStagedStore:
                 hint="finish or discard the rotation it holds with the build that staged it, "
                 "or move the fields out by hand",
             )
-        pending = self.inner.read_stage(path, PENDING)
-        if pending is not None and pending.generation != current.attributes.get(PENDING_VERSION):
-            pending = None
-        return _View(layout, current, pending, self.inner.read_stage(path, PREVIOUS))
+        staged = self.inner.read_stage(path, PENDING)
+        live = staged is not None and staged.generation == current.attributes.get(PENDING_VERSION)
+        previous = self.inner.read_stage(path, PREVIOUS)
+        return _View(layout, current, staged if live else None, previous, staged)
 
     # -- writing ------------------------------------------------------------
 
@@ -216,45 +247,56 @@ class NativeStagedStore:
         if layout is None:
             return self.inner.write(path, data, cas=cas)
         new = {key: layout.read(data, key) for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, *STAMPS)}
-        view = self._view(path, layout)
+        seen = self._seen.pop(path, None)
+        view = (
+            seen if seen is not None and seen.current.version == cas else self._view(path, layout)
+        )
         if view is None:
             # A first version is always CURRENT on OCI (`oci-create-pending`). A
             # document with no current yet starts as an empty one, which reads
-            # as having none, as the emulated document did.
+            # as having none, as the emulated document did. If what follows
+            # fails, the empty secret still reads as having no current.
             first = new[CURRENT]
-            content = {} if first is None else self._content(layout, first, new[ORIGIN])
+            content = {} if first is None else self._content(layout, first, new[ORIGIN], {})
             cas = self.inner.write(path, content, cas=cas)
             view = self._view(path, layout)
             assert view is not None
             if first is not None:
-                return self._finish(path, view, new, cas=cas)
+                if not _stamps(new):
+                    return cas
+                return self._promote(path, view.current, new, pending=False, cas=cas)
         return self._apply(path, view, new, cas=cas)
 
     def _apply(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
         old = view.keys()
+        moved_previous = new[PREVIOUS] != old[PREVIOUS]
+        if (
+            view.pending is not None
+            and new[PENDING] is None
+            and new[CURRENT] == old[PENDING]
+            and (new[CURRENT] != old[CURRENT] or moved_previous)
+        ):
+            # The promotion. Told by `previous` moving as well as by `current`,
+            # so a pending equal to the current password is still promoted.
+            return self._promote(path, view.pending, new, pending=False, cas=cas)
         if new[CURRENT] != old[CURRENT]:
-            if new[PENDING] is not None:
+            if new[PENDING] != old[PENDING] and new[PENDING] is not None:
                 raise self._unsupported(path, "a new current and a new pending at once")
-            if view.pending is not None and new[CURRENT] == old[PENDING]:
-                return self._promote(path, view.pending, new, pending=False, cas=cas)
             if view.previous is not None and new[CURRENT] == old[PREVIOUS]:
                 # The rollback: PREVIOUS back to CURRENT, by number (Q3).
                 return self._promote(path, view.previous, new, pending=False, cas=cas)
             if new[CURRENT] is None:
                 raise self._unsupported(path, "removing the current password")
-            token = self.inner.write(
-                path, self._content(view.layout, new[CURRENT], new[ORIGIN]), cas=cas
-            )
-            fresh = self._view(path, view.layout)
-            assert fresh is not None
-            return self._finish(path, fresh, new, cas=token)
-        if new[PREVIOUS] != old[PREVIOUS]:
+            return self._replace(path, view, new, cas=cas)
+        if moved_previous:
             raise self._unsupported(path, "changing `previous` without a promotion")
-        if new[PENDING] != old[PENDING]:
-            if new[PENDING] is None:
-                # Cleared without a promotion: OCI keeps the version's stage, so
-                # the record of which pending is live is what clears it.
-                return self._promote(path, view.current, new, pending=False, cas=cas)
+        if new[PENDING] is None and old[PENDING] is not None:
+            # Cleared without a promotion: OCI keeps the version's stage, so
+            # the record of which pending is live is what clears it.
+            return self._promote(path, view.current, new, pending=False, cas=cas)
+        if new[PENDING] is not None and (
+            new[PENDING] != old[PENDING] or new[ORIGIN] != old[ORIGIN]
+        ):
             return self._stage(path, view, new, cas=cas)
         if any(new[stamp] != old[stamp] for stamp in STAMPS):
             return self._promote(path, view.current, new, pending=view.pending is not None, cas=cas)
@@ -266,16 +308,20 @@ class NativeStagedStore:
             )
         return view.current.version
 
-    def _finish(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
-        """After a new CURRENT: the attributes for it, with no live pending.
+    def _replace(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
+        """A new CURRENT, as ``creds generate --promote`` writes one.
 
-        Skipped when there is nothing to record, since each write keeps an OCI
-        secret busy for about 20 seconds.
+        Staged, then promoted, rather than written as CURRENT and then given
+        its attributes: if the second call fails, CURRENT is untouched and no
+        pending reads as live, because the stage already dropped
+        ``pending_version``. Written the other way, a failure would leave the
+        old pending's record beside the new password.
         """
-        if not _stamps(new) and PENDING_VERSION not in view.attributes:
-            assert cas is not None
-            return cas
-        return self._promote(path, view.current, new, pending=False, cas=cas)
+        content = self._content(view.layout, new[CURRENT], new[ORIGIN], view.base())
+        token = self.inner.stage(path, content, attributes=_stamps(old_stamps(view)), cas=cas)
+        staged = self.inner.read_stage(path, PENDING)
+        assert staged is not None
+        return self._promote(path, staged, new, pending=False, cas=token)
 
     def _promote(
         self, path: str, target: Stored, new: dict[str, Any], *, pending: bool, cas: int | None
@@ -289,37 +335,48 @@ class NativeStagedStore:
         if pending:
             attributes[PENDING_VERSION] = target.attributes[PENDING_VERSION]
         assert target.generation is not None
-        return self._staging().promote(path, target.generation, attributes=attributes, cas=cas)
+        return self.inner.promote(path, target.generation, attributes=attributes, cas=cas)
 
     def _stage(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
-        """A new PENDING version, recorded as the live one."""
-        generation = self._next_generation(path, view)
-        attributes = {**_stamps(view.keys()), PENDING_VERSION: generation}
-        content = self._content(view.layout, new[PENDING], new[ORIGIN])
-        token = self._staging().stage(path, content, attributes=attributes, cas=cas)
+        """A new PENDING version, recorded as the live one.
+
+        The record names the number the store is expected to give it. If the
+        store gave another, an attributes-only promotion corrects the record;
+        until then the record names no PENDING version, so no pending reads as
+        live, which is the safe side.
+        """
+        expected = self._next_generation(path, view)
+        attributes = {**_stamps(new), PENDING_VERSION: expected}
+        content = self._content(view.layout, new[PENDING], new[ORIGIN], view.base())
+        token = self.inner.stage(path, content, attributes=attributes, cas=cas)
         staged = self.inner.read_stage(path, PENDING)
-        if staged is None or staged.generation != generation:
-            # The record would name a version that is not the pending.
-            raise StoreError(
-                f"{path!r}: the new pending is not version {generation}, which its record names",
-                hint="run `creds status` on this secret, then generate again",
-            )
-        return token
+        assert staged is not None
+        assert staged.generation is not None
+        if staged.generation == expected:
+            return token
+        attributes[PENDING_VERSION] = staged.generation
+        assert view.current.generation is not None
+        return self.inner.promote(path, view.current.generation, attributes=attributes, cas=token)
 
     def _next_generation(self, path: str, view: _View) -> int:
         """The number the store will give the next version: one past the highest.
 
-        The highest is not always one of the three stages, so the store is
-        asked for each number past them until one is not there.
+        The highest is not always one of the stages, so the store is asked for
+        each number past them until one is not there.
         """
-        known = [one.generation for one in (view.current, view.pending, view.previous) if one]
+        known = [one.generation for one in (view.current, view.staged, view.previous) if one]
         number = max(cast(int, one) for one in known) + 1
         while self.inner.read(path, version=number) is not None:
             number += 1
         return number
 
-    def _content(self, layout: StageLayout, value: Any, origin: Any) -> dict[str, Any]:
+    def _content(
+        self, layout: StageLayout, value: Any, origin: Any, base: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """A version's content: the secret's other keys, the password at the
+        ref's field, and what was true when it was made (decision 3)."""
         content = merge(
+            base,
             layout.patch(CURRENT, value),
             {GENERATED_AT: to_rfc3339(self._now()), GENERATED_BY: self._by},
         )
@@ -327,12 +384,14 @@ class NativeStagedStore:
             content[ORIGIN] = origin
         return content
 
-    def _staging(self) -> NativeStaging:
-        return self.inner
-
     @staticmethod
     def _unsupported(path: str, what: str) -> StoreError:
         return StoreError(f"{path!r} uses native staging, which cannot do {what} in one write")
+
+
+def old_stamps(view: _View) -> dict[str, Any]:
+    """The stamps as they stand, for a stage that must not change them."""
+    return {stamp: view.attributes.get(stamp) for stamp in STAMPS}
 
 
 def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:

@@ -240,7 +240,9 @@ commands: `creds generate`, `apply`, `check`, `rotate`, `status` and
 `finish-rollover`. Every
 other command but `doctor` refuses a PostgreSQL target. What PostgreSQL lacks,
 such as a rollover window or an account lock, is refused at plan time by
-capability, not by product. The driver registry and the store
+capability, not by product. A libpq older than 16 is a property of the client,
+not of the target, and is refused per account during the run: the one accepted
+exception to invariant 4 ([#1076](../decisions/log.md#1076)). The driver registry and the store
 registry share `sopuli/extras.py`, which finds a module without importing it and
 reads a `ModuleNotFoundError` three ways. That logic is subtle, so it has one
 copy. The error messages stay separate: a store is named by `vaults:` and a

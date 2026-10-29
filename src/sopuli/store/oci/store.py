@@ -102,6 +102,11 @@ CHURN_WINDOW_S = 15.0
 #: How many times a write is retried for that reason before it gives up.
 CHURN_RETRIES = 3
 
+#: How many times a content read is tried when OCI answers 404 for a secret
+#: it lists: once, again after waiting out ``CREATING``, and once more after
+#: a poll, in case the read lags behind the state (``oci-read-while-creating``).
+READ_ATTEMPTS = 3
+
 #: The errors a request raises when no answer came back at all.
 NO_ANSWER = (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout)
 
@@ -561,7 +566,14 @@ class OciStore:
             raise _errors.unreachable(exc, what=what, maybe_written=True) from exc
 
     def _settle(
-        self, secret_id: str, *, name: str, written: bool, what: str, first: Any = None
+        self,
+        secret_id: str,
+        *,
+        name: str,
+        written: bool,
+        what: str,
+        first: Any = None,
+        doing: str = "written",
     ) -> Any:
         """Wait until the secret is ACTIVE, and return that ``GetSecret`` answer.
 
@@ -569,7 +581,8 @@ class OciStore:
         poll. Each wait is bounded by the store's ``timeout_s``, or
         :data:`SETTLE_TIMEOUT_S`. ``written`` says whether this run's write was
         already accepted, which every error here must say: the write is made
-        either way.
+        either way. ``doing`` is what the secret was waited for, ``"written"``
+        or ``"read"``, for the error when it never gets there.
 
         A poll OCI throttles (``429``, seen in a real run straight after a
         write) is one more reason to wait, not a failure: the wait goes on,
@@ -590,15 +603,15 @@ class OciStore:
                     if state not in BUSY:
                         raise StoreError(
                             f"{what}: {made}the secret is {state}"
-                            + ("" if written else ", so it cannot be written")
+                            + ("" if written else f", so it cannot be {doing}")
                         )
                 waited = self._monotonic() - start
                 if waited >= self._settle_s:
                     raise _errors.OciUnavailableError(
                         f"{what}: {made}the secret is still {state} after {waited:.0f} s",
                         hint=(
-                            f"OCI keeps a secret busy for about 20 seconds after a write; "
-                            f'`timeout_s` on vault "{self._name}" bounds this wait'
+                            f"OCI keeps a secret busy for about 20 seconds after it is created "
+                            f'or written; `timeout_s` on vault "{self._name}" bounds this wait'
                         ),
                     )
                 self._sleep(POLL_S if response is not None else 2 * POLL_S)
@@ -637,18 +650,21 @@ class OciStore:
         """One ``GetSecretBundleByName``, as a :class:`Stored`, or ``None``."""
         name = _names.to_oci(path)
         what = self._what(name)
-        try:
-            bundle = self._secrets.get_secret_bundle_by_name(
-                secret_name=name, vault_id=self._vault_id, **which
-            ).data
-        except oci.exceptions.ServiceError as exc:
-            if exc.status == 404 and exc.request_id:
-                if self._absent_or_refused(name, which, exc, what=what):
-                    return self._bundle(path, **which)
-                return None
-            _errors.raise_for(exc, what=what)
-        except NO_ANSWER as exc:
-            raise _errors.unreachable(exc, what=what) from exc
+        attempt = 0
+        while True:
+            try:
+                bundle = self._secrets.get_secret_bundle_by_name(
+                    secret_name=name, vault_id=self._vault_id, **which
+                ).data
+                break
+            except oci.exceptions.ServiceError as exc:
+                if exc.status != 404 or not exc.request_id:
+                    _errors.raise_for(exc, what=what)
+                attempt += 1
+                if not self._absent_or_refused(name, which, exc, what=what, attempt=attempt):
+                    return None
+            except NO_ANSWER as exc:
+                raise _errors.unreachable(exc, what=what) from exc
 
         if getattr(bundle, "secret_id", None):
             self._ids[name] = bundle.secret_id
@@ -675,10 +691,13 @@ class OciStore:
         )
 
     def _absent_or_refused(
-        self, name: str, which: Mapping[str, Any], exc: Any, *, what: str
+        self, name: str, which: Mapping[str, Any], exc: Any, *, what: str, attempt: int
     ) -> bool:
         """After a 404 on a content read: ``False`` if it means "nothing there",
         ``True`` if the caller should read again; raise if it means neither.
+
+        ``attempt`` counts the 404s so far. The caller reads again at most
+        :data:`READ_ATTEMPTS` times in all.
 
         OCI answers 404 ``NotAuthorizedOrNotFound`` for a missing secret, a
         missing version or stage, a missing vault, **and** a secret this
@@ -690,6 +709,8 @@ class OciStore:
           404 until it is ACTIVE (``oci-read-while-creating``), as when a
           second run reads the lock a first run has just created. The store
           waits, and the caller reads again;
+        * it was just waited out, and the read still lags behind: the store
+          waits one poll, and the caller reads again;
         * it is listed and CURRENT was asked for: the principal may not read it;
         * it is listed and a stage or a version was asked for: a CURRENT read
           says which. If that is refused too, the principal may not read it;
@@ -699,9 +720,14 @@ class OciStore:
         if not live:
             self._check_vault()
             return False
-        if live[0].lifecycle_state == "CREATING":
-            self._settle(live[0].id, name=name, written=False, what=what)
-            return True
+        if attempt < READ_ATTEMPTS:
+            if live[0].lifecycle_state == "CREATING":
+                self._settle(live[0].id, name=name, written=False, what=what, doing="read")
+                return True
+            if attempt > 1:
+                # The secret was CREATING a moment ago: give the read a poll to catch up.
+                self._sleep(POLL_S)
+                return True
         if which.get("stage") != CURRENT:
             try:
                 self._secrets.get_secret_bundle_by_name(
@@ -820,9 +846,13 @@ def _check_size(metadata: Mapping[str, Any], *, what: str) -> None:
     compact JSON. The lock record is a string already, and is not escaped
     again. The lock record and the promotion stamps share the map, and a
     secret the tool did not create may bring keys of its own.
+
+    Characters are counted as UTF-16 code units, so one outside the Basic
+    Multilingual Plane counts twice. Only ASCII and two-byte text were
+    measured, and counting high is the side that refuses before OCI does.
     """
     size = sum(
-        len(key) + len(value if isinstance(value, str) else _compact(value))
+        _units(key) + _units(value if isinstance(value, str) else _compact(value))
         for key, value in metadata.items()
     )
     if size > METADATA_MAX:
@@ -832,26 +862,32 @@ def _check_size(metadata: Mapping[str, Any], *, what: str) -> None:
         )
 
 
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _object_or_none(text: Any) -> dict[str, Any] | None:
+    """``text`` parsed, if it is a JSON object; otherwise ``None``."""
+    if not isinstance(text, str):
+        return None
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _record(value: Any) -> Any:
     """A lock record from the metadata: the object, or ``None`` if there is no
     readable one. Never a refusal, for the reason ``LockRecord.from_dict``
     gives: a lock nobody can read must still be a lock somebody can break."""
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return _object_or_none(value)
 
 
 def _json_object(text: str, *, what: str) -> dict[str, Any]:
     """Decision 6: a secret is used when its content is a JSON object."""
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        value = None
-    if not isinstance(value, dict):
+    value = _object_or_none(text)
+    if value is None:
         raise StoreError(
             f"{what} does not hold a JSON object, so this tool cannot use it",
             hint="the tool keeps fields in a JSON object; store one, or name another secret",

@@ -573,9 +573,9 @@ class NativeStaging(Protocol):
         A generation that held PENDING loses it (OCI makes it DEPRECATED).
         ``attributes`` replace the secret's attributes whole, as OCI replaces
         its metadata map whole. A path with no CURRENT generation is refused
-        with :class:`StoreError`: whether OCI can hold a secret whose only
-        version is PENDING was not measured, so the first generation is a
-        :meth:`SecretStore.write`.
+        with :class:`StoreError`: OCI refuses to create a secret whose only
+        version is PENDING (``oci-create-pending``), so the first generation
+        is a :meth:`SecretStore.write`.
         """
         ...
 

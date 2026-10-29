@@ -284,7 +284,8 @@ NativeStaging                               # a store whose supports() has stagi
 adds a generation that is current at once, and the old current becomes
 previous; a pending and the attributes are left alone. `stage` adds a pending,
 and a pending already there loses the stage; on a path with no current it is
-refused, because whether OCI can hold a pending-only secret was not measured.
+refused, because OCI refuses to create a secret whose only version is pending
+(`oci-create-pending`).
 `promote` makes a pending or previous generation current and moves the old
 current to previous; a deprecated generation is refused, although OCI would
 promote one. Both replace the secret's attributes whole, as OCI replaces its

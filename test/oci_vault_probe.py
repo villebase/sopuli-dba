@@ -16,7 +16,8 @@ and an OCI config file. Set these variables first:
     OCI_PROBE_KEY_ID           a KMS key in that vault
     OCI_PROBE_PROFILE          the config-file profile (default: DEFAULT)
 
-    python test/oci_vault_probe.py
+    python test/oci_vault_probe.py            # every check
+    python test/oci_vault_probe.py m9 m12     # only the checks named
 
 Every secret it creates is named ``acme-probe-<UTC timestamp>-<n>`` and is
 scheduled for deletion at the end, after the shortest wait OCI allows. OCI
@@ -69,6 +70,30 @@ results:
 - **M7c** Scheduling the deletion of the oldest ``DEPRECATED`` version
   succeeds. The secret still lists 30 versions, and the next content update
   succeeds: a version scheduled for deletion does not count against the limit.
+
+M9 to M13 were added for #1151, before the store's writes (#1133). Results,
+2026-10-29, the same vault, key, region and SDK. Two runs, with the same
+results:
+
+- **M9** A create with ``stage = PENDING`` is refused with ``400
+  InvalidParameter: stage must be one of CURRENT.`` A secret's first version is
+  always CURRENT.
+- **M10** A create with the name of an ACTIVE secret is refused with ``400
+  InvalidParameter: name already exists``, not a 409. A secret scheduled for
+  deletion is ``SCHEDULING_DELETION`` straight afterwards, and a create with
+  its name gets the same answer.
+- **M11** A create answers ``CREATING``, and the secret is still ``CREATING``
+  when read straight afterwards. An update then is refused with ``409
+  IncorrectState``. It was ``ACTIVE`` 18.1 and 20.2 seconds later. Scheduling a
+  version's deletion makes the secret ``UPDATING``, for 20.5 and 19.5 seconds.
+  The version listing then shows a ``time_of_deletion`` on that version only.
+- **M12** Metadata values of 1,000 and 4,000 characters are accepted and read
+  back unchanged. 16,000 is refused with ``400 InvalidParameter: metadata
+  exceeds max allowed size``. A list, a nested object and an integer are
+  accepted and read back as they were sent. A read by name carries the
+  metadata.
+- **M13** A read by name while the secret is ``UPDATING`` after a content
+  update returns the **old** version. Once ``ACTIVE``, it returns the new one.
 """
 
 from __future__ import annotations
@@ -155,6 +180,9 @@ class Probe:
             if time.monotonic() - start > SETTLE_S:
                 raise RuntimeError(f"secret {secret_id} still {state} after {SETTLE_S}s")
             time.sleep(1)
+
+    def state(self, secret_id: str) -> str:
+        return str(self.vaults.get_secret(secret_id).data.lifecycle_state)
 
     def get(self, secret_id: str) -> tuple[Any, str]:
         response = self.vaults.get_secret(secret_id)
@@ -401,6 +429,136 @@ class Probe:
             outcome = f"refused: it still counts ({error(exc)})"
         report("M7c", "content update after it", outcome)
 
+    def m9_create_pending(self) -> None:
+        """Can a secret be created with its only version in PENDING?"""
+        name = self.name()
+        try:
+            secret = self.vaults.create_secret(
+                oci.vault.models.CreateSecretDetails(
+                    compartment_id=COMPARTMENT_ID,
+                    vault_id=VAULT_ID,
+                    key_id=KEY_ID,
+                    secret_name=name,
+                    secret_content=staged("probe-1", "PENDING"),
+                )
+            ).data
+        except oci.exceptions.ServiceError as exc:
+            report("M9", "create with stage PENDING", f"refused ({error(exc)})")
+            return
+        created.append(secret.id)
+        self.settle(secret.id)
+        report("M9", "create with stage PENDING", "accepted")
+        report("M9", "version stages", self.stages(secret.id))
+        report("M9", "read with no stage", self.bundle(name))
+        report("M9", "read with stage=PENDING", self.bundle(name, stage="PENDING"))
+
+    def m10_create_taken(self) -> None:
+        """What a create answers for a name that is already held."""
+        name = self.name()
+        self.create(name)
+        try:
+            self.create(name)
+            outcome = "accepted"
+        except oci.exceptions.ServiceError as exc:
+            outcome = f"refused ({error(exc)})"
+        report("M10", "create over an ACTIVE secret's name", outcome)
+
+        name = self.name()
+        secret = self.create(name)
+        self.vaults.schedule_secret_deletion(
+            secret.id,
+            oci.vault.models.ScheduleSecretDeletionDetails(
+                time_of_deletion=datetime.now(UTC) + timedelta(days=1, hours=1)
+            ),
+        )
+        created.remove(secret.id)
+        report("M10", "state after scheduling deletion", self.state(secret.id))
+        try:
+            self.create(name)
+            outcome = "accepted"
+        except oci.exceptions.ServiceError as exc:
+            outcome = f"refused ({error(exc)})"
+        report("M10", "create over the name of a secret scheduled for deletion", outcome)
+
+    def m11_states(self) -> None:
+        """The state after a create and after scheduling a version's deletion."""
+        secret = self.vaults.create_secret(
+            oci.vault.models.CreateSecretDetails(
+                compartment_id=COMPARTMENT_ID,
+                vault_id=VAULT_ID,
+                key_id=KEY_ID,
+                secret_name=self.name(),
+                secret_content=content("probe-1"),
+            )
+        ).data
+        created.append(secret.id)
+        report("M11", "state in the create's answer", secret.lifecycle_state)
+        report("M11", "state read straight after the create", self.state(secret.id))
+        try:
+            self.vaults.update_secret(
+                secret.id, oci.vault.models.UpdateSecretDetails(metadata={"sopuli_probe": "1"})
+            )
+            outcome = "accepted"
+        except oci.exceptions.ServiceError as exc:
+            outcome = f"refused ({error(exc)})"
+        report("M11", "update straight after the create", outcome)
+        report("M11", "seconds until ACTIVE", round(self.settle(secret.id), 1))
+
+        self.update(secret.id, secret_content=content("probe-2"))
+        self.update(secret.id, secret_content=content("probe-3"))
+        when = datetime.now(UTC) + timedelta(days=1, hours=1)
+        self.vaults.schedule_secret_version_deletion(
+            secret.id,
+            1,
+            oci.vault.models.ScheduleSecretVersionDeletionDetails(time_of_deletion=when),
+        )
+        report("M11", "state straight after scheduling a version's deletion", self.state(secret.id))
+        report("M11", "seconds until ACTIVE", round(self.settle(secret.id), 1))
+        versions = oci.pagination.list_call_get_all_results(
+            self.vaults.list_secret_versions, secret.id
+        ).data
+        report(
+            "M11",
+            "time_of_deletion per version",
+            {v.version_number: v.time_of_deletion is not None for v in versions},
+        )
+
+    def m12_metadata(self) -> None:
+        """Which metadata values OCI accepts, and what comes back."""
+        secret = self.create(self.name())
+        values: list[tuple[str, object]] = [
+            ("string of 1,000 characters", "x" * 1000),
+            ("string of 4,000 characters", "x" * 4000),
+            ("string of 16,000 characters", "x" * 16000),
+            ("list", ["appdb-alpha", "appdb-beta"]),
+            ("nested object", {"host": "app01.example.com", "pid": 4242}),
+            ("integer", 7),
+        ]
+        for label, value in values:
+            try:
+                self.update(secret.id, metadata={"sopuli_probe": value})
+            except oci.exceptions.ServiceError as exc:
+                report("M12", label, f"refused ({error(exc)})")
+                continue
+            data, _ = self.get(secret.id)
+            back = (data.metadata or {}).get("sopuli_probe")
+            same = "the same" if back == value else f"changed to {type(back).__name__}"
+            report("M12", label, f"accepted; read back {same}")
+        bundle = self.secrets.get_secret_bundle_by_name(secret.secret_name, VAULT_ID).data
+        report("M12", "bundle read carries the metadata", bundle.metadata is not None)
+
+    def m13_read_while_updating(self) -> None:
+        """Does a read during UPDATING see the old version or the new one?"""
+        name = self.name()
+        secret = self.create(name)
+        self.vaults.update_secret(
+            secret.id, oci.vault.models.UpdateSecretDetails(secret_content=content("probe-2"))
+        )
+        report("M13", "state", self.state(secret.id))
+        report("M13", "read with no stage while updating", self.bundle(name))
+        self.settle(secret.id)
+        report("M13", "read with no stage once ACTIVE", self.bundle(name))
+
     # -------------------------------------------------------------- cleanup ---
 
     def cleanup(self) -> None:
@@ -444,7 +602,15 @@ def main() -> int:
         probe.m5_promote,
         probe.m6_replace_pending,
         probe.m7_versions,
+        probe.m9_create_pending,
+        probe.m10_create_taken,
+        probe.m11_states,
+        probe.m12_metadata,
+        probe.m13_read_while_updating,
     ]
+    wanted = {one.lower() for one in sys.argv[1:]}
+    if wanted:
+        checks = [check for check in checks if check.__name__.split("_")[0] in wanted]
     try:
         for check in checks:
             try:

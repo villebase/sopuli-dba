@@ -177,11 +177,20 @@ What each outcome means:
   and the last as a wrong password, even with the right one (measured on
   16.15).
 
-`require_auth` needs libpq 16 or later. With an older libpq the tool refuses the
-login and sends nothing. It refuses each account as it reaches it, during the
-run, not at plan time as invariant 4 asks. Whether to move the refusal to plan
-time is an open decision (open: #1076). The `psycopg[binary]` wheels the
-`postgres` extra installs bundle libpq 16 or later.
+`require_auth` needs libpq 16 or later, so **libpq 16 is the supported floor**.
+On Windows AMD64 and Linux x86_64, every `psycopg[binary]` wheel from 3.1.12,
+the extra's floor, bundles libpq 16 or later (`psycopg-libpq` in
+`../README.md`). macOS and Linux arm64 wheels are not measured
+(`psycopg-libpq-macos`). A psycopg that loads a system libpq instead must find
+16 or later; an older one is not supported. That happens with `psycopg[c]`,
+with the pure-Python build, and where `PSYCOPG_IMPL` selects either.
+
+With an older libpq the tool refuses the login and sends nothing. It refuses
+each account as it reaches it, during the run. That is an accepted exception
+to invariant 4, because the measured supported installs cannot reach it
+([#1076](../decisions/log.md#1076)). `sopuli doctor` prints the libpq it
+loaded on its `libpq` line, and says whether it accepts `require_auth` on the
+next.
 
 ### 2.4 What `doctor --check-privileges` reads
 
@@ -346,5 +355,7 @@ longer password is refused before anything is sent.
 | `sql/postgres/05_psycopg_libpq_probe.py` | which libpq each psycopg wheel bundles, and whether it accepts `require_auth` |
 | `sql/postgres/06_saslprep_probe.py` | whether a verifier computed on the client and the server's SASLprep agree on a non-ASCII password (`pg-saslprep`) |
 | `sql/postgres/07_password_length_probe.py` | the longest password that sets as a verifier and logs in (`pg-password-length`) |
+| `sql/postgres/08_pgbouncer_probe.py` | what PgBouncer does with the query budget the driver sends, and how it refuses a login |
+| `sql/postgres/09_supabase_roles_probe.sql` | which roles a Supabase database lets the tool account change, and what supautils refuses |
 
 The probes are for throwaway servers only: each header says what it creates.

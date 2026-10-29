@@ -115,7 +115,7 @@ def render_target_list(paths: Sequence[Path], config: Config, *, match: Pairs = 
     it goes wrong is before a rotation, when nobody wants to read a binding
     table to count PDBs.
 
-    Two columns short of the estate table in the resolved view. §4's own
+    One column short of the estate table in the resolved view. §4's own
     example has no VAULT, and the omission is the difference between the
     commands rather than an oversight: which store masters a target is a fact
     about the binding, and this view is about the target.

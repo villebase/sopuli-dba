@@ -25,12 +25,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: What ``sopuli-dba[oracle]``, ``sopuli-dba[hashicorp]`` and ``sopuli-dba[oci]`` install.
-#: The list is the one ADR-006 names, kept here as a literal rather than derived
-#: from ``BACKENDS`` on purpose: this test is the check *on* that table, and a
-#: check that reads its expectation out of the thing it is checking would pass an
-#: empty table.
-CLIENTS = ("httpx", "oci", "oracledb")
+#: The clients the extras install, as ADR-006 names them: ``httpx``, the OCI SDK,
+#: ``python-oracledb`` and ``pysequoia``. TODO(#1168): ``psycopg`` too, once the
+#: walk can block it. Kept here as a literal rather than
+#: derived from ``BACKENDS`` on purpose: this test is the check *on* that table,
+#: and a check that reads its expectation out of the thing it is checking would
+#: pass an empty table.
+CLIENTS = ("httpx", "oci", "oracledb", "pysequoia")
 
 #: A store the tool cannot reach from this interpreter, declared anyway. §3a's
 #: promise in four lines: the file means the same thing on a machine that has the

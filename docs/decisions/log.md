@@ -1096,9 +1096,9 @@ the register.
     capabilities on the person's path. If they include `read` or `root`, the
     reset is refused at plan time.
 
-  `vault_path` is not built yet. How long its stored copy lives is decided
-  together with the method itself. [#447](#447) later decided it: Vault
-  deletes the copy when the method's `ttl` runs out.
+  `vault_path` was not built then, so how long its stored copy lives was left
+  to the method itself. [#447](#447) later decided it: Vault deletes the copy
+  when the method's `ttl` runs out.
 - **Why:** "The DBA cannot read it" has to be checked, not assumed. A DBA token
   that can read the path lets the DBA learn the password, and then act as the
   person while the database audit trail shows only the person's name. A root
@@ -3614,8 +3614,8 @@ the register.
   password. But it named the wrong cause, so an operator would look for a
   format problem rather than a container one. An `unknown` scope reaches the
   check only on a target that declares no `oracle.scope`, because one that
-  declares it is refused on connect. Comparing there would mean guessing that the session is in the
-  root, which the `LCOUNT` guard does not do either.
+  declares it is refused on connect. Comparing there would mean guessing that
+  the session is in the root, which the `LCOUNT` guard does not do either.
 - **Rejected:**
   - Compare in an `unknown` scope, and refuse only a `T:` part that is all
     blanks. It keeps the root's comparison, but it tells the placeholder by
@@ -3659,3 +3659,37 @@ the register.
   - Count every login error that exits 9. An unset admin password asks for 9
     too, and it would then fail `doctor` as a refused setup when no server
     was asked; the server's code is what tells the two apart.
+
+## #1076
+
+- **Decided:** 2026-10-29, #1076
+- **Question:** On PostgreSQL, the tool logs in with `require_auth`, which
+  libpq added in 16. With an older libpq, each account that is verified by
+  login is refused during the run, as a row error, not at plan time as
+  invariant 4 asks. Should the refusal move to plan time?
+- **Decision:** No. libpq 16 is the supported floor, and the documents say so.
+  On Windows AMD64 and Linux x86_64, every `psycopg[binary]` wheel from the
+  extra's floor, 3.1.12, bundles libpq 16 or later. A psycopg that loads an
+  older system libpq, such as `psycopg[c]` or the pure-Python build, is not
+  supported. The refusal during the run stays, as a backstop, and it is an
+  accepted exception to invariant 4. `sopuli doctor` reports the libpq it
+  loaded.
+- **Why:** The measured supported installs cannot reach the refusal. macOS and
+  Linux arm64 wheels are not measured (`psycopg-libpq-macos`). If one of them
+  bundles an older libpq, this is decided again. Moving the refusal to plan
+  time needs a new driver-protocol method that the plan stage calls once per
+  driver before it reads a target, and a name for a capability of the client
+  rather than of the database. That is a new concept for a case that only an
+  unsupported install reaches. No role is changed before the refusal, because
+  the first login comes before `ALTER ROLE`. `creds rotate` has staged a
+  `pending` by then, as it does for any row that fails after the draw. The
+  next `creds rotate` refuses until `creds apply` or `creds generate
+  --overwrite-pending` deals with it, as UC-1 §5 describes.
+- **Rejected:**
+  - A plan-time client check, `require_client(command)`. It meets invariant 4
+    in full, at the cost above.
+  - Refuse to connect on a libpq older than 16. It also blocks commands that
+    never log in as the account, such as `creds status`.
+  - Record the exception without stating the floor in the documents. An
+    operator who builds psycopg against a system libpq would not know until a
+    run refused.

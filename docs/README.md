@@ -239,7 +239,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
 | — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
-| — | — | Refuse a libpq older than 16 at plan time | open | | #1076 |
 | — | — | Forecast a single-target guardrail refusal in `--dry-run --preflight` | open | | #1116 |
 | — | — | Keep `creds rotate`'s privilege survey from refusing the run over a role checks 6 or 8 refuse | open | | #1117 |
 | — | — | Make tier 1 a merge gate: `ci ok` passes while tier 1 fails | open | | #1120 |
@@ -536,8 +535,10 @@ such as "from 16", means the one release of it that was measured.
   not measured. `sql/postgres/07_password_length_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
-  Not run: there is no macOS host. Linux arm64 is not run either. Nothing is
-  built that depends on the answer.
+  Not run: there is no macOS host. Linux arm64 is not run either. The libpq 16
+  floor ([#1076](decisions/log.md#1076)) depends on the answer: a wheel that
+  bundles an older libpq would reach the refusal that #1076 accepts only
+  because the measured installs cannot.
 
 ### Vault
 

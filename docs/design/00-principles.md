@@ -458,7 +458,7 @@ These commands install the base and each extra:
 ```
 pip install sopuli-dba                 # config, selection, schema — no network client
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
-pip install "sopuli-dba[postgres]"     # + psycopg, for PostgreSQL; the driver connects and reports only
+pip install "sopuli-dba[postgres]"     # + psycopg, to reach PostgreSQL
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel

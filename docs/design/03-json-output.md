@@ -169,17 +169,22 @@ text exactly.
 
 ### Progress
 
-While a verb reads a document from a vault, a spinner turns on **stderr**. It is
-the tool's only progress indicator. One call site turns it on:
-`_read_documents` in `sopuli/cli.py`, which `creds apply`, `creds rotate`,
-`creds finish-rollover` and `creds status` all read through.
+A spinner on **stderr** is the tool's only progress indicator. Two call sites
+turn it on:
+
+- `_read_documents` in `sopuli/cli.py`, while a verb reads a document from a
+  vault. `creds apply`, `creds rotate`, `creds finish-rollover` and
+  `creds status` all read through it.
+- `waiting` in `sopuli/store/waiting.py`, while an OCI store waits for a secret
+  to finish updating after a write, about 20 seconds. The store writes to no
+  stream, so the CLI hands it the spinner for the length of a verb.
 
 **Other reads of the vault do not animate.** `creds check` reads through
 `_stored_credential`, and `creds generate` calls `store.read` directly where it
 needs a document's current version for a compare-and-set. Turning the spinner
-on at one call site, not everywhere, keeps "which operations count as slow" a
-decision that someone makes in a diff. Adding another call site is another such
-decision.
+on at named call sites, not everywhere, keeps "which operations count as slow"
+a decision that someone makes in a diff. Adding another call site is another
+such decision.
 
 `Emitter.spinner()` decides whether the spinner runs, as `Emitter.use_color()`
 does for colour, so no call site works it out for itself:
@@ -266,6 +271,9 @@ Each part of the tool writes these lines:
 - **`vault`**: each request, with its method, path, status and time. Never a
   body, a header or the query string: a body can hold a password, and a header
   holds the token. A path names where a secret is kept, as the config does.
+- **`yopass`**: each request to the Yopass server, with its method, path, and
+  status or the error it failed with, and its time. Never a body: the body
+  holds the encrypted password.
 - **`webhook`**: the host only. The rest of a webhook URL can be its token.
 
 These lines are from `sopuli creds rotate --confirm --debug` against the tier-1
@@ -1278,7 +1286,9 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
   and password, or does not apply the variable at all (`SOPULI-W057`). It is
   quoted for a POSIX shell. It is `null` while a lock
   that has not expired is held at the secret path, for the lock and for its
-  secret, because somebody may be rotating it.
+  secret, because somebody may be rotating it. It is also `null` on every store
+  that is not HashiCorp Vault, an OCI store among them, because this build has
+  no command for one.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
 - **`listed` names the stores whose paths were read**, by the entry each was
   opened through, so an empty `found` says what it covers. A store that could

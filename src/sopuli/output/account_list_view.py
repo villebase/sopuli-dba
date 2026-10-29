@@ -8,7 +8,7 @@ Same arrangement as the other verbs: the shape here, the resolution in
 established for a read-only verb — nothing was done, and the enum's own word for
 that is better than inventing an ``inventory`` kind that describes an absence.
 
-**Three columns can be empty, and an empty one is never silently empty.** §2
+**Two columns can be empty, and an empty one is never silently empty.** §2
 applies `SOPULI-W021`'s rule to the pair of date columns: a documented column that
 vanishes with nothing saying why is a hole in the contract. So each absence is
 rendered ``-`` *and* carries a diagnostic saying which absence it is — the release

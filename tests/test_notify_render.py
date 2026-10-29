@@ -53,10 +53,9 @@ def test_the_expiry_renders_the_way_the_run_document_does() -> None:
 
 
 def test_a_method_with_no_expiry_renders_empty_rather_than_none() -> None:
-    """`manual` has no clock to expire and neither would an identity-scoped path
-    (TODO(#447)). "expires at None" is worse than a sentence whose estate chose
-    to mention an expiry that does not exist -- and the estate can see which it
-    gets, because it wrote the template."""
+    """`manual` has no clock to expire. "expires at None" is worse than a
+    sentence whose estate chose to mention an expiry that does not exist -- and
+    the estate can see which it gets, because it wrote the template."""
     message = render(
         notify("before {expires_at}"),  # type: ignore[arg-type]
         Facts(account="a", target="t"),

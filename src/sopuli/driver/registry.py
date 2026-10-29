@@ -12,11 +12,12 @@ reach Oracle. Binding stores and not drivers would read as arbitrary, and D3
 already makes reaching Oracle a per-site runtime condition, since Instant Client
 has to be installed either way.
 
-**Two registries, one mechanism.** :mod:`sopuli.extras` holds what this shares
-with :mod:`sopuli.store.registry` -- looking a module up without importing it,
-and the three-way reading of a ``ModuleNotFoundError``. What stays here is the
-noun and the wording: a store is named by ``vaults:`` and a driver by a target's
-``type:``, and a message that tried to serve both would name neither. The
+**Three registries, one mechanism.** :mod:`sopuli.extras` holds what this
+shares with :mod:`sopuli.store.registry` and :mod:`sopuli.notify.registry` --
+looking a module up without importing it, and the three-way reading of a
+``ModuleNotFoundError``. What stays here is the noun and the wording: a store is
+named by ``vaults:`` and a driver by a target's ``type:``, and a message that
+tried to serve both would name neither. The
 subtlety is shared because it is subtle; the sentences are not shared because
 they are not the same sentence.
 

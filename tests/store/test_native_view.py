@@ -222,6 +222,60 @@ def test_a_payload_write_whose_read_back_fails_still_counts(
     assert view.generation_of(PATH) is None
 
 
+def test_stamps_in_the_content_are_not_carried_into_native_versions(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """A secret that held several accounts, cut to one: its payload stamps
+    are neither shown nor copied, and no promotion is made to clear them."""
+    inner.write(PATH, {"password": "a", "rotated_at": {"acme_web_user": "x"}}, cas=0)
+
+    shown = view.read(PATH)
+    assert shown is not None
+    assert "rotated_at" not in shown.data
+    apply_patch(view, PATH, stage_patch("b"), cas=shown.version)
+
+    staged = inner.read_stage(PATH, "pending")
+    assert staged is not None
+    assert "rotated_at" not in staged.data
+
+
+def test_native_residue_is_dropped_from_a_document_read_in_payload_fields(
+    inner: MemoryStore,
+) -> None:
+    """A secret that held one account, now shared: the version stamps and the
+    bare `origin` native staging left are nobody's data in payload fields."""
+    inner.write(
+        PATH,
+        {
+            "DB": {"acme_web_user": "a"},
+            "origin": "generated",
+            "generated_at": "t",
+            "generated_by": "u",
+        },
+        cas=0,
+    )
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+
+    stored = view.read(PATH)
+
+    assert stored is not None
+    assert stored.data == {"DB": {"acme_web_user": "a"}}
+
+
+def test_a_read_back_that_raises_anything_still_gives_no_number(
+    inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+    view.write(PATH, {"password": "a"}, cas=0)
+
+    def failing(path: str, *, version: int | None = None) -> None:
+        raise RuntimeError("an unmapped SDK error")
+
+    monkeypatch.setattr(inner, "read", failing)
+
+    assert view.generation_of(PATH) is None
+
+
 def test_a_write_clears_a_version_a_failed_one_left(view: NativeStagedStore) -> None:
     seeded(view)
     view._written[PATH] = 99

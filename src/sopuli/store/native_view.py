@@ -132,9 +132,16 @@ class _View:
         """CURRENT's content without what the tool adds to each version: every
         key a secret the tool did not create brings with it (decision 6), such
         as a ``username`` beside the ``password``, or another account in a
-        document of several."""
+        document of several.
+
+        Stamps in the content are left out too. Under native staging they live
+        in the attributes, so stamps in the content are from when the secret
+        held several accounts, and copying them into each new version would
+        keep them for good."""
         data = self.current.data if isinstance(self.current.data, Mapping) else {}
-        return {key: value for key, value in data.items() if key not in OWN_KEYS}
+        return {
+            key: value for key, value in data.items() if key not in OWN_KEYS and key not in STAMPS
+        }
 
     def keys(self) -> dict[str, Any]:
         """What the assembled document holds at each key the verbs use."""
@@ -229,7 +236,7 @@ class NativeStagedStore:
         token = self._payload.pop(path, None)
         try:
             stored = self.inner.read(path)
-        except StoreError:
+        except Exception:  # noqa: BLE001 -- the write landed; a number is not worth failing it
             return None
         if stored is None or stored.version != token:
             return None
@@ -273,7 +280,11 @@ class NativeStagedStore:
                 self._refuse_a_native_pending(path, stored)
             # A record left from when the secret was native names no pending
             # here, so a reader must not take it for one.
-            return replace(stored, attributes=_without(stored.attributes, PENDING_VERSION))
+            return replace(
+                stored,
+                data=_without_residue(stored.data),
+                attributes=_without(stored.attributes, PENDING_VERSION),
+            )
         if version is not None:
             stored = self.inner.read(path, version=version)
             if stored is None:
@@ -574,6 +585,26 @@ def _lookup(layouts: Mapping[str, StageLayout]) -> Callable[[str], StageLayout |
         return layouts.get(normalise_path(path))
 
     return native
+
+
+def _without_residue(data: Any) -> Any:
+    """A payload-field document without what native staging left in it.
+
+    A secret that held one account, and now holds several, has
+    ``generated_at`` and ``generated_by`` in its content, and a bare
+    ``origin``. In payload fields ``origin`` is a map by account, and the
+    other two are reserved names (``payload.RESERVED``), so none of the three
+    is anyone's data, and carrying them into the next version would keep them
+    for good.
+    """
+    if not isinstance(data, Mapping):
+        return data
+    return {
+        key: value
+        for key, value in data.items()
+        if key not in (GENERATED_AT, GENERATED_BY)
+        and not (key == ORIGIN and not isinstance(value, Mapping))
+    }
 
 
 def _without(attributes: Mapping[str, Any], key: str) -> Mapping[str, Any]:

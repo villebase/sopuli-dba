@@ -4671,12 +4671,13 @@ def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mappin
     completed as the promotion gate completes them, which never refuses.
     """
     everything = _declared_estate(run.config)
+    unsure = unsure_layouts(everything.bindings, everything.vaults)
     return native_staged(
         stores,
-        native_layouts(everything.bindings, everything.vaults),
+        native_layouts(everything.bindings, everything.vaults, unsure=unsure),
         by=_rotated_by(),
         now=utc_now,
-        unsure=unsure_layouts(everything.bindings, everything.vaults),
+        unsure=unsure,
     )
 
 

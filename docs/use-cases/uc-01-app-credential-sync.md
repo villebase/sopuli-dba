@@ -212,7 +212,9 @@ config. `creds generate` refuses before it takes the lock, and the other
 mutating verbs before they write anything. `creds status` refuses the same way.
 `creds check` reports it on the account's row and spends no login on it. A
 PREVIOUS version alone does not block the change, because OCI cannot drop one.
-It stays readable with `@version=N`.
+It stays readable with `@version=N`. A secret that moves from one account to
+several also loses its stamps, which were in its metadata, so `creds status`
+shows no age for it until its next rotation writes them as fields.
 
 **Two accounts in one document share a lock, on purpose.** Q2 keys the lock on
 the path. A second run on the same document loses on the lock and exits 7,

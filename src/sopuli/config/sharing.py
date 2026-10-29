@@ -55,7 +55,7 @@ consequences, both deliberate:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -252,7 +252,10 @@ def colliding_stages(
 
 
 def native_layouts(
-    bindings: Iterable[Binding], vaults: Iterable[Vault]
+    bindings: Collection[Binding],
+    vaults: Collection[Vault],
+    *,
+    unsure: Collection[tuple[str, str]] | None = None,
 ) -> dict[tuple[str, str], StageLayout]:
     """The documents that use native staging, keyed as :func:`shared_secrets` keys them.
 
@@ -273,7 +276,8 @@ def native_layouts(
     refuses it instead.
     """
     staging = {vault.name for vault in vaults if vault.type in STAGING_TYPES}
-    unsure = unsure_layouts(bindings, vaults)
+    if unsure is None:
+        unsure = unsure_layouts(bindings, vaults)
     found: dict[tuple[str, str], StageLayout | None] = {}
     for binding in bindings:
         if binding.secret is None or binding.vault is None or binding.vault not in staging:
@@ -286,7 +290,9 @@ def native_layouts(
     return {key: layout for key, layout in found.items() if layout is not None}
 
 
-def unsure_layouts(bindings: Iterable[Binding], vaults: Iterable[Vault]) -> set[tuple[str, str]]:
+def unsure_layouts(
+    bindings: Collection[Binding], vaults: Collection[Vault]
+) -> set[tuple[str, str]]:
     """Documents on a staging store whose path a binding with no store also names.
 
     That binding's store could not be completed, so it may be the same

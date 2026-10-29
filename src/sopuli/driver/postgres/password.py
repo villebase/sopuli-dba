@@ -37,7 +37,7 @@ from sopuli.driver.protocol import DriverError
 from sopuli.secrets import Secret
 
 if TYPE_CHECKING:
-    from psycopg import sql
+    from psycopg.sql import Composed
 
 #: The algorithm libpq is asked for, named, so the server's
 #: ``password_encryption`` setting cannot turn it into ``md5``.
@@ -138,7 +138,7 @@ def verifier(pgconn: PasswordConnection, role: str, secret: Secret) -> str:
     return computed
 
 
-def alter_role(role: str, computed: str) -> sql.Composed:
+def alter_role(role: str, computed: str) -> Composed:
     """``ALTER ROLE "<role>" PASSWORD '<verifier>'``. ``computed`` must come from
     :func:`verifier`; anything else is refused, so a password cannot reach this
     statement by mistake."""

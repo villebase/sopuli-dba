@@ -71,6 +71,7 @@ __all__ = [
     "colliding_stages",
     "native_layouts",
     "shared_secrets",
+    "unsure_layouts",
 ]
 
 
@@ -266,10 +267,33 @@ def native_layouts(
     selector that left out the second account of a shared document would
     otherwise turn it native for one run.
 
-    Doubt keeps payload fields, the layout every store can hold. A path that a
-    binding without a known store also names may be the same document, so it
-    is not native. Nor is a document with a ref that has nowhere to stage: this
-    is called over bindings a run may have excluded, so it must not refuse.
+    A document with a ref that has nowhere to stage keeps payload fields: this
+    is called over bindings a run may have excluded, so it must not refuse. A
+    document :func:`unsure_layouts` names is not native either; the adapter
+    refuses it instead.
+    """
+    staging = {vault.name for vault in vaults if vault.type in STAGING_TYPES}
+    unsure = unsure_layouts(bindings, vaults)
+    found: dict[tuple[str, str], StageLayout | None] = {}
+    for binding in bindings:
+        if binding.secret is None or binding.vault is None or binding.vault not in staging:
+            continue
+        key = (binding.vault, normalise_path(binding.secret.path))
+        layout = None if key in unsure else _layout_or_none(binding.secret)
+        if key in found and found[key] != layout:
+            layout = None
+        found[key] = layout
+    return {key: layout for key, layout in found.items() if layout is not None}
+
+
+def unsure_layouts(bindings: Iterable[Binding], vaults: Iterable[Vault]) -> set[tuple[str, str]]:
+    """Documents on a staging store whose path a binding with no store also names.
+
+    That binding's store could not be completed, so it may be the same
+    document, and the config cannot say whether it holds one account or
+    several. Payload fields could put a pending in what applications read, and
+    native staging could put one account's pending in a shared secret, so a run
+    that touches such a document is refused rather than guessed for.
     """
     staging = {vault.name for vault in vaults if vault.type in STAGING_TYPES}
     storeless = {
@@ -277,16 +301,14 @@ def native_layouts(
         for binding in bindings
         if binding.secret is not None and binding.vault is None
     }
-    found: dict[tuple[str, str], StageLayout | None] = {}
-    for binding in bindings:
-        if binding.secret is None or binding.vault is None or binding.vault not in staging:
-            continue
-        key = (binding.vault, normalise_path(binding.secret.path))
-        layout = None if key[1] in storeless else _layout_or_none(binding.secret)
-        if key in found and found[key] != layout:
-            layout = None
-        found[key] = layout
-    return {key: layout for key, layout in found.items() if layout is not None}
+    return {
+        (binding.vault, path)
+        for binding in bindings
+        if binding.secret is not None
+        and binding.vault is not None
+        and binding.vault in staging
+        and (path := normalise_path(binding.secret.path)) in storeless
+    }
 
 
 def _layout_or_none(ref: SecretRef) -> StageLayout | None:

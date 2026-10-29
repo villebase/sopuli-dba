@@ -115,7 +115,7 @@ from sopuli.config.password_keys import place_of
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
-from sopuli.config.sharing import native_layouts
+from sopuli.config.sharing import native_layouts, unsure_layouts
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
@@ -4671,8 +4671,13 @@ def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mappin
     completed as the promotion gate completes them, which never refuses.
     """
     everything = _declared_estate(run.config)
-    layouts = native_layouts(everything.bindings, everything.vaults)
-    return native_staged(stores, layouts, by=_rotated_by(), now=utc_now)
+    return native_staged(
+        stores,
+        native_layouts(everything.bindings, everything.vaults),
+        by=_rotated_by(),
+        now=utc_now,
+        unsure=unsure_layouts(everything.bindings, everything.vaults),
+    )
 
 
 @config_group.command("validate")

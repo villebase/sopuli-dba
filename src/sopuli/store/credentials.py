@@ -365,9 +365,9 @@ def apply_patch(
     merged = payload_apply(document, _plaintext(patch))
     # A store may write the whole document some other way, as the
     # native-staging adapter does with store versions, and the run says which.
-    if not isinstance(store, WriteMechanism):
-        return Written(version=store.write(path, merged, cas=cas), mechanism=READ_MODIFY_WRITE)
     version = store.write(path, merged, cas=cas)
+    if not isinstance(store, WriteMechanism):
+        return Written(version=version, mechanism=READ_MODIFY_WRITE)
     return Written(
         version=version,
         mechanism=store.mechanism_for(path) or READ_MODIFY_WRITE,

@@ -32,6 +32,7 @@ from sopuli.store.native_view import (
     NATIVE,
     PENDING_VERSION,
     LayoutChangedError,
+    LayoutUnknownError,
     NativeStagedStore,
 )
 from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError, StoreError
@@ -174,6 +175,51 @@ def test_a_record_left_from_native_staging_names_no_pending_in_payload_fields(
 
     assert stored is not None
     assert PENDING_VERSION not in stored.attributes
+
+
+def test_a_path_whose_layout_is_unknown_is_refused(inner: MemoryStore) -> None:
+    inner.write(PATH, {"password": "a"}, cas=0)
+    view = NativeStagedStore(
+        inner, native=lambda path: None, by="x", now=lambda: NOW, unsure=lambda path: path == PATH
+    )
+
+    with pytest.raises(LayoutUnknownError) as raised:
+        view.read(PATH)
+    with pytest.raises(LayoutUnknownError):
+        view.write(PATH, {"password": "a", "pending": "b"}, cas=1)
+
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
+    stored = inner.read(PATH)
+    assert stored is not None
+    assert stored.data == {"password": "a"}
+
+
+def test_a_payload_write_reports_no_number_another_writer_moved(
+    inner: MemoryStore,
+) -> None:
+    """The number is read back after the write; if the token found is not the
+    write's own, someone else wrote in between and the number is theirs."""
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+    token = view.write(PATH, {"password": "a"}, cas=0)
+    inner.write(PATH, {"password": "z"}, cas=token)
+
+    assert view.generation_of(PATH) is None
+
+
+def test_a_payload_write_whose_read_back_fails_still_counts(
+    inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write landed, so a failed read for its number gives no number,
+    never an error that would report the write as failed."""
+    view = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+    view.write(PATH, {"password": "a"}, cas=0)
+
+    def failing(path: str, *, version: int | None = None) -> None:
+        raise StoreError("throttled")
+
+    monkeypatch.setattr(inner, "read", failing)
+
+    assert view.generation_of(PATH) is None
 
 
 def test_a_write_clears_a_version_a_failed_one_left(view: NativeStagedStore) -> None:

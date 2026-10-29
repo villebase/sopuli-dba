@@ -20,7 +20,7 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Vault
 from sopuli.config.secret_refs import parse_secret_ref
-from sopuli.config.sharing import SharedSecret, native_layouts, shared_secrets
+from sopuli.config.sharing import SharedSecret, native_layouts, shared_secrets, unsure_layouts
 from sopuli.payload import StageLayout
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}, "vault-other": {"type": "hashicorp"}}
@@ -328,15 +328,14 @@ def test_a_ref_with_nowhere_to_stage_is_not_native_and_does_not_refuse() -> None
     assert native_layouts([bound("acme_web_user", "acme-web#pending")], STORES) == {}
 
 
-def test_a_path_a_storeless_binding_also_names_is_not_native() -> None:
+def test_a_path_a_storeless_binding_also_names_is_unsure() -> None:
     """The binding without a store may be in the same document, which would
-    make it shared, so the document keeps payload fields."""
-    layouts = native_layouts(
-        [
-            bound("acme_web_user", "acme-db#DB_CREDENTIALS/acme_web_user"),
-            bound("acme_batch_user", "acme-db#DB_CREDENTIALS/acme_batch_user", vault=None),
-        ],
-        STORES,
-    )
+    make it shared, so neither layout is assumed: the adapter refuses it."""
+    bindings = [
+        bound("acme_web_user", "acme-db#DB_CREDENTIALS/acme_web_user"),
+        bound("acme_batch_user", "acme-db#DB_CREDENTIALS/acme_batch_user", vault=None),
+        bound("acme_web_user", "acme-web#password"),
+    ]
 
-    assert layouts == {}
+    assert native_layouts(bindings, STORES) == {("vault-oci", "acme-web"): StageLayout("password")}
+    assert unsure_layouts(bindings, STORES) == {("vault-oci", "acme-db")}

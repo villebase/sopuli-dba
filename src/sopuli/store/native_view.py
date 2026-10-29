@@ -31,7 +31,7 @@ the attributes, with ``pending_version``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
@@ -96,6 +96,14 @@ class LayoutChangedError(StoreError):
 
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
+
+
+class LayoutUnknownError(LayoutChangedError):
+    """The config cannot say whether a secret holds one account or several.
+
+    A kind of :class:`LayoutChangedError`, because it is refused at the same
+    moments, for the same reason: a stage written in the wrong layout is lost.
+    """
 
 
 @dataclass(frozen=True)
@@ -179,11 +187,13 @@ class NativeStagedStore:
         native: Callable[[str], StageLayout | None],
         by: str,
         now: Callable[[], datetime],
+        unsure: Callable[[str], bool] = lambda path: False,
     ) -> None:
         if STAGING not in inner.supports():
             raise StoreError("native staging needs a store that declares `staging_labels`")
         self.inner = inner
         self._native = native
+        self._unsure = unsure
         self._by = by
         self._now = now
         #: The last view each path was read at. ``apply_patch`` reads, then
@@ -193,6 +203,9 @@ class NativeStagedStore:
         #: The version number each native path's last write left current or
         #: staged, for :meth:`generation_of`.
         self._written: dict[str, int] = {}
+        #: The token each payload-field write returned, which the read in
+        #: :meth:`generation_of` must find for the number to be this write's.
+        self._payload: dict[str, int] = {}
 
     def is_native(self, path: str) -> bool:
         return self._native(path) is not None
@@ -205,12 +218,22 @@ class NativeStagedStore:
     def generation_of(self, path: str) -> int | None:
         """:class:`~sopuli.store.protocol.WriteMechanism`: the store's version
         number of what the last write to ``path`` left, for the run to report.
+
         A path in payload fields is read again for it, since a write returns
-        only the token."""
+        only the token. The write has already landed, so this never raises:
+        a failed read, or a read that finds another token because some other
+        writer came in between, gives ``None``, and the run shows the token.
+        """
         if self.is_native(path):
             return self._written.pop(path, None)
-        stored = self.inner.read(path)
-        return None if stored is None else stored.generation
+        token = self._payload.pop(path, None)
+        try:
+            stored = self.inner.read(path)
+        except StoreError:
+            return None
+        if stored is None or stored.version != token:
+            return None
+        return stored.generation
 
     # -- the protocol, passed through --------------------------------------
 
@@ -232,6 +255,7 @@ class NativeStagedStore:
         self.inner.require_cas(path)
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
+        self._refuse_if_unsure(path)
         if self.is_native(path):
             raise StoreError(f"{path!r} uses native staging, which takes whole documents")
         return self.inner.patch(path, changes, cas=cas)
@@ -239,6 +263,7 @@ class NativeStagedStore:
     # -- reading ------------------------------------------------------------
 
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
+        self._refuse_if_unsure(path)
         layout = self._native(path)
         if layout is None:
             stored = self.inner.read(path, version=version)
@@ -302,14 +327,33 @@ class NativeStagedStore:
                 "staged with, then add the account",
             )
 
+    def _refuse_if_unsure(self, path: str) -> None:
+        """Refuse a path the config cannot say the layout of.
+
+        A binding whose store could not be completed may share the path, so
+        the secret may hold one account or several. Either guess can write a
+        stage where it does not belong, so a run that touches the path stops.
+        """
+        if self._unsure(path):
+            raise LayoutUnknownError(
+                f"cannot tell whether {path!r} holds one account or several: a binding on "
+                f"that path has no store, because the default store does not resolve",
+                hint="name the store in the binding's ref, or set `SOPULI_VAULT` to a store "
+                "`vaults:` declares",
+            )
+
     # -- writing ------------------------------------------------------------
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
         # A write that raised after recording leaves nothing for this one.
         self._written.pop(path, None)
+        self._payload.pop(path, None)
+        self._refuse_if_unsure(path)
         layout = self._native(path)
         if layout is None:
-            return self.inner.write(path, data, cas=cas)
+            token = self.inner.write(path, data, cas=cas)
+            self._payload[path] = token
+            return token
         new = {key: layout.read(data, key) for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, *STAMPS)}
         seen = self._seen.pop(path, None)
         view = (
@@ -485,6 +529,7 @@ def wrap(
     *,
     by: str,
     now: Callable[[], datetime],
+    unsure: Collection[tuple[str, str]] = (),
 ) -> dict[str, SecretStore]:
     """``stores``, with each one that declares ``staging_labels`` seen through
     :class:`NativeStagedStore`.
@@ -492,7 +537,8 @@ def wrap(
     ``layouts`` is :func:`~sopuli.config.sharing.native_layouts`: the documents
     that use native staging, keyed by store name and normalised path. A staging
     store is wrapped even with none of its documents native, so a document read
-    in payload fields is still checked for a native pending.
+    in payload fields is still checked for a native pending. ``unsure`` is
+    :func:`~sopuli.config.sharing.unsure_layouts`, keyed the same way.
     """
     wrapped: dict[str, SecretStore] = {}
     for name, store in stores.items():
@@ -500,9 +546,25 @@ def wrap(
             wrapped[name] = store
             continue
         own = {path: layout for (vault, path), layout in layouts.items() if vault == name}
-        adapter = NativeStagedStore(cast(StagingStore, store), native=_lookup(own), by=by, now=now)
+        doubtful = {path for vault, path in unsure if vault == name}
+        adapter = NativeStagedStore(
+            cast(StagingStore, store),
+            native=_lookup(own),
+            by=by,
+            now=now,
+            unsure=_among(doubtful),
+        )
         wrapped[name] = cast(SecretStore, adapter)
     return wrapped
+
+
+def _among(paths: Collection[str]) -> Callable[[str], bool]:
+    """Whether a path is one of ``paths``, under its normalised spelling."""
+
+    def found(path: str) -> bool:
+        return normalise_path(path) in paths
+
+    return found
 
 
 def _lookup(layouts: Mapping[str, StageLayout]) -> Callable[[str], StageLayout | None]:

@@ -1272,7 +1272,7 @@
             "native",
             "payload"
           ],
-          "description": "Where the secret keeps its stages, on a result whose write went to the store (from run schema 1.66, #1134). `native`: as the store's own versions, so an application reading the current version never sees a pending password; a one-account secret on an OCI store. `payload`: as `pending` and `previous` fields beside the password, in one version. Absent where nothing was written."
+          "description": "Where the secret keeps its stages (from run schema 1.66, #1134), on a `creds generate` result and on a result whose promotion was written. `native`: as the store's own versions, so an application reading the current version never sees a pending password; a one-account secret on an OCI store. `payload`: as `pending` and `previous` fields beside the password, in one version. Absent on every other result, including a `rotate` result whose promotion was held back after its pending was staged."
         },
         "updated_at": {
           "$ref": "#/$defs/timestamp"

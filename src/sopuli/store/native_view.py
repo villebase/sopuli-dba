@@ -34,9 +34,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from sopuli.clock import to_rfc3339
+from sopuli.exit_codes import ExitCode
 from sopuli.payload import (
     CURRENT,
     GENERATED_AT,
@@ -88,6 +89,7 @@ class LayoutChangedError(StoreError):
     """
 
     category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
 
 
 @dataclass(frozen=True)
@@ -256,15 +258,13 @@ class NativeStagedStore:
             # document with no current yet starts as an empty one, which reads
             # as having none, as the emulated document did. If what follows
             # fails, the empty secret still reads as having no current.
+            # Whatever else the document holds, a pending or stamps, is then
+            # written against that first version, as any later write would be.
             first = new[CURRENT]
-            content = {} if first is None else self._content(layout, first, new[ORIGIN], {})
+            content = {} if first is None else self._content(layout, first, None, {})
             cas = self.inner.write(path, content, cas=cas)
             view = self._view(path, layout)
             assert view is not None
-            if first is not None:
-                if not _stamps(new):
-                    return cas
-                return self._promote(path, view.current, new, pending=False, cas=cas)
         return self._apply(path, view, new, cas=cas)
 
     def _apply(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
@@ -287,6 +287,10 @@ class NativeStagedStore:
                 return self._promote(path, view.previous, new, pending=False, cas=cas)
             if new[CURRENT] is None:
                 raise self._unsupported(path, "removing the current password")
+            if old[CURRENT] is not None and new[PREVIOUS] != old[CURRENT]:
+                # The store always moves the old CURRENT to PREVIOUS; a document
+                # that keeps another `previous` asks for what it cannot do.
+                raise self._unsupported(path, "a new current that keeps an older `previous`")
             return self._replace(path, view, new, cas=cas)
         if moved_previous:
             raise self._unsupported(path, "changing `previous` without a promotion")
@@ -311,14 +315,26 @@ class NativeStagedStore:
     def _replace(self, path: str, view: _View, new: dict[str, Any], *, cas: int | None) -> int:
         """A new CURRENT, as ``creds generate --promote`` writes one.
 
-        Staged, then promoted, rather than written as CURRENT and then given
-        its attributes: if the second call fails, CURRENT is untouched and no
+        With the live pending dropped, as the promotion patch drops it: staged,
+        then promoted, rather than written as CURRENT and then given its
+        attributes. If the second call fails, CURRENT is untouched and no
         pending reads as live, because the stage already dropped
-        ``pending_version``. Written the other way, a failure would leave the
-        old pending's record beside the new password.
+        ``pending_version``.
+
+        With a live pending kept: written as CURRENT, which leaves the PENDING
+        version where it is, then the attributes with its record kept. Staging
+        would deprecate the pending.
+
+        Content carries no ``origin``: the promotion patch removes it, and the
+        one the document held described the pending, not this password.
         """
-        content = self._content(view.layout, new[CURRENT], new[ORIGIN], view.base())
-        token = self.inner.stage(path, content, attributes=_stamps(old_stamps(view)), cas=cas)
+        content = self._content(view.layout, new[CURRENT], None, view.base())
+        if view.pending is not None and new[PENDING] is not None:
+            token = self.inner.write(path, content, cas=cas)
+            fresh = self._view(path, view.layout)
+            assert fresh is not None
+            return self._promote(path, fresh.current, new, pending=True, cas=token)
+        token = self.inner.stage(path, content, attributes=_stamps(view.attributes), cas=cas)
         staged = self.inner.read_stage(path, PENDING)
         assert staged is not None
         return self._promote(path, staged, new, pending=False, cas=token)
@@ -364,8 +380,12 @@ class NativeStagedStore:
         The highest is not always one of the stages, so the store is asked for
         each number past them until one is not there.
         """
-        known = [one.generation for one in (view.current, view.staged, view.previous) if one]
-        number = max(cast(int, one) for one in known) + 1
+        known = [
+            one.generation
+            for one in (view.current, view.staged, view.previous)
+            if one is not None and one.generation is not None
+        ]
+        number = max(known, default=0) + 1
         while self.inner.read(path, version=number) is not None:
             number += 1
         return number
@@ -387,11 +407,6 @@ class NativeStagedStore:
     @staticmethod
     def _unsupported(path: str, what: str) -> StoreError:
         return StoreError(f"{path!r} uses native staging, which cannot do {what} in one write")
-
-
-def old_stamps(view: _View) -> dict[str, Any]:
-    """The stamps as they stand, for a stage that must not change them."""
-    return {stamp: view.attributes.get(stamp) for stamp in STAMPS}
 
 
 def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:

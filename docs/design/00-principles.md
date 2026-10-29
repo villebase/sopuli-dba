@@ -302,8 +302,9 @@ behaviours measured against OCI Vault (#1129, the `oci-*` entries in
 path. For a path that uses native staging, the adapter shows the document the
 verbs already read, with `pending`, `previous` and the stamps where the mirror
 rule puts them, built from the store's versions and attributes. It turns each
-write back into `stage`, `promote` or `write`, and the run reports the
-mechanism as `native_staging`. Decision 3 says what goes where
+write back into `stage`, `promote` or `write`, and such a write's mechanism
+is `native_staging`; the run document carries it from #1134. Decision 3 says
+what goes where
 ([#1158](../decisions/log.md#1158)).
 
 **`write` and `patch` take a compare-and-set version and return the new

@@ -15,6 +15,7 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.exit_codes import ExitCode
 from sopuli.payload import (
     CURRENT,
     ORIGIN,
@@ -33,7 +34,7 @@ from sopuli.store.native_view import (
     LayoutChangedError,
     NativeStagedStore,
 )
-from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError
+from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError, StoreError
 
 PATH = "acme-db"
 LAYOUT = StageLayout("password")
@@ -404,3 +405,67 @@ def test_a_pending_equal_to_current_is_still_promoted(
     apply_patch(view, PATH, promotion("a", "a"), cas=token(view))
 
     assert stages(inner) == {"current": 2, "pending": None, "previous": 1}
+
+
+def test_a_new_current_that_keeps_the_pending_keeps_it_live(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """Staging the new current would deprecate the pending; writing it does not."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+
+    new_current = merge(LAYOUT.patch(CURRENT, "c"), LAYOUT.patch(PREVIOUS, "a"))
+    apply_patch(view, PATH, new_current, cas=token(view))
+
+    stored = view.read(PATH)
+    assert stored is not None
+    assert (stored.data["password"], stored.data["pending"]) == ("c", "b")
+    current = inner.read_stage(PATH, "current")
+    assert current is not None
+    assert ORIGIN not in current.data
+
+
+def test_a_new_current_that_keeps_an_older_previous_is_refused(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """The store always moves the old CURRENT to PREVIOUS."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, promotion("b", "a"), cas=token(view))
+
+    with pytest.raises(StoreError, match="keeps an older `previous`"):
+        apply_patch(view, PATH, LAYOUT.patch(CURRENT, "c"), cas=token(view))
+
+    assert stages(inner) == {"current": 2, "pending": None, "previous": 1}
+
+
+def test_a_first_write_with_a_pending_and_stamps_writes_them_all(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    document = merge(
+        LAYOUT.patch(CURRENT, "a"),
+        stage_patch("b"),
+        LAYOUT.patch("targets", ["appdb-alpha"]),
+    )
+
+    apply_patch(view, PATH, document, cas=0)
+
+    stored = view.read(PATH)
+    assert stored is not None
+    assert stored.data == {
+        "password": "a",
+        "pending": "b",
+        "origin": "generated",
+        "targets": ["appdb-alpha"],
+    }
+
+
+def test_a_layout_change_exits_as_a_config_error(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    inner.write(PATH, {"password": "a", "pending": "b"}, cas=0)
+
+    with pytest.raises(LayoutChangedError) as caught:
+        view.read(PATH)
+
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID

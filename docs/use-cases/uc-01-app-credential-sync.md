@@ -2067,6 +2067,11 @@ install over a guarantee it never had. The run says that the path is unguarded,
 and names the remedy. The next run then meets the exit-5 refusal below. That is
 correct, because by then somebody has been told.
 
+An OCI store has no such setting at all, so every run that takes a lock on one
+reports `SOPULI-W019` for each lock path, and goes ahead. Only IAM keeps other
+writers off an OCI secret, and the run says so rather than claim a guarantee it
+cannot check ([#1152](../decisions/log.md#1152)).
+
 **Both pre-flight refusals are exit 5, not exit 7.** Neither is a held lock. One
 is a store with no compare-and-set that nobody marked `locking: advisory-only`.
 The other is a path that does not require compare-and-set. Both are decided

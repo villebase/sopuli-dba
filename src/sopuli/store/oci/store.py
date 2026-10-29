@@ -49,6 +49,7 @@ from sopuli.store.protocol import (
     UNREACHABLE,
     VERSIONING,
     CasConflictError,
+    MetadataNotPermittedError,
     PathMetadata,
     Stored,
     StoreError,
@@ -324,9 +325,22 @@ class OciStore:
         return None
 
     def require_cas(self, path: str) -> None:
-        """Nothing to arrange, for the reason :meth:`metadata` gives. The lock's
-        pre-flight calls this for a path it found no metadata for, which on
-        OCI is every path; it sends nothing."""
+        """Refuse, saying why: OCI cannot make a secret refuse a write without
+        a compare-and-set.
+
+        The lock's pre-flight calls this for a path it found no metadata for,
+        which on OCI is every path, and records the refusal as
+        ``SOPULI-W019``. So every run that takes a lock on an OCI store says
+        that only IAM keeps other writers off it: the tool does not claim a
+        guarantee it cannot check (P2). Nothing is sent.
+        """
+        name = _names.to_oci(path)
+        raise MetadataNotPermittedError(
+            f"OCI has no setting that makes {self._what(name)} refuse a write without a "
+            f"compare-and-set, so only IAM keeps other writers off it",
+            hint="grant the right to manage secrets in the store's compartment to this "
+            "tool's principal alone",
+        )
 
     def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
         self._not_built("writing")

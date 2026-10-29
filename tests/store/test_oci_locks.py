@@ -16,7 +16,7 @@ from sopuli.config.model import Vault
 from sopuli.lock import Holder, LockableStore, LockKey, LockManager, lock_path
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
-from sopuli.store.protocol import CasConflictError
+from sopuli.store.protocol import CasConflictError, MetadataNotPermittedError
 
 RECORD = {"state": "held", "correlation_id": "01JACME", "command": "creds rotate"}
 
@@ -125,12 +125,14 @@ def test_the_record_is_counted_as_it_is_not_escaped_again(fake: FakeOci) -> None
     assert oci_store.write("locks/acme-db", {"note": '"' * 2400}, cas=0) == 1
 
 
-def test_metadata_is_unknown_and_require_cas_sends_nothing(fake: FakeOci) -> None:
-    """OCI has no `cas_required`; IAM keeps other writers out."""
+def test_require_cas_refuses_and_says_only_iam_guards_the_lock(fake: FakeOci) -> None:
+    """OCI has no `cas_required`. The tool does not claim a guarantee it
+    cannot check (P2), so the pre-flight records `SOPULI-W019` every run."""
     oci_store = store(fake)
 
     assert oci_store.metadata("locks/acme-db") is None
-    oci_store.require_cas("locks/acme-db")
+    with pytest.raises(MetadataNotPermittedError, match="only IAM keeps other writers off"):
+        oci_store.require_cas("locks/acme-db")
 
     assert fake.calls == []
 
@@ -154,5 +156,7 @@ def test_the_lock_manager_takes_and_releases_a_lock_on_an_oci_store(fake: FakeOc
     released = oci_store.read(lock_path(key))
     assert released is not None
     assert released.data["state"] == "released"
-    assert manager.unguarded == []
+    # The lock held, and the run says the path is not guarded against others.
+    assert [one.key for one in manager.unguarded] == [key]
+    assert "only IAM keeps other writers off" in manager.unguarded[0].reason
     assert len(fake.secrets["sopuli-locks.acme-db"].versions) == 1

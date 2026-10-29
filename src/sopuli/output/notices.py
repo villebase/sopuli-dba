@@ -50,7 +50,8 @@ def unknown_change_dates(found: Iterable[tuple[str, str, str | None]]) -> list[s
 
 
 def render_warnings(warnings: Sequence[str]) -> list[str]:
-    """The configuration's warnings, in full.
+    """The warnings every verb's text carries, in full: the configuration's,
+    and ``SOPULI-W059``, which no verb's own notes cover (#1159).
 
     Printed under every verb's text, not only under the config verbs'. W051 and
     W052 exist for a shell variable left over from other work, and an operator

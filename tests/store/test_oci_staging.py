@@ -32,6 +32,7 @@ from test_memory_staging import (  # noqa: F401 -- collected and run with `store
 )
 
 from sopuli.config.model import Vault
+from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._errors import OciUnavailableError
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
@@ -42,6 +43,7 @@ from sopuli.store.protocol import (
     STAGING,
     VERSIONING,
     CasConflictError,
+    PinnedVersionError,
     Pruned,
     Room,
     StoreError,
@@ -191,6 +193,20 @@ def test_a_write_to_a_full_secret_deletes_its_oldest_deprecated_version_first(
     assert all(one.time_of_deletion is None for one in secret.versions[1:])
     assert store.pruned == [Pruned(path="acme-db", generation=1)]
     assert len(secret.versions) == VERSION_LIMIT + 1
+
+
+def test_making_room_never_deletes_a_pinned_version(store: OciStore, fake: FakeOci) -> None:
+    """The guarantee is the store's, at the deletion, whatever the plan saw
+    (#1159): a ref pinning the oldest DEPRECATED version refuses the write."""
+    secret = full(fake)
+    store.protect("acme-db", [1])
+
+    with pytest.raises(PinnedVersionError, match="`@version=1`") as raised:
+        store.write("acme-db", {"password": "new"}, cas=1)
+
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
+    assert all(one.time_of_deletion is None for one in secret.versions)
+    assert store.pruned == []
 
 
 def test_a_stage_to_a_full_secret_makes_room_too(store: OciStore, fake: FakeOci) -> None:

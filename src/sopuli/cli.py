@@ -356,7 +356,7 @@ from sopuli.store.credentials import (
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.native_view import LayoutChangedError, NativeStagedStore
 from sopuli.store.native_view import wrap as native_staged
-from sopuli.store.protocol import VersionLimited
+from sopuli.store.protocol import PinnedVersionError, VersionLimited
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -4689,40 +4689,47 @@ def _plan_version_limits(
     run: Invocation,
     *,
     adds: Callable[[LockKey], int],
-    creates: bool = False,
+    refuse: bool = False,
 ) -> None:
     """What a store that limits versions will do to each document, said before
     the lock (decision 7, #1159).
 
     ``adds`` is how many versions the verb may add to the document: a stage
     adds one, a promotion in payload fields adds one, and a native promotion
-    adds none, since it moves a stage. ``creates`` is whether the verb may
-    create a secret that is not there, which only ``creds generate`` does.
+    adds none, since it moves a stage.
 
-    Refused, before anything is written:
+    **The guarantee is the store's.** Every version a ref in the file pins is
+    passed to it (``protect``), and it refuses to delete one to make room, at
+    the deletion, whatever this plan could see. What the plan adds is saying so
+    early. ``refuse`` is for ``creds generate``, which writes every document it
+    plans exactly once and alone creates secrets, so its count is exact and it
+    refuses, before anything is written:
 
-    * a create on a name that a secret scheduled for deletion still holds,
-      which the store refuses (``oci-create-taken``);
+    * a create on a name that a secret scheduled for deletion still holds
+      (``oci-create-taken``);
     * writes to a full secret with too few DEPRECATED versions to delete;
-    * writes that would delete a version a ref in the file pins.
+    * writes that would delete a pinned version.
 
+    ``apply`` and ``rotate`` may write fewer documents than they plan
+    (narrowed, guarded, not due), so for them the last two are a
+    ``SOPULI-W059`` saying the write will be refused, and the store refuses it.
     Otherwise a secret the writes would overfill is a ``SOPULI-W059`` naming
     the versions they may delete: "may", because a write that fails for
-    another reason deletes nothing. One read of the secret's versions per
-    document, on such a store only.
+    another reason deletes nothing.
     """
     pins = _pinned(run)
+    _protect(stores, pins)
     for key in keys:
-        store = stores.get(key.store)
-        if not isinstance(store, VersionLimited):
+        limited = _limits(stores.get(key.store))
+        if limited is None:
             continue
         added = adds(key)
-        if added == 0 and not creates:
+        if added == 0 and not refuse:
             continue
         where = f"{key.store}:{key.path}"
         try:
-            room = store.room(key.path)
-            held = room is None and creates and store.name_held(key.path)
+            room = limited.room(key.path)
+            held = room is None and refuse and limited.name_held(key.path)
         except StoreError:
             # A store that cannot be read here fails the write too, and says
             # why there; the plan says nothing it does not know.
@@ -4733,40 +4740,63 @@ def _plan_version_limits(
                 f"deletion; the store keeps the name until it is deleted",
                 hint="cancel the deletion to use that secret again, or name another one",
             )
-        if room is None:
+        if room is None or added == 0:
             continue
         going = room.making_room_for(added, demoting=not _is_native(stores, key))
+        path = normalise_path(key.path)
+        pinned = [n for n in going or () if (key.store, path, n) in pins or (None, path, n) in pins]
         if going is None:
-            raise StoreError(
+            problem: StoreError = StoreError(
                 f"{where} holds {room.versions} versions, its store's limit is {room.limit}, "
                 f"and too few of them are DEPRECATED to make room for {added} more without "
                 f"breaking a rollback",
                 hint="finish or discard the rotation in progress, then run again",
             )
-        if not going:
-            continue
-        path = normalise_path(key.path)
-        pinned = [n for n in going if (key.store, path, n) in pins or (None, path, n) in pins]
-        if pinned:
-            spelled = ", ".join(f"`@version={n}`" for n in pinned)
-            raise ConfigError(
+        elif pinned:
+            problem = PinnedVersionError(
                 f"{where} is full, and making room would delete version "
                 f"{', '.join(map(str, pinned))}, which a ref in the configuration pins with "
-                f"{spelled}",
+                f"{', '.join(f'`@version={n}`' for n in pinned)}",
                 hint="pin a newer version, or remove the pin, then run again",
             )
-        # Every verb's text prints it, a dry run's included; its own notes do not.
-        run.document.warn_in_text(
-            Diagnostic(
-                level="warning",
-                code=VERSION_PRUNED,
-                message=(
-                    f"{where} holds {room.versions} versions, its store's limit is "
-                    f"{room.limit}, so this run's writes may delete version "
-                    f"{', '.join(map(str, going))}, the oldest DEPRECATED, to make room"
-                ),
+        elif going:
+            _warn_version(
+                run,
+                f"{where} holds {room.versions} versions, its store's limit is {room.limit}, "
+                f"so this run's writes may delete version {', '.join(map(str, going))}, the "
+                f"oldest DEPRECATED, to make room",
             )
-        )
+            continue
+        else:
+            continue
+        if refuse:
+            raise problem
+        _warn_version(run, f"{problem}, so the store will refuse that write")
+
+
+def _warn_version(run: Invocation, message: str) -> None:
+    # Every verb's text prints it, a dry run's included; its own notes do not.
+    run.document.warn_in_text(Diagnostic(level="warning", code=VERSION_PRUNED, message=message))
+
+
+def _limits(store: SecretStore | None) -> VersionLimited | None:
+    """The store under ``store`` that limits versions, or ``None``: the
+    native-staging adapter is seen through, since it limits nothing itself."""
+    inner = store.inner if isinstance(store, NativeStagedStore) else store
+    return inner if isinstance(inner, VersionLimited) else None
+
+
+def _protect(
+    stores: Mapping[str, SecretStore], pins: Collection[tuple[str | None, str, int]]
+) -> None:
+    """Hand each pin to the store it may be in, which then never deletes it."""
+    for name, store in stores.items():
+        limited = _limits(store)
+        if limited is None:
+            continue
+        for where, path, version in pins:
+            if where is None or where == name:
+                limited.protect(path, [version])
 
 
 def _pinned(run: Invocation) -> set[tuple[str | None, str, int]]:
@@ -4831,7 +4861,7 @@ def _limited_documents(
     found: dict[LockKey, Any] = {}
     for key in keys:
         store = stores.get(key.store)
-        if not isinstance(store, VersionLimited):
+        if store is None or _limits(store) is None:
             continue
         with suppress(StoreError):
             found[key] = store.read(key.path)
@@ -5780,7 +5810,7 @@ def creds_generate(
     found, unread = _plan_documents(keys, stores)
     # One write per document: a stage, or a new current, which native staging
     # stages and then promotes.
-    _plan_version_limits(keys, stores, run, adds=lambda key: 1, creates=True)
+    _plan_version_limits(keys, stores, run, adds=lambda key: 1, refuse=True)
     plan = _with_stages(plan, keyed, found, promote=promote)
     _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.

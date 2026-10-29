@@ -31,7 +31,6 @@ the attributes, with ``pending_version``.
 
 from __future__ import annotations
 
-import builtins
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -58,13 +57,10 @@ from sopuli.store.protocol import (
     CasConflictError,
     NativeStaging,
     PathMetadata,
-    Pruned,
-    Room,
     SecretStore,
     Stored,
     StoreError,
     StoreHealth,
-    VersionLimited,
 )
 
 #: The mechanism a write through this adapter reports, beside
@@ -264,18 +260,6 @@ class NativeStagedStore:
 
     def require_cas(self, path: str) -> None:
         self.inner.require_cas(path)
-
-    # :class:`~sopuli.store.protocol.VersionLimited`, where the store is.
-
-    @property
-    def pruned(self) -> builtins.list[Pruned]:  # `list` is a method of this class
-        return self.inner.pruned if isinstance(self.inner, VersionLimited) else []
-
-    def room(self, path: str) -> Room | None:
-        return self.inner.room(path) if isinstance(self.inner, VersionLimited) else None
-
-    def name_held(self, path: str) -> bool:
-        return isinstance(self.inner, VersionLimited) and self.inner.name_held(path)
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
         self._refuse_if_unsure(path)

@@ -21,7 +21,6 @@ from jsonschema import Draft202012Validator
 
 from native_estate import FIELD, NOW, OCI_VAULT, LimitedStore, limited_store, seed, view
 from sopuli.cli import _adding, cli
-from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.diagnostics import VERSION_PRUNED
 from sopuli.exit_codes import ExitCode
@@ -31,7 +30,7 @@ from sopuli.payload import CURRENT, PENDING, PREVIOUS, StageLayout
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.native_view import PENDING_VERSION, LayoutChangedError
 from sopuli.store.native_view import wrap as native_staged
-from sopuli.store.protocol import Pruned, Room, StoreError
+from sopuli.store.protocol import PinnedVersionError, Pruned, Room, StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -340,9 +339,12 @@ def test_a_write_that_would_delete_a_pinned_version_is_refused(
 
     result = run(runner, write_config(pinned), "generate")
 
-    assert isinstance(result.exception, ConfigError)
+    assert isinstance(result.exception, PinnedVersionError)
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
     assert "`@version=4`" in str(result.exception)
     assert store.read_stage(PATH, PENDING) is None
+    # And the store is told, so the deletion itself would refuse too.
+    assert store.protected == {PATH: {4}}
 
 
 def test_a_create_on_a_name_a_deleting_secret_holds_is_refused(

@@ -32,7 +32,7 @@ place to put shared code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import MappingProxyType
@@ -147,6 +147,18 @@ class CasConflictError(StoreError):
     computed from is gone -- retrying would recompute against a document that has
     changed for a reason this run knows nothing about.
     """
+
+
+class PinnedVersionError(StoreError):
+    """Making room would delete a version a ref in the configuration pins
+    with ``@version=N``, which would then stop resolving (#1159).
+
+    A configuration error, as the plan's refusal of the same thing is: the
+    file pins a version the store must delete to go on.
+    """
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
 
 
 class PatchNotPermittedError(StoreError):
@@ -676,7 +688,9 @@ class VersionLimited(Protocol):
     ``room`` is ``None`` where nothing is at ``path``. ``name_held`` says
     whether a secret being deleted still holds ``path``'s name, so a create
     there would be refused. ``pruned`` lists each version this client has
-    scheduled for deletion, in order.
+    scheduled for deletion, in order. ``protect`` names versions a ref pins,
+    which making room refuses to delete (:class:`PinnedVersionError`): the
+    guarantee holds at the deletion, whatever the plan could see.
     """
 
     pruned: list[Pruned]
@@ -684,3 +698,5 @@ class VersionLimited(Protocol):
     def room(self, path: str) -> Room | None: ...
 
     def name_held(self, path: str) -> bool: ...
+
+    def protect(self, path: str, versions: Iterable[int]) -> None: ...

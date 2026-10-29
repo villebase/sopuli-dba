@@ -4963,15 +4963,6 @@ def test_a_converged_apply_on_a_full_secret_is_not_refused(
     """Invariant 9 (#1159): a shared OCI secret with nothing staged is not
     written, so a full one with nothing DEPRECATED is no reason to refuse."""
     monkeypatch.setattr(f"{__name__}.staging_store", limited_store)
-    config = (
-        SHARED_CONFIG.replace(
-            "vaults:\n  vault-prod:\n    type: hashicorp\n"
-            "    addr: https://vault-prod.example.com:8200\n",
-            OCI_VAULT,
-        )
-        .replace("vault: vault-prod", "vault: vault-oci")
-        .replace('"apps/acme/db#DB_CREDENTIALS/{account}"', '"acme-db#DB_CREDENTIALS/{account}"')
-    )
     harness = estate(
         native={},
         documents={"acme-db": {"DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}}},
@@ -4980,8 +4971,51 @@ def test_a_converged_apply_on_a_full_secret_is_not_refused(
     )
     harness["store"].rooms["acme-db"] = Room(versions=30, deprecated=(), limit=30)
 
-    result = run(runner, write_config(config), "--output", "json")
+    result = run(runner, write_config(OCI_SHARED_CONFIG), "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert all(session.changed == [] for session in harness["sessions"])
     assert "SOPULI-W059" not in result.output
+
+
+def test_apply_warns_where_generate_would_refuse(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """apply may write fewer documents than it plans (narrowed, guarded), so a
+    promotion the store cannot make room for is a W059 at plan time, and the
+    store refuses the write itself (#1159)."""
+    monkeypatch.setattr(f"{__name__}.staging_store", limited_store)
+    staged = {
+        "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE},
+        "pending": {"acme_web_user": STAGED, "acme_batch_user": STAGED},
+    }
+    harness = estate(
+        native={},
+        documents={"acme-db": staged},
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    harness["store"].rooms["acme-db"] = Room(versions=30, deprecated=(), limit=30)
+
+    result = run(runner, write_config(OCI_SHARED_CONFIG), "--output", "json")
+
+    (warning,) = [
+        one for one in document(result)["diagnostics"] if one.get("code") == "SOPULI-W059"
+    ]
+    assert "too few of them are DEPRECATED" in warning["message"]
+    assert "the store will refuse that write" in warning["message"]
+
+
+#: `SHARED_CONFIG` on an OCI-typed store: one secret, two accounts, payload fields.
+OCI_SHARED_CONFIG = (
+    SHARED_CONFIG.replace(
+        "vaults:\n  vault-prod:\n    type: hashicorp\n"
+        "    addr: https://vault-prod.example.com:8200\n",
+        OCI_VAULT,
+    )
+    .replace("vault: vault-prod", "vault: vault-oci")
+    .replace('"apps/acme/db#DB_CREDENTIALS/{account}"', '"acme-db#DB_CREDENTIALS/{account}"')
+)

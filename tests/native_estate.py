@@ -8,6 +8,7 @@ in for it, seeded and read through the adapter the verbs use.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -51,6 +52,8 @@ class LimitedStore(MemoryStore):
     rooms: dict[str, Room] = field(default_factory=dict)
     held: set[str] = field(default_factory=set)
     pruned: list[Pruned] = field(default_factory=list)
+    #: What the run handed :meth:`protect`, by path.
+    protected: dict[str, set[int]] = field(default_factory=dict)
 
     def room(self, path: str) -> Room | None:
         if self.read(path) is None:
@@ -59,6 +62,9 @@ class LimitedStore(MemoryStore):
 
     def name_held(self, path: str) -> bool:
         return path in self.held
+
+    def protect(self, path: str, versions: Iterable[int]) -> None:
+        self.protected.setdefault(path, set()).update(versions)
 
 
 def limited_store() -> LimitedStore:

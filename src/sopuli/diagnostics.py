@@ -726,9 +726,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "schedule the deletion of the secret's oldest DEPRECATED version, two days ahead, "
             "to make room (decision 7). In the plan and under `--dry-run` it says which versions "
             "may go; after the run, which went. CURRENT, PENDING and PREVIOUS are never "
-            "deleted. A ref pinned to such a version with `@version=N` stops resolving once it "
-            "is deleted, so the plan refuses a run where the config pins it. One entry per "
-            "secret in the plan, and per deleted version after the run."
+            "deleted. A ref pinned to such a version with `@version=N` would stop resolving, "
+            "so the store refuses that deletion, and `creds generate` refuses the run at plan "
+            "time; under `apply` and `rotate` the plan's entry says the store will refuse the "
+            "write. One entry per secret in the plan, and per deleted version after the run."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

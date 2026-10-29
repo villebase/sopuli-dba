@@ -381,6 +381,58 @@ def test_nothing_says_which_store(
     assert harness["opened"] == []
 
 
+def _oci_admin(secret: str) -> str:
+    """A target whose admin ref is on an OCI store."""
+    return (
+        VAULTS
+        + """  vault-oci:
+    type: oci
+    vault_id: ocid1.vault.oc1..exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id: ocid1.key.oc1..exampleuniqueid
+targets:
+  - name: orders-pdb
+    type: oracle
+    dsn: "db.example.com:1521/orders"
+    vault: vault-oci
+    admin:
+      username: C##SOPULI_SVC
+"""
+        + f'      auth: {{ method: vault, secret: "{secret}" }}\n'
+    )
+
+
+def test_an_admin_ref_on_an_oci_store_must_be_an_oci_name(
+    runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
+) -> None:
+    """#1145: refused before the store is opened, naming the key to fix."""
+    harness = estate()
+    config = write_config(_oci_admin("ops/dba#password"))
+
+    result = _doctor(runner, config, "--output", "json")
+    entry = json.loads(result.output)["targets"][0]
+
+    assert entry["reachable"] is False
+    assert "is not an OCI secret name" in entry["error"]["message"]
+    assert harness["opened"] == []
+
+
+def test_an_admin_ref_may_use_the_whole_oci_name_length(
+    runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
+) -> None:
+    """Only read, never locked, so the 242 limit for a rotated ref does not apply."""
+    name = "a" * 250
+    harness = estate()
+    harness["store"].write(name, {"password": STORED}, cas=0)
+    config = write_config(_oci_admin(f"{name}#password"))
+
+    result = _doctor(runner, config, "--output", "json")
+    entry = json.loads(result.output)["targets"][0]
+
+    assert entry["reachable"] is True
+    assert harness["opened"] == ["vault-oci"]
+
+
 def test_an_empty_path_says_the_store_answered(
     runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
 ) -> None:

@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.vault_layers import REACH_KEYS, TLS_KEYS, setting_name
+from sopuli.config.vaults import OCI_KEYS
 from sopuli.invocation import RESOLVED_SETTINGS
 from sopuli.settings.registry import SETTINGS
 
@@ -64,15 +65,17 @@ def _constructed() -> set[str]:
 
     `vaults.*.addr` and its ten siblings appear as a literal nowhere:
     `config/vault_layers.py` calls `resolve(setting_name(key), ...)` over
-    `REACH_KEYS` and `TLS_KEYS`, so the `*` is filled in at run time and a search
-    for the spelling finds only the registry. Computed here from the same two
-    tuples the consumer walks, so a key added to one is covered without an edit
-    here -- and a *new* family built some other way fails this test, which is the
-    right way to find out that the sweep needs widening.
+    `REACH_KEYS`, `TLS_KEYS` and `OCI_KEYS`, so the `*` is filled in at run time
+    and a search for the spelling finds only the registry. Computed here from the
+    same tuples the consumer walks, so a key added to one is covered without an
+    edit here -- and a *new* family built some other way fails this test, which
+    is the right way to find out that the sweep needs widening.
     """
-    return {setting_name(key) for key in REACH_KEYS} | {
-        setting_name(f"tls.{key}") for key in TLS_KEYS
-    }
+    return (
+        {setting_name(key) for key in REACH_KEYS}
+        | {setting_name(f"tls.{key}") for key in TLS_KEYS}
+        | {setting_name(key) for key in OCI_KEYS}
+    )
 
 
 def _docstrings(tree: ast.AST) -> set[int]:

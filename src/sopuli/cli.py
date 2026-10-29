@@ -107,6 +107,7 @@ from sopuli.config import (
     refuse_unknown_vaults,
 )
 from sopuli.config import delivery as delivery_config
+from sopuli.config.bindings import check_oci_name
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at, postgres_key_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
@@ -8623,6 +8624,15 @@ def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> Re
                     f"store on the target's `vault:`, or set `defaults.vault`, "
                     f"${DEFAULT_STORE_VARIABLE}, or the active profile's `vault:`"
                 ),
+            )
+        # Before the store is opened: a name OCI cannot hold is the file's
+        # fault, and the key path says where to fix it (#1145). A binding's
+        # ref is checked at load; this one's store may come from the run.
+        if any(vault.type == "oci" for vault in config.vaults if vault.name == name):
+            check_oci_name(
+                ref,
+                at=declared_at(target, "admin").key("auth").key("secret"),
+                read_only=True,
             )
         store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
         stored = read_secret(store, ref)

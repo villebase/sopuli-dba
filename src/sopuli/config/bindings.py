@@ -593,7 +593,7 @@ def check_for_store(secret: SecretRef, store_type: str, *, at: KeyPath) -> None:
         stage_layout(secret, at=at)
 
 
-def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
+def check_oci_name(secret: SecretRef, *, at: KeyPath, read_only: bool = False) -> None:
     """A ref on an OCI store names one OCI secret, exactly (#1137).
 
     ESO finds an OCI secret by name, so the name must be the one the operator
@@ -602,6 +602,10 @@ def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
     letters, digits, ``-``, ``_`` and ``.`` in any position, at most 255
     characters, case-sensitive. A ref may give at most :data:`OCI_REF_MAX`,
     which leaves room for its lock record's name.
+
+    ``read_only`` is for a ref the tool only reads, such as
+    ``admin.auth.secret`` (#1145). Nothing locks it, so it may use all of
+    OCI's :data:`OCI_NAME_MAX`.
     """
     name = secret.path
     if OCI_NAME.fullmatch(name) is None:
@@ -613,7 +617,14 @@ def check_oci_name(secret: SecretRef, *, at: KeyPath) -> None:
                 "with no `/`; write the name the secret has in the vault"
             ),
         )
-    if len(name) > OCI_REF_MAX:
+    if read_only and len(name) > OCI_NAME_MAX:
+        raise ConfigError(
+            f"the OCI secret name in {secret} is {len(name)} characters, longer than "
+            f"the {OCI_NAME_MAX} OCI allows",
+            at=at,
+            hint="write the name the secret has in the vault",
+        )
+    if not read_only and len(name) > OCI_REF_MAX:
         raise ConfigError(
             f"the OCI secret name in {secret} is {len(name)} characters, longer than {OCI_REF_MAX}",
             at=at,

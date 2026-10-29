@@ -82,7 +82,7 @@ from sopuli.config.vault_env import (
     vault_cli_contributions,
     vault_env_contributions,
 )
-from sopuli.config.vaults import HASHICORP_KEYS, OCI_AUTH_METHODS
+from sopuli.config.vaults import HASHICORP_KEYS, OCI_AUTH_METHODS, OCI_KEYS
 from sopuli.settings import Contribution, Layer, Resolved, ratchet_note, resolve
 
 #: One store's environment contributions, keyed by setting key -- what
@@ -479,6 +479,19 @@ def _merge(
         settings[key] = answer
         if answer.layer is not Layer.OBJECT:
             patched.append(key)
+    for key in OCI_KEYS:
+        # Declaration only (unpatchable), so there is one contribution and no
+        # merge. Resolved anyway, so that `config show` can say where it came
+        # from, as it does for every other key.
+        declared = getattr(vault, key)
+        if declared is not None:
+            where = str(_at(ROOT.key("vaults").key(vault.name), key))
+            answer = resolve(
+                setting_name(key),
+                [Contribution(layer=Layer.OBJECT, value=declared, detail=where)],
+            )
+            if answer is not None:
+                settings[key] = replace(answer, setting=where)
     # Before the address checks: on an OCI store the address is the fault, and
     # a message about its `@` or its scheme would send the operator to fix the
     # wrong thing first.

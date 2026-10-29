@@ -576,6 +576,11 @@ This is one entry, from a run with `--vault-addr` set:
 You cannot report where `addr` came from without reporting what it is, so each
 entry carries the value with its provenance.
 
+An OCI store has no `addr`. Its `settings` carry `vault_id`, `compartment_id`,
+`key_id` and `region` instead, which only the declaration can set, so their
+`source` is always `object`. The text view prints them whole under the table,
+one to a line, because an OCID is longer than the `ADDRESS` column.
+
 A `settings` entry has the **same shape** as an `invocation.options` entry. The
 schema has one `$defs/resolved_setting` that both use: it is one question about
 one resolver, and a second shape for it would be two things a consumer must

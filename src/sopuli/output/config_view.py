@@ -32,6 +32,7 @@ from sopuli.config.model import Pairs, Safety, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import POSTGRESQL
+from sopuli.config.vaults import OCI_KEYS
 from sopuli.output.document import Option
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
@@ -477,7 +478,7 @@ def _contributions(
 
 
 def _vault_rows(config: Config) -> list[str]:
-    return render_table(
+    rows = render_table(
         [Column("NAME", _NAME), Column("TYPE"), Column("ADDRESS", _DSN), Column("NOTE")],
         [
             [
@@ -489,6 +490,22 @@ def _vault_rows(config: Config) -> list[str]:
             for vault in config.vaults
         ],
     )
+    return rows + [line for vault in config.vaults for line in _oci_lines(vault)]
+
+
+def _oci_lines(vault: Vault) -> list[str]:
+    """An OCI store's OCIDs and region, one to a line, under the table (#1145).
+
+    An OCI store has no address: these four name it. They go under the table
+    rather than in it because an OCID is about 90 characters, and the
+    ``ADDRESS`` column would cut off the end, which is the part that differs.
+    """
+    found = [(key, getattr(vault, key)) for key in OCI_KEYS if getattr(vault, key) is not None]
+    width = max((len(key) for key, _ in found), default=0)
+    return [
+        f"  {vault.name if index == 0 else ' ' * len(vault.name)}  {key:<{width}}  {value}"
+        for index, (key, value) in enumerate(found)
+    ]
 
 
 def _vault_settings(config: Config) -> dict[str, Resolved]:

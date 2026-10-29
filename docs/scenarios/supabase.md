@@ -318,9 +318,23 @@ authenticator     supabase-dev  SKIPPED  the server reserves this account in sup
 nothing changed, 1 not confirmed
 ```
 
-`creds rotate` with the same config refuses the whole run in its privilege
-check, and asks for `ADMIN OPTION` on `authenticator`. supautils does not allow
-that grant (open: #1117). Take the role out of `accounts:`.
+`creds rotate` with the same config skips the role in the same way and rotates
+the others. Its privilege check does not ask for `ADMIN OPTION` on a role that
+check 8 refuses, because supautils does not allow that grant
+([#1117](../decisions/log.md#1117)):
+
+```
+$ sopuli --config declared.yaml creds rotate --confirm
+...
+ACCOUNT           TARGET        STATE    DETAIL
+acme_web_user     supabase-dev  IN_SYNC  changed and verified by login
+acme_worker_user  supabase-dev  IN_SYNC  changed and verified by login
+authenticator     supabase-dev  SKIPPED  the server reserves this account in supautils.reserved_roles, and only a superuser may change it
+
+2 changed, 1 promoted to `current`, 1 not confirmed
+```
+
+Take the role out of `accounts:` all the same: no run will ever change it.
 
 Supabase's other roles, such as `supabase_functions_admin`, are not on the
 local list. On PostgreSQL 16 and later the tool account cannot change them,

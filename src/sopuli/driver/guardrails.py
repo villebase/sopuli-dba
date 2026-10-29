@@ -247,6 +247,24 @@ def is_declared(account: str, declared: Collection[str]) -> bool:
     return account.casefold() in folded
 
 
+def server_reserved(state: UserState) -> bool:
+    """Whether a check no flag waives refuses the account whatever is granted:
+    check 6 (a superuser) and check 8 (a role the server reserves) today.
+
+    No grant to the tool account changes either answer, because the server is
+    what refuses the change. So the pre-flight asks for no grant on such an
+    account (#1117): one it could ask for could never be made, and the
+    guardrails skip the account anyway.
+
+    Read from :func:`review` and :data:`NEVER_WAIVED`, not restated, so a later
+    check of the same kind is included without an edit here. Check 1 is left
+    out: an undeclared account never reaches the survey, so the account is
+    reviewed as declared.
+    """
+    refused = {refusal.check for refusal in review(state, declared=(state.name,)).refusals}
+    return bool(refused & (NEVER_WAIVED - {DECLARED}))
+
+
 def review(state: UserState, *, declared: Collection[str], force: bool = False) -> Review:
     """Every §4 check, against one account.
 

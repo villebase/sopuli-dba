@@ -9472,37 +9472,14 @@ def _preflight_target(
             ),
         )
 
-    try:
-        # The accounts this run surveys, not every one declared: a grant missing
-        # for an account the selectors left out does not block this run.
-        audit = session.privileges(accounts=_declared_on(bindings, target.name))
-        missing_privileges = tuple(audit.missing)
-        privileges_hint = audit.hint
-    except Exception as error:  # noqa: BLE001 -- likewise
-        # Reported and **not** blocking. The audit establishes nothing either
-        # way when it cannot be read, and refusing over it would mean an estate
-        # that will not grant the view can never run a pre-flight -- while
-        # staying silent would be the guard that is not running and does not say
-        # so, which UC-1 §7 rules out for `check`'s LCOUNT guard by name.
-        missing_privileges = ()
-        privileges_hint = None
-        privilege_finding: tuple[Finding, ...] = (
-            Finding(
-                target=target.name,
-                check=preflight.PRIVILEGES,
-                message=f"the privilege audit could not be read: {_finding(error).message}",
-                hint="nothing about this target's grants was established, either way",
-                category="authorization",
-                blocking=False,
-                code=PRIVILEGE_AUDIT_UNREAD,
-            ),
-        )
-    else:
-        privilege_finding = ()
-
     missing_accounts: list[str] = []
     missing_profiles: list[tuple[str, str]] = []
     unreadable: list[Finding] = []
+    # Accounts the guardrails refuse whatever is granted (#1117), case-folded.
+    # The pre-flight asks nothing further about them: not their grants in the
+    # audit below, and not their profile. The guardrails skip each one in the
+    # run itself.
+    reserved: set[str] = set()
     for binding in bindings:
         try:
             state = session.describe_user(binding.account)
@@ -9514,7 +9491,7 @@ def _preflight_target(
             # and take every finding gathered so far with it, which is the
             # opposite of what a run asking "tell me everything first" wants.
             #
-            # Blocking, unlike the privilege audit above, and the asymmetry is
+            # Blocking, unlike the privilege audit below, and the asymmetry is
             # the point: that one establishes nothing either way, while this one
             # is the input guardrail 4 refuses on, and treating an unreadable
             # answer as "holds no admin role" is the silent success
@@ -9535,6 +9512,11 @@ def _preflight_target(
             states[(target.name, binding.account)] = state
         if state is None:
             missing_accounts.append(binding.account)
+            continue
+        if guardrails.server_reserved(state):
+            # Its profile move and reuse limits are for a change that will not
+            # happen, so a profile that is not there must not refuse the run.
+            reserved.add(binding.account.casefold())
             continue
 
         # §5's profile assignment, asked before anything is written (decision #301).
@@ -9568,7 +9550,7 @@ def _preflight_target(
             raise
         except Exception as error:  # noqa: BLE001 -- a finding about this account
             # Reported and **not** blocking, on the rule this function states and
-            # the privilege audit above already follows: a dictionary read that
+            # the privilege audit below also follows: a dictionary read that
             # failed has established nothing either way, and refusing over it
             # would mean an estate that will not grant `DBA_PROFILES` can never
             # run a pre-flight. The run still cannot move an account onto a
@@ -9595,6 +9577,44 @@ def _preflight_target(
             continue
         if found is None:
             missing_profiles.append((binding.account, moving))
+
+    try:
+        # The accounts this run surveys, not every one declared: a grant missing
+        # for an account the selectors left out does not block this run. Nor for
+        # one the guardrails refuse whatever is granted: no grant could change
+        # it, and asking for one refused the whole run over an account the
+        # guardrails skip (#1117). The pre-flight reads only `missing` and the
+        # hint from the audit, so leaving the account out loses nothing here;
+        # `doctor --check-privileges` still audits every declared account.
+        surveyed = tuple(
+            account
+            for account in _declared_on(bindings, target.name)
+            if account.casefold() not in reserved
+        )
+        audit = session.privileges(accounts=surveyed)
+        missing_privileges = tuple(audit.missing)
+        privileges_hint = audit.hint
+    except Exception as error:  # noqa: BLE001 -- likewise
+        # Reported and **not** blocking. The audit establishes nothing either
+        # way when it cannot be read, and refusing over it would mean an estate
+        # that will not grant the view can never run a pre-flight -- while
+        # staying silent would be the guard that is not running and does not say
+        # so, which UC-1 §7 rules out for `check`'s LCOUNT guard by name.
+        missing_privileges = ()
+        privileges_hint = None
+        privilege_finding: tuple[Finding, ...] = (
+            Finding(
+                target=target.name,
+                check=preflight.PRIVILEGES,
+                message=f"the privilege audit could not be read: {_finding(error).message}",
+                hint="nothing about this target's grants was established, either way",
+                category="authorization",
+                blocking=False,
+                code=PRIVILEGE_AUDIT_UNREAD,
+            ),
+        )
+    else:
+        privilege_finding = ()
 
     declared = target.target.oracle
     return (

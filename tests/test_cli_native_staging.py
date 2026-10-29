@@ -349,3 +349,33 @@ def test_each_version_the_store_deleted_is_reported_after_the_run(
     assert f"vault-oci:{PATH}" in message
     assert "version 4" in message
     assert "was scheduled for deletion" in message
+
+
+def text(runner: CliRunner, config: Path, *args: str) -> str:
+    result = runner.invoke(cli, ["creds", *args, "--config", str(config)])
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    return result.output
+
+
+def test_the_text_of_a_dry_run_names_the_version_a_write_may_delete(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """Found by the real run: the verb's own notes do not include it, so it
+    goes where every verb's text prints warnings."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+
+    output = text(runner, write_config(CONFIG), "generate", "--dry-run")
+
+    assert "may delete version 4" in output
+
+
+def test_the_text_of_a_run_names_each_version_the_store_deleted(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.pruned.append(Pruned(path=PATH, generation=4))
+
+    output = text(runner, write_config(CONFIG), "generate")
+
+    assert "version 4, its oldest DEPRECATED one, was scheduled for deletion" in output

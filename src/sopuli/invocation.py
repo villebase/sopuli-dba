@@ -1230,16 +1230,14 @@ def _report_pruned(invocation: Invocation) -> None:
         if not isinstance(store, VersionLimited):
             continue
         for pruned in store.pruned:
-            invocation.document.diagnostics.append(
-                Diagnostic(
-                    level="warning",
-                    code=VERSION_PRUNED,
-                    message=(
-                        f"{name}:{pruned.path} was full, so version {pruned.generation}, its "
-                        f"oldest DEPRECATED one, was scheduled for deletion to make room"
-                    ),
-                )
+            message = (
+                f"{name}:{pruned.path} was full, so version {pruned.generation}, its "
+                f"oldest DEPRECATED one, was scheduled for deletion to make room"
             )
+            invocation.document.diagnostics.append(
+                Diagnostic(level="warning", code=VERSION_PRUNED, message=message)
+            )
+            invocation.document.warnings_text.append(message)
 
 
 def _abort(invocation: Invocation) -> None:

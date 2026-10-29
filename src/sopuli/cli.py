@@ -4731,16 +4731,15 @@ def _plan_version_limits(
                 f"in the configuration pins with `@version={oldest}`",
                 hint="pin a newer version, or remove the pin, then run again",
             )
-        run.document.diagnostics.append(
-            Diagnostic(
-                level="warning",
-                code=VERSION_PRUNED,
-                message=(
-                    f"{where} holds {room.versions} versions, its store's limit, so a write may "
-                    f"delete version {oldest}, its oldest DEPRECATED one, to make room"
-                ),
-            )
+        message = (
+            f"{where} holds {room.versions} versions, its store's limit, so a write may "
+            f"delete version {oldest}, its oldest DEPRECATED one, to make room"
         )
+        run.document.diagnostics.append(
+            Diagnostic(level="warning", code=VERSION_PRUNED, message=message)
+        )
+        # Every verb's text prints these, a dry run's included; its own notes do not.
+        run.document.warnings_text.append(message)
 
 
 @config_group.command("validate")

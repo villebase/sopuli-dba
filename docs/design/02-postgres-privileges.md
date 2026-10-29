@@ -177,11 +177,14 @@ What each outcome means:
   and the last as a wrong password, even with the right one (measured on
   16.15).
 
-`require_auth` needs libpq 16 or later. With an older libpq the tool refuses the
-login and sends nothing. It refuses each account as it reaches it, during the
-run, not at plan time as invariant 4 asks. Whether to move the refusal to plan
-time is an open decision (open: #1076). The `psycopg[binary]` wheels the
-`postgres` extra installs bundle libpq 16 or later.
+`require_auth` needs libpq 16 or later, so **libpq 16 is the supported floor**.
+The `psycopg[binary]` wheels that the `postgres` extra installs bundle libpq 16
+or later. A psycopg that loads a system libpq instead, such as `psycopg[c]`,
+must find 16 or later; an older one is not supported. With an older libpq the
+tool refuses the login and sends nothing. It refuses each account as it reaches
+it, during the run, which is an accepted exception to invariant 4: the
+supported install cannot reach it ([#1076](../decisions/log.md#1076)).
+`sopuli doctor` reports the libpq it loaded on its `require_auth` line.
 
 ### 2.4 What `doctor --check-privileges` reads
 

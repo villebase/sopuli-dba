@@ -240,7 +240,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
 | — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
 | — | — | Exit non-zero when `doctor` reaches a target and refuses it | open | | #1062 |
-| — | — | Refuse a libpq older than 16 at plan time | open | | #1076 |
 | — | — | Forecast a single-target guardrail refusal in `--dry-run --preflight` | open | | #1116 |
 | — | — | Keep `creds rotate`'s privilege survey from refusing the run over a role checks 6 or 8 refuse | open | | #1117 |
 | — | — | Make tier 1 a merge gate: `ci ok` passes while tier 1 fails | open | | #1120 |

@@ -3639,7 +3639,12 @@ the register.
   `doctor` reports rather than refuses. It takes precedence over exit 1 for an
   unreachable target or store, and the target counts in `summary.failed`.
   Another error on a target that answered, such as a view the account cannot
-  read, leaves the exit code alone.
+  read, leaves the exit code alone. A server that refuses the login is the
+  same case (decided on #1062 after the first build): an error that exits 9
+  and carries the server's own code, such as ORA-28009 (SYS as the admin) or
+  3D000 (no such database). An error at login with no server code, such as an
+  unset admin password or a `DPI-` code from the Oracle client, stays exit 1,
+  because no server was asked.
 - **Why:** A script that runs `doctor` as a gate passed a setup that a
   mutating verb refuses at exit 9. A read verb such as `creds check` reports
   the target and exits 1; `doctor` is the check of the setup, and exit 9 says
@@ -3651,3 +3656,6 @@ the register.
   - Keep exit 0. A gate would have to parse the JSON to see the refusal.
   - A `doctor --strict` flag for the gate case. One more flag, and the
     default would stay the one that passes a refused setup.
+  - Count every login error that exits 9. An unset admin password asks for 9
+    too, and it would then fail `doctor` as a refused setup when no server
+    was asked; the server's code is what tells the two apart.

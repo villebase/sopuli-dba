@@ -1405,8 +1405,14 @@ verb such as `creds check` reports it and exits 1. `doctor` is the check of the
 setup, so it says *fix the configuration*. This takes precedence over exit 1 for
 an unreachable target or store. Another error on a target that answered, such
 as a dictionary view the account cannot read, is a finding about grants and
-does not change the exit code. An error while connecting leaves the target
-unreachable and the run at exit 1, whatever the error is.
+does not change the exit code.
+
+**A server that refuses the login is the same case**, with `reachable: false`:
+an error that exits 9 and carries the server's own code, such as ORA-28009 (SYS
+as the admin) or PostgreSQL's 3D000 (no such database). An error at login with
+no server code, such as an admin password that is not set or an Oracle `DPI-`
+code from the client library, came before any server was asked, so the target
+is unreachable and the run exits 1.
 
 **`doctor`'s `summary` counts targets.** `failed` is the targets that were not
 reached or were refused, and `ok` is the rest.

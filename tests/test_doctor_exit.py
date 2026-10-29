@@ -48,17 +48,22 @@ def _entry(*, reachable: bool) -> dict[str, Any]:
         (True, _ConfigWithAnotherExitError("refused"), False),
         (True, _UnreadableError("ORA-00942"), False),
         (True, None, False),
+        (False, _RefusedError("ORA-28009", code="ORA-28009"), True),
+        (False, _RefusedError("3D000", code="3D000"), True),
         (False, _RefusedError("an admin password that is not set"), False),
-        (False, _UnreadableError("ORA-12541"), False),
+        (False, _RefusedError("DPI-1047", code="DPI-1047"), False),
+        (False, _RefusedError("SOPULI-20004", code="SOPULI-20004"), False),
+        (False, _UnreadableError("ORA-12541", code="ORA-12541"), False),
     ],
 )
-def test_only_an_error_that_exits_9_on_a_reached_target_is_a_refusal(
+def test_only_an_error_that_exits_9_is_a_refusal(
     reachable: bool, error: Exception | None, refused: bool
 ) -> None:
-    """The exception's own `exit_code` decides, not the serialised category. A
-    target that was not reached is exit 1's case whatever its error asks for:
-    the exception cannot tell a server's refusal at login from a failure before
-    the server was asked."""
+    """The exception's own `exit_code` decides, not the serialised category. At
+    login it also needs the server's own code: ORA-28009 (SYS as the admin) and
+    3D000 (no such database) are the server refusing, while an unset password,
+    a `DPI-` code from the Oracle client, or the tool's own code came before
+    any server was asked."""
     assert _refused_for_setup(_entry(reachable=reachable), error) is refused
 
 

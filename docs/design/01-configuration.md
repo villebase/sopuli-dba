@@ -1425,8 +1425,8 @@ the survey goes on to the next. One target nobody can reach must not hide what
 the others say. `creds generate` is not gated either: it reads the targets only
 for their password limits, and a target it cannot read is a caveat, not an
 error. Decision [#481](../decisions/log.md#481). A target that `doctor`
-reached and then refused over its setup is the one exception: `doctor` exits 9
-for it (`03-json-output.md` §2, `targets`, and
+reached, or whose server refused the login, over its setup is the one
+exception: `doctor` exits 9 for it (`03-json-output.md` §2, `targets`, and
 [#1062](../decisions/log.md#1062)).
 
 **A prompt never reads stdin**, which is how P5's *one stream, one reader*

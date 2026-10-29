@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -940,10 +941,14 @@ def doctor(
 
     document.targets = entries
     refused = sum(1 for _, was_refused in examined if was_refused)
-    unreachable = sum(1 for entry in entries if not entry["reachable"])
+    # A target the server refused at login is refused, not unreachable: each
+    # target is counted once.
+    unreachable = sum(
+        1 for entry, was_refused in examined if not entry["reachable"] and not was_refused
+    )
     unreachable_vaults = sum(1 for report in vaults if not report.reachable)
-    # A refused target answered and still cannot be used, so it is a target
-    # that failed. `failed` counts both kinds; the exit code tells them apart.
+    # A refused target cannot be used either, so it is a target that failed.
+    # `failed` counts both kinds; the exit code tells them apart.
     failed = unreachable + refused
     document.finish(
         _doctor_exit(shape.missing, unreachable, unreachable_vaults, refused=refused),
@@ -979,32 +984,54 @@ def _vault_error(report: VaultReport) -> Error | None:
 def _refused_for_setup(
     entry: dict[str, Any], error: Exception | None = None, *, holds: bool | None = None
 ) -> bool:
-    """Whether ``doctor`` reached this target and then refused it over its setup.
+    """Whether the server refused this target over its setup (#1062).
 
-    Either an error whose own ``exit_code`` is 9, such as ``SOPULI-20007`` (a
-    superuser admin), or an assertion that does not hold: a target that claims
-    a scope or container it is not, which ``doctor`` reports rather than
-    raises. A mutating verb refuses each at exit 9; ``doctor`` is the check of
-    the setup, so it says *fix the configuration* too (#1062).
+    Three cases, each of which a mutating verb refuses at exit 9; ``doctor`` is
+    the check of the setup, so it says *fix the configuration* too:
 
-    Only a target that was reached. An error while connecting stays exit 1's
-    case, whatever it asks for: the exception cannot tell a server's refusal at
-    login from a failure before the server was asked, such as an admin
-    password that is not set.
+    * an error that asks for exit 9 after the session opened, such as
+      ``SOPULI-20007`` (a superuser admin);
+    * an error that asks for exit 9 at login and carries the server's own code,
+      such as ORA-28009 (SYS as the admin) or PostgreSQL's 3D000 (no such
+      database) -- :func:`_server_answered`;
+    * an assertion that does not hold: a target that claims a scope or
+      container it is not, which ``doctor`` reports rather than raises.
+
+    An error at login with no server code stays exit 1's case, whatever it asks
+    for: an admin password that is not set, or an Instant Client that will not
+    load, happens before any server is asked.
 
     Decided from the exception, not from the serialised ``category``: an error
     says for itself which exit it is, and a ``config`` category does not always
     mean exit 9. ``holds`` is the assertion's answer where the entry could not
     carry it, because the target failed after its scope was read.
     """
+    asks_for_9 = error is not None and getattr(error, "exit_code", None) == ExitCode.CONFIG_INVALID
     if not entry["reachable"]:
-        return False
-    if error is not None and getattr(error, "exit_code", None) == ExitCode.CONFIG_INVALID:
+        return asks_for_9 and _server_answered(error)
+    if asks_for_9:
         return True
     if holds is not None:
         return not holds
     asserted = entry.get("asserted")
     return bool(asserted and asserted.get("matches") is False)
+
+
+#: A code the server itself sends: Oracle's ``ORA-nnnnn``, or a five-character
+#: PostgreSQL SQLSTATE. Not ``DPI-`` or ``DPY-``, which the Oracle client
+#: library raises on this side of the wire, and not the tool's ``SOPULI-``.
+_SERVER_CODE = re.compile(r"ORA-\d{5}|[0-9A-Z]{5}")
+
+
+def _server_answered(error: Exception | None) -> bool:
+    """Whether ``error`` carries a code the server sent, so the server was asked.
+
+    A driver keeps the vendor code on the error (CLAUDE.md: an ORA- code is never
+    swallowed). A failure before any server is asked, such as an unset admin
+    password, has none.
+    """
+    code = getattr(error, "code", None)
+    return isinstance(code, str) and _SERVER_CODE.fullmatch(code) is not None
 
 
 def _doctor_exit(
@@ -1140,7 +1167,7 @@ def _examine(
                 duration_ms=_elapsed(started),
                 warnings=_reach_warning(error),
             )
-            return unreached, False
+            return unreached, _refused_for_setup(unreached, error)
 
         # Finding out what it is, which can fail on a connection that is fine:
         # a dictionary view this account cannot read, or a probe that could not

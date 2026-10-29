@@ -67,12 +67,23 @@ def test_only_an_error_that_exits_9_is_a_refusal(
     assert _refused_for_setup(_entry(reachable=reachable), error) is refused
 
 
-def test_an_assertion_that_fails_before_an_audit_error_is_still_a_refusal() -> None:
+@pytest.mark.parametrize(("matches", "refused"), [(False, True), (True, False)])
+def test_an_assertion_that_fails_before_an_audit_error_is_still_a_refusal(
+    matches: bool, refused: bool
+) -> None:
     """`doctor --check-privileges` whose audit fails after the scope was read:
-    the entry carries no scope, so the assertion's answer is passed in."""
+    the entry keeps its scope, so `asserted` is there beside the audit's error,
+    and it decides."""
     entry = _entry(reachable=True)
-    assert _refused_for_setup(entry, _UnreadableError("ORA-00942"), holds=False) is True
-    assert _refused_for_setup(entry, _UnreadableError("ORA-00942"), holds=True) is False
+    entry["asserted"] = {"scope": "pdb", "container": "ORDERS", "matches": matches}
+    assert _refused_for_setup(entry, _UnreadableError("ORA-00942")) is refused
+
+
+def test_a_code_the_postgresql_driver_assigns_itself_is_not_the_servers() -> None:
+    """`08001` and `08006` have a SQLSTATE's shape, but the driver assigns them
+    to a connection with no reply to read."""
+    for code in ("08001", "08006"):
+        assert not _refused_for_setup(_entry(reachable=False), _RefusedError(code, code=code))
 
 
 @pytest.mark.parametrize(("matches", "refused"), [(False, True), (True, False)])

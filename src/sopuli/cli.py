@@ -329,7 +329,7 @@ from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate, require_feasible
 from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
 from sopuli.personal import declared_on
-from sopuli.preflight import Finding, assertion_holds
+from sopuli.preflight import Finding
 from sopuli.safety import (
     ENCRYPTED,
     ENCRYPTED_CONNECTION,
@@ -848,9 +848,10 @@ def doctor(
     Each failure lands in its own ``targets[]`` entry with the vendor code and
     the server's own message. An unreachable target fails the run at exit 1,
     unless a configured driver or backend is missing, which is exit 9 (below).
-    A target that answered and was then refused over its setup, such as a
-    PostgreSQL admin that is a superuser, fails the run at exit 9 once every
-    target is surveyed (decision #1062).
+    A target refused over its setup fails the run at exit 9 once every target
+    is surveyed: one the server refused at login, such as SYS as the admin, or
+    one that answered and was then refused, such as a PostgreSQL admin that is
+    a superuser (decision #1062).
 
     **Install shape is reported on every run, not only when it is wrong**
     (ADR-006 E6). Which backends and drivers this build can serve, which the
@@ -981,9 +982,7 @@ def _vault_error(report: VaultReport) -> Error | None:
     return _finding(report.failure)
 
 
-def _refused_for_setup(
-    entry: dict[str, Any], error: Exception | None = None, *, holds: bool | None = None
-) -> bool:
+def _refused_for_setup(entry: dict[str, Any], error: Exception | None = None) -> bool:
     """Whether the server refused this target over its setup (#1062).
 
     Three cases, each of which a mutating verb refuses at exit 9; ``doctor`` is
@@ -1003,16 +1002,13 @@ def _refused_for_setup(
 
     Decided from the exception, not from the serialised ``category``: an error
     says for itself which exit it is, and a ``config`` category does not always
-    mean exit 9. ``holds`` is the assertion's answer where the entry could not
-    carry it, because the target failed after its scope was read.
+    mean exit 9.
     """
     asks_for_9 = error is not None and getattr(error, "exit_code", None) == ExitCode.CONFIG_INVALID
     if not entry["reachable"]:
         return asks_for_9 and _server_answered(error)
     if asks_for_9:
         return True
-    if holds is not None:
-        return not holds
     asserted = entry.get("asserted")
     return bool(asserted and asserted.get("matches") is False)
 
@@ -1021,6 +1017,13 @@ def _refused_for_setup(
 #: PostgreSQL SQLSTATE. Not ``DPI-`` or ``DPY-``, which the Oracle client
 #: library raises on this side of the wire, and not the tool's ``SOPULI-``.
 _SERVER_CODE = re.compile(r"ORA-\d{5}|[0-9A-Z]{5}")
+
+#: The two SQLSTATEs the PostgreSQL driver assigns itself, for a connection with
+#: no reply to read: ``08001`` where none was established, ``08006`` where one
+#: was lost (`driver/postgres/errors.py`). Every other code there is the
+#: server's, sent or read from its own message. Neither exits 9 today; they are
+#: named so that one never could count as a server's answer.
+_CLIENT_SQLSTATES = frozenset({"08001", "08006"})
 
 
 def _server_answered(error: Exception | None) -> bool:
@@ -1031,7 +1034,9 @@ def _server_answered(error: Exception | None) -> bool:
     password, has none.
     """
     code = getattr(error, "code", None)
-    return isinstance(code, str) and _SERVER_CODE.fullmatch(code) is not None
+    if not isinstance(code, str) or code in _CLIENT_SQLSTATES:
+        return False
+    return _SERVER_CODE.fullmatch(code) is not None
 
 
 def _doctor_exit(
@@ -1079,8 +1084,9 @@ def _doctor_exit(
     is deliberately not a function of the summary, and a consumer that wants to
     know why a run failed reads the sections rather than the arithmetic.
 
-    **A target it reached and refused over its setup is exit 9 too** (#1062),
-    after every target is surveyed. A mutating verb refuses that target at exit
+    **A target refused over its setup is exit 9 too** (#1062), after every
+    target is surveyed, whether the server refused the login or the target
+    answered first (:func:`_refused_for_setup`). A mutating verb refuses that target at exit
     9, so a ``doctor`` used as a gate must not pass it, and exit 9 says *fix the
     configuration*, which is the fix. It wins over exit 1 for an unreachable
     target or store, as install shape does: both are in the document either
@@ -1177,19 +1183,13 @@ def _examine(
         # failed claim is about a target that answered.
         warnings: tuple[str, ...] = ()
         audit = None
-        # Whether the target's assertion held, once the scope is known. The
-        # entry for a target that fails after this carries no scope, so the
-        # answer is kept here: a failed audit must not hide a wrong container.
-        holds: bool | None = None
+        # The scope as read, kept for an entry whose audit then fails: its
+        # `asserted` must still say whether the target is the container it
+        # claims, because that decides the exit code.
+        found: Scope | None = None
         try:
             scope, caveats = scope_and_claim(session, target.name, run.clusters)
-            declared = target.target.oracle
-            if declared.scope is not None or declared.container is not None:
-                holds = assertion_holds(
-                    declared_scope=declared.scope,
-                    declared_container=declared.container,
-                    scope=scope,
-                )
+            found = scope
             warnings += caveats
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
@@ -1209,11 +1209,12 @@ def _examine(
             failed = build_target(
                 target,
                 connected=True,
+                scope=found,
                 error=_finding(error),
                 duration_ms=_elapsed(started),
                 warnings=warnings,
             )
-            return failed, _refused_for_setup(failed, error, holds=holds)
+            return failed, _refused_for_setup(failed, error)
     finally:
         if session is not None:
             with suppress(Exception):

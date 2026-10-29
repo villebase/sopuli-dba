@@ -31,7 +31,7 @@ import yaml
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from native_estate import FIELD, OCI_VAULT, seed, staging_store, view
+from native_estate import FIELD, OCI_VAULT, limited_store, seed, staging_store, view
 from sopuli import apply, check
 from sopuli.admin import Resolved
 from sopuli.cli import _Applied, _left_out, _splice, cli
@@ -93,6 +93,7 @@ from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.native_view import PENDING_VERSION
+from sopuli.store.protocol import Room
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -4951,3 +4952,36 @@ def test_native_a_layout_change_is_refused_before_any_ddl(
     assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
     assert all(session.changed == [] for session in harness["sessions"])
     assert harness["store"].read(NATIVE_ALPHA).version == 1
+
+
+def test_a_converged_apply_on_a_full_secret_is_not_refused(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant 9 (#1159): a shared OCI secret with nothing staged is not
+    written, so a full one with nothing DEPRECATED is no reason to refuse."""
+    monkeypatch.setattr(f"{__name__}.staging_store", limited_store)
+    config = (
+        SHARED_CONFIG.replace(
+            "vaults:\n  vault-prod:\n    type: hashicorp\n"
+            "    addr: https://vault-prod.example.com:8200\n",
+            OCI_VAULT,
+        )
+        .replace("vault: vault-prod", "vault: vault-oci")
+        .replace('"apps/acme/db#DB_CREDENTIALS/{account}"', '"acme-db#DB_CREDENTIALS/{account}"')
+    )
+    harness = estate(
+        native={},
+        documents={"acme-db": {"DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}}},
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": passes(1), "ACME_BATCH_USER": passes(1)},
+    )
+    harness["store"].rooms["acme-db"] = Room(versions=30, deprecated=(), limit=30)
+
+    result = run(runner, write_config(config), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert all(session.changed == [] for session in harness["sessions"])
+    assert "SOPULI-W059" not in result.output

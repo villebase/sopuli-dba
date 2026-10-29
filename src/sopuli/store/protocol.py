@@ -623,6 +623,10 @@ class Room:
     deprecated: tuple[int, ...]
     #: How many versions the store holds before it refuses another.
     limit: int
+    #: The PREVIOUS and CURRENT versions, which a write that makes a new
+    #: CURRENT moves down a stage each, oldest first; ``None`` where none.
+    previous: int | None = None
+    current: int | None = None
 
     @property
     def full(self) -> bool:
@@ -632,11 +636,28 @@ class Room:
     def oldest_deprecated(self) -> int | None:
         return self.deprecated[0] if self.deprecated else None
 
-    def making_room_for(self, added: int) -> tuple[int, ...] | None:
+    def making_room_for(self, added: int, *, demoting: bool) -> tuple[int, ...] | None:
         """The versions the store would delete to add ``added`` more, oldest
-        first, or ``None`` if it cannot: too few are DEPRECATED."""
-        excess = max(0, self.versions + added - self.limit)
-        return self.deprecated[:excess] if excess <= len(self.deprecated) else None
+        first, or ``None`` if too few are DEPRECATED when one must go.
+
+        ``demoting`` is whether each new version becomes CURRENT, as a write in
+        payload fields does: the old PREVIOUS then becomes DEPRECATED, and the
+        old CURRENT PREVIOUS, so the next write can delete what the last one
+        demoted. A native stage adds a PENDING version and demotes nothing.
+        """
+        pool = list(self.deprecated)
+        upcoming = [one for one in (self.previous, self.current) if one is not None]
+        versions, going = self.versions, []
+        for _ in range(added):
+            if versions >= self.limit:
+                if not pool:
+                    return None
+                going.append(pool.pop(0))
+            else:
+                versions += 1
+            if demoting and upcoming:
+                pool.append(upcoming.pop(0))
+        return tuple(going)
 
 
 @dataclass(frozen=True)

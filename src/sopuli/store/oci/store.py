@@ -457,10 +457,12 @@ class OciStore:
         For the plan (#1159). OCI keeps the name until the deletion, reads
         report the secret as absent, and a create there is refused
         (``oci-create-taken``). ``False`` where a live secret has the name,
-        since nothing is created then.
+        since nothing is created then, and where the only one left is DELETED,
+        which holds it no longer.
         """
         held = [one.lifecycle_state for one in self._summaries(_names.to_oci(path))]
-        return bool(held) and all(state in GONE for state in held)
+        holding = [state for state in held if state != "DELETED"]
+        return bool(holding) and all(state in GONE for state in holding)
 
     def _native(
         self, path: str, attributes: Mapping[str, Any], *, cas: int | None, doing: str
@@ -493,6 +495,7 @@ class OciStore:
         """``ListSecretVersions``, counted as OCI counts them (``oci-version-limit``)."""
         counted = 0
         deprecated: list[int] = []
+        at: dict[str, int] = {}
         page = None
         while True:
             try:
@@ -505,12 +508,19 @@ class OciStore:
                 if version.time_of_deletion is not None:
                     continue
                 counted += 1
-                if set(version.stages or ()) - {"LATEST"} == {DEPRECATED}:
+                stages = set(version.stages or ()) - {"LATEST"}
+                if stages == {DEPRECATED}:
                     deprecated.append(version.version_number)
+                for stage in stages & {"CURRENT", "PREVIOUS"}:
+                    at[stage] = version.version_number
             page = response.next_page
             if not page:
                 return Room(
-                    versions=counted, deprecated=tuple(sorted(deprecated)), limit=VERSION_LIMIT
+                    versions=counted,
+                    deprecated=tuple(sorted(deprecated)),
+                    limit=VERSION_LIMIT,
+                    previous=at.get("PREVIOUS"),
+                    current=at.get("CURRENT"),
                 )
 
     def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:

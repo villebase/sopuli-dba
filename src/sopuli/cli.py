@@ -4720,16 +4720,22 @@ def _plan_version_limits(
         if added == 0 and not creates:
             continue
         where = f"{key.store}:{key.path}"
-        room = store.room(key.path)
-        if room is None:
-            if creates and store.name_held(key.path):
-                raise StoreError(
-                    f"{where} would be created, and a secret of that name is scheduled for "
-                    f"deletion; the store keeps the name until it is deleted",
-                    hint="cancel the deletion to use that secret again, or name another one",
-                )
+        try:
+            room = store.room(key.path)
+            held = room is None and creates and store.name_held(key.path)
+        except StoreError:
+            # A store that cannot be read here fails the write too, and says
+            # why there; the plan says nothing it does not know.
             continue
-        going = room.making_room_for(added)
+        if held:
+            raise StoreError(
+                f"{where} would be created, and a secret of that name is scheduled for "
+                f"deletion; the store keeps the name until it is deleted",
+                hint="cancel the deletion to use that secret again, or name another one",
+            )
+        if room is None:
+            continue
+        going = room.making_room_for(added, demoting=not _is_native(stores, key))
         if going is None:
             raise StoreError(
                 f"{where} holds {room.versions} versions, its store's limit is {room.limit}, "
@@ -4749,16 +4755,18 @@ def _plan_version_limits(
                 f"{spelled}",
                 hint="pin a newer version, or remove the pin, then run again",
             )
-        message = (
-            f"{where} holds {room.versions} versions, its store's limit is {room.limit}, so "
-            f"this run's writes may delete version {', '.join(map(str, going))}, the oldest "
-            f"DEPRECATED, to make room"
+        # Every verb's text prints it, a dry run's included; its own notes do not.
+        run.document.warn_in_text(
+            Diagnostic(
+                level="warning",
+                code=VERSION_PRUNED,
+                message=(
+                    f"{where} holds {room.versions} versions, its store's limit is "
+                    f"{room.limit}, so this run's writes may delete version "
+                    f"{', '.join(map(str, going))}, the oldest DEPRECATED, to make room"
+                ),
+            )
         )
-        run.document.diagnostics.append(
-            Diagnostic(level="warning", code=VERSION_PRUNED, message=message)
-        )
-        # Every verb's text prints these, a dry run's included; its own notes do not.
-        run.document.warnings_text.append(message)
 
 
 def _pinned(run: Invocation) -> set[tuple[str | None, str, int]]:
@@ -4783,22 +4791,51 @@ def _pinned(run: Invocation) -> set[tuple[str | None, str, int]]:
     return pins
 
 
+def _is_native(stores: Mapping[str, SecretStore], key: LockKey) -> bool:
+    store = stores.get(key.store)
+    return isinstance(store, NativeStagedStore) and store.is_native(key.path)
+
+
 def _adding(
-    stores: Mapping[str, SecretStore], *, stage: bool, promote: bool
+    stores: Mapping[str, SecretStore],
+    *,
+    stage: bool,
+    promote: bool,
+    writes: Collection[LockKey] | None = None,
 ) -> Callable[[LockKey], int]:
     """How many versions a verb that stages and/or promotes may add to a document.
 
     A stage adds one either way. A promotion adds one in payload fields, where
     it writes the document again, and none under native staging, where it
-    moves a stage.
+    moves a stage. ``writes`` narrows it to the documents the run will write,
+    where the verb can tell before the lock; ``None`` is every one.
     """
 
     def adds(key: LockKey) -> int:
-        store = stores.get(key.store)
-        native = isinstance(store, NativeStagedStore) and store.is_native(key.path)
-        return int(stage) + (int(promote) if not native else 0)
+        if writes is not None and key not in writes:
+            return 0
+        return int(stage) + (0 if _is_native(stores, key) else int(promote))
 
     return adds
+
+
+def _limited_documents(
+    keys: Iterable[LockKey], stores: Mapping[str, SecretStore]
+) -> dict[LockKey, Any]:
+    """Each document on a store that limits versions, as read before the lock,
+    for the plan to tell which of them the run will write (#1159).
+
+    A document that cannot be read is left out: the plan then says nothing
+    about it, and the run's own read fails and reports it.
+    """
+    found: dict[LockKey, Any] = {}
+    for key in keys:
+        store = stores.get(key.store)
+        if not isinstance(store, VersionLimited):
+            continue
+        with suppress(StoreError):
+            found[key] = store.read(key.path)
+    return found
 
 
 @config_group.command("validate")
@@ -6923,7 +6960,17 @@ def creds_apply(
         ),
         run,
     )
-    _plan_version_limits(keys, stores, run, adds=_adding(stores, stage=False, promote=True))
+    # Only a document with something to promote is written, and a native
+    # promotion adds no version, so only payload-field documents are read.
+    limited = _limited_documents([key for key in keys if not _is_native(stores, key)], stores)
+    promoting = {
+        _lock_key(binding)
+        for binding, source in _sources(bindings, limited, stage=source_stage)
+        if source is not None and apply_states.promotes(source.stage)
+    }
+    _plan_version_limits(
+        keys, stores, run, adds=_adding(stores, stage=False, promote=True, writes=promoting)
+    )
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
     # nothing staged is checked too, which can only refuse more. The two checks
@@ -11079,7 +11126,26 @@ def creds_rotate(
         ),
         run,
     )
-    _plan_version_limits(keys, stores, run, adds=_adding(stores, stage=True, promote=True))
+    # `--max-age-days` leaves a document that is not due unwritten, so it is
+    # not counted; telling which are due takes a read before the lock.
+    due: set[LockKey] | None = None
+    if max_age_days is not None:
+        limited = _limited_documents(keys, stores)
+        due = {
+            _lock_key(one.binding)
+            for one in rotation.select(
+                [
+                    (binding, _document_data(binding, limited))
+                    for binding in bindings
+                    if _lock_key(binding) in limited
+                ],
+                max_age_days=max_age_days,
+            )
+            if one.due
+        }
+    _plan_version_limits(
+        keys, stores, run, adds=_adding(stores, stage=True, promote=True, writes=due)
+    )
 
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target

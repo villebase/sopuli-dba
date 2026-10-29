@@ -505,6 +505,12 @@ class RunDocument:
             options=options or {},
         )
 
+    def warn_in_text(self, warning: Diagnostic) -> None:
+        """Add ``warning`` to ``diagnostics``, and to ``warnings_text``, which
+        every verb's text prints: for a warning no verb's own notes cover."""
+        self.diagnostics.append(warning)
+        self.warnings_text.append(warning.message)
+
     def finish(self, exit_code: int, summary: Summary | None = None) -> RunDocument:
         """Close the run. Returns self so callers can chain into an emitter."""
         self.finished_at = utc_now()

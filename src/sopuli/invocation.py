@@ -1230,14 +1230,16 @@ def _report_pruned(invocation: Invocation) -> None:
         if not isinstance(store, VersionLimited):
             continue
         for pruned in store.pruned:
-            message = (
-                f"{name}:{pruned.path} was full, so version {pruned.generation}, its "
-                f"oldest DEPRECATED one, was scheduled for deletion to make room"
+            invocation.document.warn_in_text(
+                Diagnostic(
+                    level="warning",
+                    code=VERSION_PRUNED,
+                    message=(
+                        f"{name}:{pruned.path} was full, so version {pruned.generation}, its "
+                        f"oldest DEPRECATED one, was scheduled for deletion to make room"
+                    ),
+                )
             )
-            invocation.document.diagnostics.append(
-                Diagnostic(level="warning", code=VERSION_PRUNED, message=message)
-            )
-            invocation.document.warnings_text.append(message)
             # A run that prompted has printed its warnings already, and the
             # handler prints them for a failed run only if it has not. A
             # deletion must be seen, so it prints them again, earlier ones too.

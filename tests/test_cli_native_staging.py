@@ -278,6 +278,26 @@ def test_a_full_secret_says_which_version_a_write_may_delete(
     assert PATH in message
 
 
+def test_a_store_the_plan_cannot_ask_still_gets_a_plan(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: LimitedStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store that will not answer how full a secret is leaves the dry run
+    as it was: the plan is printed, and the write would say what failed."""
+    seed(store, PATH, {FIELD: LIVE})
+
+    def refused(path: str) -> None:
+        raise StoreError("throttled")
+
+    monkeypatch.setattr(store, "room", refused)
+
+    result = run(runner, write_config(CONFIG), "generate", "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
 def test_the_dry_run_says_it_too(
     runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
 ) -> None:

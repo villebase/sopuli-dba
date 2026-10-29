@@ -75,8 +75,18 @@ def raise_for(exc: Any, *, what: str, missing: type[StoreError] = StoreError) ->
     raise StoreError(message) from exc
 
 
-def unreachable(exc: Exception, *, what: str) -> OciUnavailableError:
-    """The error for a request that got no answer at all."""
+def unreachable(exc: Exception, *, what: str, maybe_written: bool = False) -> OciUnavailableError:
+    """The error for a request that got no answer at all.
+
+    ``maybe_written`` is for a create or an update: a request that timed out
+    may still have been applied, and the operator must look before trying
+    again.
+    """
+    if maybe_written:
+        return OciUnavailableError(
+            f"{what}: OCI did not answer, and the write may have been made: {exc}",
+            hint="read the secret before running again; check the network, a proxy, and the region",
+        )
     return OciUnavailableError(
         f"{what}: OCI did not answer: {exc}",
         hint="check the network, a proxy, and the region",

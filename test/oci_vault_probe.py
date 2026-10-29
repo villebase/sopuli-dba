@@ -102,6 +102,17 @@ the same results apart from the timings:
   it, returns the **old** version and the **old** metadata after an update
   that changed both. Once ``ACTIVE``, it returns the new version and the new
   metadata. So a read's content and write counter always belong together.
+
+M14 was added for #1133, after a real run of the lock found a second write
+refused. Two runs, 2026-10-29, the same vault, key, region and SDK, with the
+same results apart from the timings:
+
+- **M14** The ETag moves with no field changing: once while the secret is
+  busy, once when it turns ``ACTIVE``, and **once more 2.2 to 5.4 seconds
+  after it is ACTIVE** (after a create: 5.4 and 4.4 s; after a metadata
+  update: 2.2 and 3.0 s). An update sent with the ETag read at the moment of
+  ACTIVE is refused with ``409 Conflict``, the answer a lost compare-and-set
+  gets.
 """
 
 from __future__ import annotations
@@ -627,6 +638,57 @@ class Probe:
             f"version {read.version_number}, metadata {read.metadata}",
         )
 
+    def m14_etag_settle(self) -> None:
+        """Does the ETag stop moving when the secret turns ACTIVE?
+
+        Polls every half second from a write until 15 seconds after ACTIVE,
+        and prints each new ETag with the time and the fields that changed.
+        Then sends an update with the ETag read at the moment of ACTIVE.
+        """
+        secret = self.create(self.name(), settle=False)
+        for round_ in range(2):
+            if round_:
+                self.vaults.update_secret(
+                    secret.id, oci.vault.models.UpdateSecretDetails(metadata={"sopuli_cas": "2"})
+                )
+            start = time.monotonic()
+            seen: list[str] = []
+            previous: tuple[str, dict[str, Any]] | None = None
+            at_active: str | None = None
+            active_at = 0.0
+            while True:
+                response = self.vaults.get_secret(secret.id)
+                etag = response.headers.get("etag", "")
+                data = oci.util.to_dict(response.data)
+                now = time.monotonic() - start
+                if previous is None or etag != previous[0]:
+                    before = previous[1] if previous is not None else data
+                    changed = sorted(key for key in data if before.get(key) != data[key])
+                    seen.append(f"{now:.1f}s {data['lifecycle_state']} {changed or ''}".strip())
+                if data["lifecycle_state"] == "ACTIVE" and at_active is None:
+                    at_active, active_at = etag, now
+                previous = (etag, data)
+                if at_active is not None and now - active_at > 15:
+                    break
+                time.sleep(0.5)
+            label = "create" if round_ == 0 else "metadata update"
+            report("M14", f"ETag changes after the {label}", "; ".join(seen))
+            assert at_active is not None
+            if at_active == previous[0]:
+                report("M14", f"ETag at ACTIVE after the {label}", "still current 15 s later")
+                continue
+            try:
+                self.vaults.update_secret(
+                    secret.id,
+                    oci.vault.models.UpdateSecretDetails(metadata={"sopuli_cas": "3"}),
+                    if_match=at_active,
+                )
+                outcome = "accepted"
+                self.settle(secret.id)
+            except oci.exceptions.ServiceError as exc:
+                outcome = f"refused ({error(exc)})"
+            report("M14", f"update with the ETag read at ACTIVE after the {label}", outcome)
+
     # -------------------------------------------------------------- cleanup ---
 
     def cleanup(self) -> None:
@@ -675,6 +737,7 @@ def main() -> int:
         probe.m11_states,
         probe.m12_metadata,
         probe.m13_read_while_updating,
+        probe.m14_etag_settle,
     ]
     wanted = {one.lower() for one in sys.argv[1:]}
     known = {check.__name__.split("_")[0] for check in checks}

@@ -11,6 +11,7 @@ import json
 from contextlib import contextmanager
 from typing import Any
 
+import oci
 import pytest
 from oci_fake import COMPARTMENT_ID, KEY_ID, VAULT_ID, FakeOci, FakeSecret, refused
 
@@ -167,15 +168,125 @@ def test_a_foreign_secret_is_written_from_token_one(fake: FakeOci, clock: Clock)
 
 
 def test_a_stale_etag_is_a_cas_conflict(fake: FakeOci, clock: Clock) -> None:
-    """Another writer between this run's GetSecret and its UpdateSecret."""
+    """Another writer between this run's GetSecret and its UpdateSecret: it
+    moved the counter, and the secret is busy with its write."""
     fake.put("acme-db", {"password": "a"})
 
     def other_writer(secret: FakeSecret) -> None:
         secret.etag += 1
+        secret.metadata[CAS_KEY] = "2"
 
     fake.before_update = other_writer
 
     with pytest.raises(CasConflictError):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_an_etag_that_moved_with_nothing_else_is_retried(fake: FakeOci, clock: Clock) -> None:
+    """`oci-etag-settle`: OCI moves the ETag a few seconds after ACTIVE, with
+    no field changing. Still ACTIVE and unchanged means no write landed."""
+    fake.put("acme-db", {"password": "a"})
+    once: list[bool] = []
+
+    def churn(secret: FakeSecret) -> None:
+        if not once:
+            once.append(True)
+            secret.etag += 1
+
+    fake.before_update = churn
+
+    assert store(fake, clock).write("acme-db", {"password": "b"}, cas=1) == 2
+    assert [if_match for _, _, if_match in fake.updates] == ["1", "2"]
+
+
+def test_an_etag_that_keeps_moving_gives_up(fake: FakeOci, clock: Clock) -> None:
+    fake.put("acme-db", {"password": "a"})
+
+    def churn(secret: FakeSecret) -> None:
+        secret.etag += 1
+
+    fake.before_update = churn
+
+    with pytest.raises(CasConflictError, match="changing ETag"):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+    assert len(fake.updates) == 4
+
+
+def test_a_moved_etag_on_a_busy_secret_is_a_conflict(fake: FakeOci, clock: Clock) -> None:
+    """Busy means a write was accepted since the first read, whatever it changed."""
+    fake.put("acme-db", {"password": "a"})
+
+    def other_writer(secret: FakeSecret) -> None:
+        secret.etag += 1
+        secret.lifecycle_state = "UPDATING"
+        secret.busy = 5
+
+    fake.before_update = other_writer
+
+    with pytest.raises(CasConflictError):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_a_moved_etag_found_too_late_is_a_conflict(fake: FakeOci, clock: Clock) -> None:
+    """Past the window, an ACTIVE secret no longer proves that nothing was written."""
+    fake.put("acme-db", {"password": "a"})
+
+    def slow(secret: FakeSecret) -> None:
+        secret.etag += 1
+        clock.now += 20
+
+    fake.before_update = slow
+
+    with pytest.raises(CasConflictError):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_an_unguarded_write_sends_no_etag(fake: FakeOci, clock: Clock) -> None:
+    fake.put("acme-db", {"password": "a"})
+
+    assert store(fake, clock).write("acme-db", {"password": "b"}, cas=None) == 2
+    assert fake.updates[0][2] is None
+
+
+def test_an_unguarded_create_that_loses_the_race_updates(fake: FakeOci, clock: Clock) -> None:
+    fake.before_create = lambda name: fake.put(name, {"password": "theirs"})
+
+    assert store(fake, clock).write("acme-db", {"password": "mine"}, cas=None) == 2
+    assert store(fake, clock).read("acme-db").data == {"password": "mine"}  # type: ignore[union-attr]
+
+
+def test_a_name_taken_outside_the_compartment_says_so(fake: FakeOci, clock: Clock) -> None:
+    def elsewhere(name: str) -> None:
+        raise refused(400, "InvalidParameter", "name already exists")
+
+    fake.before_create = elsewhere
+
+    with pytest.raises(StoreError, match="no secret of that name is in the store's compartment"):
+        store(fake, clock).write("acme-db", {"password": "a"}, cas=0)
+
+
+def test_a_400_that_did_not_come_from_oci_is_not_read_as_a_taken_name(
+    fake: FakeOci, clock: Clock
+) -> None:
+    def proxy(name: str) -> None:
+        raise oci.exceptions.ServiceError(400, "InvalidParameter", {}, "name already exists")
+
+    fake.before_create = proxy
+
+    with pytest.raises(OciUnavailableError, match="did not come from OCI"):
+        store(fake, clock).write("acme-db", {"password": "a"}, cas=0)
+
+
+def test_an_update_with_no_answer_may_have_been_made(fake: FakeOci, clock: Clock) -> None:
+    fake.put("acme-db", {"password": "a"})
+
+    def timeout(secret: FakeSecret) -> None:
+        raise oci.exceptions.RequestException("read timed out")
+
+    fake.before_update = timeout
+
+    with pytest.raises(OciUnavailableError, match="the write may have been made"):
         store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
 
 
@@ -240,6 +351,9 @@ def test_a_secret_already_updating_is_waited_for_before_the_write(
 
     assert store(fake, clock).write("acme-db", {"password": "b"}, cas=1) == 2
     assert len(fake.updates) == 1
+    # Three reads before the update and three after: the first answer that
+    # found it busy is the wait's first poll, not read again.
+    assert fake.calls.count("get_secret") == 6
 
 
 def test_incorrect_state_at_the_update_waits_and_retries_once(fake: FakeOci, clock: Clock) -> None:
@@ -276,10 +390,51 @@ def test_the_wait_gives_up_after_timeout_s_and_says_the_write_was_made(
 def test_a_secret_that_failed_is_not_waited_for(fake: FakeOci, clock: Clock) -> None:
     fake.put("acme-db", {"password": "a"}, lifecycle_state="FAILED")
 
-    with pytest.raises(StoreError, match="is FAILED"):
+    with pytest.raises(StoreError, match="is FAILED, so it cannot be written"):
         store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
 
     assert clock.sleeps == []
+
+
+def test_a_throttled_poll_is_waited_out(fake: FakeOci, clock: Clock) -> None:
+    """A real run met `429 TooManyRequests` on the first poll after a write."""
+    fake.put("acme-db", {"password": "a"})
+    throttled: list[bool] = []
+
+    def throttle(secret: FakeSecret) -> None:
+        if secret.busy and not throttled:
+            throttled.append(True)
+            raise refused(429, "TooManyRequests", "User-rate limit exceeded.")
+
+    fake.before_get = throttle
+
+    assert store(fake, clock).write("acme-db", {"password": "b"}, cas=1) == 2
+    assert clock.sleeps[0] == 2 * POLL_S
+
+
+def test_an_error_while_waiting_after_a_write_says_the_write_was_made(
+    fake: FakeOci, clock: Clock
+) -> None:
+    fake.put("acme-db", {"password": "a"})
+
+    def fail(secret: FakeSecret) -> None:
+        if secret.busy:
+            raise refused(500, "InternalServerError", "Internal error")
+
+    fake.before_get = fail
+
+    with pytest.raises(OciUnavailableError, match="the write was made, and waiting for it failed"):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
+
+
+def test_a_secret_that_fails_after_the_write_says_the_write_was_made(
+    fake: FakeOci, clock: Clock
+) -> None:
+    fake.put("acme-db", {"password": "a"})
+    fake.final_state = "FAILED"
+
+    with pytest.raises(StoreError, match="the write was made, and the secret is FAILED$"):
+        store(fake, clock).write("acme-db", {"password": "b"}, cas=1)
 
 
 def test_the_wait_shows_a_notice_naming_the_secret(fake: FakeOci, clock: Clock) -> None:

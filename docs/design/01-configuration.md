@@ -2850,7 +2850,9 @@ Its content is `{}`; the lock record is in its metadata, under
 ([#1152](../decisions/log.md#1152)). OCI has no setting that makes a secret
 refuse a write without a compare-and-set, as HashiCorp's `cas_required` does.
 Only IAM keeps other writers off a secret, so grant the right to manage
-secrets in the store's compartment to the tool's principal alone. The whole
+secrets in the store's compartment to the tool's principal alone. Every run
+that takes a lock on an OCI store reports `SOPULI-W019` for each lock path, to
+say so. The whole
 metadata map is limited to about 5,100 characters (`oci-metadata-limits`), and
 the tool refuses a write that would pass that before it is sent.
 

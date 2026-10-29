@@ -16,6 +16,7 @@ from sopuli.config.model import Vault
 from sopuli.lock import Holder, LockableStore, LockKey, LockManager, lock_path
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
+from sopuli.store.protocol import CasConflictError, MetadataNotPermittedError
 
 RECORD = {"state": "held", "correlation_id": "01JACME", "command": "creds rotate"}
 
@@ -73,8 +74,6 @@ def test_a_lock_record_reads_back_at_its_token(fake: FakeOci) -> None:
 
 
 def test_a_stale_lock_token_conflicts(fake: FakeOci) -> None:
-    from sopuli.store.protocol import CasConflictError
-
     oci_store = store(fake)
     oci_store.write("locks/acme-db", RECORD, cas=0)
 
@@ -82,12 +81,58 @@ def test_a_stale_lock_token_conflicts(fake: FakeOci) -> None:
         oci_store.write("locks/acme-db", RECORD, cas=0)
 
 
-def test_metadata_is_unknown_and_require_cas_sends_nothing(fake: FakeOci) -> None:
-    """OCI has no `cas_required`; IAM keeps other writers out."""
+@pytest.mark.parametrize(
+    "metadata",
+    [{CAS_KEY: "3"}, {CAS_KEY: "3", RECORD_KEY: "not json"}, {CAS_KEY: "3", RECORD_KEY: "[1]"}],
+    ids=["no record", "not JSON", "not an object"],
+)
+def test_a_lock_secret_without_a_readable_record_is_still_a_lock(
+    fake: FakeOci, metadata: dict[str, str]
+) -> None:
+    """Read as nothing, every later `cas: 0` acquisition would fail for good.
+    At its token, `LockRecord.from_dict` makes a held record of it."""
+    fake.put("sopuli-locks.acme-db", {}, metadata=metadata)
+
+    stored = store(fake).read("locks/acme-db")
+
+    assert stored is not None
+    assert (stored.data, stored.version) == (None, 3)
+
+
+def test_a_lock_being_created_is_waited_for_not_refused(fake: FakeOci) -> None:
+    """`oci-read-while-creating`: a second run reads the lock a first run has
+    just created, and OCI answers 404 until it is ACTIVE."""
+    secret = fake.put(
+        "sopuli-locks.acme-db",
+        {},
+        metadata={CAS_KEY: "1", RECORD_KEY: json.dumps(RECORD)},
+        lifecycle_state="CREATING",
+    )
+    secret.busy = 2
+
+    stored = store(fake).read("locks/acme-db")
+
+    assert stored is not None
+    assert stored.data == RECORD
+
+
+def test_the_record_is_counted_as_it_is_not_escaped_again(fake: FakeOci) -> None:
+    """A record full of quotes is no bigger to OCI for being JSON inside JSON:
+    escaped once, in the record itself, it is about 4,800 characters; escaped
+    again, as the whole map's JSON, it would be about 9,600, over the limit."""
+    oci_store = store(fake)
+
+    assert oci_store.write("locks/acme-db", {"note": '"' * 2400}, cas=0) == 1
+
+
+def test_require_cas_refuses_and_says_only_iam_guards_the_lock(fake: FakeOci) -> None:
+    """OCI has no `cas_required`. The tool does not claim a guarantee it
+    cannot check (P2), so the pre-flight records `SOPULI-W019` every run."""
     oci_store = store(fake)
 
     assert oci_store.metadata("locks/acme-db") is None
-    oci_store.require_cas("locks/acme-db")
+    with pytest.raises(MetadataNotPermittedError, match="only IAM keeps other writers off"):
+        oci_store.require_cas("locks/acme-db")
 
     assert fake.calls == []
 
@@ -111,5 +156,7 @@ def test_the_lock_manager_takes_and_releases_a_lock_on_an_oci_store(fake: FakeOc
     released = oci_store.read(lock_path(key))
     assert released is not None
     assert released.data["state"] == "released"
-    assert manager.unguarded == []
+    # The lock held, and the run says the path is not guarded against others.
+    assert [one.key for one in manager.unguarded] == [key]
+    assert "only IAM keeps other writers off" in manager.unguarded[0].reason
     assert len(fake.secrets["sopuli-locks.acme-db"].versions) == 1

@@ -217,6 +217,9 @@ class FakeOci:
         secret = self.secrets.get(secret_name)
         if vault_id != self.vault_id or secret is None or secret_name in self.unreadable:
             raise not_found(f"secret {secret_name} not found")
+        if secret.lifecycle_state == "CREATING":
+            # Measured: 404 until the new secret is ACTIVE, though it is listed.
+            raise not_found(f"secret {secret_name} not found")
         if version_number is not None:
             found = [one for one in secret.versions if one.number == version_number]
         else:

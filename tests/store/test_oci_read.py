@@ -247,12 +247,6 @@ def test_a_lock_record_is_read_from_the_metadata(fake: FakeOci) -> None:
     assert dict(stored.attributes) == {}
 
 
-def test_a_lock_secret_with_no_record_reads_as_nothing(fake: FakeOci) -> None:
-    fake.put("sopuli-locks.acme-db", {})
-
-    assert store(fake).read("locks/acme-db") is None
-
-
 def test_a_write_counter_the_tool_did_not_write_is_refused(fake: FakeOci) -> None:
     fake.put("acme-db", {"password": "a"}, metadata={CAS_KEY: "soon"})
 

@@ -637,12 +637,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "replication lag on a store with read replicas is the ordinary cause."
         ),
         LOCK_PATH_UNGUARDED: (
-            "A lock path was created without `cas_required`, because this run's store "
-            "credential may not write path metadata. The run's own lock was still taken "
+            "A lock path is not guarded against a write without a compare-and-set. On "
+            "HashiCorp it was created without `cas_required`, because this run's store "
+            "credential may not write path metadata; on OCI no such setting exists, so "
+            "every run that takes a lock there says so. The run's own lock was still taken "
             "under a compare-and-set and its fence held -- what is missing is the store "
-            "refusing an un-CAS'd write from anybody else, an operator with a vault CLI "
-            "included. Grant `update` on the mount's metadata path, or set it once by "
-            "hand; the message names the path."
+            "refusing an un-CAS'd write from anybody else, an operator with a vault CLI or "
+            "console included. On HashiCorp, grant `update` on the mount's metadata path, "
+            "or set it once by hand; on OCI, only IAM keeps other writers off. The message "
+            "names the path."
         ),
         REPAIR_DOCUMENT_STALE: (
             "The document `creds apply --repair` was given is old enough that the run it "

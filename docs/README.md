@@ -645,6 +645,11 @@ such as "from 16", means the one release of it that was measured.
   `ACTIVE`, with no field of the secret changing, and an update sent with the
   ETag read at the moment of `ACTIVE` is refused with `409 Conflict`. So a
   `409 Conflict` alone does not prove that somebody else wrote. M14.
+- `verified` `oci-read-while-creating` (#1152) — **Can a new secret be read
+  by name at once?**
+  No. While it is `CREATING`, a read by name is refused with
+  `404 NotAuthorizedOrNotFound`, though `ListSecrets` already lists it as
+  `CREATING`. Once it is `ACTIVE`, the read returns version 1. M15.
 - `unverified` `moto-secrets-manager` (#642) — **Does moto's server image cover
   every Secrets Manager call an AWS store makes?**
   Known: moto is open source, `motoserver/moto` needs no token, and it emulates

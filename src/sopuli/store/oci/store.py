@@ -1,13 +1,24 @@
 """P2's store interface over one OCI vault.
 
-This build connects, answers :meth:`OciStore.health`, reads and lists.
-Writing comes in #1133, and until then each write refuses with a
-:class:`StoreError`.
+This build connects, answers :meth:`OciStore.health`, reads, lists, and
+writes an application secret. Lock records come with #1152, and staging with
+#1153; until then each refuses with a :class:`StoreError`.
 
 Content is read with ``GetSecretBundleByName``, the call External Secrets
 Operator makes, so the tool reads exactly what an application would. One call
 returns the content, the version's stages and number, and the secret's
 metadata, which holds the write counter (:data:`._names.CAS_KEY`).
+
+A write is a compare-and-set in two halves. ``GetSecret`` gives the counter
+and the ETag; the counter is compared with ``cas``, and the ETag goes back as
+``if_match``, so OCI refuses the update if anybody wrote in between. The
+counter is the token, not OCI's version number, because a promotion and a
+metadata-only update move no version.
+
+After every write the secret is busy for about 20 seconds, and a read meanwhile
+returns the old content (``oci-read-while-updating``). So each write waits
+until the secret is ``ACTIVE`` again before it returns (decision 8), under the
+spinner (:mod:`sopuli.store.waiting`).
 """
 
 from __future__ import annotations
@@ -15,7 +26,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from types import MappingProxyType
@@ -34,12 +47,14 @@ from sopuli.store.protocol import (
     STAGES,
     UNREACHABLE,
     VERSIONING,
+    CasConflictError,
     PathMetadata,
     Stored,
     StoreError,
     StoreHealth,
     bounded_prefix,
 )
+from sopuli.store.waiting import waiting
 
 #: The stage a read with no stage returns, in OCI's spelling.
 CURRENT = "CURRENT"
@@ -51,11 +66,35 @@ GONE = frozenset({"DELETING", "DELETED", "SCHEDULING_DELETION", "PENDING_DELETIO
 #: OCI's ``Date`` header has whole seconds, so a finer skew would be noise.
 RESOLUTION = timedelta(seconds=1)
 
-#: A vault that can serve requests.
+#: A vault, or a secret, that can serve requests.
 ACTIVE = "ACTIVE"
+
+#: The states a secret is in for about 20 seconds after a write
+#: (``oci-create-state``, ``oci-updating-state``).
+BUSY = frozenset({"CREATING", "UPDATING"})
+
+#: How long a write waits for its secret to be ACTIVE when the store sets no
+#: ``timeout_s`` (decision 8). The measured window is about 20 seconds.
+SETTLE_TIMEOUT_S = 120
+
+#: Seconds between two reads of a busy secret.
+POLL_S = 2.0
+
+#: OCI's answer to a write the secret's state does not allow: it is busy.
+INCORRECT_STATE = "IncorrectState"
 
 #: The errors a request raises when no answer came back at all.
 NO_ANSWER = (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout)
+
+
+@dataclass(frozen=True)
+class _Live:
+    """A secret as ``GetSecret`` answered, once it was ACTIVE."""
+
+    id: str
+    name: str
+    etag: str
+    metadata: dict[str, Any]
 
 
 class OciStore:
@@ -63,7 +102,7 @@ class OciStore:
 
     ``vaults``, ``secrets`` and ``kms`` are the SDK clients
     (:class:`sopuli.store.oci._auth.Clients`). They are passed in, so tier 0
-    can pass fakes.
+    can pass fakes, and so are the clock and ``sleep`` the wait for ACTIVE uses.
     """
 
     def __init__(
@@ -74,6 +113,8 @@ class OciStore:
         secrets: Any,
         kms: Any,
         now: Callable[[], datetime] = utc_now,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if vault.vault_id is None or vault.compartment_id is None:
             # Unreachable through a config file, which requires both keys.
@@ -81,15 +122,20 @@ class OciStore:
         self._name = vault.name
         self._vault_id = vault.vault_id
         self._compartment_id = vault.compartment_id
+        self._key_id = vault.key_id
+        self._settle_s = vault.timeout_s or SETTLE_TIMEOUT_S
         self._vault_seen = False
         self._vaults = vaults
         self._secrets = secrets
         self._kms = kms
         self._now = now
+        self._sleep = sleep
+        self._monotonic = monotonic
 
     def supports(self) -> frozenset[str]:
         """What works in this build. Each capability arrives with its methods:
-        ``cas`` and ``staging_labels`` with the writes (#1133)."""
+        ``cas`` with the lock records (#1152), and ``staging_labels`` with
+        staging (#1153). There is no ``merge_patch``: OCI has none."""
         return frozenset({LIST, VERSIONING})
 
     def health(self) -> StoreHealth:
@@ -183,10 +229,46 @@ class OciStore:
                 return tuple(sorted(found))
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
-        self._not_built("writing")
+        """Write ``data`` as the new CURRENT version, and return the new token.
+
+        A secret that does not exist is created, with the store's KMS key, at
+        token 1. ``cas`` is compared with the write counter before anything is
+        sent, and the ETag guards the update itself. The call returns once the
+        secret is ACTIVE again, so a read straight afterwards sees ``data``.
+        """
+        if _names.is_lock(path):
+            raise StoreError(
+                f'vault "{self._name}": lock records on an OCI store are not built in this version',
+                hint="this version can write an application secret on an OCI store, not a lock",
+            )
+        name = _names.to_oci(path)
+        what = self._what(name)
+        live = self._live(name, what=what)
+        if live is None:
+            if cas not in (0, None):
+                raise CasConflictError(
+                    f"compare-and-set failed at {path!r}: expected version {cas}, found nothing"
+                )
+            self._create(name, data, what=what)
+            return 1
+        token = _token(live.metadata, what=what)
+        # `cas: 0` asserts that nothing is there, and a token is never below 1.
+        if cas is not None and cas != token:
+            raise CasConflictError(
+                f"compare-and-set failed at {path!r}: expected version {cas}, found {token}"
+            )
+        self._update(
+            live,
+            what=what,
+            secret_content=_encode(data),
+            metadata={**live.metadata, _names.CAS_KEY: str(token + 1)},
+        )
+        return token + 1
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
-        self._not_built("writing")
+        """OCI has no merge patch, so the store does not declare ``merge_patch``,
+        and :func:`~sopuli.store.credentials.apply_patch` never asks."""
+        raise StoreError(f'vault "{self._name}": an OCI store has no merge patch')
 
     def metadata(self, path: str) -> PathMetadata | None:
         self._not_built("reading")
@@ -205,8 +287,142 @@ class OciStore:
     def _not_built(self, doing: str) -> NoReturn:
         raise StoreError(
             f'vault "{self._name}": {doing} an OCI store is not built in this version',
-            hint="this version can check, read and list an OCI store only",
+            hint="this version can check, read, list and write an OCI store's secrets",
         )
+
+    def _what(self, name: str) -> str:
+        return f'secret "{name}" in vault "{self._name}"'
+
+    # ------------------------------------------------------------- writes ---
+
+    def _live(self, name: str, *, what: str) -> _Live | None:
+        """The secret called ``name`` as ``GetSecret`` sees it once ACTIVE, or
+        ``None`` if there is none that is not being deleted."""
+        summary = next(
+            (one for one in self._summaries(name) if one.lifecycle_state not in GONE), None
+        )
+        if summary is None:
+            self._check_vault()
+            return None
+        response = self._get(summary.id, what=what)
+        if response.data.lifecycle_state != ACTIVE:
+            response = self._settle(summary.id, name=name, written=False, what=what)
+        etag = (response.headers or {}).get("etag")
+        if not etag:
+            # Without an ETag the update could not be a compare-and-set.
+            raise StoreError(f"{what}: OCI sent no ETag, so it cannot be written safely")
+        return _Live(
+            id=summary.id, name=name, etag=etag, metadata=dict(response.data.metadata or {})
+        )
+
+    def _create(self, name: str, data: Any, *, what: str) -> None:
+        """``CreateSecret``, at token 1, and the wait for ACTIVE."""
+        if self._key_id is None:
+            # Unreachable through a config file, which requires the key.
+            raise StoreError(f'vault "{self._name}" needs a key_id to create {what}')
+        details = oci.vault.models.CreateSecretDetails(
+            compartment_id=self._compartment_id,
+            vault_id=self._vault_id,
+            key_id=self._key_id,
+            secret_name=name,
+            secret_content=_encode(data),
+            metadata={_names.CAS_KEY: "1"},
+        )
+        try:
+            created = self._vaults.create_secret(details).data
+        except oci.exceptions.ServiceError as exc:
+            if exc.status == 400 and "already exists" in (exc.message or ""):
+                self._taken(name, exc, what=what)
+            _errors.raise_for(exc, what=what)
+        except NO_ANSWER as exc:
+            raise _errors.unreachable(exc, what=what) from exc
+        self._settle(created.id, name=name, written=True, what=what)
+
+    def _taken(self, name: str, exc: Any, *, what: str) -> NoReturn:
+        """Say why OCI refused a create for a name that is held.
+
+        OCI answers ``400 InvalidParameter: name already exists`` whether the
+        name belongs to a live secret or to one scheduled for deletion
+        (``oci-create-taken``). The first is another writer that created it
+        after this run looked; the second keeps the name for days, and needs
+        somebody to act.
+        """
+        held = [one.lifecycle_state for one in self._summaries(name)]
+        if any(state not in GONE for state in held):
+            raise CasConflictError(
+                f"{what} was created by another writer after this run looked "
+                f"({_errors.describe(exc)})"
+            ) from exc
+        if held:
+            raise StoreError(
+                f"{what} cannot be created: a secret of that name is scheduled for deletion, "
+                f"and OCI keeps the name until it is deleted ({_errors.describe(exc)})",
+                hint="cancel the deletion in OCI to use that secret again, or name another one",
+            ) from exc
+        _errors.raise_for(exc, what=what)
+
+    def _update(self, live: _Live, *, what: str, **details: Any) -> None:
+        """``UpdateSecret`` under ``live``'s ETag, and the wait for ACTIVE.
+
+        A ``409 IncorrectState`` means another writer made the secret busy
+        after :meth:`_live` saw it ACTIVE. The store waits that out and sends
+        the update once more with the same ETag: if the other writer changed
+        the secret, OCI answers ``409 Conflict``, a lost compare-and-set.
+        """
+        update = oci.vault.models.UpdateSecretDetails(**details)
+        try:
+            self._send_update(live, update, what=what)
+        except oci.exceptions.ServiceError as exc:
+            if exc.status != 409 or exc.code != INCORRECT_STATE or not exc.request_id:
+                _errors.raise_for(exc, what=what)
+            self._settle(live.id, name=live.name, written=False, what=what)
+            try:
+                self._send_update(live, update, what=what)
+            except oci.exceptions.ServiceError as again:
+                _errors.raise_for(again, what=what)
+        self._settle(live.id, name=live.name, written=True, what=what)
+
+    def _send_update(self, live: _Live, update: Any, *, what: str) -> None:
+        try:
+            self._vaults.update_secret(live.id, update, if_match=live.etag)
+        except NO_ANSWER as exc:
+            raise _errors.unreachable(exc, what=what) from exc
+
+    def _settle(self, secret_id: str, *, name: str, written: bool, what: str) -> Any:
+        """Wait until the secret is ACTIVE, and return that ``GetSecret`` answer.
+
+        Bounded by the store's ``timeout_s``, or :data:`SETTLE_TIMEOUT_S`.
+        ``written`` says whether this run's write was already accepted, which
+        the error must say if the wait gives up: the write is made either way.
+        """
+        start = self._monotonic()
+        with waiting(f"Waiting for OCI secret `{name}` to finish updating"):
+            while True:
+                response = self._get(secret_id, what=what)
+                state = response.data.lifecycle_state
+                if state == ACTIVE:
+                    return response
+                if state not in BUSY:
+                    raise StoreError(f"{what} is {state}, so it cannot be written")
+                waited = self._monotonic() - start
+                if waited >= self._settle_s:
+                    made = "the write was made, and " if written else ""
+                    raise _errors.OciUnavailableError(
+                        f"{what}: {made}the secret is still {state} after {waited:.0f} s",
+                        hint=(
+                            f"OCI keeps a secret busy for about 20 seconds after a write; "
+                            f'`timeout_s` on vault "{self._name}" bounds this wait'
+                        ),
+                    )
+                self._sleep(POLL_S)
+
+    def _get(self, secret_id: str, *, what: str) -> Any:
+        try:
+            return self._vaults.get_secret(secret_id)
+        except oci.exceptions.ServiceError as exc:
+            _errors.raise_for(exc, what=what)
+        except NO_ANSWER as exc:
+            raise _errors.unreachable(exc, what=what) from exc
 
     def _bundle(self, path: str, **which: Any) -> Stored | None:
         """One ``GetSecretBundleByName``, as a :class:`Stored`, or ``None``."""
@@ -280,15 +496,21 @@ class OciStore:
 
     def _listed(self, name: str) -> bool:
         """Whether a secret of that name, not being deleted, is in the store's compartment."""
+        return any(one.lifecycle_state not in GONE for one in self._summaries(name))
+
+    def _summaries(self, name: str) -> tuple[Any, ...]:
+        """Every secret called ``name`` in the store's compartment, deleting ones
+        included. Names are unique in a vault, so there is one at most, unless
+        an old one is still on its way out."""
         try:
             response = self._vaults.list_secrets(
                 self._compartment_id, vault_id=self._vault_id, name=name
             )
         except oci.exceptions.ServiceError as exc:
-            _errors.raise_for(exc, what=f'secret "{name}" in vault "{self._name}"')
+            _errors.raise_for(exc, what=self._what(name))
         except NO_ANSWER as exc:
             raise _errors.unreachable(exc, what=f'vault "{self._name}"') from exc
-        return any(one.lifecycle_state not in GONE for one in response.data)
+        return tuple(response.data)
 
     def _check_vault(self) -> None:
         """Tell an empty answer from a missing vault, once per store.
@@ -327,6 +549,19 @@ def _content(bundle: Any, *, what: str) -> str:
         # Not `from exc`, and not its text: a UnicodeDecodeError quotes a byte
         # of the content, and the content is a secret.
         raise StoreError(f"{what} has content that is not UTF-8 text") from None
+
+
+def _encode(data: Any) -> Any:
+    """``data`` as a CURRENT version's content: JSON, UTF-8, base64.
+
+    The one place a password leaves the process on an OCI store (invariant 2).
+    """
+    text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    return oci.vault.models.Base64SecretContentDetails(
+        content_type="BASE64",
+        content=base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        stage=CURRENT,
+    )
 
 
 def _json_object(text: str, *, what: str) -> dict[str, Any]:

@@ -3462,3 +3462,31 @@ the register.
     delivery design for OCI.
   - Refuse every secret the tool did not create. It rules out estates where
     Terraform or ESO creates the secret and the tool rotates it.
+
+## #1133
+
+- **Decided:** 2026-10-28, on #1128 (decision 8)
+- **Question:** OCI keeps a secret busy for about 20 seconds after every write,
+  refuses another write meanwhile with `409 IncorrectState`, and answers a read
+  meanwhile with the old content (#1136, #1151). Does the store wait, and what
+  does the operator see while it does?
+- **Decision:** Each OCI write waits until the secret is `ACTIVE` again before
+  it returns, polling every 2 seconds, bounded by the store's `timeout_s`
+  (120 seconds when it is not set). The wait runs under the existing spinner,
+  naming the secret. The spinner is the terminal's only: JSON output, a stream
+  that is not a terminal, and `--debug` are unchanged. The store layer writes
+  to no stream, so the CLI hands it the spinner for the length of a verb
+  (`sopuli/store/waiting.py`), and outside a verb the wait shows nothing. If
+  the wait gives up, the error says the write was made.
+- **Why:** Without the wait, a `check` straight after `apply` reads the old
+  password and reports a mismatch, and the next write to the same secret fails.
+  Twenty silent seconds per write look like a hang. Handing the store a notice
+  keeps the rule that the store layer neither prints nor imports the output
+  layer.
+- **Rejected:**
+  - Wait only before the next write to the same secret. A read straight after
+    the write would still see the old content.
+  - Pass the emitter to every store. Each backend would then depend on the
+    output layer, and the HashiCorp backend has nothing to wait for.
+  - A separate setting for the wait. `timeout_s` already bounds how long the
+    run may stall on this store, and the lock is held throughout either way.

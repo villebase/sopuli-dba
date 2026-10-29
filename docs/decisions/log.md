@@ -3633,18 +3633,23 @@ the register.
   login is refused during the run, as a row error, not at plan time as
   invariant 4 asks. Should the refusal move to plan time?
 - **Decision:** No. libpq 16 is the supported floor, and the documents say so.
-  The `psycopg[binary]` wheels that the `postgres` extra installs bundle libpq
-  16 or later. A psycopg that loads an older system libpq, such as
-  `psycopg[c]`, is not supported. The refusal during the run stays, as a
-  backstop, and it is an accepted exception to invariant 4. `sopuli doctor`
-  reports the libpq it loaded.
-- **Why:** The supported install cannot reach the refusal. Moving it to plan
+  On Windows AMD64 and Linux x86_64, every `psycopg[binary]` wheel from the
+  extra's floor, 3.1.12, bundles libpq 16 or later. A psycopg that loads an
+  older system libpq, such as `psycopg[c]` or the pure-Python build, is not
+  supported. The refusal during the run stays, as a backstop, and it is an
+  accepted exception to invariant 4. `sopuli doctor` reports the libpq it
+  loaded.
+- **Why:** The measured supported installs cannot reach the refusal. macOS and
+  Linux arm64 wheels are not measured (`psycopg-libpq-macos`). If one of them
+  bundles an older libpq, this is decided again. Moving the refusal to plan
   time needs a new driver-protocol method that the plan stage calls once per
   driver before it reads a target, and a name for a capability of the client
   rather than of the database. That is a new concept for a case that only an
   unsupported install reaches. No role is changed before the refusal, because
   the first login comes before `ALTER ROLE`. `creds rotate` has staged a
-  `pending` by then, as it does for any row that fails after the draw.
+  `pending` by then, as it does for any row that fails after the draw. The
+  next `creds rotate` refuses until `creds apply` or `creds generate
+  --overwrite-pending` deals with it, as UC-1 §5 describes.
 - **Rejected:**
   - A plan-time client check, `require_client(command)`. It meets invariant 4
     in full, at the cost above.

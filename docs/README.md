@@ -536,8 +536,10 @@ such as "from 16", means the one release of it that was measured.
   not measured. `sql/postgres/07_password_length_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
-  Not run: there is no macOS host. Linux arm64 is not run either. Nothing is
-  built that depends on the answer.
+  Not run: there is no macOS host. Linux arm64 is not run either. The libpq 16
+  floor ([#1076](decisions/log.md#1076)) depends on the answer: a wheel that
+  bundles an older libpq would reach the refusal that #1076 accepts only
+  because the measured installs cannot.
 
 ### Vault
 

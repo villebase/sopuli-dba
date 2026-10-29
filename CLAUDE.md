@@ -91,7 +91,10 @@ detail.
 
 4. **A command that needs an unavailable capability fails at plan time.** It
    exits with a distinct exit code and a message that names the capability and
-   the target. It never fails with a generic error during execution.
+   the target. It never fails with a generic error during execution. One
+   exception is accepted: on PostgreSQL, a libpq older than 16 is refused per
+   account during the run, because no measured supported install has one
+   ([#1076](docs/decisions/log.md#1076)).
 
 5. **The config is the whitelist.** The tool never touches an account the config
    does not declare. Selectors filter the declared set; they cannot extend it.

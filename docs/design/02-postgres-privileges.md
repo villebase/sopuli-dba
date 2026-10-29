@@ -178,13 +178,19 @@ What each outcome means:
   16.15).
 
 `require_auth` needs libpq 16 or later, so **libpq 16 is the supported floor**.
-The `psycopg[binary]` wheels that the `postgres` extra installs bundle libpq 16
-or later. A psycopg that loads a system libpq instead, such as `psycopg[c]`,
-must find 16 or later; an older one is not supported. With an older libpq the
-tool refuses the login and sends nothing. It refuses each account as it reaches
-it, during the run, which is an accepted exception to invariant 4: the
-supported install cannot reach it ([#1076](../decisions/log.md#1076)).
-`sopuli doctor` reports the libpq it loaded on its `require_auth` line.
+On Windows AMD64 and Linux x86_64, every `psycopg[binary]` wheel from 3.1.12,
+the extra's floor, bundles libpq 16 or later (`psycopg-libpq` in
+`../README.md`). macOS and Linux arm64 wheels are not measured
+(`psycopg-libpq-macos`). A psycopg that loads a system libpq instead must find
+16 or later; an older one is not supported. That happens with `psycopg[c]`,
+with the pure-Python build, and where `PSYCOPG_IMPL` selects either.
+
+With an older libpq the tool refuses the login and sends nothing. It refuses
+each account as it reaches it, during the run. That is an accepted exception
+to invariant 4, because the measured supported installs cannot reach it
+([#1076](../decisions/log.md#1076)). `sopuli doctor` prints the libpq it
+loaded on its `libpq` line, and says whether it accepts `require_auth` on the
+next.
 
 ### 2.4 What `doctor --check-privileges` reads
 

@@ -2809,6 +2809,14 @@ name one secret. The limits were measured (`oci-name-rules` in
 [`../README.md`](../README.md) §*Verify before implementing*). Reasons:
 [#1137](../decisions/log.md#1137).
 
+**What the tool reads from an OCI secret.** It reads the way External Secrets
+Operator does, by name, so it sees what an application sees. The content must
+be a JSON object; a secret holding plain text or any other JSON value is
+refused, naming the secret. A secret the tool did not create, by Terraform or
+by hand, is used as it is when its content is a JSON object (#1138).
+`@version=N` names OCI's own version number. A secret being deleted is not
+listed and reads as absent.
+
 For a binding whose store a profile or `SOPULI_VAULT` supplies, these checks and
 the collision rule run when the run completes the store, before any command
 reaches it. They cover the bindings the run selects; a binding a selector leaves

@@ -56,7 +56,12 @@ def ticking() -> Iterator[datetime]:
 def store(reply: Any) -> tuple[OciStore, FakeKms]:
     kms = FakeKms(reply)
     clock = ticking()
-    entry = Vault(name="vault-oci", type="oci", vault_id=VAULT_ID)
+    entry = Vault(
+        name="vault-oci",
+        type="oci",
+        vault_id=VAULT_ID,
+        compartment_id="ocid1.compartment.oc1..exampleuniqueid",
+    )
     return OciStore(entry, vaults=None, secrets=None, kms=kms, now=lambda: next(clock)), kms
 
 
@@ -124,17 +129,12 @@ def test_no_answer_is_unreachable() -> None:
     assert "connection refused" in health.detail
 
 
-def test_reading_is_refused_until_it_is_built() -> None:
-    """Never an empty answer, which would read as "no secret here"."""
+def test_metadata_is_refused_until_it_is_built() -> None:
+    """Never an empty answer, which the lock would read as an untouched path."""
     oci_store, _ = store(vault_reply())
 
     with pytest.raises(StoreError, match="not built"):
-        oci_store.read("acme-db")
-    with pytest.raises(StoreError, match="not built"):
-        oci_store.list("")
-    with pytest.raises(StoreError, match="not built"):
         oci_store.metadata("locks/acme-db")
-    assert oci_store.supports() == frozenset()
 
 
 def test_a_reply_without_a_request_id_did_not_come_from_oci() -> None:

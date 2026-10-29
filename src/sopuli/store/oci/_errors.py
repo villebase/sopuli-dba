@@ -1,15 +1,38 @@
-"""How the OCI store reports an OCI service error.
+"""OCI service errors, as the tool's store errors.
 
-Every report keeps what OCI sent: the HTTP status, OCI's error code, and the
+Every message keeps what OCI sent: the HTTP status, OCI's error code, and the
 ``opc-request-id``, which is what Oracle support asks for. The status alone is
 not enough, because OCI answers 409 for two different things (#1136):
 ``Conflict`` is a lost compare-and-set, and ``IncorrectState`` is a secret
 still ``UPDATING`` from the last write.
+
+OCI answers 404 ``NotAuthorizedOrNotFound`` both for a resource that does not
+exist and for one the caller may not see, by design. So a 404 says "not found
+or not authorised", never just one of them.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
+
+from sopuli.exit_codes import ExitCode
+from sopuli.store.protocol import CasConflictError, StoreError
+
+#: A lost compare-and-set: a stale ``if_match`` ETag (#1136, ``oci-etag-cas``).
+CONFLICT = "Conflict"
+
+
+class OciAuthError(StoreError):
+    """OCI refused the request's signature, or the caller's policy refused it."""
+
+    category = "authorization"
+    exit_code = ExitCode.AUTH_FAILURE
+
+
+class OciUnavailableError(StoreError):
+    """OCI did not answer, was throttling, or failed on its side."""
+
+    category = "connectivity"
 
 
 def describe(exc: Any) -> str:
@@ -18,3 +41,41 @@ def describe(exc: Any) -> str:
     ``exc`` is an ``oci.exceptions.ServiceError``.
     """
     return f"OCI {exc.status} {exc.code}, opc-request-id {exc.request_id or '-'}"
+
+
+def raise_for(exc: Any, *, what: str) -> NoReturn:
+    """Raise the store error for an ``oci.exceptions.ServiceError``.
+
+    ``what`` names the thing asked about, such as ``secret "acme-db"``.
+    """
+    message = f"{what}: {exc.message or 'refused'} ({describe(exc)})"
+    if not exc.request_id:
+        # OCI sends an opc-request-id with every answer, so this one came from
+        # something in between, such as a proxy.
+        raise OciUnavailableError(
+            f"{what}: answered HTTP {exc.status}, which did not come from OCI",
+            hint="check a proxy between this host and OCI",
+        ) from exc
+    if exc.status == 401:
+        raise OciAuthError(
+            message,
+            hint="check the OCI config profile, its key, and that a session has not expired",
+        ) from exc
+    if exc.status == 404:
+        raise StoreError(
+            f"{what} was not found, or this principal may not see it ({describe(exc)})",
+            hint="check the OCID, the region, and the IAM policy for this principal",
+        ) from exc
+    if exc.status == 409 and exc.code == CONFLICT:
+        raise CasConflictError(message) from exc
+    if exc.status == 429 or exc.status >= 500:
+        raise OciUnavailableError(message) from exc
+    raise StoreError(message) from exc
+
+
+def unreachable(exc: Exception, *, what: str) -> OciUnavailableError:
+    """The error for a request that got no answer at all."""
+    return OciUnavailableError(
+        f"{what}: OCI did not answer: {exc}",
+        hint="check the network, a proxy, and the region",
+    )

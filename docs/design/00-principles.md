@@ -297,6 +297,15 @@ it. These are the
 behaviours measured against OCI Vault (#1129, the `oci-*` entries in
 [`../README.md`](../README.md) §*Verify before implementing*).
 
+**The UC-1 verbs reach native staging through an adapter**
+(`sopuli/store/native_view.py`, #1158), so none of them has a second code
+path. For a path that uses native staging, the adapter shows the document the
+verbs already read, with `pending`, `previous` and the stamps where the mirror
+rule puts them, built from the store's versions and attributes. It turns each
+write back into `stage`, `promote` or `write`, and the run reports the
+mechanism as `native_staging`. Decision 3 says what goes where
+([#1158](../decisions/log.md#1158)).
+
 **`write` and `patch` take a compare-and-set version and return the new
 version.** The returned version is the advisory lock's fencing token. A write
 that returned only "ok" would leave the lock nothing to fence with.

@@ -58,6 +58,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.payload import CURRENT, StageLayout, stage_layout
 from sopuli.payload import apply_patch as payload_apply
 from sopuli.secrets import Secret
+from sopuli.store.native_view import NATIVE, NativeStagedStore
 from sopuli.store.protocol import (
     MERGE_PATCH,
     VERSIONING,
@@ -319,7 +320,11 @@ def apply_patch(
         )
     document = None if stored is None else stored.data
     merged = payload_apply(document, _plaintext(patch))
-    return Written(version=store.write(path, merged, cas=cas), mechanism=READ_MODIFY_WRITE)
+    # Through the adapter the whole document becomes store versions, not a
+    # rewritten document, and the run says which (#1158).
+    native = isinstance(store, NativeStagedStore) and store.is_native(path)
+    mechanism = NATIVE if native else READ_MODIFY_WRITE
+    return Written(version=store.write(path, merged, cas=cas), mechanism=mechanism)
 
 
 # ----------------------------------------------------------------- helpers ---

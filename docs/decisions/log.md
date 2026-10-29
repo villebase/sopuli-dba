@@ -3559,3 +3559,31 @@ the register.
     against its own clock, so a host clock running behind would make every
     deletion refused. The probe's day and an hour worked; two days leaves
     margin and costs nothing.
+
+## #1158
+
+- **Decided:** 2026-10-28, #1158
+- **Question:** Decision 3 on #1128. Under native staging, an OCI version's
+  content cannot change after it is written, but some of UC-1's stamps only
+  become true at promotion. Where does each stamp go? And how do the verbs,
+  which read and write stages as payload fields, reach the store's versions?
+- **Decision:** A version's content holds what was true when the password was
+  made: the password at the ref's field, `origin`, `generated_at` and
+  `generated_by`. What becomes true at promotion, `rotated_at`, `rotated_by`,
+  `policy` and `targets`, goes in the secret's attributes, written in the same
+  call that moves CURRENT, with `pending_version`, the number of the live
+  pending. The verbs reach this through an adapter that shows them the
+  document they already read and turns their writes into `stage`, `promote`
+  or `write`.
+- **Why:** The attributes describe only CURRENT, which is all those stamps
+  ever describe, and an application reading CURRENT through External Secrets
+  Operator sees only the content. The verbs read stages in about ten places
+  and write them through two functions; an adapter keeps one code path for
+  both layouts, so no reader can look for a stage where the writer did not
+  put it.
+- **Rejected:**
+  - All stamps in the content. A promotion would have to write a new version
+    to record who promoted it, which is the version-per-change cost native
+    staging exists to avoid.
+  - Teaching each verb `read_stage`, `stage` and `promote` directly. Two code
+    paths per verb, and a reader left behind reads the wrong place.

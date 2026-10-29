@@ -1,8 +1,8 @@
 """P2's store interface over one OCI vault.
 
 This build connects, answers :meth:`OciStore.health`, reads, lists, writes,
-and holds lock records in metadata. Staging comes with #1153, and until then
-it refuses with a :class:`StoreError`.
+holds lock records in metadata, stages and promotes natively, and makes room
+at OCI's 30-version limit (decision 7).
 
 Content is read with ``GetSecretBundleByName``, the call External Secrets
 Operator makes, so the tool reads exactly what an application would. One call
@@ -46,6 +46,7 @@ from sopuli.store.protocol import (
     LIST,
     OK,
     STAGES,
+    STAGING,
     UNREACHABLE,
     VERSIONING,
     CasConflictError,
@@ -103,6 +104,43 @@ CHURN_RETRIES = 3
 #: The errors a request raises when no answer came back at all.
 NO_ANSWER = (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout)
 
+#: OCI's spelling of the other stages the store moves or reads.
+PENDING = "PENDING"
+DEPRECATED = "DEPRECATED"
+
+#: The stages a generation may be promoted from. OCI would promote a
+#: DEPRECATED one too (#1136, M5); the tool never does.
+PROMOTABLE = frozenset({CURRENT, PENDING, "PREVIOUS"})
+
+#: How many versions a secret holds, not counting those scheduled for
+#: deletion (``oci-version-limit``).
+VERSION_LIMIT = 30
+
+#: How far ahead a version's deletion is scheduled: the wait the probe used,
+#: a little over OCI's shortest. The version stops counting at once.
+DELETION_DELAY = timedelta(days=1, hours=1)
+
+
+@dataclass(frozen=True)
+class Room:
+    """How full a secret is, as OCI counts it (decision 7)."""
+
+    versions: int
+    #: The lowest-numbered DEPRECATED version still counted, or ``None``.
+    oldest_deprecated: int | None
+
+    @property
+    def full(self) -> bool:
+        return self.versions >= VERSION_LIMIT
+
+
+@dataclass(frozen=True)
+class Pruned:
+    """A DEPRECATED version this run scheduled for deletion to make room."""
+
+    path: str
+    generation: int
+
 
 @dataclass(frozen=True)
 class _Live:
@@ -146,6 +184,9 @@ class OciStore:
         self._vault_seen = False
         #: Secret ids by name, from this run's reads and creates (:meth:`_live`).
         self._ids: dict[str, str] = {}
+        #: Each version this run deleted to make room (decision 7), for the
+        #: run to report.
+        self.pruned: list[Pruned] = []
         self._vaults = vaults
         self._secrets = secrets
         self._kms = kms
@@ -154,9 +195,8 @@ class OciStore:
         self._monotonic = monotonic
 
     def supports(self) -> frozenset[str]:
-        """What works in this build. ``staging_labels`` arrives with staging
-        (#1153). There is no ``merge_patch``: OCI has none."""
-        return frozenset({CAS, LIST, VERSIONING})
+        """What works in this build. There is no ``merge_patch``: OCI has none."""
+        return frozenset({CAS, LIST, STAGING, VERSIONING})
 
     def health(self) -> StoreHealth:
         """One read-only ``GetVault``, which proves the auth, region and vault id.
@@ -295,6 +335,8 @@ class OciStore:
             raise CasConflictError(
                 f"compare-and-set failed at {path!r}: expected version {cas}, found {token}"
             )
+        if not lock:
+            live = self._make_room(live, path=path, what=what)
         return self._update(
             live,
             what=what,
@@ -328,18 +370,153 @@ class OciStore:
         OCI is every path; it sends nothing."""
 
     def stage(self, path: str, data: Any, *, attributes: Mapping[str, Any], cas: int | None) -> int:
-        self._not_built("writing")
+        """Add ``data`` as a PENDING version, and replace the attributes whole.
+
+        A secret with no CURRENT version is refused: OCI will not create a
+        secret whose only version is PENDING (``oci-create-pending``). A
+        PENDING already there becomes DEPRECATED (``oci-pending-replace``).
+        """
+        _, what, live = self._native(path, attributes, cas=cas, doing="stage")
+        live = self._make_room(live, path=path, what=what)
+        return self._update(
+            live,
+            what=what,
+            guarded=cas is not None,
+            content={"secret_content": _encode(data, stage=PENDING)},
+            metadata=lambda now: _with_token(attributes, now, what=what),
+        )
 
     def promote(
         self, path: str, generation: int, *, attributes: Mapping[str, Any], cas: int | None
     ) -> int:
-        self._not_built("writing")
+        """Make ``generation`` CURRENT, and replace the attributes whole, in one call.
 
-    def _not_built(self, doing: str) -> NoReturn:
-        raise StoreError(
-            f'vault "{self._name}": {doing} an OCI store is not built in this version',
-            hint="this version can check, read, list and write an OCI store's secrets",
+        OCI promotes a DEPRECATED version without complaint
+        (``oci-promote-metadata``), so the store checks first that the
+        generation holds CURRENT, PENDING or PREVIOUS, and refuses any other.
+        Promoting the CURRENT generation changes only the attributes.
+        """
+        _, what, live = self._native(path, attributes, cas=cas, doing="promote")
+        try:
+            version = self._vaults.get_secret_version(live.id, generation).data
+        except oci.exceptions.ServiceError as exc:
+            if exc.status != 404 or not exc.request_id:
+                _errors.raise_for(exc, what=what)
+            version = None
+        except NO_ANSWER as exc:
+            raise _errors.unreachable(exc, what=what) from exc
+        if version is None or not set(version.stages or ()) & PROMOTABLE:
+            raise StoreError(
+                f"generation {generation} of {what} is not CURRENT, PENDING or PREVIOUS, "
+                f"so it cannot be promoted",
+                hint="a deprecated generation is never brought back; stage a new one",
+            )
+        return self._update(
+            live,
+            what=what,
+            guarded=cas is not None,
+            content={"current_version_number": generation},
+            metadata=lambda now: _with_token(attributes, now, what=what),
         )
+
+    def room(self, path: str) -> Room | None:
+        """How full the secret at ``path`` is, or ``None`` if there is none.
+
+        For the plan (#1134): a write or a stage to a full secret first deletes
+        its oldest DEPRECATED version, and one with none is refused.
+        """
+        name = _names.to_oci(path)
+        what = self._what(name)
+        live = self._live(name, what=what)
+        return None if live is None else self._room(live.id, what=what)
+
+    def _native(
+        self, path: str, attributes: Mapping[str, Any], *, cas: int | None, doing: str
+    ) -> tuple[str, str, _Live]:
+        """The checks ``stage`` and ``promote`` share, and the secret they act on."""
+        if _names.is_lock(path):
+            raise StoreError(f"a lock record is never staged or promoted: {path!r}")
+        reserved = sorted(set(attributes) & _names.RESERVED_KEYS)
+        if reserved:
+            raise StoreError(
+                f"the attributes for {path!r} use a key this tool keeps for itself: "
+                f"{', '.join(reserved)}"
+            )
+        name = _names.to_oci(path)
+        what = self._what(name)
+        live = self._live(name, what=what)
+        if live is None:
+            raise StoreError(
+                f"{what} does not exist, so it has no CURRENT generation to {doing} beside",
+                hint="write the first version, which is CURRENT, then stage",
+            )
+        token = _token(live.metadata, what=what)
+        if cas is not None and cas != token:
+            raise CasConflictError(
+                f"compare-and-set failed at {path!r}: expected version {cas}, found {token}"
+            )
+        return name, what, live
+
+    def _room(self, secret_id: str, *, what: str) -> Room:
+        """``ListSecretVersions``, counted as OCI counts them (``oci-version-limit``)."""
+        counted = 0
+        deprecated: list[int] = []
+        page = None
+        while True:
+            try:
+                response = self._vaults.list_secret_versions(secret_id, page=page)
+            except oci.exceptions.ServiceError as exc:
+                _errors.raise_for(exc, what=what)
+            except NO_ANSWER as exc:
+                raise _errors.unreachable(exc, what=what) from exc
+            for version in response.data:
+                if version.time_of_deletion is not None:
+                    continue
+                counted += 1
+                if set(version.stages or ()) - {"LATEST"} == {DEPRECATED}:
+                    deprecated.append(version.version_number)
+            page = response.next_page
+            if not page:
+                return Room(versions=counted, oldest_deprecated=min(deprecated, default=None))
+
+    def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:
+        """Decision 7: before adding a version to a full secret, delete its
+        oldest DEPRECATED version, so the write fits.
+
+        A version scheduled for deletion stops counting at once (#1136, M7c).
+        Scheduling it makes the secret busy for about 20 seconds (#1151, M11),
+        so the store waits, reads the secret again, and checks that the counter
+        has not moved meanwhile. CURRENT, PENDING and PREVIOUS are never
+        touched, so a rollback still works.
+        """
+        room = self._room(live.id, what=what)
+        if not room.full:
+            return live
+        if room.oldest_deprecated is None:
+            raise StoreError(
+                f"{what} holds {room.versions} versions, OCI's limit, and none of them is "
+                f"DEPRECATED, so none can be removed without breaking a rollback",
+                hint="finish or discard the rotation in progress, then run again",
+            )
+        when = self._now() + DELETION_DELAY
+        try:
+            self._vaults.schedule_secret_version_deletion(
+                live.id,
+                room.oldest_deprecated,
+                oci.vault.models.ScheduleSecretVersionDeletionDetails(time_of_deletion=when),
+            )
+        except oci.exceptions.ServiceError as exc:
+            _errors.raise_for(exc, what=what)
+        except NO_ANSWER as exc:
+            raise _errors.unreachable(exc, what=what) from exc
+        self.pruned.append(Pruned(path=path, generation=room.oldest_deprecated))
+        response = self._settle(live.id, name=live.name, written=False, what=what)
+        fresh = self._as_live(live.id, live.name, response, what=what)
+        if _token(fresh.metadata, what=what) != _token(live.metadata, what=what):
+            raise CasConflictError(
+                f"{what} was written by another writer while this run made room in it"
+            )
+        return fresh
 
     def _what(self, name: str) -> str:
         return f'secret "{name}" in vault "{self._name}"'
@@ -776,16 +953,22 @@ def _name_taken(exc: Any) -> bool:
     )
 
 
-def _encode(data: Any) -> Any:
-    """``data`` as a CURRENT version's content: JSON, UTF-8, base64.
+def _encode(data: Any, *, stage: str = CURRENT) -> Any:
+    """``data`` as a version's content, in ``stage``: JSON, UTF-8, base64.
 
     The one place a password leaves the process on an OCI store (invariant 2).
     """
     return oci.vault.models.Base64SecretContentDetails(
         content_type="BASE64",
         content=base64.b64encode(_compact(data).encode("utf-8")).decode("ascii"),
-        stage=CURRENT,
+        stage=stage,
     )
+
+
+def _with_token(attributes: Mapping[str, Any], now: _Live, *, what: str) -> dict[str, Any]:
+    """The metadata a stage or a promotion sends: the attributes, which replace
+    the old map whole, and the counter moved on from ``now``."""
+    return {**attributes, _names.CAS_KEY: str(_token(now.metadata, what=what) + 1)}
 
 
 def _check_size(metadata: Mapping[str, Any], *, what: str) -> None:

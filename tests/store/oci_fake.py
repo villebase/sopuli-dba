@@ -50,11 +50,17 @@ def refused(status: int, code: str, message: str) -> Any:
     return oci.exceptions.ServiceError(status, code, {"opc-request-id": f"req-{status}"}, message)
 
 
+#: How many versions a secret holds, not counting those scheduled for
+#: deletion (#1136, M7 and M7c).
+VERSION_LIMIT = 30
+
+
 @dataclass
 class FakeVersion:
     number: int
     content: bytes
     stages: set[str]
+    time_of_deletion: Any = None
 
 
 @dataclass
@@ -77,8 +83,14 @@ class FakeSecret:
                 return one
         raise not_found(f"version {number} of {self.name} not found")
 
+    def counted(self) -> int:
+        return sum(1 for one in self.versions if one.time_of_deletion is None)
+
     def add(self, content: bytes, *, stage: str) -> None:
-        """A new version. A new PENDING deprecates the old one (M6)."""
+        """A new version. A new PENDING deprecates the old one (M6). A 31st
+        counted version is refused (M7)."""
+        if self.counted() >= VERSION_LIMIT:
+            raise refused(400, "LimitExceeded", "The limit for this tenancy has been exceeded.")
         for one in self.versions:
             one.stages.discard("LATEST")
             if stage == "PENDING" and "PENDING" in one.stages:
@@ -315,6 +327,53 @@ class FakeOci:
         secret.etag += 1
         self._busy(secret, "UPDATING")
         return SimpleNamespace(data=self._data(secret), headers={"etag": str(secret.etag)})
+
+    def get_secret_version(self, secret_id: str, secret_version_number: int) -> Any:
+        self.calls.append("get_secret_version")
+        version = self._by_id(secret_id).version(secret_version_number)
+        return SimpleNamespace(
+            data=SimpleNamespace(
+                version_number=version.number,
+                stages=sorted(version.stages),
+                time_of_deletion=version.time_of_deletion,
+            )
+        )
+
+    def list_secret_versions(self, secret_id: str, page: str | None = None) -> Any:
+        self.calls.append("list_secret_versions")
+        everything = self._by_id(secret_id).versions
+        start = int(page or 0)
+        chunk = everything[start : start + self.page_size]
+        more = start + self.page_size < len(everything)
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(
+                    version_number=one.number,
+                    stages=sorted(one.stages),
+                    time_of_deletion=one.time_of_deletion,
+                )
+                for one in chunk
+            ],
+            next_page=str(start + self.page_size) if more else None,
+        )
+
+    def schedule_secret_version_deletion(
+        self,
+        secret_id: str,
+        secret_version_number: int,
+        schedule_secret_version_deletion_details: Any,
+    ) -> Any:
+        """Only a DEPRECATED version may go (M6), and the secret is then busy
+        for a while (M11)."""
+        self.calls.append("schedule_secret_version_deletion")
+        secret = self._by_id(secret_id)
+        version = secret.version(secret_version_number)
+        if secret.lifecycle_state != "ACTIVE" or version.stages - {"LATEST"} != {"DEPRECATED"}:
+            raise refused(409, "IncorrectState", "The version is in a conflicting state.")
+        version.time_of_deletion = schedule_secret_version_deletion_details.time_of_deletion
+        secret.etag += 1
+        self._busy(secret, "UPDATING")
+        return SimpleNamespace(data=None, headers={})
 
     # -- KmsVaultClient -----------------------------------------------------
 

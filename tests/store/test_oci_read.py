@@ -17,7 +17,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._errors import raise_for
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY, from_oci, to_oci
-from sopuli.store.protocol import CAS, LIST, VERSIONING, CasConflictError, StoreError
+from sopuli.store.protocol import CasConflictError, StoreError
 
 
 @pytest.fixture
@@ -49,11 +49,6 @@ def test_any_other_path_with_a_separator_is_refused() -> None:
 
 
 # ------------------------------------------------------------------ reads ---
-
-
-def test_it_declares_cas_list_and_versioning() -> None:
-    """`staging_labels` arrives with staging (#1153), and OCI has no merge patch."""
-    assert store(FakeOci()).supports() == frozenset({CAS, LIST, VERSIONING})
 
 
 def test_a_read_returns_current_with_its_stamps(fake: FakeOci) -> None:
@@ -263,14 +258,6 @@ def test_a_write_counter_the_tool_did_not_write_is_refused(fake: FakeOci) -> Non
 
     with pytest.raises(StoreError, match="write counter"):
         store(fake).read("acme-db")
-
-
-def test_staging_is_refused_until_it_is_built(fake: FakeOci) -> None:
-    """Staging comes with #1153; writing an application secret is in `test_oci_write.py`."""
-    fake.put("acme-db", {"password": "a"})
-
-    with pytest.raises(StoreError, match="not built"):
-        store(fake).stage("acme-db", {"password": "b"}, attributes={}, cas=1)
 
 
 # ---------------------------------------------------------------- listing ---

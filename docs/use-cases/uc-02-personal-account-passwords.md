@@ -552,9 +552,9 @@ rules apply:
   name. A reset of a `C##` account never reads `<prefix>/<target>/c`: a record
   or lock there is an account named `C`'s. A reset of `C` reads and locks it,
   `lock status` lists it as the lock of `c`, and `lock break` can break it.
-  Releases up to 0.79.0 wrote every `C##` account's record and lock there, so
-  everyone who resets `C##` accounts on one target runs the same release. With
-  two releases, one account is locked at two paths
+  Everyone who resets `C##` accounts on one target runs 0.80.0 or later. An
+  earlier release writes every `C##` account's record and lock at
+  `<prefix>/<target>/c`, so with both in use one account is locked at two paths
   ([#884](../decisions/log.md#884)).
 
 **The record is written after the database confirms and after delivery** (§6.4).
@@ -1477,8 +1477,7 @@ method `accessor` is `null`, because there is no token to name. `expires_at` is
 the version's `deletion_time`. `path` and `version` are added for this method:
 the path written and the KV version the write created. Vault's audit device logs
 the person's read under their own identity, and the path and version find it
-there. Neither retrieves anything. The two fields are a minor bump of the run
-schema, made with the method.
+there. Neither retrieves anything.
 
 **How `one_time_link` makes the link** (decided in
 [#445](../decisions/log.md#445)). The method works with a Yopass server. Yopass
@@ -1536,10 +1535,10 @@ so the tool splits for such a server.
 method `accessor` is `null` and `id` is the secret's id. Yopass returns no
 expiry, so `expires_at` is the `Date` header of the server's answer to the
 create, plus `ttl`. It comes from the server's clock, as it does on the Vault
-methods. An answer without a `Date` header leaves it `null`. The id names the secret and cannot read it, but like an accessor it can
-destroy what it names: whoever holds it can fetch the ciphertext, which uses up
-the view, or delete the secret. The person's own fetch then fails, so either is
-visible. `id` is a minor bump of the run schema, made with the method.
+methods. An answer without a `Date` header leaves it `null`. The id names the
+secret and cannot read it, but like an accessor it can destroy what it names:
+whoever holds it can fetch the ciphertext, which uses up the view, or delete
+the secret. The person's own fetch then fails, so either is visible.
 
 ### 6.7 Reusable by UC-4
 

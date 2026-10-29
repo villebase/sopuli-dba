@@ -1700,8 +1700,8 @@ worse than the drift the check was looking for. All of these mitigations apply:
    of folding them into `DRIFT`. A `LOCKED(TIMED)` account is reported as
    `LOCKED`. On a PDB target, a common account that its failed logins locked
    reads `OPEN`, because the lock is in `CDB$ROOT`. The login then gets
-   `ORA-28000`, and the row is `UNVERIFIABLE`. `--method hash` makes no login,
-   so its row says that a lock from failed logins may not show.
+   `ORA-28000`, and the row is `UNVERIFIABLE`. `--method hash` refuses such an
+   account, because the PDB does not hold its verifiers either (below).
 
 ### `--method hash`: verification without a login attempt
 
@@ -1731,6 +1731,14 @@ lacks it) has nothing to compare. So an explicit `--method hash` or
 `login`. The pre-flight checks every value the run will compare, including the
 previous one under `--include-previous`, because the character-set refusal
 depends on the value.
+
+**A common account on a PDB target is refused the same way** (decided in
+#1126). In a PDB, its `SPARE4` holds a placeholder of the right shape, `S:` and
+`T:` followed by blanks. Its verifiers are held in `CDB$ROOT`, and a password
+change there leaves the PDB's row as it was. The refusal names the container,
+and says to verify by `login` or on a target that connects to `CDB$ROOT`. An
+application-common account in an application container is refused too, because
+where its verifiers are held was not measured.
 
 **`--method both` compares first** (decided in #437). A mismatch is reported as
 drift from the comparison alone, and no login is attempted, because spending

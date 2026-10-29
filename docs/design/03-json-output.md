@@ -680,7 +680,9 @@ target. `creds check --method hash|both` adds names about an account:
 
 - `verifier_12c`: the account has no 12C verifier;
 - `verifier_12c_format`: a `T:` or `t:` token is in a format never measured;
-- `verifier_charset`: the database character set cannot hold the vault value.
+- `verifier_charset`: the database character set cannot hold the vault value;
+- `verifier_container`: the account is common and the target is not
+  `CDB$ROOT`, so its verifiers are not in the container read.
 
 `error.hint` names the account, because per-account detail goes there.
 `encrypted_connection` is about a connection: `safety.require_encryption`

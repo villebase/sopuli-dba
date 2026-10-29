@@ -3559,3 +3559,29 @@ the register.
     against its own clock, so a host clock running behind would make every
     deletion refused. The probe's day and an hour worked; two days leaves
     margin and costs nothing.
+
+## #1126
+
+- **Decided:** 2026-10-29, #1126
+- **Question:** `creds check --method hash` refused a common account on a PDB
+  target with a hint about an unmeasured verifier format. In a PDB, a common
+  account's `SPARE4` is `S:` and `T:` followed by blanks. Its verifiers are held
+  in `CDB$ROOT`, and a password change there leaves the PDB's row as it was.
+  Measured by `18_common_spare4_probe.sql` on 23.26.3.0.0, 21.3.0.0.0 and
+  18.4.0.0.0. What should hash mode do for such an account?
+- **Decision:** Refuse it at plan time, exit 5, with its own capability name,
+  `verifier_container`, and a hint that names the container and says to verify
+  by `login` or on a target that connects to `CDB$ROOT`. Whether the account is
+  common, and whether the container holds its row, is decided as for the
+  `LCOUNT` guard (#1122): `DBA_USERS.COMMON` in a PDB, the `C##` prefix in an
+  `unknown` scope, a failed read counts as common, and an application container
+  is refused because it was not measured. This replaces #1122's note on a hash
+  row that a lock may not show: such a row is no longer made.
+- **Why:** The refusal was already safe, because a placeholder matches no
+  password. But it named the wrong cause, so an operator would look for a
+  format problem rather than a container one.
+- **Rejected:**
+  - Reword the format refusal when the `T:` part is all blanks. It recognises
+    the placeholder by its look, not by the account, and says nothing about an
+    application container.
+  - Document only. The hint would still name the wrong cause.

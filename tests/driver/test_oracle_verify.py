@@ -674,52 +674,111 @@ def _stub_comparison(
     monkeypatch.setattr(session_module, "compare", lambda *_a, **_k: answer)
 
 
-def test_hash_on_a_common_account_in_a_pdb_says_a_lock_may_not_show(
-    session_module: Any, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("method", ["hash", "both"])
+def test_hash_refuses_a_common_account_in_a_pdb_naming_the_container(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch, method: str
 ) -> None:
-    """The comparison spends nothing, but a pass would read as in sync while
-    `ACCOUNT_STATUS` here says `OPEN` for an account locked in the root."""
+    """#1126: in a PDB a common account's `SPARE4` is `S:` and `T:` followed by
+    blanks, and its verifiers are held in `CDB$ROOT`
+    (`18_common_spare4_probe.sql`). The refusal names the container, not the
+    format, and nothing is read or compared."""
     offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
     asked = _stub_account(session_module, offline, monkeypatch)
+    read: list[str] = []
+    monkeypatch.setattr(session_module, "stored_verifiers", lambda _cursor, name: read.append(name))
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method=method)
+
+    assert refused.value.capability == session_module.VERIFIER_CONTAINER
+    assert refused.value.target == "orders-pdb"
+    assert refused.value.hint == (
+        f"{COMMON_ACCOUNT} is a common account, and its verifiers are held in "
+        "CDB$ROOT; this container holds a blank placeholder in their place; verify "
+        "by `login`, or check the account on a target that connects to CDB$ROOT"
+    )
+    assert asked.common == [COMMON_ACCOUNT], "DBA_USERS.COMMON decides, not the name"
+    assert read == []
+    assert asked.lcount == []
+
+
+def test_the_plan_time_check_makes_the_same_refusal(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`require_verifier` is what `creds check` asks every target before it
+    checks any account (invariant 4)."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
+    _stub_account(session_module, offline, monkeypatch)
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.require_verifier(COMMON_ACCOUNT, Secret(CORRECT))
+
+    assert refused.value.capability == session_module.VERIFIER_CONTAINER
+
+
+@pytest.mark.parametrize(
+    ("scope_type", "common", "reason"),
+    [
+        (
+            "app_pdb",
+            True,
+            f"{COMMON_ACCOUNT} is a common account, and where an application container "
+            "holds its verifiers has not been measured",
+        ),
+        (
+            "unknown",
+            True,
+            f"{COMMON_ACCOUNT} is a common account, and this session's container was "
+            "not resolved, so its verifiers may be held in CDB$ROOT",
+        ),
+        (
+            "pdb",
+            None,
+            f"whether {COMMON_ACCOUNT} is a common account could not be read from "
+            "DBA_USERS, so its verifiers may be held in CDB$ROOT",
+        ),
+    ],
+)
+def test_hash_refuses_where_the_container_cannot_be_shown_to_hold_the_verifiers(
+    session_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    scope_type: str,
+    common: bool | None,
+    reason: str,
+) -> None:
+    """An application container was not measured, an unresolved scope is not
+    assumed to be the root, and a `COMMON` read that does not answer is never
+    *not common*: the same rules as the lockout guard's."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
+    _stub_account(session_module, offline, monkeypatch)
+    monkeypatch.setattr(session_module, "is_common", lambda _cursor, _name: common)
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
+
+    assert refused.value.capability == session_module.VERIFIER_CONTAINER
+    assert (refused.value.hint or "").startswith(f"{reason}; verify by `login`")
+
+
+@pytest.mark.parametrize(
+    ("scope_type", "common"), [("cdb_root", True), ("non_cdb", True), ("pdb", False)]
+)
+def test_hash_compares_where_the_container_holds_the_verifiers(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch, scope_type: str, common: bool
+) -> None:
+    """In `CDB$ROOT` and a non-CDB every account's row is its own, and so is a
+    local account's in a PDB. The comparison runs, and the guard's figures are
+    the account's."""
+    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}), scope_type=scope_type)
+    asked = _stub_account(session_module, offline, monkeypatch, common=common)
     _stub_comparison(session_module, offline, monkeypatch, session_module.NO_MATCH)
 
     result = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="hash")
 
     assert result.result == FAIL
-    assert asked.lcount == []
-    assert result.failed_logins is None
-    assert result.failed_login_limit is None
-    assert result.detail == (
-        f"{session_module._HASH_DETAIL[session_module.NO_MATCH]}; "
-        f"{IN_ROOT}; a lock from failed logins may not show here"
-    )
-
-
-def test_both_on_a_common_account_in_a_pdb_keeps_the_reason_on_each_path(
-    session_module: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`both` words its own mismatch, and logs in after a match. Either way the
-    row says why the counter is missing."""
-    offline = _offline_session(session_module, frozenset({OFFLINE_VERIFY}))
-    _stub_account(session_module, offline, monkeypatch)
-
-    _stub_comparison(session_module, offline, monkeypatch, session_module.NO_MATCH)
-    mismatched = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="both")
-    assert mismatched.result == FAIL
-    assert mismatched.detail == (
-        "matches none of the account's 12C verifiers, so the login half was not spent; "
-        f"{IN_ROOT}; a lock from failed logins may not show here"
-    )
-
-    answers = session_module._HASH_DETAIL
-    matched_answer = next(key for key in answers if key != session_module.NO_MATCH)
-    _stub_comparison(session_module, offline, monkeypatch, matched_answer)
-    matched = offline.verify_password(COMMON_ACCOUNT, Secret(CORRECT), method="both")
-    assert matched.result == PASS
-    assert matched.failed_logins is None
-    assert matched.detail == (
-        f"matches the account's 12C verifier and logs in; {UNGUARDED_IN_ROOT}"
-    )
+    assert asked.lcount == [COMMON_ACCOUNT]
+    assert result.failed_logins == 0
+    assert result.failed_login_limit == "3"
 
 
 @pytest.mark.requires_capability(OFFLINE_VERIFY)

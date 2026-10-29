@@ -3731,7 +3731,11 @@ the register.
   and its profile is not looked up. The guardrails then report it as
   `SKIPPED`, as `creds apply` does, and the rest of the run goes on. `creds
   generate` skips such an account too, so that it stages no `pending` that
-  nothing can apply; that half is #1174.
+  nothing can apply (built in #1174). A password one target refuses is
+  skipped on every binding that shares it, as #872 has `apply` change it on
+  none. `creds apply` then finds no password for the account, and on the
+  target that refuses it reports the guardrail's refusal rather than asking
+  for a `generate` that would skip it again.
 - **Why:** No grant to the tool account can change either answer, because the
   server is what refuses the change. Asking for one turned the refusal of one
   account into the refusal of every account in the run, and the remedy it

@@ -261,8 +261,15 @@ def server_reserved(state: UserState) -> bool:
     out: an undeclared account never reaches the survey, so the account is
     reviewed as declared.
     """
-    refused = {refusal.check for refusal in review(state, declared=(state.name,)).refusals}
-    return bool(refused & (NEVER_WAIVED - {DECLARED}))
+    return server_refusal(state) is not None
+
+
+def server_refusal(state: UserState) -> Refusal | None:
+    """The first refusal :func:`server_reserved` is true for, with its reason, or
+    ``None``. `creds generate` reports it on the account it skips (#1174)."""
+    unwaivable = NEVER_WAIVED - {DECLARED}
+    found = review(state, declared=(state.name,)).refusals
+    return next((refusal for refusal in found if refusal.check in unwaivable), None)
 
 
 def review(state: UserState, *, declared: Collection[str], force: bool = False) -> Review:

@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from sopuli.apply import SKIPPED
 from sopuli.diagnostics import CURRENT_REPLACED, PENDING_REPLACED, POLICY_VIOLATION_ACCEPTED
 from sopuli.generate import VAULT_ONLY, Candidate, DocumentWrite, password_key
 from sopuli.lock.keys import LockKey
@@ -229,16 +230,19 @@ def summarise(states: Sequence[str]) -> Summary:
     ``ok`` and ``changed`` are the same number here and that is not redundancy:
     they answer different questions everywhere else, and a verb whose every
     success is a mutation is exactly where they coincide. ``unchanged`` is what
-    did *not* get written, which under decision #254 is only ever failures.
+    did *not* get written: failures, and the accounts a guardrail check no flag
+    waives refuses, which ``skipped`` also counts (#1174).
     """
     staged = sum(1 for state in states if state in WRITTEN)
     failed = sum(1 for state in states if state == FAILED)
+    skipped = sum(1 for state in states if state == SKIPPED)
     return Summary(
         total=len(states),
         ok=staged,
         changed=staged,
         failed=failed,
         unchanged=len(states) - staged,
+        skipped=skipped or None,
         by_state=dict(sorted({state: states.count(state) for state in set(states)}.items())),
     )
 
@@ -318,10 +322,18 @@ def render_generate(rows: Sequence[tuple[Candidate, str, str]]) -> str:
     result names the targets. The closing line counts passwords, so one shared
     password is "1 staged", as `creds check` counts it as one secret.
     `results[]` keeps one entry per binding (`03-json-output.md`).
+
+    **A row that wrote nothing is its own row.** A skipped or refused binding
+    (#1174) carries its own target's reason, and grouping it would put one
+    target's reason under every target of the password.
     """
     grouped: dict[object, tuple[Candidate, str, str, list[str]]] = {}
     for candidate, state, detail in rows:
-        key = password_key(candidate.binding) or id(candidate)
+        key = (
+            password_key(candidate.binding) or id(candidate)
+            if state in WRITTEN or state == FAILED
+            else id(candidate)
+        )
         found = grouped.setdefault(key, (candidate, state, detail, []))
         found[3].append(candidate.binding.target)
     table = render_table(
@@ -375,6 +387,9 @@ def _verdict(states: Sequence[str]) -> str:
         parts.append(f"{promoted} promoted to current")
     if failed:
         parts.append(f"{failed} failed")
+    skipped = sum(1 for state in states if state == SKIPPED)
+    if skipped:
+        parts.append(f"{skipped} skipped")
     line = ", ".join(parts) or "nothing written"
     if (staged or promoted) and not failed:
         # The sentence that matters after a successful stage: the database has

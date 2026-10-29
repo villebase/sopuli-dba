@@ -2765,6 +2765,12 @@ which is logic this tool already owns. The notes the reading produced
 `generate` is for: `run.started`, `plan.resolved`, `constraints.resolved`,
 `run.finished`.
 
+- **An account no run could apply is `SKIPPED`** (#1174): one that guardrail
+  check 6 or 8 refuses on its target, and every binding that shares its
+  password. Its `results[]` entry has `changed: false`, its
+  `vault_write_pending` action has `applied: false` and the refusal as
+  `detail`, and `summary.skipped` counts it. Nothing is written for it, so it
+  has no `password.generated` and is in no `vault.write`.
 - **The staging events are `rotate`'s**, from the same code: a `vault.read` per
   document, a `password.generated` per account drawn, and one `vault.write` per
   document, however many accounts share it.

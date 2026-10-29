@@ -299,6 +299,19 @@ sopuli creds generate --application acme [--account acme_web_user]
    same connection and reported. If no target is reachable, fall back to the
    policy's declared limits and say so in the output. `--offline` skips this
    step.
+
+   The same connection describes each account. An account that guardrail
+   check 6 (a superuser) or check 8 (a role the server reserves) refuses is
+   skipped: no flag waives either, so a `pending` staged for it could never be
+   applied ([#1117](../decisions/log.md#1117)). A
+   password that one target refuses is skipped on every binding that shares it,
+   as `creds apply` changes on no target a credential that one target refuses
+   (#872). Each skipped binding is a `SKIPPED` row with the refusal's reason,
+   or `REFUSED` where `--account` named it, as `creds apply` reports it, and a
+   preview names it. An account whose state cannot be read is staged as usual,
+   and under `--offline` nothing is read, so nothing is skipped. `creds apply`
+   then finds no password for the account, and on the target that refuses it
+   reports the refusal, not a request to run `generate` first.
 3. Generate from a CSPRNG. Reject and regenerate candidates that break the
    charset, first-character, length-in-bytes or composition rules. The retries
    are bounded.

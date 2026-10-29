@@ -1683,6 +1683,39 @@ def test_a_named_reserved_role_is_not_sent_to_force_or_to_the_whitelist(
     assert "--force to override" not in reported
 
 
+@pytest.mark.parametrize(
+    "refusing",
+    [{"reserved_by": "supautils.reserved_roles"}, {"superuser": True}],
+    ids=["check-8-reserved", "check-6-superuser"],
+)
+def test_a_refused_account_with_no_password_in_the_vault_is_skipped(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    refusing: dict[str, Any],
+) -> None:
+    """`creds generate` stages nothing for an account check 6 or 8 refuses
+    (#1174), so `apply` finds no password for it. The refusal is the cause, so
+    the row is `SKIPPED` with its reason, not an error asking for a `generate`
+    that would skip it again, and the run exits 0."""
+    estate(
+        {
+            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=False, **refusing),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        },
+        document={
+            "DB_CREDENTIALS": {"acme_batch_user": LIVE},
+            "pending": {"acme_batch_user": STAGED},
+        },
+    )
+
+    result = run(runner, write_config(CONFIG), "--confirm", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert states(result)["acme_web_user"] == SKIPPED
+    assert "run `sopuli creds generate` first" not in json.dumps(document(result))
+
+
 def test_the_tool_s_own_account_is_skipped_and_force_changes_it_on_the_record(
     runner: CliRunner,
     write_config: Callable[[str], Path],

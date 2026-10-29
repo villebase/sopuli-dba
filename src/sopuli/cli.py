@@ -5929,7 +5929,8 @@ def creds_generate(
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
 
     supplied = _password_from_stdin() if from_stdin else None
-    limits, unanswered = _constraints_for(bindings, run, config, offline=offline)
+    reserved: dict[tuple[str, str], str] = {}
+    limits, unanswered = _constraints_for(bindings, run, config, offline=offline, reserved=reserved)
     document.constraints = build_constraints(limits, unanswered)
     notices = constraint_diagnostics(limits, supplied=supplied is not None)
     document.diagnostics.extend(notices)
@@ -5953,6 +5954,7 @@ def creds_generate(
             readings=limits.readings,
         ),
     )
+    candidates, skipped = _split_reserved(candidates, reserved)
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
     held = _holders(writes, found, _holds_current) if promote else {}
@@ -5996,6 +5998,14 @@ def creds_generate(
         table.extend(["", _staged_note(staged_over, authorised=discard)])
     for key in (write.key for write in writes if write.key not in found):
         table.extend(["", _unread_note(key, unread.get(key))])
+    if skipped:
+        # Before the write, so a preview shows it too: these accounts are in
+        # the plan, and nothing will be staged for them.
+        table.extend(["", "not staged, because no run could apply it:"])
+        table.extend(
+            f"  {candidate.binding.account} on {candidate.binding.target}: {detail}"
+            for candidate, detail in skipped
+        )
     header = "\n".join([*lines, *table])
     if run.dry_run:
         # Invariant 8: print the plan, write nothing, take no lock. No `results`
@@ -6049,6 +6059,20 @@ def creds_generate(
         raise
 
     _record_locks(document, manager)
+    # Each skipped account as its own row, `SKIPPED` and unchanged, with the
+    # reason: the plan named it, and a result that left it out would leave the
+    # reader to work out why it was never staged (#1174).
+    for candidate, detail in skipped:
+        results.append(
+            build_generate_result(
+                candidate,
+                state=apply_states.SKIPPED,
+                stage=CURRENT if promote else PENDING,
+                changed=False,
+                detail=detail,
+            )
+        )
+        rows.append((candidate, apply_states.SKIPPED, detail))
     document.results = results
     _stream_results(run)
     states = [state for _, state, _ in rows]
@@ -6126,9 +6150,15 @@ def _constraints_for(
     config: Config,
     *,
     offline: bool,
+    reserved: dict[tuple[str, str], str] | None = None,
 ) -> tuple[Constraints, dict[str, Error]]:
     """What the selected targets say a password may be (UC-1 §4 step 2), and why
     each target that did not answer did not.
+
+    ``reserved``, where given, is filled with each ``(target, account)`` that a
+    guardrail check no flag waives refuses whatever is granted, and the reason
+    (:func:`_reserved_on`). Read over the same connection, for the reason the
+    limit is.
 
     **One connection per target, not per account** (§4 step 2). A selection
     routinely puts several accounts on one database, so each distinct target is
@@ -6160,6 +6190,8 @@ def _constraints_for(
             session = _open_session(_expanded(config, name), run, config)
             readings.append((name, session.byte_limit()))
             accounts.extend(_profile_readings(session, name, bindings))
+            if reserved is not None:
+                reserved.update(_reserved_on(session, name, bindings))
         except Exception as error:  # noqa: BLE001 -- every failure takes the same fallback
             # The fallback is the same for every failure; the reason is kept.
             errors[name] = _finding(error)
@@ -6169,6 +6201,68 @@ def _constraints_for(
                     session.close()
     found = constraint_source.survey(readings, unreachable=list(errors), accounts=accounts)
     return found, errors
+
+
+def _reserved_on(
+    session: Any, target: str, bindings: Sequence[Binding]
+) -> dict[tuple[str, str], str]:
+    """Each account on ``target`` that guardrail check 6 or 8 refuses whatever
+    is granted, keyed ``(target, account)``, with the refusal's reason (#1174).
+
+    `creds generate` skips such an account, so it stages no `pending` that no
+    run could apply. **An account whose state cannot be read is not skipped.**
+    Nothing was established about it, and `creds apply`'s guardrails still
+    refuse it there if they must; skipping on an unread state would turn a
+    failed read into a decision.
+    """
+    found: dict[tuple[str, str], str] = {}
+    for account in _declared_on(bindings, target):
+        try:
+            state = session.describe_user(account)
+        except Exception:  # noqa: BLE001 -- unread is not refused; see the docstring
+            continue
+        refusal = None if state is None else guardrails.server_refusal(state)
+        if refusal is not None:
+            found[(target, account)] = refusal.reason
+    return found
+
+
+def _split_reserved(
+    candidates: Sequence[Candidate], reserved: Mapping[tuple[str, str], str]
+) -> tuple[list[Candidate], list[tuple[Candidate, str]]]:
+    """The candidates to stage, and the ones to skip with the reason (#1174).
+
+    **A password refused on one target is staged for none**, as `creds apply`
+    changes on no target a credential a guardrail refuses on one (#872). One
+    password serves every binding that shares its ref, and a `pending` staged
+    for it would be applied nowhere: its own target refuses it, and `apply`
+    holds the others back. So every binding of that password is skipped, and
+    the detail on a binding whose own target does not refuse it names the one
+    that does.
+    """
+    refusing: dict[object, list[tuple[str, str]]] = {}
+    for candidate in candidates:
+        binding = candidate.binding
+        reason = reserved.get((binding.target, binding.account))
+        if reason is not None:
+            key = staging.password_key(binding) or id(candidate)
+            refusing.setdefault(key, []).append((binding.target, reason))
+    kept: list[Candidate] = []
+    skipped: list[tuple[Candidate, str]] = []
+    for candidate in candidates:
+        binding = candidate.binding
+        own = reserved.get((binding.target, binding.account))
+        where = refusing.get(staging.password_key(binding) or id(candidate))
+        if own is not None:
+            skipped.append((candidate, own))
+        elif where:
+            names = ", ".join(target for target, _ in where)
+            skipped.append(
+                (candidate, f"a guardrail refuses this credential on {names}, so it was not staged")
+            )
+        else:
+            kept.append(candidate)
+    return kept, skipped
 
 
 def _profile_readings(
@@ -8252,6 +8346,31 @@ def _apply_target(
                 session.close()
 
 
+def _turned_away(
+    binding: Binding,
+    source: Source | None,
+    review: guardrails.Review,
+    *,
+    selection: Selection,
+    started: float,
+) -> _Applied:
+    """The row of an account §4's guardrails refuse, on its own target.
+
+    §4's two cases, and the only thing separating them is how the account got
+    into this run. Named: the operator asked for something the tool will not
+    do, and a run that reported success would be reporting it for work nobody
+    did. Fell inside a broader selection: skipped, and the run does the rest of
+    its job.
+    """
+    named = selection.names(binding.account)
+    turned_away = check_states.Outcome(
+        apply_states.REFUSED if named else apply_states.SKIPPED,
+        guardrails_reason(review, named=named),
+    )
+    _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
+    return _Applied(binding, source, turned_away, changed=False, duration_ms=_elapsed(started))
+
+
 def _refused_row(
     binding: Binding,
     source: Source | None,
@@ -8491,6 +8610,18 @@ def _apply_one(
         expiry_cleared = (
             user is None or not user.expired or session.scope().supports(EXPIRE_PASSWORD)
         )
+        if source is None and user is not None and guardrails.server_reserved(user):
+            # An account the guardrails refuse whatever is granted has no
+            # password in the vault when `creds generate` skipped it (#1174).
+            # Its refusal is the cause, so the guardrails answer for it rather
+            # than "run generate first", which would only be skipped again.
+            return _turned_away(
+                binding,
+                source,
+                guardrails.review(user, declared=declared, force=force),
+                selection=selection,
+                started=started,
+            )
         settled = apply_states.settled_before_acting(
             user,
             source,
@@ -8515,20 +8646,7 @@ def _apply_one(
         # another round trip.
         review = guardrails.review(user, declared=declared, force=force)
         if not review.permitted:
-            # §4's two cases, and the only thing separating them is how the account
-            # got into this run. Named: the operator asked for something the tool
-            # will not do, and a run that reported success would be reporting it for
-            # work nobody did. Fell inside a broader selection: skipped, and the run
-            # does the rest of its job.
-            named = selection.names(binding.account)
-            turned_away = check_states.Outcome(
-                apply_states.REFUSED if named else apply_states.SKIPPED,
-                guardrails_reason(review, named=named),
-            )
-            _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
-            return _Applied(
-                binding, source, turned_away, changed=False, duration_ms=_elapsed(started)
-            )
+            return _turned_away(binding, source, review, selection=selection, started=started)
         overridden = review.overridden
         # §4's third answer, carried on the accounts this run went on to act on. Not
         # on the refused ones above: an account the guardrails turned away was not

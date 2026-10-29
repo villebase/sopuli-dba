@@ -301,21 +301,37 @@ pgbouncer, service_role*, authenticator*, authenticated*, anon*
 The tool reads this setting before it changes anything, and refuses each
 declared role on the list. This is guardrail check 8
 ([`../design/02-postgres-privileges.md`](../design/02-postgres-privileges.md)
-§5). `--force` does not waive it. This sample used `declared.yaml`, §3's config
-with `authenticator` added to `accounts:`, after `creds generate` staged a
-password for it. Do not repeat it on a real project: `creds generate` writes
-`pending` and `origin` entries for the role into the shared vault document, and
-no run applies or removes them.
+§5). `--force` does not waive it. These samples use `declared.yaml`, §3's config
+with `authenticator` added to `accounts:`.
+
+`creds generate` skips the role, so it stages nothing that no run could apply,
+and stages the others:
 
 ```
-$ sopuli --config declared.yaml creds apply
+$ sopuli --config declared.yaml creds generate --confirm
+...
+not staged, because no run could apply it:
+  authenticator on supabase-dev: the server reserves this account in supautils.reserved_roles, and only a superuser may change it
+
+ACCOUNT           SECRET                       RESULT
+acme_web_user     vault-dev:acme1117/dev/acme  staged v1
+acme_worker_user  vault-dev:acme1117/dev/acme  staged v1
+authenticator     vault-dev:acme1117/dev/acme  the server reserves this account in supautils.reserved_roles, and only a superuser may change it
+
+2 staged, 1 skipped; no database was changed -- run `sopuli creds apply` to use them
+```
+
+`creds apply` skips it too:
+
+```
+$ sopuli --config declared.yaml creds apply --confirm
 ...
 ACCOUNT           TARGET        STATE    DETAIL
-acme_web_user     supabase-dev  IN_SYNC  the vault's password is already accepted; nothing to change
-acme_worker_user  supabase-dev  IN_SYNC  the vault's password is already accepted; nothing to change
+acme_web_user     supabase-dev  IN_SYNC  changed and verified by login
+acme_worker_user  supabase-dev  IN_SYNC  changed and verified by login
 authenticator     supabase-dev  SKIPPED  the server reserves this account in supautils.reserved_roles, and only a superuser may change it
 
-nothing changed, 1 not confirmed
+2 changed, 1 promoted to `current`, 1 not confirmed
 ```
 
 `creds rotate` with the same config skips the role in the same way and rotates

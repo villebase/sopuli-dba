@@ -29,6 +29,7 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
 from sopuli.constraints import AccountConstraints
 from sopuli.diagnostics import CURRENT_REPLACED, PENDING_REPLACED, POLICY_VIOLATION_ACCEPTED
+from sopuli.driver.protocol import UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError
 from sopuli.lock.keys import LockKey
@@ -2103,3 +2104,106 @@ def test_a_selection_does_not_hide_a_collision_on_a_store_the_run_supplies(
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
     assert "acme_batch_user" in str(result.exception)
     assert store.read(PATH) is None
+
+
+# ------------------------------------------- an account no run could apply ---
+#
+# #1174: an account that guardrail check 6 (a superuser) or 8 (a role the server
+# reserves) refuses is skipped, so no `pending` is staged that nothing applies.
+
+
+class _DescribingSession(_Session):
+    """A connection that also describes accounts, as the guardrails read them."""
+
+    def __init__(self, limit: ByteLimit, users: Mapping[str, UserState]) -> None:
+        super().__init__(limit)
+        self.users = dict(users)
+
+    def describe_user(self, account: str) -> UserState | None:
+        return self.users.get(account.upper())
+
+
+def _describing(monkeypatch: pytest.MonkeyPatch, users: Mapping[str, UserState]) -> None:
+    def fake_open(target: Any, invocation: Any, config: Any) -> _DescribingSession:
+        return _DescribingSession(ASCII_128, users)
+
+    monkeypatch.setattr("sopuli.cli._open_session", fake_open)
+
+
+def _user(name: str, **fields: Any) -> UserState:
+    return UserState(name=name, status="OPEN", password_file_member=False, **fields)
+
+
+@pytest.mark.parametrize(
+    "refusing",
+    [{"reserved_by": "supautils.reserved_roles"}, {"superuser": True}],
+    ids=["check-8-reserved", "check-6-superuser"],
+)
+def test_an_account_no_run_could_apply_is_skipped_and_the_rest_is_staged(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+    refusing: dict[str, Any],
+) -> None:
+    """The refused account is `SKIPPED` with its reason and nothing is staged
+    for it; the account beside it in the same document is staged as usual."""
+    _describing(
+        monkeypatch,
+        {
+            "ACME_WEB_USER": _user("ACME_WEB_USER", **refusing),
+            "ACME_BATCH_USER": _user("ACME_BATCH_USER"),
+        },
+    )
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    found = document(result)
+    validator.validate(found)
+    rows = {row["account"]: row for row in found["results"]}
+    assert rows["acme_web_user"]["state"] == "SKIPPED"
+    assert rows["acme_web_user"]["changed"] is False
+    assert rows["acme_batch_user"]["state"] == "PENDING_APPLY"
+    assert found["summary"]["skipped"] == 1
+    assert set(staged(store)) == {"acme_batch_user"}
+
+
+def test_the_skip_is_shown_before_anything_is_written(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preview names the skipped account and why, and writes nothing."""
+    _describing(
+        monkeypatch,
+        {
+            "ACME_WEB_USER": _user("ACME_WEB_USER", reserved_by="supautils.reserved_roles"),
+            "ACME_BATCH_USER": _user("ACME_BATCH_USER"),
+        },
+    )
+
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "not staged, because no run could apply it:" in result.output
+    assert "acme_web_user on appdb-alpha: the server reserves this account" in result.output
+    assert store.read(PATH) is None
+
+
+def test_an_account_whose_state_cannot_be_read_is_staged(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing was established about it, so it is not skipped: an unread state
+    is not a refusal, and `creds apply`'s guardrails still decide."""
+    _reachable(monkeypatch, {"appdb-alpha": ASCII_128})
+
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert {row["state"] for row in document(result)["results"]} == {"PENDING_APPLY"}

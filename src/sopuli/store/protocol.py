@@ -611,3 +611,40 @@ class WriteMechanism(Protocol):
     def mechanism_for(self, path: str) -> str | None: ...
 
     def generation_of(self, path: str) -> int | None: ...
+
+
+@dataclass(frozen=True)
+class Room:
+    """How full a secret is, as its store counts versions (decision 7)."""
+
+    versions: int
+    #: The lowest-numbered DEPRECATED version still counted, or ``None``.
+    oldest_deprecated: int | None
+    #: Whether the store will refuse another version until one goes.
+    full: bool
+
+
+@dataclass(frozen=True)
+class Pruned:
+    """A DEPRECATED version a run scheduled for deletion to make room."""
+
+    path: str
+    generation: int
+
+
+@runtime_checkable
+class VersionLimited(Protocol):
+    """A store that holds a limited number of versions per secret, and makes
+    room by deleting old ones (OCI, decision 7), so a plan can say so (#1159).
+
+    ``room`` is ``None`` where nothing is at ``path``. ``name_held`` says
+    whether a secret being deleted still holds ``path``'s name, so a create
+    there would be refused. ``pruned`` lists each version this client has
+    scheduled for deletion, in order.
+    """
+
+    pruned: list[Pruned]
+
+    def room(self, path: str) -> Room | None: ...
+
+    def name_held(self, path: str) -> bool: ...

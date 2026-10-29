@@ -35,8 +35,17 @@ from sopuli.config.model import Vault
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._errors import OciUnavailableError
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
-from sopuli.store.oci.store import THROTTLE_WAITS, VERSION_LIMIT, Pruned, Room
-from sopuli.store.protocol import CAS, LIST, STAGING, VERSIONING, CasConflictError, StoreError
+from sopuli.store.oci.store import THROTTLE_WAITS, VERSION_LIMIT
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    STAGING,
+    VERSIONING,
+    CasConflictError,
+    Pruned,
+    Room,
+    StoreError,
+)
 
 
 @pytest.fixture
@@ -133,8 +142,19 @@ def test_room_counts_versions_not_scheduled_for_deletion(store: OciStore, fake: 
     secret = fake.put("acme-db", {"p": 1}, {"p": 2}, {"p": 3}, {"p": 4})
     secret.versions[0].time_of_deletion = "2026-10-30T12:00:00Z"
 
-    assert store.room("acme-db") == Room(versions=3, oldest_deprecated=2)
+    assert store.room("acme-db") == Room(versions=3, oldest_deprecated=2, full=False)
     assert store.room("acme-nothing") is None
+
+
+def test_a_name_held_only_by_a_deleting_secret_is_held(store: OciStore, fake: FakeOci) -> None:
+    """``oci-create-taken``: a name a secret scheduled for deletion holds
+    cannot be created, though reads report nothing there (#1159)."""
+    fake.put("acme-gone", {"p": 1}, lifecycle_state="PENDING_DELETION")
+    fake.put("acme-live", {"p": 1})
+
+    assert store.name_held("acme-gone") is True
+    assert store.name_held("acme-live") is False
+    assert store.name_held("acme-nothing") is False
 
 
 def test_a_write_to_a_full_secret_deletes_its_oldest_deprecated_version_first(
@@ -335,7 +355,9 @@ def test_a_throttled_read_is_tried_again(fake: FakeOci) -> None:
     fake.throttle["list_secret_versions"] = 2
     sleeps: list[float] = []
 
-    assert throttled_store(fake, sleeps).room("acme-db") == Room(versions=2, oldest_deprecated=None)
+    assert throttled_store(fake, sleeps).room("acme-db") == Room(
+        versions=2, oldest_deprecated=None, full=False
+    )
     assert sleeps == list(THROTTLE_WAITS[:2])
 
 

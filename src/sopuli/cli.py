@@ -115,7 +115,7 @@ from sopuli.config.password_keys import place_of
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
-from sopuli.config.sharing import native_layouts, unsure_layouts
+from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
 from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
@@ -136,6 +136,7 @@ from sopuli.diagnostics import (
     PROFILE_UNREAD,
     ROLLOVER_LEFT_OPEN,
     ROTATION_UNCONFIRMED,
+    VERSION_PRUNED,
     admin_diagnostics,
     constraint_diagnostics,
     encryption_diagnostics,
@@ -355,6 +356,7 @@ from sopuli.store.credentials import (
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.native_view import LayoutChangedError
 from sopuli.store.native_view import wrap as native_staged
+from sopuli.store.protocol import VersionLimited
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -4681,6 +4683,66 @@ def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mappin
     )
 
 
+def _plan_version_limits(
+    keys: Iterable[LockKey], stores: Mapping[str, SecretStore], run: Invocation
+) -> None:
+    """What a store that limits versions will do to each document, said before
+    the lock (decision 7, #1159).
+
+    Refused, before anything is written:
+
+    * a create on a name that a secret scheduled for deletion still holds,
+      which OCI refuses (``oci-create-taken``);
+    * a write to a full secret with no DEPRECATED version to delete;
+    * a write that would delete a version a ref in the file pins.
+
+    Otherwise a full secret is a ``SOPULI-W059`` saying which version a write
+    may delete: "may", because a write that fails for another reason deletes
+    nothing. One read of the secret's versions per document, on such a store
+    only.
+    """
+    pins = pinned_versions(_declared_estate(run.config))
+    for key in keys:
+        store = stores.get(key.store)
+        if not isinstance(store, VersionLimited):
+            continue
+        where = f"{key.store}:{key.path}"
+        room = store.room(key.path)
+        if room is None:
+            if store.name_held(key.path):
+                raise StoreError(
+                    f"{where} would be created, and a secret of that name is scheduled for "
+                    f"deletion; OCI keeps the name until it is deleted",
+                    hint="cancel the deletion in OCI to use that secret again, or name another one",
+                )
+            continue
+        if not room.full:
+            continue
+        oldest = room.oldest_deprecated
+        if oldest is None:
+            raise StoreError(
+                f"{where} holds {room.versions} versions, its store's limit, and none of them "
+                f"is DEPRECATED, so no room can be made without breaking a rollback",
+                hint="finish or discard the rotation in progress, then run again",
+            )
+        if (key.store, normalise_path(key.path), oldest) in pins:
+            raise ConfigError(
+                f"{where} is full, and making room would delete version {oldest}, which a ref "
+                f"in the configuration pins with `@version={oldest}`",
+                hint="pin a newer version, or remove the pin, then run again",
+            )
+        run.document.diagnostics.append(
+            Diagnostic(
+                level="warning",
+                code=VERSION_PRUNED,
+                message=(
+                    f"{where} holds {room.versions} versions, its store's limit, so a write may "
+                    f"delete version {oldest}, its oldest DEPRECATED one, to make room"
+                ),
+            )
+        )
+
+
 @config_group.command("validate")
 @global_options
 def config_validate(
@@ -5621,6 +5683,7 @@ def creds_generate(
         run,
     )
     found, unread = _plan_documents(keys, stores)
+    _plan_version_limits(keys, stores, run)
     plan = _with_stages(plan, keyed, found, promote=promote)
     _record_plan(plan, run, noun="generation", confirmation_required=asks)
     # No-ops outside `--output jsonl`.
@@ -6800,6 +6863,7 @@ def creds_apply(
         ),
         run,
     )
+    _plan_version_limits(keys, stores, run)
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
     # nothing staged is checked too, which can only refuse more. The two checks
@@ -10955,6 +11019,7 @@ def creds_rotate(
         ),
         run,
     )
+    _plan_version_limits(keys, stores, run)
 
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target

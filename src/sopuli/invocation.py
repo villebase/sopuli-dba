@@ -89,6 +89,7 @@ from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import load_layers
 from sopuli.config.model import Config
 from sopuli.config.vault_env import ADDR_FLAG
+from sopuli.diagnostics import VERSION_PRUNED
 from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockError
@@ -102,7 +103,7 @@ from sopuli.output.notices import render_warnings
 from sopuli.output.tty import is_a_terminal
 from sopuli.settings import Contribution, Layer, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions, env_contributions
-from sopuli.store.protocol import StoreError
+from sopuli.store.protocol import StoreError, VersionLimited
 from sopuli.store.waiting import showing
 from sopuli.version import get_version
 
@@ -1042,7 +1043,11 @@ def _pass_invocation(func: F) -> F:
             # seconds, shows it under this run's spinner (decision 8). The
             # emitter decides whether a spinner may be drawn at all.
             with showing(invocation.emitter().spinner):
-                text = ctx.invoke(func, **kwargs)
+                try:
+                    text = ctx.invoke(func, **kwargs)
+                finally:
+                    # On every way out: a deletion made is made, whatever followed.
+                    _report_pruned(invocation)
         except click.Abort as exc:
             # click would print "Aborted!" and exit 1. P5 puts "aborted by user /
             # confirmation declined" on 8, and an abort raised from inside a verb
@@ -1212,6 +1217,29 @@ def _fail(invocation: Invocation, exc: BaseException) -> None:
     document.error = error
     document.finish(code)
     invocation.emitter().emit(document, "")
+
+
+def _report_pruned(invocation: Invocation) -> None:
+    """One ``SOPULI-W059`` per version a store deleted to make room (#1159).
+
+    Read from the run's clients rather than reported by each verb, so no verb
+    and no way out of one can leave a deletion unsaid. Only a store that
+    limits versions, OCI, ever deletes one (decision 7).
+    """
+    for name, store in invocation.stores.items():
+        if not isinstance(store, VersionLimited):
+            continue
+        for pruned in store.pruned:
+            invocation.document.diagnostics.append(
+                Diagnostic(
+                    level="warning",
+                    code=VERSION_PRUNED,
+                    message=(
+                        f"{name}:{pruned.path} was full, so version {pruned.generation}, its "
+                        f"oldest DEPRECATED one, was scheduled for deletion to make room"
+                    ),
+                )
+            )
 
 
 def _abort(invocation: Invocation) -> None:

@@ -19,14 +19,17 @@ import pytest
 from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
-from native_estate import FIELD, OCI_VAULT, seed, staging_store, view
+from native_estate import FIELD, OCI_VAULT, LimitedStore, limited_store, seed, view
 from sopuli.cli import cli
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
+from sopuli.diagnostics import VERSION_PRUNED
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.payload import CURRENT, PENDING, PREVIOUS
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.native_view import PENDING_VERSION, LayoutChangedError
+from sopuli.store.protocol import Pruned, Room, StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -84,8 +87,8 @@ def validator() -> Draft202012Validator:
 
 
 @pytest.fixture
-def store(monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
-    memory = staging_store()
+def store(monkeypatch: pytest.MonkeyPatch) -> LimitedStore:
+    memory = limited_store()
 
     def fake_connect(
         vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
@@ -243,3 +246,106 @@ def test_a_previous_version_alone_does_not_block_sharing(
     result = run(runner, write_config(SHARED), "generate")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+# ------------------------------------------------ version limits (#1159) ---
+
+
+def codes(result: Result) -> list[str | None]:
+    return [one.get("code") for one in json.loads(result.output).get("diagnostics", [])]
+
+
+def pruned_warning(result: Result) -> dict[str, Any]:
+    (warning,) = [
+        one for one in json.loads(result.output)["diagnostics"] if one.get("code") == VERSION_PRUNED
+    ]
+    return dict(warning)
+
+
+def test_a_full_secret_says_which_version_a_write_may_delete(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    message = pruned_warning(result)["message"]
+    assert "may delete version 4" in message
+    assert PATH in message
+
+
+def test_the_dry_run_says_it_too(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+
+    result = run(runner, write_config(CONFIG), "generate", "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert VERSION_PRUNED in codes(result)
+    assert store.read_stage(PATH, PENDING) is None
+
+
+def test_a_full_secret_with_nothing_deprecated_is_refused_before_the_write(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, oldest_deprecated=None, full=True)
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    assert isinstance(result.exception, StoreError)
+    assert "none of them is DEPRECATED" in str(result.exception)
+    assert store.read_stage(PATH, PENDING) is None
+
+
+def test_a_write_that_would_delete_a_pinned_version_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """A ref in the file pins the version making room would delete, so it
+    would stop resolving: refused at plan time, nothing written."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.rooms[PATH] = Room(versions=30, oldest_deprecated=4, full=True)
+    pinned = CONFIG.replace(
+        "    vault: vault-oci\n",
+        "    vault: vault-oci\n"
+        f'    admin: {{ username: SYSTEM, auth: {{ method: vault, secret: "{PATH}#password'
+        '@version=4" } }\n',
+    )
+
+    result = run(runner, write_config(pinned), "generate")
+
+    assert isinstance(result.exception, ConfigError)
+    assert "`@version=4`" in str(result.exception)
+    assert store.read_stage(PATH, PENDING) is None
+
+
+def test_a_create_on_a_name_a_deleting_secret_holds_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    store.held.add(PATH)
+
+    result = run(runner, write_config(CONFIG), "generate", "--promote")
+
+    assert isinstance(result.exception, StoreError)
+    assert "scheduled for deletion" in str(result.exception)
+    assert store.read(PATH) is None
+
+
+def test_each_version_the_store_deleted_is_reported_after_the_run(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """What the store deleted while the run wrote is said once the run is
+    over, whichever verb ran."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.pruned.append(Pruned(path=PATH, generation=4))
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    message = pruned_warning(result)["message"]
+    assert f"vault-oci:{PATH}" in message
+    assert "version 4" in message
+    assert "was scheduled for deletion" in message

@@ -52,6 +52,8 @@ from sopuli.store.protocol import (
     CasConflictError,
     MetadataNotPermittedError,
     PathMetadata,
+    Pruned,
+    Room,
     Stored,
     StoreError,
     StoreHealth,
@@ -135,27 +137,6 @@ VERSION_LIMIT = 30
 #: leaves room for a host clock that runs behind, and costs nothing: the
 #: version stops counting at once, whenever it is deleted (#1136, M7c).
 DELETION_DELAY = timedelta(days=2)
-
-
-@dataclass(frozen=True)
-class Room:
-    """How full a secret is, as OCI counts it (decision 7)."""
-
-    versions: int
-    #: The lowest-numbered DEPRECATED version still counted, or ``None``.
-    oldest_deprecated: int | None
-
-    @property
-    def full(self) -> bool:
-        return self.versions >= VERSION_LIMIT
-
-
-@dataclass(frozen=True)
-class Pruned:
-    """A DEPRECATED version this run scheduled for deletion to make room."""
-
-    path: str
-    generation: int
 
 
 @dataclass(frozen=True)
@@ -470,6 +451,17 @@ class OciStore:
         live = self._live(name, what=what)
         return None if live is None else self._room(live.id, what=what)
 
+    def name_held(self, path: str) -> bool:
+        """Whether a secret scheduled for deletion holds the name at ``path``.
+
+        For the plan (#1159). OCI keeps the name until the deletion, reads
+        report the secret as absent, and a create there is refused
+        (``oci-create-taken``). ``False`` where a live secret has the name,
+        since nothing is created then.
+        """
+        held = [one.lifecycle_state for one in self._summaries(_names.to_oci(path))]
+        return bool(held) and all(state in GONE for state in held)
+
     def _native(
         self, path: str, attributes: Mapping[str, Any], *, cas: int | None, doing: str
     ) -> tuple[str, str, _Live]:
@@ -517,7 +509,11 @@ class OciStore:
                     deprecated.append(version.version_number)
             page = response.next_page
             if not page:
-                return Room(versions=counted, oldest_deprecated=min(deprecated, default=None))
+                return Room(
+                    versions=counted,
+                    oldest_deprecated=min(deprecated, default=None),
+                    full=counted >= VERSION_LIMIT,
+                )
 
     def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:
         """Decision 7: OCI refused a version because the secret is full, so

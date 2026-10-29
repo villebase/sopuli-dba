@@ -8028,12 +8028,15 @@ def _shared_credentials(
 
     :func:`_refused_somewhere`'s rule, here so that `--dry-run --preflight`
     forecasts the same set (#988): bound to more than one target, and followed
-    by a promotion.
+    by a promotion, or with no password in the vault at all. The second is a
+    credential `creds generate` skipped because one target refuses it
+    (#1174): its other targets learn the refusal here, rather than reporting
+    "run generate first" for a `generate` that would skip it again (#1180).
     """
     return _shared_among(
         binding
         for binding, source in sources
-        if source is not None and apply_states.promotes(source.stage)
+        if source is None or apply_states.promotes(source.stage)
     )
 
 
@@ -8189,9 +8192,10 @@ def _refused_somewhere(
     lets its neighbours promote.
 
     **Only a credential bound to more than one target is asked about**, and only
-    one a promotion follows. With one target the estate pass's own check comes
-    before the change anyway, and an apply from `current` promotes nothing, so
-    there is no gap to close, and no extra connection.
+    one a promotion follows or one with no password in the vault
+    (:func:`_shared_credentials`). With one target the estate pass's own check
+    comes before the change anyway, and an apply from `current` promotes
+    nothing, so there is no gap to close, and no extra connection.
 
     **The checks are the estate pass's**: :func:`guardrails.review` on the
     account's `describe_user`. The answer decides every target of a refused
@@ -8309,7 +8313,15 @@ def _apply_target(
         for binding, source in work:
             password = _credential(binding)
             refusing = None if refused is None or password is None else refused.get(password)
-            if refusing and (password in everywhere or binding.target in refusing):
+            if (
+                refusing
+                and (password in everywhere or binding.target in refusing)
+                and (
+                    source is not None
+                    or binding.target in refusing
+                    or _skipped_by_generate(refusing)
+                )
+            ):
                 turned_away = _refused_row(binding, source, refusing, selection=selection)
                 out.append(turned_away)
                 _account_events(turned_away, run)
@@ -8349,6 +8361,21 @@ def _apply_target(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+def _skipped_by_generate(refusing: Mapping[str, guardrails.Review]) -> bool:
+    """Whether some target refuses this credential with a check `creds generate`
+    skips for: one no flag waives, check 6 or 8 (#1174).
+
+    Only then has the vault no password because `generate` skipped it. A
+    refusal `--force` could waive leaves `generate` staging the password, so
+    a credential with no password and only such a refusal has simply not been
+    generated, and "run `sopuli creds generate` first" is the right row (#1180).
+    """
+    unwaivable = guardrails.NEVER_WAIVED - {guardrails.DECLARED}
+    return any(
+        refusal.check in unwaivable for review in refusing.values() for refusal in review.refusals
+    )
 
 
 def _turned_away(
@@ -8627,6 +8654,12 @@ def _apply_one(
                 selection=selection,
                 started=started,
             )
+        if source is None and user is not None and held and _skipped_by_generate(held):
+            # The same, for a target that does not refuse the account itself:
+            # another target of the password does, with a check `generate`
+            # skips for, so it skipped the password on every target (#1180). A
+            # missing account is not this case, and is reported as missing.
+            return _refused_row(binding, source, held, selection=selection)
         settled = apply_states.settled_before_acting(
             user,
             source,

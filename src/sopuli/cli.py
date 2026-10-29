@@ -8028,12 +8028,15 @@ def _shared_credentials(
 
     :func:`_refused_somewhere`'s rule, here so that `--dry-run --preflight`
     forecasts the same set (#988): bound to more than one target, and followed
-    by a promotion.
+    by a promotion, or with no password in the vault at all. The second is a
+    credential `creds generate` skipped because one target refuses it
+    (#1174): its other targets learn the refusal here, rather than reporting
+    "run generate first" for a `generate` that would skip it again (#1180).
     """
     return _shared_among(
         binding
         for binding, source in sources
-        if source is not None and apply_states.promotes(source.stage)
+        if source is None or apply_states.promotes(source.stage)
     )
 
 
@@ -8189,9 +8192,10 @@ def _refused_somewhere(
     lets its neighbours promote.
 
     **Only a credential bound to more than one target is asked about**, and only
-    one a promotion follows. With one target the estate pass's own check comes
-    before the change anyway, and an apply from `current` promotes nothing, so
-    there is no gap to close, and no extra connection.
+    one a promotion follows or one with no password in the vault
+    (:func:`_shared_credentials`). With one target the estate pass's own check
+    comes before the change anyway, and an apply from `current` promotes
+    nothing, so there is no gap to close, and no extra connection.
 
     **The checks are the estate pass's**: :func:`guardrails.review` on the
     account's `describe_user`. The answer decides every target of a refused
@@ -8627,6 +8631,11 @@ def _apply_one(
                 selection=selection,
                 started=started,
             )
+        if source is None and held:
+            # The same, for a target that does not refuse the account itself:
+            # another target of the password does, the guardrail pass found it,
+            # and `generate` skipped the password on every target (#1180).
+            return _refused_row(binding, source, held, selection=selection)
         settled = apply_states.settled_before_acting(
             user,
             source,

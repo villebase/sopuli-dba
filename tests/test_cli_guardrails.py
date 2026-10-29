@@ -1716,6 +1716,34 @@ def test_a_refused_account_with_no_password_in_the_vault_is_skipped(
     assert "run `sopuli creds generate` first" not in json.dumps(document(result))
 
 
+def test_a_password_skipped_for_another_target_is_skipped_on_this_one(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1180: one password on two targets, reserved on `appdb-beta` only.
+    `generate` stages nothing for it (#1174), so the vault has no password for
+    it. On `appdb-alpha`, where the account itself is ordinary, the row is
+    `SKIPPED` naming the target that refuses it, not an error asking for a
+    `generate` that would skip it again."""
+    estate(
+        {},
+        by_target=RESERVED_ON_BETA,
+        document={
+            "DB_CREDENTIALS": {"acme_batch_user": LIVE},
+            "pending": {"acme_batch_user": STAGED},
+        },
+    )
+
+    result = run(runner, write_config(TWO_TARGETS), "--confirm", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    rows = {(entry["account"], entry["target"]): entry for entry in document(result)["results"]}
+    assert rows[("acme_web_user", "appdb-alpha")]["state"] == SKIPPED
+    assert rows[("acme_web_user", "appdb-beta")]["state"] == SKIPPED
+    reported = json.dumps(document(result))
+    assert "run `sopuli creds generate` first" not in reported
+    assert "appdb-beta" in json.dumps(rows[("acme_web_user", "appdb-alpha")])
+
+
 def test_the_tool_s_own_account_is_skipped_and_force_changes_it_on_the_record(
     runner: CliRunner,
     write_config: Callable[[str], Path],

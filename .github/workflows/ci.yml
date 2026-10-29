@@ -1,11 +1,15 @@
 name: ci
 
-# Tier 0 only (docs/design/04-testing.md §4): every commit on a pull request,
-# under a minute, no containers. Tier 1 -- Oracle Free and Vault from
-# test/compose.yaml, with the capability probing in tests/oracle_harness.py -- is
-# `tier1.yml`, which is the separate workflow this comment used to promise (#184).
-# Keeping them apart is what stops a typo waiting six minutes on an Oracle
-# healthcheck to report.
+# Tiers 0 and 1 (docs/design/04-testing.md §4), on every commit of a pull request.
+# Tier 0 is the `lint`, `test`, `install-shape`, `release-build` and `docs` jobs:
+# under a minute, no containers. Tier 1 is the `tier1` job: Oracle Free, Vault,
+# PostgreSQL, Supabase and Yopass from test/compose.yaml. The jobs run in
+# parallel, so a typo still reports from tier 0 in a minute while tier 1 waits on
+# the Oracle healthcheck.
+#
+# Tier 1 is a job here, not a workflow of its own, so that `ci ok` waits for it
+# and the `main` ruleset's one required check covers it (#1120). In a separate
+# workflow it was not a merge gate: `ci ok` could pass while it failed.
 #
 # docs/workflow.md says "main is always green" as a binding rule, and this is what
 # checks it -- on pull requests, which is not a weaker place to check it than
@@ -48,10 +52,9 @@ jobs:
   # Prose-only pull requests skip the lanes below. **This is a job rather than a
   # `paths-ignore` on the trigger, and that difference is the whole point.**
   #
-  # `tier1.yml` filters with `paths-ignore` and is right to. This one cannot,
-  # because `ci ok` -- the last job in this file -- is the status check the
-  # `main` ruleset requires (`workflow.md`), and `ci ok` needs every job below.
-  # The two mechanisms look alike and do opposite things under protection:
+  # `ci ok` -- the last job in this file -- is the status check the `main`
+  # ruleset requires (`workflow.md`), and `ci ok` needs every job below. The two
+  # mechanisms look alike and do opposite things under protection:
   #
   # * a workflow skipped by `paths-ignore` never starts, so its check contexts
   #   are never created and a required one stays **pending forever** -- every
@@ -70,11 +73,18 @@ jobs:
   # pull request through. `set -euo pipefail` is the first half of the answer
   # and `ci ok` is the other half -- see the comment on it.
   #
-  # The list below is `tier1.yml`'s `paths-ignore` written a second time, which
-  # is a real cost of doing it this way; `tests/test_workflow_prose_list.py`
-  # fails when the two drift apart. What either list may contain is measured, not
-  # guessed -- see the comment on `tier1.yml`'s copy, and
-  # `test/paths_ignore_probe.py`, which is how it is measured.
+  # **The prose list is a measured allowlist, not "docs".** The suite reads
+  # `docs/design/00-principles.md`, `docs/design/01-configuration.md`, every
+  # `docs/schemas/*.json`, every `examples/*.yaml` and `sql/oracle/00_install.sql`:
+  # the config reference's YAML examples must parse, the schemas are validated as
+  # artefacts (invariant 12), and `tests/test_examples.py` runs `config validate`
+  # against every example. A blanket `docs/**` would silently stop testing the
+  # first three, and `examples/**` would switch the fourth off while leaving its
+  # test green on whatever was last committed. So only files nothing opens are
+  # listed. `test/paths_ignore_probe.py` measures it, and says how to run it.
+  # It deselects the modules the `docs` job runs (#458), so what it reports is a
+  # file nothing would check on a prose-only pull request.
+  # `tests/test_workflow_prose_list.py` keeps `examples/` and `sql/` out of it.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -154,7 +164,7 @@ jobs:
           if [ "$code" = true ]; then
             echo "::notice::something other than prose changed -- running every lane"
           else
-            echo "::notice::prose only -- lint, test and install shape will report skipped"
+            echo "::notice::prose only -- lint, test, install shape and tier 1 will report skipped"
           fi
 
   lint:
@@ -388,10 +398,176 @@ jobs:
           print("base carries no backend client")
           PY
 
+  # Tier 1 (04-testing.md §4): the UC-1 happy path and the store's real-backend
+  # tests, against the containers in test/compose.yaml.
+  #
+  # **Only freely pullable images** (§1). `gvenzl/oracle-free`, `hashicorp/vault`,
+  # `postgres`, `supabase/postgres` and Yopass are pullable by anyone including a
+  # fork, and Instant Client is a free download with no account. Nothing here
+  # needs a licence, a build from Oracle binaries, or a tenancy: those are tier 3,
+  # and they are the maintainer's machine rather than this file.
+  #
+  # Skipped for prose, like the tier-0 lanes, and in `ci ok`'s `needs`, so a red
+  # tier 1 fails the required check (#1120).
+  tier1:
+    name: tier 1 (Oracle Free + Vault)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    # Only `contents: read`. The workflow's `pull-requests: read` is for the
+    # `changes` job, and this job runs the pull request's own code.
+    permissions:
+      contents: read
+    # amd64, and not incidentally: the 11g XE image in tier 2 is published for
+    # linux/amd64 only, and Oracle's containers are unsupported under emulation.
+    runs-on: ubuntu-latest
+    # §4 budgets this tier at under ten minutes, and the timeout is deliberately
+    # not that number: a budget is what the lane should cost, a timeout is when
+    # to conclude it has hung. Setting them equal would make a slow image pull --
+    # which is Docker Hub's day, not ours -- indistinguishable from an Oracle
+    # that never reaches healthy, and it would fail the pull rather than report
+    # it. Oracle reaches healthy in 30-60 s and the suite is seconds; anything
+    # near 20 minutes is stuck, not slow.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # `[all]`: a lane whose subject is a vendor client has nothing to assert
+      # without one.
+      - run: pip install -e ".[dev,all]"
+
+      # D3: thick mode is mandatory. Thin mode has no Native Network Encryption,
+      # cannot reach 11.2, and cannot log on through an external password store
+      # (00-principles.md, "Why thick mode"). So Instant Client is a
+      # runtime prerequisite here exactly as it is for an operator, and a lane
+      # without it would skip every driver test while reporting green.
+      #
+      # Basic Lite rather than Basic: it drops the error-message files for
+      # languages nobody here reads and is a third of the size. `libaio` is the
+      # one system dependency; its package name changed on 24.04, hence the
+      # fallback.
+      - name: install Oracle Instant Client
+        run: |
+          # `update` must not be the gate, and the install must be. The runner
+          # image carries third-party repositories this job needs nothing from
+          # -- Google Chrome's among them -- and one of them serving a corrupt
+          # index fails `apt-get update` with exit 100 over a package nobody
+          # here is asking for. Seen on 2026-09-09: `E: Failed to fetch
+          # https://dl.google.com/linux/chrome-stable/... Hash Sum mismatch`,
+          # twice in a row, on a change that touched no CI at all.
+          #
+          # So a failed update is reported and carried past, and the two lines
+          # below decide the step. `libaio` comes from Ubuntu's own archive: if
+          # *that* is what is broken, the install fails and the job fails with a
+          # message naming the package rather than somebody else's repository.
+          sudo apt-get update -qq \
+            || echo "::warning::apt-get update reported errors; the install below is the gate"
+          sudo apt-get install -y --no-install-recommends libaio1t64 \
+            || sudo apt-get install -y --no-install-recommends libaio1
+          # Ubuntu 24.04's time_t transition renamed the library to
+          # `libaio.so.1t64`, and Instant Client is linked against `libaio.so.1`.
+          # Installing the package is therefore not enough: without this the
+          # client is present, on LD_LIBRARY_PATH, and still gives DPI-1047.
+          lib=$(find /usr/lib -name 'libaio.so.1t64' | head -1)
+          if [ -n "$lib" ] && [ ! -e "${lib%1t64}1" ]; then
+            sudo ln -s "$lib" "${lib%1t64}1"
+            echo "linked ${lib%1t64}1 -> $lib"
+          fi
+          # One named release, checked against the SHA-256 that Oracle's
+          # download page publishes for it (#868). The unversioned "latest" URLs
+          # change under the job, and nothing could check what they served.
+          # SQL*Plus is for tests/test_password_paths.py, which logs in through a
+          # connect string the way an operator does. It unpacks into the same
+          # directory as the client. To move to a new release, change `ver`,
+          # `dir` and the two hashes, all from
+          # https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+          ver=23.26.3.0.0
+          dir=2326300
+          basic=instantclient-basiclite-linux.x64-$ver.zip
+          sqlplus=instantclient-sqlplus-linux.x64-$ver.zip
+          curl -fsSLO "https://download.oracle.com/otn_software/linux/instantclient/$dir/$basic"
+          curl -fsSLO "https://download.oracle.com/otn_software/linux/instantclient/$dir/$sqlplus"
+          sha256sum --check --strict - <<SUMS
+          88c2b59d473f0d34615556dbee51cb90cce61a9104b4c1c772d13c344fba19c9  $basic
+          6570d7939856767cdbb549b51e1423d6a5f53143c57c30c015669706f65a632a  $sqlplus
+          SUMS
+          sudo mkdir -p /opt/oracle
+          sudo unzip -q "$basic" -d /opt/oracle
+          sudo unzip -qo "$sqlplus" -d /opt/oracle
+          # The directory is found rather than named, so a new release needs only
+          # the four values above changed.
+          # Checked rather than assumed, because the failure is otherwise silent
+          # and lands somewhere else: `find` printing nothing makes `dirname`
+          # answer `.`, and the lane then reports DPI-1047 from a step that said
+          # it installed the client -- which is the wrong place to start looking.
+          libclntsh=$(find /opt/oracle -name 'libclntsh.so*' | head -1)
+          if [ -z "$libclntsh" ]; then
+            echo "::error::libclntsh.so not found under /opt/oracle -- the Instant Client archive did not unpack as expected"
+            find /opt/oracle -maxdepth 2 | head -20
+            exit 1
+          fi
+          client=$(dirname "$libclntsh")
+          echo "LD_LIBRARY_PATH=$client" >> "$GITHUB_ENV"
+          echo "$client" >> "$GITHUB_PATH"
+          echo "installed Instant Client at $client"
+
+      # The compose file rather than `services:`, which is T2's answer applied to
+      # CI. Two concrete reasons beyond symmetry: `services:` would duplicate the
+      # image pins, and `tests/store/test_hashicorp_cas_conflict.py` asserts on
+      # Vault's own error wording, so a second pin is a second thing to forget.
+      # And Vault's KV mounts come from a one-shot init container that
+      # `services:` cannot express at all -- it would have to be scripted here,
+      # which is the compose file written twice.
+      # Two calls, because `--wait` fails on a container that has *exited* even
+      # when it exited 0, and `vault-init` is a one-shot by design: it mounts kv
+      # (v2) and kv1 (v1), sets up the userpass identities, and stops. Waiting on
+      # the long-running services by name and starting the one-shot afterwards
+      # says what is meant. `wait` then holds pytest until vault-init has
+      # finished, and fails the step if it exited non-zero: a half-finished setup
+      # would show up as login failures in the personal-path tests.
+      # yopass has no healthcheck, because its image has no shell, so `--wait`
+      # waits only for it to run. The `yopass_stack` fixture waits on /health.
+      # supabase is in a profile of its own, so that a local tier-1 stack does
+      # not pull its image; this lane runs it (#1111).
+      - name: bring up the tier-1 stack
+        working-directory: test
+        run: |
+          docker compose --profile tier1 --profile supabase up -d --wait vault postgres supabase oracle-free yopass yopass-memcached
+          docker compose --profile tier1 up -d vault-init
+          docker compose --profile tier1 wait vault-init
+
+      - name: pytest
+        env:
+          # Turns "no environment" from a skip into a failure. A lane that
+          # reported green while skipping everything it exists to run would be
+          # worse than no lane, because it would be quoted as evidence.
+          SOPULI_TEST_TIER1: required
+          SOPULI_TEST_ORACLE_NAME: 23ai Free
+        run: pytest
+
+      # Runs on failure too: when Oracle did not come up, its log is the whole
+      # diagnosis and the alternative is re-running the job with a debug step
+      # somebody has to write first.
+      - name: container logs
+        if: always()
+        working-directory: test
+        run: docker compose --profile tier1 --profile supabase logs --tail 100
+
+      - name: tear down
+        if: always()
+        working-directory: test
+        run: docker compose --profile '*' down
+
   # The lane a prose-only pull request still has to pass, and what makes the
   # skipping above safe (#458).
   #
-  # `changes` switches off `lint`, `test` and `install shape` for prose. But three
+  # `changes` switches off `lint`, `test`, `install shape` and `tier1` for prose. But three
   # tier-0 tests read exactly the files the prose list ignores:
   #
   # * `tests/test_verification_register.py` reads its register out of
@@ -469,7 +645,7 @@ jobs:
   # for the wrong one.
   ci-ok:
     name: ci ok
-    needs: [changes, lint, test, install-shape, release-build, docs]
+    needs: [changes, lint, test, install-shape, release-build, tier1, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

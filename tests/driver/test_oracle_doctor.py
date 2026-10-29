@@ -170,15 +170,16 @@ def test_a_matching_assertion_is_reported_as_matching(
     assert document["exit_code"] == 0
 
 
-def test_a_wrong_assertion_is_reported_without_failing_the_connection(
+def test_a_wrong_assertion_is_reported_and_fails_the_run_at_exit_9(
     runner: CliRunner, live_oracle: Environment, tmp_path: Path
 ) -> None:
-    """`doctor` surveys; it does not refuse.
+    """`doctor` describes the target in full, and then exits 9.
 
     The connection succeeded and the claim did not hold, and both are true at
-    once — so `reachable` stays true and the mismatch is reported beside it.
-    Refusing here would make the command unable to describe the very estate
-    problem it exists to find.
+    once — so `reachable` stays true and the mismatch is reported beside it,
+    rather than refused before the target is described. A mutating verb refuses
+    this target at exit 9, so `doctor` used as a gate must fail too (#1062), and
+    `summary` counts it as failed.
     """
     config = _config(
         tmp_path / "doctor.yaml",
@@ -186,8 +187,11 @@ def test_a_wrong_assertion_is_reported_without_failing_the_connection(
         asserted="    oracle: { container: ACME_NO_SUCH_CONTAINER }",
     )
 
-    document = _document(_run(runner, config, "--output", "json"))
+    result = _run(runner, config, "--output", "json")
 
+    assert result.exit_code == 9, result.output
+    document = _document(result)
+    assert document["summary"]["failed"] == 1
     entry = document["targets"][0]
     assert entry["reachable"] is True
     assert entry["asserted"]["matches"] is False

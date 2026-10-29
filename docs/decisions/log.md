@@ -3634,16 +3634,19 @@ the register.
   was that a target it cannot use is that target's finding. Should it exit
   non-zero?
 - **Decision:** Yes. After surveying every target, `doctor` exits 9 if any
-  target it reached carries an error whose category is `config`, the category
-  every other verb exits 9 over, or an `asserted` that does not match. `doctor`
-  reports a target that claims a scope or container it is not, where every
-  other verb refuses it. It takes precedence over exit 1 for an unreachable
-  target or store. Another error on a target that answered, such
-  as a view the account cannot read, leaves the exit code alone.
-- **Why:** A script that runs `doctor` as a gate passed a setup that every
-  other verb refuses. Exit 9 says to fix the configuration, which is the fix
-  for each of these. The survey still reports every target, so nothing is
-  hidden by stopping early.
+  target it reached carries an error that exits 9, or an `asserted` that does
+  not match: a target that claims a scope or container it is not, which
+  `doctor` reports rather than refuses. It takes precedence over exit 1 for an
+  unreachable target or store, and the target counts in `summary.failed`.
+  Another error on a target that answered, such as a view the account cannot
+  read, leaves the exit code alone.
+- **Why:** A script that runs `doctor` as a gate passed a setup that a
+  mutating verb refuses at exit 9. A read verb such as `creds check` reports
+  the target and exits 1; `doctor` is the check of the setup, and exit 9 says
+  to fix the configuration, which is the fix for each of these. The survey
+  still reports every target, so nothing is hidden by stopping early. Both
+  findings are in the document whatever the exit, so the exit names the one
+  that no retry clears, as install shape already does.
 - **Rejected:**
   - Keep exit 0. A gate would have to parse the JSON to see the refusal.
   - A `doctor --strict` flag for the gate case. One more flag, and the

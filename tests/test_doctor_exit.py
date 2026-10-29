@@ -1,8 +1,9 @@
 """`doctor`'s exit code when a target answers and is then refused (#1062).
 
-Tier 0: the rule reads the entries `doctor` builds, so no database is needed.
-The live refusals, `SOPULI-20007` and `SOPULI-20008`, are in
-`tests/driver/test_postgres_doctor.py`.
+Tier 0: the rule reads the entry `doctor` builds and the exception it caught,
+so no database is needed. The live refusals are in
+`tests/driver/test_postgres_doctor.py` (`SOPULI-20007`, `SOPULI-20008`) and
+`tests/driver/test_oracle_doctor.py` (a scope the target asserts and is not).
 """
 
 from __future__ import annotations
@@ -12,39 +13,56 @@ from typing import Any
 import pytest
 
 from sopuli.cli import _doctor_exit, _refused_for_setup
+from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 
 
-def _entry(*, reachable: bool, category: str | None = None) -> dict[str, Any]:
-    entry: dict[str, Any] = {"target": "pg-dev", "reachable": reachable}
-    if category is not None:
-        entry["error"] = {"category": category, "message": "refused", "code": "SOPULI-20007"}
-    return entry
+class _RefusedError(DriverError):
+    """A refusal that asks for exit 9, as `SOPULI-20007` does."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+
+class _ConfigWithAnotherExitError(DriverError):
+    """A `config` error whose own exit is not 9: the category alone does not decide."""
+
+    category = "config"
+    exit_code = ExitCode.USAGE
+
+
+class _UnreadableError(DriverError):
+    """A dictionary view the account cannot read: a finding about grants."""
+
+    category = "database"
+
+
+def _entry(*, reachable: bool) -> dict[str, Any]:
+    return {"target": "pg-dev", "reachable": reachable}
 
 
 @pytest.mark.parametrize(
-    ("entry", "refused"),
+    ("reachable", "error", "refused"),
     [
-        (_entry(reachable=True, category="config"), True),
-        (_entry(reachable=True, category="database"), False),
-        (_entry(reachable=True), False),
-        (_entry(reachable=False, category="config"), False),
-        (_entry(reachable=False, category="connectivity"), False),
+        (True, _RefusedError("refused"), True),
+        (True, _ConfigWithAnotherExitError("refused"), False),
+        (True, _UnreadableError("ORA-00942"), False),
+        (True, None, False),
+        (False, _RefusedError("refused"), False),
     ],
 )
-def test_only_a_config_error_on_a_reached_target_is_a_refusal(
-    entry: dict[str, Any], refused: bool
+def test_only_an_exit_9_error_on_a_reached_target_is_a_refusal(
+    reachable: bool, error: Exception | None, refused: bool
 ) -> None:
-    """A `database` error on a target that answered, such as a view the account
-    cannot read, is a finding about grants. A target that never answered is
-    exit 1's case, whatever its error says."""
-    assert _refused_for_setup(entry) is refused
+    """The exception's own `exit_code` decides, not the serialised category. A
+    target that never answered is exit 1's case, whatever its error says."""
+    assert _refused_for_setup(_entry(reachable=reachable), error) is refused
 
 
 @pytest.mark.parametrize(("matches", "refused"), [(False, True), (True, False)])
 def test_a_scope_the_target_asserts_and_is_not_is_a_refusal(matches: bool, refused: bool) -> None:
     """`doctor` reports an assertion that does not match as `asserted` rather
-    than raising it. Every other verb refuses that target at exit 9."""
+    than raising it. A mutating verb refuses that target at exit 9."""
     entry = _entry(reachable=True)
     entry["asserted"] = {"scope": "pdb", "container": "ORDERS", "matches": matches}
     assert _refused_for_setup(entry) is refused

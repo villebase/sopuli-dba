@@ -849,7 +849,9 @@ def doctor(
     unless a configured driver or backend is missing, which is exit 9 (below).
     A target that answered and was then refused over its setup, such as a
     PostgreSQL admin that is a superuser, fails the run at exit 9 once every
-    target is surveyed, because every other verb refuses it there (#1062).
+    target is surveyed, and counts in ``summary.failed``. A mutating verb
+    refuses such a target at exit 9; ``doctor`` checks the setup, so it says
+    *fix the configuration* too (#1062).
 
     **Install shape is reported on every run, not only when it is wrong**
     (ADR-006 E6). Which backends and drivers this build can serve, which the
@@ -932,19 +934,22 @@ def doctor(
     document.diagnostics.extend(vault_diagnostics(vaults))
 
     client = _client_report(config)
-    entries = [
+    examined = [
         _examine(target, run, config, privileges=check_privileges)
         for target in config.expanded_targets
     ]
+    entries = [entry for entry, _ in examined]
 
     document.targets = entries
-    reachable = sum(1 for entry in entries if entry["reachable"])
-    failed = len(entries) - reachable
+    unreachable = sum(1 for entry in entries if not entry["reachable"])
+    refused = sum(1 for _, was_refused in examined if was_refused)
     unreachable_vaults = sum(1 for report in vaults if not report.reachable)
-    refused = sum(1 for entry in entries if _refused_for_setup(entry))
+    # A refused target answered and still cannot be used, so it is a target that
+    # failed. `failed` counts both kinds; the exit code tells them apart.
+    failed = unreachable + refused
     document.finish(
-        _doctor_exit(shape.missing, failed, unreachable_vaults, refused=refused),
-        Summary(total=len(entries), ok=reachable, changed=0, failed=failed),
+        _doctor_exit(shape.missing, unreachable, unreachable_vaults, refused=refused),
+        Summary(total=len(entries), ok=len(entries) - failed, changed=0, failed=failed),
     )
     sections = [*render_install(shape)]
     if wallet is not None:
@@ -973,22 +978,26 @@ def _vault_error(report: VaultReport) -> Error | None:
     return _finding(report.failure)
 
 
-def _refused_for_setup(entry: dict[str, Any]) -> bool:
+def _refused_for_setup(entry: dict[str, Any], error: Exception | None = None) -> bool:
     """Whether ``doctor`` reached this target and then refused it over its setup.
 
-    Either a ``config`` error on a target that answered, such as
-    ``SOPULI-20007`` (a PostgreSQL admin that is a superuser) or
+    Either an error on a target that answered whose own ``exit_code`` is 9, such
+    as ``SOPULI-20007`` (a PostgreSQL admin that is a superuser) or
     ``SOPULI-20008`` (two targets on one cluster), or an ``asserted`` that does
-    not match: a target that claims a scope or container it is not. ``doctor``
-    reports the second rather than raising it, and every other verb refuses
-    both at exit 9 (#1062). An error on a target that answered and is not
-    ``config``, such as a dictionary view the account cannot read, is a finding
+    not match: a target that claims a scope or container it is not, which
+    ``doctor`` reports rather than raises. A mutating verb refuses both at exit
+    9; a read verb reports the target and exits 1. ``doctor`` is the check of
+    the setup, so it says *fix the configuration* (#1062).
+
+    Decided from the exception, not from the serialised ``category``: an error
+    says for itself which exit it is, and a ``config`` category does not always
+    mean exit 9. An error that does not ask for exit 9 on a target that
+    answered, such as a dictionary view the account cannot read, is a finding
     about grants and leaves the exit code alone.
     """
     if not entry["reachable"]:
         return False
-    error = entry.get("error")
-    if error and error.get("category") == "config":
+    if error is not None and getattr(error, "exit_code", None) == ExitCode.CONFIG_INVALID:
         return True
     asserted = entry.get("asserted")
     return bool(asserted and asserted.get("matches") is False)
@@ -1040,9 +1049,13 @@ def _doctor_exit(
     know why a run failed reads the sections rather than the arithmetic.
 
     **A target it reached and refused over its setup is exit 9 too** (#1062),
-    after every target is surveyed, and it wins over an unreachable target. Each
-    other verb refuses that target at exit 9, so a ``doctor`` used as a gate
-    must not pass it. Exit 9 says *fix the configuration*, which is the fix.
+    after every target is surveyed. A mutating verb refuses that target at exit
+    9, so a ``doctor`` used as a gate must not pass it, and exit 9 says *fix the
+    configuration*, which is the fix. It wins over exit 1 for an unreachable
+    target or store, as install shape does: both are in the document either
+    way, and the exit names the one that no retry will clear. Unlike the other
+    two, a refused target is a target that failed, so ``summary.failed`` counts
+    it.
     """
     if missing or refused:
         return ExitCode.CONFIG_INVALID
@@ -1101,8 +1114,14 @@ def _declared_on(bindings: Iterable[Binding], target: str) -> tuple[str, ...]:
 
 def _examine(
     target: ExpandedTarget, run: Invocation, config: Config, *, privileges: bool = False
-) -> dict[str, Any]:
-    """One target: connect, report what it is, and always close."""
+) -> tuple[dict[str, Any], bool]:
+    """One target: connect, report what it is, and always close.
+
+    Returns the ``targets[]`` entry, and whether the target was refused for its
+    setup (:func:`_refused_for_setup`). The second is decided here, where the
+    exception is still in hand, because the entry keeps only its serialised
+    form.
+    """
     started = time.monotonic()
     session = None
     try:
@@ -1110,13 +1129,14 @@ def _examine(
         try:
             session = _open_session(target, run, config, scope_only=True)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return build_target(
+            unreached = build_target(
                 target,
                 connected=False,
                 error=_finding(error),
                 duration_ms=_elapsed(started),
                 warnings=_reach_warning(error),
             )
+            return unreached, False
 
         # Finding out what it is, which can fail on a connection that is fine:
         # a dictionary view this account cannot read, or a probe that could not
@@ -1144,19 +1164,20 @@ def _examine(
         except Exception as error:  # noqa: BLE001 -- also a per-target finding
             # With what was found before the failure: a skipped cluster check
             # is still worth saying when the audit after it failed.
-            return build_target(
+            failed = build_target(
                 target,
                 connected=True,
                 error=_finding(error),
                 duration_ms=_elapsed(started),
                 warnings=warnings,
             )
+            return failed, _refused_for_setup(failed, error)
     finally:
         if session is not None:
             with suppress(Exception):
                 session.close()
 
-    return build_target(
+    entry = build_target(
         target,
         connected=True,
         scope=scope,
@@ -1164,6 +1185,7 @@ def _examine(
         warnings=warnings,
         privileges=audit,
     )
+    return entry, _refused_for_setup(entry)
 
 
 def _timeouts(run: Invocation) -> Timeouts:

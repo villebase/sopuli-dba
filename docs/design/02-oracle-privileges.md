@@ -372,6 +372,20 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
     `SELECT ON SYS.USER$` with `CONTAINER = ALL` reads it after
     `ALTER SESSION SET CONTAINER = CDB$ROOT`. A database link, the `V$` views
     and `KU$_USER_VIEW` were not tried.
+- **A common account's verifiers are held in `CDB$ROOT`, not in a PDB.**
+  `sql/oracle/18_common_spare4_probe.sql` measured it on 23.26.3.0.0,
+  21.3.0.0.0 and 18.4.0.0.0, twice on each, with the same results:
+  - In the PDB, the account's `SPARE4` is `S:` and 60 blanks, then `T:` and
+    160 blanks. It has the shape of a real value and no hex digit. The root's
+    is a real `S:` and `T:`, and a local account in the PDB has real ones too.
+  - `ALTER USER ... IDENTIFIED BY` in the root changes the root's `SPARE4` and
+    leaves the PDB's as it was. The new password logs in to the PDB, and the
+    old one gets `ORA-01017`. So the PDB's row is not what authenticates.
+  - In the PDB, the same statement gets `ORA-65066`.
+
+  So `--method hash` refuses a common account on a PDB target
+  (`verifier_container`), naming the container
+  ([#1126](../decisions/log.md#1126)).
 - **A read through the view is not quieter in the audit trail.** Under a unified
   audit policy on `SELECT ON SYS.USER$`, one read of one row through the view
   leaves six `USER$` rows under the reader's name, with the reader's statement.
@@ -503,6 +517,10 @@ the account name and nothing else, and compares in
 `src/sopuli/driver/oracle/verifier.py`. It refuses, and names the target, when:
 
 - the session cannot read `SYS.USER$` (`offline_verify`);
+- the row read cannot be shown to hold the account's verifiers: the account
+  is common and the target is not `CDB$ROOT`, so the row holds a placeholder,
+  or the container or the account's `COMMON` column could not be read
+  (`verifier_container`, §2);
 - the account has no `12C` verifier (`verifier_12c`);
 - a `T:` or `t:` token is not the measured 160 hex characters
   (`verifier_12c_format`);
@@ -1480,6 +1498,7 @@ the design as it is then.
 | `sql/oracle/15_mixed_mode_trail_probe.sql` | whether, in mixed mode, an enabled unified policy records a logon and an `ALTER USER` under each `AUDIT_TRAIL` setting (§5) |
 | `sql/oracle/16_lcount_grant_probe.sql` | what `SYS.KU$_USER_VIEW` shows of `LCOUNT` and the verifiers under each role combination, in a PDB and in `CDB$ROOT`, and what a read leaves in the audit trail (§2) |
 | `sql/oracle/17_common_lcount_probe.sql` | where a common account's failed-login count lives, which profile limit locks it, and what a session in a PDB can read of the count (§2) |
+| `sql/oracle/18_common_spare4_probe.sql` | what `SPARE4` holds for a common account in a PDB and in `CDB$ROOT`, and whether a password change in the root reaches the PDB's row (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

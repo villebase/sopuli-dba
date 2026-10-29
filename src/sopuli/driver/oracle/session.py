@@ -158,11 +158,12 @@ _INITIALISING = threading.Lock()
 #: What ``error.target_capability`` carries when a comparison cannot run, beside
 #: ``offline_verify`` for an unreadable ``SYS.USER$``. Names rather than sentences,
 #: because the field is what a consumer branches on (03-json-output §4); the
-#: account they concern is in the hint. All three are per account rather than
+#: account they concern is in the hint. All four are per account rather than
 #: per target, which is why none of them is in the capability probe.
 VERIFIER_12C = "verifier_12c"
 VERIFIER_FORMAT = "verifier_12c_format"
 VERIFIER_CHARSET = "verifier_charset"
+VERIFIER_CONTAINER = "verifier_container"
 
 #: The scopes where ``SYS.USER$`` holds every account's own failed-login count,
 #: from :data:`~sopuli.driver.protocol.SCOPE_TYPES`. Named rather than compared
@@ -172,6 +173,63 @@ OWN_COUNT_SCOPES = frozenset({CDB_ROOT, "non_cdb"})
 
 #: Application containers, where the count of a common account was not measured.
 APPLICATION_SCOPES = frozenset({"app_root", "app_pdb"})
+
+#: :meth:`OracleSession._held_elsewhere`'s answers: why an account's own
+#: ``SYS.USER$`` row may not be in this container.
+_UNRESOLVED = "unresolved"
+_UNREAD = "unread"
+_APPLICATION = "application"
+_COMMON_IN_PDB = "common_in_pdb"
+
+#: Each answer worded for the lockout guard, and for the verifiers with the
+#: remedy a ``hash`` refusal offers. Keyed by the answer, so an answer with no
+#: wording is a ``KeyError`` rather than another answer's wording. A target on
+#: ``CDB$ROOT`` is offered only where the verifiers are known to be there; an
+#: unresolved container is the connection's, and a root target through the same
+#: account would not resolve either. ``login`` is offered last and says it is
+#: unguarded, because the account's failed logins are counted where this
+#: session cannot read them (#1122).
+_GUARD_GAP = {
+    _UNRESOLVED: (
+        "{name} is a common account, and this session's container was not "
+        "resolved, so its failed logins may be counted in CDB$ROOT"
+    ),
+    _UNREAD: (
+        "whether {name} is a common account could not be read from DBA_USERS, "
+        "so its failed logins may be counted in CDB$ROOT"
+    ),
+    _APPLICATION: (
+        "{name} is a common account, and where an application container "
+        "counts its failed logins has not been measured"
+    ),
+    _COMMON_IN_PDB: (
+        "{name} is a common account, and its failed logins are counted in "
+        "CDB$ROOT, which this session cannot read"
+    ),
+}
+_UNGUARDED_LOGIN = "verify by `login`, which has no lockout guard for this account here"
+_VERIFIER_GAP = {
+    _UNRESOLVED: (
+        "{name} is a common account, and this session's container was not "
+        "resolved, so its verifiers may be held in CDB$ROOT",
+        f"run `sopuli doctor` to see why the container was not read, or {_UNGUARDED_LOGIN}",
+    ),
+    _UNREAD: (
+        "whether {name} is a common account could not be read from DBA_USERS, "
+        "so its verifiers may be held in CDB$ROOT",
+        _UNGUARDED_LOGIN,
+    ),
+    _APPLICATION: (
+        "{name} is a common account, and where an application container "
+        "holds its verifiers has not been measured",
+        _UNGUARDED_LOGIN,
+    ),
+    _COMMON_IN_PDB: (
+        "{name} is a common account, and its verifiers are held in CDB$ROOT; "
+        "this container holds a blank placeholder in their place",
+        f"check the account on a target that connects to CDB$ROOT, or {_UNGUARDED_LOGIN}",
+    ),
+}
 
 #: What a ``hash`` comparison reports, by which verifier the password reproduced.
 #: Every one says no login was attempted, because that is the difference between
@@ -1072,10 +1130,12 @@ class OracleSession:
         roles are a guardrail input for mutations, not for reading.
 
         Where ``SELECT ON SYS.USER$`` was never granted, or the account is a
-        common account outside ``CDB$ROOT`` (:meth:`_guard_gap`), the guard is
-        **unavailable**, the attempt still goes ahead, and the result says
-        so in ``detail`` rather than letting an absent guard read like a
-        satisfied one.
+        common account outside ``CDB$ROOT`` (:meth:`_guard_gap`), a ``login``'s
+        guard is **unavailable**, the attempt still goes ahead, and the result
+        says so in ``detail`` rather than letting an absent guard read like a
+        satisfied one. ``hash`` and ``both`` refuse such a common account
+        instead, because the row read here does not hold its verifiers
+        (:meth:`_verifier_gap`).
         """
         if method == VERIFY_HASH:
             return self._compare_verifier(account, secret)
@@ -1198,33 +1258,49 @@ class OracleSession:
         have no ``COMMON`` column, so the ``C##`` prefix decides. A read of
         ``COMMON`` that does not answer is a gap too, never *not common*.
         """
+        held = self._held_elsewhere(cursor, name)
+        return None if held is None else _GUARD_GAP[held].format(name=name)
+
+    def _verifier_gap(self, cursor: Cursor, name: str) -> tuple[str, str] | None:
+        """Why ``SPARE4`` read here is not ``name``'s verifiers, and what to do instead.
+
+        ``None`` where it is.
+
+        Measured by ``sql/oracle/18_common_spare4_probe.sql`` on 23.26.3.0.0,
+        21.3.0.0.0 and 18.4.0.0.0: in a PDB, a common account's ``SPARE4`` is a
+        placeholder of the right shape, ``S:`` and ``T:`` followed by blanks.
+        The verifiers are held in ``CDB$ROOT``, and a password change made there
+        leaves the PDB's row as it was (decided in #1126). The other reasons
+        follow :meth:`_guard_gap`'s: an application container was not measured,
+        and a container that could not be told is not assumed to be the root.
+        So in an ``unknown`` scope a ``C##`` account is refused even where the
+        session is in fact in the root.
+        """
+        held = self._held_elsewhere(cursor, name)
+        if held is None:
+            return None
+        reason, remedy = _VERIFIER_GAP[held]
+        return reason.format(name=name), remedy
+
+    def _held_elsewhere(self, cursor: Cursor, name: str) -> str | None:
+        """Whether ``name``'s own ``SYS.USER$`` row may be in another container.
+
+        ``None`` where this container holds it. Otherwise one of
+        :data:`_UNRESOLVED`, :data:`_UNREAD`, :data:`_APPLICATION` or
+        :data:`_COMMON_IN_PDB`, which :meth:`_guard_gap` and
+        :meth:`_verifier_gap` each word for what they read.
+        """
         scope = self.scope().type
         if scope in OWN_COUNT_SCOPES:
             return None
         if scope == UNKNOWN:
-            if not name.upper().startswith(COMMON_PREFIX):
-                return None
-            return (
-                f"{name} is a common account, and this session's container was not "
-                "resolved, so its failed logins may be counted in CDB$ROOT"
-            )
+            return _UNRESOLVED if name.upper().startswith(COMMON_PREFIX) else None
         common = is_common(cursor, name)
         if common is None:
-            return (
-                f"whether {name} is a common account could not be read from DBA_USERS, "
-                "so its failed logins may be counted in CDB$ROOT"
-            )
+            return _UNREAD
         if not common:
             return None
-        if scope in APPLICATION_SCOPES:
-            return (
-                f"{name} is a common account, and where an application container "
-                "counts its failed logins has not been measured"
-            )
-        return (
-            f"{name} is a common account, and its failed logins are counted in "
-            "CDB$ROOT, which this session cannot read"
-        )
+        return _APPLICATION if scope in APPLICATION_SCOPES else _COMMON_IN_PDB
 
     def require_verifier(self, account: str, secret: Secret) -> None:
         """Refuse ``hash`` or ``both`` for ``account`` at **plan time**, or say nothing.
@@ -1256,10 +1332,13 @@ class OracleSession:
         as hash mode's point -- and its lock is still reported, by ``check``
         from the account's status, where it has always come from.
 
-        **Four refusals, each an** :class:`UnsupportedCapabilityError` **naming
+        **Five refusals, each an** :class:`UnsupportedCapabilityError` **naming
         the target**, and none falls back to anything (invariant 4):
 
         * the session cannot read ``SYS.USER$``, so there is no verifier to read;
+        * the account is common and the session is not in ``CDB$ROOT``, so the
+          row read here holds a placeholder, not its verifiers
+          (:meth:`_verifier_gap`);
         * the account has no 12C verifier -- 11g, or ``PASSWORD_VERSIONS``
           without ``12C`` -- and comparing ``S:`` or 10G instead would report a
           check stronger than the one made;
@@ -1279,18 +1358,13 @@ class OracleSession:
                 result=UNAVAILABLE,
                 detail=f'there is no account "{account}" on this target',
             )
-        state, counter, gap, answer = found
+        state, counter, answer = found
         detail = mismatch if answer == NO_MATCH and mismatch else _HASH_DETAIL[answer]
-        if gap is not None:
-            # A comparison spends no login, so the guard is not the point here.
-            # The lock is: ACCOUNT_STATUS read in this container does not show
-            # one held in another, and a pass would otherwise read as in sync.
-            detail = f"{detail}; {gap}; a lock from failed logins may not show here"
         return VerifyResult(
             method=VERIFY_HASH,
             result=FAIL if answer == NO_MATCH else PASS,
             failed_logins=counter,
-            failed_login_limit=None if gap is not None else state.failed_login_limit,
+            failed_login_limit=state.failed_login_limit,
             detail=detail,
         )
 
@@ -1334,11 +1408,12 @@ class OracleSession:
 
     def _verifier_answer(
         self, account: str, secret: Secret
-    ) -> tuple[UserState, int | None, str | None, str] | None:
+    ) -> tuple[UserState, int | None, str] | None:
         """Read the verifiers and compare, raising every refusal; ``None`` if no account.
 
-        Returns the account, its ``LCOUNT``, :meth:`_guard_gap`'s reason, and the
-        comparison's answer. ``LCOUNT`` is ``None`` where there is a gap.
+        Returns the account, its ``LCOUNT``, and the comparison's answer. An
+        account whose verifiers may be held in another container is refused
+        (:meth:`_verifier_gap`), so the ``LCOUNT`` read here is its own.
         """
         if not self.scope().supports(OFFLINE_VERIFY):
             raise UnsupportedCapabilityError(
@@ -1351,9 +1426,14 @@ class OracleSession:
             state = login_state(cursor, account)
             if state is None:
                 return None
+            gap = self._verifier_gap(cursor, state.name)
+            if gap is not None:
+                reason, remedy = gap
+                raise UnsupportedCapabilityError(
+                    VERIFIER_CONTAINER, target=self.target.name, hint=f"{reason}; {remedy}"
+                )
             spare4 = stored_verifiers(cursor, state.name)
-            gap = self._guard_gap(cursor, state.name)
-            counter = None if gap is not None else failed_logins(cursor, state.name)
+            counter = failed_logins(cursor, state.name)
 
         try:
             answer = compare(secret, spare4, limit=self.byte_limit())
@@ -1389,7 +1469,7 @@ class OracleSession:
                 ),
             )
 
-        return state, counter, gap, answer
+        return state, counter, answer
 
     def _unreadable_verifier_hint(self) -> str:
         """Why ``SYS.USER$`` cannot be read here, in the words that fit this target.

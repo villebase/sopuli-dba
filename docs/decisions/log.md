@@ -3360,9 +3360,9 @@ the register.
   the account is common, because `COMMON_USER_PREFIX` can be changed. An
   application-common account in an application container gets the same
   answer, because where its failed logins are counted was not measured. In an
-  `unknown` scope, which may have no `COMMON` column, a `C##` name decides. A
-  `--method hash` row says that a lock from failed logins may not show, since
-  `ACCOUNT_STATUS` in the PDB reads `OPEN`.
+  `unknown` scope, which may have no `COMMON` column, a `C##` name decides.
+  `--method hash` refuses such an account, because the PDB does not hold its
+  verifiers either (#1126).
 - **Why:** The guard read 0 and a limit that may not apply, so it looked
   satisfied while it protected nothing. Saying that it is absent is UC-1 §7's
   rule for a guard that is not running. The login itself still shows a lock:
@@ -3587,3 +3587,40 @@ the register.
     staging exists to avoid.
   - Teaching each verb `read_stage`, `stage` and `promote` directly. Two code
     paths per verb, and a reader left behind reads the wrong place.
+
+## #1126
+
+- **Decided:** 2026-10-29, #1126
+- **Question:** `creds check --method hash` refused a common account on a PDB
+  target with a hint about an unmeasured verifier format. In a PDB, a common
+  account's `SPARE4` is `S:` and `T:` followed by blanks. Its verifiers are held
+  in `CDB$ROOT`, and a password change there leaves the PDB's row as it was.
+  Measured by `18_common_spare4_probe.sql` on 23.26.3.0.0, 21.3.0.0.0 and
+  18.4.0.0.0. What should hash mode do for such an account?
+- **Decision:** Refuse it at plan time, exit 5, with its own capability name,
+  `verifier_container`, and a hint that names the container. For a common
+  account in a PDB, the hint offers a target that connects to `CDB$ROOT`
+  first. Where the container was not resolved, it offers `sopuli doctor`
+  instead, because a root target through the same account would not resolve
+  either. It always offers `login`, and says that `login` has no lockout guard
+  for this account. Whether the account is common, and whether the container
+  holds its row, is decided as for the `LCOUNT` guard (#1122):
+  `DBA_USERS.COMMON` in a PDB, the `C##` prefix in an `unknown` scope, a
+  failed read counts as common, and an application container is refused
+  because it was not measured. So in an `unknown` scope, `hash` refuses a
+  `C##` account even when the session is in fact in `CDB$ROOT`, where it
+  compared before.
+- **Why:** The refusal was already safe, because a placeholder matches no
+  password. But it named the wrong cause, so an operator would look for a
+  format problem rather than a container one. An `unknown` scope reaches the
+  check only on a target that declares no `oracle.scope`, because one that
+  declares it is refused on connect. Comparing there would mean guessing that the session is in the
+  root, which the `LCOUNT` guard does not do either.
+- **Rejected:**
+  - Compare in an `unknown` scope, and refuse only a `T:` part that is all
+    blanks. It keeps the root's comparison, but it tells the placeholder by
+    its look, and the two guards would then decide one question two ways.
+  - Reword the format refusal when the `T:` part is all blanks. It recognises
+    the placeholder by its look, not by the account, and says nothing about an
+    application container.
+  - Document only. The hint would still name the wrong cause.

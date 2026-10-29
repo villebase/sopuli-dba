@@ -122,6 +122,9 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `17_common_lcount_probe.sql` | `23.26.3.0.0` | 2026-10-28 | #1122 | A common account has one failed-login count, the root's. Failed logins in the PDB and in the root add to it, a good login in the PDB resets it, and it locks the account in both containers on the limit of the account's profile in the root, whether that limit is lower or higher than the PDB's. In the PDB, `SYS.USER$` reads 0 and `DBA_USERS` says `OPEN` for the locked account, which answers `ORA-28000` to a right or a wrong password. `CONTAINERS()` and `CDB_USERS` read in the PDB show only the PDB. A common account that holds `SET CONTAINER` and `SELECT ON SYS.USER$`, both `CONTAINER = ALL`, reads the root's count after it switches to `CDB$ROOT` |
 | `17_common_lcount_probe.sql` | `21.3.0.0.0` | 2026-10-28 | #1122 | As on 26ai |
 | `17_common_lcount_probe.sql` | `18.4.0.0.0` | 2026-10-28 | #1122 | As on 26ai |
+| `18_common_spare4_probe.sql` | `23.26.3.0.0` | 2026-10-29 | #1126 | In the PDB, a common account's `SPARE4` is `S:` and 60 blanks, then `T:` and 160 blanks: the shape of a real value, with no hex digit. The root holds the real verifiers. `ALTER USER ... IDENTIFIED BY` in the root changes the root's row and leaves the PDB's as it was, and the new password logs in to the PDB. The same statement in the PDB gets `ORA-65066` |
+| `18_common_spare4_probe.sql` | `21.3.0.0.0` | 2026-10-29 | #1126 | As on 26ai |
+| `18_common_spare4_probe.sql` | `18.4.0.0.0` | 2026-10-29 | #1126 | As on 26ai |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-08-26 | — | `COMMON` and PDB installs, both `keep_audit` settings |
 | `99_uninstall.sql` | `23.26.2.0.0` | 2026-10-17 | #812 | `keep_audit=N` drops the `SOPULI_CDB_*` policies in `CDB$ROOT`; in a PDB it drops the PDB's own and leaves the root's |
 | `99_uninstall.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | Both `keep_audit` settings |

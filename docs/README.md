@@ -608,6 +608,37 @@ such as "from 16", means the one release of it that was measured.
   31 is refused with `400 LimitExceeded`, and OCI removes no version by itself. A metadata-only update adds no version.
   Scheduling the deletion of a DEPRECATED version frees its place at once: the
   next content update succeeds. M7, M7b and M7c.
+- `verified` `oci-create-pending` (#1151) — **Can a secret be created with its
+  only version in PENDING?**
+  No. `CreateSecret` with `stage = PENDING` is refused with
+  `400 InvalidParameter: stage must be one of CURRENT.` A secret's first version
+  is always CURRENT. M9.
+- `verified` `oci-create-taken` (#1151) — **What does a create answer for a
+  name that is already held?**
+  `400 InvalidParameter: name already exists`, not a 409. The answer is the same
+  when the name belongs to a secret scheduled for deletion, both while it is
+  `SCHEDULING_DELETION` and once it is `PENDING_DELETION`, which followed
+  within 20 seconds. M10.
+- `verified` `oci-create-state` (#1151) — **Is a new secret ready at once?**
+  No. A create answers `CREATING`, and an update in that state is refused with
+  `409 IncorrectState`. It was `ACTIVE` 20.8 and 18.7 seconds after the create
+  answered. Scheduling a version's deletion makes the secret `UPDATING`, and it
+  was `ACTIVE` 19.7 and 21.8 seconds later. M11.
+- `verified` `oci-metadata-limits` (#1151) — **What may a secret's metadata
+  hold?**
+  About 5,100 characters for the whole map, counted in characters, not bytes.
+  Under a 12-character key, one ASCII value of 5,101 characters is accepted
+  and 5,159 is refused; two values of 2,629 characters each are refused
+  together; 5,101 two-byte characters are accepted. The refusal is
+  `400 InvalidParameter: metadata exceeds max allowed size`. A list, a nested
+  object and an integer are accepted and read back as sent. A read by name
+  carries the same metadata as `GetSecret`. M12.
+- `verified` `oci-read-while-updating` (#1151) — **Does a read see a write
+  straight away?**
+  No. A read by name made while the secret is `UPDATING`, after an update that
+  changed the content and the metadata, returns the old version and the old
+  metadata. Once it is `ACTIVE`, the read returns both new. So a read's content
+  and its write counter always belong together. M13.
 - `unverified` `moto-secrets-manager` (#642) — **Does moto's server image cover
   every Secrets Manager call an AWS store makes?**
   Known: moto is open source, `motoserver/moto` needs no token, and it emulates

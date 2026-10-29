@@ -1,8 +1,8 @@
 """The longest password on a PostgreSQL target. Tier 0, and free of psycopg.
 
-Kept apart from :mod:`sopuli.driver.postgres.password`, which imports psycopg,
-so a test can pin the registry's literal to this constant on a machine without
-the ``postgres`` extra.
+A module of its own, holding the one fact the registry's literal is pinned to,
+so a test can compare the two without importing anything that computes or sends
+a password.
 
 **1024 bytes, in UTF-8.** libpq 13 cannot log in with a longer password
 (``pg-password-length``, #1057), and an application may still use it. The

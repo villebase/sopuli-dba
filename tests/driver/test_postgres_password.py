@@ -16,12 +16,14 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
+from sopuli.driver.postgres import password
 from sopuli.driver.protocol import DriverError, Scope, Timeouts, UnsupportedCapabilityError
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
+# `password` imports without psycopg (#1168); the session and what it reaches
+# do not, so the module skips where the extra is not installed.
 session_module = pytest.importorskip("sopuli.driver.postgres.session")
-password = pytest.importorskip("sopuli.driver.postgres.password")
 roles = pytest.importorskip("sopuli.driver.postgres.roles")
 
 ROLE = "acme_web_user"

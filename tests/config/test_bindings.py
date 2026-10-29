@@ -1589,6 +1589,50 @@ def test_a_run_that_does_not_use_the_store_is_not_refused_over_the_estate() -> N
     assert completed is narrowed
 
 
+def test_a_collision_in_a_document_the_run_does_not_touch_is_not_refused() -> None:
+    """Two left-out accounts share a root `pending` in `legacy-db`. This run
+    stages only into `acme-db`, so it cannot lose either of their passwords,
+    and the run that does stage into `legacy-db` refuses."""
+    config = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-oci": OCI_VAULT},
+            "targets": [
+                {
+                    "name": "alpha",
+                    "type": "oracle",
+                    "dsn": "db.example.com:1521/S.example.com",
+                    "environment": "dev",
+                    "oracle": {"scope": "pdb", "container": "P"},
+                }
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": "acme-db#DB/{account}",
+                },
+                {
+                    "name": "legacy",
+                    "targets": ["alpha"],
+                    "accounts": ["acme_old_user", "acme_older_user"],
+                    "secret_template": "legacy-db#{account}",
+                },
+            ],
+        }
+    )
+    env = {"SOPULI_VAULT": "vault-oci"}
+    narrowed = filter_estate(config, Selection(applications=("acme",)))
+
+    completed = binding_stores.complete(narrowed, env=env, estate=config)
+
+    assert [binding.vault for binding in completed.bindings] == ["vault-oci"]
+    legacy = filter_estate(config, Selection(applications=("legacy",)))
+    with pytest.raises(ConfigError, match="acme_old_user"):
+        binding_stores.complete(legacy, env=env, estate=config)
+
+
 def test_the_whole_estate_does_not_refuse_accounts_that_stage_apart() -> None:
     """The estate check refuses only a real collision: a pointer per account
     stages each account in its own place."""

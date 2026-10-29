@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import oci
@@ -128,6 +129,49 @@ def test_a_write_updates_under_the_etag_and_moves_the_token(fake: FakeOci, clock
     assert if_match == etag
     assert details.metadata == {CAS_KEY: "5", "targets": ["appdb-alpha"]}
     assert decoded(details) == {"password": "b"}
+
+
+def test_a_write_reports_the_version_it_made_current(fake: FakeOci, clock: Clock) -> None:
+    """From OCI's own answer once the secret is ready again, so the run can
+    show the number `@version=N` pins without reading the secret back
+    (#1164). Asked once, then forgotten; a lock record makes no version."""
+    fake.put("acme-db", {"password": "a"}, {"password": "b"})
+    oci_store = store(fake, clock)
+
+    oci_store.write("acme-db", {"password": "c"}, cas=1)
+    oci_store.write("acme-new", {"password": "x"}, cas=0)
+    oci_store.write("locks/acme-db", {"state": "held"}, cas=0)
+
+    assert oci_store.generation_of("acme-db") == 3
+    assert oci_store.generation_of("acme-db") is None
+    assert oci_store.generation_of("acme-new") == 1
+    assert oci_store.generation_of("locks/acme-db") is None
+
+
+def test_a_version_another_writer_made_is_not_reported(fake: FakeOci, clock: Clock) -> None:
+    """Between the update and the moment the secret is ACTIVE again, another
+    writer may have moved CURRENT; the counter then holds their token, and
+    the run shows its own token rather than their version (#1164)."""
+    oci_store = store(fake, clock)
+    theirs = SimpleNamespace(
+        data=SimpleNamespace(metadata={CAS_KEY: "9"}, current_version_number=12)
+    )
+    ours = SimpleNamespace(data=SimpleNamespace(metadata={CAS_KEY: "5"}, current_version_number=11))
+
+    oci_store._remember("acme-db", theirs, token="5")
+    assert oci_store.generation_of("acme-db") is None
+    oci_store._remember("acme-db", ours, token="5")
+    assert oci_store.generation_of("acme-db") == 11
+
+
+def test_a_stage_forgets_the_last_write_s_version(fake: FakeOci, clock: Clock) -> None:
+    fake.put("acme-db", {"password": "a"})
+    oci_store = store(fake, clock)
+    oci_store.write("acme-db", {"password": "b"}, cas=1)
+
+    oci_store.stage("acme-db", {"password": "c"}, attributes={}, cas=2)
+
+    assert oci_store.generation_of("acme-db") is None
 
 
 def test_the_new_version_is_current_and_the_old_one_previous(fake: FakeOci, clock: Clock) -> None:

@@ -188,6 +188,9 @@ class OciStore:
         #: The versions a ref in the configuration pins, by OCI name, which
         #: making room must never delete (#1159). Filled by :meth:`protect`.
         self._pinned: dict[str, set[int]] = {}
+        #: The version number each :meth:`write` made CURRENT, by OCI name,
+        #: for :meth:`generation_of` (#1164).
+        self._generations: dict[str, int] = {}
         self._vaults = vaults
         self._secrets = secrets
         self._kms = kms
@@ -310,7 +313,21 @@ class OciStore:
         because OCI will not create a secret without one.
         """
         name = _names.to_oci(path)
+        # A write that raised leaves no number for this one to report.
+        self._generations.pop(name, None)
         return self._write(name, path, data, cas=cas, what=self._what(name), raced=False)
+
+    def mechanism_for(self, path: str) -> str | None:
+        """:class:`~sopuli.store.protocol.WriteMechanism`: a write is the usual
+        whole document, so nothing to add."""
+        return None
+
+    def generation_of(self, path: str) -> int | None:
+        """:class:`~sopuli.store.protocol.WriteMechanism`: the version number
+        the last :meth:`write` to ``path`` made CURRENT, from OCI's own answer
+        once the secret was ACTIVE again, so no further call (#1164). ``None``
+        for a lock record, which adds no version."""
+        return self._generations.pop(_names.to_oci(path), None)
 
     def _write(
         self, name: str, path: str, data: Any, *, cas: int | None, what: str, raced: bool
@@ -325,7 +342,12 @@ class OciStore:
                 )
             try:
                 self._create(
-                    name, {} if lock else data, metadata={_names.CAS_KEY: "1", **record}, what=what
+                    name,
+                    {} if lock else data,
+                    metadata={_names.CAS_KEY: "1", **record},
+                    what=what,
+                    # A lock secret's `{}` is not a credential's version.
+                    remember=not lock,
                 )
             except CasConflictError:
                 # An unguarded write overwrites whoever created it first, once.
@@ -350,6 +372,9 @@ class OciStore:
                 _names.CAS_KEY: str(_token(now.metadata, what=what) + 1),
                 **record,
             },
+            # A new CURRENT, whose number `generation_of` reports; a lock
+            # record moves no version.
+            remember=not lock,
         )
 
     def patch(self, path: str, changes: Any, *, cas: int | None) -> int:
@@ -486,6 +511,9 @@ class OciStore:
                 f"{', '.join(reserved)}"
             )
         name = _names.to_oci(path)
+        # A stage or a promotion moves CURRENT's number away from what the last
+        # write made, so that number is no longer the one to report.
+        self._generations.pop(name, None)
         what = self._what(name)
         live = self._live(name, what=what)
         if live is None:
@@ -634,8 +662,18 @@ class OciStore:
             read_at=self._monotonic(),
         )
 
-    def _create(self, name: str, data: Any, *, metadata: dict[str, Any], what: str) -> None:
-        """``CreateSecret`` with ``data`` as the first version, and the wait for ACTIVE."""
+    def _create(
+        self,
+        name: str,
+        data: Any,
+        *,
+        metadata: dict[str, Any],
+        what: str,
+        remember: bool = False,
+    ) -> None:
+        """``CreateSecret`` with ``data`` as the first version, and the wait for
+        ACTIVE. ``remember`` keeps the version number it made, as
+        :meth:`_update` does."""
         if self._key_id is None:
             # Unreachable through a config file, which requires the key.
             raise StoreError(f'vault "{self._name}" needs a key_id to create {what}')
@@ -657,7 +695,9 @@ class OciStore:
         except NO_ANSWER as exc:
             raise _errors.unreachable(exc, what=what, maybe_written=True) from exc
         self._ids[name] = created.id
-        self._settle(created.id, name=name, written=True, what=what)
+        settled = self._settle(created.id, name=name, written=True, what=what)
+        if remember:
+            self._remember(name, settled, token=metadata[_names.CAS_KEY])
 
     def _taken(self, name: str, exc: Any, *, what: str) -> NoReturn:
         """Say why OCI refused a create for a name that is held.
@@ -699,6 +739,7 @@ class OciStore:
         room_for: str | None,
         content: Mapping[str, Any],
         metadata: Callable[[_Live], dict[str, Any]],
+        remember: bool = False,
     ) -> int:
         """``UpdateSecret`` under ``live``'s ETag, the wait for ACTIVE, and the
         new token.
@@ -777,8 +818,20 @@ class OciStore:
                         "run help",
                     ) from exc
                 current = churned
-        self._settle(live.id, name=live.name, written=True, what=what)
+        settled = self._settle(live.id, name=live.name, written=True, what=what)
+        if remember:
+            self._remember(live.name, settled, token=sent[_names.CAS_KEY])
         return int(sent[_names.CAS_KEY])
+
+    def _remember(self, name: str, settled: Any, *, token: str) -> None:
+        """Keep the version number ``settled`` shows as CURRENT, for
+        :meth:`generation_of`, if it is this write's: the counter still holds
+        the ``token`` the write sent. Another writer in between, which an
+        unguarded write does not stop, leaves no number, so the run shows the
+        token rather than someone else's version."""
+        found = dict(settled.data.metadata or {}).get(_names.CAS_KEY)
+        if found == token:
+            self._generations[name] = settled.data.current_version_number
 
     def _room_for(self, current: _Live, *, path: str, guarded: bool, what: str) -> _Live:
         """Make room for a version OCI refused as over the limit, and return the

@@ -194,6 +194,31 @@ def test_a_path_whose_layout_is_unknown_is_refused(inner: MemoryStore) -> None:
     assert stored.data == {"password": "a"}
 
 
+def test_a_payload_write_takes_the_number_from_a_store_that_knows_it(
+    inner: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store that reports its writes' numbers, as the OCI store does, is
+    asked, and the secret is not read back (#1164)."""
+
+    class Reporting(MemoryStore):
+        def mechanism_for(self, path: str) -> str | None:
+            return None
+
+        def generation_of(self, path: str) -> int | None:
+            return 7
+
+    store = Reporting(capabilities=inner.capabilities)
+    view = NativeStagedStore(store, native=lambda path: None, by="x", now=lambda: NOW)
+    view.write(PATH, {"password": "a"}, cas=0)
+
+    def unread(path: str, *, version: int | None = None) -> None:
+        raise AssertionError("read back")
+
+    monkeypatch.setattr(store, "read", unread)
+
+    assert view.generation_of(PATH) == 7
+
+
 def test_a_payload_write_reports_no_number_another_writer_moved(
     inner: MemoryStore,
 ) -> None:

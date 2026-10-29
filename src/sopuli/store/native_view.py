@@ -61,6 +61,7 @@ from sopuli.store.protocol import (
     Stored,
     StoreError,
     StoreHealth,
+    WriteMechanism,
 )
 
 #: The mechanism a write through this adapter reports, beside
@@ -226,14 +227,18 @@ class NativeStagedStore:
         """:class:`~sopuli.store.protocol.WriteMechanism`: the store's version
         number of what the last write to ``path`` left, for the run to report.
 
-        A path in payload fields is read again for it, since a write returns
-        only the token. The write has already landed, so this never raises:
-        a failed read, or a read that finds another token because some other
-        writer came in between, gives ``None``, and the run shows the token.
+        A path in payload fields asks the store, which knows the number from
+        its own write and gives ``None`` where another writer came in between
+        (the OCI store, #1164). A store that cannot say is read again for it,
+        and the same holds: a read that finds another token gives ``None``. The
+        write has already landed, so this never raises: a failed read gives
+        ``None`` too, and the run then shows the token.
         """
         if self.is_native(path):
             return self._written.pop(path, None)
         token = self._payload.pop(path, None)
+        if isinstance(self.inner, WriteMechanism):
+            return self.inner.generation_of(path)
         try:
             stored = self.inner.read(path)
         except Exception:  # noqa: BLE001 -- the write landed; a number is not worth failing it

@@ -588,12 +588,13 @@ sopuli --config sopuli.yaml doctor
 ```
 ```
 install
-  KIND     NAME       STATUS           CONFIGURED
-  backend  file       not_implemented  -
-  backend  hashicorp  installed        vault-dev
-  backend  keyring    not_implemented  -
-  backend  oci        not_implemented  -
-  driver   oracle     installed        1 target
+  KIND     NAME        STATUS           CONFIGURED
+  backend  file        not_implemented  -
+  backend  hashicorp   installed        vault-dev
+  backend  keyring     not_implemented  -
+  backend  oci         not_installed    -
+  driver   oracle      installed        1 target
+  driver   postgresql  not_installed    -
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
@@ -617,7 +618,9 @@ it in five parts:
 
 - **install** — which backends this machine has code for, against which your
   config asks for. `not_implemented` means this build has no module for that
-  backend yet, not that you installed something wrong.
+  backend yet, not that you installed something wrong. `not_installed` means
+  you did not install that extra, which is fine for a store or database your
+  config does not use.
 - **vaults** — whether the store answered, whether your token authenticated, and
   how far its clock is from yours.
 - **client** — whether Instant Client loaded, and which Oracle versions it can
@@ -788,7 +791,7 @@ no orphans in 1 vault (vault-dev)
 | `error: externally-managed-environment` from `pip install` | your Linux distribution does not let pip install into its own Python. Install pipx from the system packages. Section 2a |
 | `config file is accessible to ...`, exit 9 | the file's permissions are too open. Section 3 has the fix |
 | `instant_client  not loaded` in `doctor` | Instant Client is missing or not on the library path. Section 2c |
-| `... declares type "oci", but this build has no oci backend yet`, exit 9 | your config names a store this build has no code for |
+| `... declares type "file", but this build has no file backend yet`, exit 9 | your config names a store this build has no code for |
 | `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives two lines. Use the `pipx` one if you installed with pipx, as section 2 recommends, and the `pip` one otherwise |
 | `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *What the fence does in this build*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |

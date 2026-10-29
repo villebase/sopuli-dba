@@ -182,3 +182,9 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["oracledb"]
 ignore_missing_imports = true
+
+# The `oci` SDK ships no type information. Only `sopuli.store.oci` imports it,
+# which ADR-006 requires; that module treats its clients as `Any`.
+[[tool.mypy.overrides]]
+module = ["oci", "oci.*"]
+ignore_missing_imports = true

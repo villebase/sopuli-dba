@@ -322,7 +322,7 @@ def test_the_auth_example_builds_the_stores_it_describes() -> None:
     method written as a bare value -- so if the grammar and the document disagree
     about any of them, it shows up here rather than in somebody's config file.
     """
-    block = next(block for _, block in _blocks() if "instance_principal" in block)
+    block = next(block for _, block in _blocks() if "auth: config_file" in block)
 
     prod, dev, oci = build_vaults(parse_yaml(block))
 
@@ -335,10 +335,10 @@ def test_the_auth_example_builds_the_stores_it_describes() -> None:
     assert dev.auth is not None
     assert str(dev.auth.token) == "file ~/.vault-token"
 
-    # The bare form: sugar for `{ method: instance_principal }`, and no material,
-    # since a machine identity is not something the file can point at.
+    # The bare form: sugar for `{ method: config_file }`, and no material, since
+    # the OCI config file holds it.
     assert oci.auth is not None
-    assert oci.auth.method == "instance_principal"
+    assert oci.auth.method == "config_file"
     assert oci.auth.token is None
 
 

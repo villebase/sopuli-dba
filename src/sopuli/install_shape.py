@@ -179,8 +179,8 @@ def status_of(entry: Backend | DatabaseDriver) -> str:
     Order matters, and it is the order :func:`sopuli.store.registry.resolve`
     already fails in. A build with no module for a backend cannot serve it
     whatever `pip` has put on the machine, so that is asked first -- otherwise
-    ``oci``, which has an extra and no module yet, would report itself installed
-    on a developer machine that has the SDK and still refuse at connect time.
+    a backend with an extra and no module yet would report itself installed on
+    a developer machine that has its client and still refuse at connect time.
 
     **Public because it has a second caller.** :mod:`sopuli.diagnostics` asks it
     to decide whether an install line is honest for a component, and a second

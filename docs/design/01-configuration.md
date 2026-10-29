@@ -917,7 +917,7 @@ What changes is where it stops:
 | Moment | With the backend missing |
 |---|---|
 | load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
-| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `oci`, `file` and `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `file` and `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```
@@ -1073,6 +1073,14 @@ Python client provides. The four OCI methods parse here too, because §3a is one
 grammar with two vocabularies, and are refused against a HashiCorp store with a
 message saying they authenticate to a different vendor.
 
+**An OCI store can perform** `config_file`. The other three OCI methods parse
+and are refused when the store is opened, with a message saying *not
+implemented yet*. An OCI store with no `auth:` block uses `config_file` with
+the profile `DEFAULT`, as the OCI CLI does. The file is `~/.oci/config`, or the
+one `OCI_CONFIG_FILE` names. That is the OCI SDK's variable; the OCI CLI's
+`OCI_CLI_CONFIG_FILE` is not read. The store's `region`, when set, replaces the
+profile's.
+
 A key belongs to the method that uses it: `role_id` under `method: token` is an
 error naming the method in force, because it is a leftover from an edit that
 changed the method rather than a typo. `mount` here is the **auth** mount, not the
@@ -1105,7 +1113,7 @@ vaults:
     vault_id:       ocid1.vault.oc1.eu-frankfurt-1.exampleuniqueid
     compartment_id: ocid1.compartment.oc1..exampleuniqueid
     key_id:         ocid1.key.oc1.eu-frankfurt-1.exampleuniqueid
-    auth: instance_principal
+    auth: config_file
 ```
 
 This is **not** a SecretRef (§7). A SecretRef addresses a value *in* a vault; this

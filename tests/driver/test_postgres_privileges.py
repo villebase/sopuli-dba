@@ -54,9 +54,6 @@ def test_a_role_without_admin_option_is_missing_it_from_16() -> None:
     found = _classify(managed=(ManagedRole(WEB, False, False, False),))
 
     assert found.missing == (f"ADMIN OPTION ON {WEB}",)
-    assert found.missing_for == ((WEB, f"ADMIN OPTION ON {WEB}"),), (
-        "the pre-flight needs to know which account an entry is about (#1117)"
-    )
     assert "02-postgres-privileges.md section 2" in found.hint
     assert USER in found.hint
 

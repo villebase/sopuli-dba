@@ -518,12 +518,6 @@ class PrivilegeAudit:
     #: whether or not it is empty: a section that appeared only on a problem
     #: could not be quoted as evidence that there was none (E6).
     missing: tuple[str, ...] = ()
-    #: Each entry of ``missing`` that is about one asked account, paired with
-    #: that account as it was asked: ``(account, entry)``. Empty where no grant is
-    #: per account, as on Oracle. The pre-flight drops the entries for an
-    #: account the guardrails refuse whatever is granted (#1117), and keeps the
-    #: account in the audit for everything else, such as an over-grant.
-    missing_for: tuple[tuple[str, str], ...] = ()
     #: Every role held, traversed. Reported whole rather than only where it
     #: matched, so a reader can see *how* an over-grant arrived -- a site role
     #: two levels up is a real case, and the one nobody guesses.

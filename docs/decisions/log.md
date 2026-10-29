@@ -3668,14 +3668,13 @@ the register.
   `ADMIN OPTION` on the role, a grant supautils does not allow. Should the
   survey ask about such an account, and should `creds generate` stage a
   `pending` for it?
-- **Decision:** The pre-flight's privilege survey does not count a grant
-  missing on an account that a check no flag waives would refuse whatever is
-  granted: check 6 (a superuser) and check 8 (a reserved role). The account
-  stays in the audit, so an over-grant on it is still reported. The guardrails
-  then report it as `SKIPPED`, as `creds apply` does, and the rest of the run
-  goes on. `creds generate` skips
-  such an account too, so that it stages no `pending` that nothing can apply;
-  that half is #1174.
+- **Decision:** The pre-flight asks nothing further about an account that a
+  check no flag waives would refuse whatever is granted: check 6 (a superuser)
+  and check 8 (a reserved role). The privilege audit is not asked about it,
+  and its profile is not looked up. The guardrails then report it as
+  `SKIPPED`, as `creds apply` does, and the rest of the run goes on. `creds
+  generate` skips such an account too, so that it stages no `pending` that
+  nothing can apply; that half is #1174.
 - **Why:** No grant to the tool account can change either answer, because the
   server is what refuses the change. Asking for one turned the refusal of one
   account into the refusal of every account in the run, and the remedy it
@@ -3688,7 +3687,5 @@ the register.
     hide that account's missing grant, and with `--force` the run would go on
     to an `ALTER ROLE` the server refuses. Only the checks no flag waives can
     be known to make the grant pointless.
-  - Leave the account out of the audit altogether. It would also drop an
-    over-grant on it, such as a tool account that can `SET ROLE` to it.
   - Leave `creds generate` as it is. Its `pending` for the role stays in the
     shared document, and no run applies or removes it.

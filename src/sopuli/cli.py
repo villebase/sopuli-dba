@@ -9176,8 +9176,9 @@ def _preflight_target(
     missing_profiles: list[tuple[str, str]] = []
     unreadable: list[Finding] = []
     # Accounts the guardrails refuse whatever is granted (#1117), case-folded.
-    # The privilege audit below asks for no grant on them; the guardrails skip
-    # each one in the run itself.
+    # The pre-flight asks nothing further about them: not their grants in the
+    # audit below, and not their profile. The guardrails skip each one in the
+    # run itself.
     reserved: set[str] = set()
     for binding in bindings:
         try:
@@ -9213,7 +9214,10 @@ def _preflight_target(
             missing_accounts.append(binding.account)
             continue
         if guardrails.server_reserved(state):
+            # Its profile move and reuse limits are for a change that will not
+            # happen, so a profile that is not there must not refuse the run.
             reserved.add(binding.account.casefold())
+            continue
 
         # §5's profile assignment, asked before anything is written (decision #301).
         # Only where the policy declares one and the account is not already on it:
@@ -9276,14 +9280,19 @@ def _preflight_target(
 
     try:
         # The accounts this run surveys, not every one declared: a grant missing
-        # for an account the selectors left out does not block this run.
-        audit = session.privileges(accounts=_declared_on(bindings, target.name))
-        # Nor does a grant missing on an account the guardrails refuse whatever
-        # is granted: no grant could change it, and asking for one refused the
-        # whole run over an account the guardrails skip (#1117). The account
-        # stays in the audit, so an over-grant on it is still reported.
-        unasked = {entry for account, entry in audit.missing_for if account.casefold() in reserved}
-        missing_privileges = tuple(entry for entry in audit.missing if entry not in unasked)
+        # for an account the selectors left out does not block this run. Nor for
+        # one the guardrails refuse whatever is granted: no grant could change
+        # it, and asking for one refused the whole run over an account the
+        # guardrails skip (#1117). The pre-flight reads only `missing` and the
+        # hint from the audit, so leaving the account out loses nothing here;
+        # `doctor --check-privileges` still audits every declared account.
+        surveyed = tuple(
+            account
+            for account in _declared_on(bindings, target.name)
+            if account.casefold() not in reserved
+        )
+        audit = session.privileges(accounts=surveyed)
+        missing_privileges = tuple(audit.missing)
         privileges_hint = audit.hint
     except Exception as error:  # noqa: BLE001 -- likewise
         # Reported and **not** blocking. The audit establishes nothing either

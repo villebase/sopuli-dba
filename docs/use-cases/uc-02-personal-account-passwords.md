@@ -552,10 +552,13 @@ rules apply:
   name. A reset of a `C##` account never reads `<prefix>/<target>/c`: a record
   or lock there is an account named `C`'s. A reset of `C` reads and locks it,
   `lock status` lists it as the lock of `c`, and `lock break` can break it.
-  Everyone who resets `C##` accounts on one target runs 0.80.0 or later. An
-  earlier release writes every `C##` account's record and lock at
-  `<prefix>/<target>/c`, so with both in use one account is locked at two paths
-  ([#884](../decisions/log.md#884)).
+  **Reset `C##` accounts on one target with 0.80.0 or later only.** A release
+  before it writes every `C##` account's record and lock at
+  `<prefix>/<target>/c`, so with both in use one account is locked at two
+  paths ([#884](../decisions/log.md#884)). A record or lock found at
+  `<prefix>/<target>/c` on a target with no account named `C` is one such
+  release left behind: `lock break` clears the lock, and the record can be
+  deleted.
 
 **The record is written after the database confirms and after delivery** (§6.4).
 On the seen path, "after delivery" is as late as possible: the value is composed

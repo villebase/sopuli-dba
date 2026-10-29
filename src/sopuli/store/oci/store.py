@@ -81,8 +81,9 @@ SETTLE_TIMEOUT_S = 120
 #: Seconds between two reads of a busy secret.
 POLL_S = 2.0
 
-#: The largest metadata map, as compact JSON characters, the store sends. A
-#: little under the 5,120 measured to be accepted (``oci-metadata-limits``).
+#: The largest metadata map the store sends, in characters of keys and values
+#: (:func:`_check_size`). A little under the 5,113 measured to be accepted
+#: (``oci-metadata-limits``).
 METADATA_MAX = 5100
 
 #: OCI's answer to a write the secret's state does not allow: it is busy.
@@ -628,7 +629,8 @@ class OciStore:
             ).data
         except oci.exceptions.ServiceError as exc:
             if exc.status == 404 and exc.request_id:
-                self._absent_or_refused(name, which, exc, what=what)
+                if self._absent_or_refused(name, which, exc, what=what):
+                    return self._bundle(path, **which)
                 return None
             _errors.raise_for(exc, what=what)
         except NO_ANSWER as exc:
@@ -639,10 +641,11 @@ class OciStore:
         metadata = dict(bundle.metadata or {})
         if _names.is_lock(path):
             # Decision 5: the record is in the metadata, so updating it adds no
-            # version. A lock secret with no record holds nothing to read.
-            if _names.RECORD_KEY not in metadata:
-                return None
-            data = _json_object(metadata[_names.RECORD_KEY], what=what)
+            # version. A lock secret with no readable record is still a lock,
+            # at its token: `LockRecord.from_dict` makes a held, expired record
+            # of it, which `lock break` can clear. Read as nothing, every later
+            # `cas: 0` acquisition would fail for good.
+            data = _record(metadata.get(_names.RECORD_KEY))
         else:
             data = _json_object(_content(bundle, what=what), what=what)
         stages = set(bundle.stages or ())
@@ -659,8 +662,9 @@ class OciStore:
 
     def _absent_or_refused(
         self, name: str, which: Mapping[str, Any], exc: Any, *, what: str
-    ) -> None:
-        """Return if a 404 on a content read means "nothing there"; raise if not.
+    ) -> bool:
+        """After a 404 on a content read: ``False`` if it means "nothing there",
+        ``True`` if the caller should read again; raise if it means neither.
 
         OCI answers 404 ``NotAuthorizedOrNotFound`` for a missing secret, a
         missing version or stage, a missing vault, **and** a secret this
@@ -668,20 +672,28 @@ class OciStore:
         a run plan to create a secret that exists, so the cases are told apart:
 
         * the secret is not listed: it is absent, once the vault is known;
+        * it is listed and still ``CREATING``: OCI answers a read by name with
+          404 until it is ACTIVE (``oci-read-while-creating``), as when a
+          second run reads the lock a first run has just created. The store
+          waits, and the caller reads again;
         * it is listed and CURRENT was asked for: the principal may not read it;
         * it is listed and a stage or a version was asked for: a CURRENT read
           says which. If that is refused too, the principal may not read it;
           otherwise the stage or version is just not there.
         """
-        if not self._listed(name):
+        live = [one for one in self._summaries(name) if one.lifecycle_state not in GONE]
+        if not live:
             self._check_vault()
-            return
+            return False
+        if live[0].lifecycle_state == "CREATING":
+            self._settle(live[0].id, name=name, written=False, what=what)
+            return True
         if which.get("stage") != CURRENT:
             try:
                 self._secrets.get_secret_bundle_by_name(
                     secret_name=name, vault_id=self._vault_id, stage=CURRENT
                 )
-                return
+                return False
             except oci.exceptions.ServiceError as again:
                 if again.status != 404:
                     _errors.raise_for(again, what=what)
@@ -689,10 +701,6 @@ class OciStore:
             f"{what} exists, and this principal may not read its content ({_errors.describe(exc)})",
             hint="the IAM policy must allow reading secret bundles in this vault",
         )
-
-    def _listed(self, name: str) -> bool:
-        """Whether a secret of that name, not being deleted, is in the store's compartment."""
-        return any(one.lifecycle_state not in GONE for one in self._summaries(name))
 
     def _summaries(self, name: str) -> tuple[Any, ...]:
         """Every secret called ``name`` in the store's compartment, deleting ones
@@ -791,19 +799,36 @@ def _encode(data: Any) -> Any:
 def _check_size(metadata: Mapping[str, Any], *, what: str) -> None:
     """Refuse a metadata map OCI would refuse, before it is sent.
 
-    OCI limits the whole map (``oci-metadata-limits``): one key and value of
-    5,120 characters as compact JSON was accepted, and 5,178 refused, in
-    characters rather than bytes. The lock record and the promotion stamps
-    share the map, and a secret the tool did not create may bring keys of its
-    own.
+    OCI limits the whole map (``oci-metadata-limits``), in characters rather
+    than bytes: a 12-character key with a 5,101-character value was accepted,
+    5,113 in all, and with 5,159, refused. So the size is counted as OCI was
+    measured, keys and string values as they are, and a list or an object as
+    compact JSON. The lock record is a string already, and is not escaped
+    again. The lock record and the promotion stamps share the map, and a
+    secret the tool did not create may bring keys of its own.
     """
-    size = len(_compact(dict(metadata)))
+    size = sum(
+        len(key) + len(value if isinstance(value, str) else _compact(value))
+        for key, value in metadata.items()
+    )
     if size > METADATA_MAX:
         raise StoreError(
-            f"{what}: its metadata would be {size} characters as JSON, and OCI allows "
-            f"about {METADATA_MAX}",
+            f"{what}: its metadata would be {size} characters, and OCI allows about {METADATA_MAX}",
             hint="remove metadata keys this tool does not use from the secret",
         )
+
+
+def _record(value: Any) -> Any:
+    """A lock record from the metadata: the object, or ``None`` if there is no
+    readable one. Never a refusal, for the reason ``LockRecord.from_dict``
+    gives: a lock nobody can read must still be a lock somebody can break."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _json_object(text: str, *, what: str) -> dict[str, Any]:

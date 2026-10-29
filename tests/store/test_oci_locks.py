@@ -16,6 +16,7 @@ from sopuli.config.model import Vault
 from sopuli.lock import Holder, LockableStore, LockKey, LockManager, lock_path
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
+from sopuli.store.protocol import CasConflictError
 
 RECORD = {"state": "held", "correlation_id": "01JACME", "command": "creds rotate"}
 
@@ -73,13 +74,55 @@ def test_a_lock_record_reads_back_at_its_token(fake: FakeOci) -> None:
 
 
 def test_a_stale_lock_token_conflicts(fake: FakeOci) -> None:
-    from sopuli.store.protocol import CasConflictError
-
     oci_store = store(fake)
     oci_store.write("locks/acme-db", RECORD, cas=0)
 
     with pytest.raises(CasConflictError):
         oci_store.write("locks/acme-db", RECORD, cas=0)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{CAS_KEY: "3"}, {CAS_KEY: "3", RECORD_KEY: "not json"}, {CAS_KEY: "3", RECORD_KEY: "[1]"}],
+    ids=["no record", "not JSON", "not an object"],
+)
+def test_a_lock_secret_without_a_readable_record_is_still_a_lock(
+    fake: FakeOci, metadata: dict[str, str]
+) -> None:
+    """Read as nothing, every later `cas: 0` acquisition would fail for good.
+    At its token, `LockRecord.from_dict` makes a held record of it."""
+    fake.put("sopuli-locks.acme-db", {}, metadata=metadata)
+
+    stored = store(fake).read("locks/acme-db")
+
+    assert stored is not None
+    assert (stored.data, stored.version) == (None, 3)
+
+
+def test_a_lock_being_created_is_waited_for_not_refused(fake: FakeOci) -> None:
+    """`oci-read-while-creating`: a second run reads the lock a first run has
+    just created, and OCI answers 404 until it is ACTIVE."""
+    secret = fake.put(
+        "sopuli-locks.acme-db",
+        {},
+        metadata={CAS_KEY: "1", RECORD_KEY: json.dumps(RECORD)},
+        lifecycle_state="CREATING",
+    )
+    secret.busy = 2
+
+    stored = store(fake).read("locks/acme-db")
+
+    assert stored is not None
+    assert stored.data == RECORD
+
+
+def test_the_record_is_counted_as_it_is_not_escaped_again(fake: FakeOci) -> None:
+    """A record full of quotes is no bigger to OCI for being JSON inside JSON:
+    escaped once, in the record itself, it is about 4,800 characters; escaped
+    again, as the whole map's JSON, it would be about 9,600, over the limit."""
+    oci_store = store(fake)
+
+    assert oci_store.write("locks/acme-db", {"note": '"' * 2400}, cas=0) == 1
 
 
 def test_metadata_is_unknown_and_require_cas_sends_nothing(fake: FakeOci) -> None:

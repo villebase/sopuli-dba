@@ -1094,9 +1094,11 @@ the register.
     `sys/wrapping/wrap`, and the person's unwrap is the last read.
   - `vault_path`: before writing, the tool must ask Vault for the DBA token's
     capabilities on the person's path. If they include `read` or `root`, the
-    reset is refused at plan time. How long its stored copy lives is
-    [#447](#447)'s decision: Vault deletes the copy when the method's `ttl`
-    runs out.
+    reset is refused at plan time.
+
+  `vault_path` was not built then, so how long its stored copy lives was left
+  to the method itself. [#447](#447) later decided it: Vault deletes the copy
+  when the method's `ttl` runs out.
 - **Why:** "The DBA cannot read it" has to be checked, not assumed. A DBA token
   that can read the path lets the DBA learn the password, and then act as the
   person while the database audit trail shows only the person's name. A root

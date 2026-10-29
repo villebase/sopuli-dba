@@ -3490,3 +3490,25 @@ the register.
     output layer, and the HashiCorp backend has nothing to wait for.
   - A separate setting for the wait. `timeout_s` already bounds how long the
     run may stall on this store, and the lock is held throughout either way.
+
+## #1152
+
+- **Decided:** 2026-10-28, on #1128 (decision 5)
+- **Question:** Every mutated path gets a lock record, written at least twice
+  a run. An OCI secret holds at most 30 versions, and OCI removes none by
+  itself (#1136). Where does an OCI store keep the record?
+- **Decision:** In the lock secret's metadata, under `sopuli_record`, as a
+  JSON string. The lock secret is `sopuli-locks.<name>`, created by the tool
+  with `{}` as its content, and its content never changes. A metadata-only
+  update adds no version and changes the ETag (#1136, M3 and M7b), so the
+  compare-and-set still guards it. The whole metadata map is limited to about
+  5,100 characters (#1151, M12), and a lock record is well under 1,000.
+- **Why:** A record in the content would add a version per write and fill a
+  lock secret after about 15 runs. The metadata holds it without ever reaching
+  that limit, and the store needs nothing to clean up.
+- **Rejected:**
+  - The record in the content, deleting old DEPRECATED lock versions as the
+    limit nears. It works, but it deletes on every few runs, and each deletion
+    keeps the secret busy for about 20 seconds (#1151, M11).
+  - One lock secret for the whole store. Two runs on different secrets would
+    contend for it, and P5's locks are per path.

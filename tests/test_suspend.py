@@ -134,7 +134,7 @@ def test_an_application_s_account_a_predicate_admits_is_refused_even_under_force
 
     assert not decision.proceed
     assert decision.state == SKIPPED
-    assert "application 'acme' also declares this account" in decision.detail
+    assert "also declared by acme" in decision.detail
 
 
 def test_the_inline_application_is_named_as_such() -> None:
@@ -146,7 +146,44 @@ def test_the_inline_application_is_named_as_such() -> None:
     )
 
     assert not decision.proceed
-    assert "the inline application also declares" in decision.detail
+    assert "also declared by the inline application" in decision.detail
+
+
+def test_an_application_on_another_target_does_not_refuse_it_here() -> None:
+    """The vault masters the account only where the application binds it."""
+    beta = {**TARGET, "name": "appdb-dev-beta"}
+    estate = build_config(
+        {
+            "version": 1,
+            "targets": [TARGET, beta],
+            "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["appdb-dev-beta"],
+                    "accounts": ["acme_web_user"],
+                    "secret": "vault-dev:acme/db#pw",
+                }
+            ],
+            "personal_accounts": [{"profile": "DEV_USERS"}],
+        }
+    )
+
+    here = decide(
+        state("ACME_WEB_USER", profile="DEV_USERS"),
+        config=estate,
+        account="acme_web_user",
+        target="appdb-dev-alpha",
+    )
+    there = decide(
+        state("ACME_WEB_USER", profile="DEV_USERS"),
+        config=estate,
+        account="acme_web_user",
+        target="appdb-dev-beta",
+    )
+
+    assert here.proceed
+    assert not there.proceed
 
 
 def test_a_person_the_same_predicate_admits_beside_an_application_still_proceeds() -> None:

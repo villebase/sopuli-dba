@@ -114,7 +114,7 @@ def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
 
     assert not decision.proceed
     assert decision.state == SKIPPED
-    assert "application 'acme' also declares this account" in decision.detail
+    assert "also declared by acme" in decision.detail
 
 
 def test_a_missing_account_is_a_finding() -> None:

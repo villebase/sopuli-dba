@@ -167,18 +167,16 @@ def bound_by_application(config: Config, account: str, target: str) -> str | Non
     would give the account a password no vault holds, and the application
     would fail at its next login (invariant 6). No flag waives it.
 
-    Compared case-folded, for :func:`admits`'s reason.
+    Names are compared by ``upper()``, invariant 5's rule for one database user
+    on one target. The application is named as `account list`'s
+    `SOPULI-W042` names it.
     """
-    folded = account.casefold()
+    spelled = account.upper()
     for binding in config.bindings:
-        if binding.target == target and binding.account.casefold() == folded:
-            owner = (
-                f"application {binding.application!r}"
-                if binding.application is not None
-                else "the inline application"
-            )
+        if binding.target == target and binding.account.upper() == spelled:
+            owner = binding.application or "the inline application"
             return (
-                f"{owner} also declares this account, and its password is "
+                f"also declared by {owner}, whose password for it is "
                 f"mastered in the vault -- a personal-account verb does not change an "
                 f"application's account"
             )

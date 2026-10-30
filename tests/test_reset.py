@@ -302,11 +302,10 @@ def test_an_undeclared_account_is_refused() -> None:
     assert answer.state == SKIPPED
 
 
-def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
-    """#1056: a reset would give it a password no vault holds, and the
-    application would fail at its next login. `--force` does not waive it."""
-    answer = decide(
-        state(name="ACME_WEB_USER", profile="DEV_USERS"),
+def application_account(**rest: Any) -> Any:
+    """`acme_web_user`, which application `acme` binds and a predicate admits."""
+    return decide(
+        state(name="ACME_WEB_USER", profile="DEV_USERS", **rest),
         config=config(
             vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
             applications=[
@@ -320,9 +319,25 @@ def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
         force=True,
     )
 
+
+def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
+    """#1056: a reset would give it a password no vault holds, and the
+    application would fail at its next login. `--force` does not waive it."""
+    answer = application_account()
+
     assert answer.proceed is False
     assert answer.state == SKIPPED
-    assert "application 'acme' also declares this account" in answer.detail
+    assert "also declared by acme" in answer.detail
+
+
+def test_a_locked_application_account_is_not_sent_to_unlock_it() -> None:
+    """Unlocking it would not make it a person's to reset, so the application
+    is named rather than the lock."""
+    answer = application_account(status="LOCKED", locked=True)
+
+    assert answer.state == SKIPPED
+    assert "also declared by acme" in answer.detail
+    assert "unlock" not in answer.detail
 
 
 def test_a_deliberately_locked_account_is_refused() -> None:

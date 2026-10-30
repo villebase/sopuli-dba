@@ -400,8 +400,11 @@ the declaration does not admit. So one run touches exactly one account. Where a
 predicate admits an account that an application binds on that target, they
 refuse it as `SKIPPED`, naming the application, and `--force` does not waive
 it. A reset would give the account a password no vault holds, and the
-application would fail at its next login. `account list` describes such an
-account and adds `SOPULI-W042`. Reasons: [#1056](../decisions/log.md#1056).
+application would fail at its next login. On a target where no application
+binds the name, the account is a person's and the verbs go ahead. `account
+list` adds `SOPULI-W042` wherever an application declares the name, on any
+target, because there the whitelist is ambiguous. Reasons:
+[#1056](../decisions/log.md#1056).
 
 **A name may not be declared twice.** An account that is both an application
 account and a personal one would make the whitelist ambiguous about which

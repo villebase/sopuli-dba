@@ -308,23 +308,14 @@ def decide(
     (H4). Checking it first also keeps the message specific -- reported through
     check 1 it would read as *not declared*, which is a different thing to go and
     look at. An account an application binds here is refused the same way, for
-    :func:`~sopuli.personal.bound_by_application`'s reason (#1056).
+    :func:`~sopuli.personal.bound_by_application`'s reason (#1056), and before
+    the lock: unlocking it would not make it a person's to reset.
     """
     if state is None:
         return Decision(
             proceed=False,
             state=ACCOUNT_MISSING,
             detail="the account does not exist on this target",
-        )
-
-    if deliberately_locked(state.status):
-        return Decision(
-            proceed=False,
-            state=SKIPPED,
-            detail=(
-                f"the account is {state.status.lower()}; a reset does not unlock a "
-                f"deliberate lock -- unlock it first if that is what you mean"
-            ),
         )
 
     rule = declared_on(
@@ -337,6 +328,17 @@ def decide(
     application = bound_by_application(config, state.name, target) if rule is not None else None
     if application is not None:
         return Decision(proceed=False, state=SKIPPED, detail=application)
+
+    if deliberately_locked(state.status):
+        return Decision(
+            proceed=False,
+            state=SKIPPED,
+            detail=(
+                f"the account is {state.status.lower()}; a reset does not unlock a "
+                f"deliberate lock -- unlock it first if that is what you mean"
+            ),
+        )
+
     found = review(state, declared=[state.name] if rule is not None else [], force=force)
 
     if not found.permitted:

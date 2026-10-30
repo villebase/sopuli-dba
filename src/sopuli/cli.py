@@ -144,6 +144,7 @@ from sopuli.diagnostics import (
     guardrail_diagnostics,
     guardrail_pass_ahead,
     guardrail_refuses_ahead,
+    handover_left_behind,
     install_diagnostics,
     lock_broken,
     lock_diagnostics,
@@ -2484,9 +2485,14 @@ def _reset_notices(found: Sequence[_Reset]) -> list[Diagnostic]:
     order they happened: the notification goes out first, and the journal is
     written last because it holds what happened (§6.4). The encryption warnings
     come once per target, for the targets a password was sent to (#697).
+
+    A 1Password item left behind (#446) comes first: it happened during the
+    delivery, before the notification and the record.
     """
     notes: list[Diagnostic] = []
     for one in found:
+        if one.left_behind is not None:
+            notes.append(handover_left_behind(one.account, one.target, one.left_behind))
         if one.record_error is not None:
             notes.append(reset_record_unwritten(one.record_error.path, one.record_error.reason))
         if one.notify_error is not None:
@@ -2829,6 +2835,11 @@ class _Reset:
     #: ``diagnostics[]``, which is where a consumer already looks for what a run
     #: could not do.
     notify_error: str | None = None
+    #: Why the 1Password item an `onepassword_share` delivery shared could not
+    #: be deleted, so that it still holds the password (#446). **Never
+    #: serialised as a result field**, for `record_error`'s reason: the caller
+    #: turns it into `SOPULI-W061` in ``diagnostics[]``.
+    left_behind: str | None = None
     #: The encryption of the connection the new password was sent over; ``None``
     #: where no password was sent. **Never serialised as a result field**: the
     #: caller turns it into SOPULI-W031/W032 in ``diagnostics[]``, once per
@@ -3085,6 +3096,9 @@ def _reset_one(
                 audited=audited,
             )
 
+        # Set before the DDL, so a row for a DDL that failed still says what the
+        # delivery could not delete (SOPULI-W061).
+        receipt: Receipt | None = None
         try:
             secret = generate(policy, limit=limit, target=target.name)
             # **UC-2 6.4's other order, and this is the branch that makes it
@@ -3143,6 +3157,7 @@ def _reset_one(
                         caveats=caveats,
                         encryption=sent if _carried(error) else None,
                         audited=audited,
+                        left_behind=receipt.left_behind if receipt is not None else None,
                     )
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -3160,6 +3175,7 @@ def _reset_one(
                 error=reported,
                 encryption=sent if _carried(error) else None,
                 audited=audited,
+                left_behind=receipt.left_behind if receipt is not None else None,
             )
 
         # The row is built **before** the hand-over, and that is not style.
@@ -3197,6 +3213,7 @@ def _reset_one(
             error=unclosed,
             delivered=delivery.method,
             handover=receipt.reported() if receipt is not None else None,
+            left_behind=receipt.left_behind if receipt is not None else None,
             overridden=overridden,
             caveats=caveats,
             duration_ms=_elapsed(started),
@@ -3306,10 +3323,14 @@ def _refuse_personal_delivery_store(
     A method's own ``vault:`` is checked when the file is read
     (:mod:`sopuli.config.references`). The rest of :func:`_delivery_store`'s
     chain, the target's ``vault:`` and ``defaults.vault``, depends on which
-    targets the run reaches, so it is checked here, per target. The seen path
-    and ``one_time_link`` write to no store.
+    targets the run reaches, so it is checked here, per target. The seen path,
+    ``one_time_link`` and ``onepassword_share`` write to no store.
     """
-    if delivery.is_seen or delivery.one_time_link is not None:
+    if (
+        delivery.is_seen
+        or delivery.one_time_link is not None
+        or delivery.onepassword_share is not None
+    ):
         return
     checked: set[str] = set()
     for target in reached:
@@ -3504,10 +3525,36 @@ def _delivery_backends(
     needs no credential, and a preview that said "would be reset" for a server
     the real run refuses would be wrong about what the run will do. Nothing is
     returned, so nothing is delivered.
+
+    **`onepassword_share` has one backend for every target too**, for
+    `one_time_link`'s reason. Its preflight logs in with the service account
+    and checks the vault and the account's sharing policy (#446). A `--dry-run`
+    skips it, as it skips opening a store: it needs the token, which a preview
+    does not ask for. It still checks that the SDK imports, which needs no
+    token, so a preview refuses a host the real run would refuse.
     """
     if delivery.is_seen:
         return {}
-    if delivery.one_time_link is not None:
+    if delivery.onepassword_share is not None:
+        # Imported here, for `_delivery_backend`'s reason.
+        from sopuli.delivery import onepassword
+
+        if run.dry_run:
+            onepassword.check_installed()
+            return {}
+
+        shared = delivery.onepassword_share
+        share = onepassword.OnePassword(
+            onepassword_vault=shared.onepassword_vault,
+            ttl=shared.ttl,
+            token=resolve_material(
+                shared.token,
+                env=material_environment(),
+                where=f"delivery.{onepassword.METHOD}.token",
+            ),
+        )
+        backends: dict[str, DeliveryBackend] = {target.name: share for target in reached}
+    elif delivery.one_time_link is not None:
         # Imported here, for `_delivery_backend`'s reason.
         from sopuli.delivery import yopass
 
@@ -3518,7 +3565,7 @@ def _delivery_backends(
         link.preflight(account=account, target=reached[0].name if reached else "")
         if run.dry_run:
             return {}
-        backends: dict[str, DeliveryBackend] = {target.name: link for target in reached}
+        backends = {target.name: link for target in reached}
     elif run.dry_run:
         return {}
     else:
@@ -3539,8 +3586,8 @@ def _delivery_backend(
     cubbyhole live in the same vault authenticates to it once.
 
     One branch per unseen method this build serves that writes to a store.
-    `one_time_link` writes to none, so :func:`_delivery_backends` builds it.
-    Each further method adds a branch here or there (TODO(#446)).
+    `one_time_link` and `onepassword_share` write to none, so
+    :func:`_delivery_backends` builds them.
     """
     # Imported here rather than at module scope, for the reason the store registry
     # imports its backends on first use (ADR-006 rule 1). Nothing above this line

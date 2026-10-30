@@ -72,9 +72,10 @@ PERMITTED = {
         "retrieval credential (UC-2 §6.6, decision #445)"
     ),
     "delivery/onepassword.py": (
-        "the 1Password service account token, presented to 1Password's SDK to log in -- "
-        "`_auth.py`'s reason, not a numbered exception: a credential the tool presents "
-        "to a service it is calling (#446)"
+        "the password, passed to 1Password's SDK, which writes it into the item it shares "
+        "-- the method's store write, as the vault write is invariant 2's first exception "
+        "(#446); and the service account token, presented to the SDK to log in, for "
+        "`_auth.py`'s reason: a credential the tool presents to a service it is calling"
     ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "driver/oracle/verifier.py": (

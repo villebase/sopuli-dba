@@ -102,7 +102,8 @@ class Handover:
     #: (decision #447). ``None`` on a method that writes to no path.
     path: str | None = None
     version: int | None = None
-    #: The Yopass secret a `one_time_link` delivery created (decision #445).
+    #: The Yopass secret a `one_time_link` delivery created (decision #445), or
+    #: the 1Password item an `onepassword_share` delivery shared (#446).
     #: ``None`` on every other method.
     id: str | None = None
 
@@ -139,6 +140,12 @@ class Receipt:
     accessor it can destroy what it names. ``link`` is the link without the key,
     set only when the method splits the two: the key is then the ``token``. When
     it does not split, the ``token`` is the whole link and ``link`` is ``None``.
+
+    On `onepassword_share` (#446), ``id`` is the id of the 1Password item the
+    share was made from, and the ``token`` is the share link. The item is
+    deleted once the share exists. ``left_behind`` says why it could not be,
+    where it could not: the item then still holds the password, and the run
+    warns (`SOPULI-W061`). ``None`` on every other method.
     """
 
     method: str
@@ -149,12 +156,14 @@ class Receipt:
     version: int | None = None
     id: str | None = None
     link: str | None = None
+    left_behind: str | None = None
 
     @property
     def location(self) -> str | None:
         """What the reset record's ``delivery.to`` holds: the wrap's accessor,
-        the path a `vault_path` delivery wrote, or the id of a `one_time_link`
-        secret. None of them retrieves anything."""
+        the path a `vault_path` delivery wrote, the id of a `one_time_link`
+        secret, or the id of the 1Password item an `onepassword_share` delivery
+        shared. None of them retrieves anything."""
         return self.accessor or self.path or self.id
 
     def reported(self) -> Handover:

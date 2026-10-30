@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.69.schema.json`](../schemas/sopuli-run-1.69.schema.json),
-[`../schemas/sopuli-event-1.20.schema.json`](../schemas/sopuli-event-1.20.schema.json)
+Schemas: [`../schemas/sopuli-run-1.70.schema.json`](../schemas/sopuli-run-1.70.schema.json),
+[`../schemas/sopuli-event-1.21.schema.json`](../schemas/sopuli-event-1.21.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -2092,7 +2092,15 @@ unseen method will have its own kind of handle for the same fact.
   record. Yopass returns no expiry, so `expires_at` is the `Date` header of the
   server's answer to the create, plus the `ttl`: the server's clock, as on the
   Vault methods. It is `null` when the answer has no `Date` header. `id` is
-  absent on every other method (UC-2 §6.6, decided in #445).
+  absent on every method but these two (UC-2 §6.6, decided in #445).
+- **On `onepassword_share`, `id` is the id of the 1Password item** the share
+  was made from, from run schema 1.70 and event schema 1.21. `accessor` is
+  `null`. The delivery deletes the item once the share exists, so the id opens
+  nothing; it finds the item's events in 1Password's activity log. 1Password
+  returns no expiry and no server time with the link, so `expires_at` is the
+  tool's own clock, read just before the share is made, plus the `ttl`. The
+  link stops working after the `ttl` from the share, so the reported time is
+  never later than the real one (UC-2 §6.6, #446).
 
 **`audited`** says whether the database audits the DBA's routes to acting as the
 person (UC-2 §1): `true`, `false` or `"unknown"`. **`audited_detail`** says why:
@@ -2293,6 +2301,7 @@ not contract and may improve.
 | `SOPULI-W058` | A PostgreSQL target's `sslmode` does not verify the server: `disable`, `allow`, `prefer` or `require` (#1058). The connection may still be encrypted, but anything on the network path can present its own certificate and read the password a run sets. One entry per target, raised on every command that loads the file, with `at` naming the `sslmode` line to change. The database counterpart of `SOPULI-W004`, which is about a store. `safety.require_encryption` refuses `disable` and an unencrypted connection, and does not ask for a verified server (`01-configuration.md` §3a) |
 | `SOPULI-W059` | A secret is at its store's version limit (30 on OCI), so a write makes the store schedule the deletion of the secret's oldest DEPRECATED version, two days ahead, to make room (decision 7, #1159). From run schema 1.67. `creds generate`, `apply` and `rotate` raise it in the plan and under `--dry-run`, naming the versions the run's writes may delete, and every run raises it afterwards for each version a store did delete. CURRENT, PENDING and PREVIOUS are never deleted. A ref pinned to such a version with `@version=N` would stop resolving once it is deleted, so the store refuses that deletion (exit 9), and `creds generate` and `rotate` refuse the run at plan time. Under `apply`, which may write fewer documents than it plans, the plan's entry says the store will refuse that write, as it does for a secret with too few DEPRECATED versions. One entry per secret in the plan, and per deleted version after the run |
 | `SOPULI-W060` | A dry run found an account that a guardrail refuses on its own target, from what the survey read (#1116). From run schema 1.68 and event schema 1.20. Raised by `creds apply --dry-run --preflight` and `creds rotate --dry-run`. The real run reviews each account before it changes it, and skips one a guardrail refuses, so this says the run's `SKIPPED` row before the run starts. Where `--account` named the account, the run stops on it with `ERROR`, and the dry run then exits 1 and counts it in `summary.failed`. **One per account and target**, naming each check that refuses it, with `account` and `target` set. A credential the guardrail pass decides for every target is `SOPULI-W055` instead. Under `--force`, only a check no flag waives raises it |
+| `SOPULI-W061` | An `onepassword_share` delivery shared the 1Password item that holds the new password, and could not delete the item afterwards (#446). From run schema 1.70 and event schema 1.21. The link works and the password changed, so the run does not fail, as with `SOPULI-W026`. The item holds a working password until somebody deletes it, so the message says to delete it by hand, and names the item, the vault and 1Password's reason. **One per account and target**, with `account` and `target` set |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.
@@ -2546,6 +2555,11 @@ alone. Either is a retrieval credential, kept in a `Secret` and printed by
 `sopuli/output/delivery_view.py` under the rules above. In split mode the link
 without the key is printed beside it in plain text: it holds the secret's id and
 nothing that decrypts. `results[].handover` carries that id.
+
+**On the `onepassword_share` path the same rules hold for the 1Password share
+link** (#446). It holds its key in the fragment, opens once, and is a retrieval
+credential, printed by the same module. `results[].handover` carries the id of
+the item the share was made from.
 
 **No terminal is required**, unlike the seen path. A handover script reads the
 token from a pipe, and requiring a terminal would leave an estate no way to

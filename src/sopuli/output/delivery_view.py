@@ -6,8 +6,9 @@ working password under five structural guards, because on the seen path the
 exposure *is* the delivery. Here the password goes to the store and to nobody
 else; what the DBA holds is a retrieval credential they pass on out of band,
 because §6.1 bars it from the notify channel and the tool carries no other. It is
-a wrapping token on `vault_wrapped`, and a one-time link, or the key apart from
-its link, on `one_time_link` (decision #445).
+a wrapping token on `vault_wrapped`, a one-time link, or the key apart from
+its link, on `one_time_link` (decision #445), and a 1Password share link on
+`onepassword_share` (#446).
 
 **It is still secret-bearing.** §6.1's rule is about reach rather than value —
 "the password, or anything that retrieves it" — so the credential is a
@@ -78,7 +79,8 @@ def render_handover(receipt: Receipt, *, account: str, target: str) -> str | Non
     *do not unwrap it yourself* is doing work, not being polite.
 
     A `one_time_link` receipt gets :func:`_render_link`: the link, or the link
-    and the key as two values.
+    and the key as two values. So does an `onepassword_share` receipt, which
+    carries an id and a link that holds its key.
     """
     if receipt.token is None:
         return _render_path(receipt, account=account, target=target)

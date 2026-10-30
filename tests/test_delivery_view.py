@@ -158,6 +158,9 @@ def test_the_password_has_no_way_into_this_view() -> None:
         # holds the password or the key (decision #445).
         "id",
         "link",
+        # Why `onepassword_share` could not delete its item: 1Password's message
+        # about a delete, which carries no item content (#446).
+        "left_behind",
     }
 
 

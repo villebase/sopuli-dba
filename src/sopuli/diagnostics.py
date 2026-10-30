@@ -549,6 +549,12 @@ VERSION_PRUNED = "SOPULI-W059"
 #: bound to more than one target is `SOPULI-W055` instead.
 GUARDRAIL_REFUSES_AHEAD = "SOPULI-W060"
 
+#: An `onepassword_share` delivery shared the 1Password item that holds the new
+#: password, and could not delete it afterwards (#446). The share exists and the
+#: password changed, so the run does not fail, but the item holds a working
+#: password until somebody deletes it.
+HANDOVER_LEFT_BEHIND = "SOPULI-W061"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -745,6 +751,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "target, naming each check that refuses it. A credential bound to more than one "
             "target is `SOPULI-W055` instead. Under `--force`, only the checks no flag "
             "waives refuse, as in the run."
+        ),
+        HANDOVER_LEFT_BEHIND: (
+            "`account reset-password` with `delivery.method: onepassword_share` shared the "
+            "1Password item that holds the new password, and could not delete the item "
+            "afterwards. The link works and the password changed, so the run does not fail. "
+            "The item holds a working password until somebody deletes it, so delete it by "
+            "hand. The message names the item and 1Password's reason."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1679,6 +1692,24 @@ def guardrail_refuses_ahead(account: str, target: str, reason: str, *, named: bo
         message=(
             f"{account} on {target}: a guardrail refuses this account, so the run would "
             f"{outcome}: {reason}"
+        ),
+    )
+
+
+def handover_left_behind(account: str, target: str, reason: str) -> Diagnostic:
+    """The 1Password item an `onepassword_share` delivery shared is still there (#446).
+
+    ``reason`` is the delete's failure, which names the item and the vault.
+    """
+    return Diagnostic(
+        level="warning",
+        code=HANDOVER_LEFT_BEHIND,
+        target=target,
+        account=account,
+        message=(
+            f"the password for {account} on {target} was shared, and the 1Password item "
+            f"that holds it could not be deleted, so it holds a working password until "
+            f"somebody deletes it -- delete it by hand; the link still works: {reason}"
         ),
     )
 

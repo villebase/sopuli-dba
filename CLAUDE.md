@@ -78,6 +78,8 @@ detail.
 
    `one_time_link` passes the password to `pysequoia` in the process, and only
    ciphertext leaves. That call is its store write, as the vault write is (#445).
+   `onepassword_share` passes the password to 1Password's SDK in the process,
+   which writes it into an item. That call is its store write too (#446).
 
    `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in
    a module that holds none of these sites, and on a second call in the seen

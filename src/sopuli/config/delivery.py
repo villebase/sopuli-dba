@@ -94,7 +94,7 @@ ONEPASSWORD = "onepassword_share"
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
 #: disagreeing about which methods work.
-IMPLEMENTED = (MANUAL, WRAPPED, PATH, LINK)
+IMPLEMENTED = (MANUAL, WRAPPED, PATH, LINK, ONEPASSWORD)
 
 #: The keys `manual:` takes. One, and it is required -- see
 #: :class:`~sopuli.config.model.ManualDelivery` for why it is not a default.
@@ -604,10 +604,9 @@ def _check_shape(block: dict[str, Any], method: str, *, at: KeyPath) -> None:
 def unserviceable(delivery: Delivery | None) -> str | None:
     """Why the configured method cannot deliver yet, or ``None`` when it could.
 
-    :data:`IMPLEMENTED` lists the methods this build serves. The others are not
-    built: `onepassword_share` (TODO(#446)) and `smtp_encrypted`, which has no
-    issue. A file naming `method: onepassword_share` parses and cannot hand
-    anybody a password.
+    :data:`IMPLEMENTED` lists the methods this build serves. The one that is
+    not built is `smtp_encrypted`, which has no issue. A file naming
+    `method: smtp_encrypted` parses and cannot hand anybody a password.
 
     A **warning rather than a refusal**, following E4/E5's shape for a configured
     backend this build cannot serve (ADR-006): the file is valid, the install is

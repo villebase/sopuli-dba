@@ -16,12 +16,25 @@ account's sharing policy allows the `ttl`. 1Password gives the policy only for
 an item, so the check creates an empty Secure Note, reads the policy through it,
 and deletes it. The note holds no password.
 
+**The delivery** creates a Login item titled ``<account> on <target>``, with
+the account as its username and the password as its password. It shares the
+item as a link that opens once and expires after the `ttl`, and deletes the
+item. The link is the receipt's token: anyone who holds it can open it, once.
+The item's id is the hand-over's record, in ``results[].handover.id``. If the
+delete fails, the password has still been handed over, so the delivery does not
+fail: the receipt says why, and the run warns (`SOPULI-W061`), because the
+item then holds the password until somebody deletes it.
+
+**The password reaches the SDK in this process.** That call is the method's
+store write, as the vault write is for the Vault methods, and
+`tests/test_reveal_sites.py` records this module with that reason. A failure of
+a call that carries the item is named by its type only, because its message
+could quote what it was given (#785).
+
 **`onepassword` is imported inside the functions that use it.** This module is
 in no registry, so ADR-006 rule 1 applies to it as it does to
 :mod:`sopuli.delivery.yopass`, and `tests/store/test_install_shape.py` imports it
 with the SDK blocked.
-
-TODO(#446): deliver, and the wiring that makes the method usable.
 """
 
 from __future__ import annotations
@@ -31,10 +44,13 @@ import importlib
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sopuli.config.delivery import ONEPASSWORD_TTLS
 from sopuli.config.errors import ROOT, ConfigError
+from sopuli.delivery import Receipt
+from sopuli.delivery.yopass import ttl_seconds
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import install_hint
 from sopuli.output.debug import logger
@@ -188,6 +204,106 @@ class OnePassword:
             asyncio.run(self._preflight())
             self._checked = True
 
+    def deliver(self, secret: Secret, *, account: str, target: str) -> Receipt:
+        """Create the item, share it once, delete it, and return the link."""
+        return asyncio.run(self._deliver(secret, account=account, target=target))
+
+    async def _deliver(self, secret: Secret, *, account: str, target: str) -> Receipt:
+        types = _sdk_types()
+        client = await self.client_factory(self.token)
+        vault_id = await self._vault_id(client)
+        item = await _call(
+            "create an item",
+            vault=self.onepassword_vault,
+            quote=False,
+            call=lambda: client.items.create(
+                types.ItemCreateParams(
+                    category=types.ItemCategory.LOGIN,
+                    vault_id=vault_id,
+                    title=f"{account} on {target}",
+                    fields=[
+                        types.ItemField(
+                            id="username",
+                            title="username",
+                            field_type=types.ItemFieldType.TEXT,
+                            value=account,
+                        ),
+                        types.ItemField(
+                            id="password",
+                            title="password",
+                            field_type=types.ItemFieldType.CONCEALED,
+                            # The method's store write (module docstring).
+                            value=secret.reveal(),
+                        ),
+                    ],
+                )
+            ),
+        )
+        try:
+            policy = await _call(
+                "read the sharing policy",
+                vault=self.onepassword_vault,
+                call=lambda: client.items.shares.get_account_policy(vault_id, item.id),
+            )
+            # 1Password returns no expiry with the link. The share's clock starts
+            # after this one, so the expiry reported from it is never late. Whole
+            # seconds, as the other methods report, and rounding down keeps it so.
+            shared_at = datetime.now(UTC).replace(microsecond=0)
+            link = await _call(
+                "share the item",
+                vault=self.onepassword_vault,
+                quote=False,
+                call=lambda: client.items.shares.create(
+                    item,
+                    policy,
+                    types.ItemShareParams(
+                        expire_after=types.ItemShareDuration(ONEPASSWORD_TTLS[self.ttl]),
+                        one_time_only=True,
+                    ),
+                ),
+            )
+        except BaseException as error:
+            # No share exists, so the item is the only copy of a password that
+            # authenticates nothing yet. It goes, and the failure is reported.
+            left = await self._delete(client, vault_id, item.id)
+            if left is not None:
+                undeleted = _undeleted(item.id, left)
+                if isinstance(error, StoreError):
+                    error.hint = f"{error.hint}. {undeleted}"
+                else:
+                    # An interrupt has no hint. Its traceback shows the note.
+                    error.add_note(undeleted)
+            raise
+        if not isinstance(link, str) or not link:
+            left = await self._delete(client, vault_id, item.id)
+            raise StoreError(
+                "1Password answered the share with no link, so nothing was handed over",
+                hint=(
+                    "the item was deleted, and the account's password has not changed"
+                    if left is None
+                    else f"the account's password has not changed. {_undeleted(item.id, left)}"
+                ),
+            )
+        return Receipt(
+            method=METHOD,
+            token=Secret(link),
+            id=str(item.id),
+            expires_at=shared_at + timedelta(seconds=ttl_seconds(self.ttl)),
+            left_behind=await self._delete(client, vault_id, item.id),
+        )
+
+    async def _delete(self, client: Any, vault_id: str, item_id: str) -> str | None:
+        """Delete an item, or say why it could not be. Never raises a StoreError."""
+        try:
+            await _call(
+                f"delete the item {item_id}",
+                vault=self.onepassword_vault,
+                call=lambda: client.items.delete(vault_id, item_id),
+            )
+        except StoreError as error:
+            return error.message
+        return None
+
     async def _preflight(self) -> None:
         types = _sdk_types()
         client = await self.client_factory(self.token)
@@ -274,29 +390,54 @@ class OnePassword:
         )
 
 
-async def _call(what: str, *, vault: str, call: Callable[[], Awaitable[Any]]) -> Any:
+async def _call(
+    what: str, *, vault: str, call: Callable[[], Awaitable[Any]], quote: bool = True
+) -> Any:
     """One SDK call, or a :class:`StoreError` that says what was being done.
 
     ``call`` is called here, not by the caller, so an error raised while its
     arguments are built is mapped too. The SDK raises plain ``Exception`` with
-    1Password's message, which is kept. A missing permission arrives here, so
-    the hint names the three the method needs.
+    1Password's message, which is kept, unless ``quote`` is false: a call that
+    carries the password is named by its type only (#785). A missing permission
+    arrives here, so the hint names the three the method needs.
     """
     started = time.monotonic()
     try:
         result = await call()
     except Exception as error:  # noqa: BLE001 -- the SDK raises plain Exception
         LOG.debug("%s: %s in %.3fs", what, type(error).__name__, time.monotonic() - started)
+        said = str(error) if quote else type(error).__name__
         raise StoreError(
-            f"1Password could not {what} in the vault {vault!r}: {error}",
+            f"1Password could not {what} in the vault {vault!r}: {said}",
             hint=(
-                "1Password's own message is above. The service account needs read, write "
-                "and share items on the vault. Nothing was handed over, and the account's "
-                "password has not changed"
+                (
+                    "1Password's own message is above"
+                    if quote
+                    else "1Password's message is not shown, because the call carried the password"
+                )
+                + ". The service account needs read, write and share items on the vault. "
+                "Nothing was handed over, and the account's password has not changed"
             ),
         ) from None
     LOG.debug("%s: ok in %.3fs", what, time.monotonic() - started)
     return result
+
+
+def _undeleted(item_id: str, reason: str) -> str:
+    """The hint's sentence for an item a failed delivery could not delete."""
+    return (
+        f"The item {item_id} could not be deleted either, and holds a password that was "
+        f"never set, so it can be deleted by hand: {reason}"
+    )
+
+
+def check_installed() -> None:
+    """Refuse, naming the extra, if the SDK does not import.
+
+    Needs no token, so a ``--dry-run`` runs it too (invariant 4).
+    """
+    _sdk()
+    _sdk_types()
 
 
 def _name(value: Any) -> str:

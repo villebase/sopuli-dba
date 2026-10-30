@@ -767,10 +767,7 @@ def test_the_onepassword_block_is_not_read_when_another_method_is_selected() -> 
     assert section.onepassword_share is None
 
 
-def test_onepassword_share_still_warns_that_nothing_serves_it() -> None:
-    """The keys are read, and the delivery is not built yet (TODO(#446)), so a
-    clean parse must not read as a working delivery."""
+def test_onepassword_share_is_served_by_this_build() -> None:
     notice = unserviceable(built(method="onepassword_share", onepassword_share=onepassword_block()))
 
-    assert notice is not None
-    assert "not implemented in this build" in notice
+    assert notice is None

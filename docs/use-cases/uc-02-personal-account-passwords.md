@@ -6,9 +6,8 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 This document specifies `personal_accounts:`, `sopuli account reset-password`,
 `sopuli account expire-password`, `sopuli account suspend` and
 `sopuli account list`. The reset is built for the `manual`, `vault_wrapped`,
-`vault_path` and `one_time_link` delivery methods; §6.2 lists the methods that
-are not built yet. §9 lists the
-open questions.
+`vault_path`, `one_time_link` and `onepassword_share` delivery methods; §6.2
+lists the method that is not built yet. §9 lists the open questions.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -210,7 +209,7 @@ types `account` at the prompt.
 
 | Command | What it does | Mutates |
 |---|---|---|
-| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped`, `vault_path` and `one_time_link`. A file naming an unseen method that is not built yet (`onepassword_share`, `smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
+| `sopuli account reset-password` | **unseen, the default**: generate a password, set it, write it where only the owner is meant to fetch it; show it to nobody. Built for `vault_wrapped`, `vault_path`, `one_time_link` and `onepassword_share`. A file naming the unseen method that is not built yet (`smtp_encrypted`) is refused at plan time with exit 5, before the password changes | yes |
 | `sopuli account reset-password`, `manual` | **seen**: generate a password, set it **with expiry**, and show it once, after confirmation. Under §6.5's five guards | yes |
 | `sopuli account expire-password` | `PASSWORD EXPIRE` with no new password: "make them change it". Closes an open rollover window first | yes |
 | `sopuli account suspend` | `ACCOUNT LOCK`, for offboarding | yes |
@@ -1148,7 +1147,7 @@ exist. A file that breaks either rule is refused at load as config-invalid
 | `vault_wrapped` | unseen | a Vault response-wrapping token, single use | yes |
 | `vault_path` | unseen | a KV path only their own identity can read | yes |
 | `one_time_link` | unseen | a URL that decrypts once | yes |
-| `onepassword_share` | unseen | a 1Password share link that opens once | not yet; decided in #446 |
+| `onepassword_share` | unseen | a 1Password share link that opens once | yes |
 | `manual` | **seen** | the password, printed to the DBA's terminal | yes |
 | `smtp_encrypted` | unseen | encrypted mail the tool sends | no; no issue yet |
 
@@ -1371,14 +1370,14 @@ look interchangeable, so this section says how they differ.
   tool's**: the server deletes a one-time secret as part of the read that
   returns it. Unlike Vault, an unlicensed Yopass server keeps no record of that
   read.
-- **`onepassword_share`**, not built yet (#446): one view, like the Yopass
-  link, and a bearer credential for the same reason: anyone who has the link
-  can open it. **The single view is 1Password's, not the tool's**: a second
-  open says "Maximum views reached". The link also expires after the method's
-  `ttl`. The method will create an item holding the password, share it, and
-  delete the item. A share is a copy, so the link still opens, and no copy
-  stays in the vault. Measured on a 1Password account on 2026-10-30 (#446). It
-  adds 1Password as a third party, as `one_time_link` adds the Yopass server.
+- **`onepassword_share`**: one view, like the Yopass link, and a bearer
+  credential for the same reason: anyone who has the link can open it. **The
+  single view is 1Password's, not the tool's**: a second open says "Maximum
+  views reached". The link also expires after the method's `ttl`. The tool
+  creates an item holding the password, shares it, and deletes the item. A
+  share is a copy, so the link still opens, and no copy stays in the vault.
+  Measured on a 1Password account on 2026-10-30 (#446). It adds 1Password as a
+  third party, as `one_time_link` adds the Yopass server.
 - **`smtp_encrypted`**: as strong as the recipient's key management, and no
   stronger.
 
@@ -1552,6 +1551,37 @@ methods. An answer without a `Date` header leaves it `null`. The id names the
 secret and cannot read it, but like an accessor it can destroy what it names:
 whoever holds it can fetch the ciphertext, which uses up the view, or delete
 the secret. The person's own fetch then fails, so either is visible.
+
+**How `onepassword_share` makes the link** (#446). A 1Password service
+account, through 1Password's Python SDK, creates a Login item titled
+`<account> on <target>` in the method's vault, with the account as the username
+and the password as the password. It shares the item as a link anyone can
+open, once, that expires after the `ttl`, and deletes the item. The service
+account needs read, write and share items on the vault.
+
+**The account's sharing policy is read at plan time**, before a password is
+drawn. 1Password gives it only for an existing item, so the tool creates an
+empty Secure Note, reads the policy through it, and deletes it. It refuses,
+with exit 5, a `ttl` longer than the policy's maximum and a policy that does
+not allow a link anyone can open. A `--dry-run` does not run this check,
+because it needs the token. It does check that the SDK is installed, which
+needs no token.
+
+**If the item cannot be deleted after the share**, the password has still been
+handed over, so the reset goes on, and the run warns with `SOPULI-W061`: the
+item holds a working password until somebody deletes it.
+
+**A link scanner may use up the view.** 1Password's page fetches the item as
+soon as it loads and shows it, with the password hidden behind a reveal. A
+second open says "Maximum views reached". Measured on 2026-10-30 (#446), with
+a reveal before the second open; whether a load without a reveal counts as the
+view was not measured apart. A chat preview or a mail scanner that runs the
+page's script loads it, so send the link by a channel that does not open
+links.
+
+**The run document records the hand-over** in `results[].handover`, with `id`
+the id of the deleted item. 1Password returns no expiry with the link, so
+`expires_at` is the tool's clock just before the share, plus the `ttl`.
 
 ### 6.7 Reusable by UC-4
 

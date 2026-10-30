@@ -4806,8 +4806,8 @@ def _plan_version_limits(
     * a create on a name that a secret scheduled for deletion still holds
       (``oci-create-taken``);
     * the same for the document's lock record, which taking the lock creates.
-      Every verb refuses this one, ``apply`` too, since every verb locks every
-      document it plans (#1188);
+      ``apply`` refuses this one too, since generate, rotate and apply each
+      lock every document they plan (#1188);
     * writes to a full secret with too few DEPRECATED versions to delete;
     * writes that would delete a pinned version.
 
@@ -4900,7 +4900,10 @@ def _refuse_held_lock_name(limited: VersionLimited, key: LockKey) -> None:
         f"{key.store}:{path}{named}, the lock record for {key.store}:{key.path}, would be "
         f"created when this run takes the lock, and a secret of that name is scheduled for "
         f"deletion; the store keeps the name until it is deleted",
-        hint="cancel the deletion to use that lock record again, then run again",
+        hint=(
+            "wait until the store deletes it, or cancel the deletion; a cancelled record "
+            "comes back as it was, and `sopuli lock status` shows whether it is held"
+        ),
     )
 
 

@@ -71,6 +71,11 @@ PERMITTED = {
         "and the link it returns, which holds the key and is the fifth exception's "
         "retrieval credential (UC-2 §6.6, decision #445)"
     ),
+    "delivery/onepassword.py": (
+        "the 1Password service account token, presented to 1Password's SDK to log in -- "
+        "`_auth.py`'s reason, not a numbered exception: a credential the tool presents "
+        "to a service it is calling (#446)"
+    ),
     "passwords.py": "generation's own validation, which never leaves the process",
     "driver/oracle/verifier.py": (
         "`check --method hash`'s comparison (UC-1 §7) -- `passwords.py`'s reason: the "

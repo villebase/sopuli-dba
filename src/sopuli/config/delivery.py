@@ -8,9 +8,8 @@ documents what is *built*, and this is the layer that makes the second true.
 the sub-block with the same name carries that method's own settings. Both halves
 are checked here. This module refuses a method UC-2 §6.2 does not define and a
 method whose sub-block is missing, which is the part that is common to all six.
-Where the selected method is `manual`, `vault_wrapped`, `vault_path` or
-`one_time_link`, it also reads that method's keys. The keys of
-`onepassword_share:` (TODO(#446)) are not read yet.
+Where the selected method is `manual`, `vault_wrapped`, `vault_path`,
+`one_time_link` or `onepassword_share`, it also reads that method's keys.
 
 **Why the sub-block must exist at all**, rather than defaulting: every method
 needs something. A wrapping token needs a TTL, a link needs a server address and
@@ -30,6 +29,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+from sopuli.config.auth import read_material
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     choice,
@@ -44,6 +44,7 @@ from sopuli.config.model import (
     Delivery,
     LinkDelivery,
     ManualDelivery,
+    OnePasswordDelivery,
     PathDelivery,
     WrappedDelivery,
 )
@@ -86,6 +87,9 @@ PATH = "vault_path"
 #: A link a Yopass server opens once (decision #445).
 LINK = "one_time_link"
 
+#: A 1Password share link that opens once (#446).
+ONEPASSWORD = "onepassword_share"
+
 #: The methods this build can actually serve. Here rather than in
 #: :mod:`sopuli.reset` because :func:`unserviceable` needs it too, and one list
 #: is what keeps `config validate`'s warning and the verb's refusal from
@@ -111,6 +115,21 @@ PATH_KEYS = ("ttl", "prefix", "vault")
 #: `split_key` is optional and ``false`` by default. There is no key for
 #: one-time: the tool always asks for it (decision #445).
 LINK_KEYS = ("base_url", "ttl", "split_key")
+
+#: The keys `onepassword_share:` takes, all required. There is no key for
+#: view-once: the tool always asks for it (#446).
+ONEPASSWORD_KEYS = ("onepassword_vault", "ttl", "token")
+
+#: The expiries 1Password offers for a share, as this file writes them, and the
+#: name 1Password gives each. Shortest first: an account's sharing policy sets a
+#: maximum, and :mod:`sopuli.delivery.onepassword` compares by this order.
+ONEPASSWORD_TTLS = {
+    "1h": "OneHour",
+    "24h": "OneDay",
+    "168h": "SevenDays",
+    "336h": "FourteenDays",
+    "720h": "ThirtyDays",
+}
 
 #: Characters `vault_path.prefix` refuses beyond what any store path does. The
 #: person's Vault policy repeats the prefix, and in a policy path `*` and `+`
@@ -178,6 +197,11 @@ def build_delivery(document: dict[str, Any]) -> Delivery | None:
         ),
         vault_path=_build_path(block[PATH], at=at.key(PATH)) if method == PATH else None,
         one_time_link=_build_link(block[LINK], at=at.key(LINK)) if method == LINK else None,
+        onepassword_share=(
+            _build_onepassword(block[ONEPASSWORD], at=at.key(ONEPASSWORD))
+            if method == ONEPASSWORD
+            else None
+        ),
         # Read whichever method is selected, which is the opposite of the rule one
         # line up. A method's sub-block is left unjudged when it is not the
         # chosen one, because nothing consults it; a notification is a property of
@@ -419,6 +443,70 @@ def _build_link(raw: Any, *, at: KeyPath) -> LinkDelivery:
         ttl=ttl,
         split_key=split_key is True,
     )
+
+
+def _build_onepassword(raw: Any, *, at: KeyPath) -> OnePasswordDelivery:
+    """`onepassword_share:`'s own settings.
+
+    **Only where `onepassword_share` is the selected method**, for `manual`'s
+    reason.
+
+    `onepassword_vault` is **required**: the title of the 1Password vault the
+    item is created in. A default would be a vault the file does not show.
+
+    `ttl` is **required**, with the wrap TTL's shape, and must be one of
+    :data:`ONEPASSWORD_TTLS`: 1Password offers no other expiry. Whether the
+    account's sharing policy allows it is checked at plan time.
+
+    `token` is **required**, and is named rather than written (C9). It is a
+    service account token, and it reads and writes the vault.
+    """
+    block = mapping(raw, at=at)
+    reject_unknown_keys(block, allowed=ONEPASSWORD_KEYS, at=at)
+
+    onepassword_vault = required_string(
+        block,
+        "onepassword_vault",
+        at=at,
+        hint=(
+            "the title of the 1Password vault the item is created in. The service account "
+            "needs read, write and share items on it"
+        ),
+    )
+    # Not stripped: it is compared exactly with 1Password's titles, and a title
+    # may end in a space.
+    allowed = ", ".join(f"`{ttl}`" for ttl in ONEPASSWORD_TTLS)
+    ttl = _required_ttl(
+        block,
+        method=ONEPASSWORD,
+        at=at,
+        why=(
+            "the link stops working, and how soon is what this method promises -- so it is "
+            f"written down rather than defaulted. 1Password offers {allowed}"
+        ),
+    )
+    if ttl not in ONEPASSWORD_TTLS:
+        raise ConfigError(
+            f"ttl {ttl!r} is not an expiry 1Password offers",
+            at=at.key("ttl"),
+            hint=f"use one of {allowed}: an hour, a day, or 7, 14 or 30 days",
+        )
+    if "token" not in block:
+        raise ConfigError(
+            "`onepassword_share` delivery needs a `token`",
+            at=at.key("token"),
+            hint=(
+                "the service account token, named rather than written: "
+                "`{ env: OP_SERVICE_ACCOUNT_TOKEN }` or `{ file: /path }` (C9)"
+            ),
+        )
+    token = read_material(
+        block["token"],
+        at=at.key("token"),
+        noun="a 1Password service account token",
+        example="OP_SERVICE_ACCOUNT_TOKEN",
+    )
+    return OnePasswordDelivery(onepassword_vault=onepassword_vault, ttl=ttl, token=token)
 
 
 def _required_ttl(block: dict[str, Any], *, method: str, at: KeyPath, why: str) -> str:

@@ -54,12 +54,14 @@ class FakeClient:
         *,
         vaults: list[tuple[str, str]] | None = None,
         max_expiry: str = "ThirtyDays",
-        fail: str | None = None,
+        allowed_types: tuple[str, ...] = ("Public", "Authenticated"),
+        fail: tuple[str, ...] = (),
     ) -> None:
         self.calls: list[tuple[str, Any]] = []
         self.live: set[str] = set()
         self._vaults = vaults if vaults is not None else [(VAULT_ID, VAULT)]
         self._max_expiry = max_expiry
+        self._allowed_types = allowed_types
         self._fail = fail
         self.vaults = SimpleNamespace(list=self._list_vaults)
         self.items = SimpleNamespace(
@@ -79,15 +81,20 @@ class FakeClient:
 
     async def _policy(self, vault_id: str, item_id: str) -> Any:
         self.calls.append(("shares.get_account_policy", (vault_id, item_id)))
-        if self._fail == "policy":
+        if "policy" in self._fail:
             # The message 1Password sends when the service account lacks share items.
             raise Exception(  # noqa: TRY002 -- the SDK raises plain Exception
                 "you do not have the right permissions to perform this action: sharing an item"
             )
-        return SimpleNamespace(max_expiry=SimpleNamespace(value=self._max_expiry))
+        return SimpleNamespace(
+            max_expiry=SimpleNamespace(value=self._max_expiry),
+            allowed_types=[SimpleNamespace(value=kind) for kind in self._allowed_types],
+        )
 
     async def _delete(self, vault_id: str, item_id: str) -> None:
         self.calls.append(("items.delete", (vault_id, item_id)))
+        if "delete" in self._fail:
+            raise Exception("connection reset")  # noqa: TRY002 -- as the SDK does
         self.live.discard(item_id)
 
 
@@ -107,18 +114,28 @@ def fake_types(monkeypatch: pytest.MonkeyPatch) -> None:
 # ------------------------------------------------------------- the policy ---
 
 
+PUBLIC = ("Public",)
+
+
+def test_the_expiries_are_listed_shortest_first() -> None:
+    """`refusal` compares by the dict's order, so the order is the contract."""
+    hours = [int(ttl.removesuffix("h")) for ttl in ONEPASSWORD_TTLS]
+
+    assert hours == sorted(hours)
+
+
 @pytest.mark.parametrize("ttl", list(ONEPASSWORD_TTLS))
 def test_a_policy_with_the_longest_maximum_allows_every_ttl(ttl: str) -> None:
-    assert refusal(ttl=ttl, max_expiry="ThirtyDays") is None
+    assert refusal(ttl=ttl, max_expiry="ThirtyDays", allowed_types=PUBLIC) is None
 
 
 def test_a_ttl_up_to_the_maximum_is_allowed() -> None:
-    assert refusal(ttl="168h", max_expiry="SevenDays") is None
-    assert refusal(ttl="1h", max_expiry="SevenDays") is None
+    assert refusal(ttl="168h", max_expiry="SevenDays", allowed_types=PUBLIC) is None
+    assert refusal(ttl="1h", max_expiry="SevenDays", allowed_types=PUBLIC) is None
 
 
 def test_a_ttl_beyond_the_maximum_is_refused_naming_the_maximum() -> None:
-    reason = refusal(ttl="720h", max_expiry="SevenDays")
+    reason = refusal(ttl="720h", max_expiry="SevenDays", allowed_types=PUBLIC)
 
     assert reason is not None
     assert "168h at most" in reason
@@ -126,10 +143,20 @@ def test_a_ttl_beyond_the_maximum_is_refused_naming_the_maximum() -> None:
 
 
 def test_a_maximum_this_build_does_not_know_is_refused_rather_than_guessed() -> None:
-    reason = refusal(ttl="1h", max_expiry="NinetyDays")
+    reason = refusal(ttl="1h", max_expiry="NinetyDays", allowed_types=PUBLIC)
 
     assert reason is not None
     assert "NinetyDays" in reason
+
+
+def test_a_policy_without_links_anyone_can_open_is_refused() -> None:
+    """The method makes only that kind of share, so the share would fail after
+    a password was drawn."""
+    reason = refusal(ttl="1h", max_expiry="ThirtyDays", allowed_types=("Authenticated",))
+
+    assert reason is not None
+    assert "a link anyone can open" in reason
+    assert "Authenticated" in reason
 
 
 # -------------------------------------------------------------- preflight ---
@@ -172,8 +199,18 @@ def test_a_ttl_the_policy_refuses_is_refused_with_exit_5() -> None:
     assert client.live == set()
 
 
+def test_a_policy_without_links_anyone_can_open_is_refused_with_exit_5() -> None:
+    client = FakeClient(allowed_types=("Authenticated",))
+    with pytest.raises(OnePasswordRefusedError) as raised:
+        backend(client).preflight(account="acme_dba_user", target="acme-prod")
+
+    assert raised.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "a link anyone can open" in str(raised.value)
+    assert client.live == set()
+
+
 def test_a_missing_share_permission_fails_and_still_deletes_the_note() -> None:
-    client = FakeClient(fail="policy")
+    client = FakeClient(fail=("policy",))
     with pytest.raises(StoreError) as raised:
         backend(client).preflight(account="acme_dba_user", target="acme-prod")
 
@@ -181,6 +218,23 @@ def test_a_missing_share_permission_fails_and_still_deletes_the_note() -> None:
     assert "sharing an item" in message
     assert "read, write and share items" in message
     assert client.live == set()
+
+
+def test_a_failed_delete_does_not_hide_why_the_policy_read_failed() -> None:
+    client = FakeClient(fail=("policy", "delete"))
+    with pytest.raises(StoreError) as raised:
+        backend(client).preflight(account="acme_dba_user", target="acme-prod")
+
+    message = str(raised.value)
+    assert "sharing an item" in message
+    assert "could not be deleted either" in message
+    assert "note1" in message
+
+
+def test_a_failed_delete_after_a_good_read_is_the_failure() -> None:
+    client = FakeClient(fail=("delete",))
+    with pytest.raises(StoreError, match="could not delete the item"):
+        backend(client).preflight(account="acme_dba_user", target="acme-prod")
 
 
 def test_a_vault_the_service_account_cannot_see_is_refused() -> None:
@@ -224,6 +278,27 @@ def test_a_missing_sdk_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert raised.value.exit_code == ExitCode.CONFIG_INVALID
     assert "sopuli-dba[onepassword]" in str(raised.value)
+
+
+def test_an_sdk_whose_library_does_not_load_names_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK's native library needs glibc 2.32, and an older one raises
+    ImportError on import, not ModuleNotFoundError."""
+
+    class Unloadable:
+        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
+            if fullname == "onepassword" or fullname.startswith("onepassword."):
+                raise ImportError("version `GLIBC_2.32' not found")
+
+    monkeypatch.delitem(sys.modules, "onepassword", raising=False)
+    monkeypatch.delitem(sys.modules, "onepassword.client", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [Unloadable(), *sys.meta_path])
+    with pytest.raises(OnePasswordNotInstalledError) as raised:
+        onepassword._sdk()
+
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
+    assert "failed to load: ImportError" in str(raised.value)
 
 
 def test_the_token_is_not_in_the_backend_s_repr() -> None:

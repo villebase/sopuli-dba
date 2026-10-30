@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,12 +60,17 @@ class OnePasswordNotInstalledError(ConfigError):
     ADR-006 rule 2: a missing client is a diagnosable condition with exit 9,
     naming the extra, not a traceback. The SDK has wheels for CPython 3.9 to 3.13
     only, so on 3.14 and later the extra installs nothing and this is the answer.
+
+    ``loaded`` names the error when the SDK is installed and its native library
+    does not load, as on a Linux with glibc older than 2.32.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, loaded: str | None = None) -> None:
+        state = (
+            "is not installed" if loaded is None else f"is installed and failed to load: {loaded}"
+        )
         super().__init__(
-            f"`delivery.method: {METHOD}` needs 1Password's SDK (onepassword-sdk), which "
-            f"is not installed",
+            f"`delivery.method: {METHOD}` needs 1Password's SDK (onepassword-sdk), which {state}",
             at=ROOT,
             hint=(
                 f"install it with:  {install_hint(EXTRA)}. The SDK runs on Python 3.9 to "
@@ -92,13 +97,28 @@ class OnePasswordLoginError(StoreError):
     exit_code = ExitCode.AUTH_FAILURE
 
 
-def refusal(*, ttl: str, max_expiry: str) -> str | None:
-    """Why the account's sharing policy refuses ``ttl``, or ``None`` if it allows it.
+#: 1Password's name for a share that anyone with the link can open, as the
+#: sharing policy lists it in its allowed types. The method makes only this kind.
+PUBLIC = "Public"
 
-    Pure. ``ttl`` is the file's value and ``max_expiry`` is 1Password's name for
-    the policy's maximum, such as ``SevenDays``. A maximum this build does not
-    know is a refusal, not a guess.
+
+def refusal(*, ttl: str, max_expiry: str, allowed_types: Collection[str]) -> str | None:
+    """Why the account's sharing policy refuses this share, or ``None`` if it allows it.
+
+    Pure. ``ttl`` is the file's value. ``max_expiry`` and ``allowed_types`` are
+    1Password's names for the policy's maximum, such as ``SevenDays``, and for
+    the kinds of share it allows, such as ``Public``. A maximum this build does
+    not know is a refusal, not a guess.
+
+    The order of :data:`~sopuli.config.delivery.ONEPASSWORD_TTLS` is the order
+    of the expiries, shortest first. A test holds the dict to that order.
     """
+    if PUBLIC not in allowed_types:
+        return (
+            "the account's sharing policy does not allow a link anyone can open, "
+            f"which is the only share this method makes. It allows: "
+            f"{', '.join(sorted(allowed_types)) or 'none'}"
+        )
     names = list(ONEPASSWORD_TTLS.values())
     if max_expiry not in names:
         return f"the account's sharing policy reports a maximum expiry of {max_expiry!r}"
@@ -124,12 +144,14 @@ async def _authenticate(token: Secret) -> Any:
         return await client_type.authenticate(
             auth=token.reveal(), integration_name=DISTRIBUTION, integration_version=get_version()
         )
-    except Exception as error:  # noqa: BLE001 -- the SDK raises plain Exception
+    except Exception:  # noqa: BLE001 -- the SDK raises plain Exception
+        # The SDK's message is not repeated: it is about the token it was given,
+        # and could quote it (#785).
         raise OnePasswordLoginError(
-            f"the 1Password service account token did not log in: {error}",
+            "the 1Password service account token did not log in",
             hint=(
-                f"check the token `delivery.{METHOD}.token` names. A service account "
-                f"token starts with `ops_`"
+                f"check the token `delivery.{METHOD}.token` names: a service account "
+                f"token starts with `ops_`, and has no line break or space around it"
             ),
         ) from None
 
@@ -172,27 +194,46 @@ class OnePassword:
                 )
             ),
         )
+        read_failed: StoreError | None = None
         try:
             policy = await _call(
                 "read the sharing policy",
                 vault=self.onepassword_vault,
                 call=client.items.shares.get_account_policy(vault_id, note.id),
             )
-        finally:
+        except StoreError as error:
+            read_failed = error
+        try:
             await _call(
                 f"delete the item {PLACEHOLDER_TITLE!r} ({note.id})",
                 vault=self.onepassword_vault,
                 call=client.items.delete(vault_id, note.id),
             )
-        reason = refusal(ttl=self.ttl, max_expiry=_name(policy.max_expiry))
+        except StoreError as error:
+            if read_failed is None:
+                raise
+            # The read's failure is the one to report. The note holds no
+            # password, so leaving it behind is said in the hint, not raised.
+            read_failed.hint = (
+                f"{read_failed.hint}. The empty note {PLACEHOLDER_TITLE!r} ({note.id}) "
+                f"could not be deleted either, and can be deleted by hand: {error.message}"
+            )
+        if read_failed is not None:
+            raise read_failed
+        reason = refusal(
+            ttl=self.ttl,
+            max_expiry=_name(policy.max_expiry),
+            allowed_types=[_name(kind) for kind in policy.allowed_types],
+        )
         if reason is not None:
             raise OnePasswordRefusedError(
                 f"`delivery.method: {METHOD}` cannot share from the 1Password vault "
                 f"{self.onepassword_vault!r}: {reason}",
-                at=ROOT.key("delivery").key(METHOD).key("ttl"),
+                at=ROOT.key("delivery").key(METHOD),
                 hint=(
-                    f"lower `delivery.{METHOD}.ttl`, or raise the account's maximum in "
-                    f"1Password's sharing settings. Nothing was drawn or changed"
+                    f"change the account's sharing settings in 1Password, or lower "
+                    f"`delivery.{METHOD}.ttl`, or choose another method (UC-2 6.2). "
+                    f"Nothing was drawn or changed"
                 ),
             )
 
@@ -256,6 +297,8 @@ def _sdk() -> Any:
         from onepassword import client
     except ModuleNotFoundError as error:
         raise OnePasswordNotInstalledError() from error
+    except (ImportError, OSError) as error:
+        raise OnePasswordNotInstalledError(loaded=type(error).__name__) from error
     return client
 
 
@@ -265,4 +308,6 @@ def _sdk_types() -> Any:
         from onepassword import types
     except ModuleNotFoundError as error:
         raise OnePasswordNotInstalledError() from error
+    except (ImportError, OSError) as error:
+        raise OnePasswordNotInstalledError(loaded=type(error).__name__) from error
     return types

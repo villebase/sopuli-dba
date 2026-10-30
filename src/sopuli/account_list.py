@@ -199,8 +199,9 @@ def cross_declared(config: Config, account: str) -> str | None:
     operator with an ambiguous whitelist and no way to look at it. Describing the
     ambiguity is what lets them resolve it.
     """
-    folded = account.casefold()
+    # By `upper()`, invariant 5's rule, as the mutating verbs compare (#1056).
+    spelled = account.upper()
     for application in config.applications:
-        if any(declared.casefold() == folded for declared in application.accounts):
+        if any(declared.upper() == spelled for declared in application.accounts):
             return application.label
     return None

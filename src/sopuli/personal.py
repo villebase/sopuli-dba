@@ -176,8 +176,7 @@ def bound_by_application(config: Config, account: str, target: str) -> str | Non
         if binding.target == target and binding.account.upper() == spelled:
             owner = binding.application or "the inline application"
             return (
-                f"also declared by {owner}, whose password for it is "
-                f"mastered in the vault -- a personal-account verb does not change an "
-                f"application's account"
+                f"also declared by {owner} as an application account -- a "
+                f"personal-account verb does not change an application's account"
             )
     return None

@@ -302,10 +302,11 @@ def test_an_undeclared_account_is_refused() -> None:
     assert answer.state == SKIPPED
 
 
-def application_account(**rest: Any) -> Any:
-    """`acme_web_user`, which application `acme` binds and a predicate admits."""
+def application_account(name: str = "ACME_WEB_USER", **rest: Any) -> Any:
+    """A reset of ``name`` where application `acme` binds `acme_web_user` and a
+    profile predicate admits both."""
     return decide(
-        state(name="ACME_WEB_USER", profile="DEV_USERS", **rest),
+        state(name=name, profile="DEV_USERS", **rest),
         config=config(
             vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
             applications=[
@@ -313,7 +314,7 @@ def application_account(**rest: Any) -> Any:
             ],
             personal_accounts=[{"profile": "DEV_USERS"}],
         ),
-        account="acme_web_user",
+        account=name.lower(),
         target="alpha-0",
         delivery=UNSEEN,
         force=True,
@@ -328,6 +329,10 @@ def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
     assert answer.proceed is False
     assert answer.state == SKIPPED
     assert "also declared by acme" in answer.detail
+
+
+def test_a_person_the_same_predicate_admits_beside_an_application_is_reset() -> None:
+    assert application_account("JDOE").proceed
 
 
 def test_a_locked_application_account_is_not_sent_to_unlock_it() -> None:

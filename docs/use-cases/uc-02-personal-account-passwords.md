@@ -396,10 +396,15 @@ Reasons: [H1](../decisions/log.md#h1).
 5's rule that selectors cannot extend the declared set stays exactly as written.
 `account list` resolves the predicate. `reset-password`, `expire-password` and
 `suspend` also require the account named on the command line, and refuse any name
-the declaration does not admit. So one run touches exactly one account. They do
-not check whether a predicate admitted an application's account, which only
-`account list` reports (`SOPULI-W042`). Whether they should refuse it is an open
-decision (open: #1056).
+the declaration does not admit. So one run touches exactly one account. Where a
+predicate admits an account that an application binds on that target, they
+refuse it as `SKIPPED`, naming the application, and `--force` does not waive
+it. A reset would give the account a password no vault holds, and the
+application would fail at its next login. On a target where no application
+binds the name, the account is a person's and the verbs go ahead. `account
+list` adds `SOPULI-W042` wherever an application declares the name, on any
+target, because there the whitelist is ambiguous. Reasons:
+[#1056](../decisions/log.md#1056).
 
 **A name may not be declared twice.** An account that is both an application
 account and a personal one would make the whitelist ambiguous about which
@@ -1696,7 +1701,7 @@ absent (`04-testing.md`). They never branch on a version.
 | ~~—~~ | ~~How the seen path's one plaintext emission is narrowed, and whether `--confirm` answers its prompt in advance~~ | **closed** — it prints, under five structural guards (§6.5): one reveal site, refused with `--output json`/`jsonl` and unrepresentable in the schema, refused unless stdout is a terminal, confirmed every time with `--confirm` **not** answering it and stdin required to be a terminal (#853), and `force_expire: true` required. `CLAUDE.md` invariant 2's fourth exception · #439 |
 | ~~—~~ | ~~When the reset journal's store and the delivery store are different vaults, and the journal's is down, does the run refuse or deliver without a lock and a record (§3.3)?~~ | **closed** — it refuses before any DDL; to reset during a journal outage, remove `reset_records:` and `SOPULI-W024` says so (§3.3). Reasons: [#516](../decisions/log.md#516) · #516 |
 | ~~—~~ | ~~Should the seen reset's rollover refusal narrow to accounts whose old password still authenticates (§4.3)?~~ | **closed** — the refusal is removed: the seen reset closes the window after the set, and refuses `--keep-rollover` (§4.3). Reasons: [#541](../decisions/log.md#541) · #541 |
-| — | Should a mutating `account` verb refuse an application's account that a predicate admits (§2)? | #1056 |
+| ~~—~~ | ~~Should a mutating `account` verb refuse an application's account that a predicate admits (§2)?~~ | **closed** — yes, as `SKIPPED` naming the application, and `--force` does not waive it (§2). Reasons: [#1056](../decisions/log.md#1056) · #1056 |
 
 §4.4's conflict between guardrail check 4 and DBA accounts is not a question with
 an issue. It is P3 applied to a population it was not written for, stated here so

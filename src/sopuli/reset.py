@@ -41,7 +41,7 @@ from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import UserState
 from sopuli.exit_codes import ExitCode
-from sopuli.personal import declared_on
+from sopuli.personal import bound_by_application, declared_on
 from sopuli.safety import RefusedError
 
 #: ``results[].state`` words this verb uses, all already in the run schema's
@@ -307,7 +307,9 @@ def decide(
     flag overrides *account guardrails*, and this is somebody's offboarding decision
     (H4). Checking it first also keeps the message specific -- reported through
     check 1 it would read as *not declared*, which is a different thing to go and
-    look at.
+    look at. An account an application binds here is refused the same way, for
+    :func:`~sopuli.personal.bound_by_application`'s reason (#1056), and before
+    the lock: unlocking it would not make it a person's to reset.
     """
     if state is None:
         return Decision(
@@ -315,6 +317,17 @@ def decide(
             state=ACCOUNT_MISSING,
             detail="the account does not exist on this target",
         )
+
+    rule = declared_on(
+        config,
+        state.name,
+        target,
+        profile=state.profile,
+        roles=state.roles,
+    )
+    application = bound_by_application(config, state.name, target) if rule is not None else None
+    if application is not None:
+        return Decision(proceed=False, state=SKIPPED, detail=application)
 
     if deliberately_locked(state.status):
         return Decision(
@@ -326,13 +339,6 @@ def decide(
             ),
         )
 
-    rule = declared_on(
-        config,
-        state.name,
-        target,
-        profile=state.profile,
-        roles=state.roles,
-    )
     found = review(state, declared=[state.name] if rule is not None else [], force=force)
 
     if not found.permitted:

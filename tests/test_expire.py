@@ -88,6 +88,35 @@ def test_an_undeclared_account_is_refused_even_under_force() -> None:
     assert decision.state == SKIPPED
 
 
+def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
+    """#1056, through :func:`sopuli.suspend.decide`'s gates."""
+    decision = decide(
+        state(name="ACME_WEB_USER", profile="DEV_USERS"),
+        config=build_config(
+            {
+                "version": 1,
+                "targets": [TARGET],
+                "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+                "applications": [
+                    {
+                        "name": "acme",
+                        "accounts": ["acme_web_user"],
+                        "secret": "vault-dev:acme/db#pw",
+                    }
+                ],
+                "personal_accounts": [{"profile": "DEV_USERS"}],
+            }
+        ),
+        account="acme_web_user",
+        target="appdb-dev-alpha",
+        force=True,
+    )
+
+    assert not decision.proceed
+    assert decision.state == SKIPPED
+    assert "also declared by acme" in decision.detail
+
+
 def test_a_missing_account_is_a_finding() -> None:
     decision = decide(
         None, config=config({"accounts": ["jdoe"]}), account="jdoe", target="appdb-dev-alpha"

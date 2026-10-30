@@ -302,6 +302,49 @@ def test_an_undeclared_account_is_refused() -> None:
     assert answer.state == SKIPPED
 
 
+def application_account(name: str = "ACME_WEB_USER", **rest: Any) -> Any:
+    """A reset of ``name`` where application `acme` binds `acme_web_user` and a
+    profile predicate admits both."""
+    return decide(
+        state(name=name, profile="DEV_USERS", **rest),
+        config=config(
+            vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+            applications=[
+                {"name": "acme", "accounts": ["acme_web_user"], "secret": "vault-dev:acme/db#pw"}
+            ],
+            personal_accounts=[{"profile": "DEV_USERS"}],
+        ),
+        account=name.lower(),
+        target="alpha-0",
+        delivery=UNSEEN,
+        force=True,
+    )
+
+
+def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
+    """#1056: a reset would give it a password no vault holds, and the
+    application would fail at its next login. `--force` does not waive it."""
+    answer = application_account()
+
+    assert answer.proceed is False
+    assert answer.state == SKIPPED
+    assert "also declared by acme" in answer.detail
+
+
+def test_a_person_the_same_predicate_admits_beside_an_application_is_reset() -> None:
+    assert application_account("JDOE").proceed
+
+
+def test_a_locked_application_account_is_not_sent_to_unlock_it() -> None:
+    """Unlocking it would not make it a person's to reset, so the application
+    is named rather than the lock."""
+    answer = application_account(status="LOCKED", locked=True)
+
+    assert answer.state == SKIPPED
+    assert "also declared by acme" in answer.detail
+    assert "unlock" not in answer.detail
+
+
 def test_a_deliberately_locked_account_is_refused() -> None:
     """H4: `LOCKED` without `(TIMED)` is somebody's offboarding decision,
     and handing the account a working password would undo it silently."""

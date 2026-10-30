@@ -3753,6 +3753,28 @@ the register.
   - Leave `creds generate` as it is. Its `pending` for the role stays in the
     shared document, and no run applies or removes it.
 
+## #1056
+
+- **Decided:** 2026-10-30, #1056
+- **Question:** A name in both an application entry and `personal_accounts:`
+  is refused when the file loads (H1). An account that a `profile:` or
+  `role:` predicate admits and an application also binds cannot be seen
+  there. `account list` adds `SOPULI-W042` to it, and `reset-password`,
+  `expire-password` and `suspend` went ahead. Should they refuse it?
+- **Decision:** Yes. Where a predicate admits the account and an application
+  binds it on that target, the three verbs report it as `SKIPPED`, naming the
+  application, before the guardrail review. `--force` does not waive it.
+- **Why:** A reset gives the account a password no vault holds. The vault is
+  still its master (invariant 6), so the application fails at its next login,
+  and `creds check` reports drift that a person caused through a verb meant
+  for other accounts. This matches the load-time rule for names, and it can
+  be relaxed later without breaking anything.
+- **Rejected:**
+  - Warn and go ahead, as `account list` does. The warning arrives with the
+    reset, after the vault and the database already disagree.
+  - Leave it and document it beside H1's cost. The failure stays possible,
+    and nothing says so when it happens.
+
 ## #1061
 
 - **Decided:** 2026-10-30, #1061

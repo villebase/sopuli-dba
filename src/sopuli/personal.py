@@ -154,3 +154,29 @@ def declared_on(
             ),
         )
     return admitting[0]
+
+
+def bound_by_application(config: Config, account: str, target: str) -> str | None:
+    """Why a mutating `account` verb refuses ``account`` on ``target`` because
+    an application binds it there, or ``None`` where none does (#1056).
+
+    A name in both an application entry and `personal_accounts:` is refused
+    when the file loads. An account a *predicate* admits cannot be checked
+    there, because whether the predicate admits it is a fact about the
+    database. The verbs ask this after the predicate has answered. A reset
+    would give the account a password no vault holds, and the application
+    would fail at its next login (invariant 6). No flag waives it.
+
+    Names are compared by ``upper()``, invariant 5's rule for one database user
+    on one target. The application is named as `account list`'s
+    `SOPULI-W042` names it.
+    """
+    spelled = account.upper()
+    for binding in config.bindings:
+        if binding.target == target and binding.account.upper() == spelled:
+            owner = binding.application or "the inline application"
+            return (
+                f"also declared by {owner} as an application account -- a "
+                f"personal-account verb does not change an application's account"
+            )
+    return None

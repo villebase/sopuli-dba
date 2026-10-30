@@ -3753,6 +3753,35 @@ the register.
   - Leave `creds generate` as it is. Its `pending` for the role stays in the
     shared document, and no run applies or removes it.
 
+## #1116
+
+- **Decided:** 2026-10-30, #1116
+- **Question:** `creds apply --dry-run --preflight` forecast a guardrail
+  refusal only for a credential bound to more than one target
+  (`SOPULI-W055`). An account the guardrails refuse on its only target was
+  planned as an ordinary change, and the real run then skipped it, or stopped
+  on it where the operator named it. Should the dry run, and the `creds
+  rotate` preview, forecast it, in what form, and with what exit code for a
+  named account?
+- **Decision:** Both forecast it, as a new per-account code, `SOPULI-W060`
+  (run schema 1.68, event schema 1.20), from the accounts the survey read. The
+  plan's text does not change. Where `--account` named the account, the dry
+  run exits 1, as the real run does.
+- **Why:** Invariant 8 asks for a plan first, and a plan that lists a change
+  the run will refuse is wrong about the run. The survey has already read
+  everything the review needs, so the forecast opens no connection. A dry run
+  that exits 0 where the run would exit 1 would pass a gate the run fails; a
+  survey refusal already exits non-zero under `--dry-run`.
+- **Rejected:**
+  - Widen `SOPULI-W055` to every credential. That changes what an existing
+    code means, and W055 speaks of a credential across targets, not of one
+    account.
+  - Say `skip` or `refused` in the plan's `INTENT` column. That changes the
+    plan's text and possibly the run document, and the plan is built before
+    the survey reads anything.
+  - Warn and exit 0 for a named account. The dry run would then pass where the
+    run fails.
+
 ## #1056
 
 - **Decided:** 2026-10-30, #1056

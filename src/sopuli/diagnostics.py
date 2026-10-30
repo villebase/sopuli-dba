@@ -543,6 +543,12 @@ ORPHANS_UNREAD = "SOPULI-W056"
 #: after the run, that it did.
 VERSION_PRUNED = "SOPULI-W059"
 
+#: `creds apply --dry-run --preflight` or `creds rotate --dry-run` found an
+#: account that a guardrail refuses on its own target, so the real run would
+#: skip it, or stop on it where the operator named it (#1116). A credential
+#: bound to more than one target is `SOPULI-W055` instead.
+GUARDRAIL_REFUSES_AHEAD = "SOPULI-W060"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -707,11 +713,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "changes that credential on none of them, so this is the run's `SKIPPED` rows "
             "said before it starts. One entry per credential, naming the document, the "
             "account, each refusing target with its reason, and the targets it would be "
-            "left alone on. Not raised under `--force`, which waives the checks the pass "
-            "asks. `apply` raises it only under `--preflight`, so that its plain dry run "
-            "opens no connection; `rotate`'s dry run always surveys. A rotation stages a "
-            "`pending` for the refused credential before the pass asks, and leaves it "
-            "staged."
+            "left alone on. Under `--force`, only a check no flag waives raises it. Where "
+            "`--account` named an account a refusing target refuses, the run stops on it, "
+            "and the dry run exits 1. `apply` raises it only under `--preflight`, so that "
+            "its plain dry run opens no connection; `rotate`'s dry run always surveys. A "
+            "rotation stages no `pending` for the refused credential."
         ),
         ORPHANS_UNREAD: (
             "`vault orphans` listed documents it was not allowed to read, so it cannot say "
@@ -730,6 +736,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "so the store refuses that deletion, and `creds generate` and `rotate` refuse the "
             "run at plan time; under `apply` the plan's entry says the store will refuse the "
             "write. One entry per secret in the plan, and per deleted version after the run."
+        ),
+        GUARDRAIL_REFUSES_AHEAD: (
+            "A `creds apply --dry-run --preflight` or a `creds rotate --dry-run` found an "
+            "account that a guardrail refuses on its own target, from the account the survey "
+            "read. The real run skips it there, or stops on it where `--account` named it, "
+            "and then the dry run exits 1 as the run would. One entry per account and "
+            "target, naming each check that refuses it. A credential bound to more than one "
+            "target is `SOPULI-W055` instead. Under `--force`, only the checks no flag "
+            "waives refuse, as in the run."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1645,6 +1660,25 @@ def guardrail_pass_ahead(
         message=(
             f"{document}: a guardrail refuses {', '.join(accounts)} on {where}, so the run "
             f"would change the credential on none of {', '.join(targets)}"
+        ),
+    )
+
+
+def guardrail_refuses_ahead(account: str, target: str, reason: str, *, named: bool) -> Diagnostic:
+    """One account the real run would skip, or stop on, at its own target (#1116).
+
+    ``reason`` is :func:`~sopuli.cli.guardrails_reason`'s, with the remedy
+    where the account was named, as the run's own row words it.
+    """
+    outcome = "stop on it" if named else "skip it"
+    return Diagnostic(
+        level="warning",
+        code=GUARDRAIL_REFUSES_AHEAD,
+        target=target,
+        account=account,
+        message=(
+            f"{account} on {target}: a guardrail refuses this account, so the run would "
+            f"{outcome}: {reason}"
         ),
     )
 

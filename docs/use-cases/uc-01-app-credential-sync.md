@@ -681,12 +681,18 @@ plain `--dry-run` opens no connection and does not say it. Under `--force` it
 names only the refusals no flag waives. Reasons:
 [#988](../decisions/log.md#988).
 
-**`creds rotate --dry-run` says it too.** Its survey always runs, so it needs no
-`--preflight`. Nothing is staged yet, but the rotation stages a `pending` for
-every credential due before the pass asks, so each one counts. The other rules
-are `apply`'s. A refused credential's `pending` stays staged after the run, so
-the next `creds rotate` refuses until `creds apply` or `creds generate
---overwrite-pending` deals with it. Reasons: [#997](../decisions/log.md#997).
+**It also says what each account's own review would refuse.** Every other
+account the survey read is reviewed as the run reviews it before its change. One
+that a guardrail refuses on its own target is `SOPULI-W060`, naming the account,
+the target and each check. The run skips it, so the dry run still exits 0.
+Where `--account` named it, the run stops on it with `ERROR`, so the dry run
+exits 1 and counts it in `summary.failed`. Reasons:
+[#1116](../decisions/log.md#1116).
+
+**`creds rotate --dry-run` says both.** Its survey always runs, so it needs no
+`--preflight`. Nothing is staged yet, and the rotation decides what to stage
+from the same reads, so every credential due counts. The other rules are
+`apply`'s. Reasons: [#997](../decisions/log.md#997).
 
 A guardrail skip counts against the promotion only where the promotion would
 move past it: the account has a `pending` to promote, or a `previous` on a

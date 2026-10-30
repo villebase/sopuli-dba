@@ -302,6 +302,29 @@ def test_an_undeclared_account_is_refused() -> None:
     assert answer.state == SKIPPED
 
 
+def test_an_application_s_account_a_predicate_admits_is_refused() -> None:
+    """#1056: a reset would give it a password no vault holds, and the
+    application would fail at its next login. `--force` does not waive it."""
+    answer = decide(
+        state(name="ACME_WEB_USER", profile="DEV_USERS"),
+        config=config(
+            vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+            applications=[
+                {"name": "acme", "accounts": ["acme_web_user"], "secret": "vault-dev:acme/db#pw"}
+            ],
+            personal_accounts=[{"profile": "DEV_USERS"}],
+        ),
+        account="acme_web_user",
+        target="alpha-0",
+        delivery=UNSEEN,
+        force=True,
+    )
+
+    assert answer.proceed is False
+    assert answer.state == SKIPPED
+    assert "application 'acme' also declares this account" in answer.detail
+
+
 def test_a_deliberately_locked_account_is_refused() -> None:
     """H4: `LOCKED` without `(TIMED)` is somebody's offboarding decision,
     and handing the account a working password would undo it silently."""

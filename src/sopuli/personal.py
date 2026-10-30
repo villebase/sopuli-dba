@@ -154,3 +154,32 @@ def declared_on(
             ),
         )
     return admitting[0]
+
+
+def bound_by_application(config: Config, account: str, target: str) -> str | None:
+    """Why a mutating `account` verb refuses ``account`` on ``target`` because
+    an application binds it there, or ``None`` where none does (#1056).
+
+    A name in both an application entry and `personal_accounts:` is refused
+    when the file loads. An account a *predicate* admits cannot be checked
+    there, because whether the predicate admits it is a fact about the
+    database. The verbs ask this after the predicate has answered. A reset
+    would give the account a password no vault holds, and the application
+    would fail at its next login (invariant 6). No flag waives it.
+
+    Compared case-folded, for :func:`admits`'s reason.
+    """
+    folded = account.casefold()
+    for binding in config.bindings:
+        if binding.target == target and binding.account.casefold() == folded:
+            owner = (
+                f"application {binding.application!r}"
+                if binding.application is not None
+                else "the inline application"
+            )
+            return (
+                f"{owner} also declares this account, and its password is "
+                f"mastered in the vault -- a personal-account verb does not change an "
+                f"application's account"
+            )
+    return None

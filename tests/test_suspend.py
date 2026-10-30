@@ -106,6 +106,60 @@ def test_an_account_that_does_not_exist_is_a_finding_rather_than_an_error() -> N
     assert decision.review is None
 
 
+def with_application(name: str | None) -> Any:
+    """`acme_web_user` bound by an application, and a profile predicate. With no
+    ``name``, the application is the inline, top-level form."""
+    binding = {"accounts": ["acme_web_user"], "secret": "vault-dev:acme/db#pw"}
+    return build_config(
+        {
+            "version": 1,
+            "targets": [TARGET],
+            "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+            **({"applications": [{"name": name, **binding}]} if name is not None else binding),
+            "personal_accounts": [{"profile": "DEV_USERS"}],
+        }
+    )
+
+
+def test_an_application_s_account_a_predicate_admits_is_refused_even_under_force() -> None:
+    """#1056: the predicate admits it, but an application binds it, and changing
+    it here would leave the vault, its master, holding the wrong password."""
+    decision = decide(
+        state("ACME_WEB_USER", profile="DEV_USERS"),
+        config=with_application("acme"),
+        account="acme_web_user",
+        target="appdb-dev-alpha",
+        force=True,
+    )
+
+    assert not decision.proceed
+    assert decision.state == SKIPPED
+    assert "application 'acme' also declares this account" in decision.detail
+
+
+def test_the_inline_application_is_named_as_such() -> None:
+    decision = decide(
+        state("ACME_WEB_USER", profile="DEV_USERS"),
+        config=with_application(None),
+        account="acme_web_user",
+        target="appdb-dev-alpha",
+    )
+
+    assert not decision.proceed
+    assert "the inline application also declares" in decision.detail
+
+
+def test_a_person_the_same_predicate_admits_beside_an_application_still_proceeds() -> None:
+    decision = decide(
+        state(profile="DEV_USERS"),
+        config=with_application("acme"),
+        account="jdoe",
+        target="appdb-dev-alpha",
+    )
+
+    assert decision.proceed
+
+
 def test_a_vendor_account_is_refused_even_where_it_is_declared() -> None:
     """Guardrail 2. Suspending DBSNMP refuses exactly as rotating it would."""
     decision = decide(

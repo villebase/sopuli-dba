@@ -195,6 +195,7 @@ pair of brackets, separated by commas.
 | `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
 | `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
 | `"sopuli-dba[yopass]"` | an HTTP client and `pysequoia`, an OpenPGP library | `account reset-password` hands a password over as a one-time Yopass link |
+| `"sopuli-dba[onepassword]"` | 1Password's SDK, on Python 3.13 and earlier | `account reset-password` hands a password over as a 1Password share link that opens once |
 | `"sopuli-dba[all]"` | every extra | CI, or you genuinely have all of them |
 
 A working install is one store plus one database. For most sites that is:

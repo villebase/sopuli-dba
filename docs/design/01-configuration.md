@@ -346,9 +346,8 @@ There is no key for one-time. The tool always asks the server for a one-time
 secret.
 
 **`onepassword_share:`** hands the person a 1Password share link that opens
-once (UC-2 §6.6, #446). **It is not built yet**: its keys are checked, and a
-reset refuses the method with exit 5. It needs the `onepassword` extra, which
-carries 1Password's SDK. The SDK runs on Python 3.9 to 3.13, and on Linux needs
+once (UC-2 §6.6, #446). It needs the `onepassword` extra, which carries
+1Password's SDK. The SDK runs on Python 3.9 to 3.13, and on Linux needs
 glibc 2.32 or later.
 
 ```yaml
@@ -365,10 +364,11 @@ creates the item in. It is not called `vault`, because in the other methods
 `vault` names an entry under `vaults:`.
 
 `ttl` is **required**, as `vault_wrapped`'s is. It must be one of the expiries
-1Password offers: `1h`, `24h`, `168h`, `336h` or `720h`. Once the method is
-built, a run also checks the account's sharing policy before a password is
-drawn. It refuses, with exit 5, a `ttl` longer than the policy's maximum and a
-policy that does not allow a link anyone can open.
+1Password offers: `1h`, `24h`, `168h`, `336h` or `720h`. A run also checks the
+account's sharing policy before a password is drawn. It refuses, with exit 5,
+a `ttl` longer than the policy's maximum and a policy that does not allow a
+link anyone can open. A `--dry-run` skips this check, because it needs the
+token.
 
 `token` is **required**: the service account token, named as an environment
 variable or a file, never written here (C9). The service account needs read,
@@ -380,8 +380,7 @@ There is no key for view-once. The tool always asks for it.
 `smtp_encrypted`**, because it is not built, so a typo inside it is accepted.
 **`config validate` warns when the selected method is not implemented in this
 build** (`SOPULI-W035`), so that a clean parse does not read as a working
-delivery. `onepassword_share` is not implemented yet either, so it warns too,
-although its keys are checked. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
+delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
 build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an

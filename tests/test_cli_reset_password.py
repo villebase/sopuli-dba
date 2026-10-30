@@ -23,15 +23,19 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from conftest import WriteConfig
 from oracle_harness import Environment
-from sopuli.cli import cli
+from sopuli.cli import _delivery_backends, cli
+from sopuli.config.loading import build_config
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
+from sopuli.delivery import onepassword
 from sopuli.delivery.vault_wrapped import NotWrappableError
 from sopuli.exit_codes import ExitCode
 from sopuli.lock.errors import LockDeniedError, LockStolenError
@@ -270,6 +274,63 @@ def test_a_target_s_own_oci_store_is_refused_for_a_delivery(
     rendered = str(result.exception)
     assert "targets[0].vault" in rendered
     assert "of type 'oci'" in rendered
+
+
+#: `OCI_DELIVERY` with `onepassword_share` selected: an OCI `defaults.vault`,
+#: and a delivery that writes to no store (#446).
+ONEPASSWORD_DELIVERY = OCI_DELIVERY.replace(
+    """  method: vault_path
+  vault_path:
+    ttl: 1h
+    prefix: handover
+""",
+    """  method: onepassword_share
+  onepassword_share:
+    onepassword_vault: acme-handover
+    ttl: 24h
+    token: { env: SOPULI_TEST_ACME_OP_TOKEN }
+""",
+)
+
+
+def test_onepassword_share_is_not_refused_for_an_oci_default_store(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It writes to no store, so `defaults.vault` naming an OCI store is no
+    reason to refuse it (#1138). The token is unset, so the run stops at plan
+    time on that instead, before anything connects."""
+    monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
+
+    result = run(runner, write_config(ONEPASSWORD_DELIVERY), "--account", ACCOUNT)
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    rendered = str(result.exception)
+    assert "SOPULI_TEST_ACME_OP_TOKEN" in rendered
+    assert "delivery.onepassword_share.token" in rendered
+    assert "of type 'oci'" not in rendered
+
+
+def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `--dry-run` delivers nothing, and logging in needs the token, which a
+    preview does not ask for."""
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a preview built a 1Password backend")
+
+    monkeypatch.setattr(onepassword, "OnePassword", refuse)
+    monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
+    config = build_config(yaml.safe_load(ONEPASSWORD_DELIVERY))
+    assert config.delivery is not None
+
+    backends = _delivery_backends(
+        SimpleNamespace(dry_run=True),  # type: ignore[arg-type]
+        config,
+        config.delivery,
+        config.expanded_targets,
+        account=ACCOUNT,
+    )
+
+    assert backends == {}
 
 
 # ------------------------------------------------------ the preview, tier 1 ---

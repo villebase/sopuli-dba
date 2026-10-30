@@ -50,6 +50,7 @@ from typing import Any
 from sopuli.config.delivery import ONEPASSWORD_TTLS
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.delivery import Receipt
+from sopuli.delivery.yopass import ttl_seconds
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import install_hint
 from sopuli.output.debug import logger
@@ -265,24 +266,29 @@ class OnePassword:
             # No share exists, so the item is the only copy of a password that
             # authenticates nothing yet. It goes, and the failure is reported.
             left = await self._delete(client, vault_id, item.id)
-            if left is not None and isinstance(error, StoreError):
-                error.hint = (
-                    f"{error.hint}. The item {item.id} could not be deleted either, and holds "
-                    f"a password that was never set, so it can be deleted by hand: {left}"
-                )
+            if left is not None:
+                undeleted = _undeleted(item.id, left)
+                if isinstance(error, StoreError):
+                    error.hint = f"{error.hint}. {undeleted}"
+                else:
+                    # An interrupt has no hint. Its traceback shows the note.
+                    error.add_note(undeleted)
             raise
         if not isinstance(link, str) or not link:
-            await self._delete(client, vault_id, item.id)
+            left = await self._delete(client, vault_id, item.id)
             raise StoreError(
                 "1Password answered the share with no link, so nothing was handed over",
-                hint="the item was deleted, and the account's password has not changed",
+                hint=(
+                    "the item was deleted, and the account's password has not changed"
+                    if left is None
+                    else f"the account's password has not changed. {_undeleted(item.id, left)}"
+                ),
             )
         return Receipt(
             method=METHOD,
             token=Secret(link),
             id=str(item.id),
-            # Every key of ONEPASSWORD_TTLS is a number of hours.
-            expires_at=shared_at + timedelta(hours=int(self.ttl[:-1])),
+            expires_at=shared_at + timedelta(seconds=ttl_seconds(self.ttl)),
             left_behind=await self._delete(client, vault_id, item.id),
         )
 
@@ -404,13 +410,34 @@ async def _call(
         raise StoreError(
             f"1Password could not {what} in the vault {vault!r}: {said}",
             hint=(
-                "1Password's own message is above. The service account needs read, write "
-                "and share items on the vault. Nothing was handed over, and the account's "
-                "password has not changed"
+                (
+                    "1Password's own message is above"
+                    if quote
+                    else "1Password's message is not shown, because the call carried the password"
+                )
+                + ". The service account needs read, write and share items on the vault. "
+                "Nothing was handed over, and the account's password has not changed"
             ),
         ) from None
     LOG.debug("%s: ok in %.3fs", what, time.monotonic() - started)
     return result
+
+
+def _undeleted(item_id: str, reason: str) -> str:
+    """The hint's sentence for an item a failed delivery could not delete."""
+    return (
+        f"The item {item_id} could not be deleted either, and holds a password that was "
+        f"never set, so it can be deleted by hand: {reason}"
+    )
+
+
+def check_installed() -> None:
+    """Refuse, naming the extra, if the SDK does not import.
+
+    Needs no token, so a ``--dry-run`` runs it too (invariant 4).
+    """
+    _sdk()
+    _sdk_types()
 
 
 def _name(value: Any) -> str:

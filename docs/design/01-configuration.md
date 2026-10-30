@@ -368,7 +368,7 @@ creates the item in. It is not called `vault`, because in the other methods
 account's sharing policy before a password is drawn. It refuses, with exit 5,
 a `ttl` longer than the policy's maximum and a policy that does not allow a
 link anyone can open. A `--dry-run` skips this check, because it needs the
-token.
+token, but still checks that the SDK is installed.
 
 `token` is **required**: the service account token, named as an environment
 variable or a file, never written here (C9). The service account needs read,

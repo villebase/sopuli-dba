@@ -318,6 +318,8 @@ def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch
         raise AssertionError("a preview built a 1Password backend")
 
     monkeypatch.setattr(onepassword, "OnePassword", refuse)
+    # The SDK check is the next test's; some CI jobs install no extras.
+    monkeypatch.setattr(onepassword, "check_installed", lambda: None)
     monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
     config = build_config(yaml.safe_load(ONEPASSWORD_DELIVERY))
     assert config.delivery is not None
@@ -331,6 +333,23 @@ def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch
     )
 
     assert backends == {}
+
+
+def test_a_preview_refuses_a_host_without_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Importing the SDK needs no token, so a preview checks it, and does not say
+    "would be reset" for a run that would be refused (invariant 4)."""
+    monkeypatch.setitem(sys.modules, "onepassword", None)
+    config = build_config(yaml.safe_load(ONEPASSWORD_DELIVERY))
+    assert config.delivery is not None
+
+    with pytest.raises(onepassword.OnePasswordNotInstalledError):
+        _delivery_backends(
+            SimpleNamespace(dry_run=True),  # type: ignore[arg-type]
+            config,
+            config.delivery,
+            config.expanded_targets,
+            account=ACCOUNT,
+        )
 
 
 # ------------------------------------------------------ the preview, tier 1 ---

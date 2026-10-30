@@ -1564,7 +1564,8 @@ drawn. 1Password gives it only for an existing item, so the tool creates an
 empty Secure Note, reads the policy through it, and deletes it. It refuses,
 with exit 5, a `ttl` longer than the policy's maximum and a policy that does
 not allow a link anyone can open. A `--dry-run` does not run this check,
-because it needs the token.
+because it needs the token. It does check that the SDK is installed, which
+needs no token.
 
 **If the item cannot be deleted after the share**, the password has still been
 handed over, so the reset goes on, and the run warns with `SOPULI-W061`: the

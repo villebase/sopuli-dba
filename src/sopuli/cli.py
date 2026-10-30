@@ -3096,6 +3096,9 @@ def _reset_one(
                 audited=audited,
             )
 
+        # Set before the DDL, so a row for a DDL that failed still says what the
+        # delivery could not delete (SOPULI-W061).
+        receipt: Receipt | None = None
         try:
             secret = generate(policy, limit=limit, target=target.name)
             # **UC-2 6.4's other order, and this is the branch that makes it
@@ -3154,6 +3157,7 @@ def _reset_one(
                         caveats=caveats,
                         encryption=sent if _carried(error) else None,
                         audited=audited,
+                        left_behind=receipt.left_behind if receipt is not None else None,
                     )
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -3171,6 +3175,7 @@ def _reset_one(
                 error=reported,
                 encryption=sent if _carried(error) else None,
                 audited=audited,
+                left_behind=receipt.left_behind if receipt is not None else None,
             )
 
         # The row is built **before** the hand-over, and that is not style.
@@ -3525,15 +3530,18 @@ def _delivery_backends(
     `one_time_link`'s reason. Its preflight logs in with the service account
     and checks the vault and the account's sharing policy (#446). A `--dry-run`
     skips it, as it skips opening a store: it needs the token, which a preview
-    does not ask for.
+    does not ask for. It still checks that the SDK imports, which needs no
+    token, so a preview refuses a host the real run would refuse.
     """
     if delivery.is_seen:
         return {}
     if delivery.onepassword_share is not None:
-        if run.dry_run:
-            return {}
         # Imported here, for `_delivery_backend`'s reason.
         from sopuli.delivery import onepassword
+
+        if run.dry_run:
+            onepassword.check_installed()
+            return {}
 
         shared = delivery.onepassword_share
         share = onepassword.OnePassword(

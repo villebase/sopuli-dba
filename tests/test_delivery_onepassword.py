@@ -430,6 +430,8 @@ def test_a_failed_call_carrying_the_password_is_named_by_its_type_only(step: str
 
     assert PASSWORD not in str(raised.value)
     assert ": Exception" in str(raised.value)
+    assert "message is not shown, because the call carried the password" in str(raised.value)
+    assert "message is above" not in str(raised.value)
 
 
 def test_a_failed_share_deletes_the_item_before_failing() -> None:
@@ -451,10 +453,38 @@ def test_a_failed_share_and_a_failed_delete_name_the_item_left() -> None:
 
 def test_a_share_that_returns_no_link_fails_and_deletes_the_item() -> None:
     client = FakeClient(fail=("empty",))
-    with pytest.raises(StoreError, match="no link"):
+    with pytest.raises(StoreError, match="no link") as raised:
         deliver(client)
 
     assert client.live == set()
+    assert "the item was deleted" in str(raised.value)
+
+
+def test_a_share_with_no_link_and_a_failed_delete_name_the_item_left() -> None:
+    """The hint must not say the item was deleted when it was not."""
+    client = FakeClient(fail=("empty", "delete"))
+    with pytest.raises(StoreError, match="no link") as raised:
+        deliver(client)
+
+    assert "the item was deleted" not in str(raised.value)
+    assert "The item note1 could not be deleted either" in str(raised.value)
+
+
+def test_an_interrupt_with_a_failed_delete_notes_the_item_left() -> None:
+    """An interrupt has no hint to extend, so the item is named in a note, which
+    the traceback shows."""
+    client = FakeClient(fail=("interrupt", "delete"))
+    with pytest.raises(KeyboardInterrupt) as raised:
+        deliver(client)
+
+    assert any("The item note1 could not be deleted" in note for note in raised.value.__notes__)
+
+
+def test_check_installed_refuses_a_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What a `--dry-run` runs: no token, and the same refusal as the real run."""
+    monkeypatch.setitem(sys.modules, "onepassword", None)
+    with pytest.raises(OnePasswordNotInstalledError):
+        onepassword.check_installed()
 
 
 # ------------------------------------------- a real account (maintainer) ---

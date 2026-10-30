@@ -18,6 +18,7 @@ on which Oracle release, and what it showed.
 | [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
 | [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | one password rotation end to end: stage, apply, check, roll back, and close the rollover window |
 | [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | the vault-write side of an External Secrets Operator setup, and the division of responsibility that makes it safe |
+| [scenarios/personal-password-delivery.md](scenarios/personal-password-delivery.md) | one person's password reset end to end, each way to hand the new password over, and which one to choose |
 | [scenarios/supabase.md](scenarios/supabase.md) | replacing a shared `postgres` password on Supabase with one vault-managed login role for each service |
 | [../examples/](../examples/) | runnable config files with comments, starting with the smallest one that works |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | what a first-time contributor needs that `workflow.md` and `CLAUDE.md` do not say for that audience |

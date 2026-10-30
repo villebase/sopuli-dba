@@ -3774,3 +3774,29 @@ the register.
     reset, after the vault and the database already disagree.
   - Leave it and document it beside H1's cost. The failure stays possible,
     and nothing says so when it happens.
+
+## #1061
+
+- **Decided:** 2026-10-30, #1061
+- **Question:** Two PostgreSQL targets in one run that share a
+  `system_identifier` are refused as one cluster declared twice
+  (`SOPULI-20008`, #1047). A copy made with `pg_basebackup`, or a standby
+  promoted and split off, keeps its source's identifier but is a separate
+  server with its own roles. Keep refusing such a pair?
+- **Decision:** Keep refusing. An estate with such a copy gives each of the
+  two its own secret and runs one of them per run, with `--target`, because
+  the check compares only the targets one run connects to.
+- **Why:** The tool cannot tell a copy from a standby by anything it can read,
+  and changing one set of roles under two names is the failure the check
+  exists for. The cost falls only on an estate that runs such copies. It is
+  larger than one flag: a secret both copies share is never promoted, because
+  the promotion waits for every target the config declares for it (UC-1 §5),
+  and `doctor` over both exits 9, so a gate runs it once per target.
+- **Rejected:**
+  - A per-target opt-out, such as `postgres: { distinct_from: [<target>] }`.
+    One more key, and a statement nothing can check from SQL: a wrong one
+    turns the refusal off for a real standby.
+  - Compare more than the identifier, such as the timeline or
+    `pg_control_checkpoint()`. Whether either tells a fresh copy from its
+    source has not been measured, and a comparison that refuses or admits a
+    pair would need that measured on each release first.

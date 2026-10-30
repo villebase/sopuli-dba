@@ -1602,16 +1602,21 @@ declare one target for them. The check compares only the targets the run
 connects to, and opens no connection to a target the selectors left out. The
 second target to reach a cluster is refused with `SOPULI-20008`, a `config`
 error naming both targets, and is that target's error in the run. `doctor`
-reports it as the target's error and still exits 0, as for any target it
-reached and could not use. Whether it should exit non-zero is an open decision
-(open: #1062).
+reports it as the target's error and exits 9
+([#1062](../decisions/log.md#1062)).
 
 A cluster copied with `pg_basebackup`, or a standby promoted and split off,
 keeps the identifier of the cluster it came from, and has its own roles from
 then on. The tool cannot tell such a copy from a standby, so it refuses the
-second of the two as well. Whether to keep refusing that pair is an open
-decision (open: #1061). Any role can read the
-identifier by default (`pg-system-identifier` in
+second of the two as well. To manage both, give each its own secret, with a
+`secret_template` that contains `{target}` or a separate application entry for
+each, and run one of them
+per run with `--target`. The check compares only the targets one run connects
+to. One secret shared by both would never be promoted, because the promotion
+waits for every target the config declares for it (UC-1 §5). `doctor` over
+both targets exits 9 for the same reason, so a gate that runs it runs it once
+per target too. Reasons: [#1061](../decisions/log.md#1061). Any role
+can read the identifier by default (`pg-system-identifier` in
 [`../README.md`](../README.md) §*Verify before implementing*). Where a site
 revoked it, `doctor` says so in a warning and the target is not checked: not
 knowing is not a finding.

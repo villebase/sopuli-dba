@@ -237,8 +237,6 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | ADR-006 | ADR | Optional dependencies | decided | vendor clients are extras; base opens no sockets | #130 |
 | ADR-007 | ADR | The vault token flag | decided | `--vault-token-file PATH` | #145 |
 | ADR-008 | ADR | Contribution provenance | decided | DCO sign-off, no CLA | #370 |
-| — | — | Refuse an application account that a predicate admits, in a mutating account verb | open | | #1056 |
-| — | — | Keep refusing a PostgreSQL pair that shares `system_identifier` | open | | #1061 |
 
 Closed decision issues with no ID are not listed here. Each has a record in the
 [decision log](decisions/log.md), named by its issue number.

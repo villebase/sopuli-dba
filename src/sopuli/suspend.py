@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from sopuli.config.model import Config
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.protocol import UserState
-from sopuli.personal import declared_on
+from sopuli.personal import bound_by_application, declared_on
 
 #: ``results[].state`` words this verb uses, all of them already in the run
 #: schema's ``state`` enum -- a verb that needed a new one would be saying
@@ -89,6 +89,10 @@ def decide(
     than here, and it is why the declaration is expressed *through* the review's
     check 1 instead of short-circuiting it -- one refusal vocabulary, one place
     that decides what ``--force`` may do.
+
+    **An account an application binds here is refused** where a predicate
+    admits it, before the review, and ``--force`` does not waive it
+    (:func:`~sopuli.personal.bound_by_application`, #1056).
     """
     if state is None:
         return Decision(
@@ -104,6 +108,9 @@ def decide(
         profile=state.profile,
         roles=state.roles,
     )
+    application = bound_by_application(config, state.name, target) if rule is not None else None
+    if application is not None:
+        return Decision(proceed=False, state=SKIPPED, detail=application)
     # Check 1 takes the declared set, so handing it this account's own name where
     # a rule admits it -- and nothing where none does -- expresses the predicate
     # in the vocabulary the guardrails already refuse in. The alternative was a

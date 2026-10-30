@@ -189,7 +189,9 @@ def cross_declared(config: Config, account: str) -> str | None:
     at load, and its docstring says what it cannot reach: an account a *predicate*
     admits and an application declares is a fact about a database, so no validator
     can catch it. H1 accepted that cost and said the verb resolving the predicate
-    is where it has to be caught. This is that verb.
+    is where it has to be caught. This is that verb for `account list`; the
+    mutating verbs refuse such an account
+    (:func:`~sopuli.personal.bound_by_application`, #1056).
 
     A **notice rather than a refusal**, and the asymmetry is deliberate. The
     load-time rule refuses because a file can be fixed before anything runs; here
@@ -197,8 +199,9 @@ def cross_declared(config: Config, account: str) -> str | None:
     operator with an ambiguous whitelist and no way to look at it. Describing the
     ambiguity is what lets them resolve it.
     """
-    folded = account.casefold()
+    # By `upper()`, invariant 5's rule, as the mutating verbs compare (#1056).
+    spelled = account.upper()
     for application in config.applications:
-        if any(declared.casefold() == folded for declared in application.accounts):
+        if any(declared.upper() == spelled for declared in application.accounts):
             return application.label
     return None

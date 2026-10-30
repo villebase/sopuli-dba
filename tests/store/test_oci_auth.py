@@ -6,6 +6,7 @@ file or reaches the network.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -252,12 +253,25 @@ def test_a_principal_that_cannot_get_credentials_is_an_auth_failure(
     assert sdk.clients == []
 
 
+#: The default config file, as the CLI options name it: absolute.
+DEFAULT_FILE = os.path.abspath(os.path.expanduser(oci.config.DEFAULT_LOCATION))
+
 #: Each CLI option the clients name (#1186), whatever the store left to defaults.
-API_KEY_CLI = ("--profile", "DEFAULT", "--auth", "api_key", "--region", "eu-frankfurt-1")
+API_KEY_CLI = (
+    "--config-file",
+    DEFAULT_FILE,
+    "--profile",
+    "DEFAULT",
+    "--auth",
+    "api_key",
+    "--region",
+    "eu-frankfurt-1",
+)
 
 
-def test_the_cli_options_name_the_default_profile_and_its_region(sdk: Sdk) -> None:
-    """Named even as defaults, so OCI_CLI_PROFILE or oci_cli_rc cannot change them."""
+def test_the_cli_options_name_the_default_file_profile_and_region(sdk: Sdk) -> None:
+    """Named even as defaults, so OCI_CLI_CONFIG_FILE, OCI_CLI_PROFILE or
+    oci_cli_rc cannot change them."""
     assert build_clients(vault(), env={}).cli_options == API_KEY_CLI
 
 
@@ -267,6 +281,8 @@ def test_the_cli_options_name_the_profile_and_the_stores_region(sdk: Sdk) -> Non
     )
 
     assert clients.cli_options == (
+        "--config-file",
+        DEFAULT_FILE,
         "--profile",
         "ACME",
         "--auth",
@@ -276,11 +292,12 @@ def test_the_cli_options_name_the_profile_and_the_stores_region(sdk: Sdk) -> Non
     )
 
 
-def test_the_cli_options_name_a_config_file_from_oci_config_file(sdk: Sdk) -> None:
-    """The CLI reads OCI_CLI_CONFIG_FILE, so the store's file is passed to it."""
-    clients = build_clients(vault(), env={"OCI_CONFIG_FILE": "/srv/acme/oci-config"})
+def test_the_cli_options_name_the_file_oci_config_file_chose_absolute(sdk: Sdk) -> None:
+    """The CLI reads OCI_CLI_CONFIG_FILE, so the store's file is passed to it,
+    and absolute, so the command works pasted in another directory."""
+    clients = build_clients(vault(), env={"OCI_CONFIG_FILE": "acme/oci-config"})
 
-    assert clients.cli_options == ("--config-file", "/srv/acme/oci-config", *API_KEY_CLI)
+    assert clients.cli_options[:2] == ("--config-file", os.path.abspath("acme/oci-config"))
 
 
 @pytest.mark.parametrize(
@@ -331,6 +348,8 @@ def test_the_cli_options_name_a_session(
     )
 
     assert clients.cli_options == (
+        "--config-file",
+        DEFAULT_FILE,
         "--profile",
         "SOPULI_SESSION",
         "--auth",

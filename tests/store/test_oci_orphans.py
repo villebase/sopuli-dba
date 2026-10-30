@@ -25,7 +25,7 @@ from sopuli.lock.record import Holder, LockRecord
 from sopuli.orphans import SECRET, Orphan, Survey
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.orphans_view import render
-from sopuli.store.oci import OciStore
+from sopuli.store.oci import Clients, OciStore, open_store
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
 from sopuli.store.protocol import SecretStore
 
@@ -174,6 +174,26 @@ def test_the_command_names_how_the_clients_reach_the_store() -> None:
 
     assert store.delete_command("acme-old") == (
         f"{DELETE} {fake.secrets['acme-old'].id} --profile ACME --region eu-stockholm-1"
+    )
+
+
+def test_open_store_hands_the_clients_cli_options_to_the_store() -> None:
+    fake = FakeOci()
+    fake.put("acme-old", {"origin": "generated"})
+    entry = Vault(
+        name="vault-oci",
+        type="oci",
+        vault_id=VAULT_ID,
+        compartment_id=COMPARTMENT_ID,
+        key_id=KEY_ID,
+    )
+    store = open_store(
+        entry, Clients(vaults=fake, secrets=fake, kms=fake, cli_options=("--profile", "ACME"))
+    )
+    store.list("")
+
+    assert store.delete_command("acme-old") == (
+        f"{DELETE} {fake.secrets['acme-old'].id} --profile ACME"
     )
 
 

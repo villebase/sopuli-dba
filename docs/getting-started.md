@@ -771,28 +771,29 @@ On an OCI store, the list shows each record by its OCI secret name, the name
 you see in the console. A lock is the secret `sopuli-locks.<name>`. The
 commands are OCI CLI commands, and each names the secret's OCID, because the
 CLI cannot delete a secret by name. Here the secret moved from
-`acme-e18b00-old` to `acme-e18b00-new`. The OCIDs are replaced with examples:
+`acme-837cfe-old` to `acme-837cfe-new`. The OCIDs and the config file's path
+are replaced with examples:
 
 ```
 $ sopuli --config sopuli.yaml vault orphans
 config: sopuli.yaml
 
 VAULT      PATH                          KIND    LOCK
-vault-oci  acme-e18b00-old               secret  -
-vault-oci  sopuli-locks.acme-e18b00-old  lock    released
+vault-oci  acme-837cfe-old               secret  -
+vault-oci  sopuli-locks.acme-837cfe-old  lock    released
 
 2 orphans in 1 vault (vault-oci): records that look like this tool's, at paths no binding in this config declares
 
 They may be another config's. Check each one before you delete it (getting-started.md, "Moving a secret path"). To delete them:
 
-  oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid1 --profile DEFAULT --auth api_key --region eu-frankfurt-1
-  oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid2 --profile DEFAULT --auth api_key --region eu-frankfurt-1
+  oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid1 --config-file /home/op/.oci/config --profile DEFAULT --auth api_key --region eu-frankfurt-1
+  oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid2 --config-file /home/op/.oci/config --profile DEFAULT --auth api_key --region eu-frankfurt-1
 ```
 
 OCI does not delete a secret at once. It deletes it 30 days later, unless you
 add `--time-of-deletion`, and until then nobody can create a secret with that
-name. The commands name the auth method, profile and region the run used, so
-they run as sopuli did, whatever your OCI CLI settings say. Your OCI user needs
+name. The commands name the config file, auth method, profile and region the
+run used, so they run as sopuli did, whatever your OCI CLI settings say. Your OCI user needs
 the `SECRET_DELETE` permission, which `manage secrets` gives.
 
 ---

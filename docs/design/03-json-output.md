@@ -1253,23 +1253,23 @@ estate's. **A path any binding names is declared in every store.** Two
 case: an application moved to another store at the same path leaves a record
 that is not reported. Entries with the same address, namespace, mount and KV
 version are listed once, under the first name. The verb deletes nothing. This is from an OCI store, after the
-application's secret moved from `acme-e18b00-old` to `acme-e18b00-new`. The
-OCIDs are replaced with examples:
+application's secret moved from `acme-837cfe-old` to `acme-837cfe-new`. The
+OCIDs and the config file's path are replaced with examples:
 
 ```json
 "orphans": {
   "listed": [ "vault-oci" ],
   "prefix": null,
   "listed_paths": 2,
-  "found": [ { "vault": "vault-oci", "path": "acme-e18b00-old",
-               "name": "acme-e18b00-old", "kind": "secret",
+  "found": [ { "vault": "vault-oci", "path": "acme-837cfe-old",
+               "name": "acme-837cfe-old", "kind": "secret",
                "version": 1, "lock": null,
-               "delete_command": "oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid1 --profile DEFAULT --auth api_key --region eu-frankfurt-1" },
-             { "vault": "vault-oci", "path": "locks/acme-e18b00-old",
-               "name": "sopuli-locks.acme-e18b00-old", "kind": "lock",
+               "delete_command": "oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid1 --config-file /home/op/.oci/config --profile DEFAULT --auth api_key --region eu-frankfurt-1" },
+             { "vault": "vault-oci", "path": "locks/acme-837cfe-old",
+               "name": "sopuli-locks.acme-837cfe-old", "kind": "lock",
                "version": 1,
                "lock": { "state": "released", "held": false, "expired": false },
-               "delete_command": "oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid2 --profile DEFAULT --auth api_key --region eu-frankfurt-1" } ]
+               "delete_command": "oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid2 --config-file /home/op/.oci/config --profile DEFAULT --auth api_key --region eu-frankfurt-1" } ]
 }
 ```
 
@@ -1304,16 +1304,15 @@ for a lock at `locks/acme/acme/dev` on the tier-1 stack.
   the listing gave, because the CLI deletes no secret by name. From run schema
   1.69 (#1186). It names the `--auth` method and the `--region` the run's
   clients used, and for a config-file or session-token method the
-  `--profile`, defaults included. So the OCI CLI's own variables and
-  `oci_cli_rc` cannot send it elsewhere, and it reaches the store this run
-  read. It names `--config-file` where `OCI_CONFIG_FILE` chose the file,
-  because the OCI CLI reads `OCI_CLI_CONFIG_FILE` instead. The store builds the
-  command, because it knows how its clients were built. It is `null` where the
-  listing gave no OCID, and the text then says so. OCI deletes the secret 30
-  days later unless the command is given
+  `--config-file`, as an absolute path, and the `--profile`, defaults
+  included. So the OCI CLI's own variables, such as `OCI_CLI_CONFIG_FILE`,
+  and `oci_cli_rc` cannot send it elsewhere, and it reaches the store this run
+  read. The store builds the command, because it knows how its clients were
+  built. OCI deletes the secret 30 days later unless the command is given
   `--time-of-deletion`, and the name stays taken until then: OCI refuses a new
-  secret of that name, and `creds generate` and `creds rotate` refuse one at
-  plan time.
+  secret of that name. For a secret's name, `creds generate` and `creds rotate`
+  refuse at plan time. For a lock's name, `sopuli-locks.<name>`, the run fails
+  when it takes the lock.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
 - **`listed` names the stores whose paths were read**, by the entry each was
   opened through, so an empty `found` says what it covers. A store that could

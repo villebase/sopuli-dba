@@ -130,8 +130,10 @@ def _from_config_file(
         signer = _security_token_signer(config, where=where) if session else None
         oci.config.validate_config(config, signer=signer)
         cli = (
-            # The CLI reads OCI_CLI_CONFIG_FILE, not this variable.
-            *(("--config-file", location) if CONFIG_FILE_VARIABLE in env else ()),
+            # Always, and absolute: the CLI reads OCI_CLI_CONFIG_FILE, not this
+            # variable, and the command may be pasted in another directory.
+            "--config-file",
+            os.path.abspath(os.path.expanduser(location)),
             "--profile",
             profile,
             "--auth",

@@ -31,6 +31,7 @@ from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
     CHANGED_NOT_PROMOTED,
     GUARDRAIL_PASS_AHEAD,
+    GUARDRAIL_REFUSES_AHEAD,
     GUARDRAIL_UNCHECKED,
     PROMOTION_SKIPPED,
     ROTATION_UNCONFIRMED,
@@ -493,6 +494,10 @@ def ahead(result: Result) -> list[dict[str, Any]]:
     return [one for one in diagnostics(result) if one.get("code") == GUARDRAIL_PASS_AHEAD]
 
 
+def refused_ahead(result: Result) -> list[dict[str, Any]]:
+    return [one for one in diagnostics(result) if one.get("code") == GUARDRAIL_REFUSES_AHEAD]
+
+
 def test_a_dry_run_preflight_says_which_credential_the_pass_would_skip(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
@@ -739,22 +744,106 @@ def test_a_forced_dry_run_forecasts_nothing(
     assert ahead(result) == []
 
 
-def test_a_credential_on_one_target_is_not_forecast(
+#: One target, where guardrail 2 refuses `acme_web_user`.
+VENDOR_WEB_USER = {
+    "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
+    "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+}
+
+
+def test_a_refusal_on_an_account_s_only_target_is_forecast_per_account(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The pass asks only about a credential on more than one target; the
-    refusal on one target is the run's own row, which the plan does not
-    forecast either."""
-    estate(
-        {
-            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
-            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-        }
-    )
+    """#1116. The pass asks only about a credential on more than one target, so
+    this is not `SOPULI-W055`. The run's own review skips the account, and the
+    dry run says so as `SOPULI-W060`, from the survey's read."""
+    harness = estate(VENDOR_WEB_USER)
     result = run(runner, write_config(CONFIG), "--dry-run", "--preflight", "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert ahead(result) == []
+    (found,) = refused_ahead(result)
+    assert found["account"] == "acme_web_user"
+    assert found["target"] == "appdb-alpha"
+    assert found["message"].startswith(
+        "acme_web_user on appdb-alpha: a guardrail refuses this account, so the run would skip it: "
+    )
+    assert document(result)["summary"]["failed"] == 0
+    assert changed(harness) == []
+
+
+def test_the_forecast_and_the_run_agree_on_one_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The account the dry run names is the one the real run skips."""
+    estate(VENDOR_WEB_USER)
+    config = write_config(CONFIG)
+    preview = run(runner, config, "--dry-run", "--preflight", "--output", "json")
+    real = run(runner, config, "--confirm", "--output", "json")
+
+    (found,) = refused_ahead(preview)
+    rows = {(one["account"], one["target"]): one["state"] for one in document(real)["results"]}
+    assert rows[(found["account"], found["target"])] == SKIPPED, rows
+    assert rows[("acme_batch_user", "appdb-alpha")] != SKIPPED, rows
+
+
+def test_a_named_account_the_run_would_stop_on_fails_the_dry_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1116: the real run stops with `ERROR` and exit 1 on an account the
+    operator named, and the dry run exits 1 as well."""
+    estate(VENDOR_WEB_USER)
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--dry-run",
+        "--preflight",
+        "--account",
+        "acme_web_user",
+        "--output",
+        "json",
+    )
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    (found,) = refused_ahead(result)
+    assert "so the run would stop on it" in found["message"]
+    assert "you named this account" in found["message"]
+    assert document(result)["summary"]["failed"] == 1
+
+
+def test_a_forced_dry_run_forecasts_only_what_no_flag_waives(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`--force` waives guardrail 2 in the run, so the forecast drops it."""
+    estate(VENDOR_WEB_USER)
+    result = run(
+        runner, write_config(CONFIG), "--dry-run", "--preflight", "--force", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert refused_ahead(result) == []
+
+
+def test_the_per_account_forecast_is_printed_too(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(VENDOR_WEB_USER)
+    result = run(runner, write_config(CONFIG), "--dry-run", "--preflight")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "acme_web_user on appdb-alpha: a guardrail refuses this account" in result.output
+
+
+def test_a_shared_credential_is_forecast_once_not_per_account(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The pass decides a shared credential for every target, as `SOPULI-W055`,
+    so its refusing target has no `SOPULI-W060` of its own."""
+    estate({}, by_target=DBA_ON_BETA)
+    result = run(runner, write_config(TWO_TARGETS), "--dry-run", "--preflight", "--output", "json")
+
+    assert len(ahead(result)) == 1
+    assert refused_ahead(result) == []
 
 
 def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(
@@ -2032,21 +2121,39 @@ def test_a_rotation_preview_the_survey_refuses_forecasts_nothing(
     assert ahead(result) == []
 
 
-def test_a_rotation_preview_of_a_credential_on_one_target_forecasts_nothing(
+def test_a_rotation_preview_forecasts_a_refusal_on_an_account_s_only_target(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The pass asks only about a credential on more than one target."""
-    estate(
-        {
-            "ACME_WEB_USER": account("ACME_WEB_USER", vendor_maintained=True),
-            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
-        },
-        document=NOTHING_STAGED,
-    )
-    result = rotate(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+    """#1116: not `SOPULI-W055`, which is for a credential on more than one
+    target, but `SOPULI-W060`, and the real rotation skips the account."""
+    estate(VENDOR_WEB_USER, document=NOTHING_STAGED)
+    config = write_config(CONFIG)
+    preview = rotate(runner, config, "--dry-run", "--output", "json")
+    real = rotate(runner, config, "--confirm", "--output", "json")
 
-    assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert ahead(result) == []
+    assert preview.exit_code == ExitCode.SUCCESS, preview.output
+    assert ahead(preview) == []
+    (found,) = refused_ahead(preview)
+    assert (found["account"], found["target"]) == ("acme_web_user", "appdb-alpha")
+    rows = {
+        (entry["account"], entry["target"]): entry["state"]
+        for entry in document(real)["results"]
+        if "target" in entry
+    }
+    assert rows[("acme_web_user", "appdb-alpha")] == SKIPPED, rows
+
+
+def test_a_rotation_preview_of_a_named_refused_account_exits_1(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(VENDOR_WEB_USER, document=NOTHING_STAGED)
+    result = rotate(
+        runner, write_config(CONFIG), "--dry-run", "--account", "acme_web_user", "--output", "json"
+    )
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    (found,) = refused_ahead(result)
+    assert "so the run would stop on it" in found["message"]
 
 
 # ------------------------------------------------- the check that could not run ---

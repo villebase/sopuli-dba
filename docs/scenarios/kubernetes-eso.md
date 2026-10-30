@@ -514,10 +514,10 @@ as section 3 says for HashiCorp.
 ### What was run
 
 On 2026-10-30, against Kubernetes 1.36.1 (the cluster built into Docker
-Desktop), ESO 2.10.0, an OCI vault, and Oracle AI Database 26ai Free, with the
-manifests above and a template naming the run's own secret. After each step
-the script forced ESO to read the vault again, and logged in to the database
-with the password ESO had put in the Kubernetes Secret:
+Desktop), ESO 2.10.0, an OCI vault, and Oracle AI Database 26ai Free. The
+manifests were those above, with the run's own names and OCIDs in them. Unlike section 7, the script is a one-off and is not in this
+repository. After each step it forced ESO to read the vault again, and logged
+in to the database with the password ESO had put in the Kubernetes Secret:
 
 | After | OCI versions | The password ESO served |
 |---|---|---|
@@ -547,7 +547,7 @@ Said plainly rather than left for you to discover:
   Vault (section 8). `file` and `keyring` are accepted in a config file and
   report that this build has no module for them.
 - **The manifests are checked against one ESO version, and that version will
-  move.** Section 7 has the details of what was run. It was ESO 2.10.0; ESO's
+  move.** Sections 7 and 8 have the details of what was run. It was ESO 2.10.0; ESO's
   own API has changed between major versions before, and `apiVersion:
   external-secrets.io/v1` is the line most likely to need changing. If your
   cluster runs a different version, read its documentation before assuming the

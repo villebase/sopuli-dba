@@ -18,9 +18,9 @@ application-credential commands, and the personal-account commands refuse it.
 differs there. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE`
 attribute the tool account needs can change the password of every role that is
 not a superuser, so there the tool account is close to a superuser and only the
-tool enforces the config's whitelist. From 16 the server enforces it too. Only
-HashiCorp Vault is supported as the secret
-store. Try it against a test database first.
+tool enforces the config's whitelist. From 16 the server enforces it too. The
+secret store is HashiCorp Vault, or OCI Vault for the application-credential
+commands. Try it against a test database first.
 
 ---
 

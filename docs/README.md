@@ -556,9 +556,11 @@ such as "from 16", means the one release of it that was measured.
   `test/vault_auth_probe.py`.
 - `verified` `oci-vault-cost-limits` (#643, #1135) — **Do the OCI Vault tests
   in tier 3 still cost nothing?**
-  Yes. The tenancy's cost analysis for October 2026 holds the tier-3 runs of
-  #1129 to #1164, among them one secret filled to its 30 versions. It has no
-  line for Vault, Key Management or Secrets, and no charge for any of them.
+  Yes. The tenancy's cost analysis, read on 2026-10-30 for 1 to 30 October,
+  holds the tier-3 runs of #1129 to #1164 on 28 and 29 October, among them one
+  secret filled to its 30 versions. It lists every service the tenancy used,
+  at a cost of zero where it is free, and it has no line for Vault, Key
+  Management or Secrets, in cost or in usage.
   The vault is a default vault, its key is software-protected, and no secret
   is replicated. Oracle's pages on 2026-10-14 said the same: Secret Management
   free, a software-protected key free, and API calls to Key Management not

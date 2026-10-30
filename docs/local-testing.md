@@ -911,10 +911,12 @@ password still works.
 
 The same commands run with an OCI vault as the master. This needs an OCI
 tenancy, a vault and a key in it, the `oci` extra, and a profile in
-`~/.oci/config`; the test stack has no OCI emulator. Declare the store and
-point the target at it:
+`~/.oci/config`; the test stack has no OCI emulator. The samples below ran
+with this config, on a second test stack's port. The `9bf135` in the template is the run's own, so that each
+run makes fresh secrets:
 
 ```yaml
+version: 1
 vaults:
   vault-oci:
     type: oci
@@ -922,10 +924,28 @@ vaults:
     compartment_id: ocid1.compartment.oc1..exampleuniqueid
     key_id:         ocid1.key.oc1.eu-frankfurt-1.exampleuniqueid
     auth: config_file
+defaults:
+  policy: app-standard
+policies:
+  app-standard:
+    password: {length: 24, charset: alnum, first_char: alpha}
+targets:
+  - name: free-pdb
+    type: oracle
+    dsn: 127.0.0.1:1521/FREEPDB1
+    environment: dev
+    vault: vault-oci
+    admin: {username: SYSTEM, auth: {method: env}}
+    oracle: {scope: pdb, container: FREEPDB1}
+applications:
+  - name: acme
+    accounts: [acme_native_user]
+    secret_template: "acme-9bf135-{account}#password"
 ```
 
+`ACME_NATIVE_USER` is an account created for the run, with `CREATE SESSION`.
 A ref on an OCI store is the OCI secret name, so a `secret_template` uses no
-`/`. Here it is `acme-9bf135-{account}#password`. An application with one
+`/`. An application with one
 account per secret gets OCI's own stages: `pending` is a PENDING version, and
 the results name OCI's version numbers. Each OCI write waits about 20 seconds
 for the secret to settle.
@@ -967,14 +987,16 @@ acme_native_user  free-pdb  IN_SYNC  changed and verified by login
 ```
 
 OCI now holds version 1 as PREVIOUS and version 2 as CURRENT. `rotate`, `check`
-and `apply --source previous` run as in §8.5 to §8.7, and `check` names the
-version it verified:
+and `apply --source previous` run as in §8.5 to §8.7. After a `rotate`, `check`
+names the OCI version it verified:
 
 ```
-$ sopuli --config sopuli.yaml creds check --include-previous
+$ sopuli --config sopuli.yaml creds check
 ...
 ACCOUNT           TARGET    STATE    DETAIL
-acme_native_user  free-pdb  IN_SYNC  vault v2 verified by login
+acme_native_user  free-pdb  IN_SYNC  vault v3 verified by login
+
+all 1 in sync
 ```
 
 OCI keeps at most 30 versions of a secret. When a write would make a 31st, the

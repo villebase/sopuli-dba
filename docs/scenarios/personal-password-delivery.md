@@ -357,8 +357,13 @@ The tool sets up none of this. Somebody who administers Vault does it once:
 read the person's path, the tool could read the password back, and the reset
 would no longer be unseen. So the tool asks Vault what the token can do, and
 refuses if the answer includes `read`. That is why this config gives
-`vault_path` its own vault entry, `vault-handover`, with the narrow token. The
-root token used for the records can read everything.
+`vault_path` its own vault entry, `vault-handover`, with the narrow token.
+
+**The tool checks only the token it delivers with.** Any other token you hold
+that can read the path can read the password too. In this test setup that
+includes the root token used for the records, which can read everything. In a
+real estate, the DBA's own Vault tokens must not hold `read` on the personal
+paths, and the record store needs a token of its own without it.
 
 ### The reset
 
@@ -384,8 +389,8 @@ a token that holds `undelete` on the path can still restore it.
 ```
 
 The path uses the account name as the database stores it, in capitals. Tell the
-person where the password is. The path is not a secret, because only their own
-login can read it.
+person where the password is. The path is not a secret: knowing it does not let
+anybody read it.
 
 ### What the person does
 
@@ -431,12 +436,15 @@ Code: 403. Errors:
 
 ### What the path promises, and what it does not
 
-- **Only the person's identity can read it**, for as long as the Vault policy
-  and the identity metadata say so. The tool cannot see the metadata, so it
-  cannot check that `db_account` names the right person. That rests on whoever
-  administers Vault identities.
-- **The person can read it more than once.** The value is a working password
-  until Vault deletes it at the `ttl`, 8 hours here.
+- **Only the person's identity can read it**, if no other token holds `read`
+  on the path, and for as long as the Vault policy and the identity metadata
+  say so. The tool cannot see the metadata, so it cannot check that
+  `db_account` names the right person. That rests on whoever administers Vault
+  identities.
+- **The person can read it more than once.** The copy at the path stays
+  readable until Vault deletes it at the `ttl`, 8 hours here. The password
+  itself is not expired, so it keeps working on the database until somebody
+  changes it.
 - **Vault deletes it, but does not destroy it.** A token that holds `undelete`
   on the path can bring the value back.
 
@@ -518,8 +526,9 @@ $ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:1337/secret/<ID>
 - **Link previews can use it up.** Some chat and mail tools open links to
   preview them. The Yopass page fetches nothing until the person presses the
   button, so a preview does not use up the view. A server set up to fetch when
-  the page loads would let a preview use it up. For such a server, the tool
-  splits the link, as below.
+  the page loads would let a preview use it up. When the server reports that
+  setting, the tool splits the link by itself, as below, whatever `split_key`
+  says.
 
 ### Two channels: `split_key`
 
@@ -567,9 +576,9 @@ account. This method needs a 1Password account with a *service account*, a
 pipx install "sopuli-dba[oracle,hashicorp,onepassword]"
 ```
 
-1Password's SDK does not run on Python 3.14 yet. If pipx uses 3.14, pick an
-older Python as [getting-started.md](../getting-started.md) shows, with
-`--python 3.13`.
+The extra installs 1Password's SDK only on Python 3.13 and older. If pipx uses
+a newer Python, pick an older one as [getting-started.md](../getting-started.md)
+shows, with `--python 3.13`.
 
 The service account needs permission to read, write and share items in the
 vault that `onepassword_vault` names. Here that is a vault called `sopuli-test`.
@@ -623,7 +632,8 @@ example when there is no Vault they can use.
 **The password is always expired.** The person must change it at first logon,
 and after that the password you saw no longer works. Until then, anybody who saw
 it can log in as them. The config must say `force_expire: true` in the `manual`
-block. A `manual` block without it is refused when the config is loaded.
+block. When `manual` is the selected method, a `manual` block without it is
+refused when the config is loaded, with exit 9.
 
 The tool guards the seen path in other ways too:
 
@@ -692,7 +702,7 @@ read it, and tell the person they must change it.
 | Method | The person needs | Read more than once | Who can read it | You see it |
 |---|---|---|---|---|
 | `vault_wrapped` | a Vault they can reach | no | whoever holds the token | no |
-| `vault_path` | their own Vault login, set up by a Vault admin | yes, until the `ttl` | only their Vault identity | no |
+| `vault_path` | their own Vault login, set up by a Vault admin | yes, until the `ttl` | their Vault identity, and any token with `read` on the path | no |
 | `one_time_link` | a browser; you need a Yopass server | no | whoever holds the link | no |
 | `onepassword_share` | a browser; you need a 1Password account | no | whoever holds the link | no |
 | `manual` | nothing | yes, until they change it | anybody who saw it | yes |
@@ -700,8 +710,10 @@ read it, and tell the person they must change it.
 - **Start with `vault_wrapped`.** It works with the Vault you already have. A
   read by somebody else cannot be prevented, but the person finds out.
 - **Choose `vault_path` when your people already log in to Vault as
-  themselves.** Nobody can intercept the password without the person's own
-  login. The value stays readable until the `ttl`, so keep it short.
+  themselves.** There is no token or link to intercept on the way. To read the
+  password, somebody needs the person's own login, or a token that holds `read`
+  on the path, so keep such tokens away from DBAs. The copy stays readable until
+  the `ttl`, so keep it short.
 - **Choose `one_time_link` or `onepassword_share` when the person has no Vault
   access.** Use `one_time_link` if you run a Yopass server you trust, and
   `onepassword_share` if your estate already uses 1Password. On a Yopass link,
@@ -836,11 +848,12 @@ person.
 | `SOPULI-W061` on `onepassword_share` | the link was made, but the tool could not delete the item afterwards. The item holds a working password: delete it in 1Password |
 | exit 7 | another DBA's reset holds the lock on this account. `sopuli lock status` names them |
 | exit 8 on `manual` | you declined the confirmation, or stdout or stdin is not a terminal |
-| exit 9 | the config is unusable, for example a `manual` block without `force_expire: true` |
+| exit 9 | the config is unusable, for example `method: manual` with a `manual` block that lacks `force_expire: true` |
 
-Every command also takes `--output json` for a machine-readable version of the
-same run, without the password. On `vault_wrapped`, the token then goes to
-stderr, because stdout carries the document. The contract is in
+Every unseen method also takes `--output json` for a machine-readable version
+of the same run, without the password. The token, link, key or path you hand
+over then goes to stderr, because stdout carries the document. `manual` refuses
+`--output json`, as section 7 says. The contract is in
 [03-json-output.md](../design/03-json-output.md).
 
 ---

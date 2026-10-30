@@ -345,11 +345,41 @@ also splits, whatever this says, when the server reports
 There is no key for one-time. The tool always asks the server for a one-time
 secret.
 
-**The tool does not validate the keys inside the sub-blocks of
-`onepassword_share` and `smtp_encrypted`**, because neither is built, so a typo
-inside one is accepted. So **`config validate` warns when the selected method is not implemented in this
+**`onepassword_share:`** hands the person a 1Password share link that opens
+once (UC-2 §6.6, #446). It needs the `onepassword` extra, which carries
+1Password's SDK. The SDK runs on Python 3.9 to 3.13, and on Linux needs glibc
+2.32 or later.
+
+```yaml
+delivery:
+  method: onepassword_share
+  onepassword_share:
+    onepassword_vault: acme-handover
+    ttl: 24h
+    token: { env: OP_SERVICE_ACCOUNT_TOKEN }
+```
+
+`onepassword_vault` is **required**: the title of the 1Password vault the tool
+creates the item in. It is not called `vault`, because in the other methods
+`vault` names an entry under `vaults:`.
+
+`ttl` is **required**, as `vault_wrapped`'s is. It must be one of the expiries
+1Password offers: `1h`, `24h`, `168h`, `336h` or `720h`. A run also checks it
+against the account's sharing policy before a password is drawn, and refuses
+a `ttl` longer than the policy's maximum, with exit 5.
+
+`token` is **required**: the service account token, named as an environment
+variable or a file, never written here (C9). The service account needs read,
+write and share items on the vault.
+
+There is no key for view-once. The tool always asks for it.
+
+**The tool does not validate the keys inside the sub-block of
+`smtp_encrypted`**, because it is not built, so a typo inside it is accepted.
+**`config validate` warns when the selected method is not implemented in this
 build** (`SOPULI-W035`), so that a clean parse does not read as a working
-delivery. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
+delivery. `onepassword_share` is not implemented yet either, so it warns too,
+although its keys are checked. `IMPLEMENTED` in `sopuli/config/delivery.py` lists the methods this
 build serves.
 
 **The published schema leaves every sub-block open** (§9b). The tool leaves an

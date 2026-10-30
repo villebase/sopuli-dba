@@ -1033,6 +1033,31 @@ class LinkDelivery:
 
 
 @dataclass(frozen=True)
+class OnePasswordDelivery:
+    """`delivery.onepassword_share:` -- a 1Password share link that opens once (#446).
+
+    The tool creates an item holding the password in a 1Password vault, shares
+    it as a view-once link with an expiry, and deletes the item. The link stays
+    usable after the delete, because a share is a copy. Nothing here talks to
+    1Password: :mod:`sopuli.delivery.onepassword` does.
+
+    ``onepassword_vault`` is **required**: the title of the 1Password vault the
+    item is created in. Not `vault`, which in every other method names a
+    `vaults:` entry of this file.
+
+    ``ttl`` is **required**, for `vault_wrapped`'s reason. 1Password offers a
+    fixed set of expiries, so the config layer refuses any other value.
+
+    ``token`` is **required**, and is a :class:`MaterialRef` for the service
+    account token: an environment variable or a file, never the value (C9).
+    """
+
+    onepassword_vault: str
+    ttl: str
+    token: MaterialRef
+
+
+@dataclass(frozen=True)
 class WebhookNotify:
     """`delivery.notify.webhook:` -- where to post, and what to say.
 
@@ -1112,6 +1137,8 @@ class Delivery:
     vault_path: PathDelivery | None = None
     #: `one_time_link`'s settings, where it is selected.
     one_time_link: LinkDelivery | None = None
+    #: `onepassword_share`'s settings, where it is selected.
+    onepassword_share: OnePasswordDelivery | None = None
     #: The channel that says a password is ready, or ``None`` where the
     #: estate configured none. Read whichever `method` is selected, unlike a
     #: method's own sub-block: a notification is a property of the delivery as a

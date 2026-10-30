@@ -8,10 +8,10 @@ that fires without saying which key is wrong has not finished its job.
 
 Which keys a method's sub-block takes is a fact about the service behind the
 method, so only methods whose keys are read have keys to test. `vault_wrapped:`,
-`vault_path:` and `one_time_link:` have sections of their own below;
-`onepassword_share:` (TODO(#446)) is not read yet. What this
-layer owes every method is the part common to all six: the method is one of the
-six, and the selected one brought settings.
+`vault_path:`, `one_time_link:` and `onepassword_share:` have sections of their
+own below; `smtp_encrypted:` is not read. What this layer owes every method is
+the part common to all six: the method is one of the six, and the selected one
+brought settings.
 """
 
 from __future__ import annotations
@@ -53,9 +53,9 @@ def test_a_section_that_is_absent_is_none_rather_than_the_default() -> None:
 
 
 def test_the_method_is_read_and_its_sub_block_is_required() -> None:
-    section = built(method="onepassword_share", onepassword_share={"vault": "acme"})
+    section = built(method="smtp_encrypted", smtp_encrypted={"to": "acme"})
 
-    assert section.method == "onepassword_share"
+    assert section.method == "smtp_encrypted"
     assert not section.is_seen
 
 
@@ -73,12 +73,14 @@ def test_manual_is_the_one_seen_method() -> None:
         if method != "manual":
             # Each method has its own required keys, so a sweep over the enum
             # has to carry them: `vault_wrapped` needs a `ttl`, `vault_path` a
-            # `ttl` and a `prefix`, `one_time_link` a `base_url` and a `ttl`, and
-            # an empty block is a config error rather than an unseen delivery.
+            # `ttl` and a `prefix`, `one_time_link` a `base_url` and a `ttl`,
+            # `onepassword_share` a vault, a `ttl` and a token, and an empty
+            # block is a config error rather than an unseen delivery.
             settings: dict[str, Any] = {
                 "vault_wrapped": {"ttl": "15m"},
                 "vault_path": {"ttl": "8h", "prefix": "personal"},
                 "one_time_link": link_block(),
+                "onepassword_share": onepassword_block(),
             }.get(method, {})
             assert not built(method=method, **{method: settings}).is_seen
 
@@ -215,10 +217,10 @@ def test_an_unimplemented_method_warns_that_nothing_serves_it() -> None:
     had already been drawn."""
     # The test is about the warning, not about which method is missing, so it
     # uses one this build does not implement.
-    notice = unserviceable(built(method="onepassword_share", onepassword_share={}))
+    notice = unserviceable(built(method="smtp_encrypted", smtp_encrypted={}))
 
     assert notice is not None
-    assert "onepassword_share" in notice
+    assert "smtp_encrypted" in notice
     assert "not implemented in this build" in notice
 
 
@@ -307,7 +309,7 @@ def test_the_warning_reaches_config_warnings_rather_than_only_the_helper() -> No
     config = build_config(
         {
             "version": 1,
-            "delivery": {"method": "onepassword_share", "onepassword_share": {}},
+            "delivery": {"method": "smtp_encrypted", "smtp_encrypted": {}},
         }
     )
 
@@ -680,3 +682,85 @@ def test_the_link_block_is_not_read_when_another_method_is_selected() -> None:
 
 def test_one_time_link_is_served_by_this_build() -> None:
     assert unserviceable(built(method="one_time_link", one_time_link=link_block())) is None
+
+
+# ------------------------------------------------ `onepassword_share:`'s keys ---
+
+
+def onepassword_block(**keys: Any) -> dict[str, Any]:
+    return {
+        "onepassword_vault": "acme-handover",
+        "ttl": "24h",
+        "token": {"env": "OP_SERVICE_ACCOUNT_TOKEN"},
+        **keys,
+    }
+
+
+def test_the_onepassword_block_is_read() -> None:
+    section = built(method="onepassword_share", onepassword_share=onepassword_block())
+
+    settings = section.onepassword_share
+    assert settings is not None
+    assert settings.onepassword_vault == "acme-handover"
+    assert settings.ttl == "24h"
+    assert str(settings.token) == "env OP_SERVICE_ACCOUNT_TOKEN"
+    # A 1Password vault is not a `vaults:` entry, so the store chain ignores it.
+    assert section.vault is None
+
+
+@pytest.mark.parametrize("key", ["onepassword_vault", "ttl", "token"])
+def test_the_onepassword_block_s_keys_are_required(key: str) -> None:
+    block = onepassword_block()
+    del block[key]
+    with pytest.raises(ConfigError) as raised:
+        build_delivery(document(method="onepassword_share", onepassword_share=block))
+    assert f"delivery.onepassword_share.{key}" in str(raised.value)
+
+
+@pytest.mark.parametrize("ttl", ["1h", "24h", "168h", "336h", "720h"])
+def test_the_expiries_1password_offers_are_accepted(ttl: str) -> None:
+    section = built(method="onepassword_share", onepassword_share=onepassword_block(ttl=ttl))
+
+    assert section.onepassword_share is not None
+    assert section.onepassword_share.ttl == ttl
+
+
+@pytest.mark.parametrize("ttl", ["15m", "2h", "48h", "3600s"])
+def test_an_expiry_1password_does_not_offer_is_refused_at_load(ttl: str) -> None:
+    """1Password offers five expiries, so any other value would fail at the share,
+    after a password had been drawn."""
+    with pytest.raises(ConfigError, match="not an expiry 1Password offers") as raised:
+        build_delivery(
+            document(method="onepassword_share", onepassword_share=onepassword_block(ttl=ttl))
+        )
+    assert "`720h`" in str(raised.value)
+
+
+def test_a_token_written_as_a_value_is_refused_without_echoing_it() -> None:
+    """C9: the file names where the token is. It never holds the token."""
+    block = onepassword_block(token="ops_acme_not_a_real_token")
+    with pytest.raises(ConfigError, match="named, not written here") as raised:
+        build_delivery(document(method="onepassword_share", onepassword_share=block))
+    assert "ops_acme" not in str(raised.value)
+
+
+def test_there_is_no_key_for_view_once() -> None:
+    """The tool always asks for view-once (#446)."""
+    block = onepassword_block(view_once=False)
+    with pytest.raises(ConfigError, match="view_once"):
+        build_delivery(document(method="onepassword_share", onepassword_share=block))
+
+
+def test_the_onepassword_block_is_not_read_when_another_method_is_selected() -> None:
+    section = built(method="vault_wrapped", vault_wrapped={"ttl": "15m"}, onepassword_share={})
+
+    assert section.onepassword_share is None
+
+
+def test_onepassword_share_still_warns_that_nothing_serves_it() -> None:
+    """The keys are read, and the delivery is not built yet (TODO(#446)), so a
+    clean parse must not read as a working delivery."""
+    notice = unserviceable(built(method="onepassword_share", onepassword_share=onepassword_block()))
+
+    assert notice is not None
+    assert "not implemented in this build" in notice

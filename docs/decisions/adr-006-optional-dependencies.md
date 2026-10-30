@@ -45,7 +45,7 @@ The base install carries what every invocation uses and nothing else.
 | store extras | one vendor client per secret store | `sopuli-dba[<store>]` |
 | driver extras | one database driver per product | `sopuli-dba[<product>]` |
 | notify extras | the client a notify channel posts with (E7, #442) | `sopuli-dba[notify]` |
-| delivery extras | what a delivery method reaches its service with, and anything else it needs: `httpx` and `pysequoia` for `one_time_link` (#445) | `sopuli-dba[yopass]` |
+| delivery extras | what a delivery method reaches its service with, and anything else it needs: `httpx` and `pysequoia` for `one_time_link` (#445), and 1Password's SDK for `onepassword_share` (#446) | `sopuli-dba[yopass]`, `sopuli-dba[onepassword]` |
 | `all` | every extra above | `sopuli-dba[all]` |
 
 `pywin32` is in base and is not a counter-example: it is selected by a platform

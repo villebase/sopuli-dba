@@ -354,7 +354,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[postgres]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[all]"]
+        shape: ["", "[oracle]", "[postgres]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[onepassword]", "[all]"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1371,9 +1371,14 @@ look interchangeable, so this section says how they differ.
   tool's**: the server deletes a one-time secret as part of the read that
   returns it. Unlike Vault, an unlicensed Yopass server keeps no record of that
   read.
-- **`onepassword_share`**: whatever 1Password's API offers, which is not yet known
-  (open: #446). If single view has to be simulated with a follow-up delete, the
-  documentation must not claim single view.
+- **`onepassword_share`**: one view, like the Yopass link, and a bearer
+  credential for the same reason: anyone who has the link can open it. **The
+  single view is 1Password's, not the tool's**: a second open says "Maximum
+  views reached". The link also expires after the method's `ttl`. The tool
+  creates an item holding the password, shares it, and deletes the item. A
+  share is a copy, so the link still opens, and no copy stays in the vault.
+  Measured on a 1Password account on 2026-10-30 (#446). It adds 1Password as a
+  third party, as `one_time_link` adds the Yopass server.
 - **`smtp_encrypted`**: as strong as the recipient's key management, and no
   stronger.
 

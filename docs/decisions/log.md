@@ -3829,3 +3829,34 @@ the register.
     `pg_control_checkpoint()`. Whether either tells a fresh copy from its
     source has not been measured, and a comparison that refuses or admits a
     pair would need that measured on each release first.
+
+## #446
+
+- **Decided:** 2026-10-30, #446
+- **Question:** How should `onepassword_share` reach 1Password, and what should
+  it promise? The plan named the Connect API, which may have no sharing, and a
+  share with single view, which might have had to be simulated with a delete.
+- **Decision:** A service account, through 1Password's Python SDK, as the
+  install extra `sopuli-dba[onepassword]`. The tool creates an item holding the
+  password, shares it as a view-once link that anyone with the link can open,
+  with a required `ttl`, and deletes the item. Before a password is drawn, a
+  run checks the `ttl` against the account's sharing policy and refuses with
+  exit 5.
+- **Why:** Measured on a 1Password account on 2026-10-30. A service account
+  with read, write and share items on the vault can share, through `op` and
+  the SDK. The single view is 1Password's own: a second open says "Maximum
+  views reached". A link still opens after its item is deleted, so no copy of
+  the password has to stay in the vault. The SDK runs in the process, so the
+  token never reaches a command line, and it can set view-once and an expiry
+  together, which `op item share` refuses. A link to anyone matches
+  `one_time_link` and needs no new per-account field.
+- **Rejected:**
+  - The `op` program. An external program is a new kind of dependency, and it
+    cannot combine view-once with an expiry.
+  - A share restricted to the owner's email. 1Password then asks for a code
+    sent to that address, which defeats a link scanner, but personal accounts
+    have no email in the config.
+  - Keep the item. The password would stay stored in a second place the tool
+    never cleans up.
+  - Leave the expiry to the account's default. The expiry would be set outside
+    the file.

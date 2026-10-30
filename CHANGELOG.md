@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.82.0](https://github.com/villebase/sopuli-dba/compare/v0.81.0...v0.82.0) (2026-10-30)
+
+
+### Features
+
+* a store adapter for native staging under the UC-1 verbs ([#1158](https://github.com/villebase/sopuli-dba/issues/1158)) ([#1161](https://github.com/villebase/sopuli-dba/issues/1161)) ([63331d3](https://github.com/villebase/sopuli-dba/commit/63331d329305958f3f51a769f66c8138ceab321e))
+* add native staging to the store protocol and the in-memory store ([#1131](https://github.com/villebase/sopuli-dba/issues/1131)) ([#1143](https://github.com/villebase/sopuli-dba/issues/1143)) ([26a5b66](https://github.com/villebase/sopuli-dba/commit/26a5b6689d676e2b6d864536791d1850732d5a96))
+* authenticate to an OCI store with a session token or a principal ([#1146](https://github.com/villebase/sopuli-dba/issues/1146)) ([#1148](https://github.com/villebase/sopuli-dba/issues/1148)) ([226e0f7](https://github.com/villebase/sopuli-dba/commit/226e0f7a9c7ab9d7431fc9d1a20179b22a86a863))
+* check an OCI store's version limit and deleting names at plan time ([#1159](https://github.com/villebase/sopuli-dba/issues/1159)) ([#1170](https://github.com/villebase/sopuli-dba/issues/1170)) ([763f371](https://github.com/villebase/sopuli-dba/commit/763f3711666ac16375101674eb90e9a56497e2b9))
+* connect to an OCI store and check its health ([#1132](https://github.com/villebase/sopuli-dba/issues/1132)) ([#1147](https://github.com/villebase/sopuli-dba/issues/1147)) ([dfc2906](https://github.com/villebase/sopuli-dba/commit/dfc2906696e8e7017e8ae413dee663ea003dce27))
+* forecast a guardrail refusal on an account's only target in a dry run ([#1116](https://github.com/villebase/sopuli-dba/issues/1116)) ([#1184](https://github.com/villebase/sopuli-dba/issues/1184)) ([273cc7c](https://github.com/villebase/sopuli-dba/commit/273cc7c035c78468c2cd06d4357b00a41d0fc42c))
+* keep lock records in OCI secret metadata ([#1152](https://github.com/villebase/sopuli-dba/issues/1152)) ([#1156](https://github.com/villebase/sopuli-dba/issues/1156)) ([87a9641](https://github.com/villebase/sopuli-dba/commit/87a964192b92ee53100d792cdd2b3191f2254936))
+* list an OCI store's OCIDs in config show; check its admin ref names ([#1145](https://github.com/villebase/sopuli-dba/issues/1145)) ([#1150](https://github.com/villebase/sopuli-dba/issues/1150)) ([b4ae186](https://github.com/villebase/sopuli-dba/commit/b4ae1860167bb9eb36e7a423c164bf8ac85fa29e))
+* **postgres:** refuse a role supautils reserves, at plan time ([#1111](https://github.com/villebase/sopuli-dba/issues/1111)) ([#1113](https://github.com/villebase/sopuli-dba/issues/1113)) ([a933e49](https://github.com/villebase/sopuli-dba/commit/a933e496d6d5075bf5101f361c6b8e051bcbdf61))
+* read an OCI store's vault, compartment and key ([#1130](https://github.com/villebase/sopuli-dba/issues/1130)) ([#1139](https://github.com/villebase/sopuli-dba/issues/1139)) ([2234fe2](https://github.com/villebase/sopuli-dba/commit/2234fe2669cae8894f67e63c11d99e77186ce1ee))
+* read and list an OCI store ([#1144](https://github.com/villebase/sopuli-dba/issues/1144)) ([#1149](https://github.com/villebase/sopuli-dba/issues/1149)) ([9e2fbd6](https://github.com/villebase/sopuli-dba/commit/9e2fbd64df31d5478374e8e580c0b204eb23077c))
+* refuse a ref on an OCI store that is not an OCI secret name ([#1137](https://github.com/villebase/sopuli-dba/issues/1137)) ([#1140](https://github.com/villebase/sopuli-dba/issues/1140)) ([fba6d4c](https://github.com/villebase/sopuli-dba/commit/fba6d4c4e32d73973f2b522412a0954d8d711df5))
+* refuse personal accounts on an OCI store ([#1138](https://github.com/villebase/sopuli-dba/issues/1138)) ([#1142](https://github.com/villebase/sopuli-dba/issues/1142)) ([e4feefe](https://github.com/villebase/sopuli-dba/commit/e4feefeb2e045a78fd1ca9f558b2c5f5d35af50c))
+* **reset:** allow the seen reset on a rollover profile and close the window ([#541](https://github.com/villebase/sopuli-dba/issues/541)) ([#1127](https://github.com/villebase/sopuli-dba/issues/1127)) ([d017163](https://github.com/villebase/sopuli-dba/commit/d017163ca3e7430c81fdabc31c25fbf2a953d388))
+* stage, promote, and make room at the version limit on an OCI store ([#1153](https://github.com/villebase/sopuli-dba/issues/1153)) ([#1157](https://github.com/villebase/sopuli-dba/issues/1157)) ([18783ba](https://github.com/villebase/sopuli-dba/commit/18783ba4496566abc7b3a7e2721fd9c6feb9a423))
+* use native staging for a one-account secret on an OCI store ([#1134](https://github.com/villebase/sopuli-dba/issues/1134)) ([#1162](https://github.com/villebase/sopuli-dba/issues/1162)) ([f537227](https://github.com/villebase/sopuli-dba/commit/f537227097b455c9b0d1ee743d3d8088a5454018))
+* write and create secrets on an OCI store under compare-and-set ([#1133](https://github.com/villebase/sopuli-dba/issues/1133)) ([#1155](https://github.com/villebase/sopuli-dba/issues/1155)) ([242e153](https://github.com/villebase/sopuli-dba/commit/242e15373ee9047914a473af95cafaf5b2dcc652))
+
+
+### Bug Fixes
+
+* check stage collisions over the whole estate when the run supplies the store ([#1141](https://github.com/villebase/sopuli-dba/issues/1141)) ([#1160](https://github.com/villebase/sopuli-dba/issues/1160)) ([c7e2201](https://github.com/villebase/sopuli-dba/commit/c7e22019d34d8effe3416f5ea4b3b518550f6bbe))
+* exit 9 from doctor when a target it reached is refused for its setup ([#1062](https://github.com/villebase/sopuli-dba/issues/1062)) ([#1172](https://github.com/villebase/sopuli-dba/issues/1172)) ([9bc12ea](https://github.com/villebase/sopuli-dba/commit/9bc12ea06ad080a05e39c0946ea58dc4d2b57c7b))
+* import psycopg where the PostgreSQL password module uses it ([#1168](https://github.com/villebase/sopuli-dba/issues/1168)) ([#1177](https://github.com/villebase/sopuli-dba/issues/1177)) ([5e201d9](https://github.com/villebase/sopuli-dba/commit/5e201d9f52bae59332e9f757d795b8a5c16db174))
+* leave a role check 6 or 8 refuses out of rotate's privilege survey ([#1117](https://github.com/villebase/sopuli-dba/issues/1117)) ([#1175](https://github.com/villebase/sopuli-dba/issues/1175)) ([4301c94](https://github.com/villebase/sopuli-dba/commit/4301c94e7b093553c1dc1c1c4982fd3359f30acf))
+* name an OCI orphan by its secret name, and print its OCI delete command ([#1186](https://github.com/villebase/sopuli-dba/issues/1186)) ([#1187](https://github.com/villebase/sopuli-dba/issues/1187)) ([50cc443](https://github.com/villebase/sopuli-dba/commit/50cc4434f65d842e32af62344bf6dcb50672e890))
+* refuse an application's account that a predicate admits in account verbs ([#1056](https://github.com/villebase/sopuli-dba/issues/1056)) ([#1183](https://github.com/villebase/sopuli-dba/issues/1183)) ([2f6c150](https://github.com/villebase/sopuli-dba/commit/2f6c1507c88e2a4c33137923d6057e01009cbbe0))
+* refuse hash mode for a common account outside CDB$ROOT, naming the container ([#1126](https://github.com/villebase/sopuli-dba/issues/1126)) ([#1163](https://github.com/villebase/sopuli-dba/issues/1163)) ([ebef966](https://github.com/villebase/sopuli-dba/commit/ebef9663c8bb665663539eeab11e499482f2a118))
+* report no lockout guard for a common account outside the root ([#1122](https://github.com/villebase/sopuli-dba/issues/1122)) ([#1125](https://github.com/villebase/sopuli-dba/issues/1125)) ([1cbd3b1](https://github.com/villebase/sopuli-dba/commit/1cbd3b114fdc1916260dfba720b0bab16f8837b8))
+* skip a shared password another target refuses on every target in apply ([#1180](https://github.com/villebase/sopuli-dba/issues/1180)) ([#1181](https://github.com/villebase/sopuli-dba/issues/1181)) ([19591c5](https://github.com/villebase/sopuli-dba/commit/19591c5ba86109ab46ee0e6051e1a5d4b2df3903))
+* skip an account check 6 or 8 refuses in creds generate ([#1174](https://github.com/villebase/sopuli-dba/issues/1174)) ([#1179](https://github.com/villebase/sopuli-dba/issues/1179)) ([cb2326c](https://github.com/villebase/sopuli-dba/commit/cb2326ca3b37c75d9d8b2c6eaaa78d3f3cd392ee))
+* take a write's version number from the OCI store, not a read-back ([#1164](https://github.com/villebase/sopuli-dba/issues/1164)) ([#1178](https://github.com/villebase/sopuli-dba/issues/1178)) ([3a1c4ae](https://github.com/villebase/sopuli-dba/commit/3a1c4ae4624d420cbad3f4c1e7642569b8d2db51))
+
 ## [0.81.0](https://github.com/villebase/sopuli-dba/compare/v0.80.0...v0.81.0) (2026-10-27)
 
 

@@ -223,7 +223,7 @@ from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
 from sopuli.lock.inspect import discover as discover_locks
 from sopuli.lock.keys import LockKey, acquisition_order, normalise_path, parse_lock_key
-from sopuli.lock.manager import HeldLock, LockableStore, LockManager, describe_holder
+from sopuli.lock.manager import HeldLock, LockableStore, LockManager, describe_holder, lock_path
 from sopuli.lock.record import current_holder
 from sopuli.lock.takeover import (
     Nothing,
@@ -358,7 +358,7 @@ from sopuli.store.credentials import (
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.native_view import LayoutChangedError, NativeStagedStore
 from sopuli.store.native_view import wrap as native_staged
-from sopuli.store.protocol import PinnedVersionError, VersionLimited
+from sopuli.store.protocol import NativeNames, PinnedVersionError, VersionLimited
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -4805,6 +4805,9 @@ def _plan_version_limits(
 
     * a create on a name that a secret scheduled for deletion still holds
       (``oci-create-taken``);
+    * the same for the document's lock record, which taking the lock creates.
+      Every verb refuses this one, ``apply`` too, since every verb locks every
+      document it plans (#1188);
     * writes to a full secret with too few DEPRECATED versions to delete;
     * writes that would delete a pinned version.
 
@@ -4825,6 +4828,7 @@ def _plan_version_limits(
         limited = _limits(stores.get(key.store))
         if limited is None:
             continue
+        _refuse_held_lock_name(limited, key)
         added = adds(key)
         if added == 0 and not refuse:
             continue
@@ -4874,6 +4878,30 @@ def _plan_version_limits(
         if refuse:
             raise problem
         _warn_version(run, f"{problem.message}, so the store will refuse that write")
+
+
+def _refuse_held_lock_name(limited: VersionLimited, key: LockKey) -> None:
+    """Refuse a document whose lock record taking the lock would create, where
+    a secret scheduled for deletion holds that record's name (#1188).
+
+    ``name_held`` is ``False`` where the record exists, since taking the lock
+    then creates nothing.
+    """
+    path = lock_path(key)
+    try:
+        held = limited.name_held(path)
+    except StoreError:
+        # As for the secret: the acquisition fails too, and says why there.
+        return
+    if not held:
+        return
+    named = f" ({limited.native_name(path)})" if isinstance(limited, NativeNames) else ""
+    raise StoreError(
+        f"{key.store}:{path}{named}, the lock record for {key.store}:{key.path}, would be "
+        f"created when this run takes the lock, and a secret of that name is scheduled for "
+        f"deletion; the store keeps the name until it is deleted",
+        hint="cancel the deletion to use that lock record again, then run again",
+    )
 
 
 def _warn_version(run: Invocation, message: str) -> None:

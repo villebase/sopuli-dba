@@ -708,6 +708,16 @@ def test_the_onepassword_block_is_read() -> None:
     assert section.vault is None
 
 
+def test_the_vault_title_is_kept_as_written() -> None:
+    """It is compared exactly with 1Password's titles, and a title may end in a
+    space, so stripping it would make such a vault impossible to name."""
+    block = onepassword_block(onepassword_vault="acme-handover ")
+    section = built(method="onepassword_share", onepassword_share=block)
+
+    assert section.onepassword_share is not None
+    assert section.onepassword_share.onepassword_vault == "acme-handover "
+
+
 @pytest.mark.parametrize("key", ["onepassword_vault", "ttl", "token"])
 def test_the_onepassword_block_s_keys_are_required(key: str) -> None:
     block = onepassword_block()

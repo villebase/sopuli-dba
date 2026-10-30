@@ -27,6 +27,7 @@ TODO(#446): deliver, and the wiring that makes the method usable.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
@@ -138,20 +139,28 @@ async def _authenticate(token: Secret) -> Any:
 
     The token is revealed here, to the SDK that presents it to 1Password, as a
     vault token is revealed on the wire (`tests/test_reveal_sites.py`).
+
+    The SDK raises plain ``Exception`` for a bad token and for a 1Password it
+    cannot reach alike, so its message is kept: it is the only thing that tells
+    the two apart. The token is cut out of it first, because the message is
+    about the token it was given (#785). On SDK 0.4.2, the two bad tokens tried
+    gave messages that did not quote them.
     """
     client_type = _sdk().Client
+    revealed = token.reveal()
     try:
         return await client_type.authenticate(
-            auth=token.reveal(), integration_name=DISTRIBUTION, integration_version=get_version()
+            auth=revealed, integration_name=DISTRIBUTION, integration_version=get_version()
         )
-    except Exception:  # noqa: BLE001 -- the SDK raises plain Exception
-        # The SDK's message is not repeated: it is about the token it was given,
-        # and could quote it (#785).
+    except Exception as error:  # noqa: BLE001 -- the SDK raises plain Exception
+        message = str(error).replace(revealed, "***") if revealed else str(error)
         raise OnePasswordLoginError(
-            "the 1Password service account token did not log in",
+            f"the 1Password service account did not log in: {message}",
             hint=(
-                f"check the token `delivery.{METHOD}.token` names: a service account "
-                f"token starts with `ops_`, and has no line break or space around it"
+                f"the SDK's message is above. If it is about the token, check the token "
+                f"`delivery.{METHOD}.token` names: a service account token starts with "
+                f"`ops_`, with no line break or space around it. Otherwise check that "
+                f"this host reaches 1Password"
             ),
         ) from None
 
@@ -186,7 +195,7 @@ class OnePassword:
         note = await _call(
             "create an item",
             vault=self.onepassword_vault,
-            call=client.items.create(
+            call=lambda: client.items.create(
                 types.ItemCreateParams(
                     category=types.ItemCategory.SECURENOTE,
                     vault_id=vault_id,
@@ -194,32 +203,35 @@ class OnePassword:
                 )
             ),
         )
-        read_failed: StoreError | None = None
+        # The delete runs whatever ends the read, an interrupt included. When the
+        # read failed, its failure is the one to report: a failed delete is then
+        # added to its hint, because the note holds no password.
+        read_failed: BaseException | None = None
         try:
             policy = await _call(
                 "read the sharing policy",
                 vault=self.onepassword_vault,
-                call=client.items.shares.get_account_policy(vault_id, note.id),
+                call=lambda: client.items.shares.get_account_policy(vault_id, note.id),
             )
-        except StoreError as error:
+        except BaseException as error:
             read_failed = error
-        try:
-            await _call(
-                f"delete the item {PLACEHOLDER_TITLE!r} ({note.id})",
-                vault=self.onepassword_vault,
-                call=client.items.delete(vault_id, note.id),
-            )
-        except StoreError as error:
-            if read_failed is None:
-                raise
-            # The read's failure is the one to report. The note holds no
-            # password, so leaving it behind is said in the hint, not raised.
-            read_failed.hint = (
-                f"{read_failed.hint}. The empty note {PLACEHOLDER_TITLE!r} ({note.id}) "
-                f"could not be deleted either, and can be deleted by hand: {error.message}"
-            )
-        if read_failed is not None:
-            raise read_failed
+            raise
+        finally:
+            try:
+                await _call(
+                    f"delete the item {PLACEHOLDER_TITLE!r} ({note.id})",
+                    vault=self.onepassword_vault,
+                    call=lambda: client.items.delete(vault_id, note.id),
+                )
+            except StoreError as error:
+                if read_failed is None:
+                    raise
+                if isinstance(read_failed, StoreError):
+                    read_failed.hint = (
+                        f"{read_failed.hint}. The empty note {PLACEHOLDER_TITLE!r} "
+                        f"({note.id}) could not be deleted either, and can be deleted by "
+                        f"hand: {error.message}"
+                    )
         reason = refusal(
             ttl=self.ttl,
             max_expiry=_name(policy.max_expiry),
@@ -240,7 +252,7 @@ class OnePassword:
     async def _vault_id(self, client: Any) -> str:
         """The id of the one vault titled :attr:`onepassword_vault`, or a refusal."""
         vaults = await _call(
-            "list its vaults", vault=self.onepassword_vault, call=client.vaults.list()
+            "list its vaults", vault=self.onepassword_vault, call=client.vaults.list
         )
         found = [vault.id for vault in vaults if vault.title == self.onepassword_vault]
         if len(found) == 1:
@@ -262,16 +274,17 @@ class OnePassword:
         )
 
 
-async def _call(what: str, *, vault: str, call: Awaitable[Any]) -> Any:
+async def _call(what: str, *, vault: str, call: Callable[[], Awaitable[Any]]) -> Any:
     """One SDK call, or a :class:`StoreError` that says what was being done.
 
-    The SDK raises plain ``Exception`` with 1Password's message, which is kept.
-    A missing permission arrives here, so the hint names the three the method
-    needs.
+    ``call`` is called here, not by the caller, so an error raised while its
+    arguments are built is mapped too. The SDK raises plain ``Exception`` with
+    1Password's message, which is kept. A missing permission arrives here, so
+    the hint names the three the method needs.
     """
     started = time.monotonic()
     try:
-        result = await call
+        result = await call()
     except Exception as error:  # noqa: BLE001 -- the SDK raises plain Exception
         LOG.debug("%s: %s in %.3fs", what, type(error).__name__, time.monotonic() - started)
         raise StoreError(
@@ -293,21 +306,26 @@ def _name(value: Any) -> str:
 
 def _sdk() -> Any:
     """`onepassword.client`, or the refusal that names the extra."""
-    try:
-        from onepassword import client
-    except ModuleNotFoundError as error:
-        raise OnePasswordNotInstalledError() from error
-    except (ImportError, OSError) as error:
-        raise OnePasswordNotInstalledError(loaded=type(error).__name__) from error
-    return client
+    return _sdk_module("onepassword.client")
 
 
 def _sdk_types() -> Any:
     """`onepassword.types`, or the refusal that names the extra."""
+    return _sdk_module("onepassword.types")
+
+
+def _sdk_module(name: str) -> Any:
+    """One module of the SDK, or the refusal that names the extra.
+
+    A missing module counts as the SDK missing only when the module is the
+    SDK's own. A dependency the SDK cannot import, such as `pydantic`, means
+    the SDK is installed and failed to load.
+    """
     try:
-        from onepassword import types
+        return importlib.import_module(name)
     except ModuleNotFoundError as error:
-        raise OnePasswordNotInstalledError() from error
+        if error.name is not None and error.name.split(".")[0] == "onepassword":
+            raise OnePasswordNotInstalledError() from error
+        raise OnePasswordNotInstalledError(loaded=f"no module {error.name!r}") from error
     except (ImportError, OSError) as error:
         raise OnePasswordNotInstalledError(loaded=type(error).__name__) from error
-    return types

@@ -472,7 +472,9 @@ def _build_onepassword(raw: Any, *, at: KeyPath) -> OnePasswordDelivery:
             "the title of the 1Password vault the item is created in. The service account "
             "needs read, write and share items on it"
         ),
-    ).strip()
+    )
+    # Not stripped: it is compared exactly with 1Password's titles, and a title
+    # may end in a space.
     allowed = ", ".join(f"`{ttl}`" for ttl in ONEPASSWORD_TTLS)
     ttl = _required_ttl(
         block,

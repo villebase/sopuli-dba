@@ -37,7 +37,7 @@ from sopuli.store.protocol import StoreError
 
 TOKEN = Secret("ops_acme_not_a_real_token")
 VAULT = "acme-handover"
-VAULT_ID = "t4e2fmlzona4xpoz55hsyukctq"
+VAULT_ID = "acmehandovervault000000001"
 
 #: What the real SDK's `onepassword.types` provides to the check, and no more.
 FAKE_TYPES = SimpleNamespace(
@@ -81,6 +81,8 @@ class FakeClient:
 
     async def _policy(self, vault_id: str, item_id: str) -> Any:
         self.calls.append(("shares.get_account_policy", (vault_id, item_id)))
+        if "interrupt" in self._fail:
+            raise KeyboardInterrupt
         if "policy" in self._fail:
             # The message 1Password sends when the service account lacks share items.
             raise Exception(  # noqa: TRY002 -- the SDK raises plain Exception
@@ -231,6 +233,14 @@ def test_a_failed_delete_does_not_hide_why_the_policy_read_failed() -> None:
     assert "note1" in message
 
 
+def test_an_interrupt_during_the_read_still_deletes_the_note() -> None:
+    client = FakeClient(fail=("interrupt",))
+    with pytest.raises(KeyboardInterrupt):
+        backend(client).preflight(account="acme_dba_user", target="acme-prod")
+
+    assert client.live == set()
+
+
 def test_a_failed_delete_after_a_good_read_is_the_failure() -> None:
     client = FakeClient(fail=("delete",))
     with pytest.raises(StoreError, match="could not delete the item"):
@@ -257,7 +267,8 @@ def test_a_token_that_does_not_log_in_is_exit_6_and_not_echoed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def refuse(**kwargs: Any) -> Any:
-        raise Exception("invalid service account token")  # noqa: TRY002 -- as the SDK does
+        # Worse than 0.4.2 did: a message that quotes the token it was given.
+        raise Exception(f"invalid service account token {kwargs['auth']}")  # noqa: TRY002
 
     monkeypatch.setattr(
         onepassword, "_sdk", lambda: SimpleNamespace(Client=SimpleNamespace(authenticate=refuse))
@@ -267,7 +278,24 @@ def test_a_token_that_does_not_log_in_is_exit_6_and_not_echoed(
         link.preflight(account="acme_dba_user", target="acme-prod")
 
     assert raised.value.exit_code == ExitCode.AUTH_FAILURE
+    assert "invalid service account token ***" in str(raised.value)
     assert "ops_acme" not in str(raised.value)
+
+
+def test_a_missing_dependency_of_the_sdk_is_not_reported_as_the_sdk_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK is installed, and `pydantic` is not: installing the extra again
+    would not help, so the message says the SDK failed to load."""
+
+    def import_module(name: str) -> Any:
+        raise ModuleNotFoundError("No module named 'pydantic'", name="pydantic")
+
+    monkeypatch.setattr("sopuli.delivery.onepassword.importlib.import_module", import_module)
+    with pytest.raises(OnePasswordNotInstalledError) as raised:
+        onepassword._sdk()
+
+    assert "failed to load: no module 'pydantic'" in str(raised.value)
 
 
 def test_a_missing_sdk_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1148,7 +1148,7 @@ exist. A file that breaks either rule is refused at load as config-invalid
 | `vault_wrapped` | unseen | a Vault response-wrapping token, single use | yes |
 | `vault_path` | unseen | a KV path only their own identity can read | yes |
 | `one_time_link` | unseen | a URL that decrypts once | yes |
-| `onepassword_share` | unseen | an item in a password manager | no (open: #446) |
+| `onepassword_share` | unseen | a 1Password share link that opens once | not yet; decided in #446 |
 | `manual` | **seen** | the password, printed to the DBA's terminal | yes |
 | `smtp_encrypted` | unseen | encrypted mail the tool sends | no; no issue yet |
 

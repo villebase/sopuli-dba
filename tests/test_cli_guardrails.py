@@ -846,6 +846,45 @@ def test_a_shared_credential_is_forecast_once_not_per_account(
     assert refused_ahead(result) == []
 
 
+def test_a_named_account_the_pass_refuses_fails_the_dry_run_as_the_run(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The run's row on the refusing target is `REFUSED` where the account was
+    named, so it exits 1, and the dry run does too."""
+    estate({}, by_target=DBA_ON_BETA)
+    config = write_config(TWO_TARGETS)
+    named = ("--account", "acme_web_user", "--output", "json")
+    preview = run(runner, config, "--dry-run", "--preflight", *named)
+    real = run(runner, config, "--confirm", *named)
+
+    assert len(ahead(preview)) == 1
+    assert preview.exit_code == ExitCode.FAILURE, preview.output
+    assert document(preview)["summary"]["failed"] == 1
+    assert real.exit_code == ExitCode.FAILURE, real.output
+
+
+def test_a_locked_refused_account_is_not_forecast_as_skipped(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The run reports a locked account `LOCKED` before its review, so the
+    guardrails are not its answer, and the dry run does not claim they are."""
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=True, status="LOCKED", locked=True
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    config = write_config(CONFIG)
+    preview = run(runner, config, "--dry-run", "--preflight", "--output", "json")
+    real = run(runner, config, "--confirm", "--output", "json")
+
+    assert refused_ahead(preview) == []
+    rows = {(one["account"], one["target"]): one["state"] for one in document(real)["results"]}
+    assert rows[("acme_web_user", "appdb-alpha")] == "LOCKED", rows
+
+
 def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

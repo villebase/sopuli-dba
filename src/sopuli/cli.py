@@ -7253,15 +7253,15 @@ def creds_apply(
         # After the refusal: a run the survey stops never reaches the pass. Under
         # `--force` it is the checks no flag waives (#1111).
         shared = _shared_credentials(sources)
-        skipped_ahead = _guardrail_pass_ahead(
-            shared, read, declared=_declared_accounts(run), force=force
+        skipped_ahead, named_shared = _guardrail_pass_ahead(
+            shared, read, declared=_declared_accounts(run), force=force, selection=selection
         )
         document.diagnostics.extend(skipped_ahead)
         repair_notes.extend(one.message for one in skipped_ahead)
         # And each account's own review, which the run asks before its change
         # (#1116).
         refused_ahead, named = _refused_ahead(
-            [binding for binding, _ in sources],
+            sources,
             read,
             shared=shared,
             declared=_declared_accounts(run),
@@ -7275,9 +7275,10 @@ def creds_apply(
         # table.
         repair_notes.extend(caveat_notes(findings))
         # A named account the run would stop on fails the preview, as the run.
+        stopped = named + named_shared
         document.finish(
-            ExitCode.FAILURE if named else ExitCode.SUCCESS,
-            Summary(total=len(sources), failed=named),
+            ExitCode.FAILURE if stopped else ExitCode.SUCCESS,
+            Summary(total=len(sources), failed=stopped),
         )
         return "\n".join(
             [
@@ -8089,8 +8090,10 @@ def _guardrail_pass_ahead(
     *,
     declared: frozenset[str],
     force: bool,
-) -> list[Diagnostic]:
-    """What the real run's guardrail pass would skip, as `SOPULI-W055` (#988).
+    selection: Selection,
+) -> tuple[list[Diagnostic], int]:
+    """What the real run's guardrail pass would skip, as `SOPULI-W055` (#988),
+    and how many accounts it would stop on.
 
     ``shared`` is the credentials the pass would ask about, from
     :func:`_shared_credentials` for `apply` and :func:`_shared_among` for a
@@ -8099,10 +8102,20 @@ def _guardrail_pass_ahead(
     own. The answer is :func:`_refused_somewhere`'s: the same
     :func:`guardrails.review`. An account the survey could not read is left out,
     as the pass leaves it to the run.
+
+    The count is of accounts `--account` named on a target that refuses them:
+    the run's row for one is `REFUSED` (:func:`_refused_row`), and the dry run
+    exits 1 for it, as the run does (#1116).
     """
     notices: list[Diagnostic] = []
+    named = 0
     for credential, refusing in _refusals(shared, states, declared=declared, force=force).items():
         bound = {binding.target: binding.account for binding in shared[credential]}
+        named += sum(
+            1
+            for binding in shared[credential]
+            if binding.target in refusing and selection.names(binding.account)
+        )
         notices.append(
             guardrail_pass_ahead(
                 str(credential[0]),
@@ -8113,11 +8126,11 @@ def _guardrail_pass_ahead(
                 list(bound),
             )
         )
-    return notices
+    return notices, named
 
 
 def _refused_ahead(
-    bindings: Iterable[Binding],
+    sources: Iterable[tuple[Binding, Source | None]],
     states: Mapping[tuple[str, str], UserState],
     *,
     shared: Collection[Credential],
@@ -8125,37 +8138,85 @@ def _refused_ahead(
     force: bool,
     selection: Selection,
 ) -> tuple[list[Diagnostic], int]:
-    """What the real run's guardrails would refuse on an account's own target,
+    """What `creds apply`'s guardrails would refuse on an account's own target,
     as `SOPULI-W060` (#1116), and how many of those accounts were named.
 
-    The run reviews each account on its target before it changes it, and skips
-    one a guardrail refuses, or stops on it where `--account` named it. This is
-    that review, on the accounts the survey read, so it costs no connection. A
+    :func:`_apply_one` reviews each account before it changes it, and skips one
+    a guardrail refuses, or stops on it where `--account` named it. This is that
+    review, on the accounts the survey read, so it costs no connection. A
     credential in ``shared`` is left out: the guardrail pass decides it for every
     target, and :func:`_guardrail_pass_ahead` forecasts that as `SOPULI-W055`.
+
+    **Only where the review is the run's answer.** The run settles an account
+    with no password, a locked one and a rollback with a rotation in flight
+    before it reviews (:func:`apply_states.settled_before_acting`), except an
+    account with no password that the server reserves, which the guardrails
+    answer (#1174). An expired account is left out too, because a target
+    without `expire_password` settles it first. A forecast that says nothing is
+    not wrong; one that names an outcome the run will not reach is.
     """
     notices: list[Diagnostic] = []
     named = 0
-    for binding in bindings:
+    for binding, source in sources:
         if _credential(binding) in shared:
             continue
         state = states.get((binding.target, binding.account))
         if state is None:
             continue
+        reserved = source is None and guardrails.server_reserved(state)
+        settled = state.expired or apply_states.settled_before_acting(state, source) is not None
+        if settled and not reserved:
+            continue
         review = guardrails.review(state, declared=declared, force=force)
-        if review.permitted:
+        if not review.permitted:
+            stops = selection.names(binding.account)
+            named += stops
+            notices.append(_refused_ahead_notice(binding, review, named=stops))
+    return notices, named
+
+
+def _rotation_refused_ahead(
+    rotating: Iterable[Binding],
+    skipped: Mapping[Credential, Mapping[str, guardrails.Review]],
+    *,
+    shared: Collection[Credential],
+    selection: Selection,
+) -> tuple[list[Diagnostic], int]:
+    """What a rotation would skip on one target, as `SOPULI-W060` (#1116), and
+    how many accounts it would stop on.
+
+    ``skipped`` is :func:`_to_stage`'s answer: a credential a guardrail refuses
+    is not staged, and the run gives each of its bindings
+    :func:`_refused_row`'s row, before anything else is asked of the account.
+    So every binding of such a credential is forecast, with its target's
+    reason, whatever else the run would have asked of the account. A credential
+    in ``shared`` is `SOPULI-W055`'s.
+    """
+    notices: list[Diagnostic] = []
+    named = 0
+    for binding in rotating:
+        credential = _credential(binding)
+        if credential is None or credential in shared or credential not in skipped:
+            continue
+        review = skipped[credential].get(binding.target)
+        if review is None:
             continue
         stops = selection.names(binding.account)
         named += stops
-        notices.append(
-            guardrail_refuses_ahead(
-                binding.account,
-                binding.target,
-                guardrails_reason(review, named=stops),
-                named=stops,
-            )
-        )
+        notices.append(_refused_ahead_notice(binding, review, named=stops))
     return notices, named
+
+
+def _refused_ahead_notice(
+    binding: Binding, review: guardrails.Review, *, named: bool
+) -> Diagnostic:
+    """One `SOPULI-W060`, worded as the run's own row for the account."""
+    return guardrail_refuses_ahead(
+        binding.account,
+        binding.target,
+        guardrails_reason(review, named=named),
+        named=named,
+    )
 
 
 def _refusals(
@@ -12324,27 +12385,23 @@ def _preview_rotation(
         return _refuse_preflight(findings, document, header=header)
     # The run's own decision, from the same reads (#1009): a credential the
     # guardrails would skip is not staged, so its `pending` refuses nothing.
-    _to_stage(rotating, documents, read, run=run, force=force)
+    _, skipped = _to_stage(rotating, documents, read, run=run, force=force)
     # After the refusal, as in `apply`: a run the survey stops never reaches the
     # pass.
     shared = _shared_among(rotating)
-    skipped_ahead = _guardrail_pass_ahead(
-        shared, read, declared=_declared_accounts(run), force=force
+    skipped_ahead, named_shared = _guardrail_pass_ahead(
+        shared, read, declared=_declared_accounts(run), force=force, selection=selection
     )
     document.diagnostics.extend(skipped_ahead)
-    refused_ahead, named = _refused_ahead(
-        rotating,
-        read,
-        shared=shared,
-        declared=_declared_accounts(run),
-        force=force,
-        selection=selection,
+    refused_ahead, named = _rotation_refused_ahead(
+        rotating, skipped, shared=shared, selection=selection
     )
     document.diagnostics.extend(refused_ahead)
 
+    stopped = named + named_shared
     document.finish(
-        ExitCode.FAILURE if named else ExitCode.SUCCESS,
-        Summary(total=len(rotating), failed=named),
+        ExitCode.FAILURE if stopped else ExitCode.SUCCESS,
+        Summary(total=len(rotating), failed=stopped),
     )
     # Decision #606: a survey that passed with a check missing says so in the text
     # too.

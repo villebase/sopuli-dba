@@ -182,6 +182,9 @@ class OciStore:
         self._vault_seen = False
         #: Secret ids by name, from this run's reads and creates (:meth:`_live`).
         self._ids: dict[str, str] = {}
+        #: Secret ids by name, from this run's listings, for :meth:`native_id`.
+        #: Kept apart from ``_ids`` so a listing changes no write's calls.
+        self._listed: dict[str, str] = {}
         #: Each version this run deleted to make room (decision 7), for the
         #: run to report.
         self.pruned: list[Pruned] = []
@@ -291,9 +294,19 @@ class OciStore:
                 path = _names.from_oci(summary.secret_name)
                 if path.startswith(bounded):
                     found.append(path)
+                    self._listed[summary.secret_name] = summary.id
             page = response.next_page
             if not page:
                 return tuple(sorted(found))
+
+    def native_name(self, path: str) -> str:
+        """The OCI secret name for ``path`` (#1186)."""
+        return _names.to_oci(path)
+
+    def native_id(self, path: str) -> str | None:
+        """The OCID of the secret at ``path``, as this run's listings saw it, or
+        ``None`` where none of them held it (#1186)."""
+        return self._listed.get(_names.to_oci(path))
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
         """Write ``data`` as the new CURRENT version, and return the new token.

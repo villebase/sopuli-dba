@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.68.schema.json`](../schemas/sopuli-run-1.68.schema.json),
+Schemas: [`../schemas/sopuli-run-1.69.schema.json`](../schemas/sopuli-run-1.69.schema.json),
 [`../schemas/sopuli-event-1.20.schema.json`](../schemas/sopuli-event-1.20.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1252,27 +1252,38 @@ estate's. **A path any binding names is declared in every store.** Two
 `SOPULI_VAULT` or a profile may be written to any of them. The cost is one
 case: an application moved to another store at the same path leaves a record
 that is not reported. Entries with the same address, namespace, mount and KV
-version are listed once, under the first name. The verb deletes nothing. This is from the tier-1 stack, after the
-application's path moved from `acme/acme/dev` to `acme/dev/acme`:
+version are listed once, under the first name. The verb deletes nothing. This is from an OCI store, after the
+application's secret moved from `acme-3af999-old` to `acme-3af999-new`. The
+OCIDs are replaced with examples:
 
 ```json
 "orphans": {
-  "listed": [ "vault-dev" ],
+  "listed": [ "vault-oci" ],
   "prefix": null,
   "listed_paths": 2,
-  "found": [ { "vault": "vault-dev", "path": "acme/acme/dev", "kind": "secret",
+  "found": [ { "vault": "vault-oci", "path": "acme-3af999-old",
+               "name": "acme-3af999-old", "kind": "secret",
                "version": 1, "lock": null,
-               "delete_command": "vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv acme/acme/dev" },
-             { "vault": "vault-dev", "path": "locks/acme/acme/dev", "kind": "lock",
-               "version": 2,
+               "delete_command": "oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid1" },
+             { "vault": "vault-oci", "path": "locks/acme-3af999-old",
+               "name": "sopuli-locks.acme-3af999-old", "kind": "lock",
+               "version": 1,
                "lock": { "state": "released", "held": false, "expired": false },
-               "delete_command": "vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv locks/acme/acme/dev" } ]
+               "delete_command": "oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid2" } ]
 }
 ```
 
-- **`path` is the path as the store listed it**, the one a delete takes. A lock
-  record's starts with `locks/`, unlike `lock.found[].path`, which names the
-  secret path.
+On HashiCorp Vault, `name` is the path, and `delete_command` is
+`vault kv metadata delete -address=http://127.0.0.1:8200 -mount=kv locks/acme/acme/dev`
+for a lock at `locks/acme/acme/dev` on the tier-1 stack.
+
+- **`path` is the path as the store listed it**, the one a HashiCorp delete
+  takes. A lock record's starts with `locks/`, unlike `lock.found[].path`,
+  which names the secret path.
+- **`name` is the record's name in the store**, the one an operator looks it
+  up by, and the text output's `PATH` column shows it. On OCI it is the
+  secret's name, so a lock record at `locks/<name>` is `sopuli-locks.<name>`.
+  On HashiCorp Vault it is the path. From run schema 1.69 (#1186).
 - **`version` is `null` on a store with no compare-and-set**, as in
   `lock.found[]`.
 - **`delete_command` is `vault kv metadata delete`** on KV v2. A plain
@@ -1286,9 +1297,19 @@ application's path moved from `acme/acme/dev` to `acme/dev/acme`:
   and password, or does not apply the variable at all (`SOPULI-W057`). It is
   quoted for a POSIX shell. It is `null` while a lock
   that has not expired is held at the secret path, for the lock and for its
-  secret, because somebody may be rotating it. It is also `null` on every store
-  that is not HashiCorp Vault, an OCI store among them, because this build has
-  no command for one.
+  secret, because somebody may be rotating it. It is also `null` on a `file` or
+  `keyring` store, because this build has no command for one.
+- **On OCI, `delete_command` is the OCI CLI's
+  `oci vault secret schedule-secret-deletion`** for the secret's OCID, which
+  the listing gave, because the CLI deletes no secret by name. From run schema
+  1.69 (#1186). It names `--region` where the store sets a region, `--profile`
+  where its auth names a profile, and `--auth` for a session token or a
+  principal, so it reaches the store this run read. It names no config file:
+  the OCI CLI reads `OCI_CLI_CONFIG_FILE`, not the `OCI_CONFIG_FILE` the store
+  reads. OCI deletes the secret 30 days later unless the command is given
+  `--time-of-deletion`, and the name stays taken until then: OCI refuses a new
+  secret of that name, and `creds generate` and `creds rotate` refuse one at
+  plan time.
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
 - **`listed` names the stores whose paths were read**, by the entry each was
   opened through, so an empty `found` says what it covers. A store that could

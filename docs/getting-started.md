@@ -758,6 +758,34 @@ the vault in your config whatever `VAULT_ADDR` says. They are quoted for bash.
 the next lock there could never be taken. Your token needs the `delete`
 capability on `<mount>/metadata/<path>`.
 
+On an OCI store, the list shows each record by its OCI secret name, the name
+you see in the console. A lock is the secret `sopuli-locks.<name>`. The
+commands are OCI CLI commands, and each names the secret's OCID, because the
+CLI cannot delete a secret by name. Here the secret moved from
+`acme-3af999-old` to `acme-3af999-new`. The OCIDs are replaced with examples:
+
+```
+$ sopuli --config sopuli.yaml vault orphans
+config: sopuli.yaml
+
+VAULT      PATH                          KIND    LOCK
+vault-oci  acme-3af999-old               secret  -
+vault-oci  sopuli-locks.acme-3af999-old  lock    released
+
+2 orphans in 1 vault (vault-oci): records that look like this tool's, at paths no binding in this config declares
+
+They may be another config's. Check each one before you delete it (getting-started.md, "Moving a secret path"). To delete them:
+
+  oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid1
+  oci vault secret schedule-secret-deletion --secret-id ocid1.vaultsecret.oc1..exampleuniqueid2
+```
+
+OCI does not delete a secret at once. It deletes it 30 days later, unless you
+add `--time-of-deletion`, and until then nobody can create a secret with that
+name. The commands name the store's `region`, auth method and profile when
+your config sets them. Your OCI user needs the `SECRET_DELETE` permission,
+which `manage secrets` gives.
+
 Run it again to see that they are gone:
 
 ```

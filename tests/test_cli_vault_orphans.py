@@ -183,6 +183,8 @@ def test_a_moved_secret_and_its_lock_are_reported(
         ("locks/acme/alpha/db", "lock"),
     ]
     assert found(result)[0]["delete_command"] == f"{DELETE_DEV} acme/alpha/db"
+    # On HashiCorp Vault a record's name is its path (#1186).
+    assert [entry["name"] for entry in found(result)] == ["acme/alpha/db", "locks/acme/alpha/db"]
     assert found(result)[1]["lock"] == {"state": "released", "held": False, "expired": False}
     assert document["summary"]["total"] == 2
 

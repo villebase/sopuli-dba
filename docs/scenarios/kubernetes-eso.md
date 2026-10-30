@@ -441,6 +441,100 @@ mount name and the path.
 
 ---
 
+## 8. With OCI Vault as the store
+
+The arrangement in section 1 is the same with an OCI vault as the master. Two
+things differ, and both make the ESO side simpler.
+
+**A ref is the OCI secret name.** With one account per secret, a template such
+as `acme-dev-{account}#password` makes one OCI secret per account, named
+`acme-dev-acme_app_user`, whose content is a JSON document with a `password`
+field. ESO reads that secret by name and that field by `property`.
+
+**A pending password is a PENDING version, not a field.** ESO's Oracle provider
+reads the CURRENT version unless `remoteRef.version` names another stage. So
+ESO cannot see a password `creds generate` staged until `creds apply` has set
+it on every target and promoted it. Do not set `version`.
+
+A secret shared by several accounts keeps the layout of section 2 inside one
+version, and `property` walks into it as section 4 does.
+
+The `SecretStore` below uses an API key, the one auth ESO's Oracle provider
+offers for a cluster outside OCI. Its `secretRef` has no field for a
+passphrase, so the key must have none. In OCI's own Kubernetes service, use
+`principalType: Workload` or `InstancePrincipal` instead, and store no key at
+all.
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: oci-vault
+  namespace: acme
+spec:
+  provider:
+    oracle:
+      vault: ocid1.vault.oc1.eu-frankfurt-1.exampleuniqueid
+      region: eu-frankfurt-1
+      principalType: UserPrincipal
+      auth:
+        user: ocid1.user.oc1..exampleuniqueid
+        tenancy: ocid1.tenancy.oc1..exampleuniqueid
+        secretRef:
+          privatekey:
+            name: oci-api-key
+            key: privateKey
+          fingerprint:
+            name: oci-api-key
+            key: fingerprint
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: acme-db-credentials
+  namespace: acme
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: oci-vault
+    kind: SecretStore
+  target:
+    name: acme-db-credentials
+  data:
+    - secretKey: DB_PASSWORD
+      remoteRef:
+        key: acme-dev-acme_app_user   # the OCI secret name
+        property: password
+```
+
+**Give ESO's principal read access to secret bundles only.** sopuli's own
+principal needs to manage secrets; ESO's needs to read them, and nothing else,
+as section 3 says for HashiCorp.
+
+### What was run
+
+On 2026-10-30, against Kubernetes 1.36.1 (the cluster built into Docker
+Desktop), ESO 2.10.0, an OCI vault, and Oracle AI Database 26ai Free. The
+manifests were those above, with the run's own names and OCIDs in them. Unlike section 7, the script is a one-off and is not in this
+repository. After each step it forced ESO to read the vault again, and logged
+in to the database with the password ESO had put in the Kubernetes Secret:
+
+| After | OCI versions | The password ESO served |
+|---|---|---|
+| `creds generate --promote`, `creds apply` | 1 CURRENT | logged in |
+| `creds generate` | 1 CURRENT, 2 PENDING | logged in, and was the same as before |
+| `creds apply` | 1 PREVIOUS, 2 CURRENT | logged in, and was new |
+| `creds rotate --confirm` | 1 DEPRECATED, 2 PREVIOUS, 3 CURRENT | logged in |
+| `creds apply --source previous --confirm` | 1 DEPRECATED, 2 CURRENT, 3 PREVIOUS | logged in, and was version 2's |
+
+The password was never printed. The run establishes that ESO reads the
+version sopuli made CURRENT and ignores a PENDING one, and that a rollback
+reaches ESO as an ordinary change. It does not establish the IAM policy: the
+API key belonged to a user who can manage the vault, so a read-only policy for
+ESO was not tested.
+
+---
+
 ## What is not built yet
 
 Said plainly rather than left for you to discover:
@@ -449,11 +543,11 @@ Said plainly rather than left for you to discover:
   Everything above works because both tools use the vault, not because they know
   about each other. If you want the pods restarted automatically, that is ESO's
   feature, not this project's.
-- **Only HashiCorp Vault is supported today.** ESO can read many stores; sopuli
-  can currently write to one. `oci`, `file` and `keyring` are accepted in a config
-  file and report that this build has no module for them.
+- **sopuli writes to two of the stores ESO can read:** HashiCorp Vault and OCI
+  Vault (section 8). `file` and `keyring` are accepted in a config file and
+  report that this build has no module for them.
 - **The manifests are checked against one ESO version, and that version will
-  move.** Section 7 has the details of what was run. It was ESO 2.10.0; ESO's
+  move.** Sections 7 and 8 have the details of what was run. It was ESO 2.10.0; ESO's
   own API has changed between major versions before, and `apiVersion:
   external-secrets.io/v1` is the line most likely to need changing. If your
   cluster runs a different version, read its documentation before assuming the

@@ -84,10 +84,10 @@ of secrets, and they stay free:
 - its key is software-protected, not HSM-protected;
 - no secret is replicated to another region.
 
-The pull request that builds an OCI store checks the prices again
-(unverified: oci-vault-cost-limits). The limit a fixed set of secrets reaches
-is measured: a secret holds 30 versions (`oci-version-limit` in
-[`../README.md`](../README.md) §*Verify before implementing*). Reasons:
+The tenancy's cost analysis shows no charge for them after the runs that
+built the OCI store (`oci-vault-cost-limits`). The limit a fixed set of
+secrets reaches is measured: a secret holds 30 versions (`oci-version-limit`).
+Both are in [`../README.md`](../README.md) §*Verify before implementing*. Reasons:
 [T4](../decisions/log.md#t4).
 
 ### Emulators: smoke tests only

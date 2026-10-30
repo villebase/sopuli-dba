@@ -552,13 +552,17 @@ such as "from 16", means the one release of it that was measured.
   measurements are in [ADR-005](decisions/adr-005-vault-client.md). `httpx` is in
   the `sopuli-dba[hashicorp]` extra, not in base (ADR-006, E2). The probe is
   `test/vault_auth_probe.py`.
-- `unverified` `oci-vault-cost-limits` (#643) — **Do the OCI Vault tests in
-  tier 3 still cost nothing?**
-  Known: on 2026-10-14 Oracle's pages listed Secret Management as free, a
-  software-protected key as free, and API calls to Key Management as not billed
-  (T4). The version limit is `oci-version-limit` below. Open: the prices in a
-  tenancy's cost analysis after the tier-3 runs (#1135). No OCI store exists
-  yet, so nothing depends on this.
+- `verified` `oci-vault-cost-limits` (#643, #1135) — **Do the OCI Vault tests
+  in tier 3 still cost nothing?**
+  Yes. The tenancy's cost analysis, read on 2026-10-30 for 1 to 30 October,
+  holds the tier-3 runs of #1129 to #1164 on 28 and 29 October, among them one
+  secret filled to its 30 versions. It lists every service the tenancy used,
+  at a cost of zero where it is free, and it has no line for Vault, Key
+  Management or Secrets, in cost or in usage.
+  The vault is a default vault, its key is software-protected, and no secret
+  is replicated. Oracle's pages on 2026-10-14 said the same: Secret Management
+  free, a software-protected key free, and API calls to Key Management not
+  billed (T4). The version limit is `oci-version-limit` below.
 - `verified` `oci-name-rules` (#1129) — **What may an OCI secret name hold,
   how long can it be, and is it case-sensitive?**
   Letters, digits, `-`, `_` and `.`, in any position, leading, trailing or

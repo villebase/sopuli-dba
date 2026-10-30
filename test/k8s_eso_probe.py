@@ -214,9 +214,14 @@ def blocks_from_doc() -> dict[str, str]:
         (str(lang), str(body)) for lang, body in FENCE.findall(text)
     ]
 
+    # Section 8's OCI manifests are left out: this probe stands up HashiCorp
+    # Vault, and the OCI block holds a `SecretStore` and an `ExternalSecret` of
+    # its own.
+    oci = re.compile(r"^\s+oracle:$", re.MULTILINE)
+
     def one(lang: str, needle: str, what: str) -> str:
         pattern = re.compile(needle, re.MULTILINE)
-        found = [b for tag, b in fenced if tag == lang and pattern.search(b)]
+        found = [b for tag, b in fenced if tag == lang and pattern.search(b) and not oci.search(b)]
         if len(found) != 1:
             raise SystemExit(
                 f"{DOC.name}: expected exactly one {lang} block matching "

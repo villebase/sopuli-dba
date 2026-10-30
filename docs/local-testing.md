@@ -46,8 +46,8 @@ the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the Oracle service account, run
 the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
-`psql` (§7). The only store backend is `hashicorp`; `doctor` lists
-the others as `not_implemented`. A PostgreSQL target runs `doctor` and the
+`psql` (§7). The store backends are `hashicorp` and `oci` (§8.8); `doctor`
+lists the others as `not_implemented`. A PostgreSQL target runs `doctor` and the
 `creds` commands (§7), and refuses the `account` commands.
 
 ---
@@ -906,6 +906,103 @@ acme_batch_user  free-pdb  ROLLOVER_ACTIVE  the vault's password is already acce
 
 `acme_batch_user` needs no change: its rollover window is still open, so the old
 password still works.
+
+### 8.8 With OCI Vault as the store
+
+The same commands run with an OCI vault as the master. This needs an OCI
+tenancy, a vault and a key in it, the `oci` extra, and a profile in
+`~/.oci/config`; the test stack has no OCI emulator. The samples below ran
+with this config, on a second test stack's port. The `9bf135` in the template is the run's own, so that each
+run makes fresh secrets:
+
+```yaml
+version: 1
+vaults:
+  vault-oci:
+    type: oci
+    vault_id:       ocid1.vault.oc1.eu-frankfurt-1.exampleuniqueid
+    compartment_id: ocid1.compartment.oc1..exampleuniqueid
+    key_id:         ocid1.key.oc1.eu-frankfurt-1.exampleuniqueid
+    auth: config_file
+defaults:
+  policy: app-standard
+policies:
+  app-standard:
+    password: {length: 24, charset: alnum, first_char: alpha}
+targets:
+  - name: free-pdb
+    type: oracle
+    dsn: 127.0.0.1:1521/FREEPDB1
+    environment: dev
+    vault: vault-oci
+    admin: {username: SYSTEM, auth: {method: env}}
+    oracle: {scope: pdb, container: FREEPDB1}
+applications:
+  - name: acme
+    accounts: [acme_native_user]
+    secret_template: "acme-9bf135-{account}#password"
+```
+
+`ACME_NATIVE_USER` is an account created for the run, with `CREATE SESSION`.
+A ref on an OCI store is the OCI secret name, so a `secret_template` uses no
+`/`. An application with one
+account per secret gets OCI's own stages: `pending` is a PENDING version, and
+the results name OCI's version numbers. Each OCI write waits about 20 seconds
+for the secret to settle.
+
+```
+$ sopuli --config sopuli.yaml creds generate --promote
+...
+ACCOUNT           SECRET                                  RESULT
+acme_native_user  vault-oci:acme-9bf135-acme_native_user  promoted to v1
+
+1 promoted to current; no database was changed -- run `sopuli creds apply` to use them
+
+1 note:
+  the lock path for vault-oci:acme-9bf135-acme_native_user is not guarded against a write carrying no compare-and-set: OCI has no setting that makes secret "sopuli-locks.acme-9bf135-acme_native_user" in vault "vault-oci" refuse a write without a compare-and-set, so only IAM keeps other writers off it
+    hint: grant the right to manage secrets in the store's compartment to this tool's principal alone
+```
+
+The note is `SOPULI-W019`, and every run that takes a lock on an OCI store
+prints it. The tool keeps its locks in secrets named `sopuli-locks.<name>`.
+The samples below leave it out, and `SOPULI-W031` with it.
+
+`generate` then stages version 2 as PENDING, and `apply` promotes it:
+
+```
+$ sopuli --config sopuli.yaml creds generate
+...
+ACCOUNT           SECRET                                  RESULT
+acme_native_user  vault-oci:acme-9bf135-acme_native_user  staged v2
+
+$ sopuli --config sopuli.yaml creds apply
+...
+ACCOUNT           TARGET    SECRET                                  SOURCE
+acme_native_user  free-pdb  vault-oci:acme-9bf135-acme_native_user  pending
+
+ACCOUNT           TARGET    STATE    DETAIL
+acme_native_user  free-pdb  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+```
+
+OCI now holds version 1 as PREVIOUS and version 2 as CURRENT. `rotate`, `check`
+and `apply --source previous` run as in §8.5 to §8.7. After a `rotate`, `check`
+names the OCI version it verified:
+
+```
+$ sopuli --config sopuli.yaml creds check
+...
+ACCOUNT           TARGET    STATE    DETAIL
+acme_native_user  free-pdb  IN_SYNC  vault v3 verified by login
+
+all 1 in sync
+```
+
+OCI keeps at most 30 versions of a secret. When a write would make a 31st, the
+tool schedules the deletion of the oldest DEPRECATED version first, and says
+so as `SOPULI-W059`. To read the password from Kubernetes, see
+[`scenarios/kubernetes-eso.md`](scenarios/kubernetes-eso.md) §8.
 
 ---
 

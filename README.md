@@ -123,7 +123,7 @@ unfinished part. It promises three things:
 | **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`, or `[postgres,hashicorp]` for PostgreSQL. The *Installing* section below says how to get pipx. `sopuli --version` and `sopuli about` report the installed version. PostgreSQL needs libpq 16 or later: the `postgres` extra's wheels bundle one on Windows and Linux x86_64, and a psycopg built against an older system libpq is not supported |
 | **Databases** | Oracle, for every command. PostgreSQL, for the application-credential commands (UC-1): of the commands that connect to a database, a PostgreSQL target runs `doctor` and `creds`, and the personal-account commands refuse it. For Oracle, CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0 and 23.26.3.0.0, and some on 23.26.3.3.0 on OCI. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. For PostgreSQL, the commands run end to end on 16.15, and the probes in `sql/postgres/` ran on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, and on Supabase's 17.6 |
 | **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. PostgreSQL 12 and earlier, and the commands end to end on any release but 16.15. PostgreSQL on macOS and Linux arm64, where nobody has checked which libpq the `postgres` extra installs. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
-| **Vaults** | HashiCorp Vault only. `oci`, `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
+| **Vaults** | HashiCorp Vault, for every command. OCI Vault, for the application-credential commands (UC-1). With one account per secret, a pending password is an OCI PENDING version, which External Secrets Operator does not read, so an application cannot see it before the tool promotes it. The personal-account commands refuse an OCI store. `file` and `keyring` can be written in a config file, but this build has no code for them and says so when you try |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
 | **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, so they may change more than the rest |
 
@@ -223,7 +223,7 @@ is one to give:
 
 ```
 $ sopuli creds check
-sopuli: vault "oci-prod" declares type "oci", but this build has no oci backend yet
+sopuli: vault "keyring-local" declares type "keyring", but this build has no keyring backend yet
   hint: this is not something to install -- the backend is not written yet
 ```
 
@@ -231,10 +231,13 @@ The rule and what it costs: [ADR-006](https://github.com/villebase/sopuli-dba/bl
 
 > **Status: alpha.** The extras above are declared in `pyproject.toml` and
 > the registry behind them resolves a backend on first use.
-> **`hashicorp` is the one secret store that exists** — KV v2 and KV v1, with
-> token, AppRole, Kubernetes and userpass auth. Every command that reaches a
-> store reaches that one. `oci`, `file` and `keyring` are accepted in a config
-> and report that this build has no module for them.
+> **Two secret stores exist.** `hashicorp` is KV v2 and KV v1, with token,
+> AppRole, Kubernetes and userpass auth. Every command that reaches a store
+> can reach it. `oci` is OCI Vault, with API key (`config_file`),
+> `session_token`, instance principal and resource principal auth. The
+> application-credential commands reach it, and the personal-account commands
+> refuse it. `file` and `keyring` are accepted in a config and report that this
+> build has no module for them.
 
 Step-by-step, including your first config file:
 [`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md).

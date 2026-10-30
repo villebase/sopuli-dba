@@ -76,6 +76,8 @@ def claim(session: object, target: str, clusters: dict[str, str]) -> None:
             f"(system_identifier {identity})",
             hint=(
                 "declare each cluster once. A primary and its standbys share their "
-                "roles, so one target covers them all"
+                "roles, so one target covers them all. If one is a pg_basebackup copy "
+                "or a promoted standby, a separate server, give each its own secret and "
+                "run one of them per run with --target"
             ),
         )

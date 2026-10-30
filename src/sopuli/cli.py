@@ -7229,6 +7229,7 @@ def creds_apply(
         # writes nothing and needs no lock, which is why it can.
         foreseen: list[tuple[str, UserState]] = []
         read: dict[tuple[str, str], UserState] = {}
+        surveyed_scopes: dict[str, Scope] = {}
         findings = _preflight(
             _surveyable(sources),
             run,
@@ -7238,6 +7239,7 @@ def creds_apply(
             rollbacks=_rolling_back(sources),
             reuse=foreseen,
             states=read,
+            scopes=surveyed_scopes,
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
         # The warning the run would raise after the statement, raised before it --
@@ -7253,8 +7255,9 @@ def creds_apply(
         # After the refusal: a run the survey stops never reaches the pass. Under
         # `--force` it is the checks no flag waives (#1111).
         shared = _shared_credentials(sources)
+        declared = _declared_accounts(run)
         skipped_ahead, named_shared = _guardrail_pass_ahead(
-            shared, read, declared=_declared_accounts(run), force=force, selection=selection
+            shared, read, declared=declared, force=force, selection=selection
         )
         document.diagnostics.extend(skipped_ahead)
         repair_notes.extend(one.message for one in skipped_ahead)
@@ -7263,8 +7266,10 @@ def creds_apply(
         refused_ahead, named = _refused_ahead(
             sources,
             read,
+            scopes=surveyed_scopes,
+            config=config,
             shared=shared,
-            declared=_declared_accounts(run),
+            declared=declared,
             force=force,
             selection=selection,
         )
@@ -8133,6 +8138,8 @@ def _refused_ahead(
     sources: Iterable[tuple[Binding, Source | None]],
     states: Mapping[tuple[str, str], UserState],
     *,
+    scopes: Mapping[str, Scope],
+    config: Config,
     shared: Collection[Credential],
     declared: frozenset[str],
     force: bool,
@@ -8147,13 +8154,15 @@ def _refused_ahead(
     credential in ``shared`` is left out: the guardrail pass decides it for every
     target, and :func:`_guardrail_pass_ahead` forecasts that as `SOPULI-W055`.
 
-    **Only where the review is the run's answer.** The run settles an account
-    with no password, a locked one and a rollback with a rotation in flight
-    before it reviews (:func:`apply_states.settled_before_acting`), except an
-    account with no password that the server reserves, which the guardrails
-    answer (#1174). An expired account is left out too, because a target
-    without `expire_password` settles it first. A forecast that says nothing is
-    not wrong; one that names an outcome the run will not reach is.
+    **Only where the review is the run's answer.** The run first asks
+    :func:`apply_states.settled_before_acting`, which settles an account with no
+    password, a locked one its policy does not unlock, an expired one where the
+    target's `expire_password` would not clear it, and a rollback with a
+    rotation in flight. This asks the same function with the same inputs: the
+    policy's `unlock`, and the capability from the scope the survey read
+    (``scopes``). An account with no password that the server reserves is the
+    exception, as in the run, because the guardrails answer for it (#1174). A
+    target whose scope the survey did not read is not forecast.
     """
     notices: list[Diagnostic] = []
     named = 0
@@ -8161,11 +8170,17 @@ def _refused_ahead(
         if _credential(binding) in shared:
             continue
         state = states.get((binding.target, binding.account))
-        if state is None:
+        scope = scopes.get(binding.target)
+        if state is None or scope is None:
             continue
         reserved = source is None and guardrails.server_reserved(state)
-        settled = state.expired or apply_states.settled_before_acting(state, source) is not None
-        if settled and not reserved:
+        settled = apply_states.settled_before_acting(
+            state,
+            source,
+            unlock=apply_states.attributes_for(config, binding).unlock,
+            expiry_cleared=scope.supports(EXPIRE_PASSWORD),
+        )
+        if settled is not None and not reserved:
             continue
         review = guardrails.review(state, declared=declared, force=force)
         if not review.permitted:
@@ -9615,6 +9630,7 @@ def _preflight(
     rollbacks: Collection[tuple[str, str]] = (),
     reuse: list[tuple[str, UserState]] | None = None,
     states: dict[tuple[str, str], UserState] | None = None,
+    scopes: dict[str, Scope] | None = None,
 ) -> list[Finding]:
     """UC-1 §8 step 3: ask the estate before anything is written.
 
@@ -9668,6 +9684,8 @@ def _preflight(
     **Each account read is kept in ``states``**, by (target, account), where the
     caller passes one. `apply --dry-run` asks the guardrail pass's question of
     them (#988), so the forecast costs no connection the survey did not open.
+    Each target's scope is kept in ``scopes`` the same way, for the
+    capabilities the run asks before its review (#1116).
     """
     if strategy is None and not full:
         return []
@@ -9701,6 +9719,7 @@ def _preflight(
                         rollbacks=rollbacks,
                         reuse=reuse,
                         states=states,
+                        scopes=scopes,
                     )
                 )
         finally:
@@ -9718,6 +9737,7 @@ def _preflight_target(
     rollbacks: Collection[tuple[str, str]] = (),
     reuse: list[tuple[str, UserState]] | None = None,
     states: dict[tuple[str, str], UserState] | None = None,
+    scopes: dict[str, Scope] | None = None,
 ) -> tuple[Finding, ...]:
     """One reachable target, against §8's remaining checks.
 
@@ -9748,6 +9768,8 @@ def _preflight_target(
                 hint="the connection worked; this is what it could not read",
             ),
         )
+    if scopes is not None:
+        scopes[target.name] = scope
 
     missing_accounts: list[str] = []
     missing_profiles: list[tuple[str, str]] = []

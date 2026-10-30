@@ -885,6 +885,63 @@ def test_a_locked_refused_account_is_not_forecast_as_skipped(
     assert rows[("acme_web_user", "appdb-alpha")] == "LOCKED", rows
 
 
+def test_a_locked_account_its_policy_unlocks_is_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """With `unlock_if_locked`, the run does not settle the account as
+    `LOCKED`: it goes on to the review, which refuses it. The forecast asks
+    the run's own question, with the policy's answer."""
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=True, status="LOCKED", locked=True
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    unlocking = CONFIG.replace(
+        "    password: { length: 24, charset: alnum, first_char: alpha }",
+        "    password: { length: 24, charset: alnum, first_char: alpha }\n"
+        "    account: { unlock_if_locked: true }",
+    )
+    result = run(
+        runner,
+        write_config(unlocking),
+        "--dry-run",
+        "--preflight",
+        "--account",
+        "acme_web_user",
+        "--output",
+        "json",
+    )
+
+    assert [one["account"] for one in refused_ahead(result)] == ["acme_web_user"]
+    assert result.exit_code == ExitCode.FAILURE, result.output
+
+
+def test_an_expired_account_the_target_would_not_clear_is_not_forecast(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The harness's target has no `expire_password`, so the run settles an
+    expired account as `EXPIRED` before its review, and the dry run says
+    nothing the run would not."""
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=True, status="EXPIRED", expired=True
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    config = write_config(CONFIG)
+    preview = run(runner, config, "--dry-run", "--preflight", "--output", "json")
+    real = run(runner, config, "--confirm", "--output", "json")
+
+    assert refused_ahead(preview) == []
+    rows = {(one["account"], one["target"]): one["state"] for one in document(real)["results"]}
+    assert rows[("acme_web_user", "appdb-alpha")] == "EXPIRED", rows
+
+
 def test_the_guardrail_pass_opens_no_connection_for_a_credential_on_one_target(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

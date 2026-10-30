@@ -713,11 +713,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "changes that credential on none of them, so this is the run's `SKIPPED` rows "
             "said before it starts. One entry per credential, naming the document, the "
             "account, each refusing target with its reason, and the targets it would be "
-            "left alone on. Not raised under `--force`, which waives the checks the pass "
-            "asks. `apply` raises it only under `--preflight`, so that its plain dry run "
-            "opens no connection; `rotate`'s dry run always surveys. A rotation stages a "
-            "`pending` for the refused credential before the pass asks, and leaves it "
-            "staged."
+            "left alone on. Under `--force`, only a check no flag waives raises it. Where "
+            "`--account` named an account a refusing target refuses, the run stops on it, "
+            "and the dry run exits 1. `apply` raises it only under `--preflight`, so that "
+            "its plain dry run opens no connection; `rotate`'s dry run always surveys. A "
+            "rotation stages no `pending` for the refused credential."
         ),
         ORPHANS_UNREAD: (
             "`vault orphans` listed documents it was not allowed to read, so it cannot say "

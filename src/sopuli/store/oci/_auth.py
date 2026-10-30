@@ -59,6 +59,11 @@ class Clients:
     vaults: Any
     secrets: Any
     kms: Any
+    #: The OCI CLI options that reach the store as these clients do: the
+    #: config file, profile, auth method and region they were built with
+    #: (#1186). Every one the CLI could otherwise take from its own variables
+    #: or ``oci_cli_rc`` is named, so a printed command runs as this run did.
+    cli_options: tuple[str, ...] = ()
 
 
 def build_clients(vault: Vault, *, env: Mapping[str, str]) -> Clients:
@@ -96,7 +101,9 @@ def build_clients(vault: Vault, *, env: Mapping[str, str]) -> Clients:
 
     signer = _principal(factory, where=where)
     region = vault.region if vault.region is not None else signer.region
-    return _clients(vault, {"region": region}, signer)
+    return _clients(
+        vault, {"region": region}, signer, cli=("--auth", method, "--region", str(region))
+    )
 
 
 def _from_config_file(
@@ -122,9 +129,21 @@ def _from_config_file(
             )
         signer = _security_token_signer(config, where=where) if session else None
         oci.config.validate_config(config, signer=signer)
+        cli = (
+            # Always, and absolute: the CLI reads OCI_CLI_CONFIG_FILE, not this
+            # variable, and the command may be pasted in another directory.
+            "--config-file",
+            os.path.abspath(os.path.expanduser(location)),
+            "--profile",
+            profile,
+            "--auth",
+            "security_token" if session else "api_key",
+            "--region",
+            str(config["region"]),
+        )
         # Building a client loads the profile's private key, so a missing key
         # file or a wrong pass phrase fails here and not in `from_file`.
-        return _clients(vault, config, signer)
+        return _clients(vault, config, signer, cli=cli)
     except (oci.exceptions.ClientError, OSError) as exc:
         raise OciConfigError(
             f"{where}: cannot use profile {profile!r} in the OCI config file {location}: {exc}",
@@ -179,11 +198,14 @@ def _principal(factory: Any, *, where: str) -> Any:
         ) from exc
 
 
-def _clients(vault: Vault, config: Mapping[str, Any], signer: Any) -> Clients:
+def _clients(
+    vault: Vault, config: Mapping[str, Any], signer: Any, *, cli: tuple[str, ...]
+) -> Clients:
     return Clients(
         vaults=oci.vault.VaultsClient(config, **_options(vault, signer)),
         secrets=oci.secrets.SecretsClient(config, **_options(vault, signer)),
         kms=oci.key_management.KmsVaultClient(config, **_options(vault, signer)),
+        cli_options=cli,
     )
 
 

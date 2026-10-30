@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sopuli.config.model import Binding, Vault
@@ -57,7 +57,14 @@ from sopuli.lock.inspect import LockState, ResetRegion, SkippedPath, secret_path
 from sopuli.lock.keys import LockKey, lock_key, normalise_path
 from sopuli.lock.manager import LOCK_PREFIX, lock_path
 from sopuli.payload import ORIGIN, ROTATED_AT
-from sopuli.store.protocol import CAS, LIST, SecretStore, StoreError, bounded_prefix
+from sopuli.store.protocol import (
+    CAS,
+    LIST,
+    NativeNames,
+    SecretStore,
+    StoreError,
+    bounded_prefix,
+)
 
 #: :attr:`Orphan.kind` for a secret document.
 SECRET = "secret"
@@ -89,8 +96,8 @@ class Orphan:
 
     #: The store and the secret path, normalised. A lock and its secret share it.
     key: LockKey
-    #: The path as the store listed it, which is what a delete takes. A lock's
-    #: starts with ``locks/``.
+    #: The path as the store listed it, which is what a HashiCorp delete takes.
+    #: A lock's starts with ``locks/``.
     path: str
     kind: str
     #: The store's version of a secret, ``None`` on a store with no
@@ -98,10 +105,23 @@ class Orphan:
     version: int | None = None
     #: The lock record, as ``lock status`` reads it. ``None`` for a secret.
     lock: LockState | None = None
+    #: The store's own name for the record, where it has names of its own
+    #: (:class:`~sopuli.store.protocol.NativeNames`): an OCI lock's is
+    #: ``sopuli-locks.<name>``. ``None`` where the name is :attr:`path`.
+    native_name: str | None = None
+    #: The command that deletes the record, from a store with names of its
+    #: own. ``None`` there where its listing did not hold the record, and on
+    #: every other store, whose command :func:`delete_command` builds.
+    native_command: str | None = None
 
     @property
     def store(self) -> str:
         return self.key.store
+
+    @property
+    def name(self) -> str:
+        """The record's name in the store: what an operator looks it up by."""
+        return self.native_name if self.native_name is not None else self.path
 
     @property
     def is_held(self) -> bool:
@@ -263,10 +283,10 @@ def find(
         listed.append(name)
         in_region = region if region is not None and region.store == name else None
         locks, bad = _locks(name, store, paths, declared, region=in_region)
-        found.extend(locks)
+        found.extend(_named(store, locks))
         skipped.extend(bad)
         secrets, bad, failed = _secrets(name, store, paths, declared, region=in_region)
-        found.extend(secrets)
+        found.extend(_named(store, secrets))
         skipped.extend(bad)
         unread.extend(failed)
     if stores and not listed and not unread:
@@ -284,6 +304,22 @@ def find(
         prefix=prefix,
         seen=seen,
     )
+
+
+def _named(store: SecretStore, orphans: list[Orphan]) -> list[Orphan]:
+    """``orphans`` with the store's own name and delete command for each, where
+    it has names of its own. ``store`` is the one :func:`find` listed, not a
+    view over it, so the check sees the store itself."""
+    if not isinstance(store, NativeNames):
+        return orphans
+    return [
+        replace(
+            orphan,
+            native_name=store.native_name(orphan.path),
+            native_command=store.delete_command(orphan.path),
+        )
+        for orphan in orphans
+    ]
 
 
 def survey_prefix(given: str) -> str:
@@ -432,6 +468,10 @@ def delete_command(vault: Vault, path: str) -> str | None:
     no user name or password, because the loader refuses or drops one (#891). It
     is quoted for a POSIX shell.
 
+    A store with names of its own builds its command itself
+    (:class:`~sopuli.store.protocol.NativeNames`), because it knows how its
+    client reached the store; :func:`commands` takes that one.
+
     ``None`` for a backend this build has no command for.
     """
     if vault.type != "hashicorp":
@@ -457,7 +497,11 @@ def commands(survey: Survey, vaults: Sequence[Vault]) -> tuple[str | None, ...]:
     by_name = {vault.name: vault for vault in vaults}
     held = survey.held()
     return tuple(
-        None if orphan.key in held else delete_command(by_name[orphan.store], orphan.path)
+        None
+        if orphan.key in held
+        else orphan.native_command
+        if orphan.native_name is not None
+        else delete_command(by_name[orphan.store], orphan.path)
         for orphan in survey.orphans
     )
 

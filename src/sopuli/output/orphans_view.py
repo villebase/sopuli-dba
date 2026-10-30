@@ -44,6 +44,7 @@ def _entry(orphan: Orphan, command: str | None) -> dict[str, Any]:
     return {
         "vault": orphan.store,
         "path": orphan.path,
+        "name": orphan.name,
         "kind": orphan.kind,
         "version": orphan.version if lock is None else lock.version,
         "lock": None
@@ -113,12 +114,18 @@ def render(
                 lines.append(f"  {command}")
             elif orphan.key in held:
                 lines.append(
-                    f"  (none for {orphan.store}:{orphan.path}: a live lock stands on "
+                    f"  (none for {orphan.store}:{orphan.name}: a live lock stands on "
                     f"{orphan.key.path}; see `sopuli lock status`)"
+                )
+            elif orphan.native_name is not None:
+                # The store has a command, and the listing gave no id to put in it.
+                lines.append(
+                    f"  (none for {orphan.store}:{orphan.name}: the store's listing gave no id "
+                    "for it)"
                 )
             else:
                 lines.append(
-                    f"  (none for {orphan.store}:{orphan.path}: no command for this store)"
+                    f"  (none for {orphan.store}:{orphan.name}: no command for this store)"
                 )
     if warnings:
         heading = "1 warning" if len(warnings) == 1 else f"{len(warnings)} warnings"
@@ -131,7 +138,8 @@ def _table(orphans: Sequence[Orphan]) -> list[str]:
     return list(
         render_table(
             [Column("VAULT"), Column("PATH"), Column("KIND"), Column("LOCK")],
-            [[orphan.store, orphan.path, orphan.kind, _lock(orphan)] for orphan in orphans],
+            # The store's own name, so an OCI record reads as the console shows it.
+            [[orphan.store, orphan.name, orphan.kind, _lock(orphan)] for orphan in orphans],
         )
     )
 

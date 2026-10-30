@@ -705,3 +705,22 @@ class VersionLimited(Protocol):
     def name_held(self, path: str) -> bool: ...
 
     def protect(self, path: str, versions: Iterable[int]) -> None: ...
+
+
+@runtime_checkable
+class NativeNames(Protocol):
+    """A store whose records have names of their own, not the tool's paths (#1186).
+
+    On OCI, the lock at ``locks/<name>`` is the secret ``sopuli-locks.<name>``,
+    and a delete takes the secret's OCID. ``vault orphans`` shows an operator
+    the name to look a record up by, and the command that deletes it.
+
+    ``native_name`` is the store's name for ``path``. ``delete_command`` is
+    the store's own CLI command that deletes the record at ``path``, built
+    from what this client's listings saw and how the client reaches the
+    store, or ``None`` where the listings did not hold it.
+    """
+
+    def native_name(self, path: str) -> str: ...
+
+    def delete_command(self, path: str) -> str | None: ...

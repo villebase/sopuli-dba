@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import shlex
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -158,6 +159,8 @@ class OciStore:
     ``vaults``, ``secrets`` and ``kms`` are the SDK clients
     (:class:`sopuli.store.oci._auth.Clients`). They are passed in, so tier 0
     can pass fakes, and so are the clock and ``sleep`` the wait for ACTIVE uses.
+    ``cli_options`` are the clients' ``Clients.cli_options``, which
+    :meth:`delete_command` names.
     """
 
     def __init__(
@@ -167,6 +170,7 @@ class OciStore:
         vaults: Any,
         secrets: Any,
         kms: Any,
+        cli_options: tuple[str, ...] = (),
         now: Callable[[], datetime] = utc_now,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -182,6 +186,11 @@ class OciStore:
         self._vault_seen = False
         #: Secret ids by name, from this run's reads and creates (:meth:`_live`).
         self._ids: dict[str, str] = {}
+        #: Secret ids by name, from this run's listings, for
+        #: :meth:`delete_command`. Kept apart from ``_ids`` so a listing
+        #: changes no write's calls.
+        self._listed: dict[str, str] = {}
+        self._cli_options = cli_options
         #: Each version this run deleted to make room (decision 7), for the
         #: run to report.
         self.pruned: list[Pruned] = []
@@ -291,9 +300,40 @@ class OciStore:
                 path = _names.from_oci(summary.secret_name)
                 if path.startswith(bounded):
                     found.append(path)
+                    self._listed[summary.secret_name] = summary.id
             page = response.next_page
             if not page:
                 return tuple(sorted(found))
+
+    def native_name(self, path: str) -> str:
+        """The OCI secret name for ``path`` (#1186)."""
+        return _names.to_oci(path)
+
+    def delete_command(self, path: str) -> str | None:
+        """The OCI CLI command that schedules the deletion of the secret at
+        ``path``, or ``None`` where this run's listings did not hold it (#1186).
+
+        It takes the secret's OCID, because the CLI deletes no secret by name.
+        OCI deletes it 30 days ahead unless the command is given
+        ``--time-of-deletion``, and the name stays taken until then. The
+        command names the config file, profile, auth method and region this
+        store's clients were built with, so it runs as this run did. It is
+        quoted for a POSIX shell.
+        """
+        secret_id = self._listed.get(_names.to_oci(path))
+        if secret_id is None:
+            return None
+        return shlex.join(
+            [
+                "oci",
+                "vault",
+                "secret",
+                "schedule-secret-deletion",
+                "--secret-id",
+                secret_id,
+                *self._cli_options,
+            ]
+        )
 
     def write(self, path: str, data: Any, *, cas: int | None) -> int:
         """Write ``data`` as the new CURRENT version, and return the new token.

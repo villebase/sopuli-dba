@@ -93,7 +93,7 @@ from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.native_view import PENDING_VERSION
-from sopuli.store.protocol import Room
+from sopuli.store.protocol import Room, StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -5007,6 +5007,31 @@ def test_apply_warns_where_generate_would_refuse(
     ]
     assert "too few of them are DEPRECATED" in warning["message"]
     assert "the store will refuse that write" in warning["message"]
+
+
+def test_apply_refuses_a_lock_record_on_a_name_a_deleting_secret_holds(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlike a write, the lock is taken on every document the plan names, so
+    a converged apply would fail at it too: refused, not warned (#1188)."""
+    monkeypatch.setattr(f"{__name__}.staging_store", limited_store)
+    harness = estate(
+        native={},
+        documents={"acme-db": {"DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}}},
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": passes(1), "ACME_BATCH_USER": passes(1)},
+    )
+    harness["store"].held.add("locks/acme-db")
+
+    result = run(runner, write_config(OCI_SHARED_CONFIG), "--output", "json")
+
+    assert isinstance(result.exception, StoreError)
+    assert "the lock record for vault-oci:acme-db" in str(result.exception)
+    assert harness["sessions"] == []
+    assert harness["store"].read("locks/acme-db") is None
 
 
 #: `SHARED_CONFIG` on an OCI-typed store: one secret, two accounts, payload fields.

@@ -359,6 +359,24 @@ def test_a_create_on_a_name_a_deleting_secret_holds_is_refused(
     assert store.read(PATH) is None
 
 
+def test_a_lock_record_on_a_name_a_deleting_secret_holds_is_refused(
+    runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
+) -> None:
+    """Taking the lock creates its record, so a name held for it fails the
+    same way as the secret's, and is refused at plan time too (#1188)."""
+    seed(store, PATH, {FIELD: LIVE})
+    store.held.add(f"locks/{PATH}")
+
+    result = run(runner, write_config(CONFIG), "generate")
+
+    assert isinstance(result.exception, StoreError)
+    message = str(result.exception)
+    assert f"vault-oci:locks/{PATH}, the lock record for vault-oci:{PATH}" in message
+    assert "scheduled for deletion" in message
+    assert store.read_stage(PATH, PENDING) is None
+    assert store.read(f"locks/{PATH}") is None
+
+
 def test_each_version_the_store_deleted_is_reported_after_the_run(
     runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
 ) -> None:

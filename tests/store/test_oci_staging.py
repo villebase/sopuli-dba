@@ -185,6 +185,18 @@ def test_a_name_held_only_by_a_deleting_secret_is_held(store: OciStore, fake: Fa
     assert store.name_held("acme-deleted") is False
 
 
+def test_a_lock_name_held_by_a_deleting_secret_is_held(store: OciStore, fake: FakeOci) -> None:
+    """The lock at ``locks/<name>`` is the secret ``sopuli-locks.<name>``,
+    and a deleting one holds that name as a secret's does (#1188). A live
+    lock record holds nothing: taking the lock then creates nothing."""
+    fake.put("sopuli-locks.acme-gone", {}, lifecycle_state="PENDING_DELETION")
+    fake.put("sopuli-locks.acme-live", {})
+
+    assert store.name_held("locks/acme-gone") is True
+    assert store.name_held("acme-gone") is False
+    assert store.name_held("locks/acme-live") is False
+
+
 def test_a_write_to_a_full_secret_deletes_its_oldest_deprecated_version_first(
     store: OciStore, fake: FakeOci
 ) -> None:

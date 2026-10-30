@@ -1311,8 +1311,9 @@ for a lock at `locks/acme/acme/dev` on the tier-1 stack.
   built. OCI deletes the secret 30 days later unless the command is given
   `--time-of-deletion`, and the name stays taken until then: OCI refuses a new
   secret of that name. For a secret's name, `creds generate` and `creds rotate`
-  refuse at plan time. For a lock's name, `sopuli-locks.<name>`, the run fails
-  when it takes the lock.
+  refuse at plan time. For a lock's name, `sopuli-locks.<name>`, these two and
+  `creds apply` refuse at plan time too, because each takes the lock on every
+  document it plans, and taking it creates the lock record (#1188).
 - **`found` is emitted empty**, as `lock.found` is on `lock status`.
 - **`listed` names the stores whose paths were read**, by the entry each was
   opened through, so an empty `found` says what it covers. A store that could

@@ -2897,7 +2897,9 @@ and current version are the same, no write was accepted in between, and the
 update is sent again with the new ETag, at most three more times. A name still
 held by a secret scheduled for deletion cannot be used again until OCI deletes
 it. `creds generate` and `rotate` refuse a run that would create such a secret
-before they take the lock, and a create that meets one anyway says so.
+before they take the lock, and a create that meets one anyway says so. They
+and `apply` also refuse a run whose lock record, `sopuli-locks.<name>`, such a
+secret holds, because taking the lock would create it (#1188).
 
 **The lock on an OCI store.** The advisory lock on a secret `acme-db` lives in
 a secret the tool creates, `sopuli-locks.acme-db`, in the same compartment.

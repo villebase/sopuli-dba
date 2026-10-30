@@ -117,6 +117,12 @@ def render(
                     f"  (none for {orphan.store}:{orphan.name}: a live lock stands on "
                     f"{orphan.key.path}; see `sopuli lock status`)"
                 )
+            elif orphan.native_name is not None:
+                # The store has a command, and the listing gave no id to put in it.
+                lines.append(
+                    f"  (none for {orphan.store}:{orphan.name}: the store's listing gave no id "
+                    "for it)"
+                )
             else:
                 lines.append(
                     f"  (none for {orphan.store}:{orphan.name}: no command for this store)"

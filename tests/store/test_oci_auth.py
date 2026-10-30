@@ -252,6 +252,54 @@ def test_a_principal_that_cannot_get_credentials_is_an_auth_failure(
     assert sdk.clients == []
 
 
+#: Each CLI option the clients name (#1186), whatever the store left to defaults.
+API_KEY_CLI = ("--profile", "DEFAULT", "--auth", "api_key", "--region", "eu-frankfurt-1")
+
+
+def test_the_cli_options_name_the_default_profile_and_its_region(sdk: Sdk) -> None:
+    """Named even as defaults, so OCI_CLI_PROFILE or oci_cli_rc cannot change them."""
+    assert build_clients(vault(), env={}).cli_options == API_KEY_CLI
+
+
+def test_the_cli_options_name_the_profile_and_the_stores_region(sdk: Sdk) -> None:
+    clients = build_clients(
+        vault(VaultAuth(method="config_file", profile="ACME"), region="eu-stockholm-1"), env={}
+    )
+
+    assert clients.cli_options == (
+        "--profile",
+        "ACME",
+        "--auth",
+        "api_key",
+        "--region",
+        "eu-stockholm-1",
+    )
+
+
+def test_the_cli_options_name_a_config_file_from_oci_config_file(sdk: Sdk) -> None:
+    """The CLI reads OCI_CLI_CONFIG_FILE, so the store's file is passed to it."""
+    clients = build_clients(vault(), env={"OCI_CONFIG_FILE": "/srv/acme/oci-config"})
+
+    assert clients.cli_options == ("--config-file", "/srv/acme/oci-config", *API_KEY_CLI)
+
+
+@pytest.mark.parametrize(
+    ("method", "factory"),
+    [
+        ("instance_principal", "InstancePrincipalsSecurityTokenSigner"),
+        ("resource_principal", "get_resource_principals_signer"),
+    ],
+)
+def test_the_cli_options_name_a_principal_and_its_region(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, method: str, factory: str
+) -> None:
+    monkeypatch.setattr(oci.auth.signers, factory, FakeSigner)
+
+    clients = build_clients(vault(VaultAuth(method=method)), env={})
+
+    assert clients.cli_options == ("--auth", method, "--region", "eu-amsterdam-1")
+
+
 def test_session_token_signs_with_the_session(
     sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -266,6 +314,30 @@ def test_session_token_signs_with_the_session(
 
     signers = [kwargs["signer"] for _, _, kwargs in sdk.clients]
     assert [(one.token, one.key) for one in signers] == [("session-token", "key")] * 3
+
+
+def test_the_cli_options_name_a_session(
+    sdk: Sdk, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("session-token\n", encoding="utf-8")
+    profile = {**PROFILE, "security_token_file": str(token)}
+    monkeypatch.setattr(oci.config, "from_file", lambda file_location, profile_name: profile)
+    monkeypatch.setattr(oci.signer, "load_private_key_from_file", lambda path, phrase: "key")
+    monkeypatch.setattr(oci.auth.signers, "SecurityTokenSigner", FakeSessionSigner)
+
+    clients = build_clients(
+        vault(VaultAuth(method="session_token", profile="SOPULI_SESSION")), env={}
+    )
+
+    assert clients.cli_options == (
+        "--profile",
+        "SOPULI_SESSION",
+        "--auth",
+        "security_token",
+        "--region",
+        "eu-frankfurt-1",
+    )
 
 
 def test_a_profile_with_no_session_says_how_to_make_one(sdk: Sdk) -> None:

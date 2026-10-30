@@ -109,9 +109,10 @@ class Orphan:
     #: (:class:`~sopuli.store.protocol.NativeNames`): an OCI lock's is
     #: ``sopuli-locks.<name>``. ``None`` where the name is :attr:`path`.
     native_name: str | None = None
-    #: The store's id for the record, which a delete takes on OCI. ``None``
-    #: where the store has none, or its listing did not give one.
-    native_id: str | None = None
+    #: The command that deletes the record, from a store with names of its
+    #: own. ``None`` there where its listing did not hold the record, and on
+    #: every other store, whose command :func:`delete_command` builds.
+    native_command: str | None = None
 
     @property
     def store(self) -> str:
@@ -306,14 +307,16 @@ def find(
 
 
 def _named(store: SecretStore, orphans: list[Orphan]) -> list[Orphan]:
-    """``orphans`` with the store's own name and id for each, where it has them."""
+    """``orphans`` with the store's own name and delete command for each, where
+    it has names of its own. ``store`` is the one :func:`find` listed, not a
+    view over it, so the check sees the store itself."""
     if not isinstance(store, NativeNames):
         return orphans
     return [
         replace(
             orphan,
             native_name=store.native_name(orphan.path),
-            native_id=store.native_id(orphan.path),
+            native_command=store.delete_command(orphan.path),
         )
         for orphan in orphans
     ]
@@ -453,7 +456,7 @@ def _kv_version(vault: Vault) -> int:
     return vault.kv_version if vault.kv_version is not None else DEFAULT_KV_VERSION
 
 
-def delete_command(vault: Vault, path: str, *, native_id: str | None = None) -> str | None:
+def delete_command(vault: Vault, path: str) -> str | None:
     """The vault CLI command that removes ``path`` and its history, or ``None``.
 
     KV v2 needs ``kv metadata delete``. A plain ``kv delete`` keeps the
@@ -465,12 +468,12 @@ def delete_command(vault: Vault, path: str, *, native_id: str | None = None) -> 
     no user name or password, because the loader refuses or drops one (#891). It
     is quoted for a POSIX shell.
 
-    On OCI it is :func:`_oci_delete_command`, which needs ``native_id``.
+    A store with names of its own builds its command itself
+    (:class:`~sopuli.store.protocol.NativeNames`), because it knows how its
+    client reached the store; :func:`commands` takes that one.
 
     ``None`` for a backend this build has no command for.
     """
-    if vault.type == "oci":
-        return _oci_delete_command(vault, native_id)
     if vault.type != "hashicorp":
         return None
     words = (
@@ -486,34 +489,6 @@ def delete_command(vault: Vault, path: str, *, native_id: str | None = None) -> 
     return shlex.join(words)
 
 
-def _oci_delete_command(vault: Vault, secret_id: str | None) -> str | None:
-    """The OCI CLI command that schedules the deletion of the secret ``secret_id``.
-
-    OCI deletes a secret only on a schedule, 30 days ahead unless the command
-    gives ``--time-of-deletion``, and its name stays taken until then. The
-    command takes the secret's OCID, because the CLI has no delete by name.
-
-    It names the store's ``region`` where the config sets one, and the store's
-    auth method and profile, so it reaches the store this run read. It names no
-    config file: the CLI reads ``OCI_CLI_CONFIG_FILE``, not the
-    ``OCI_CONFIG_FILE`` this store reads. ``None`` without an id.
-    """
-    if secret_id is None:
-        return None
-    words = ["oci", "vault", "secret", "schedule-secret-deletion", "--secret-id", secret_id]
-    if vault.region is not None:
-        words.extend(["--region", vault.region])
-    method = vault.auth.method if vault.auth is not None else None
-    if method in ("instance_principal", "resource_principal"):
-        words.extend(["--auth", method])
-    else:
-        if vault.auth is not None and vault.auth.profile is not None:
-            words.extend(["--profile", vault.auth.profile])
-        if method == "session_token":
-            words.extend(["--auth", "security_token"])
-    return shlex.join(words)
-
-
 def commands(survey: Survey, vaults: Sequence[Vault]) -> tuple[str | None, ...]:
     """The delete command for each orphan, in order, ``None`` where none is printed.
 
@@ -524,7 +499,9 @@ def commands(survey: Survey, vaults: Sequence[Vault]) -> tuple[str | None, ...]:
     return tuple(
         None
         if orphan.key in held
-        else delete_command(by_name[orphan.store], orphan.path, native_id=orphan.native_id)
+        else orphan.native_command
+        if orphan.native_name is not None
+        else delete_command(by_name[orphan.store], orphan.path)
         for orphan in survey.orphans
     )
 

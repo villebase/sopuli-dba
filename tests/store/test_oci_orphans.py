@@ -18,11 +18,13 @@ from jsonschema import Draft202012Validator
 from oci_fake import COMPARTMENT_ID, KEY_ID, VAULT_ID, FakeOci
 
 from sopuli.cli import cli
-from sopuli.config.model import Vault, VaultAuth
+from sopuli.config.model import Vault
 from sopuli.exit_codes import ExitCode
+from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder, LockRecord
-from sopuli.orphans import delete_command
+from sopuli.orphans import SECRET, Orphan, Survey
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.orphans_view import render
 from sopuli.store.oci import OciStore
 from sopuli.store.oci._names import CAS_KEY, RECORD_KEY
 from sopuli.store.protocol import SecretStore
@@ -153,50 +155,61 @@ def test_a_live_lock_names_the_record_as_oci_does(
     assert DELETE not in result.output
 
 
-SECRET_ID = "ocid1.vaultsecret.oc1..exampleuniqueid"
-
-
-def oci_vault(**settings: Any) -> Vault:
-    return Vault(
-        name="v",
+def store_over(fake: FakeOci, *, cli_options: tuple[str, ...] = ()) -> OciStore:
+    entry = Vault(
+        name="vault-oci",
         type="oci",
         vault_id=VAULT_ID,
         compartment_id=COMPARTMENT_ID,
         key_id=KEY_ID,
-        **settings,
+    )
+    return OciStore(entry, vaults=fake, secrets=fake, kms=fake, cli_options=cli_options)
+
+
+def test_the_command_names_how_the_clients_reach_the_store() -> None:
+    fake = FakeOci()
+    fake.put("acme-old", {"origin": "generated"})
+    store = store_over(fake, cli_options=("--profile", "ACME", "--region", "eu-stockholm-1"))
+    store.list("")
+
+    assert store.delete_command("acme-old") == (
+        f"{DELETE} {fake.secrets['acme-old'].id} --profile ACME --region eu-stockholm-1"
     )
 
 
-@pytest.mark.parametrize(
-    ("vault", "expected"),
-    [
-        (oci_vault(), f"{DELETE} {SECRET_ID}"),
-        (oci_vault(region="eu-frankfurt-1"), f"{DELETE} {SECRET_ID} --region eu-frankfurt-1"),
-        (
-            oci_vault(auth=VaultAuth(method="config_file", profile="SOPULI")),
-            f"{DELETE} {SECRET_ID} --profile SOPULI",
-        ),
-        (
-            oci_vault(auth=VaultAuth(method="session_token", profile="SOPULI_SESSION")),
-            f"{DELETE} {SECRET_ID} --profile SOPULI_SESSION --auth security_token",
-        ),
-        (
-            oci_vault(auth=VaultAuth(method="session_token")),
-            f"{DELETE} {SECRET_ID} --auth security_token",
-        ),
-        (
-            oci_vault(auth=VaultAuth(method="instance_principal")),
-            f"{DELETE} {SECRET_ID} --auth instance_principal",
-        ),
-        (
-            oci_vault(auth=VaultAuth(method="resource_principal")),
-            f"{DELETE} {SECRET_ID} --auth resource_principal",
-        ),
-    ],
-)
-def test_the_oci_delete_command_follows_the_store(vault: Vault, expected: str) -> None:
-    assert delete_command(vault, "a", native_id=SECRET_ID) == expected
+def test_no_command_for_a_secret_no_listing_held() -> None:
+    fake = FakeOci()
+    fake.put("acme-old", {"origin": "generated"})
+
+    assert store_over(fake).delete_command("acme-old") is None
 
 
-def test_no_oci_delete_command_without_an_id() -> None:
-    assert delete_command(oci_vault(), "a") is None
+def test_every_listing_keeps_its_ids() -> None:
+    """Under --prefix the survey lists twice, and the second keeps the first's."""
+    fake = FakeOci()
+    fake.put("acme-old", {"origin": "generated"})
+    fake.put("sopuli-locks.acme-old", {})
+    store = store_over(fake)
+    store.list("")
+    store.list("locks")
+
+    assert store.delete_command("acme-old") is not None
+    assert store.delete_command("locks/acme-old") is not None
+
+
+def test_a_record_with_no_command_says_the_listing_gave_no_id() -> None:
+    survey = Survey(
+        orphans=(
+            Orphan(
+                key=LockKey(store="vault-oci", path="acme-old"),
+                path="acme-old",
+                kind=SECRET,
+                native_name="acme-old",
+            ),
+        ),
+        listed=("vault-oci",),
+        seen=1,
+    )
+    text = render([Path("sopuli.yaml")], survey, [None])
+
+    assert "(none for vault-oci:acme-old: the store's listing gave no id for it)" in text

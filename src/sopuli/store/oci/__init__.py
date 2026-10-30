@@ -27,7 +27,13 @@ def connect(vault: Vault, *, env: Mapping[str, str], token_file: Path | None = N
 
 def open_store(vault: Vault, clients: Clients) -> OciStore:
     """The store for ``vault``, with its clients already built."""
-    return OciStore(vault, vaults=clients.vaults, secrets=clients.secrets, kms=clients.kms)
+    return OciStore(
+        vault,
+        vaults=clients.vaults,
+        secrets=clients.secrets,
+        kms=clients.kms,
+        cli_options=clients.cli_options,
+    )
 
 
 __all__ = ["Clients", "OciStore", "build_clients", "connect", "open_store"]

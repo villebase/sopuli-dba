@@ -713,13 +713,14 @@ class NativeNames(Protocol):
 
     On OCI, the lock at ``locks/<name>`` is the secret ``sopuli-locks.<name>``,
     and a delete takes the secret's OCID. ``vault orphans`` shows an operator
-    the name to look a record up by, and prints a delete command with the id.
+    the name to look a record up by, and the command that deletes it.
 
-    ``native_name`` is the store's name for ``path``. ``native_id`` is the
-    store's id for the record at ``path``, as this client's last :meth:`list`
-    saw it, or ``None`` where that listing did not hold it.
+    ``native_name`` is the store's name for ``path``. ``delete_command`` is
+    the store's own CLI command that deletes the record at ``path``, built
+    from what this client's listings saw and how the client reaches the
+    store, or ``None`` where the listings did not hold it.
     """
 
     def native_name(self, path: str) -> str: ...
 
-    def native_id(self, path: str) -> str | None: ...
+    def delete_command(self, path: str) -> str | None: ...

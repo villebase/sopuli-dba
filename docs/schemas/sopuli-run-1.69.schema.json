@@ -875,7 +875,7 @@
                   "string",
                   "null"
                 ],
-                "description": "The command that deletes the record and its versions, quoted for a POSIX shell. On HashiCorp Vault, the vault CLI's, naming the store's address and namespace. On OCI, the OCI CLI's `schedule-secret-deletion` for the secret's OCID, from run schema 1.69. `null` where a lock that has not expired is held at the secret path, and where this build has no command for the store's type."
+                "description": "The command that deletes the record and its versions, quoted for a POSIX shell. On HashiCorp Vault, the vault CLI's, which deletes at once, naming the store's address and namespace. On OCI, from run schema 1.69, the OCI CLI's `schedule-secret-deletion` for the secret's OCID, naming the profile, auth method and region the run used: OCI deletes the secret 30 days later, and its name stays taken until then. `null` where a lock that has not expired is held at the secret path, and where this build has no command for the store's type."
               }
             }
           }

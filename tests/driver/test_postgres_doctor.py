@@ -85,7 +85,7 @@ def test_doctor_reaches_the_cluster_and_reports_what_it_is(
     assert scope["open_mode"] == "READ WRITE"
     assert scope["read_write"] is True
     assert scope["db_version"], "the version the server reported"
-    assert scope["capabilities"] == []
+    assert scope["capabilities"] == ["role_lookup"]
     assert scope["encryption"]["method"] == "none"
     assert scope["encryption"]["protocol"] == "tcp"
 

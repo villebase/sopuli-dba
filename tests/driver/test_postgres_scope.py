@@ -18,7 +18,7 @@ from sopuli.driver.postgres.scope import (
     observe,
     require_read_write,
 )
-from sopuli.driver.protocol import CLUSTER, Scope
+from sopuli.driver.protocol import CLUSTER, ROLE_LOOKUP, Scope
 from sopuli.exit_codes import ExitCode
 
 
@@ -95,8 +95,9 @@ def test_a_packaged_builds_suffix_is_not_the_version() -> None:
     assert _observe(version="16.4 (Debian 16.4-1.pgdg120+1)").db_version == "16.4"
 
 
-def test_no_capability_is_reported() -> None:
-    assert _observe().capabilities == frozenset()
+def test_role_lookup_is_the_one_capability_reported() -> None:
+    """``pg_roles`` is open to every role (#1201)."""
+    assert _observe().capabilities == frozenset({ROLE_LOOKUP})
 
 
 @pytest.mark.parametrize(

@@ -125,6 +125,29 @@ def test_a_write_not_written_yet_refuses_without_reading_the_scope() -> None:
     assert session._scope is None
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda s: s.resolve_profile("acme_dev_profile"),
+        lambda s: s.accounts_matching(profile="acme_dev_profile"),
+    ],
+)
+def test_a_profile_predicate_is_an_absent_capability(call: Any) -> None:
+    """A cluster has no profiles, so `account list` refuses a `profile:`
+    predicate by capability, exit 5, naming what to declare instead (#1201)."""
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        call(_session())
+
+    assert refused.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "profile_management" in refused.value.message
+    assert "`role:`" in str(refused.value.hint)
+
+
+def test_accounts_matching_takes_exactly_one_predicate() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        _session().accounts_matching()
+
+
 def test_rollover_is_an_absent_capability() -> None:
     with pytest.raises(UnsupportedCapabilityError) as refused:
         _session().require_rollover("acme_app_user")

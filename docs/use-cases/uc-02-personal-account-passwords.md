@@ -7,7 +7,9 @@ This document specifies `personal_accounts:`, `sopuli account reset-password`,
 `sopuli account expire-password`, `sopuli account suspend` and
 `sopuli account list`. The reset is built for the `manual`, `vault_wrapped`,
 `vault_path`, `one_time_link` and `onepassword_share` delivery methods; §6.2
-lists the method that is not built yet. §9 lists the open questions.
+lists the method that is not built yet. §9 lists the open questions. On
+PostgreSQL only `account list` is built; the other verbs refuse a PostgreSQL
+target with `SOPULI-20006`.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -434,6 +436,15 @@ predicate admits an account is a fact about a database.
 names a profile or role that **does not exist** is refused, because that is a
 misspelling. One that exists and **matches no accounts** is not an error, because
 that is a true answer about today's estate.
+
+**On PostgreSQL, only `accounts:` and `role:` apply.** A cluster has no
+profiles, so a `profile:` predicate is refused by the absent
+`profile_management` capability, exit 5. A `role:` predicate admits every role
+that is a member of the named role through any chain of grants, whatever their
+`INHERIT` and `SET` options. That includes a group role in the chain and a
+`NOLOGIN` member: PostgreSQL cannot tell a group role from a suspended person,
+and `account list` must not show fewer accounts than a mutating verb would
+admit. Reasons: [#1201](../decisions/log.md#1201).
 
 ---
 

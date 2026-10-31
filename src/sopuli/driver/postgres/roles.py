@@ -128,6 +128,27 @@ ROLE_QUERY = (
 )
 
 
+#: Every role whose name may match a declared role name: the ASCII names that
+#: match by the server's ``upper()``, and every non-ASCII name, which
+#: :func:`resolve_role` matches itself, for :data:`ROLE_QUERY`'s reason.
+ROLE_NAME_QUERY = (
+    "select rolname from pg_roles where upper(rolname) = upper(%s) "
+    "or octet_length(rolname) <> char_length(rolname)"
+)
+
+#: Every role that is a member of the named role, through any chain of grants
+#: whatever their ``INHERIT`` and ``SET`` options (#1201): the walk
+#: :data:`ROLE_QUERY` makes, run the other way. The name is the spelling
+#: :func:`resolve_role` gave back, so it is compared exactly.
+MEMBERS_QUERY = (
+    "with recursive members(oid) as ("
+    "select m.member from pg_auth_members m join pg_roles g on g.oid = m.roleid "
+    "where g.rolname = %s "
+    "union select m.member from pg_auth_members m join members on m.roleid = members.oid"
+    ") select r.rolname from members join pg_roles r on r.oid = members.oid order by r.rolname"
+)
+
+
 class Cursor(Protocol):
     """The part of a psycopg cursor this module uses."""
 
@@ -154,20 +175,54 @@ def describe(cursor: Cursor, account: str, *, target: str) -> UserState | None:
     create roles. ``target`` is for the message only.
     """
     cursor.execute(ROLE_QUERY, (account,))
-    folded = account.upper()
-    rows = [row for row in cursor.fetchall() if str(row[0]).upper() == folded]
-    if not rows:
+    row = _one_match(cursor.fetchall(), account, target=target)
+    return None if row is None else state_of(row)
+
+
+def resolve_role(cursor: Cursor, role: str, *, target: str) -> str | None:
+    """The role ``role`` names on ``target``, as ``pg_roles`` spells it, or
+    ``None`` if there is none.
+
+    Matched as :func:`describe` matches an account, by Python's ``str.upper()``,
+    so a `role:` predicate names a role the way the config names an account.
+    Two roles that match are refused, as they are there.
+    """
+    cursor.execute(ROLE_NAME_QUERY, (role,))
+    row = _one_match(cursor.fetchall(), role, target=target)
+    return None if row is None else str(row[0])
+
+
+def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
+    """Every role that is a member of ``role``, directly or through another
+    role, sorted by name.
+
+    ``role`` is the spelling :func:`resolve_role` gave back. A role is a member
+    whether or not it can log in: a group role in the chain is listed, and so
+    is a suspended person's ``NOLOGIN`` role. A listing must not show fewer
+    accounts than a mutating verb would admit (``Session.accounts_matching``),
+    and :func:`describe` reports both kinds as members.
+    """
+    cursor.execute(MEMBERS_QUERY, (role,))
+    return tuple(str(row[0]) for row in cursor.fetchall())
+
+
+def _one_match(rows: Any, name: str, *, target: str) -> tuple[Any, ...] | None:
+    """The one row whose first column matches ``name`` by ``str.upper()``,
+    ``None`` for none, and :class:`AmbiguousRoleError` for more than one."""
+    folded = name.upper()
+    matches = [row for row in rows if str(row[0]).upper() == folded]
+    if not matches:
         return None
-    if len(rows) > 1:
-        names = ", ".join(sorted(f'"{row[0]}"' for row in rows))
+    if len(matches) > 1:
+        names = ", ".join(sorted(f'"{row[0]}"' for row in matches))
         raise AmbiguousRoleError(
-            f'target "{target}": "{account}" matches more than one role: {names}',
+            f'target "{target}": "{name}" matches more than one role: {names}',
             hint=(
-                "the config compares account names by upper(), so it cannot tell these "
+                "the config compares role names by upper(), so it cannot tell these "
                 "apart; rename one of the roles, or leave both out of the config"
             ),
         )
-    return state_of(rows[0])
+    return tuple(matches[0])
 
 
 def state_of(row: tuple[Any, ...]) -> UserState:

@@ -22,12 +22,16 @@ from sopuli.driver.guardrails import (
     review,
 )
 from sopuli.driver.postgres.roles import (
+    MEMBERS_QUERY,
     NO_CHANGE_DATE,
     RESERVED_ROLES,
+    ROLE_NAME_QUERY,
     ROLE_QUERY,
     AmbiguousRoleError,
     describe,
+    members_of,
     reserved_names,
+    resolve_role,
     state_of,
 )
 from sopuli.exit_codes import ExitCode
@@ -303,3 +307,52 @@ def test_the_memberships_walk_the_grants_that_exist() -> None:
     assert "pg_auth_members" in ROLE_QUERY
     assert "with recursive" in ROLE_QUERY
     assert "pg_has_role" not in ROLE_QUERY
+
+
+# ------------------------------------------------ a `role:` predicate (#1201) ---
+
+
+def test_a_role_is_resolved_to_the_spelling_pg_roles_gives() -> None:
+    cursor = _Cursor([("acme_dev_team",)])
+
+    assert resolve_role(cursor, "ACME_DEV_TEAM", target="pg-dev") == "acme_dev_team"
+    ((query, params),) = cursor.executed
+    assert query == ROLE_NAME_QUERY
+    assert params == ("ACME_DEV_TEAM",)
+
+
+def test_a_role_that_does_not_exist_resolves_to_none() -> None:
+    assert resolve_role(_Cursor([("acme_ö_team",)]), "acme_ä_team", target="pg-dev") is None
+
+
+def test_two_roles_that_differ_only_in_case_refuse_a_predicate() -> None:
+    cursor = _Cursor([("acme_dev_team",), ("ACME_DEV_TEAM",)])
+
+    with pytest.raises(AmbiguousRoleError) as refused:
+        resolve_role(cursor, "acme_dev_team", target="pg-dev")
+
+    assert '"ACME_DEV_TEAM", "acme_dev_team"' in refused.value.message
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_the_members_are_every_role_below_the_named_one() -> None:
+    cursor = _Cursor([("acme_dev_alice",), ("acme_dev_bob",), ("acme_dev_leads",)])
+
+    assert members_of(cursor, "acme_dev_team") == (
+        "acme_dev_alice",
+        "acme_dev_bob",
+        "acme_dev_leads",
+    )
+    ((query, params),) = cursor.executed
+    assert query == MEMBERS_QUERY
+    assert params == ("acme_dev_team",)
+
+
+def test_the_members_walk_the_grants_down_whatever_their_options() -> None:
+    """The walk ROLE_QUERY makes, the other way, and with no filter on the
+    grant's INHERIT or SET option (#1201, decision 4)."""
+    assert "with recursive" in MEMBERS_QUERY
+    assert "m.roleid = members.oid" in MEMBERS_QUERY
+    assert "inherit" not in MEMBERS_QUERY.lower()
+    assert "set_option" not in MEMBERS_QUERY.lower()
+    assert "rolcanlogin" not in MEMBERS_QUERY, "a NOLOGIN member is still admitted"

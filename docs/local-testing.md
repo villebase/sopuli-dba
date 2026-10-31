@@ -456,8 +456,9 @@ and the run exits 1.
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
 password `sopuli-test`. `doctor` connects to it and reports what it found, and
 the UC-1 commands run against it: `creds generate`, `apply`, `check`, `rotate`,
-`status` and `finish-rollover`, which finds no window to close. The UC-2
-commands refuse a PostgreSQL target with `SOPULI-20006`.
+`status` and `finish-rollover`, which finds no window to close. Of the UC-2
+commands, `account list` runs against it, and the others refuse a PostgreSQL
+target with `SOPULI-20006`.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
@@ -500,7 +501,7 @@ client
   require_auth      accepted
 
 TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-pg-dev  yes        cluster  -          READ WRITE  0             none
+pg-dev  yes        cluster  -          READ WRITE  1             none
   pg-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
 ...
 1 warning:
@@ -517,7 +518,7 @@ not. With `GRANT pg_monitor TO sopuli_admin`, it prints:
 $ sopuli --config postgres.yaml doctor --check-privileges
 ...
 TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-pg-dev  yes        cluster  -          READ WRITE  0             none
+pg-dev  yes        cluster  -          READ WRITE  1             none
   pg-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
   pg-dev: over-granted, and the tool needs none of it: pg_monitor, pg_read_all_stats
 ...
@@ -1032,6 +1033,48 @@ ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-23     -
 `personal_accounts:` can also select accounts by a database profile or role, with
 `profile:` or `role:` instead of `accounts:`. `list` is how you see which
 accounts that selects.
+
+On the PostgreSQL cluster of §7, make a role with three members, one of them
+`NOLOGIN`:
+
+```
+postgres=# CREATE ROLE acme_dev_team NOLOGIN;
+postgres=# CREATE ROLE acme_dev_alice LOGIN IN ROLE acme_dev_team;
+postgres=# CREATE ROLE acme_dev_bob LOGIN IN ROLE acme_dev_team;
+postgres=# CREATE ROLE acme_dev_carol NOLOGIN IN ROLE acme_dev_team;
+```
+
+Add a policy and a `role:` predicate to `postgres.yaml`:
+
+```yaml
+policies:
+  personal-standard:
+    password: { length: 20 }
+personal_accounts:
+  - role: acme_dev_team
+    policy: personal-standard
+```
+
+```
+$ sopuli --config postgres.yaml account list
+ACCOUNT         TARGET  DECLARED BY           STATUS   DB_PW_CHANGED  RESET_AT
+acme_dev_alice  pg-dev  role 'acme_dev_team'  OPEN     -              -
+acme_dev_bob    pg-dev  role 'acme_dev_team'  OPEN     -              -
+acme_dev_carol  pg-dev  role 'acme_dev_team'  NOLOGIN  -              -
+
+3 declared accounts, 3 on the selected targets
+
+2 notes:
+  pg-dev: DB_PW_CHANGED is empty for 3 accounts: PostgreSQL does not record when a role's password was changed
+  no `reset_records:` block is declared, so there is no reset journal to read and RESET_AT is empty for every account; the database's own password-change date is unaffected and is reported beside it
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
+```
+
+A cluster has no profiles, so a `profile:` predicate on a PostgreSQL target is
+refused with exit 5.
 
 ### `account reset-password`
 

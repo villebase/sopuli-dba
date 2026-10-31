@@ -3860,3 +3860,36 @@ the register.
     never cleans up.
   - Leave the expiry to the account's default. The expiry would be set outside
     the file.
+
+## #1201
+
+- **Decided:** 2026-10-31, #1201
+- **Question:** UC-2 on PostgreSQL. Which grants make a role a member for a
+  `role:` predicate? What do the seen path, `suspend`, and a reset of a role
+  whose `VALID UNTIL` has passed do on a cluster?
+- **Decision:** A `role:` predicate admits membership through any chain of
+  `pg_auth_members` grants, whatever their `INHERIT` and `SET` options, and a
+  `NOLOGIN` member is admitted. The seen (`manual`) path and `account
+  expire-password` are refused at plan time by the absent `expire_password`
+  capability. `suspend` issues `ALTER ROLE … NOLOGIN`, and the reset refuses a
+  `NOLOGIN` role. A reset of a role whose `VALID UNTIL` has passed clears it
+  to `infinity`, in a statement of its own that runs only then.
+- **Why:** A membership is what was granted, whatever its options, and
+  `describe_user` already walks every chain for the guardrails. A listing that
+  walked fewer would show fewer accounts than a mutating verb admits. PostgreSQL
+  has no "change the password at next logon", and the seen path's expiry is
+  what ends the DBA's exposure. `NOLOGIN` blocks every authentication method,
+  and PostgreSQL has no timed lock to confuse it with. A past `VALID UNTIL`
+  would leave the owner a password that cannot log in, which is the state a
+  reset exists to end, as Oracle's reset clears a timed lock.
+- **Rejected:**
+  - Only chains whose grants carry `INHERIT`. A member through a `SET` grant
+    can still act as the role.
+  - A short `VALID UNTIL` for the seen path. The DBA's copy would work until
+    that time instead of until the owner's first logon, and after it the owner
+    could not log in.
+  - A past `VALID UNTIL` for `suspend`. Only password authentication obeys it,
+    so a role that authenticates by certificate, GSS or peer would stay usable.
+  - Refusing the reset of a role whose `VALID UNTIL` has passed, or resetting
+    it and warning. The first leaves the owner locked out until somebody edits
+    the role by hand. The second hands over a password that cannot log in.

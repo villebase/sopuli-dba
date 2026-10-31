@@ -352,7 +352,17 @@ def test_a_deliberately_locked_account_is_refused() -> None:
 
     assert answer.proceed is False
     assert answer.state == SKIPPED
-    assert "does not unlock a deliberate lock" in answer.detail
+    assert "does not undo a deliberate lock" in answer.detail
+    assert "ALTER ROLE … LOGIN on PostgreSQL" in answer.detail
+
+
+def test_a_nologin_role_is_refused_as_a_deliberate_lock() -> None:
+    """#1201: the PostgreSQL driver sets the field, and the status is its own
+    word, which Oracle's parse does not know."""
+    answer = decision(state(status="NOLOGIN", locked=True, deliberately_locked=True))
+
+    assert answer.proceed is False
+    assert answer.state == SKIPPED
 
 
 def test_force_does_not_waive_a_deliberate_lock() -> None:

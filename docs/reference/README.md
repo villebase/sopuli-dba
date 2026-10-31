@@ -23,9 +23,9 @@ generated from the same definitions that `--help` reads.
 Every command except `about` takes these options, after the command name.
 
 - `--debug`: Write debug output to stderr: each statement sent to a database and each request sent to a vault, with the time it took. Not a stable format.
-- `--color` `auto|always|never`: Colour in text output. auto follows the terminal; NO_COLOR disables it.  [default: auto]
+- `--color` `auto|always|never`: Colour in text output. Default: auto, which follows the terminal; NO_COLOR disables it.
 - `--profile` `NAME`: Run under a profile declared in `profiles:`. Not a selector: it changes how the run behaves, never what it acts on.
-- `--output` `text|json|jsonl`: Output format. Scripts should read json, never text.  [default: text]
+- `--output` `text|json|jsonl`: Output format. Default: text. Scripts should read json, never text.
 - `--vault-addr` `URL`: Address of the default vault: the store that `SOPULI_VAULT` or `defaults.vault` names. Refused when neither names one.
 - `--vault-token-file` `PATH`: File that holds the vault token. It is the command line's place in the token chain; the token itself is never an option value.
 - `--dry-run`: Print the plan and make no changes.

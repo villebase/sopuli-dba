@@ -8,9 +8,10 @@ The failure names the command to run.
 
 from __future__ import annotations
 
+import click
 import pytest
 
-from command_reference import REFERENCE, pages
+from command_reference import REFERENCE, _bounds, _leaves, _metavar, _prose, pages
 from repo_files import requires_repo
 
 REGENERATE = "run `python tests/command_reference.py` and commit docs/reference/"
@@ -33,3 +34,58 @@ def test_page_matches_the_command_tree(name: str, text: str) -> None:
     assert page.read_text(encoding="utf-8") == text, (
         f"docs/reference/{name} is out of date; {REGENERATE}"
     )
+
+
+# ------------------------------------------------- what the generator refuses ---
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- a list item",
+        "* a list item",
+        "1. a numbered item",
+        "9. a numbered item",
+        "# a heading",
+        "> a quote",
+    ],
+)
+def test_a_help_line_that_reads_as_structure_is_refused(line: str) -> None:
+    with pytest.raises(ValueError, match="Markdown structure"):
+        _prose(f"First line.\n{line}", "sopuli demo")
+
+
+def test_an_angle_bracket_outside_backticks_is_refused() -> None:
+    assert _prose("Takes `<path>` as written.", "sopuli demo")
+    with pytest.raises(ValueError, match="outside backticks"):
+        _prose("Takes <path> as written.", "sopuli demo")
+
+
+def test_a_nested_group_is_refused() -> None:
+    outer = click.Group("outer", commands=[click.Group("inner")])
+    ctx = click.Context(outer, info_name="outer")
+    with pytest.raises(ValueError, match="nested group"):
+        list(_leaves(outer, ctx))
+
+
+@pytest.mark.parametrize(
+    ("kind", "words"),
+    [
+        (click.IntRange(1, 100), "1 to 100"),
+        (click.IntRange(min=1), "at least 1"),
+        (click.IntRange(max=9), "at most 9"),
+        (click.IntRange(0, 10, max_open=True), "at least 0, less than 10"),
+        (click.IntRange(0, 10, min_open=True), "more than 0, at most 10"),
+    ],
+)
+def test_an_integer_range_is_said_in_words(kind: click.IntRange, words: str) -> None:
+    assert _bounds(kind) == words
+
+
+def test_a_placeholder_is_spelled_as_help_spells_it() -> None:
+    assert _metavar(click.Argument(["name"], required=False)) == "[NAME]"
+    assert _metavar(click.Argument(["lock"], metavar="VAULT:PATH")) == "VAULT:PATH"
+    assert _metavar(click.Option(["--count"], type=click.IntRange(1, 3))) == "INTEGER"
+    assert _metavar(click.Option(["--file"], type=click.Path())) == "PATH"
+    with pytest.raises(ValueError, match="takes 2 values"):
+        _metavar(click.Option(["--pair"], nargs=2))

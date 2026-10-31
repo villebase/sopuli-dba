@@ -890,7 +890,7 @@ def _options(func: F, *, hidden: bool) -> F:
         type=click.Choice([mode.value for mode in OutputMode]),
         default=None,
         hidden=hidden,
-        help="Output format. Scripts should read json, never text.  [default: text]",
+        help="Output format. Default: text. Scripts should read json, never text.",
     )
     color = click.option(
         "--color",
@@ -898,8 +898,8 @@ def _options(func: F, *, hidden: bool) -> F:
         type=click.Choice([choice.value for choice in ColorChoice]),
         default=None,
         hidden=hidden,
-        help="Colour in text output. auto follows the terminal; NO_COLOR disables"
-        " it.  [default: auto]",
+        help="Colour in text output. Default: auto, which follows the terminal;"
+        " NO_COLOR disables it.",
     )
     profile = click.option(
         "--profile",

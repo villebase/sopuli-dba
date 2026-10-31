@@ -18,12 +18,14 @@ It lives in `tests/` and not in a `scripts/` folder because the sdist ships
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
 import click
 
 from sopuli.cli import cli
+from sopuli.invocation import global_options
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "docs" / "reference"
@@ -53,18 +55,81 @@ def _global_names() -> frozenset[str]:
 GLOBAL_NAMES = _global_names()
 
 
-def _help(command: click.Command) -> str:
+#: A line that Markdown would read as a list item, a heading or a quote, rather
+#: than as the next line of a paragraph.
+_STRUCTURE = re.compile(r"^\s*(?:[-*+]\s|#|>|\d+[.)](?:\s|$))")
+
+#: Text between backticks, which Markdown prints as written.
+_CODE_SPAN = re.compile(r"`[^`]*`")
+
+
+def _prose(text: str, where: str) -> str:
+    """Help text, refused where Markdown would not show it as prose.
+
+    The pages print help text as Markdown, so that its backticks show as code.
+    A line that starts like a list item or a heading would change the page's
+    structure, and a `<` outside backticks can be swallowed as HTML. Rewording
+    the help is the fix; escaping it here would make the page differ from
+    `--help`.
+    """
+    for line in text.splitlines():
+        if _STRUCTURE.match(line):
+            raise ValueError(f"{where}: help line reads as Markdown structure: {line!r}")
+        if "<" in _CODE_SPAN.sub("", line):
+            raise ValueError(f"{where}: help has a `<` outside backticks: {line!r}")
+    return text
+
+
+def _help(command: click.Command, ctx: click.Context) -> str:
     """The command's help text, as `--help` shows it before click wraps it."""
-    return inspect.cleandoc(command.help or "")
+    return _prose(inspect.cleandoc(command.help or ""), ctx.command_path)
 
 
 def _usage(command: click.Command, ctx: click.Context) -> str:
     return " ".join([ctx.command_path, *command.collect_usage_pieces(ctx)])
 
 
-def _default(param: click.Parameter, ctx: click.Context) -> str | None:
-    """The default worth printing: a number or a string, never a flag's False."""
-    value = param.get_default(ctx, call=False)
+def _metavar(param: click.Parameter) -> str:
+    """The value's placeholder, as `--help` spells it.
+
+    Built here rather than read from `make_metavar`, whose signature changed in
+    click 8.2; `pyproject.toml` allows click 8.1.
+    """
+    if param.nargs != 1:
+        raise ValueError(f"{param.name}: takes {param.nargs} values; extend the generator")
+    if param.metavar is not None:
+        return param.metavar
+    if isinstance(param, click.Argument):
+        name = (param.name or "").upper()
+        return name if param.required else f"[{name}]"
+    if isinstance(param.type, click.IntRange):
+        return "INTEGER"  # the range itself is printed among the facts
+    return param.type.name.upper()
+
+
+def _bounds(kind: click.IntRange) -> str:
+    """An integer range as words: `1 to 100`, `at least 1`, `less than 10`."""
+    if kind.min is not None and kind.max is not None and not (kind.min_open or kind.max_open):
+        return f"{kind.min} to {kind.max}"
+    parts = []
+    if kind.min is not None:
+        parts.append(f"{'more than' if kind.min_open else 'at least'} {kind.min}")
+    if kind.max is not None:
+        parts.append(f"{'less than' if kind.max_open else 'at most'} {kind.max}")
+    return ", ".join(parts)
+
+
+def _default(option: click.Option, ctx: click.Context) -> str | None:
+    """The default that `--help` shows, or None where it shows none.
+
+    `--help` shows a default only for an option with `show_default`, and shows
+    the string itself where `show_default` is one.
+    """
+    if isinstance(option.show_default, str):
+        return option.show_default
+    if not option.show_default:
+        return None
+    value = option.get_default(ctx, call=False)
     if isinstance(value, bool) or not isinstance(value, int | str):
         return None
     return str(value)
@@ -78,13 +143,11 @@ def _option_line(option: click.Option, ctx: click.Context) -> str:
     elif isinstance(option.type, click.Choice):
         value = " `" + "|".join(str(choice) for choice in option.type.choices) + "`"
     else:
-        value = f" `{option.make_metavar(ctx)}`"
-        if isinstance(option.type, click.IntRange):
-            value = " `INTEGER`"
+        value = f" `{_metavar(option)}`"
 
     facts: list[str] = []
     if isinstance(option.type, click.IntRange):
-        facts.append(f"{option.type.min} to {option.type.max}")
+        facts.append(_bounds(option.type))
     default = _default(option, ctx)
     if default is not None:
         facts.append(f"default `{default}`")
@@ -93,8 +156,9 @@ def _option_line(option: click.Option, ctx: click.Context) -> str:
     if option.required:
         facts.append("required")
     said = f" ({', '.join(facts)})" if facts else ""
+    where = f"{ctx.command_path} {option.opts[0]}"
 
-    return f"- {names}{value}{said}: {option.help or ''}".rstrip()
+    return f"- {names}{value}{said}: {_prose(option.help or '', where)}".rstrip()
 
 
 def _visible_options(command: click.Command) -> list[click.Option]:
@@ -116,7 +180,7 @@ def _arguments(command: click.Command, ctx: click.Context) -> list[str]:
 def _command_section(command: click.Command, ctx: click.Context, level: str) -> list[str]:
     """The heading, usage, help and options of one command that is not a group."""
     lines = [f"{level} {ctx.command_path}", "", "```", _usage(command, ctx), "```", ""]
-    lines += [_help(command), ""]
+    lines += [_help(command, ctx), ""]
 
     arguments = _arguments(command, ctx)
     if arguments:
@@ -138,13 +202,25 @@ def _subcommands(group: click.Group, ctx: click.Context) -> Iterable[tuple[str, 
             yield name, command
 
 
+def _leaves(group: click.Group, ctx: click.Context) -> Iterable[tuple[str, click.Command]]:
+    """The commands of a top-level group, refusing a group inside it.
+
+    The pages have one level of commands under each group. A nested group would
+    otherwise be printed as a command, with its own commands left out.
+    """
+    for name, command in _subcommands(group, ctx):
+        if isinstance(command, click.Group):
+            raise ValueError(f"{ctx.command_path} {name} is a nested group; extend the generator")
+        yield name, command
+
+
 def _page(name: str, command: click.Command, root: click.Context) -> str:
     ctx = click.Context(command, info_name=name, parent=root)
     if not isinstance(command, click.Group):
         lines = [GENERATED, "", *_command_section(command, ctx, "#")]
     else:
-        lines = [GENERATED, "", f"# {ctx.command_path}", "", _help(command), ""]
-        for sub_name, sub in _subcommands(command, ctx):
+        lines = [GENERATED, "", f"# {ctx.command_path}", "", _help(command, ctx), ""]
+        for sub_name, sub in _leaves(command, ctx):
             sub_ctx = click.Context(sub, info_name=sub_name, parent=ctx)
             lines += _command_section(sub, sub_ctx, "##")
     return "\n".join(lines).rstrip() + "\n"
@@ -155,7 +231,7 @@ def _without_globals(root: click.Context) -> Iterable[str]:
     for name, command in _subcommands(cli, root):
         ctx = click.Context(command, info_name=name, parent=root)
         leaves = (
-            [(f"{name} {sub_name}", sub) for sub_name, sub in _subcommands(command, ctx)]
+            [(f"{name} {sub_name}", sub) for sub_name, sub in _leaves(command, ctx)]
             if isinstance(command, click.Group)
             else [(name, command)]
         )
@@ -170,7 +246,7 @@ def _index(root: click.Context) -> str:
         "",
         "# Command reference",
         "",
-        _help(cli),
+        _help(cli, root),
         "",
         "Each page below covers one command, or one group of commands. It gives",
         "each command's usage line, its help text and its options. The pages are",
@@ -182,11 +258,10 @@ def _index(root: click.Context) -> str:
         lines.append(f"- [`{PROGRAM} {name}`]({name}.md): {summary}")
     lines.append("")
 
-    # Every verb that takes the global options declares the same visible copies;
-    # `doctor` is one of them.
-    doctor = cli.get_command(root, "doctor")
-    assert doctor is not None
-    doctor_ctx = click.Context(doctor, info_name="doctor", parent=root)
+    # The options come from a command built with the decorator every verb uses,
+    # so that no single verb decides what the list holds. It is never invoked.
+    shown = click.command("global")(global_options(lambda **_: None))
+    shown_ctx = click.Context(shown, info_name="global", parent=root)
     without = sorted(_without_globals(root))
     except_these = f" except {', '.join(f'`{name}`' for name in without)}" if without else ""
     lines += [
@@ -195,8 +270,8 @@ def _index(root: click.Context) -> str:
         f"Every command{except_these} takes these options, after the command name.",
         "",
         *(
-            _option_line(option, doctor_ctx)
-            for option in _visible_options(doctor)
+            _option_line(option, shown_ctx)
+            for option in _visible_options(shown)
             if option.name in GLOBAL_NAMES
         ),
         "",

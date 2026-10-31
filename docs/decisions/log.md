@@ -3874,7 +3874,8 @@ the register.
   expire-password` are refused at plan time by the absent `expire_password`
   capability. `suspend` issues `ALTER ROLE … NOLOGIN`, and the reset refuses a
   `NOLOGIN` role. A reset of a role whose `VALID UNTIL` has passed clears it
-  to `infinity`, in a statement of its own that runs only then.
+  to `infinity`, in the same `ALTER ROLE` as the password, so the two change
+  together or not at all. A date still to come is left alone.
 - **Why:** A grant with `INHERIT` or `SET` lets its member use or become the
   role, whichever option it has. A grant with neither lets the member only
   manage the role's members. From PostgreSQL 16 a role's creator holds, by default, such a

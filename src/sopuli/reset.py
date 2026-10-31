@@ -329,7 +329,7 @@ def decide(
     if application is not None:
         return Decision(proceed=False, state=SKIPPED, detail=application)
 
-    if deliberately_locked(state.status):
+    if state.deliberately_locked or deliberately_locked(state.status):
         return Decision(
             proceed=False,
             state=SKIPPED,

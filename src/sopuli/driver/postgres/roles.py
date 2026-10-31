@@ -280,6 +280,7 @@ def state_of(row: tuple[Any, ...]) -> UserState:
         name=str(name),
         status=_status(can_login=bool(can_login), expired=bool(expired)),
         locked=not can_login,
+        deliberately_locked=not can_login,
         expired=bool(expired),
         password_expires_at=valid_until if isinstance(valid_until, datetime) else None,
         password_changed_unknown=NO_CHANGE_DATE,

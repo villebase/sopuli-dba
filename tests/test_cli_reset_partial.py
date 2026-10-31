@@ -34,6 +34,7 @@ from sopuli.diagnostics import encryption_diagnostics, no_reset_record
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ENCRYPTION_TLS,
+    EXPIRE_PASSWORD,
     PASSWORD_SET,
     ROLLOVER_FINISH,
     AccountChange,
@@ -42,6 +43,7 @@ from sopuli.driver.protocol import (
     Encryption,
     PartialAccountChangeError,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
 )
 from sopuli.exit_codes import ExitCode
@@ -131,6 +133,8 @@ class FakeSession:
         self.encryption = Encryption(method=ENCRYPTION_TLS, protocol="tcps")
         #: What the audit check answers; a test about it sets its own.
         self.audited = AuditCoverage(audited=True, detail="LOGON by P; ALTER USER by P")
+        #: Oracle's, which can expire a password, so the seen path is allowed.
+        self.capabilities = frozenset({EXPIRE_PASSWORD})
 
     def describe_user(self, account: str) -> UserState | None:
         # Check 3 answered, as on a target that took §2's optional grant, so the
@@ -138,7 +142,7 @@ class FakeSession:
         return UserState(name=account.upper(), status=self.status, password_file_member=False)
 
     def scope(self) -> Scope:
-        return Scope(encryption=self.encryption)
+        return Scope(encryption=self.encryption, capabilities=self.capabilities)
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         return self.audited
@@ -1042,6 +1046,25 @@ def test_the_seen_path_does_not_ask(
     assert "audited" not in row
     assert "audited_detail" not in row
     assert session.asked == []
+
+
+def test_the_seen_path_is_refused_where_the_target_cannot_expire_a_password(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """A PostgreSQL target has no `expire_password` (#1201), so a seen reset
+    stops at plan time with exit 5 naming it, before any password is drawn.
+    Shown as a preview: the real seen run needs a terminal, and the check runs
+    before the preview returns, so both stop at the same line."""
+    session = Asked("OPEN", DENIED)
+    session.capabilities = frozenset()
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(MANUAL), "--dry-run")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError), result.output
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "expire_password" in str(result.exception)
+    assert session.reset == []
 
 
 def test_a_refused_row_does_not_ask(

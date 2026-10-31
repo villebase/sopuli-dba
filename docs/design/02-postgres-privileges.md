@@ -87,8 +87,9 @@ it no other attribute. §3 lists the ones that must not be given.
 
 ### 2.2 Each managed role
 
-A managed role is one that the config declares as an account on this target.
-How the tool account is given each one depends on the release.
+A managed role is one that the config declares as an account on this target:
+an application's role, or a personal role that `account reset-password` may
+reset. How the tool account is given each one depends on the release.
 
 **From 16**, grant each managed role to the tool account with `ADMIN OPTION`,
 and with `INHERIT FALSE` and `SET FALSE`:

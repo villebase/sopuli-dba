@@ -699,6 +699,12 @@ class UserState:
     name: str
     status: str
     locked: bool = False
+    #: A person locked the account, as `account suspend` does, so a reset
+    #: refuses it (H4). A lock a failed-login limit set is not one. Oracle's
+    #: status tells the two apart, and :func:`sopuli.reset.decide` parses it;
+    #: a driver whose lock has no timed form sets this instead, as PostgreSQL
+    #: does for ``NOLOGIN`` (#1201).
+    deliberately_locked: bool = False
     #: The password has **stopped working**. Deliberately not true of an account
     #: in its grace period, which is :attr:`in_grace` -- Oracle spells that
     #: ``EXPIRED(GRACE)``, and the token ``EXPIRED`` is inside it. Reading the two

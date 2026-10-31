@@ -2259,7 +2259,9 @@ def account_reset_password(
     # Before any password is drawn (#857), and after the refusals above, which
     # need no connection. Under `--dry-run` too: a preview that said "would be
     # reset" over a connection the run would refuse would be wrong.
-    _require_encryption(reached, run, config)
+    scopes: dict[str, Scope | None] = {}
+    _require_encryption(reached, run, config, scopes=scopes)
+    _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
 
     header = render_plan(plan, noun="account")
     if not reached:
@@ -9478,6 +9480,41 @@ def _require_encryption(
         refusal = _unencrypted(scope.encryption, target=expanded.name, location=location)
         if refusal is not None:
             raise refusal
+
+
+def _require_seen_expiry(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    delivery: Delivery,
+    scopes: dict[str, Scope | None],
+) -> None:
+    """Refuse a seen reset, at plan time, on a target that cannot expire a
+    password (#1201).
+
+    The seen path's expiry is what ends the DBA's exposure (UC-2 §1), so a
+    target without ``expire_password`` cannot take it: PostgreSQL has no "change
+    the password at next login". Exit 5, naming the target, before any password
+    is drawn. One connection per target on the seen path, shared through
+    ``scopes`` with :func:`_require_encryption`, and none on an unseen one. A
+    target this cannot reach is left to the run, where the driver refuses the
+    reset before it sends anything.
+    """
+    if not delivery.is_seen:
+        return
+    for expanded in targets:
+        scope = _plan_scope(expanded, run, config, scopes)
+        if scope is not None and not scope.supports(EXPIRE_PASSWORD):
+            raise UnsupportedCapabilityError(
+                EXPIRE_PASSWORD,
+                target=expanded.name,
+                hint=(
+                    "the seen path expires the password so that the copy the DBA saw "
+                    "stops working at the owner's first login (UC-2 §1), and this target "
+                    "cannot expire one; use an unseen delivery method"
+                ),
+            )
 
 
 def _unencrypted(

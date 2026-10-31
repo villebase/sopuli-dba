@@ -8,8 +8,9 @@ This document specifies `personal_accounts:`, `sopuli account reset-password`,
 `sopuli account list`. The reset is built for the `manual`, `vault_wrapped`,
 `vault_path`, `one_time_link` and `onepassword_share` delivery methods; §6.2
 lists the method that is not built yet. §9 lists the open questions. On
-PostgreSQL only `account list` is built; the other verbs refuse a PostgreSQL
-target with `SOPULI-20006`.
+PostgreSQL, `account list` and the unseen `account reset-password` are built
+(§4.1). The seen reset is refused there with exit 5, and the other verbs refuse
+a PostgreSQL target with `SOPULI-20006`.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -813,6 +814,30 @@ applies on both paths:
   not been probed on any release** (unverified: expire-ddl-text). Oracle's masking
   is keyed to the statement type, which gives no reason to expect a difference,
   but that is not a measurement. Quote none of these results without the release.
+
+**On PostgreSQL a reset is one statement**, and only on the unseen path. The
+password goes as a SCRAM verifier computed on the client, as in UC-1
+(invariant 15):
+
+```sql
+-- the reset itself
+ALTER ROLE "<role>" PASSWORD 'SCRAM-SHA-256$…'
+-- where the role's VALID UNTIL has passed
+ALTER ROLE "<role>" PASSWORD 'SCRAM-SHA-256$…' VALID UNTIL 'infinity'
+```
+
+PostgreSQL cannot make a role change its password at its next login, so the
+seen path has nothing to end the DBA's exposure. It is refused at plan time by
+the absent `expire_password` capability, exit 5, before a password is drawn.
+PostgreSQL has no lock that a failed-login limit sets, so there is no statement
+1, and every `NOLOGIN` role is a deliberate lock that the reset refuses as
+`SKIPPED`. A role past its `VALID UNTIL` cannot log in with any password. The
+reset clears the date in the same statement as the password, so the two change
+together or not at all, and reports it in statement 1's row. A date still to
+come is left alone. There is no rollover window, so there is no statement 3.
+The tool account needs `ADMIN OPTION` on the role, as for an application role
+(`02-postgres-privileges.md` §2.2). Reasons:
+[#1201](../decisions/log.md#1201).
 
 **The store write and the DDL are two steps, and neither order is free.** Setting
 the password first and failing the write leaves an account nobody knows the

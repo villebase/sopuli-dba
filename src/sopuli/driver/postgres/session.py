@@ -56,11 +56,15 @@ from sopuli.driver.postgres.roles import describe, members_of
 from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
 from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
+    EXPIRE_PASSWORD,
     OFFLINE_VERIFY,
     PASS,
     PASSWORD_ROLLOVER,
+    PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
+    ROLLOVER_FINISH,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
@@ -88,6 +92,13 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("postgres")
+
+#: The hint for a seen reset on a cluster.
+NO_EXPIRY = (
+    "PostgreSQL cannot make a role change its password at its next login, and the "
+    "seen path's expiry is what ends the DBA's exposure (UC-2 §1); use an unseen "
+    "delivery method"
+)
 
 #: The hint for a `profile:` predicate on a cluster.
 NO_PROFILES = (
@@ -256,6 +267,14 @@ class PostgresSession:
         unencrypted connection apply to it as they would to a password.
         """
         admit(secret)
+        state = self._role_to_set(account)
+        self._send_password(state.name, secret)
+        return ChangeResult(changed=True, detail="password set")
+
+    def _role_to_set(self, account: str) -> UserState:
+        """The role whose password is about to be set, after the refusals that
+        come before anything is sent: a read-only target, a server that cannot
+        store a SCRAM verifier, and a role that does not exist."""
         scope = self.scope()
         require_read_write(scope, target=self.target.name)
         major = _major(scope.db_version)
@@ -278,17 +297,24 @@ class PostgresSession:
                     "ACCOUNT_MISSING rather than failing"
                 ),
             )
-        computed = verifier(self.connection.pgconn, state.name, secret)
+        return state
+
+    def _send_password(self, role: str, secret: Secret, *, clear_valid_until: bool = False) -> None:
+        """Compute the verifier and send the one ``ALTER ROLE``. A failure once
+        the statement is handed over has ``password_sent`` set."""
+        computed = verifier(self.connection.pgconn, role, secret)
         try:
             with self._cursor() as cursor:
-                cursor.execute(alter_role(state.name, computed))
+                cursor.execute(alter_role(role, computed, clear_valid_until=clear_valid_until))
         except DriverError as error:
             error.password_sent = True
             raise
         LOG.debug(
-            "ALTER ROLE %s PASSWORD <SCRAM-SHA-256 verifier> on %s", state.name, self.target.name
+            "ALTER ROLE %s PASSWORD <SCRAM-SHA-256 verifier>%s on %s",
+            role,
+            " VALID UNTIL 'infinity'" if clear_valid_until else "",
+            self.target.name,
         )
-        return ChangeResult(changed=True, detail="password set")
 
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend a role")
@@ -296,7 +322,66 @@ class PostgresSession:
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
     ) -> tuple[AccountChange, ...]:
-        raise self._not_written("reset a password")
+        """UC-2 §4.1 on a cluster: one statement, reported as the three rows
+        the protocol names (#1201).
+
+        **Refusals come before anything is sent**, as on Oracle: a seen reset
+        (``expire``), because PostgreSQL cannot make a role change its password
+        at its next login, and that expiry is what ends the DBA's exposure; then
+        :meth:`_role_to_set`'s; then a ``NOLOGIN`` role, which a person
+        suspended (H4). PostgreSQL has no lock that a failed-login limit sets,
+        so every ``NOLOGIN`` is deliberate.
+
+        **A ``VALID UNTIL`` that has passed is cleared to ``infinity``** in the
+        same ``ALTER ROLE`` as the password, so the two change together or not
+        at all. A role past its date cannot log in with any password, and a
+        reset exists to end that state, as Oracle's reset clears a timed lock. A
+        date still to come is left alone. The first row reports it, in the
+        place of Oracle's unlock.
+
+        PostgreSQL has no rollover window, so the third row never issues
+        anything, whatever ``keep_rollover`` says.
+        """
+        if expire:
+            require_capability(
+                self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=NO_EXPIRY
+            )
+        admit(secret)
+        state = self._role_to_set(account)
+        if state.deliberately_locked:
+            raise DriverError(
+                f'role "{state.name}" cannot log in (NOLOGIN), and a reset does not change that',
+                hint=(
+                    "NOLOGIN is somebody's decision -- `account suspend`, usually -- and "
+                    "handing the role a working password would undo it silently. Run "
+                    "ALTER ROLE … LOGIN first if that is what you mean (H4)"
+                ),
+            )
+        self._send_password(state.name, secret, clear_valid_until=state.expired)
+        if state.expired:
+            cleared = AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=True,
+                status=state.status,
+                detail="VALID UNTIL had passed; set to infinity with the password",
+            )
+        else:
+            cleared = AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=False,
+                status=state.status,
+                detail="the role can log in; VALID UNTIL has not passed",
+            )
+        return (
+            cleared,
+            AccountChange(PASSWORD_SET, changed=True, status=state.status, detail="password set"),
+            AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=state.status,
+                detail="PostgreSQL has no rollover window",
+            ),
+        )
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
         raise self._not_written("expire a password")

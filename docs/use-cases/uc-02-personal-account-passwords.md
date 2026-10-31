@@ -834,7 +834,12 @@ PostgreSQL has no lock that a failed-login limit sets, so there is no statement
 `SKIPPED`. A role past its `VALID UNTIL` cannot log in with any password. The
 reset clears the date in the same statement as the password, so the two change
 together or not at all, and reports it in statement 1's row. A date still to
-come is left alone. There is no rollover window, so there is no statement 3.
+come is left alone. This is Oracle's behaviour for an expired password:
+PostgreSQL defines `VALID UNTIL` as the time the role's password stops being
+valid, and the driver reports a past one as `EXPIRED`. So on PostgreSQL, end a
+person's account with `NOLOGIN` (`account suspend`), not with `VALID UNTIL`,
+because a reset clears a past `VALID UNTIL`. There is no rollover window, so
+there is no statement 3.
 The tool account needs `ADMIN OPTION` on the role, as for an application role
 (`02-postgres-privileges.md` §2.2). Reasons:
 [#1201](../decisions/log.md#1201).

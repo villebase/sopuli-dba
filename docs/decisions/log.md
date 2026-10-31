@@ -3899,4 +3899,9 @@ the register.
     so a role that authenticates by certificate, GSS or peer would stay usable.
   - Refusing the reset of a role whose `VALID UNTIL` has passed, or resetting
     it and warning. The first leaves the owner locked out until somebody edits
-    the role by hand. The second hands over a password that cannot log in.
+    the role by hand. The second hands over a password that cannot log in. The
+    review of #1209 raised the refusal again, for a contractor's end date set
+    with `VALID UNTIL`. It was kept out because clearing matches Oracle, whose
+    reset clears an expired password: PostgreSQL defines `VALID UNTIL` as the
+    end of the password's validity, not the account's. UC-2 §4.1 says to end
+    an account with `NOLOGIN` instead.

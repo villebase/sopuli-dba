@@ -22,6 +22,7 @@ from sopuli.driver.guardrails import (
     review,
 )
 from sopuli.driver.postgres.roles import (
+    COUNTING_GRANT,
     MEMBERS_QUERY,
     NO_CHANGE_DATE,
     RESERVED_ROLES,
@@ -53,6 +54,7 @@ def _row(
     valid_until: datetime | None = None,
     expired: bool = False,
     member_of: tuple[str, ...] = (),
+    counted_in: tuple[str, ...] | None = None,
     reserved_roles: str | None = None,
 ) -> tuple[Any, ...]:
     return (
@@ -67,6 +69,7 @@ def _row(
         valid_until,
         expired,
         list(member_of),
+        list(member_of if counted_in is None else counted_in),
         reserved_roles,
     )
 
@@ -133,6 +136,20 @@ def test_memberships_are_upper_cased_as_the_protocol_says() -> None:
 
     assert state.roles == frozenset({"ACME_READERS"})
     assert state.admin_roles == frozenset()
+
+
+def test_a_predicate_admits_by_counting_grants_only() -> None:
+    """A role's creator holds it by an ADMIN-only grant, which a `role:`
+    predicate does not count (#1201)."""
+    state = state_of(_row(member_of=("acme_dev_team",), counted_in=()))
+
+    assert state.roles == frozenset()
+
+
+def test_check_four_walks_every_grant_whatever_its_options() -> None:
+    """An ADMIN-only member of a guarded role can grant it on, so it is
+    refused although a predicate would not count the grant."""
+    assert _checks(member_of=("pg_read_all_data",), counted_in=()) == {PRIVILEGED_ROLE}
 
 
 # ------------------------------------------------------- what each refuses ---
@@ -348,11 +365,21 @@ def test_the_members_are_every_role_below_the_named_one() -> None:
     assert params == ("acme_dev_team",)
 
 
-def test_the_members_walk_the_grants_down_whatever_their_options() -> None:
-    """The walk ROLE_QUERY makes, the other way, and with no filter on the
-    grant's INHERIT or SET option (#1201, decision 4)."""
+def test_the_members_walk_down_the_grants_a_predicate_counts() -> None:
+    """ROLE_QUERY's counting walk, the other way: every step, the first too,
+    keeps only a grant with INHERIT or SET (#1201)."""
     assert "with recursive" in MEMBERS_QUERY
     assert "m.roleid = members.oid" in MEMBERS_QUERY
-    assert "inherit" not in MEMBERS_QUERY.lower()
-    assert "set_option" not in MEMBERS_QUERY.lower()
+    assert MEMBERS_QUERY.count(COUNTING_GRANT) == 2
+    assert ROLE_QUERY.count(COUNTING_GRANT) == 2, "both steps of the second walk"
     assert "rolcanlogin" not in MEMBERS_QUERY, "a NOLOGIN member is still admitted"
+
+
+def test_a_grant_counts_by_either_option_and_every_grant_counts_without_them() -> None:
+    """``to_jsonb`` gives NULL for a column the server does not have, so a
+    server without the options counts every grant, with no version read."""
+    assert "'inherit_option'" in COUNTING_GRANT
+    assert "'set_option'" in COUNTING_GRANT
+    assert " or " in COUNTING_GRANT
+    assert COUNTING_GRANT.startswith("coalesce(")
+    assert COUNTING_GRANT.endswith(", true)")

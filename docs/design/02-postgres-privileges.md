@@ -323,8 +323,11 @@ in case are refused, because the config cannot tell them apart.
 A `role:` predicate in `personal_accounts:` is resolved from the same two
 catalogs, so it needs no grant either. The role is matched as an account name
 is, and its members are found by walking `pg_auth_members` down from it, through
-any chain of grants (UC-2 §2). Because any role can read `pg_roles`, the driver
-always reports `role_lookup`.
+grants that have `INHERIT` or `SET` (UC-2 §2). The guardrails' walk for check 4
+follows every grant, because a member that holds a guarded role only with
+`ADMIN OPTION` can still grant it on. A server without the two options counts
+every grant. Because any role can read `pg_roles`, the driver always reports
+`role_lookup`.
 
 ---
 

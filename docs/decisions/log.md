@@ -3868,15 +3868,20 @@ the register.
   `role:` predicate? What do the seen path, `suspend`, and a reset of a role
   whose `VALID UNTIL` has passed do on a cluster?
 - **Decision:** A `role:` predicate admits membership through any chain of
-  `pg_auth_members` grants, whatever their `INHERIT` and `SET` options, and a
-  `NOLOGIN` member is admitted. The seen (`manual`) path and `account
+  `pg_auth_members` grants that each have `INHERIT` or `SET`, and a `NOLOGIN`
+  member is admitted. A grant with neither does not count. A server without
+  the two options counts every grant. The seen (`manual`) path and `account
   expire-password` are refused at plan time by the absent `expire_password`
   capability. `suspend` issues `ALTER ROLE … NOLOGIN`, and the reset refuses a
   `NOLOGIN` role. A reset of a role whose `VALID UNTIL` has passed clears it
   to `infinity`, in a statement of its own that runs only then.
-- **Why:** A membership is what was granted, whatever its options, and
-  `describe_user` already walks every chain for the guardrails. A listing that
-  walked fewer would show fewer accounts than a mutating verb admits. PostgreSQL
+- **Why:** A grant with `INHERIT` or `SET` lets its member use or become the
+  role, whichever option it has. A grant with neither lets the member only
+  manage the role's members. From PostgreSQL 16 a role's creator holds such a
+  grant, with `ADMIN OPTION`, so counting it would admit the tool account, a
+  DBA's admin role, or `postgres` on a managed service. The review of #1206
+  found this. The listing and the mutating verbs count the same grants, so they
+  admit the same accounts. The guardrails still walk every grant. PostgreSQL
   has no "change the password at next logon", and the seen path's expiry is
   what ends the DBA's exposure. `NOLOGIN` blocks every authentication method,
   and PostgreSQL has no timed lock to confuse it with. A past `VALID UNTIL`
@@ -3885,6 +3890,7 @@ the register.
 - **Rejected:**
   - Only chains whose grants carry `INHERIT`. A member through a `SET` grant
     can still act as the role.
+  - Every grant, whatever its options. It admits each role's creator.
   - A short `VALID UNTIL` for the seen path. The DBA's copy would work until
     that time instead of until the owner's first logon, and after it the owner
     could not log in.

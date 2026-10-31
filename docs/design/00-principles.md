@@ -148,8 +148,7 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `account_lock_state` | Read and set lock state | yes |
 | `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles` |
 
-A PostgreSQL session reports none of these yet: its driver connects and reports
-the scope, and does nothing a capability names.
+A PostgreSQL session reports `role_lookup` and none of the others.
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.

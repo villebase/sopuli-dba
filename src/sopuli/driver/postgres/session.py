@@ -39,6 +39,7 @@ import psycopg
 from psycopg import pq
 
 from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.driver.postgres import roles
 from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, client_lines, libpq_release
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
@@ -51,7 +52,7 @@ from sopuli.driver.postgres.password import (
     verifier,
 )
 from sopuli.driver.postgres.privileges import audit
-from sopuli.driver.postgres.roles import describe, members_of, resolve_role
+from sopuli.driver.postgres.roles import describe, members_of
 from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
 from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
@@ -325,23 +326,25 @@ class PostgresSession:
         open to every role, so :data:`ROLE_LOOKUP` is always reported."""
         require_capability(self.scope(), ROLE_LOOKUP, target=self.target.name)
         with self._cursor() as cursor:
-            return resolve_role(cursor, role, target=self.target.name)
+            return roles.resolve_role(cursor, role, target=self.target.name)
 
     def accounts_matching(
         self, *, profile: str | None = None, role: str | None = None
     ) -> tuple[str, ...]:
-        """Every role that is a member of ``role``, through any chain of grants
-        (:func:`~sopuli.driver.postgres.roles.members_of`). A ``profile`` is
-        refused as :meth:`resolve_profile` refuses it."""
+        """Every role that is a member of ``role`` by grants with ``INHERIT`` or
+        ``SET`` (:func:`~sopuli.driver.postgres.roles.members_of`). A
+        ``profile`` is refused as :meth:`resolve_profile` refuses it."""
         if (profile is None) == (role is None):
             raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
         if profile is not None:
             self.resolve_profile(profile)
             return ()  # pragma: no cover -- resolve_profile always raises
         assert role is not None
+        spelled = self.resolve_role(role)
+        if spelled is None:
+            return ()
         with self._cursor() as cursor:
-            spelled = resolve_role(cursor, role, target=self.target.name)
-            return () if spelled is None else members_of(cursor, spelled)
+            return members_of(cursor, spelled)
 
     def verify_password(
         self,

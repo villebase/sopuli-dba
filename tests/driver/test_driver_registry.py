@@ -215,8 +215,8 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
     assert (
-        "can run only `doctor`, `creds apply`, `creds check`, `creds finish-rollover`, "
-        "`creds generate`, `creds rotate`, `creds status` there yet"
+        "can run only `doctor`, `account list`, `creds apply`, `creds check`, "
+        "`creds finish-rollover`, `creds generate`, `creds rotate`, `creds status` there yet"
     ) in refused.value.message
     assert "`account reset-password` is not written for it" in str(refused.value.hint)
 
@@ -224,6 +224,11 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
 def test_creds_check_is_let_through_on_postgresql() -> None:
     """#1067: the driver verifies by login, so `creds check` runs there."""
     require_command(target("pg-dev", "postgresql"), "creds.check")
+
+
+def test_account_list_is_let_through_on_postgresql() -> None:
+    """#1201: the driver resolves a `role:` predicate, so `account list` runs."""
+    require_command(target("pg-dev", "postgresql"), "account.list")
 
 
 def test_a_driver_written_for_every_command_refuses_none() -> None:
@@ -242,10 +247,11 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
     assert "can run only `doctor`, `creds apply` there yet" in refused.value.message
 
 
-def test_postgresql_is_written_for_uc1_and_nothing_else_yet() -> None:
+def test_postgresql_is_written_for_uc1_and_account_list() -> None:
     """Pinned so that adding a command is a deliberate, reviewed line."""
     assert DRIVERS["postgresql"].commands == frozenset(
         {
+            "account.list",
             "creds.check",
             "creds.apply",
             "creds.rotate",

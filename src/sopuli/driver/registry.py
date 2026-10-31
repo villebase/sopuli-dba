@@ -162,8 +162,11 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # rotate`, `generate`, `status` and `finish-rollover`, whose modes
         # PostgreSQL lacks are refused at plan time by capability (#1072). A
         # role never has a rollover window, so `finish-rollover` finds none.
+        # UC-2: `account list`, where a `profile:` predicate is refused by
+        # capability, because a cluster has no profiles (#1201).
         commands=frozenset(
             {
+                "account.list",
                 "creds.check",
                 "creds.apply",
                 "creds.rotate",

@@ -22,12 +22,17 @@ from sopuli.driver.guardrails import (
     review,
 )
 from sopuli.driver.postgres.roles import (
+    COUNTING_GRANT,
+    MEMBERS_QUERY,
     NO_CHANGE_DATE,
     RESERVED_ROLES,
+    ROLE_NAME_QUERY,
     ROLE_QUERY,
     AmbiguousRoleError,
     describe,
+    members_of,
     reserved_names,
+    resolve_role,
     state_of,
 )
 from sopuli.exit_codes import ExitCode
@@ -49,6 +54,7 @@ def _row(
     valid_until: datetime | None = None,
     expired: bool = False,
     member_of: tuple[str, ...] = (),
+    counted_in: tuple[str, ...] | None = None,
     reserved_roles: str | None = None,
 ) -> tuple[Any, ...]:
     return (
@@ -63,6 +69,7 @@ def _row(
         valid_until,
         expired,
         list(member_of),
+        list(member_of if counted_in is None else counted_in),
         reserved_roles,
     )
 
@@ -129,6 +136,20 @@ def test_memberships_are_upper_cased_as_the_protocol_says() -> None:
 
     assert state.roles == frozenset({"ACME_READERS"})
     assert state.admin_roles == frozenset()
+
+
+def test_a_predicate_admits_by_counting_grants_only() -> None:
+    """A role's creator holds it by an ADMIN-only grant, which a `role:`
+    predicate does not count (#1201)."""
+    state = state_of(_row(member_of=("acme_dev_team",), counted_in=()))
+
+    assert state.roles == frozenset()
+
+
+def test_check_four_walks_every_grant_whatever_its_options() -> None:
+    """An ADMIN-only member of a guarded role can grant it on, so it is
+    refused although a predicate would not count the grant."""
+    assert _checks(member_of=("pg_read_all_data",), counted_in=()) == {PRIVILEGED_ROLE}
 
 
 # ------------------------------------------------------- what each refuses ---
@@ -303,3 +324,62 @@ def test_the_memberships_walk_the_grants_that_exist() -> None:
     assert "pg_auth_members" in ROLE_QUERY
     assert "with recursive" in ROLE_QUERY
     assert "pg_has_role" not in ROLE_QUERY
+
+
+# ------------------------------------------------ a `role:` predicate (#1201) ---
+
+
+def test_a_role_is_resolved_to_the_spelling_pg_roles_gives() -> None:
+    cursor = _Cursor([("acme_dev_team",)])
+
+    assert resolve_role(cursor, "ACME_DEV_TEAM", target="pg-dev") == "acme_dev_team"
+    ((query, params),) = cursor.executed
+    assert query == ROLE_NAME_QUERY
+    assert params == ("ACME_DEV_TEAM",)
+
+
+def test_a_role_that_does_not_exist_resolves_to_none() -> None:
+    assert resolve_role(_Cursor([("acme_ö_team",)]), "acme_ä_team", target="pg-dev") is None
+
+
+def test_two_roles_that_differ_only_in_case_refuse_a_predicate() -> None:
+    cursor = _Cursor([("acme_dev_team",), ("ACME_DEV_TEAM",)])
+
+    with pytest.raises(AmbiguousRoleError) as refused:
+        resolve_role(cursor, "acme_dev_team", target="pg-dev")
+
+    assert '"ACME_DEV_TEAM", "acme_dev_team"' in refused.value.message
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_the_members_are_every_role_below_the_named_one() -> None:
+    cursor = _Cursor([("acme_dev_alice",), ("acme_dev_bob",), ("acme_dev_leads",)])
+
+    assert members_of(cursor, "acme_dev_team") == (
+        "acme_dev_alice",
+        "acme_dev_bob",
+        "acme_dev_leads",
+    )
+    ((query, params),) = cursor.executed
+    assert query == MEMBERS_QUERY
+    assert params == ("acme_dev_team",)
+
+
+def test_the_members_walk_down_the_grants_a_predicate_counts() -> None:
+    """ROLE_QUERY's counting walk, the other way: every step, the first too,
+    keeps only a grant with INHERIT or SET (#1201)."""
+    assert "with recursive" in MEMBERS_QUERY
+    assert "m.roleid = members.oid" in MEMBERS_QUERY
+    assert MEMBERS_QUERY.count(COUNTING_GRANT) == 2
+    assert ROLE_QUERY.count(COUNTING_GRANT) == 2, "both steps of the second walk"
+    assert "rolcanlogin" not in MEMBERS_QUERY, "a NOLOGIN member is still admitted"
+
+
+def test_a_grant_counts_by_either_option_and_every_grant_counts_without_them() -> None:
+    """``to_jsonb`` gives NULL for a column the server does not have, so a
+    server without the options counts every grant, with no version read."""
+    assert "'inherit_option'" in COUNTING_GRANT
+    assert "'set_option'" in COUNTING_GRANT
+    assert " or " in COUNTING_GRANT
+    assert COUNTING_GRANT.startswith("coalesce(")
+    assert COUNTING_GRANT.endswith(", true)")

@@ -320,6 +320,15 @@ A name is matched by `upper()`, as the config compares names (invariant 5). The
 role keeps the spelling `pg_roles` gives back. Two roles whose names differ only
 in case are refused, because the config cannot tell them apart.
 
+A `role:` predicate in `personal_accounts:` is resolved from the same two
+catalogs, so it needs no grant either. The role is matched as an account name
+is, and its members are found by walking `pg_auth_members` down from it, through
+grants that have `INHERIT` or `SET` (UC-2 §2). The guardrails' walk for check 4
+follows every grant, because a member that holds a guarded role only with
+`ADMIN OPTION` can still grant it on. A server without the two options counts
+every grant. Because any role can read `pg_roles`, the driver always reports
+`role_lookup`.
+
 ---
 
 ## 6. Where the password text can surface

@@ -16,7 +16,11 @@ field                           PostgreSQL
                                 (check 2)
 ``admin_roles``                 ``REPLICATION``, ``BYPASSRLS``, ``CREATEROLE``,
                                 and membership in a role of
-                                :data:`GUARDED_ROLES` (check 4)
+                                :data:`GUARDED_ROLES` through any grant
+                                (check 4)
+``roles``                       membership through grants with ``INHERIT``
+                                or ``SET``, which a `role:` predicate
+                                admits by (#1201)
 ``session_account``             the role is ``session_user`` (check 7)
 ``reserved_by``                 ``supautils.reserved_roles`` names the role
                                 (check 8)
@@ -104,9 +108,37 @@ EXPIRED = "EXPIRED"
 #: ``char_length`` differ. ``isfinite`` keeps ``infinity`` and ``-infinity``
 #: out of the date column, which Python's ``datetime`` cannot hold.
 #:
-#: The memberships walk ``pg_auth_members`` up from the role, through every
-#: chain of grants whatever their ``INHERIT`` and ``SET`` options, because a
-#: member can reach a role's powers either way. Walking the grants that exist,
+#: A grant that makes its member a member for a `role:` predicate: one with
+#: ``INHERIT`` or ``SET`` (#1201). From PostgreSQL 16 a role's creator holds
+#: it with ``ADMIN OPTION`` and, under the default ``createrole_self_grant``,
+#: neither, which lets it manage the role's members and nothing else. A server
+#: without the two columns gives ``NULL`` for both, and every grant there
+#: counts, as every member could ``SET ROLE``.
+#: Read through ``to_jsonb`` so that one query serves both, with no probe and
+#: no version (invariant 3).
+COUNTING_GRANT = (
+    "coalesce((to_jsonb(m) ->> 'inherit_option')::boolean "
+    "or (to_jsonb(m) ->> 'set_option')::boolean, true)"
+)
+
+
+def _held(condition: str) -> str:
+    """The roles ``r`` holds, walking ``pg_auth_members`` up through every
+    grant that meets ``condition``."""
+    return (
+        "array(with recursive held(oid) as ("
+        f"select m.roleid from pg_auth_members m where m.member = r.oid and {condition} "
+        "union select m.roleid from pg_auth_members m join held on m.member = held.oid "
+        f"where {condition}"
+        ") select b.rolname from held join pg_roles b on b.oid = held.oid order by b.rolname)"
+    )
+
+
+#: The memberships are walked twice. The first walk follows every chain of
+#: grants whatever their options, for guardrail 4: a member that holds a
+#: guarded role only with ``ADMIN OPTION`` can still grant it on, so it is
+#: refused either way. The second follows only :data:`COUNTING_GRANT` grants,
+#: and is what a `role:` predicate admits by. Walking the grants that exist,
 #: rather than asking ``pg_has_role`` of every role in the cluster, costs the
 #: role's own memberships, and does not report a superuser as a member of
 #: everything.
@@ -118,13 +150,32 @@ ROLE_QUERY = (
     f"r.rolcreaterole, r.oid < {FIRST_NORMAL_OID}, r.rolname = session_user, "
     "case when isfinite(r.rolvaliduntil) then r.rolvaliduntil end, "
     "coalesce(r.rolvaliduntil < now(), false), "
-    "array(with recursive held(oid) as ("
-    "select m.roleid from pg_auth_members m where m.member = r.oid "
-    "union select m.roleid from pg_auth_members m join held on m.member = held.oid"
-    ") select b.rolname from held join pg_roles b on b.oid = held.oid order by b.rolname), "
+    f"{_held('true')}, {_held(COUNTING_GRANT)}, "
     f"current_setting('{RESERVED_ROLES}', true) "
     "from pg_roles r where upper(r.rolname) = upper(%s) "
     "or octet_length(r.rolname) <> char_length(r.rolname)"
+)
+
+
+#: Every role whose name may match a declared role name: the ASCII names that
+#: match by the server's ``upper()``, and every non-ASCII name, which
+#: :func:`resolve_role` matches itself, for :data:`ROLE_QUERY`'s reason.
+ROLE_NAME_QUERY = (
+    "select rolname from pg_roles where upper(rolname) = upper(%s) "
+    "or octet_length(rolname) <> char_length(rolname)"
+)
+
+#: Every role that is a member of the named role through a chain of
+#: :data:`COUNTING_GRANT` grants (#1201): :data:`ROLE_QUERY`'s second walk,
+#: run the other way. The name is the spelling :func:`resolve_role` gave back,
+#: so it is compared exactly.
+MEMBERS_QUERY = (
+    "with recursive members(oid) as ("
+    "select m.member from pg_auth_members m join pg_roles g on g.oid = m.roleid "
+    f"where g.rolname = %s and {COUNTING_GRANT} "
+    "union select m.member from pg_auth_members m join members on m.roleid = members.oid "
+    f"where {COUNTING_GRANT}"
+    ") select r.rolname from members join pg_roles r on r.oid = members.oid order by r.rolname"
 )
 
 
@@ -154,20 +205,55 @@ def describe(cursor: Cursor, account: str, *, target: str) -> UserState | None:
     create roles. ``target`` is for the message only.
     """
     cursor.execute(ROLE_QUERY, (account,))
-    folded = account.upper()
-    rows = [row for row in cursor.fetchall() if str(row[0]).upper() == folded]
-    if not rows:
+    row = _one_match(cursor.fetchall(), account, target=target)
+    return None if row is None else state_of(row)
+
+
+def resolve_role(cursor: Cursor, role: str, *, target: str) -> str | None:
+    """The role ``role`` names on ``target``, as ``pg_roles`` spells it, or
+    ``None`` if there is none.
+
+    Matched as :func:`describe` matches an account, by Python's ``str.upper()``,
+    so a `role:` predicate names a role the way the config names an account.
+    Two roles that match are refused, as they are there.
+    """
+    cursor.execute(ROLE_NAME_QUERY, (role,))
+    row = _one_match(cursor.fetchall(), role, target=target)
+    return None if row is None else str(row[0])
+
+
+def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
+    """Every role that is a member of ``role``, directly or through another
+    role, by :data:`COUNTING_GRANT` grants, sorted by name.
+
+    ``role`` is the spelling :func:`resolve_role` gave back. A role is a member
+    whether or not it can log in: a group role in the chain is listed, and so
+    is a suspended person's ``NOLOGIN`` role. A listing must show exactly the
+    accounts a mutating verb would admit (``Session.accounts_matching``), and
+    the verb admits by :attr:`UserState.roles`, which :func:`describe` fills
+    from the same kind of grant.
+    """
+    cursor.execute(MEMBERS_QUERY, (role,))
+    return tuple(str(row[0]) for row in cursor.fetchall())
+
+
+def _one_match(rows: Any, name: str, *, target: str) -> tuple[Any, ...] | None:
+    """The one row whose first column matches ``name`` by ``str.upper()``,
+    ``None`` for none, and :class:`AmbiguousRoleError` for more than one."""
+    folded = name.upper()
+    matches = [row for row in rows if str(row[0]).upper() == folded]
+    if not matches:
         return None
-    if len(rows) > 1:
-        names = ", ".join(sorted(f'"{row[0]}"' for row in rows))
+    if len(matches) > 1:
+        names = ", ".join(sorted(f'"{row[0]}"' for row in matches))
         raise AmbiguousRoleError(
-            f'target "{target}": "{account}" matches more than one role: {names}',
+            f'target "{target}": "{name}" matches more than one role: {names}',
             hint=(
-                "the config compares account names by upper(), so it cannot tell these "
+                "the config compares role names by upper(), so it cannot tell these "
                 "apart; rename one of the roles, or leave both out of the config"
             ),
         )
-    return state_of(rows[0])
+    return tuple(matches[0])
 
 
 def state_of(row: tuple[Any, ...]) -> UserState:
@@ -184,10 +270,12 @@ def state_of(row: tuple[Any, ...]) -> UserState:
         valid_until,
         expired,
         member_of,
+        counted_in,
         reserved_roles,
     ) = row
     attributes = dict(zip(GUARDED_ATTRIBUTES, (replication, bypassrls, createrole), strict=True))
     held = frozenset(str(role) for role in member_of or ())
+    counted = frozenset(str(role) for role in counted_in or ())
     return UserState(
         name=str(name),
         status=_status(can_login=bool(can_login), expired=bool(expired)),
@@ -197,7 +285,7 @@ def state_of(row: tuple[Any, ...]) -> UserState:
         password_changed_unknown=NO_CHANGE_DATE,
         vendor_maintained=bool(built_in),
         password_file_member=False,
-        roles=frozenset(role.upper() for role in held),
+        roles=frozenset(role.upper() for role in counted),
         admin_roles=frozenset(word for word, has in attributes.items() if has)
         | frozenset(role.upper() for role in held & GUARDED_ROLES),
         superuser=bool(superuser),

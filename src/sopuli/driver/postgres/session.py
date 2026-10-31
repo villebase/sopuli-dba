@@ -15,13 +15,14 @@ in as the role (:meth:`PostgresSession.verify_password`), and sets a role's
 password with a verifier computed on the client
 (:meth:`PostgresSession.set_password`, invariant 15). That ``ALTER ROLE`` is the
 one statement the driver sends that changes anything, and it checks
-:func:`~sopuli.driver.postgres.scope.require_read_write` first. The registry
-entry lists the commands it is written for, UC-1's, and UC-2's refuse the
-target with ``SOPULI-20006`` before it connects
-(:func:`~sopuli.driver.registry.require_command`). What PostgreSQL has no
-counterpart for, such as a rollover window, is refused by capability, exit 5.
-The methods for UC-2 are not written yet, and refuse with ``SOPULI-20006``
-without a round trip.
+:func:`~sopuli.driver.postgres.scope.require_read_write` first. It also resolves
+a `role:` predicate for `account list` (:meth:`PostgresSession.accounts_matching`).
+The registry entry lists the commands it is written for, UC-1's and `account
+list`, and the other UC-2 commands refuse the target with ``SOPULI-20006``
+before it connects (:func:`~sopuli.driver.registry.require_command`). What
+PostgreSQL has no counterpart for, such as a rollover window or a profile, is
+refused by capability, exit 5. The other methods for UC-2 are not written yet,
+and refuse with ``SOPULI-20006`` without a round trip.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ import psycopg
 from psycopg import pq
 
 from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.driver.postgres import roles
 from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, client_lines, libpq_release
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
@@ -50,13 +52,15 @@ from sopuli.driver.postgres.password import (
     verifier,
 )
 from sopuli.driver.postgres.privileges import audit
-from sopuli.driver.postgres.roles import describe
+from sopuli.driver.postgres.roles import describe, members_of
 from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
 from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
     PASS,
     PASSWORD_ROLLOVER,
+    PROFILE_MANAGEMENT,
+    ROLE_LOOKUP,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
@@ -84,6 +88,12 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("postgres")
+
+#: The hint for a `profile:` predicate on a cluster.
+NO_PROFILES = (
+    "PostgreSQL has no profiles; declare these accounts by name with `accounts:`, "
+    "or by a role they hold with `role:`"
+)
 
 
 def _ms(started: float) -> int:
@@ -303,15 +313,38 @@ class PostgresSession:
         raise self._not_written("enforce a role's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
-        raise self._not_written("look up a profile")
+        """Refused by capability: PostgreSQL has no profiles, so a `profile:`
+        predicate names nothing on a cluster."""
+        require_capability(
+            self.scope(), PROFILE_MANAGEMENT, target=self.target.name, hint=NO_PROFILES
+        )
+        return None  # pragma: no cover -- the capability is never reported
 
     def resolve_role(self, role: str) -> str | None:
-        raise self._not_written("look up a role")
+        """The role as ``pg_roles`` spells it, or ``None``
+        (:func:`~sopuli.driver.postgres.roles.resolve_role`). ``pg_roles`` is
+        open to every role, so :data:`ROLE_LOOKUP` is always reported."""
+        require_capability(self.scope(), ROLE_LOOKUP, target=self.target.name)
+        with self._cursor() as cursor:
+            return roles.resolve_role(cursor, role, target=self.target.name)
 
     def accounts_matching(
         self, *, profile: str | None = None, role: str | None = None
     ) -> tuple[str, ...]:
-        raise self._not_written("list the roles a predicate admits")
+        """Every role that is a member of ``role`` by grants with ``INHERIT`` or
+        ``SET`` (:func:`~sopuli.driver.postgres.roles.members_of`). A
+        ``profile`` is refused as :meth:`resolve_profile` refuses it."""
+        if (profile is None) == (role is None):
+            raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
+        if profile is not None:
+            self.resolve_profile(profile)
+            return ()  # pragma: no cover -- resolve_profile always raises
+        assert role is not None
+        spelled = self.resolve_role(role)
+        if spelled is None:
+            return ()
+        with self._cursor() as cursor:
+            return members_of(cursor, spelled)
 
     def verify_password(
         self,

@@ -53,7 +53,7 @@ to `username: postgres`, saved as `as-postgres.yaml`, `doctor
 $ sopuli --config as-postgres.yaml doctor --check-privileges
 ...
 TARGET        REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-supabase-dev  yes        cluster  -          READ WRITE  0             none
+supabase-dev  yes        cluster  -          READ WRITE  1             none
   supabase-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
   supabase-dev: over-granted, and the tool needs none of it: BYPASSRLS, REPLICATION, pg_monitor, pg_read_all_data, pg_read_all_stats, pg_signal_backend
 ...
@@ -191,7 +191,7 @@ dedicated tool account it reports nothing over-granted:
 $ sopuli --config supabase.yaml doctor --check-privileges
 ...
 TARGET        REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-supabase-dev  yes        cluster  -          READ WRITE  0             none
+supabase-dev  yes        cluster  -          READ WRITE  1             none
   supabase-dev: the connection is not encrypted, so a password the tool sets crosses it in clear: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
 ...
 ```

@@ -10,9 +10,10 @@ command acts as one. ``02-postgres-privileges.md`` §1 has the reason. This is
 the PostgreSQL form of the Oracle rule that the tool never connects ``AS
 SYSDBA``.
 
-**No capability is reported.** Each one in P1's table names something a driver
-does on this target, and this build of the PostgreSQL driver does none of them
-yet. Connecting proves none of them either.
+**One capability is reported, ``role_lookup``.** ``pg_roles`` is open to every
+role, so the tool account can always tell a role that does not exist from one
+that nobody holds. Each other capability in P1's table names something this
+build of the PostgreSQL driver does not do, and connecting proves none of them.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from sopuli.driver.protocol import (
     CLUSTER,
     ENCRYPTION_NONE,
     ENCRYPTION_TLS,
+    ROLE_LOOKUP,
     UNKNOWN,
     DriverError,
     Encryption,
@@ -154,6 +156,7 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
         db_version=str(version).split()[0],
         open_mode=open_mode,
         read_write=open_mode == READ_WRITE,
+        capabilities=frozenset({ROLE_LOOKUP}),
         encryption=encryption,
     )
 

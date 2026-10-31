@@ -658,6 +658,52 @@ such as "from 16", means the one release of it that was measured.
   that builds an AWS store answers it. No AWS store exists yet, so nothing
   depends on this.
 
+### 1Password
+
+No 1Password store exists. These answer #1193, whether one could. The probe is
+`test/onepassword_store_probe.py`, run against `onepassword-sdk` 0.4.2.
+
+- `verified` `onepassword-item-cas` (#1193) — **Does an item update refuse a
+  write when the item has changed since it was read?**
+  Yes. `Items.put` succeeds only when the item's `version` is the current one.
+  A version behind, ahead or 0 is refused with `The submitted item is not up to
+  date`, even when the stale write changes only a field the other write did not
+  touch. Of two puts of one version sent at once, one succeeds and the other is
+  refused with `data conflict occurred on the server`. Both are plain
+  `Exception`, so the message is the only way to know a conflict. A put that
+  changes nothing still makes a new version. S1.
+- `verified` `onepassword-item-history` (#1193) — **Can the SDK read an
+  earlier version of an item?**
+  No. `Items.get` takes a vault and an item id only, and a secret reference
+  refuses `?version=` and `?revision=` as unknown query keys. S2.
+- `verified` `onepassword-stages` (#1193) — **Can `pending` and `current` be
+  two fields of one item, promoted in one write?**
+  Yes. One put changed both fields under one new version. A field id may hold
+  letters, digits, `-`, `_`, `.` and a space, and not `/`. The notes field
+  holds JSON and reads back as written. S3.
+- `verified` `onepassword-titles` (#1193) — **Is an item title a unique key?**
+  No. A second item with an existing title is created without complaint, and a
+  secret reference to that title then fails with `more than one item matched`.
+  A reference matches a title without regard to case. It can name only a title
+  of letters, digits, `_`, `.`, `-` and spaces: a title with `/`, `@` or `=`
+  can be created, and cannot be named by a reference. S4.
+- `verified` `onepassword-rate-limits` (#1193) — **What does a store call cost
+  against a service account's limits?**
+  A get or a secret reference read costs 1 read. A put costs 1 write and 2
+  reads, so 3 against the daily limit. Listing a vault's items cost nothing.
+  `op service-account ratelimit` reported 100 writes and 1,000 reads an hour
+  for the token, and 1,000 requests a day for the account. 1Password publishes
+  those for its 1Password and Families plans, with 5,000 a day for Teams, and
+  1,000 writes, 10,000 reads and 50,000 a day for Business. S6.
+- `verified` `onepassword-errors` (#1193) — **Can the SDK's errors be told
+  apart?**
+  Only by their messages. Every failure is a plain `Exception`, except
+  `RateLimitExceededException`. A missing item reads `item couldn't be found`,
+  a deleted one `item is not in an active state`, and a get in a missing vault
+  `vault couldn't be found`, though a list of the same vault reads `item
+  couldn't be found`. A service account sees only the vaults it was granted,
+  so a vault it may not read looks like one that does not exist. S7.
+
 ## Next use cases
 
 None of these is specified. Each has a number so that work deferred from a

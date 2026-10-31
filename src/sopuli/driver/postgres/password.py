@@ -138,12 +138,21 @@ def verifier(pgconn: PasswordConnection, role: str, secret: Secret) -> str:
     return computed
 
 
-def alter_role(role: str, computed: str) -> Composed:
+def alter_role(role: str, computed: str, *, clear_valid_until: bool = False) -> Composed:
     """``ALTER ROLE "<role>" PASSWORD '<verifier>'``. ``computed`` must come from
     :func:`verifier`; anything else is refused, so a password cannot reach this
-    statement by mistake."""
+    statement by mistake.
+
+    ``clear_valid_until`` adds ``VALID UNTIL 'infinity'``, for a personal reset
+    of a role whose date has passed (#1201). It goes in the same statement, so
+    the date and the password change together or not at all."""
     if not computed.startswith(PREFIX):
         raise ValueError("refusing to send a password that is not a SCRAM-SHA-256 verifier")
     from psycopg import sql
 
-    return sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(computed))
+    statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+        sql.Identifier(role), sql.Literal(computed)
+    )
+    if clear_valid_until:
+        return statement + sql.SQL(" VALID UNTIL 'infinity'")
+    return statement

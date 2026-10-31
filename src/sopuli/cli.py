@@ -2259,7 +2259,9 @@ def account_reset_password(
     # Before any password is drawn (#857), and after the refusals above, which
     # need no connection. Under `--dry-run` too: a preview that said "would be
     # reset" over a connection the run would refuse would be wrong.
-    _require_encryption(reached, run, config)
+    scopes: dict[str, Scope | None] = {}
+    _require_encryption(reached, run, config, scopes=scopes)
+    _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
 
     header = render_plan(plan, noun="account")
     if not reached:
@@ -3003,6 +3005,9 @@ def _reset_one(
         # one. The real run asks them here as well, which is still the last
         # point before a password is drawn.
         try:
+            # Asked again for a target `_require_seen_expiry` could not read.
+            if delivery.is_seen:
+                reset.require_seen_expiry(session.scope(), target=target.name)
             # The connection the password would cross, read again (#857).
             # `_require_encryption` refused the run before this unless it could
             # not reach the target.
@@ -9478,6 +9483,33 @@ def _require_encryption(
         refusal = _unencrypted(scope.encryption, target=expanded.name, location=location)
         if refusal is not None:
             raise refusal
+
+
+def _require_seen_expiry(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    delivery: Delivery,
+    scopes: dict[str, Scope | None],
+) -> None:
+    """Refuse a seen reset, at plan time, on a target that cannot expire a
+    password (#1201).
+
+    The seen path's expiry is what ends the DBA's exposure (UC-2 §1), so a
+    target without ``expire_password`` cannot take it: PostgreSQL has no "change
+    the password at next login". Exit 5, naming the target, before any password
+    is drawn. One connection per target on the seen path, shared through
+    ``scopes`` with :func:`_require_encryption`, and none on an unseen one. A
+    target whose scope this cannot read is left to the run, which asks again in
+    :func:`_reset_one` before it draws a password.
+    """
+    if not delivery.is_seen:
+        return
+    for expanded in targets:
+        scope = _plan_scope(expanded, run, config, scopes)
+        if scope is not None:
+            reset.require_seen_expiry(scope, target=expanded.name)
 
 
 def _unencrypted(

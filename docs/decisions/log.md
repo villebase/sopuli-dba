@@ -3874,7 +3874,8 @@ the register.
   expire-password` are refused at plan time by the absent `expire_password`
   capability. `suspend` issues `ALTER ROLE … NOLOGIN`, and the reset refuses a
   `NOLOGIN` role. A reset of a role whose `VALID UNTIL` has passed clears it
-  to `infinity`, in a statement of its own that runs only then.
+  to `infinity`, in the same `ALTER ROLE` as the password, so the two change
+  together or not at all. A date still to come is left alone.
 - **Why:** A grant with `INHERIT` or `SET` lets its member use or become the
   role, whichever option it has. A grant with neither lets the member only
   manage the role's members. From PostgreSQL 16 a role's creator holds, by default, such a
@@ -3898,4 +3899,9 @@ the register.
     so a role that authenticates by certificate, GSS or peer would stay usable.
   - Refusing the reset of a role whose `VALID UNTIL` has passed, or resetting
     it and warning. The first leaves the owner locked out until somebody edits
-    the role by hand. The second hands over a password that cannot log in.
+    the role by hand. The second hands over a password that cannot log in. The
+    review of #1209 raised the refusal again, for a contractor's end date set
+    with `VALID UNTIL`. It was kept out because clearing matches Oracle, whose
+    reset clears an expired password: PostgreSQL defines `VALID UNTIL` as the
+    end of the password's validity, not the account's. UC-2 §4.1 says to end
+    an account with `NOLOGIN` instead.

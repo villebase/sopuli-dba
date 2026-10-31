@@ -115,6 +115,14 @@ PASSWORD_REUSE_POLICY = "password_reuse_policy"
 #: Force expiry, or end a rollover window early.
 EXPIRE_PASSWORD = "expire_password"
 
+#: The hint for a seen reset on a target without :data:`EXPIRE_PASSWORD`,
+#: given at plan time and by a driver alike (#1201).
+SEEN_NEEDS_EXPIRY = (
+    "the seen path expires the password so that the copy the DBA saw stops working "
+    "at the owner's first login (UC-2 §1), and this target cannot expire one; use an "
+    "unseen delivery method"
+)
+
 #: Lock state can be read and set.
 ACCOUNT_LOCK_STATE = "account_lock_state"
 
@@ -699,6 +707,12 @@ class UserState:
     name: str
     status: str
     locked: bool = False
+    #: A person locked the account, as `account suspend` does, so a reset
+    #: refuses it (H4). A lock a failed-login limit set is not one. Oracle's
+    #: status tells the two apart, and :func:`sopuli.reset.decide` parses it;
+    #: a driver whose lock has no timed form sets this instead, as PostgreSQL
+    #: does for ``NOLOGIN`` (#1201).
+    deliberately_locked: bool = False
     #: The password has **stopped working**. Deliberately not true of an account
     #: in its grace period, which is :attr:`in_grace` -- Oracle spells that
     #: ``EXPIRED(GRACE)``, and the token ``EXPIRED`` is inside it. Reading the two

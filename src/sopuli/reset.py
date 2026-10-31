@@ -39,7 +39,13 @@ from sopuli.config.errors import ArgumentError
 from sopuli.config.model import Config, Delivery
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
-from sopuli.driver.protocol import UserState
+from sopuli.driver.protocol import (
+    EXPIRE_PASSWORD,
+    SEEN_NEEDS_EXPIRY,
+    Scope,
+    UserState,
+    require_capability,
+)
 from sopuli.exit_codes import ExitCode
 from sopuli.personal import bound_by_application, declared_on
 from sopuli.safety import RefusedError
@@ -132,6 +138,14 @@ class DeliveryUnavailableError(RefusedError):
                 "`config validate` warns about this before a run needs it"
             ),
         )
+
+
+def require_seen_expiry(scope: Scope, *, target: str) -> None:
+    """Refuse a seen reset on a target that cannot expire a password, exit 5
+    (#1201). The expiry is what ends the DBA's exposure (UC-2 §1). Asked at
+    plan time for every target, and again per target for one whose scope plan
+    time could not read."""
+    require_capability(scope, EXPIRE_PASSWORD, target=target, hint=SEEN_NEEDS_EXPIRY)
 
 
 def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
@@ -329,13 +343,14 @@ def decide(
     if application is not None:
         return Decision(proceed=False, state=SKIPPED, detail=application)
 
-    if deliberately_locked(state.status):
+    if state.deliberately_locked or deliberately_locked(state.status):
         return Decision(
             proceed=False,
             state=SKIPPED,
             detail=(
-                f"the account is {state.status.lower()}; a reset does not unlock a "
-                f"deliberate lock -- unlock it first if that is what you mean"
+                f"the account is {state.status.lower()}; a reset does not undo a "
+                f"deliberate lock -- remove it by hand first if that is what you mean "
+                f"(ALTER USER … ACCOUNT UNLOCK on Oracle, ALTER ROLE … LOGIN on PostgreSQL)"
             ),
         )
 

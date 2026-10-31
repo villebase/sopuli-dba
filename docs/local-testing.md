@@ -457,8 +457,8 @@ The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
 password `sopuli-test`. `doctor` connects to it and reports what it found, and
 the UC-1 commands run against it: `creds generate`, `apply`, `check`, `rotate`,
 `status` and `finish-rollover`, which finds no window to close. Of the UC-2
-commands, `account list` runs against it, and the others refuse a PostgreSQL
-target with `SOPULI-20006`.
+commands, `account list` and `account reset-password` run against it, and the
+others refuse a PostgreSQL target with `SOPULI-20006`.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
@@ -1161,6 +1161,71 @@ ACME_DEV_BOB    free-pdb  names        OPEN    2026-10-23     -
 ```
 
 A reset draws a new password every time, so running it twice resets twice.
+
+### `account reset-password` on PostgreSQL
+
+On the cluster of §7, with the roles from `account list` above, give the tool
+account `ADMIN OPTION` on each role it may reset, and let one role's
+`VALID UNTIL` pass:
+
+```
+postgres=# GRANT acme_dev_alice TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+postgres=# GRANT acme_dev_bob TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+postgres=# GRANT acme_dev_carol TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+postgres=# ALTER ROLE acme_dev_bob VALID UNTIL '2000-01-01';
+```
+
+Add the `vaults:`, `defaults.vault`, `delivery:` and `reset_records:` blocks of
+§5 to `postgres.yaml`. A role past its `VALID UNTIL` is `EXPIRED`, and the
+reset sets the date to `infinity` with the password:
+
+```
+$ sopuli --config postgres.yaml account reset-password --account acme_dev_bob
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT       TARGET  INTENT        SECRET
+acme_dev_bob  pg-dev  password_set  -
+
+ACCOUNT       TARGET  STATE  WAS      DETAIL
+acme_dev_bob  pg-dev  RESET  EXPIRED  declared by role 'acme_dev_team'
+
+reset acme_dev_bob on 1 of 1 targets
+
+
+1 note:
+  pg-dev: a password was sent over a connection that is not encrypted: set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)
+
+hand this to acme_dev_bob for pg-dev; it unwraps once:
+
+    <TOKEN>
+
+It stops working at 2026-10-31T18:59:39.448848Z, and the first unwrap is the
+last. Do not unwrap it to check -- that spends the person's one read, and
+them finding it spent is the only warning either of you gets.
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
+```
+
+```
+$ docker exec sopuli-test-postgres-1 psql -U postgres -tAc "select rolname, rolvaliduntil from pg_roles where rolname like 'acme_dev_%' order by 1"
+acme_dev_alice|
+acme_dev_bob|infinity
+acme_dev_carol|
+acme_dev_team|
+```
+
+A `NOLOGIN` role is `SKIPPED`, as a locked Oracle account is. `delivery.method:
+manual` is refused with exit 5, because PostgreSQL cannot make a role change its
+password at its next login:
+
+```
+$ sopuli --config postgres.yaml account reset-password --account acme_dev_alice --dry-run
+...
+sopuli: target "pg-dev" does not support expire_password
+  hint: the seen path expires the password so that the copy the DBA saw stops working at the owner's first login (UC-2 §1), and this target cannot expire one; use an unseen delivery method
+```
 
 ### Delivering to the person's own Vault path
 

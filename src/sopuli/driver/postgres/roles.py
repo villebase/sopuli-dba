@@ -110,9 +110,10 @@ EXPIRED = "EXPIRED"
 #:
 #: A grant that makes its member a member for a `role:` predicate: one with
 #: ``INHERIT`` or ``SET`` (#1201). From PostgreSQL 16 a role's creator holds
-#: it with ``ADMIN OPTION`` and neither, which lets it manage the role's
-#: members and nothing else. A server without the two columns gives ``NULL``
-#: for both, and every grant there counts, as every member could ``SET ROLE``.
+#: it with ``ADMIN OPTION`` and, under the default ``createrole_self_grant``,
+#: neither, which lets it manage the role's members and nothing else. A server
+#: without the two columns gives ``NULL`` for both, and every grant there
+#: counts, as every member could ``SET ROLE``.
 #: Read through ``to_jsonb`` so that one query serves both, with no probe and
 #: no version (invariant 3).
 COUNTING_GRANT = (

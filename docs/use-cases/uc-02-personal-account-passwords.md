@@ -442,8 +442,11 @@ profiles, so a `profile:` predicate is refused by the absent
 `profile_management` capability, exit 5. A `role:` predicate admits every role
 that is a member of the named role through a chain of grants that each have
 `INHERIT` or `SET`. A grant with neither does not count. From PostgreSQL 16 a
-role's creator holds the role by such a grant, with `ADMIN OPTION`, which lets it
-manage the role's members and nothing else. A group role in the chain and a
+role's creator holds the role by such a grant by default, with `ADMIN OPTION`,
+which lets it manage the role's members and nothing else. A server whose
+`createrole_self_grant` adds `inherit` or `set` gives the creator a grant that
+counts. The creator then holds `CREATEROLE` or is a superuser, so a mutating
+verb refuses it (checks 4 and 6), but `account list` shows it. A group role in the chain and a
 `NOLOGIN` member are admitted: PostgreSQL cannot tell a group role from a
 suspended person, and `account list` must show exactly the accounts a mutating
 verb would admit. Reasons: [#1201](../decisions/log.md#1201).

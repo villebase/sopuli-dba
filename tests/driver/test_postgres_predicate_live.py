@@ -62,6 +62,13 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         "observer": f"acme_{suffix}_dev_observer",
         "stranger": f"acme_{suffix}_dev_stranger",
     }
+    with _superuser(live_postgres) as admin:
+        options = admin.execute(
+            "select count(*) from pg_attribute where attrelid = 'pg_auth_members'::regclass "
+            "and attname in ('inherit_option', 'set_option')"
+        ).fetchone()
+    if options != (2,):
+        pytest.skip("the server's grants have no INHERIT and SET options, which these cases need")
     password = uuid.uuid4().hex
     try:
         with _superuser(live_postgres) as admin:

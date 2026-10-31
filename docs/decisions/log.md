@@ -3877,7 +3877,7 @@ the register.
   to `infinity`, in a statement of its own that runs only then.
 - **Why:** A grant with `INHERIT` or `SET` lets its member use or become the
   role, whichever option it has. A grant with neither lets the member only
-  manage the role's members. From PostgreSQL 16 a role's creator holds such a
+  manage the role's members. From PostgreSQL 16 a role's creator holds, by default, such a
   grant, with `ADMIN OPTION`, so counting it would admit the tool account, a
   DBA's admin role, or `postgres` on a managed service. The review of #1206
   found this. The listing and the mutating verbs count the same grants, so they

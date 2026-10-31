@@ -707,8 +707,8 @@ def config_show(
     run against a production config from a laptop. A secret ref is an address,
     never a value.
 
-    A config file that cannot be loaded exits 9, with a run document that
-    names the problem.
+    A config file that cannot be loaded exits 9, and the error names the
+    problem.
     """
     # The boundary reads the file before this runs, and a bad one never reaches
     # here: the exit handler in `sopuli.invocation` emits the run document and
@@ -859,11 +859,10 @@ def doctor(
     wallet problem before it connects. The wallet check only warns; each
     target's connection decides the result.
 
-    `--check-privileges` also reports grants the service account holds and
-    does not need, and grants it needs and does not have. It warns and never
-    fails. An over-granted account is someone else's problem to fix, and a
-    failing `doctor` would block the person who ran it, perhaps during an
-    incident, over something they did not cause. A missing grant is a finding
+    `--check-privileges` warns and never fails. An over-granted account is
+    someone else's problem to fix, and a failing `doctor` would block the
+    person who ran it, perhaps during an incident, over something they did not
+    cause. A missing grant is a finding
     about readiness: reporting it here stops it appearing later as several
     unrelated failures. The check is behind a flag because it costs several
     reads per target, and on Oracle one probe per documented grant. The output
@@ -1357,12 +1356,11 @@ def policy_sample(
     what a target would accept without connecting to one. Only a connection
     can read a target's real limit, and this command makes none.
 
-    `--reveal` prints the passwords. A sample is not a credential, because
-    nothing logs in with it and it is never stored, so this is one of the few
-    places where the tool prints a password on purpose. The tool refuses
-    `--reveal` with `--output json`, because JSON output is what gets captured
-    and sent to log storage. The JSON output has no field for the passwords at
-    all.
+    `--reveal` prints the passwords. The tool allows this because a sample is
+    not a credential: nothing logs in with it and it is never stored. The tool
+    refuses `--reveal` with `--output json` or `jsonl`, because JSON output is
+    what gets captured and sent to log storage. The JSON output has no field
+    for the passwords at all.
 
     NAME must be a policy the config declares; the tool refuses any other
     name. Without NAME the command uses `defaults.policy`.
@@ -5031,9 +5029,10 @@ def config_validate(
 
     The command exits 9 if the configuration has an unknown key or breaks any
     other rule, because a typo in a credential tool must never be ignored. It
-    prints nothing about the file itself, so it suits a CI job that only needs
-    to know whether the file is valid. Under `--output json` the run document
-    lists each problem.
+    names the first problem it finds; fix it and run the command again to find
+    the next. A valid file exits 0, and the output says only which files were
+    read, how much they declare, and any warnings, so the command suits a CI
+    job.
 
     The tool's own loader does the check, not the published JSON schema. The
     schema checks structure only and leaves out the rules that relate one key

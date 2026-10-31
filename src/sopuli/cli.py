@@ -492,7 +492,7 @@ def select_option(func: F) -> F:
             "selectors",
             multiple=True,
             metavar="K=V[,K=V]",
-            help="Keep only targets carrying every label. Repeat to add more.",
+            help="Keep only targets carrying every label given. Repeat for more labels.",
         ),
     ):
         func = option(func)
@@ -1481,8 +1481,8 @@ def account_group() -> None:
     "--select",
     "selectors",
     multiple=True,
-    metavar="KEY=VALUE",
-    help="Keep only targets carrying every label. Repeat to add more.",
+    metavar="K=V[,K=V]",
+    help="Keep only targets carrying every label given. Repeat for more labels.",
 )
 @click.option(
     "--target",
@@ -1787,8 +1787,8 @@ def _suspend_one(
     "--select",
     "selectors",
     multiple=True,
-    metavar="KEY=VALUE",
-    help="Keep only targets carrying every label. Repeat to add more.",
+    metavar="K=V[,K=V]",
+    help="Keep only targets carrying every label given. Repeat for more labels.",
 )
 @click.option(
     "--target",
@@ -2116,8 +2116,8 @@ def _unseen_methods_built() -> str:
     "--select",
     "selectors",
     multiple=True,
-    metavar="KEY=VALUE",
-    help="Keep only targets carrying every label. Repeat to add more.",
+    metavar="K=V[,K=V]",
+    help="Keep only targets carrying every label given. Repeat for more labels.",
 )
 @click.option(
     "--target",
@@ -2207,8 +2207,9 @@ def account_reset_password(
 
     `--account` names one account. The target selectors choose where it is
     reset, not which account; each target holds a separate account with a
-    separate password. A profile or role rule in `personal_accounts:` can
-    narrow the targets and never widens them.
+    separate password. Where `personal_accounts:` declares accounts by a
+    profile or role rule, the tool refuses the account on any target where the
+    rule does not match it, as for `account suspend`.
     """
     document = run.document
     action = "resetting a password"
@@ -3716,8 +3717,8 @@ def _hand_over(
     "--select",
     "selectors",
     multiple=True,
-    metavar="KEY=VALUE",
-    help="Keep only targets carrying every label. Repeat to add more.",
+    metavar="K=V[,K=V]",
+    help="Keep only targets carrying every label given. Repeat for more labels.",
 )
 @click.option(
     "--target",
@@ -3749,7 +3750,8 @@ def account_list_command(
 ) -> str:
     """Resolve `personal_accounts:` and show what it matched.
 
-    The command reads no password and writes nothing. `personal_accounts:` can
+    The command reads no password and writes nothing, and it works on Oracle
+    targets only. `personal_accounts:` can
     declare accounts by a rule over a database profile or role, so the
     config alone does not list them. This command applies the rules on each
     selected target, and shows each account with the rule that matched it and
@@ -4468,7 +4470,7 @@ def vault_group() -> None:
     "vaults",
     multiple=True,
     metavar="NAME",
-    help="Survey only this entry in `vaults:`. Repeatable.",
+    help="Survey only this entry in `vaults:`. Repeat to add more.",
 )
 @click.option(
     "--prefix",
@@ -4514,7 +4516,6 @@ def vault_orphans(vaults: tuple[str, ...], prefix: str | None, run: Invocation) 
     name the prefix, so "no orphans" is not read as a statement about the
     whole store.
     """
-    # `sopuli.orphans` says what counts as this tool's record.
     document = run.document
     config = run.config
     refuse_unknown_vaults(config, vaults)
@@ -4564,6 +4565,7 @@ def vault_orphans(vaults: tuple[str, ...], prefix: str | None, run: Invocation) 
     )
     # Every binding's path, declared in every store: `sopuli.orphans` says why.
     declared = orphans_declared_by(config.bindings)
+    # `sopuli.orphans` says what counts as this tool's record.
     found = find_orphans(declared, stores=stores, region=region, prefix=under)
     deletes = orphan_commands(found, config.vaults)
 

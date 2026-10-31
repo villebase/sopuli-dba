@@ -678,9 +678,9 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
   refuses `?version=` and `?revision=` as unknown query keys. S2.
 - `verified` `onepassword-stages` (#1193) — **Can `pending` and `current` be
   two fields of one item, promoted in one write?**
-  Yes. One put changed both fields under one new version. A field id may hold
-  letters, digits, `-`, `_`, `.` and a space, and not `/`. The notes field
-  holds JSON and reads back as written. S3.
+  Yes. One put changed both fields under one new version. Field ids with a
+  space, `_`, `-`, `.` or a digit were accepted, and one with `/` was refused.
+  The notes field holds JSON and reads back as written. S3.
 - `verified` `onepassword-titles` (#1193) — **Is an item title a unique key?**
   No. A second item with an existing title is created without complaint, and a
   secret reference to that title then fails with `more than one item matched`.
@@ -697,7 +697,8 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
   1,000 writes, 10,000 reads and 50,000 a day for Business. S6.
 - `verified` `onepassword-errors` (#1193) — **Can the SDK's errors be told
   apart?**
-  Only by their messages. Every failure is a plain `Exception`, except
+  Only by their messages. Every failure the probe met is a plain `Exception`.
+  No run reached a rate limit, for which the SDK's source raises
   `RateLimitExceededException`. A missing item reads `item couldn't be found`,
   a deleted one `item is not in an active state`, and a get in a missing vault
   `vault couldn't be found`, though a list of the same vault reads `item

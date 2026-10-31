@@ -16,9 +16,12 @@ extra and a service account with read and write items on one vault. Set:
     python test/onepassword_store_probe.py          # every check
     python test/onepassword_store_probe.py s1 s4    # only the checks named
 
-Every item it creates is titled ``acme-probe-<UTC timestamp>-<n>`` and is
-deleted at the end. Field values are placeholders such as ``probe-1``, never a
-real credential. The token is never printed.
+Every item it creates has the run's UTC timestamp in its title, such as
+``acme-probe-20261031121527-1``, and is deleted at the end. S4's titles are
+odd on purpose (``apps/acme/db-<timestamp>``), so a run killed before then
+leaves items to delete by the timestamp, not by a prefix. Field values are
+placeholders such as ``probe-1``, never a real credential. The token is never
+printed.
 
 Results, 2026-10-31, ``onepassword-sdk`` 0.4.2, ``op`` 2.41.1, an account
 whose service account limits are those 1Password publishes for the 1Password
@@ -42,9 +45,11 @@ S6's costs ran once.
   key``.
 - **S3** One put changes two fields together under one version: ``current``
   and ``pending`` became ``current`` alone, version 1 to 2. The notes field
-  holds JSON and reads back as written. A field id may hold letters, digits,
-  ``-``, ``_``, ``.`` and a space; ``acme/alpha`` is refused by the SDK
-  before any request.
+  holds JSON and reads back as written. The field ids ``acme alpha``,
+  ``acme_alpha``, ``acme-alpha``, ``acme1`` and ``acme.alpha`` were accepted
+  (added for the review of #1198 and run once). ``acme/alpha`` is refused by
+  the SDK before any request: ``field id 'acme/alpha' must contain only
+  alphanumeric characters or -, _, . and the whitespace character``.
 - **S4** A title is not a key. A second item with an existing title is
   created without complaint, and a reference to that title then fails with
   ``more than one item matched the secret reference query``. A title may hold
@@ -61,7 +66,9 @@ S6's costs ran once.
 - **S7** An item id that never existed: ``item couldn't be found``. A deleted
   item, read or put: ``item is not in an active state``. A get in a vault id
   that does not exist: ``vault couldn't be found``; a list of the same vault
-  id: ``item couldn't be found``. Every one is a plain ``Exception``. The
+  id: ``item couldn't be found``. Every one is a plain ``Exception``. No run
+  reached a rate limit; the SDK's source raises
+  ``RateLimitExceededException`` for one. The
   service account sees only the vault it was granted, so a vault it may not
   read looks like one that does not exist.
 """
@@ -69,6 +76,7 @@ S6's costs ran once.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import subprocess
 import sys
@@ -148,8 +156,13 @@ async def create(
 
 async def outcome(what: str, fn: Callable[[], Awaitable[Any]]) -> Any:
     """Like :func:`call`, but a refusal is a result, not a failure."""
+    return await attempt(lambda: call(what, fn))
+
+
+async def attempt(fn: Callable[[], Awaitable[Any]]) -> Any:
+    """``fn``'s result, or the exception it raised. ``fn`` counts its own calls."""
     try:
-        return await call(what, fn)
+        return await fn()
     except Exception as error:  # noqa: BLE001
         return error
 
@@ -238,8 +251,6 @@ async def s2(client: Client, vault_id: str) -> None:
     set_value(item, "current", "probe-2")
     item = await call("put", lambda: client.items.put(item))
     say(f"    item at version {item.version}")
-    import inspect
-
     for name in ("get", "get_all", "list"):
         say(f"    Items.{name}{inspect.signature(getattr(client.items, name))}")
     say(f"    Secrets.resolve{inspect.signature(client.secrets.resolve)}")
@@ -270,6 +281,12 @@ async def s3(client: Client, vault_id: str) -> None:
     result = await outcome("put", lambda: client.items.put(item))
     say(f"    {verdict(result)}")
     item = await call("get", lambda: client.items.get(vault_id, item.id))
+    for odd in ("acme alpha", "acme_alpha", "acme-alpha", "acme1"):
+        say(f"    a field id {odd!r}")
+        set_value(item, odd, "probe-3")
+        result = await outcome("put", lambda item=item: client.items.put(item))
+        say(f"    {verdict(result)}")
+        item = await call("get", lambda item=item: client.items.get(vault_id, item.id))
     say("    a field id holding . and the notes holding JSON")
     set_value(item, "acme.alpha", "probe-3")
     item.notes = '{"targets": ["db1.example.com"], "generation": 2}'
@@ -288,9 +305,9 @@ async def s4(client: Client, vault_id: str) -> None:
     say("S4 paths")
     title = f"acme-probe-{STAMP}-dup"
     await create(client, vault_id, 41, [field("current", "probe-a")], title=title)
-    result = await outcome(
-        "create a second item with the same title",
-        lambda: create(client, vault_id, 42, [field("current", "probe-b")], title=title),
+    say("    a second item with the same title")
+    result = await attempt(
+        lambda: create(client, vault_id, 42, [field("current", "probe-b")], title=title)
     )
     say(f"    second title: {verdict(result)}")
     vault = (await call("get vault overview", lambda: client.vaults.get_overview(vault_id))).title
@@ -301,8 +318,8 @@ async def s4(client: Client, vault_id: str) -> None:
         ("apps/acme/db", "ACME-PROBE-UPPER", "acme probe space", "acme@probe=1"), start=43
     ):
         odd_title = f"{odd}-{STAMP}"
-        result = await outcome(
-            f"create title {odd_title!r}",
+        say(f"    title {odd_title!r}")
+        result = await attempt(
             lambda odd_title=odd_title, n=n: create(
                 client, vault_id, n, [field("current", f"probe-{n}")], title=odd_title
             ),
@@ -370,6 +387,9 @@ async def s6(client: Client, vault_id: str) -> None:
         ("5 lists", after_resolves, after_lists),
     ):
         spent = {key: end[key] - start[key] for key in start}
+        if any(count < 0 for count in spent.values()):
+            say(f"    {label}: a counter went down, so a window reset; run S6 again")
+            return
         say(f"    {label} used {spent}")
 
 
@@ -380,7 +400,9 @@ def limits() -> str:
     done = subprocess.run(
         ["op", "service-account", "ratelimit"], env=env, capture_output=True, text=True
     )
-    return done.stdout.rstrip() or done.stderr.rstrip()
+    if done.returncode != 0:
+        raise RuntimeError(f"op service-account ratelimit failed: {done.stderr.strip()}")
+    return done.stdout.rstrip()
 
 
 def used() -> dict[str, int]:
@@ -396,6 +418,10 @@ CHECKS = {"s1": s1, "s2": s2, "s3": s3, "s4": s4, "s7": s7, "s6": s6}
 
 
 async def main(names: list[str]) -> int:
+    unknown = [name for name in names if name not in CHECKS]
+    if unknown:
+        say(f"no check named {', '.join(unknown)}; the checks are {', '.join(CHECKS)}")
+        return 2
     token_file = os.environ.get("SOPULI_TEST_ONEPASSWORD_TOKEN_FILE")
     if not token_file:
         say("set SOPULI_TEST_ONEPASSWORD_TOKEN_FILE")
@@ -407,7 +433,10 @@ async def main(names: list[str]) -> int:
     del token
     vault_name = os.environ.get("OP_PROBE_VAULT", "sopuli-test")
     vaults = await client.vaults.list()
-    vault_id = next(v.id for v in vaults if v.title == vault_name)
+    vault_id = next((v.id for v in vaults if v.title == vault_name), None)
+    if vault_id is None:
+        say(f"the service account sees no vault named {vault_name!r}; set OP_PROBE_VAULT")
+        return 2
     failed = 0
     try:
         for name in names or list(CHECKS):

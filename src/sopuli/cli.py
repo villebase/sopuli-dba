@@ -859,9 +859,9 @@ def doctor(
     wrong: which backends and drivers this build can serve, which the config
     asks for, and where the two differ. The output is often kept as audit
     evidence, so it has to show that nothing is missing, as well as what is.
-    A configured component that this machine cannot serve makes the run exit
-    9. `config validate` only warns about the same thing and exits 0, because
-    the file itself is valid.
+    A configured component that this machine cannot serve makes the run exit 9.
+    `config validate` only warns about the same thing and exits 0, because the
+    file itself is valid.
 
     For an estate that uses `auth: external`, the command checks the Oracle
     wallet first. A wallet that is missing or cannot be read fails the

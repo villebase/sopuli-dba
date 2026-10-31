@@ -11,7 +11,15 @@ from __future__ import annotations
 import click
 import pytest
 
-from command_reference import REFERENCE, _bounds, _leaves, _metavar, _prose, pages
+from command_reference import (
+    REFERENCE,
+    _bounds,
+    _leaves,
+    _metavar,
+    _option_line,
+    _prose,
+    pages,
+)
 from repo_files import requires_repo
 
 REGENERATE = "run `python tests/command_reference.py` and commit docs/reference/"
@@ -27,13 +35,18 @@ def test_every_page_is_committed_and_none_is_extra() -> None:
     )
 
 
-@pytest.mark.parametrize(("name", "text"), sorted(pages().items()))
-def test_page_matches_the_command_tree(name: str, text: str) -> None:
-    page = REFERENCE / name
-    requires_repo(page)
-    assert page.read_text(encoding="utf-8") == text, (
-        f"docs/reference/{name} is out of date; {REGENERATE}"
-    )
+def test_every_page_matches_the_command_tree() -> None:
+    """Rendered inside the test, not in `parametrize`: a refusal from the
+    generator then fails this test alone, rather than stopping collection and
+    with it every other tier-0 test."""
+    requires_repo(REFERENCE)
+    stale = [
+        name
+        for name, text in sorted(pages().items())
+        if not (REFERENCE / name).is_file()
+        or (REFERENCE / name).read_text(encoding="utf-8") != text
+    ]
+    assert not stale, f"out of date in docs/reference/: {stale}; {REGENERATE}"
 
 
 # ------------------------------------------------- what the generator refuses ---
@@ -48,6 +61,8 @@ def test_page_matches_the_command_tree(name: str, text: str) -> None:
         "9. a numbered item",
         "# a heading",
         "> a quote",
+        "---",
+        "===",
     ],
 )
 def test_a_help_line_that_reads_as_structure_is_refused(line: str) -> None:
@@ -55,10 +70,41 @@ def test_a_help_line_that_reads_as_structure_is_refused(line: str) -> None:
         _prose(f"First line.\n{line}", "sopuli demo")
 
 
+def test_an_issue_number_at_a_line_start_is_prose() -> None:
+    assert _prose("First line.\n#1194 is the issue.", "sopuli demo")
+
+
 def test_an_angle_bracket_outside_backticks_is_refused() -> None:
     assert _prose("Takes `<path>` as written.", "sopuli demo")
     with pytest.raises(ValueError, match="outside backticks"):
         _prose("Takes <path> as written.", "sopuli demo")
+
+
+def test_emphasis_markers_outside_backticks_are_refused() -> None:
+    assert _prose("Accounts `acme_*_user`, or acme_app_user.", "sopuli demo")
+    for text in ("Files *.md and *.yml.", "An _emphasised_ word."):
+        with pytest.raises(ValueError, match="outside backticks"):
+            _prose(text, "sopuli demo")
+
+
+def test_a_code_span_may_cross_a_line_break_but_not_stay_open() -> None:
+    assert _prose("Run `config\nvalidate` first.", "sopuli demo")
+    with pytest.raises(ValueError, match="unpaired backtick"):
+        _prose("Run `config validate first.", "sopuli demo")
+
+
+def test_an_option_help_with_two_paragraphs_is_refused() -> None:
+    option = click.Option(["--demo"], help="One.\n\nTwo.")
+    ctx = click.Context(click.Command("demo", params=[option]), info_name="demo")
+    with pytest.raises(ValueError, match="more than one paragraph"):
+        _option_line(option, ctx)
+
+
+def test_a_shown_default_it_cannot_print_is_refused() -> None:
+    option = click.Option(["--demo/--no-demo"], default=False, show_default=True)
+    ctx = click.Context(click.Command("demo", params=[option]), info_name="demo")
+    with pytest.raises(ValueError, match="bool default"):
+        _option_line(option, ctx)
 
 
 def test_a_nested_group_is_refused() -> None:

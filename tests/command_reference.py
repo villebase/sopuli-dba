@@ -55,12 +55,18 @@ def _global_names() -> frozenset[str]:
 GLOBAL_NAMES = _global_names()
 
 
-#: A line that Markdown would read as a list item, a heading or a quote, rather
-#: than as the next line of a paragraph.
-_STRUCTURE = re.compile(r"^\s*(?:[-*+]\s|#|>|\d+[.)](?:\s|$))")
+#: A line that Markdown could read as a list item, a heading, a quote or a
+#: heading's underline, rather than as the next line of a paragraph. Every
+#: numbered line is refused, though only `1.` interrupts a paragraph: whether
+#: the others make a list depends on where click's wrapping puts them.
+_STRUCTURE = re.compile(r"^\s*(?:[-*+]\s|#{1,6}(?:\s|$)|>|\d+[.)](?:\s|$)|=+\s*$|-+\s*$)")
 
 #: Text between backticks, which Markdown prints as written.
 _CODE_SPAN = re.compile(r"`[^`]*`")
+
+#: A `*`, or a `_` at the edge of a word, which Markdown can pair up as emphasis.
+#: A `_` inside a word, as in `acme_app_user`, is left alone by GitHub.
+_EMPHASIS = re.compile(r"\*|(?<!\w)_|_(?!\w)")
 
 
 def _prose(text: str, where: str) -> str:
@@ -68,15 +74,22 @@ def _prose(text: str, where: str) -> str:
 
     The pages print help text as Markdown, so that its backticks show as code.
     A line that starts like a list item or a heading would change the page's
-    structure, and a `<` outside backticks can be swallowed as HTML. Rewording
-    the help is the fix; escaping it here would make the page differ from
-    `--help`.
+    structure, a `<` outside backticks can be swallowed as HTML, and a `*` or
+    `_` can turn into italics. Rewording the help is the fix; escaping it here
+    would make the page differ from `--help`.
     """
     for line in text.splitlines():
         if _STRUCTURE.match(line):
             raise ValueError(f"{where}: help line reads as Markdown structure: {line!r}")
-        if "<" in _CODE_SPAN.sub("", line):
-            raise ValueError(f"{where}: help has a `<` outside backticks: {line!r}")
+    # A code span may run across a line break, so spans are found per paragraph.
+    for paragraph in re.split(r"\n\s*\n", text):
+        outside = _CODE_SPAN.sub("", " ".join(paragraph.split()))
+        if "`" in outside:
+            raise ValueError(f"{where}: help has an unpaired backtick: {paragraph!r}")
+        if "<" in outside:
+            raise ValueError(f"{where}: help has a `<` outside backticks: {paragraph!r}")
+        if _EMPHASIS.search(outside):
+            raise ValueError(f"{where}: help has a `*` or `_` outside backticks: {paragraph!r}")
     return text
 
 
@@ -131,7 +144,8 @@ def _default(option: click.Option, ctx: click.Context) -> str | None:
         return None
     value = option.get_default(ctx, call=False)
     if isinstance(value, bool) or not isinstance(value, int | str):
-        return None
+        where = f"{ctx.command_path} {option.opts[0]}"
+        raise ValueError(f"{where}: shows a {type(value).__name__} default; extend the generator")
     return str(value)
 
 
@@ -140,7 +154,7 @@ def _option_line(option: click.Option, ctx: click.Context) -> str:
     names = ", ".join(f"`{name}`" for name in [*option.opts, *option.secondary_opts])
     if option.is_flag:
         value = ""
-    elif isinstance(option.type, click.Choice):
+    elif isinstance(option.type, click.Choice) and option.metavar is None:
         value = " `" + "|".join(str(choice) for choice in option.type.choices) + "`"
     else:
         value = f" `{_metavar(option)}`"
@@ -157,8 +171,12 @@ def _option_line(option: click.Option, ctx: click.Context) -> str:
         facts.append("required")
     said = f" ({', '.join(facts)})" if facts else ""
     where = f"{ctx.command_path} {option.opts[0]}"
+    text = option.help or ""
+    if re.search(r"\n\s*\n", text):
+        # One list item holds one paragraph; a second would land under no option.
+        raise ValueError(f"{where}: option help has more than one paragraph")
 
-    return f"- {names}{value}{said}: {_prose(option.help or '', where)}".rstrip()
+    return f"- {names}{value}{said}: {_prose(text, where)}".rstrip()
 
 
 def _visible_options(command: click.Command) -> list[click.Option]:
@@ -169,12 +187,9 @@ def _visible_options(command: click.Command) -> list[click.Option]:
     ]
 
 
-def _arguments(command: click.Command, ctx: click.Context) -> list[str]:
-    return [
-        f"- `{param.make_metavar(ctx)}`"
-        for param in command.params
-        if isinstance(param, click.Argument)
-    ]
+def _arguments(command: click.Command) -> list[str]:
+    params = command.params
+    return [f"- `{_metavar(param)}`" for param in params if isinstance(param, click.Argument)]
 
 
 def _command_section(command: click.Command, ctx: click.Context, level: str) -> list[str]:
@@ -182,7 +197,7 @@ def _command_section(command: click.Command, ctx: click.Context, level: str) -> 
     lines = [f"{level} {ctx.command_path}", "", "```", _usage(command, ctx), "```", ""]
     lines += [_help(command, ctx), ""]
 
-    arguments = _arguments(command, ctx)
+    arguments = _arguments(command)
     if arguments:
         lines += ["Arguments:", "", *arguments, ""]
 
@@ -254,7 +269,9 @@ def _index(root: click.Context) -> str:
         "",
     ]
     for name, command in _subcommands(cli, root):
-        summary = command.get_short_help_str(limit=200)
+        # click cuts the summary at the limit, which could split a code span;
+        # `_prose` refuses the unpaired backtick that would leave.
+        summary = _prose(command.get_short_help_str(limit=200), f"{PROGRAM} {name}")
         lines.append(f"- [`{PROGRAM} {name}`]({name}.md): {summary}")
     lines.append("")
 

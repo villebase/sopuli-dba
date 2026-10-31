@@ -437,8 +437,9 @@ def help_with(**facts: str) -> Callable[[F], F]:
 GUARDRAIL_WAIVER_HELP = (
     "Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the "
     "password file, an admin role, the deny list and the tool's own account. "
-    "Never guardrail 1, an account the config does not declare, 6, a superuser, "
-    "or 8, a role the server reserves. The run document records every waiver."
+    "Nothing waives guardrails 1, 6 and 8: an account the config does not "
+    "declare, a superuser, and a role the server reserves. The run document "
+    "records every waiver."
 )
 
 
@@ -5279,8 +5280,9 @@ def creds_check(
     that runs every hour therefore never blocks a rotation.
 
     It exits 3 when a password has drifted, so a monitoring system can alert on
-    drift alone. A target that cannot be reached exits 1, never 3, so a broken
-    check does not look like drift.
+    drift alone. If any target gives no answer, for example because it cannot
+    be reached, the run exits 1, even when another target has drifted. Exit 3
+    would claim the check was complete. Alert on exit 1 as well as exit 3.
 
     `--method login`, the default, logs in as the account. On Oracle there are
     two more methods. `--method hash` compares the vault's password with the
@@ -5297,14 +5299,15 @@ def creds_check(
     to `login`.
 
     A login can lock the account, and a locked account is worse than the drift
-    this command looks for. So the command logs in once per account per run,
-    or twice with `--include-previous`, and never retries a wrong password. On
-    Oracle, where the tool account holds `SELECT ON SYS.USER$`, it reads the
-    failed-login counter just before each login, and refuses the login within
-    `--lockout-margin` tries of the profile's limit. Without that grant the
-    guard is unavailable: the row says so, and the check goes ahead. The same
-    applies to a common account on a target that is not `CDB$ROOT`, because the
-    root counts its failed logins. PostgreSQL has no failed-login lockout.
+    this command looks for. So the command logs in to each target once per
+    account per run, or twice with `--include-previous`, and never retries a
+    wrong password. On Oracle, where the tool account holds `SELECT ON
+    SYS.USER$`, it reads the failed-login counter just before each login, and
+    refuses the login within `--lockout-margin` tries of the profile's limit.
+    Without that grant the guard is unavailable: the row says so, and the
+    check goes ahead. The same applies to a common account on a target that is
+    not `CDB$ROOT`, because the root counts its failed logins. PostgreSQL has
+    no failed-login lockout.
 
     The command reads each account's status separately, so a locked account,
     an expired password and a missing account each get their own state. A
@@ -5878,8 +5881,8 @@ def creds_generate(
     database's own character set, and draws a password that fits the strictest
     answer. If a target cannot be reached, the policy's length applies instead,
     and the output says which of the two the run used. `--offline` asks no
-    target, for an estate that is down on purpose. The advisory lock is in the
-    vault, because the vault is the only place this command writes.
+    target, for an estate that is down on purpose. Reading the databases does
+    not move the advisory lock: it is in the vault, as for every command.
 
     Staging is separate from applying. An operator can prepare a password, get
     a change window approved, and apply it later, and each half can be retried
@@ -7017,9 +7020,10 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     default=False,
     help=(
         "Check every target before writing anything: that it is reachable, is the "
-        "container the config names, is open read-write, has the declared accounts, "
-        "and grants the tool account what it needs. Refuses the run if a check "
-        "fails, instead of finding the problem part way through."
+        "container the config names, is open read-write, has the declared accounts "
+        "and the profiles their policies assign, and grants the tool account what "
+        "it needs. Refuses the run if a check fails, instead of finding the "
+        "problem part way through."
     ),
 )
 @click.option(
@@ -7072,9 +7076,10 @@ def creds_apply(
     vault's password, as `creds check` does by default, under the same lockout
     guards, and leaves alone a password that already works. A second run
     therefore reports `changed: false`. It spends at most two logins per
-    account per run, and it counts them before it starts. It does not compare
-    verifiers instead, because that needs the optional `SELECT ON SYS.USER$`
-    grant, which no account can hold on Autonomous Database.
+    account on each target per run, and it counts them before it starts. It
+    does not compare verifiers instead, because that needs the optional
+    `SELECT ON SYS.USER$` grant, which no account can hold on Autonomous
+    Database.
 
     The command does not change a locked account. The `ALTER USER` would
     succeed, but the login that verifies it could not, and the database would
@@ -7126,7 +7131,8 @@ def creds_apply(
 
     `--preflight` checks every target before anything is written: that it is
     reachable, is the container the config names, is open read-write, has the
-    declared accounts, and grants the tool account what it needs. The command
+    declared accounts and the profiles their policies assign, and grants the
+    tool account what it needs. The command
     reports every problem it finds and refuses the run. Without it, the run
     could find on the tenth target a problem that was there from the start,
     after nine databases already hold a password that the vault has not
@@ -11126,8 +11132,8 @@ def creds_finish_rollover(
 
     It refuses an account that has a staged `pending`, without spending a
     login. A staged `pending` means the rotation is not finished: the vault's
-    `current` is still the old password, and closing the window would lock out
-    every application that has not received the new one. Run
+    `current` is still the old password, and closing the window would stop
+    every application that has not received the new one from logging in. Run
     `sopuli creds apply` first.
 
     It leaves the window open on an account whose database refuses the vault's
@@ -12550,9 +12556,9 @@ def creds_status(
     `--max-age-days` marks accounts by it. The vault keeps one value per secret
     path, however many targets share it, so there is nothing to combine across
     databases. The database's own password-change date is shown beside it, as
-    DB_PW_CHANGED, and the command never acts on it. The two dates come from different clocks.
-    A row where they differ a lot can point to drift, and it costs no login to
-    notice.
+    DB_PW_CHANGED, and the command never acts on it. The two dates come from
+    different clocks. A row where they differ a lot can point to drift, and it
+    costs no login to notice.
 
     The command does not tell you whether a password works; `creds check` spends
     a login to find out. A row here shows `UNVERIFIABLE` because nothing was

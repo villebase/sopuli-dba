@@ -413,6 +413,7 @@ How this works in practice, and what it expects of contributors:
 | [docs/scenarios/kubernetes-eso.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
 | [docs/scenarios/supabase.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/supabase.md) | on Supabase, give each service its own login role instead of the shared `postgres` password |
 | [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | complete config files with comments, starting with the smallest one that works |
+| [docs/reference/](https://github.com/villebase/sopuli-dba/blob/main/docs/reference/README.md) | look up a command: its usage, its help text and every option |
 | [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |
 | [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | run the usual commands by hand against the local test stack |
 | [CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md) | send a change |

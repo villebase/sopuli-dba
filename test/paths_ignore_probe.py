@@ -104,6 +104,7 @@ WATCHED = WATCHED_DIRS + WATCHED_FILES
 #: Adding a test that reads prose means adding it here *and* to the `docs` job, or
 #: this probe goes quiet about whatever it reads.
 DOCS_LANE = (
+    "tests/test_command_reference.py",
     "tests/test_verification_register.py",
     "tests/test_decision_register.py",
     "tests/test_decision_log.py",

@@ -805,6 +805,7 @@ the `SECRET_DELETE` permission, which `manage secrets` gives.
 | [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | the rest of this story: `apply`, `check`, rolling back, and closing a rollover window |
 | [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | letting applications in Kubernetes collect the new password by themselves |
 | [../examples/](../examples/) | complete config files with comments, starting with the smallest one that works |
+| [reference/](reference/README.md) | every command and its options, the same text as `--help` |
 | [security-model.md](security-model.md) | what the tool can and cannot do, before you trust it with production |
 | [design/01-configuration.md](design/01-configuration.md) | the full config reference — every key, every rule |
 | [local-testing.md](local-testing.md) | the usual commands, run by hand against the local test stack, and [with OCI Vault as the store](local-testing.md#88-with-oci-vault-as-the-store) |

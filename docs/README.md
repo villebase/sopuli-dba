@@ -21,6 +21,7 @@ on which Oracle release, and what it showed.
 | [scenarios/personal-password-delivery.md](scenarios/personal-password-delivery.md) | one person's password reset end to end, each way to hand the new password over, and which one to choose |
 | [scenarios/supabase.md](scenarios/supabase.md) | replacing a shared `postgres` password on Supabase with one vault-managed login role for each service |
 | [../examples/](../examples/) | runnable config files with comments, starting with the smallest one that works |
+| [reference/](reference/README.md) | every command: its usage, its help text and its options, generated from the command definitions |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | what a first-time contributor needs that `workflow.md` and `CLAUDE.md` do not say for that audience |
 | [../SECURITY.md](../SECURITY.md) | reporting a vulnerability privately |
 

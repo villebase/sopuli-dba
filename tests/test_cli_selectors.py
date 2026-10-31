@@ -372,28 +372,52 @@ def test_an_unnarrowed_run_omits_the_object(
 # ------------------------------------------------- one definition per selector ---
 
 
-def _commands(group: click.Group, ctx: click.Context) -> list[click.Command]:
-    found: list[click.Command] = []
+TARGET_SELECTORS = ("--select", "--target", "--group")
+
+
+def _commands(group: click.Group, ctx: click.Context) -> dict[str, click.Command]:
+    """Every command and group in the tree by its path, groups included: a
+    group could declare a selector of its own."""
+    found: dict[str, click.Command] = {ctx.command_path: group}
     for name in group.list_commands(ctx):
         command = group.get_command(ctx, name)
-        if isinstance(command, click.Group):
-            found += _commands(command, click.Context(command, info_name=name, parent=ctx))
-        elif command is not None:
-            found.append(command)
+        sub_ctx = click.Context(command, info_name=name, parent=ctx) if command else None
+        if isinstance(command, click.Group) and sub_ctx is not None:
+            found |= _commands(command, sub_ctx)
+        elif command is not None and sub_ctx is not None:
+            found[sub_ctx.command_path] = command
     return found
 
 
-@pytest.mark.parametrize("flag", ["--select", "--target", "--group"])
+def _selector_options(flag: str) -> dict[str, click.Option]:
+    """The option declaring `flag`, by command path, hidden ones included,
+    since a hidden copy still decides how the flag parses."""
+    return {
+        path: option
+        for path, command in _commands(cli, click.Context(cli, info_name="sopuli")).items()
+        for option in command.params
+        if isinstance(option, click.Option) and flag in option.opts
+    }
+
+
+@pytest.mark.parametrize("flag", TARGET_SELECTORS)
 def test_a_target_selector_reads_the_same_on_every_command(flag: str) -> None:
     """The estate commands and the `account` verbs take these from one place
     (#1204). A command that declared its own copy could give the same flag
     other help, another placeholder, or a single value instead of a repeatable
     one, and `--help` would disagree between verbs."""
     seen = {
-        (option.help, option.metavar, option.multiple, option.name)
-        for command in _commands(cli, click.Context(cli, info_name="sopuli"))
-        for option in command.params
-        if isinstance(option, click.Option) and flag in option.opts and not option.hidden
+        (option.help, option.metavar, option.multiple, option.name, option.hidden)
+        for option in _selector_options(flag).values()
     }
 
     assert len(seen) == 1, seen
+
+
+def test_the_target_selectors_come_together() -> None:
+    """A command taking one of the three takes all three. An option that some
+    commands carry and others do not is the defect `select_option`'s docstring
+    describes."""
+    carriers = {flag: set(_selector_options(flag)) for flag in TARGET_SELECTORS}
+
+    assert carriers["--select"] == carriers["--target"] == carriers["--group"], carriers

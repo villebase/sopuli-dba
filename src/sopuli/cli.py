@@ -627,18 +627,15 @@ def about_refusals(given: GlobalOptions) -> list[str]:
 def about(options: GlobalOptions | None) -> None:
     """Show the sopuli-dba banner, tagline, and project links.
 
-    Static, compiled-in text and nothing else: the same output on every machine,
-    on every run. It reads no configuration, opens no socket and reports nothing
-    about the installation it is running from -- backends, drivers, versions and
-    reachability are `doctor`'s, and two commands answering overlapping
-    questions is how they come to disagree.
+    The text is built into the tool, so it is the same on every machine and
+    every run. The command reads no configuration, opens no socket, and says
+    nothing about the installation. `doctor` reports backends, drivers,
+    versions and reachability.
 
-    `--color` is read from the position before the verb, which is the one this
-    command's parser can see: `sopuli --color never about`. Every other global
-    option is refused there rather than ignored, including `--output json`:
-    there is no machine-readable form of this screen, and exiting 0 with human
-    text after being asked for JSON is the silent-ignore this tool refuses
-    everywhere else.
+    The command takes `--color` before the verb: `sopuli --color never about`.
+    It refuses every other global option, including `--output json`, because
+    this screen has no JSON form. Printing text after a request for JSON would
+    ignore the request silently, and the tool never does that.
     """
     # Not a run, so not decorated with `global_options` and given no
     # `Invocation`. It resolves no settings, has nothing to report and no
@@ -707,29 +704,27 @@ def config_show(
 ) -> str:
     """Show the effective configuration.
 
-    Two views of one file. Without ``--resolved`` it shows the configuration as
-    loaded, which answers *did my YAML say what I think it says* after however
-    many ``--config`` layers were merged. With it, target sets are expanded and
-    every secret ref rendered per account, which answers *what will this act on*.
+    The command has two views. Without `--resolved` it shows the configuration
+    as loaded, after every `--config` file is merged, so you can check that the
+    YAML says what you meant. With `--resolved` it expands the target sets and
+    shows each account's secret ref, so you can see what the tool would act on.
 
-    ``--explain`` answers a third question -- *where did each setting come from*
-    -- and answers it the same way in both views, because provenance does not
-    depend on target expansion. That is why it does not require ``--resolved``
-    the way ``--select`` does: a selector has nothing to filter until the estate
-    exists, and a setting has a source either way (P3).
+    `--explain` shows where each setting came from. It works the same in both
+    views, because a setting has a source whether or not targets are expanded.
+    A selector such as `--select` needs `--resolved`, because there is nothing
+    to filter until the targets are expanded.
 
-    Offline in the strongest sense: it opens no socket to a vault or a database,
-    so it is safe to run against a production config from a laptop. A secret ref
-    is an address and never a value.
+    The command opens no connection to a vault or a database, so it is safe to
+    run against a production config from a laptop. A secret ref is an address,
+    never a value.
 
-    The file is read before this runs, by the boundary, and a bad one never
-    reaches here at all: the exit handler in :mod:`sopuli.invocation` catches it,
-    emits the run document and lets it out to exit 9. J7 makes that the code that
-    *does* carry a document, because the invocation resolved before the file
-    turned out to be unusable. That is one place it happens rather than one per
-    verb, and it is why this command asks ``run`` for a configuration instead of
-    loading one.
+    A config file that cannot be loaded exits 9, and the error names the
+    problem.
     """
+    # The boundary reads the file before this runs, and a bad one never reaches
+    # here: the exit handler in `sopuli.invocation` emits the run document and
+    # exits 9 (J7). That happens in one place rather than once per verb, which is
+    # why this command asks `run` for a configuration instead of loading one.
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)
@@ -792,25 +787,19 @@ def target_list(
 ) -> str:
     """List the targets the configuration expands to.
 
-    ``01-configuration.md`` section 4 makes this a command rather than a flag:
-    "generation is invisible until it goes wrong", and the moment it matters is
-    before a rotation, when the question is *how many databases is this about
-    to touch* and the answer must not require reading a binding table to count.
+    A target set is a template that generates targets. This command shows the
+    targets it generates, so before a rotation you can see how many databases
+    the rotation will change, without counting rows in a binding table. It
+    always shows the expanded list, so it has no `--resolved` flag; `config
+    show` shows the template.
 
-    Always the expanded estate, so there is no ``--resolved`` here. A target
-    set is a template; the targets it generates are the only thing this command
-    is about, which is why ``config show`` keeps the other view rather than
-    this one growing a flag to suppress its own subject.
-
-    Offline, like the ``config`` verbs: nothing here opens a socket, so it is
-    safe against a production config from a laptop. It says which targets
-    *exist*, never which are reachable -- that is a different command with a
-    different failure mode, and it must not arrive as a flag on this one.
-
-    A bad config file never reaches here, for the reason ``config show`` gives:
-    the boundary reads it, and its exit handler emits the document on exit 9
-    (J7).
+    Like the `config` verbs, it opens no connection, so it is safe to run
+    against a production config from a laptop. It says which targets exist,
+    not which can be reached. `doctor` connects and answers that.
     """
+    # A bad config file never reaches here, for the reason `config show` gives:
+    # the boundary reads it, and its exit handler emits the document on exit 9
+    # (J7).
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)
@@ -838,7 +827,7 @@ def target_list(
 @click.option(
     "--check-privileges",
     is_flag=True,
-    help="Also report privileges the service account holds and does not need.",
+    help="Also report grants the service account holds and does not need, and grants it lacks.",
 )
 @global_options
 def doctor(
@@ -852,63 +841,49 @@ def doctor(
 ) -> str:
     """Check that every target can be reached, and report what it is.
 
-    It connects to every target, and it **mutates nothing** -- everything
-    the `creds` verbs depend on either works here or is reported as the reason
-    it does not. A `status`-shaped verb (P5): it takes no lock, so an hourly one
-    never blocks a rotation.
+    The command connects to every target and changes nothing. Everything the
+    `creds` verbs need either works here, or the output says why it does not.
+    It takes no lock, so a `doctor` that runs every hour never blocks a
+    rotation.
 
-    **A target that cannot be reached is a finding, not a crash.** The whole
-    point is to survey an estate and say which parts of it are unwell, so one
-    unreachable database must not end the run before the next target is tried.
-    Each failure lands in its own ``targets[]`` entry with the vendor code and
-    the server's own message. An unreachable target fails the run at exit 1,
-    unless a configured driver or backend is missing, which is exit 9 (below).
-    A target refused over its setup fails the run at exit 9 once every target
-    is surveyed: one the server refused at login, such as SYS as the admin, or
-    one that answered and was then refused, such as a PostgreSQL admin that is
-    a superuser (decision #1062).
+    A target that cannot be reached is a finding, and the command goes on to
+    the next target. Each failure gets its own entry in `targets[]`, with the
+    vendor code and the server's own message. An unreachable target makes the
+    run exit 1, unless a configured driver or backend is missing, which is
+    exit 9. A target refused because of how it is set up makes the run exit 9,
+    after every target is checked. That covers a target that refused the
+    login, such as one whose admin is SYS, and one that answered and was then
+    refused, such as a PostgreSQL admin that is a superuser.
 
-    **Install shape is reported on every run, not only when it is wrong**
-    (ADR-006 E6). Which backends and drivers this build can serve, which the
-    config asks for, and where the two disagree -- because this output is audit
-    evidence as often as it is a diagnostic, and a section that appeared only on
-    a mismatch could never be quoted as proof that there was none. A configured
-    component this machine cannot serve fails the run, at exit 9; `config
-    validate` warns over the same fact and exits 0, which is E4 and E6
-    disagreeing on purpose.
+    The command reports the install on every run, not only when something is
+    wrong: which backends and drivers this build can serve, which the config
+    asks for, and where the two differ. The output is often kept as audit
+    evidence, so it has to show that nothing is missing, as well as what is.
+    A configured component that this machine cannot serve makes the run exit
+    9. `config validate` only warns about the same thing and exits 0, because
+    the file itself is valid.
 
-    **The wallet is checked for estates that use ``auth: external``**, and only
-    those (P4). A wallet that is missing or unreadable fails the connection as an
-    Oracle *login* error, which sends somebody to the account and the password
-    they do not have rather than to the file permissions they do. This says so
-    first. It warns and never fails: what happens to the run is decided by each
-    target's own reachability a moment later.
+    For an estate that uses `auth: external`, the command checks the Oracle
+    wallet first. A wallet that is missing or cannot be read fails the
+    connection with an Oracle login error. That error points to the account
+    and the password, not to the file permissions, so the command reports the
+    wallet problem before it connects. The wallet check only warns; each
+    target's connection decides the result.
 
-    Nothing here is a substitute for the guardrails. Reporting what a service
-    account holds is not enforcing it; the account guardrails that every mutating
-    verb applies are what refuse.
-
-    **``--check-privileges`` warns and never fails** (decision P5). An
-    over-granted account is somebody else's decision to fix, and a ``doctor``
-    that exited non-zero over it would block the person who ran it, mid-incident,
-    over a condition they did not create. A **missing** grant is reported the
-    same way and for a different reason: it is a finding about readiness, and
-    reporting it here is what stops it surfacing as six unrelated failures three
-    commands later.
-
-    It is behind a flag because it is not cheap -- several reads per target, and
-    on Oracle one probe per documented grant -- and a survey of twenty databases
-    should not pay for a question nobody asked.
-
-    What it *cannot* see is reported beside what it found: a refused view, and
-    the rows of the must-not-grant list that no view reachable from here carries.
-    An audit that listed only its findings would read as complete whatever it
-    managed to look at.
-
-    Help text stays ASCII throughout, which is P4's rule and why the section
-    numbers above are spelled out -- ``tests/test_cli_smoke.py`` fails the build
-    on a section sign reaching a Windows console.
+    `--check-privileges` warns and never fails. An over-granted account is
+    someone else's problem to fix, and a failing `doctor` would block the
+    person who ran it, perhaps during an incident, over something they did not
+    cause. A missing grant is a finding
+    about readiness: reporting it here stops it appearing later as several
+    unrelated failures. The check is behind a flag because it costs several
+    reads per target, and on Oracle one probe per documented grant. The output
+    also lists what the check could not see: a view it was refused, and the
+    entries of the must-not-grant list that no view it can read covers.
+    Reporting grants does not enforce anything; the account guardrails of the
+    mutating verbs do that.
     """
+    # Help text stays ASCII, which is P4's rule: `tests/test_cli_smoke.py` fails
+    # the build on a section sign reaching a Windows console.
     document = run.document
 
     selection = selected(selectors, targets, accounts, groups, applications)
@@ -1381,28 +1356,25 @@ def policy_sample(
 ) -> str:
     """Show what a password policy produces, without touching anything.
 
-    A policy is a handful of numbers and a charset name, and none of that answers
-    the question somebody actually has: *what do the passwords look like*. This
-    draws samples so they can answer it -- whether a `custom` charset renders what
-    was meant, whether 24 characters fit a 30-byte target, whether the shape
-    survives a `.env` file.
+    A policy is a few numbers and a character set name, and they do not show
+    what the passwords look like. This command draws samples so you can see:
+    whether a `custom` character set gives what you meant, whether 24
+    characters fit a 30-byte limit, or whether the passwords survive a `.env`
+    file.
 
-    Offline, and further than the other verbs: it opens no socket *and* writes
-    nothing. Nothing generated here is stored, in a vault or anywhere else. With
-    `--max-bytes` and `--encoding` it previews what a target would accept without
-    connecting to one. Reading a target's real limit needs a connection (P1),
-    which this verb does not make.
+    The command opens no connection and writes nothing. Nothing it draws is
+    stored, in a vault or anywhere else. `--max-bytes` and `--encoding` preview
+    what a target would accept without connecting to one. Only a connection
+    can read a target's real limit, and this command makes none.
 
-    `--reveal` prints the passwords themselves. That is invariant 2's third
-    exception, where plaintext reaches output on purpose: a sample is not a
-    credential, because nothing authenticates with it and it is
-    never stored. It is refused with `--output json`, which is what gets captured
-    and shipped to log aggregation -- and the JSON section carries no value
-    property at all, so the two halves cannot disagree about that.
+    `--reveal` prints the passwords. The tool allows this because a sample is
+    not a credential: nothing logs in with it and it is never stored. The tool
+    refuses `--reveal` with `--output json` or `jsonl`, because JSON output is
+    what gets captured and sent to log storage. The JSON output has no field
+    for the passwords at all.
 
-    Named policies only: this samples what the file declares, so an undeclared
-    name is refused the same way one written *in* the file would be. With no name
-    it uses `defaults.policy`.
+    NAME must be a policy the config declares; the tool refuses any other
+    name. Without NAME the command uses `defaults.policy`.
     """
     document = run.document
 
@@ -5066,30 +5038,28 @@ def config_validate(
 ) -> str:
     """Check the configuration and say nothing else.
 
-    P3 makes this a first-class command: it "exits non-zero on unknown keys -- a
-    typo in a credential tool must never be silently ignored". Everything it does
-    is what ``load_layers`` already does; what it adds is a command whose *only*
-    job is that, so a file can be checked in CI without asking for output nobody
-    reads.
+    The command exits 9 if the configuration has an unknown key or breaks any
+    other rule, because a typo in a credential tool must never be ignored. It
+    names the first problem it finds; fix it and run the command again to find
+    the next. A valid file exits 0, and the output says only which files were
+    read, how much they declare, and any warnings, so the command suits a CI
+    job.
 
-    **Validated by the loader, not by the published schema.** The two are not
-    equivalent, and the stricter one wins:
-    ``docs/schemas/sopuli-config-3.4.schema.json`` is structural, deliberately
-    leaves the cross-key rules out (``01-configuration.md`` section 9b), and
-    ``jsonschema`` is a development dependency that must not become a runtime
-    one. The schema is the editor's fast local check; this is the complete one.
+    The tool's own loader does the check, not the published JSON schema. The
+    schema checks structure only and leaves out the rules that relate one key
+    to another, so it is a fast check for an editor. This command is the
+    complete check.
 
-    Offline, like ``config show``: no vault and no database is contacted, so it
-    is safe to point at a production config from a laptop.
-
-    A bad file never reaches here: the boundary reads it, maps it to exit 9 and
-    emits the run document. That matters more for this verb than for any other --
-    reporting configuration problems is its entire purpose, and a validator that
-    goes silent under ``--output json`` exactly when it has something to say is not
-    a validator. J7 rests on that argument. It is also why this verb reads as thin
-    as it does: everything it checks has already happened by the time it is called,
-    and what is left is saying so.
+    Like `config show`, it opens no connection to a vault or a database, so it
+    is safe to run against a production config from a laptop.
     """
+    # The boundary reads the file before this runs, maps a bad one to exit 9 and
+    # emits the run document (J7). That matters most for this verb: a validator
+    # that went silent under `--output json` when it had something to say would
+    # not be one. It is also why the verb is thin: everything it checks has
+    # already happened by the time it is called. `jsonschema` is a development
+    # dependency and must not become a runtime one, which is one reason the
+    # loader, not the schema, validates.
     document = run.document
 
     paths = run.sources

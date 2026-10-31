@@ -1067,6 +1067,37 @@ def test_the_seen_path_is_refused_where_the_target_cannot_expire_a_password(
     assert session.reset == []
 
 
+def test_the_seen_path_is_asked_again_where_plan_time_could_not_read_the_scope(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """Plan time leaves a target whose scope it could not read to the run, so
+    the row asks again before a password is drawn, and a preview does not say
+    "would be reset" (#1209)."""
+
+    class FirstScopeFails(Asked):
+        def __init__(self) -> None:
+            super().__init__("OPEN", DENIED)
+            self.capabilities = frozenset()
+            self.scopes_read = 0
+
+        def scope(self) -> Scope:
+            self.scopes_read += 1
+            if self.scopes_read == 1:
+                raise DriverError("the scope could not be read")
+            return super().scope()
+
+    session = FirstScopeFails()
+    _open(monkeypatch, session, unseen=False)
+
+    result = _run(runner, write_config(MANUAL), "--dry-run", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    row = _row(result)
+    assert row["state"] == "ERROR"
+    assert "expire_password" in json.dumps(row)
+    assert session.reset == []
+
+
 def test_a_refused_row_does_not_ask(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:

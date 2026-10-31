@@ -3005,6 +3005,9 @@ def _reset_one(
         # one. The real run asks them here as well, which is still the last
         # point before a password is drawn.
         try:
+            # Asked again for a target `_require_seen_expiry` could not read.
+            if delivery.is_seen:
+                reset.require_seen_expiry(session.scope(), target=target.name)
             # The connection the password would cross, read again (#857).
             # `_require_encryption` refused the run before this unless it could
             # not reach the target.
@@ -9498,23 +9501,15 @@ def _require_seen_expiry(
     the password at next login". Exit 5, naming the target, before any password
     is drawn. One connection per target on the seen path, shared through
     ``scopes`` with :func:`_require_encryption`, and none on an unseen one. A
-    target this cannot reach is left to the run, where the driver refuses the
-    reset before it sends anything.
+    target whose scope this cannot read is left to the run, which asks again in
+    :func:`_reset_one` before it draws a password.
     """
     if not delivery.is_seen:
         return
     for expanded in targets:
         scope = _plan_scope(expanded, run, config, scopes)
-        if scope is not None and not scope.supports(EXPIRE_PASSWORD):
-            raise UnsupportedCapabilityError(
-                EXPIRE_PASSWORD,
-                target=expanded.name,
-                hint=(
-                    "the seen path expires the password so that the copy the DBA saw "
-                    "stops working at the owner's first login (UC-2 §1), and this target "
-                    "cannot expire one; use an unseen delivery method"
-                ),
-            )
+        if scope is not None:
+            reset.require_seen_expiry(scope, target=expanded.name)
 
 
 def _unencrypted(

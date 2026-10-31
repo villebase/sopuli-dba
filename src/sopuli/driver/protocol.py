@@ -115,6 +115,14 @@ PASSWORD_REUSE_POLICY = "password_reuse_policy"
 #: Force expiry, or end a rollover window early.
 EXPIRE_PASSWORD = "expire_password"
 
+#: The hint for a seen reset on a target without :data:`EXPIRE_PASSWORD`,
+#: given at plan time and by a driver alike (#1201).
+SEEN_NEEDS_EXPIRY = (
+    "the seen path expires the password so that the copy the DBA saw stops working "
+    "at the owner's first login (UC-2 §1), and this target cannot expire one; use an "
+    "unseen delivery method"
+)
+
 #: Lock state can be read and set.
 ACCOUNT_LOCK_STATE = "account_lock_state"
 

@@ -65,6 +65,7 @@ from sopuli.driver.protocol import (
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     ROLLOVER_FINISH,
+    SEEN_NEEDS_EXPIRY,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
@@ -92,13 +93,6 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("postgres")
-
-#: The hint for a seen reset on a cluster.
-NO_EXPIRY = (
-    "PostgreSQL cannot make a role change its password at its next login, and the "
-    "seen path's expiry is what ends the DBA's exposure (UC-2 §1); use an unseen "
-    "delivery method"
-)
 
 #: The hint for a `profile:` predicate on a cluster.
 NO_PROFILES = (
@@ -344,7 +338,7 @@ class PostgresSession:
         """
         if expire:
             require_capability(
-                self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=NO_EXPIRY
+                self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=SEEN_NEEDS_EXPIRY
             )
         admit(secret)
         state = self._role_to_set(account)

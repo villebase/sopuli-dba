@@ -647,6 +647,7 @@ def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> U
         name=name,
         status=status,
         locked=LOCKED in status,
+        deliberately_locked=deliberately_locked(status),
         # `EXPIRED(GRACE)` carries the token `EXPIRED`, so the two are read
         # together or the grace period comes out as a hard expiry. Every caller
         # tests `locked` before either, and every locked form carries `LOCKED`,

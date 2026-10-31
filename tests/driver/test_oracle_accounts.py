@@ -167,6 +167,7 @@ def test_a_locked_account_is_locked_without_losing_its_status(account: Any) -> N
 
     assert state is not None
     assert state.locked is True
+    assert state.deliberately_locked is True
     assert "LOCKED" in state.status
 
 

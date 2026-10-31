@@ -432,6 +432,16 @@ def help_with(**facts: str) -> Callable[[F], F]:
     return apply
 
 
+#: `--force` on the application verbs. `02-oracle-privileges.md` section 4
+#: numbers the guardrails.
+GUARDRAIL_WAIVER_HELP = (
+    "Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the "
+    "password file, an admin role, the deny list and the tool's own account. "
+    "Never guardrail 1, an account the config does not declare, 6, a superuser, "
+    "or 8, a role the server reserves. The run document records every waiver."
+)
+
+
 def select_option(func: F) -> F:
     """The selectors, for the commands that act on the estate.
 
@@ -5246,7 +5256,8 @@ def creds_group() -> None:
     show_default=True,
     help=(
         "login: log in as the account. hash: compare the stored 12C verifier, with "
-        "no login. both: compare, then log in only if the comparison passed."
+        "no login. both: compare, then log in only if the comparison passed. "
+        "hash and both are for Oracle only."
     ),
 )
 @global_options
@@ -5261,51 +5272,46 @@ def creds_check(
     method: str,
     run: Invocation,
 ) -> str:
-    """Check whether the vault's password works against each database.
+    """Check whether the vault's password works on each database.
 
-    One question per account per target, and the command **mutates nothing**: no
-    vault write, no DDL, and no lock at all -- P5 exempts `check` precisely so an
-    hourly scheduled one never blocks a rotation.
+    The command asks one question per account per target. It changes nothing:
+    it writes nothing to the vault, issues no DDL and takes no lock. A check
+    that runs every hour therefore never blocks a rotation.
 
-    **Exit 3 for drift** is what makes this schedulable. A monitoring system
-    alerts on 3 specifically, which is distinct from "the tool failed" -- so a
-    target that could not be reached is exit 1 and never exit 3, or a broken
-    check would page the same person as a real one.
+    It exits 3 when a password has drifted, so a monitoring system can alert on
+    drift alone. A target that cannot be reached exits 1, never 3, so a broken
+    check does not look like drift.
 
-    **--method login is the default, unconditionally** (Q1).
-    --method hash compares the vault's password with the account's stored 12C
-    verifier and logs in as nobody, so it spends nothing against the lockout
-    counter. It needs the optional `SELECT ON SYS.USER$` grant, which no
-    account can hold on Autonomous Database. --method both compares first and
-    logs in only if the comparison passed, so a value already shown wrong is
-    never tried.
+    `--method login`, the default, logs in as the account. On Oracle there are
+    two more methods. `--method hash` compares the vault's password with the
+    account's stored 12C verifier and does not log in, so it spends nothing
+    against the lockout counter. It needs the optional `SELECT ON SYS.USER$`
+    grant, which no account can hold on Autonomous Database. `--method both`
+    compares first, and logs in only if the comparison passed, so it never
+    tries a password that is already shown to be wrong.
 
-    **An explicit hash or both is refused before anything is checked** where it
-    cannot be honoured: no grant, an account with no 12C verifier, or a
-    password the database character set cannot hold. That is exit 5, naming the
-    target, and never a quiet fall-back to login.
+    When `hash` or `both` cannot be used, the tool refuses the run with exit 5
+    before it checks anything, and names the target. That happens when the
+    grant is missing, when the account has no 12C verifier, or when the
+    database character set cannot hold the password. The tool never falls back
+    to `login`.
 
-    **Locking an account would be worse than the drift this detects**, so all of
-    UC-1's runtime mitigations are in place. One login per account per run (two
-    with `--include-previous`) and no retry on a wrong password -- the driver's
-    signature has no shape for a back-off loop. Where `SELECT ON SYS.USER$` was
-    granted, the failed-login counter is read fresh immediately before the
-    attempt and the login is
-    refused within `--lockout-margin` of the profile's limit. That grant is
-    optional and not part of the default install, so where it is absent the
-    guard is *unavailable* rather than passing: the run says so in the row and
-    goes ahead on the remaining mitigations. The same is true of a common
-    account on a target that is not `CDB$ROOT`, whose failed logins are counted
-    in the root.
+    A login can lock the account, and a locked account is worse than the drift
+    this command looks for. So the command logs in once per account per run,
+    or twice with `--include-previous`, and never retries a wrong password. On
+    Oracle, where the tool account holds `SELECT ON SYS.USER$`, it reads the
+    failed-login counter just before each login, and refuses the login within
+    `--lockout-margin` tries of the profile's limit. Without that grant the
+    guard is unavailable: the row says so, and the check goes ahead. The same
+    applies to a common account on a target that is not `CDB$ROOT`, because the
+    root counts its failed logins. PostgreSQL has no failed-login lockout.
 
-    **Lock, expiry and a missing account are reported as themselves.** A login
-    attempt alone conflates an expired password, an already-locked account and a
-    genuinely wrong one behind one Oracle error, so the account's status is read
-    separately -- from a view the baseline grant already covers -- and each gets
-    its own state. Two of those three are not the vault's fault, and folding
-    them into drift would send somebody to rotate a credential that is fine.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    The command reads each account's status separately, so a locked account,
+    an expired password and a missing account each get their own state. A
+    login alone returns one Oracle error for an expired password, a locked
+    account and a wrong password. Only the wrong password is drift, and
+    reporting the other two as drift would send someone to rotate a password
+    that works.
     """
     # --method hash rests on the register entry t-verifier in `docs/README.md`;
     # `docs/measurements.md` has the releases it was measured on. Markers live in
@@ -5826,7 +5832,7 @@ def _stored_credential(binding: Binding, stores: Mapping[str, SecretStore]) -> S
     "--promote",
     is_flag=True,
     default=False,
-    help="Write straight to `current` instead of staging. Still asks no database anything.",
+    help="Write straight to `current` instead of staging. Sets nothing on a database.",
 )
 @click.option(
     "--overwrite-current",
@@ -5865,68 +5871,58 @@ def creds_generate(
     confirm: bool,
     run: Invocation,
 ) -> str:
-    """Draw a new password per the policy and stage it in the vault.
+    """Draw a new password from the policy and stage it in the vault.
 
-    **The database is read and never written.** Step 2 of the use case asks one
-    connection per selected target for the one constraint that can be known in
-    advance -- how long a password may be, in that database's own character set --
-    and the strictest answer governs the draw. Nothing is issued, so reading the
-    database does not change where the advisory lock lives: in the vault (Q2),
-    where this command's writes go.
+    The command reads each database and never changes it. It opens one
+    connection per selected target to ask how long a password may be, in that
+    database's own character set, and draws a password that fits the strictest
+    answer. If a target cannot be reached, the policy's length applies instead,
+    and the output says which of the two the run used. `--offline` asks no
+    target, for an estate that is down on purpose. The advisory lock is in the
+    vault, because the vault is the only place this command writes.
 
-    A target that cannot be reached is not a failure. The policy's declared
-    length governs instead, which is the documented fallback, and the run says
-    which of the two happened rather than leaving a reader to assume the estate
-    agreed. `--offline` declines to ask at all, for staging against an estate
-    that is down on purpose.
+    Staging is separate from applying. An operator can prepare a password, get
+    a change window approved, and apply it later, and each half can be retried
+    on its own. Nothing uses the new password until `sopuli creds apply` sets
+    it on the databases and promotes it.
 
-    **Staging is deliberately separate from applying.** It lets an operator
-    prepare a password, get a change window approved, and apply later -- and it
-    makes each half independently retryable. Nothing is using the new password
-    until `sopuli creds apply` puts it in the database and promotes it.
+    `--promote` writes the password to `current` instead of `pending`. It is for
+    the first adoption of an account that already exists and whose password is
+    not in the vault. Applications read `current`, so replacing an existing
+    `current` before any database has the new password breaks them. The
+    command therefore refuses to replace one at plan time, and names the
+    accounts, unless `--overwrite-current` is given. The old `current` moves to
+    `previous` in the same write. Any `pending` is cleared, because the next
+    `creds apply` would otherwise prefer it to the promoted password.
 
-    **`--promote` writes `current` instead**, for first adoption of an account
-    that already exists and whose password is not in the vault (use case section
-    4). It is invariant 7's one exception and it is not a small one: what the
-    invariant protects is a `current` applications are reading being replaced
-    before any database can serve the new value. Where the account has no
-    `current` there is no such window and the write is unremarkable; where it has
-    one, `--overwrite-current` has to say so, and without it the run refuses at
-    plan time naming the accounts. The value `current` held moves to `previous`
-    in the same write, and any `pending` is cleared -- a staged password left
-    behind is one the next `apply` would prefer to what was just promoted.
+    The command never discards a staged `pending` unless asked. If a selected
+    account already has one, it refuses at plan time and names the accounts;
+    `creds apply` finishes that rotation. `--overwrite-pending` allows the new
+    draw to replace it, for a staged password that nobody should use.
+    `--promote` clears `pending` too, so it also needs this flag. The reason
+    for the refusal: an `apply` may be setting that password on a database now,
+    and if the vault no longer held it, nobody would have the database's
+    password.
 
-    **A staged `pending` is never discarded unasked.** Where a selected account
-    already has one, the run refuses at plan time naming the accounts, and
-    `creds apply` is what finishes it. `--overwrite-pending` authorises drawing
-    over it, for a staged password nobody should use. `--promote` clears a
-    `pending` too, so it needs the flag as well. An `apply` may be putting that
-    password on a database right now, and a vault that no longer held it would
-    leave the database with a password nobody has.
+    A second run with `--overwrite-pending` replaces the staged password and
+    reports a change. Drawing a random password has no target state to converge
+    on, so this command is not idempotent. The output warns that it replaced a
+    staged password, because anything that already read the old one now holds
+    a stale value.
 
-    **A second run with the flag replaces what was staged, and reports a
-    change.** That is outside the idempotency invariant rather than excused from
-    it: the invariant governs commands that converge on a state, and drawing a
-    fresh random secret has no state to converge on. The run warns that it
-    replaced a staged password, because anything already holding the old one is
-    now stale.
+    When several accounts share one secret document, which is the default
+    layout, their passwords go in one compare-and-set write under one lock.
+    Each account still gets its own password.
 
-    **One document is one write.** Where several accounts share a secret -- the
-    documented default -- their passwords go in a single compare-and-set write under
-    a single lock, not one write each. Each account still gets its own password:
-    sharing a document is a storage layout, not a shared credential.
+    The command never retries a compare-and-set conflict. It holds the lock, so
+    a conflict means something outside this tool wrote to the document. Reading
+    it again and writing over it would change fields of accounts that nobody
+    selected.
 
-    **A compare-and-set conflict is never retried.** This run holds the lock, so
-    a conflict means somebody outside this tool wrote to the document, and
-    re-reading to merge over them would rewrite fields belonging to accounts
-    nobody selected.
-
-    `--from-stdin` takes one password on stdin and applies it to every selected
-    account, for migration and for systems that dictate the value. It is
-    validated by the same predicate a generated one is drawn against, and reads
-    the policy length as a minimum rather than an exact figure.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    `--from-stdin` reads one password from stdin and stages it for every
+    selected account. It is for a migration, or for a system that dictates the
+    password. The tool checks it with the same rules it draws a password by,
+    and treats the policy's length as a minimum, not an exact length.
     """
     # Why a second run is outside invariant 9 rather than an exception to it:
     # decision #254 and H7. Why it needs `--overwrite-pending`: #769. They are
@@ -7009,9 +7005,9 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     type=click.Choice(STRATEGIES),
     default=None,
     help=(
-        "Rollover regime. Default: rollover where the database and the account's "
-        "profile allow it, staged otherwise. An explicit one the estate cannot "
-        "honour is refused before anything is changed."
+        "Rollover strategy. Default: rollover where the database and the account's "
+        "profile allow it, staged otherwise. If an account cannot use the strategy "
+        "given, the tool refuses the run before it changes anything."
     ),
 )
 @click.option(
@@ -7020,9 +7016,10 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     is_flag=True,
     default=False,
     help=(
-        "Survey every target before writing anything: reachable, the scope it "
-        "claims, the accounts declared, the privileges needed. Refuses the run "
-        "rather than discovering it half way through."
+        "Check every target before writing anything: that it is reachable, is the "
+        "container the config names, is open read-write, has the declared accounts, "
+        "and grants the tool account what it needs. Refuses the run if a check "
+        "fails, instead of finding the problem part way through."
     ),
 )
 @click.option(
@@ -7048,14 +7045,7 @@ def _already_pending(existing: Any, write: DocumentWrite) -> dict[str, int]:
     "--force",
     is_flag=True,
     default=False,
-    help=(
-        "Waive the account guardrails of 02-oracle-privileges.md section 4, "
-        "checks 2 to 5 and 7: vendor-maintained, password file, admin role, deny "
-        "list, the tool's own account. Never check 1 -- an account the config does "
-        "not declare is refused whatever this says -- and never check 6, a superuser, "
-        "or check 8, a role the server reserves. Every waiver is recorded in the run "
-        "document."
-    ),
+    help=GUARDRAIL_WAIVER_HELP,
 )
 @global_options
 def creds_apply(
@@ -7073,100 +7063,86 @@ def creds_apply(
     force: bool,
     run: Invocation,
 ) -> str:
-    """Make each database hold what the vault holds, then promote what it staged.
+    """Set the vault's password on each database, then promote what was staged.
 
-    **The direction is always vault to database** (invariant 6). Nothing here
-    reads a password out of a database, and there is no flag that would make it.
+    Passwords always go from the vault to the database. The command never reads
+    a password from a database, and no flag makes it do so.
 
-    **The database is asked before it is changed.** Invariant 9 names this the
-    convergent verb -- the one that must report `changed: false` on a re-run -- and
-    it learns whether a change is needed by logging in, as `creds check` does by
-    default. Comparing verifiers instead would need the optional `SELECT ON
-    SYS.USER$` grant, which no account can hold on Autonomous Database. So every
-    account is verified first, under the same lockout mitigations `creds check`
-    uses, and a password that already works is left alone. Two logins per account
-    per run, budgeted up front rather than counted afterwards.
+    The command checks each database before it changes it. It logs in with the
+    vault's password, as `creds check` does by default, under the same lockout
+    guards, and leaves alone a password that already works. A second run
+    therefore reports `changed: false`. It spends at most two logins per
+    account per run, and it counts them before it starts. It does not compare
+    verifiers instead, because that needs the optional `SELECT ON SYS.USER$`
+    grant, which no account can hold on Autonomous Database.
 
-    **A locked account is not changed at all.** The statement would succeed and
-    the verification could never pass, which would end the run holding a database
-    whose password is in no vault stage -- the state the `pending` ordering exists
-    to keep a run out of. An expired one *is* changed: setting a password clears
-    the expiry, which is UC-1 section 6.4's own reading of ORA-28001.
+    The command does not change a locked account. The `ALTER USER` would
+    succeed, but the login that verifies it could not, and the database would
+    then hold a password that is in no vault stage. It does change an account
+    whose password has expired, because setting a password clears the expiry.
 
-    **The promotion is the commit, and it is per document.** The unit of work is
-    the target and the unit of the commit is the secret document: `previous` takes
-    what `current` held, `current` takes what `pending` held, and `pending` is
-    cleared -- in one compare-and-set write, under the lock this run already
-    holds, and only once **every** target for **every** account in that document
-    has confirmed. A run touching two documents may promote one and not the
-    other.
+    The promotion is the commit, and it happens once per secret document. In one
+    compare-and-set write, under the lock the run holds, `previous` takes the
+    old `current`, `current` takes `pending`, and `pending` is cleared. It
+    happens only when every target of every account in that document has
+    confirmed the new password. A run that touches two documents can promote one
+    and not the other.
 
-    **`--source previous` is the rollback**, and it is the escape hatch UC-1
-    section 8 describes: an application turns out to have hard-coded the old
-    password somewhere, and the database has to go back. It puts `previous` on
-    every selected target and then **swaps the vault**, so `current` holds what
-    the database now has and `previous` holds what was just taken off it. That
-    leaves the estate consistent rather than deliberately drifted, and it is not
-    a breach of the vault-is-master rule: both values came out of the vault, and
-    no database was ever read for one.
+    Nothing is promoted until it is confirmed. If some targets confirmed and
+    others did not, the targets that changed keep the new password, `pending`
+    stays, the run exits 4, and each account involved carries a warning.
+    Applications read `current`, so until the promotion they read a password
+    that part of the estate no longer has. Running the command again is safe,
+    and it is the fix.
 
-    Rollback is bounded to one generation, because that is all the stage vocabulary
-    can address (Q3). It needs `--confirm`, and it refuses where a password is
-    staged -- rolling back under a rotation in flight leaves a `pending` that the
-    next run would move the estate forward with. A profile that restricts password
-    reuse usually refuses it, since `previous` is a password the account has held:
-    the run says so (SOPULI-W028), and on such a profile the way back is a rollover
-    window rather than a rollback.
+    A run that leaves out part of a promotion does not promote. Every target
+    the config declares for the credential must confirm in this run, and so
+    must every other account in the same document that has a staged password.
+    A selector that leaves one of them out still changes the databases it
+    selects, which is how to roll a password out in stages. The run then
+    leaves `pending` in place, exits 4, and names what it left out. To finish,
+    run the command again without the selector.
 
-    **The rollover regime is chosen per account, and refused as a whole.** Where
-    the database has gradual password rollover and the account's profile grants a
-    window, that is the default -- both passwords authenticate until the window
-    closes, so a partial apply causes no outage. `--strategy` names one instead,
-    and an explicit one the estate cannot honour is refused before anything is
-    changed rather than discovered halfway through. `--strategy staged` against a
-    profile that grants a window is one of those refusals: Oracle opens the window
-    because the profile says so, whatever this run asked for.
+    `--source previous` is the rollback, for when an application turns out to
+    hold the old password and the database has to go back to it. The command
+    sets `previous` on every selected target and then swaps the two stages in
+    the vault, so `current` holds what the databases now have. Both passwords
+    come from the vault, so the vault stays the master record. A rollback goes
+    back one password only, because the vault keeps only one `previous`. It
+    needs `--confirm`, and the tool refuses it while a password is staged,
+    because the next run would apply that `pending` and undo the rollback. A
+    profile that limits password reuse usually refuses the old password; the
+    output then shows SOPULI-W028, and the way back on that profile is a
+    rollover window instead.
 
-    **`--preflight` asks the whole estate first** (UC-1 section 8 step 3). One
-    connection per target, before anything is written: is it reachable, is it the
-    container the config claims, is it open read-write, does it have the accounts
-    declared, does the service account hold the privileges. Every problem found
-    is reported and the run refuses, because the alternative is discovering on
-    target nine that target ten was never going to work -- by which point nine
-    databases hold a password the vault has not promoted. Off by default, since a
-    repair of one target should not pay for a survey of twenty.
+    The tool chooses the rollover strategy per account. Where the database
+    supports gradual password rollover and the account's profile grants a
+    window, `rollover` is the default: both passwords work until the window
+    closes, so a partial run causes no outage. `--strategy` names a strategy
+    instead. If any account cannot use it, the tool refuses the whole run
+    before it changes anything. For example, `--strategy staged` is refused
+    for an account whose profile grants a window, because Oracle opens the
+    window whatever the run asks for.
 
-    **Nothing is promoted that was not confirmed** (invariant 7). Where some
-    targets confirmed and others did not, the database is left changed where it
-    changed, `pending` stays, the run exits 4, and the accounts involved carry a
-    warning saying so -- because applications fetch `current`, and until the
-    promotion lands they are fetching a password part of the estate no longer
-    has. Re-running is the remedy and is safe.
+    `--preflight` checks every target before anything is written: that it is
+    reachable, is the container the config names, is open read-write, has the
+    declared accounts, and grants the tool account what it needs. The command
+    reports every problem it finds and refuses the run. Without it, the run
+    could find on the tenth target a problem that was there from the start,
+    after nine databases already hold a password that the vault has not
+    promoted. It is off by default, so a repair of one target does not pay
+    for a check of the whole estate.
 
-    **A run narrower than its promotion does not promote.** Every target the
-    config declares for a credential being promoted must confirm in this run,
-    and so must a sibling account in the same document that has a password
-    staged. A selector that leaves any of them out still changes the databases
-    it names -- that is how a rollout is staged -- and then leaves `pending`
-    where it is and exits 4, naming what it left out. Run apply without the
-    narrowing to finish.
-
-    **`--repair FILE` narrows that re-run to what the last one left behind.**
-    It reads a previous run's document -- an apply or a rotate that exited 4, or
-    a check that exited 3 -- and acts only on the (account, target) pairs it reported as
-    not confirmed. What it buys is logins, not capability: an unnarrowed repair
-    converges the estate correctly and expensively, at one login per account per
-    target against the failed-login counter section 7 exists to protect.
-
-    It **narrows and cannot extend** (invariant 5): a pair the document names
-    and the config no longer declares is dropped, not acted on. It combines with
-    the other selectors as *and*, like every one of them. A document produced
-    over a different configuration is refused before a target is dialled, which
-    is the one mistake the narrowing does not make harmless; a document merely
-    *old* warns and proceeds, because a pair since repaired costs one login and
-    reports no change.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    `--repair FILE` limits a run to what an earlier run left unconfirmed. FILE
+    is the run document of an `apply` or `rotate` that exited 4, or of a
+    `check` that exited 3. The command acts only on the account and target
+    pairs that document reports as not confirmed. A run without `--repair`
+    reaches the same result, but spends a login on every account on every
+    target. `--repair` can only narrow the run: it drops a pair that the
+    config no longer declares, and it combines with the other selectors. The
+    tool refuses a document made from a different configuration before it
+    connects to any target. It only warns about an old document, because a
+    pair that has been repaired since costs one login and reports no change.
     """
     document = run.document
     refuse_if_readonly(run.resolved, action="applying a password")
@@ -11140,41 +11116,38 @@ def creds_finish_rollover(
 ) -> str:
     """End an open password rollover window early.
 
-    UC-1 section 6.3 step 4. While a window is open both the old and the new
-    password authenticate, which is what makes zero-downtime rotation real; this
-    ends it, so only the new one works from that moment. S2 runs it as a
-    follow-up job once applications have had their grace period.
+    While a rollover window is open, both the old and the new password work,
+    so applications can move to the new one without an outage. This command
+    ends the window, so only the new password works from then on. Run it as a
+    follow-up job once applications have had time to read the new password.
 
-    **This is the one step whose purpose is to stop something working**, so most
-    of what it does is decide which accounts to leave alone.
+    Its purpose is to stop a password working, so most of what it does is
+    decide which accounts to leave alone.
 
-    **A staged `pending` is refused, without spending a login.** It means the
-    rotation is unfinished, so the vault's `current` is still the *old* password
-    and closing the window would strand every application that has not been given
-    the new one. Run `sopuli creds apply` first.
+    It refuses an account that has a staged `pending`, without spending a
+    login. A staged `pending` means the rotation is not finished: the vault's
+    `current` is still the old password, and closing the window would lock out
+    every application that has not received the new one. Run
+    `sopuli creds apply` first.
 
-    **An account whose vault password the database refuses keeps its window.**
-    That is drift, exit 3, and closing there would leave nothing that
-    authenticates -- neither the password applications fetch nor the one that is
-    about to stop working.
+    It leaves the window open on an account whose database refuses the vault's
+    password. That is drift, and the run exits 3. Closing the window there
+    would leave no password that works: neither the one applications read nor
+    the one that is about to stop working.
 
-    **What the login proves, and what it does not.** Under an open window a
-    *pass* says less than usual, because both passwords authenticate: it cannot
-    tell "the database has the vault's password" from "it has the previous one
-    and accepts both". A *fail* is conclusive, and that is the case worth
-    spending an attempt on. The gap is covered on the vault side by the `pending`
-    rule above, which costs nothing and catches the case a pass would have got
-    wrong.
+    A successful login proves less than usual while a window is open, because
+    both passwords work. It cannot tell whether the database holds the vault's
+    password or the previous one. A failed login does prove a problem, and that
+    is the case worth a login. The `pending` rule above covers the gap: it
+    costs nothing, and it catches the case a successful login would miss.
 
-    **No lock, and no vault write.** Nothing in any store changes, so there is
-    nothing for the advisory lock to protect.
+    The command takes no lock and writes nothing to any store, so the advisory
+    lock has nothing to protect.
 
-    **An account with no window open reports no change.** That is the ordinary
-    result for a scheduled job, and invariant 9: issuing the statement anyway is
-    accepted silently by Oracle and changes nothing, so a run that did would
-    report a change every night.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    An account with no open window reports no change. That is the usual result
+    for a scheduled job. Oracle accepts the statement silently even when no
+    window is open, so a command that issued it anyway would report a change on
+    every run.
     """
     document = run.document
     refuse_if_readonly(run.resolved, action="ending a rollover window")
@@ -11474,9 +11447,9 @@ def _finish_one(
     type=click.Choice(STRATEGIES),
     default=None,
     help=(
-        "Rollover regime. Default: rollover where the database and the account's "
-        "profile allow it, staged otherwise. An explicit one the estate cannot "
-        "honour is refused before anything is changed."
+        "Rollover strategy. Default: rollover where the database and the account's "
+        "profile allow it, staged otherwise. If an account cannot use the strategy "
+        "given, the tool refuses the run before it changes anything."
     ),
 )
 @click.option(
@@ -11512,14 +11485,7 @@ def _finish_one(
     "--force",
     is_flag=True,
     default=False,
-    help=(
-        "Waive the account guardrails of 02-oracle-privileges.md section 4, "
-        "checks 2 to 5 and 7: vendor-maintained, password file, admin role, deny "
-        "list, the tool's own account. Never check 1 -- an account the config does "
-        "not declare is refused whatever this says -- and never check 6, a superuser, "
-        "or check 8, a role the server reserves. Every waiver is recorded in the run "
-        "document."
-    ),
+    help=GUARDRAIL_WAIVER_HELP,
 )
 @global_options
 def creds_rotate(
@@ -11536,79 +11502,73 @@ def creds_rotate(
     force: bool,
     run: Invocation,
 ) -> str:
-    """Draw a new password, put it on every target, and promote it. UC-1 section 8.
+    """Draw a new password, set it on every target, and promote it.
 
-    **This is not a wrapper around three verbs, and that is the whole point.**
-    Calling `generate`, `apply` and `check` in sequence gives up the two
-    properties the sequence is built on. Each of those verbs takes and releases
-    its own lock, so between a `generate` that released and an `apply` that has
-    not yet acquired, another run can stage a different `pending` -- and this run
-    would then apply and promote a password it never generated. Here one
-    acquisition spans the whole sequence, and the fence is re-read before every
-    mutating call, so a run whose lease is taken over stops rather than applying
-    a password the vault no longer advertises.
+    The steps are generate, apply, verify and promote, in that order. Nothing
+    is promoted until every target has confirmed the new password, so the
+    `current` that applications read is always a password the whole estate
+    already accepts. A run that stops part way leaves `pending` staged and the
+    databases it reached changed. `creds apply` finishes that run, and under
+    the rollover strategy there is no outage in the meantime.
 
-    **The pre-flight is unconditional here**, which is the one place it differs
-    from `creds apply`. There it is `--preflight` and off by default, because a
-    repair of one target should not pay for a survey of twenty. A rotation is the
-    opposite case: it is about to change every target it was given, and
-    discovering on target nine that target ten was never going to work leaves
-    nine databases holding a password no application has been told about.
+    Running `creds generate`, `creds apply` and `creds check` one after another
+    is not the same. Each of those commands takes and releases its own lock.
+    Between them, another run could stage a different `pending`, and `apply`
+    would then promote a password that this operator never generated. This
+    command holds one lock for all the steps, and checks before every change
+    that it still holds the lock. A run that has lost its lock stops, instead
+    of applying a password the vault no longer holds.
 
-    **`--max-age-days` reads the vault and never the database** (Q9). `rotated_at`
-    lives on the secret path, one value however many targets share it, so there is
-    nothing to aggregate across the PDBs of a CDB and no "oldest, newest or any"
-    rule to invent. An account the vault has no stamp for is **not** selected: a
-    freshly adopted estate has no stamps anywhere in it, and treating unknown as
-    infinitely old would make this tool's first scheduled act against that estate a
-    rotation of every credential it has.
+    It always checks every target first, the same checks as `creds apply
+    --preflight`. A rotation changes every target it selects. Without the
+    check, it could find on the tenth target a problem that was there from the
+    start, after nine databases already hold a password that no application
+    has been given.
 
-    **The order is generate, apply, verify, promote, and it is a safety design**
-    (invariant 7). Nothing is promoted until every target has confirmed, so the
-    `current` that applications fetch is only ever a password the whole estate
-    has already accepted. A run that gets part way leaves `pending` staged and
-    the databases it reached changed -- which is recoverable, `creds apply` is
-    the recovery, and under the rollover strategy there is no outage meanwhile.
+    `--max-age-days` reads the age from the vault, never from the database.
+    The vault keeps one `rotated_at` value per secret path, however many
+    targets share it, so there is nothing to combine across databases. The
+    command does not select an account that has no `rotated_at` value. A
+    newly adopted estate has none, and treating them as old would make the
+    first scheduled run rotate every credential in it.
 
-    **A staging failure stops the run before any database is touched.** Section
-    8's table says row 4 leaves nothing changed in the database, and a rotation
-    that staged two documents, failed on a third and applied the two anyway would
-    make that row untrue for the estate somebody has to reason about afterwards.
+    If staging fails, the run stops before it changes any database. A
+    rotation that staged two documents, failed on a third, and applied the two
+    anyway would leave a mixed estate that is hard to reason about.
 
-    **Step 8 reads the promotion back**, which is the one step no other verb has.
-    A store that acknowledges a write and then serves something else is not a
-    theoretical failure -- it is what a read replica behind its primary looks
-    like -- and an application fetching `current` in that window gets the old
-    password. The run says which accounts, carries `SOPULI-W012` and exits 4:
-    nothing needs undoing, and the place to look is the vault, not a database.
+    After the promotion, the command reads `current` back from the vault. A
+    store can acknowledge a write and then return the old value, for example
+    from a read replica that is behind its primary, and an application would
+    then read the old password. The run names the accounts, shows
+    SOPULI-W012 and exits 4. Nothing needs to be undone; look at the vault,
+    not at a database.
 
-    **A rotation narrower than its promotion is refused**, before anything is
-    staged: a selector that leaves out another target of a credential being
-    rotated, or a sibling in the same document with a password staged, exits 8
-    naming them. To roll out part of an estate at a time, use `creds generate`
-    and then `creds apply` per target.
+    The tool refuses a rotation that leaves out part of a credential, before
+    anything is staged. If a selector leaves out another target of a
+    credential being rotated, or another account in the same document that has
+    a staged password, the run exits 8 and names them. To roll a password out
+    to part of an estate at a time, run `creds generate`, then `creds apply`
+    per target.
 
-    **A rotation over a staged `pending` is refused** too, after the pre-flight
-    and before anything is staged, naming the accounts. Some run may be putting
-    that password on a database now, and drawing over it would leave the
-    database with a password the vault has nowhere. `creds apply` applies and
-    promotes what is staged; `creds generate --overwrite-pending` discards it.
+    The tool also refuses a rotation over a staged `pending`, after the checks
+    and before anything is staged, and names the accounts. Another run may be
+    setting that password on a database now, and a new draw would leave that
+    database with a password the vault no longer holds. `creds apply` applies
+    and promotes what is staged; `creds generate --overwrite-pending` discards
+    it.
 
-    **An account the guardrails would skip is not staged** (#1009). The
-    pre-flight's reads decide it, as the guardrail pass decides it, so the
-    rotation draws no password that nothing would apply. A `pending` such an
-    account already has is not drawn over, so it does not refuse the run: the
-    rotation leaves it as it is and rotates the other accounts. Under `--force`
-    the account is staged, and its `pending` refuses, as any other's does.
+    The command does not stage a password for an account that the guardrails
+    would skip, because nothing would apply it. The first checks decide this,
+    with the same reads the guardrails use. A `pending` that such an account
+    already has does not refuse the run: the rotation leaves it alone and
+    rotates the other accounts. Under `--force` the account is staged, and its
+    `pending` refuses the run, as any other account's does.
 
-    **`--finish-rollover` runs at the end of the run, not per target.** That is
-    what makes it different from `--strategy direct`, which closes each window as
-    it opens it. Here every window stays open until every target has been applied
-    and verified, so an application that has not yet picked up the new password
-    keeps authenticating with the old one for the whole run rather than losing it
-    the moment its own database was reached.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    `--finish-rollover` ends the rollover windows at the end of the run, not
+    target by target. `--strategy direct` is different: it closes each window
+    as it opens it. With `--finish-rollover`, every window stays open until
+    every target has been applied and verified, so an application that has not
+    yet read the new password can use the old one for the whole run.
     """
     document = run.document
     refuse_if_readonly(run.resolved, action="rotating a password")
@@ -12580,33 +12540,27 @@ def creds_status(
     max_age_days: int | None,
     run: Invocation,
 ) -> str:
-    """Inventory the estate: ages, versions, lock state, rollover.
+    """List the estate's accounts: age, vault version, lock state and rollover.
 
-    **No login attempts, no lock, no mutation.** The safest verb in the tool --
-    `creds check` at least tries a password, and this reads two dictionary views
-    and a vault document. Safe to run anywhere, at any hour, against production.
+    The command makes no login attempt, takes no lock and changes nothing. It
+    reads dictionary views and the vault's secret documents, so it is safe to
+    run at any time, against production.
 
-    **AGE is the vault's, and it is the one that counts.** `--max-age-days` filters
-    on the `rotated_at` stamp the vault holds (Q9), never on the database's own
-    `PASSWORD_CHANGE_DATE` -- one value per secret path however many targets share
-    it, so there is nothing to aggregate and no "oldest, newest or any" rule to
-    invent for an account spanning a CDB's PDBs.
+    The AGE column comes from the vault's `rotated_at` value, and
+    `--max-age-days` marks accounts by it. The vault keeps one value per secret
+    path, however many targets share it, so there is nothing to combine across
+    databases. The database's own password-change date is shown beside it, as
+    DB_PW_CHANGED, and the command never acts on it. The two dates come from different clocks.
+    A row where they differ a lot can point to drift, and it costs no login to
+    notice.
 
-    The database's date is displayed beside it and never acted on. The pair is
-    the point: the same database history answers differently depending on which
-    clock is asked, and a row where the two disagree wildly is a drift smell that
-    costs no login attempt to notice.
+    The command does not tell you whether a password works; `creds check` spends
+    a login to find out. A row here shows `UNVERIFIABLE` because nothing was
+    tried, not `IN_SYNC`.
 
-    **It will not tell you whether a password works.** That is `creds check`,
-    which spends a login to find out. A row here reads `UNVERIFIABLE` because
-    nothing was asked -- reporting `IN_SYNC` from a command that never tried
-    would be agreement nobody measured.
-
-    **What it does say without asking**: an account the config declares and the
-    database has not got, one that is locked or expired, a rotation somebody
-    staged and never applied, and a rollover window standing open.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    It does report, without a login: an account that the config declares and
+    the database does not have, an account that is locked or expired, a
+    password that was staged and never applied, and an open rollover window.
     """
     document = run.document
 

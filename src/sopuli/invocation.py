@@ -890,7 +890,7 @@ def _options(func: F, *, hidden: bool) -> F:
         type=click.Choice([mode.value for mode in OutputMode]),
         default=None,
         hidden=hidden,
-        help="Output format. Scripts should consume json, never text.  [default: text]",
+        help="Output format. Scripts should read json, never text.  [default: text]",
     )
     color = click.option(
         "--color",
@@ -916,8 +916,8 @@ def _options(func: F, *, hidden: bool) -> F:
         metavar="URL",
         default=None,
         hidden=hidden,
-        help="Address of the default vault -- whichever store `SOPULI_VAULT` or"
-        " `defaults.vault` names. Refused when neither does.",
+        help="Address of the default vault: the store that `SOPULI_VAULT` or"
+        " `defaults.vault` names. Refused when neither names one.",
     )
     vault_token_file = click.option(
         TOKEN_FLAG,
@@ -925,8 +925,8 @@ def _options(func: F, *, hidden: bool) -> F:
         type=click.Path(path_type=Path),
         default=None,
         hidden=hidden,
-        help="File holding the vault token. The command line's position in the"
-        " token chain; the token itself is never an option value.",
+        help="File that holds the vault token. It is the command line's place in"
+        " the token chain; the token itself is never an option value.",
     )
     # Always hidden, in both positions: the help must not advertise a flag whose
     # only behaviour is to refuse. Somebody arrives here by typing what Vault's

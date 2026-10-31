@@ -26,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner, Result
 
@@ -366,3 +367,33 @@ def test_an_unnarrowed_run_omits_the_object(
     body = document(runner, write_config(CONFIG))
 
     assert "selection" not in body["invocation"]
+
+
+# ------------------------------------------------- one definition per selector ---
+
+
+def _commands(group: click.Group, ctx: click.Context) -> list[click.Command]:
+    found: list[click.Command] = []
+    for name in group.list_commands(ctx):
+        command = group.get_command(ctx, name)
+        if isinstance(command, click.Group):
+            found += _commands(command, click.Context(command, info_name=name, parent=ctx))
+        elif command is not None:
+            found.append(command)
+    return found
+
+
+@pytest.mark.parametrize("flag", ["--select", "--target", "--group"])
+def test_a_target_selector_reads_the_same_on_every_command(flag: str) -> None:
+    """The estate commands and the `account` verbs take these from one place
+    (#1204). A command that declared its own copy could give the same flag
+    other help, another placeholder, or a single value instead of a repeatable
+    one, and `--help` would disagree between verbs."""
+    seen = {
+        (option.help, option.metavar, option.multiple, option.name)
+        for command in _commands(cli, click.Context(cli, info_name="sopuli"))
+        for option in command.params
+        if isinstance(option, click.Option) and flag in option.opts and not option.hidden
+    }
+
+    assert len(seen) == 1, seen

@@ -443,6 +443,42 @@ GUARDRAIL_WAIVER_HELP = (
 )
 
 
+#: The selectors that narrow targets. :func:`select_option` and
+#: :func:`target_selector_options` share these three definitions, so the
+#: estate commands and the `account` verbs cannot drift apart (#1204).
+_SELECT_OPTION = click.option(
+    "--select",
+    "selectors",
+    multiple=True,
+    metavar="K=V[,K=V]",
+    help="Keep only targets carrying every label given. Repeat for more labels.",
+)
+_TARGET_OPTION = click.option(
+    "--target",
+    "targets",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only this target. Repeat to add more.",
+)
+_GROUP_OPTION = click.option(
+    "--group",
+    "groups",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only targets in this group. Repeat to add more.",
+)
+
+
+def target_selector_options(func: F) -> F:
+    """`--select`, `--target` and `--group`, for the `account` verbs.
+
+    An `account` verb acts on the one account that `--account` names, or, in
+    `account list`, filters by it. So it takes only the selectors that narrow
+    targets, not `--account` or `--application` from :func:`select_option`.
+    """
+    return _SELECT_OPTION(_TARGET_OPTION(_GROUP_OPTION(func)))
+
+
 def select_option(func: F) -> F:
     """The selectors, for the commands that act on the estate.
 
@@ -451,13 +487,14 @@ def select_option(func: F) -> F:
     silently means nothing on some of the commands carrying it is the same
     defect as ignoring one that does.
 
-    That rule is also why all five are one decorator rather than a target-shaped
-    set and an account-shaped set. An account selector narrows *targets* too, by
-    dropping the ones left with no bindings
+    That rule is also why an estate command takes all five, rather than a
+    target-shaped set or an account-shaped set. An account selector narrows
+    *targets* too, by dropping the ones left with no bindings
     (:func:`~sopuli.config.selection.filter_estate`), so `--account` on
     ``target list`` means "the targets where this account lives" rather than
     nothing at all -- and every command carrying the flags is narrowed by every
-    one of them.
+    one of them. The `account` verbs are the exception, with their own
+    `--account`; see :func:`target_selector_options`.
 
     **Names are refused when they name nothing; labels are not.** `--select
     env=nosuch` is an empty run, because labels describe an estate that changes.
@@ -468,6 +505,8 @@ def select_option(func: F) -> F:
     ``--app`` is an accepted alias for ``--application``, which
     ``01-configuration.md`` §3 has documented since before either existed.
     """
+    # Applied innermost first, so `--help` lists them in the reverse order:
+    # --select, --target, --account, --group, --application.
     for option in (
         click.option(
             "--application",
@@ -477,13 +516,7 @@ def select_option(func: F) -> F:
             metavar="NAME",
             help="Keep only this application entry's accounts. Repeat to add more.",
         ),
-        click.option(
-            "--group",
-            "groups",
-            multiple=True,
-            metavar="NAME",
-            help="Keep only targets in this group. Repeat to add more.",
-        ),
+        _GROUP_OPTION,
         click.option(
             "--account",
             "accounts",
@@ -491,20 +524,8 @@ def select_option(func: F) -> F:
             metavar="NAME",
             help="Keep only this account, and the targets it lives on. Repeat to add more.",
         ),
-        click.option(
-            "--target",
-            "targets",
-            multiple=True,
-            metavar="NAME",
-            help="Keep only this target. Repeat to add more.",
-        ),
-        click.option(
-            "--select",
-            "selectors",
-            multiple=True,
-            metavar="K=V[,K=V]",
-            help="Keep only targets carrying every label given. Repeat for more labels.",
-        ),
+        _TARGET_OPTION,
+        _SELECT_OPTION,
     ):
         func = option(func)
     return func
@@ -1460,27 +1481,7 @@ def account_group() -> None:
     metavar="NAME",
     help="The one account to suspend. Required: this verb acts on exactly one.",
 )
-@click.option(
-    "--select",
-    "selectors",
-    multiple=True,
-    metavar="K=V[,K=V]",
-    help="Keep only targets carrying every label given. Repeat for more labels.",
-)
-@click.option(
-    "--target",
-    "targets",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only this target. Repeat to add more.",
-)
-@click.option(
-    "--group",
-    "groups",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only targets in this group. Repeat to add more.",
-)
+@target_selector_options
 @click.option(
     "--confirm",
     is_flag=True,
@@ -1766,27 +1767,7 @@ def _suspend_one(
     metavar="NAME",
     help="The one account to expire. Required: this verb acts on exactly one.",
 )
-@click.option(
-    "--select",
-    "selectors",
-    multiple=True,
-    metavar="K=V[,K=V]",
-    help="Keep only targets carrying every label given. Repeat for more labels.",
-)
-@click.option(
-    "--target",
-    "targets",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only this target. Repeat to add more.",
-)
-@click.option(
-    "--group",
-    "groups",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only targets in this group. Repeat to add more.",
-)
+@target_selector_options
 @click.option(
     "--confirm",
     is_flag=True,
@@ -2095,27 +2076,7 @@ def _unseen_methods_built() -> str:
     metavar="NAME",
     help="The one account to reset. Required: this verb acts on exactly one.",
 )
-@click.option(
-    "--select",
-    "selectors",
-    multiple=True,
-    metavar="K=V[,K=V]",
-    help="Keep only targets carrying every label given. Repeat for more labels.",
-)
-@click.option(
-    "--target",
-    "targets",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only this target. Repeat to add more.",
-)
-@click.option(
-    "--group",
-    "groups",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only targets in this group. Repeat to add more.",
-)
+@target_selector_options
 @click.option(
     "--keep-rollover",
     is_flag=True,
@@ -3696,27 +3657,7 @@ def _hand_over(
 
 
 @account_group.command("list")
-@click.option(
-    "--select",
-    "selectors",
-    multiple=True,
-    metavar="K=V[,K=V]",
-    help="Keep only targets carrying every label given. Repeat for more labels.",
-)
-@click.option(
-    "--target",
-    "targets",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only this target. Repeat to add more.",
-)
-@click.option(
-    "--group",
-    "groups",
-    multiple=True,
-    metavar="NAME",
-    help="Keep only targets in this group. Repeat to add more.",
-)
+@target_selector_options
 @click.option(
     "--account",
     "account",

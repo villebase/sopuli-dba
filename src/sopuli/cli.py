@@ -1482,13 +1482,21 @@ def account_group() -> None:
     "selectors",
     multiple=True,
     metavar="KEY=VALUE",
-    help="Limit to targets carrying this label. Repeatable.",
+    help="Keep only targets carrying every label. Repeat to add more.",
 )
 @click.option(
-    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+    "--target",
+    "targets",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only this target. Repeat to add more.",
 )
 @click.option(
-    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+    "--group",
+    "groups",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only targets in this group. Repeat to add more.",
 )
 @click.option(
     "--confirm",
@@ -1501,8 +1509,8 @@ def account_group() -> None:
     is_flag=True,
     default=False,
     help=(
-        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser or a reserved role, "
-        "which nothing waives."
+        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account "
+        "the config does not declare, a superuser, and a role the server reserves."
     ),
 )
 @global_options
@@ -1515,37 +1523,34 @@ def account_suspend(
     force: bool,
     run: Invocation,
 ) -> str:
-    """Lock a person's account -- the offboarding state a reset refuses to clear.
+    """Lock a person's account, for offboarding. A reset will not unlock it.
 
-    `ALTER USER ... ACCOUNT LOCK`, against an account `personal_accounts:`
-    declares. The state it produces is `LOCKED`, which is a different thing from
-    the `LOCKED(TIMED)` a failed-login limit produces: that one expires on its
-    own under `PASSWORD_LOCK_TIME`, and this one does not until somebody unlocks
-    it.
+    The command issues `ALTER USER ... ACCOUNT LOCK` for an account that
+    `personal_accounts:` declares. It works on Oracle targets only. The account
+    ends up `LOCKED`. That is different from the `LOCKED(TIMED)` state that a
+    failed-login limit causes: `LOCKED(TIMED)` ends by itself after
+    `PASSWORD_LOCK_TIME`, and `LOCKED` lasts until someone unlocks the account.
 
-    **One account, named on the command line.** `--account` is required and takes
-    one name, because an offboarding is one person leaving and UC-2 section 2
-    requires a mutating verb to name its account rather than resolve a set. The
-    target selectors narrow where it is suspended, not who is.
+    `--account` is required and takes one name, because an offboarding is one
+    person leaving, and a mutating verb must name its account instead of
+    choosing a set. The target selectors choose where the account is
+    suspended, not which account.
 
-    **A predicate does not widen this.** Where `personal_accounts:` declares by
-    profile or role rather than by name, the rule is resolved against each target
-    and the account is refused wherever the rule does not admit it -- so a
-    declaration can never turn one named account into several.
+    Where `personal_accounts:` declares accounts by profile or role instead of
+    by name, the tool checks the rule on each target, and refuses the account
+    on any target where the rule does not match it. A declaration can never
+    turn one named account into several.
 
-    **The guardrails are the ones every mutating verb uses.** Suspending DBSNMP
-    refuses exactly as rotating it would, and `--force` waives checks 2 to 5 and
-    7 and never 1, 6 or 8: the whitelist, which is invariant 5's own sentence, a
-    superuser, or a role the server reserves.
+    The command uses the same account guardrails as every mutating verb, so
+    suspending DBSNMP is refused just as rotating it would be. `--force`
+    waives guardrails 2 to 5 and 7, never 1, 6 or 8.
 
-    **Idempotent.** An account that is already locked reports no change and
-    issues nothing -- the driver reads the state first, because Oracle accepts
-    the statement against a locked account silently.
+    An account that is already locked reports no change, and the command
+    issues nothing. The driver reads the state first, because Oracle accepts
+    the statement silently for a locked account.
 
-    **It changes no password and touches no store.** There is nothing here for
-    the advisory lock to protect, and nothing that could emit a secret.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    The command changes no password and writes to no store, so it takes no
+    advisory lock and cannot reveal a secret.
     """
     document = run.document
     action = "suspending an account"
@@ -1783,13 +1788,21 @@ def _suspend_one(
     "selectors",
     multiple=True,
     metavar="KEY=VALUE",
-    help="Limit to targets carrying this label. Repeatable.",
+    help="Keep only targets carrying every label. Repeat to add more.",
 )
 @click.option(
-    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+    "--target",
+    "targets",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only this target. Repeat to add more.",
 )
 @click.option(
-    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+    "--group",
+    "groups",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only targets in this group. Repeat to add more.",
 )
 @click.option(
     "--confirm",
@@ -1802,8 +1815,8 @@ def _suspend_one(
     is_flag=True,
     default=False,
     help=(
-        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser or a reserved role, "
-        "which nothing waives."
+        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account "
+        "the config does not declare, a superuser, and a role the server reserves."
     ),
 )
 @global_options
@@ -1818,31 +1831,30 @@ def account_expire_password(
 ) -> str:
     """Make a person change their password at next logon, without setting one.
 
-    `ALTER USER ... PASSWORD EXPIRE`, against an account `personal_accounts:`
-    declares. No password is drawn, sent or shown, so there is nothing to
-    deliver and nothing that could leak -- which is why this is its own verb
-    rather than a flag on `reset-password`.
+    The command issues `ALTER USER ... PASSWORD EXPIRE` for an account that
+    `personal_accounts:` declares. It works on Oracle targets only. It draws,
+    sends and shows no password, so there is nothing to deliver and nothing
+    that could leak. That is why it is a separate verb, not a flag on
+    `reset-password`.
 
-    **An open rollover window is closed first.** Expiring does not close
-    one: measured, the old password keeps authenticating through the window and
-    can be used to set the next one. So the verb issues `EXPIRE PASSWORD
-    ROLLOVER PERIOD`, then the expiry. Somebody who knows only the old password
-    then needs a reset rather than a self-service change.
+    The command closes an open rollover window first, with `EXPIRE PASSWORD
+    ROLLOVER PERIOD`, and then expires the password. Expiring alone does not
+    close the window: the old password keeps working during the window, and
+    can be used to set the next one. After this command, someone who knows
+    only the old password needs a reset.
 
-    **One account, named on the command line**, and a predicate in
-    `personal_accounts:` never widens it -- `account suspend`'s rules. The
-    guardrails are the ones every mutating verb uses, and `--force` waives
-    checks 2 to 5 and 7 and never 1, 6 or 8: the whitelist, a superuser, or a
-    role the server reserves.
+    `--account` names one account, and a profile or role rule in
+    `personal_accounts:` never widens it, as for `account suspend`. The command
+    uses the same account guardrails as every mutating verb. `--force` waives
+    guardrails 2 to 5 and 7, never 1, 6 or 8.
 
-    **Idempotent.** An account already expired with no window open reports no
-    change and issues nothing. `EXPIRED(GRACE)` is not already expired: the
-    password still logs in until this runs. A lock of either kind is left alone.
+    An account that is already expired, with no window open, reports no
+    change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
+    expired, because the password still works until this command runs. The
+    command leaves a lock of either kind alone.
 
-    It writes no reset record and takes no advisory lock: it delivers nothing,
-    so there is nothing for either to protect.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    It writes no reset record and takes no advisory lock, because it delivers
+    nothing.
     """
     document = run.document
     action = "expiring a password"
@@ -2105,13 +2117,21 @@ def _unseen_methods_built() -> str:
     "selectors",
     multiple=True,
     metavar="KEY=VALUE",
-    help="Limit to targets carrying this label. Repeatable.",
+    help="Keep only targets carrying every label. Repeat to add more.",
 )
 @click.option(
-    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+    "--target",
+    "targets",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only this target. Repeat to add more.",
 )
 @click.option(
-    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+    "--group",
+    "groups",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only targets in this group. Repeat to add more.",
 )
 @click.option(
     "--keep-rollover",
@@ -2133,8 +2153,9 @@ def _unseen_methods_built() -> str:
     is_flag=True,
     default=False,
     help=(
-        "Waive guardrails 2 to 5 and 7. Never the whitelist, a superuser, a reserved role, "
-        "or a deliberate lock."
+        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8 (an account "
+        "the config does not declare, a superuser, and a role the server reserves), or an "
+        "account locked on purpose."
     ),
 )
 @global_options
@@ -2154,42 +2175,40 @@ def account_reset_password(
 ) -> str:
     """Give a person's account a new password, and hand it over.
 
-    UC-2's reason for existing: somebody cannot get into their own account,
-    usually because the password expired and they no longer know it. This draws a
-    new one, sets it, and delivers it by the method `delivery:` names.
+    This is for someone who cannot get into their own account, usually because
+    the password expired and they no longer know it. The command draws a new
+    password, sets it, and delivers it by the method `delivery:` names. It
+    works on Oracle targets only.
 
-    **Two paths, and the configuration chooses.** The unseen path -- the default
-    -- puts the value where only the owner can fetch it and shows it to nobody.
-    {unseen} this build implements; a file naming
-    one that is not built is refused here, before the password changes. The seen path,
-    `delivery.method: {manual}`, prints the password to your terminal and always
-    expires the account, because expiry at first logon is what ends your sight of
-    it.
+    The configuration chooses one of two paths. The unseen path, the default,
+    puts the password where only the owner can fetch it, and shows it to
+    nobody. {unseen} this build implements. The tool refuses a method that is
+    not built before it changes the password. The seen path,
+    `delivery.method: {manual}`, prints the password on your terminal and
+    always expires the account. The owner must change the password at first
+    logon, which ends your knowledge of it.
 
-    **`--confirm` cannot be used with `{manual}`.** That path asks every time and no
-    flag may answer: the prompt exists to establish that somebody is watching, and
-    a flag asserting it would be testifying to its own premise. If nobody can
-    answer, nobody can receive the password either. For the same reason it is
-    refused unless stdout and stdin are both terminals, so a redirect or a pipe
-    cannot stand in for the person.
+    `--confirm` cannot be used with `{manual}`. That path asks every time, and
+    no flag can answer for you: the question checks that a person is watching.
+    If nobody can answer, nobody can receive the password either. For the same
+    reason, the tool refuses the seen path unless stdin and stdout are both
+    terminals, so a redirect or a pipe cannot stand in for the person.
 
-    **Running it twice draws a second password.** There is no convergence to be
-    had -- a fresh random draw has nothing to compare against -- so this verb sits
-    outside invariant 9 and says so in what it prints. Whoever holds the
-    first password holds one that no longer works.
+    Running the command twice draws a second password, and the first one stops
+    working. A random draw has no target state to converge on, so the command
+    is not idempotent, and its output says so.
 
-    **The rollover window is closed by default** (UC-2 4.3), so the old password
-    stops working at once. `--keep-rollover` leaves it open, which is for the
-    reset where the person still knows their old password -- and exactly wrong
-    after a suspected disclosure, where somebody else knows it too. It is refused
-    with `{manual}`: there the close is what makes the expiry end your sight of
-    the account.
+    The command closes the rollover window by default, so the old password
+    stops working at once. `--keep-rollover` leaves the window open, for a
+    reset where the person still knows the old password. Do not use it after a
+    suspected disclosure, because someone else knows the old password too. The
+    tool refuses `--keep-rollover` with `{manual}`, because there the closed
+    window is what makes the expiry end your knowledge of the password.
 
-    **One account, named on the command line.** The target selectors narrow where
-    it is reset, not who is; each target holds a separate account with a separate
-    password. A predicate in `personal_accounts:` narrows and never widens.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    `--account` names one account. The target selectors choose where it is
+    reset, not which account; each target holds a separate account with a
+    separate password. A profile or role rule in `personal_accounts:` can
+    narrow the targets and never widens them.
     """
     document = run.document
     action = "resetting a password"
@@ -3698,13 +3717,21 @@ def _hand_over(
     "selectors",
     multiple=True,
     metavar="KEY=VALUE",
-    help="Limit to targets carrying this label. Repeatable.",
+    help="Keep only targets carrying every label. Repeat to add more.",
 )
 @click.option(
-    "--target", "targets", multiple=True, metavar="NAME", help="Limit to this target. Repeatable."
+    "--target",
+    "targets",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only this target. Repeat to add more.",
 )
 @click.option(
-    "--group", "groups", multiple=True, metavar="NAME", help="Limit to this group. Repeatable."
+    "--group",
+    "groups",
+    multiple=True,
+    metavar="NAME",
+    help="Keep only targets in this group. Repeat to add more.",
 )
 @click.option(
     "--account",
@@ -3722,27 +3749,25 @@ def account_list_command(
 ) -> str:
     """Resolve `personal_accounts:` and show what it matched.
 
-    Reads no password and writes nothing. H1 needs this verb: a personal account
-    may be declared by a *predicate* over a database profile or role, and this is
-    how to read a whitelist you cannot enumerate. The declaration is resolved
-    against each selected target, and each account is reported with the rule that
-    admitted it and the state the database is in.
+    The command reads no password and writes nothing. `personal_accounts:` can
+    declare accounts by a rule over a database profile or role, so the
+    config alone does not list them. This command applies the rules on each
+    selected target, and shows each account with the rule that matched it and
+    the account's state in the database.
 
-    Two date columns, not one. DB_PW_CHANGED is the database's own
-    password-change date and RESET_AT is what the reset journal recorded, and
-    UC-2 3.2 keeps them apart deliberately: they come off two clocks and answer
-    two questions. A database date later than RESET_AT on the unseen path means
-    somebody changed the password after the tool delivered it.
+    It shows two dates. DB_PW_CHANGED is the database's own password-change
+    date. RESET_AT is the date the reset journal recorded. They come from
+    different clocks and answer different questions, so the command keeps them
+    apart. On the unseen path, a database date later than RESET_AT means
+    someone changed the password after the tool delivered it.
 
-    Either can be empty and an empty one is never silent: SOPULI-W021 says why
-    there is no database date, SOPULI-W023 that no journal is configured, and
-    SOPULI-W054 that the journal could not be opened or read.
+    When a date is empty, a warning says why: SOPULI-W021 that the database
+    gave no date, SOPULI-W023 that no journal is configured, and SOPULI-W054
+    that the journal could not be opened or read.
 
-    A predicate naming a profile or role that does not exist is refused -- that
-    is a misspelling. One that exists and matches no accounts is not an error,
-    because that is a true answer about today's estate.
-
-    Help text stays ASCII throughout, which is P4's rule.
+    The tool refuses a rule that names a profile or role the database does not
+    have, because that is a misspelling. A rule that matches no accounts is not
+    an error: it is a true answer about the estate today.
     """
     document = run.document
 
@@ -4118,7 +4143,7 @@ def _unreachable_row(target: ExpandedTarget, error: Error) -> account_list.Row:
 
 @cli.group("lock")
 def lock_group() -> None:
-    """Inspect the advisory locks, and take one back."""
+    """Show the advisory locks, and break one."""
 
 
 @lock_group.command("status")
@@ -4134,59 +4159,51 @@ def lock_status(
 ) -> str:
     """Show which secret paths are locked, and by whom.
 
-    The answer to exit 7. A mutating run that loses a lock prints the holder and
-    stops; this is how anybody else finds out the same thing without racing for
-    it -- what is held, by whom, since when, and whether the claim has lapsed.
+    A mutating run that cannot get a lock prints the holder and exits 7. This
+    command shows the same facts to anyone else, without competing for the
+    lock: what is held, by whom, since when, and whether the lock has expired.
 
-    **It takes no lock itself**, and neither do `check`, `status` or any
-    `--dry-run`. The reason is not politeness: an hourly survey that locked would
-    block the rotations it exists to report on, and the concurrency gate would start
-    failing for the wrong reason.
+    It takes no lock itself, and neither do `creds check`, `creds status` or
+    any `--dry-run`. A survey that runs every hour and took locks would block
+    the rotations it reports on.
 
-    **It opens a connection.** `config show`, `target list` and `policy sample`
-    are offline by design and safe to point at a production config from a
-    laptop; this one authenticates to every store its selection
-    touches and reads from it. Nothing it reads is a secret -- a lock record
-    carries an identity, a command and two timestamps, and never a value -- but
-    the connection is real, and `--select` is how a survey is kept to the estate
-    somebody meant.
+    It opens a connection. `config show`, `target list` and `policy sample`
+    connect to nothing, but this command logs in to every store its selection
+    uses and reads from it. Nothing it reads is a secret: a lock record holds
+    an identity, a command and two timestamps, never a password. Use the
+    selectors to keep the survey to the part of the estate you mean.
 
-    It reports the **declared** set: every secret path the configuration binds an
-    account to, deduplicated through the same key the manager locks on, so two
-    accounts sharing one document are one row here exactly as they are one lock
-    during a rotation.
+    It reports every secret path the configuration binds an account to, once
+    per lock key. Two accounts that share one secret document are one row,
+    just as they are one lock during a rotation.
 
-    **And then it looks beside it.** Each store's lock prefix is listed,
-    and a record at a path this configuration does not declare is reported with
-    `declared: false` -- an application renamed or removed, or another config's
-    estate sharing the mount. That is the record nobody could otherwise see, and
-    a lock nobody can see is a lock nobody can clear. Invariant 5 is untouched:
-    the config whitelists what the tool may *touch*, and this command touches
-    nothing. A store with no `list` capability is named in a warning rather than
-    refused, so a survey never becomes a command that works on some backends and
-    not others.
+    It also lists each store's lock prefix, and reports a record at a path the
+    configuration does not declare with `declared: false`. Such a record comes
+    from an application that was renamed or removed, or from another config's
+    estate on the same mount. Nobody else can see it, and nobody can clear a
+    lock they cannot see. Reading it does not break the rule that the tool
+    touches only what the config declares, because this command changes
+    nothing. A store that cannot list is named in a warning, not refused, so
+    the survey works on every backend.
 
-    **And it surveys UC-2's reset locks, which no binding declares.**
-    `reset_records:` declares a prefix rather than a set of keys -- a personal
-    account admitted by a `profile:` or `role:` predicate has no name until a
-    database is asked, and this verb asks none -- so the region is listed like
-    any other and what is found under it is reported as this estate's, with
-    `declared_by: reset_records` rather than as a leftover. The store is opened
-    because the block declares it, so a configuration with no `applications:` at
-    all still gets a survey rather than an empty estate while a reset holds a
-    lock.
+    It also lists the locks that `account reset-password` takes, under the
+    prefix that `reset_records:` declares. No binding declares those keys,
+    because an account matched by a profile or role rule has no name until a
+    database is asked, and this command asks none. It reports what it finds
+    there as part of this estate, with `declared_by: reset_records`. It opens
+    that store because `reset_records:` declares it, so a configuration with
+    no `applications:` still gets a survey.
 
-    **A selector does not narrow that region, and the reason is that a path
-    segment is not a declaration.** A record path spells its target, so filtering
-    by it would mean trusting the spelling -- and a record under this prefix whose
-    target segment matches nothing declared is precisely the one worth seeing,
-    which a filter built on the segment would hide. So `--select` decides which
-    *bindings* are surveyed, and the prefix is surveyed whole.
+    The selectors do not narrow that prefix. A record path spells its target,
+    so a filter would have to trust the spelling, and a record whose target
+    matches nothing declared is the one most worth seeing. So the selectors
+    choose which bindings are surveyed, and the prefix is always surveyed
+    whole.
 
-    Always exit 0 when it could look. A held lock is a finding, not a failure --
-    exit 7 means *this run could not proceed*, and this run had nothing to
-    proceed with. A store that could not be *listed* is not a failure either: the
-    warning says how much of the estate the answer covers.
+    The command exits 0 whenever it could look. A held lock is a finding, not
+    a failure: exit 7 means "this run could not go ahead", and this run had
+    nothing to do. A store that could not be listed is not a failure either;
+    the warning says how much of the estate the answer covers.
     """
     document = run.document
 
@@ -4284,48 +4301,44 @@ def lock_break(
     force: bool,
     run: Invocation,
 ) -> str:
-    """Take a lock from whoever holds it, and fence them.
+    """Take a lock from whoever holds it, and fence them out.
 
-    The remedy `lock status` names and exit 7 points at. A run that was killed
-    leaves a held record behind; it expires, and until it does -- or if it never
-    does, because something wrote a record with no readable expiry -- nothing else
-    can rotate that credential. This is how a person clears it deliberately.
+    A run that was killed leaves its lock record behind. The lock expires, but
+    until it does, nothing else can rotate that credential, and a record with
+    no readable expiry never expires. This command clears such a lock on
+    purpose. `lock status` and exit 7 point to it.
 
-    The argument is spelled the way exit 7, the `lock.*` events and `lock
-    status`'s first column already print it, so the invocation in a refusal is a
-    paste rather than a translation.
+    VAULT:PATH is spelled as exit 7, the `lock.*` events and the first column
+    of `lock status` print it, so you can paste it from any of them.
 
-    **It never deletes.** A `released` record is written over the held one, with
-    `cas` set to the version that was read. A KV v2 delete leaves the metadata
-    behind, after which a first acquisition can never compare-and-set against
-    version 0 again -- and that monotonic version *is* the fence, so a delete
-    would break every future lock on the path in order to clear one.
+    The command never deletes the record. It writes a `released` record over
+    the held one, as a compare-and-set against the version it read. A KV v2
+    delete leaves the metadata behind, and a later first lock could then never
+    compare-and-set against version 0. The version number is the fence, so a
+    delete would break every future lock on the path.
 
-    **It fences whoever held it**, and that is what makes breaking a lock
-    survivable rather than reckless: the write bumps the version, so the run that
-    held it fails its next fence check and stops before its next `ALTER USER`.
-    Which is also why a store that cannot fence is refused rather than served a
-    weaker version of this, and why a store *declared* `locking: advisory-only`
-    is refused whatever it supports -- there would be nothing to stop the run
-    whose lock was taken, which is precisely the situation that ends with two
-    runners applying different passwords to different targets.
+    The write raises the version, so the run that held the lock fails its next
+    fence check and stops before its next `ALTER USER`. That is what makes it
+    safe to break a lock. For the same reason, the tool refuses a store that
+    cannot fence, and a store declared `locking: advisory-only`, whatever it
+    supports. Without a fence, nothing would stop the run whose lock was
+    taken, and two runs could set different passwords on different targets.
 
-    **An expired lock takes confirmation; a live one takes `--force` as well.**
-    An expired holder is almost always a process that died. A live one is
-    somebody working, and the answer is usually to talk to them -- so that
-    refusal is exit 7, naming them, in the same words a rotation losing the same
-    lock would use.
+    An expired lock needs confirmation. A lock that has not expired needs
+    `--force` as well, because its holder is probably someone working, and the
+    better answer is usually to talk to them. Without `--force` the command
+    exits 7 and names the holder, in the same words a rotation would use.
 
-    **It is a mutation**, so `--dry-run` prints the plan and writes nothing, and
-    `safety.readonly` refuses it outright. Nothing to break -- a path with no
-    record, or one already released -- is exit 0 having changed nothing, which is
-    what makes running this twice safe.
+    The command is a mutation, so `--dry-run` prints the plan and writes
+    nothing, and `safety.readonly` refuses it. If there is nothing to break, a
+    path with no record or one already released, it exits 0 and changes
+    nothing, so running it twice is safe.
 
-    It acts on the one lock named, whether or not this configuration declares a
-    binding for it: the leftover at a path the file no longer names is exactly the
-    record nobody else can clear. The write still lands under the store's lock
-    prefix, in a store `vaults:` declares, and never touches the secret the lock
-    guards.
+    It acts on the lock named, whether or not this configuration declares a
+    binding for it, because a leftover at a path the file no longer names is
+    the record nobody else can clear. It writes only under the store's lock
+    prefix, in a store that `vaults:` declares, and never touches the secret
+    the lock protects.
     """
     document = run.document
 
@@ -4466,41 +4479,42 @@ def vault_group() -> None:
 )
 @global_options
 def vault_orphans(vaults: tuple[str, ...], prefix: str | None, run: Invocation) -> str:
-    """List vault records this tool wrote that no binding declares (#999).
+    """List vault records this tool wrote that no binding declares.
 
-    An application moved to a new secret path leaves its old document and that
-    document's lock record behind. This lists both kinds, in every store
-    `vaults:` declares, and prints the command that deletes each one. **It
-    deletes nothing.** :mod:`sopuli.orphans` says what counts as this tool's
-    record.
+    When an application moves to a new secret path, its old document and that
+    document's lock record stay behind. This command lists both kinds, in
+    every store that `vaults:` declares, and prints the command that deletes
+    each one. It deletes nothing itself.
 
-    Every store is surveyed, not only the ones a binding names: a store the
-    config stopped using is where a moved estate's old records are most likely
-    to be. A record may belong to another config that shares the mount, which is
-    why the delete is left to the operator.
+    It surveys every store, not only the ones a binding names, because a
+    store the config no longer uses is where old records are most likely to
+    be. A record may belong to another config that shares the mount, which is
+    why the command leaves the delete to you.
 
-    Exit 0 when it could look, as `lock status`. An orphan is a finding, not a
-    failure. Exit 5 when no store can list, and exit 1 when every store that
-    can failed its listing (#1018).
+    The command exits 0 whenever it could look, as `lock status` does: an
+    orphan is a finding, not a failure. It exits 5 when no store can list, and
+    1 when every store that can list failed to.
 
-    **Every store in `vaults:` is opened**, so one this run cannot log in to
-    fails the run, as on `lock status`. A store with token auth is not
-    contacted until the listing, so one that does not answer is named in W056
-    instead. Any other auth method logs in when the store is opened. A survey
-    that left a declared store out would report it as clean.
+    It opens every store in `vaults:`, so a store it cannot log in to fails
+    the run, as on `lock status`. A store with token auth is not contacted
+    until the listing, so if it does not answer, warning SOPULI-W056 names it.
+    A store with any other auth method logs in when it is opened. A survey
+    that left out a declared store would report that store as clean.
 
-    `--vault NAME` (#1015) is how to leave one out: only the named entries are
-    opened, and the summary and `orphans.listed` say which were read. A store
-    two entries name is opened through the one named first, so its login is
-    the one the operator chose. A path a binding names is still declared in
-    every store, a selected one included.
+    `--vault NAME` leaves stores out: the command opens only the named
+    entries, and the summary and `orphans.listed` say which it read. When two
+    entries name the same store, the command opens it through the one named
+    first, so it logs in the way you chose. A path that a binding names still
+    counts as declared in every store, including a selected one.
 
-    `--prefix PATH` (#1016) lists only the secret paths under PATH and the lock
-    records under `locks/PATH`, in each store surveyed, so a shared mount's
-    other documents are neither listed nor read. It is a folder: a document at
-    exactly PATH is not under it. The summary and `orphans.prefix` name it, so
-    `no orphans` is not read as a statement about the whole store.
+    `--prefix PATH` lists only the secret paths under PATH, and the lock
+    records under `locks/PATH`, in each store it surveys. The other documents
+    on a shared mount are neither listed nor read. PATH is a folder: a
+    document at exactly PATH is not under it. The summary and `orphans.prefix`
+    name the prefix, so "no orphans" is not read as a statement about the
+    whole store.
     """
+    # `sopuli.orphans` says what counts as this tool's record.
     document = run.document
     config = run.config
     refuse_unknown_vaults(config, vaults)

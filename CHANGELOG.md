@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.83.0](https://github.com/villebase/sopuli-dba/compare/v0.82.0...v0.83.0) (2026-10-31)
+
+
+### Features
+
+* deliver a personal account's password as a 1Password share link ([#446](https://github.com/villebase/sopuli-dba/issues/446)) ([#1192](https://github.com/villebase/sopuli-dba/issues/1192)) ([a40c581](https://github.com/villebase/sopuli-dba/commit/a40c5812dbc686c7dccccfa91e7389fa2047f2a4))
+* read onepassword_share's keys and check the 1Password account at plan time ([#446](https://github.com/villebase/sopuli-dba/issues/446)) ([#1189](https://github.com/villebase/sopuli-dba/issues/1189)) ([8f4f813](https://github.com/villebase/sopuli-dba/commit/8f4f813f6e475144db2e2ee337413f5bf640e6b0))
+* run account list on PostgreSQL with a role: predicate ([#1201](https://github.com/villebase/sopuli-dba/issues/1201)) ([#1206](https://github.com/villebase/sopuli-dba/issues/1206)) ([55eb10f](https://github.com/villebase/sopuli-dba/commit/55eb10f7c7fdaa9ad7708059fa1a4b9a21a5fd16))
+
+
+### Bug Fixes
+
+* refuse at plan time a lock name held by a secret scheduled for deletion ([#1188](https://github.com/villebase/sopuli-dba/issues/1188)) ([#1190](https://github.com/villebase/sopuli-dba/issues/1190)) ([820bbbe](https://github.com/villebase/sopuli-dba/commit/820bbbe866fc9a9ce633a1d8905fb7ff722b9fca))
+
 ## [0.82.0](https://github.com/villebase/sopuli-dba/compare/v0.81.0...v0.82.0) (2026-10-30)
 
 

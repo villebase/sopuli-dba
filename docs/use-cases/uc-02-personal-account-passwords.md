@@ -381,7 +381,8 @@ question, so it is one verb, not two.
   (`SOPULI-W041`). A predicate can also admit an account that another guardrail
   refuses: a member of `DBA`, a superuser, or the tool's own account. The row
   then carries `SOPULI-W062`, which names each check that refuses, from the
-  same review a mutating verb runs. The text output prints the notices under the
+  same review a mutating verb runs. `SYSTEM` holds `DBA`, so its row carries
+  both codes. The text output prints the notices under the
   table. This makes H1's cost visible, which is why the verb exists.
 - **The refusals are the ones this section specifies.** The two-rules,
   two-policies refusal fires here exactly as it does in the mutating verbs. A

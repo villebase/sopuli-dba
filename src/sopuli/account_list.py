@@ -208,19 +208,6 @@ def cross_declared(config: Config, account: str) -> str | None:
     return None
 
 
-#: §4's number for each check, as the notice names it.
-CHECK_NUMBERS = {
-    guardrails.DECLARED: 1,
-    guardrails.VENDOR_MAINTAINED: 2,
-    guardrails.PASSWORD_FILE: 3,
-    guardrails.PRIVILEGED_ROLE: 4,
-    guardrails.DENY_LIST: 5,
-    guardrails.SUPERUSER: 6,
-    guardrails.OWN_ACCOUNT: 7,
-    guardrails.RESERVED: 8,
-}
-
-
 def guardrail_refusal(state: UserState) -> str | None:
     """Why a mutating verb would refuse this listed account, or ``None`` (#1207).
 
@@ -233,16 +220,25 @@ def guardrail_refusal(state: UserState) -> str | None:
     Guardrail 2 is left out, because ``SOPULI-W041`` already says it. A check
     that could not run is left out too: it refuses nothing in a verb either.
     The answer is the review's, so the listing and the verbs cannot disagree.
+    The remedy for a check no flag waives is the one a verb gives
+    (:data:`~sopuli.driver.guardrails.UNWAIVABLE_REMEDIES`).
+
+    An account the database owns can carry this and ``SOPULI-W041`` both:
+    Oracle's ``SYSTEM`` holds ``DBA``. The two codes name different checks,
+    and each needs its own fix.
     """
     found = guardrails.review(state, declared=(state.name,)).refusals
     refusals = [one for one in found if one.check != guardrails.VENDOR_MAINTAINED]
     if not refusals:
         return None
-    reasons = "; ".join(f"check {CHECK_NUMBERS[one.check]}, {one.reason}" for one in refusals)
-    fixed = next((one for one in refusals if not one.overridable), None)
-    remedy = (
-        f"no flag overrides check {CHECK_NUMBERS[fixed.check]}"
-        if fixed is not None
-        else "`--force` overrides it, and the override is recorded"
+    # `.get` so that a check added to the review without a number still lists.
+    checks = ", ".join(
+        f"check {guardrails.NUMBERS.get(one.check, one.check)} ({one.reason})" for one in refusals
     )
-    return f"a mutating verb refuses this account at plan time ({reasons}); {remedy}"
+    fixed = next((one for one in refusals if not one.overridable), None)
+    if fixed is not None:
+        remedy = guardrails.UNWAIVABLE_REMEDIES.get(fixed.check, "no flag overrides it")
+    else:
+        pronoun = "it" if len(refusals) == 1 else "them"
+        remedy = f"`--force` overrides {pronoun}, and the override is recorded"
+    return f"a mutating verb refuses this account at plan time: {checks}. {remedy}"

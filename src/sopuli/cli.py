@@ -9177,15 +9177,9 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
 
 
-#: What to do about each check that no flag waives, by check. One entry for each
-#: member of :data:`guardrails.NEVER_WAIVED`, which a test holds it to.
-UNWAIVABLE_REMEDIES = {
-    guardrails.DECLARED: "declare it in `accounts:` first; no flag extends the whitelist",
-    guardrails.SUPERUSER: "this tool does not change a superuser; leave it out of the config",
-    guardrails.RESERVED: (
-        "this tool does not change a role the server reserves; leave it out of the config"
-    ),
-}
+#: What to do about each check that no flag waives. Kept in the guardrails
+#: module, so that `account list` words a refusal as a verb does (#1207).
+UNWAIVABLE_REMEDIES = guardrails.UNWAIVABLE_REMEDIES
 
 
 def _with_regime(

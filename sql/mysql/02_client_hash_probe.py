@@ -30,15 +30,15 @@ never through argv.
 The probe checks each result against the one RESULTS below records, and
 prints each that differs. A difference, or a step that fails, makes it exit 1.
 A failed step on one server does not stop the others, and each server's
-accounts are dropped either way. The helpers that 03 and 04 use are here.
+accounts are dropped either way. The helpers that the later probes in this
+folder use are here.
 
 It MEASURES and decides nothing.
 
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
-times. The last version, which checks each result against RESULTS and runs
-CH4 as the tool account, ran twice more, exit 0.
+times.
 
 RESULTS -- the same on all three releases, except where noted
 
@@ -174,25 +174,37 @@ def container(service: str) -> str:
     return f"{PROJECT}-{service}-1"
 
 
-def mysql(service: str, user: str, password: str, statement: str) -> tuple[bool, str]:
-    """Run one statement as `user` over TCP. True and the output, or False and the error."""
+def client(
+    service: str, user: str, password: str, statements: str, *flags: str
+) -> tuple[int, str, str]:
+    """Run the server's mysql client as `user`: its exit code, output and errors.
+
+    Over TCP unless `flags` say otherwise. The client's warning about a password
+    in its environment is left out of the errors.
+    """
     done = subprocess.run(
         [
             "docker", "exec", "-i", "-e", "MYSQL_PWD", container(service),
-            "mysql", f"-u{user}", "-h127.0.0.1", "-N", "-B", "--default-character-set=utf8mb4",
+            "mysql", f"-u{user}", "-N", "-B", "--default-character-set=utf8mb4",
+            *(flags or ("-h127.0.0.1",)),
         ],
-        input=statement.encode("utf-8"),
+        input=statements.encode("utf-8"),
         env={**os.environ, "MYSQL_PWD": password},
         capture_output=True,
         check=False,
     )  # fmt: skip
-    out = done.stdout.decode("utf-8", "replace").strip()
     err = "\n".join(
         line
         for line in done.stderr.decode("utf-8", "replace").splitlines()
         if "Using a password" not in line
     ).strip()
-    if done.returncode == 0:
+    return done.returncode, done.stdout.decode("utf-8", "replace").strip(), err
+
+
+def mysql(service: str, user: str, password: str, statement: str) -> tuple[bool, str]:
+    """Run one statement as `user` over TCP. True and the output, or False and the error."""
+    returncode, out, err = client(service, user, password, statement)
+    if returncode == 0:
         return True, out
     # "ERROR 1045 (28000) at line 1: Access denied ..." -> "1045 (28000): Access denied ..."
     found = re.match(r"ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.DOTALL)
@@ -220,9 +232,9 @@ def as_tool(service: str, statement: str) -> str:
     return "ok" if ok else out
 
 
-def login(service: str, password: str) -> str:
+def login(service: str, password: str, account: str = ACCOUNT) -> str:
     """`ok`, or the error number and SQLSTATE of the refusal."""
-    ok, out = mysql(service, ACCOUNT, password, "SELECT CURRENT_USER()")
+    ok, out = mysql(service, account, password, "SELECT CURRENT_USER()")
     return "ok" if ok else code(out)
 
 
@@ -259,8 +271,10 @@ def run(probe: Callable[[str], None]) -> int:
     for service in SERVICES:
         try:
             probe(service)
-        except StepError as exc:
-            print(f"STEP FAILED: {exc}")
+        # ValueError too: a stored value the probe cannot parse, such as an
+        # empty SELECT or a hash of another plugin.
+        except (StepError, ValueError) as exc:
+            print(f"STEP FAILED: {service}: {type(exc).__name__}: {exc}")
             failed = True
         finally:
             try:
@@ -293,8 +307,8 @@ def stored_hash(service: str) -> bytes:
 # ------------------------------------------------------------------ probes --
 
 
-#: CH4's recorded answer on each release line: 8.0 has the plugin, 8.4 ships it
-#: disabled, and 9 has none.
+#: CH4's recorded refusal on 8.4.13, which ships the plugin disabled, and on
+#: 9.7.4, which has none. 8.0.46 accepts the hash.
 NATIVE_REFUSED = "1524 (HY000)"
 
 

@@ -32,8 +32,7 @@ It MEASURES and decides nothing.
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
-times. The last version, which checks each result against RESULTS, ran twice
-more, exit 0.
+times.
 
 RESULTS -- the same on all three releases
 
@@ -90,7 +89,7 @@ _SPEC.loader.exec_module(ch)
 ACCOUNT = ch.ACCOUNT
 A, B, C = "Acme-Probe-pwA", "Acme-Probe-pwB", "Acme-Probe-pwC"
 OK, REFUSED = "ok", "1045 (28000)"
-RETAIN_B = f"IDENTIFIED BY '{B}' RETAIN CURRENT PASSWORD"
+RETAIN_B = f"IDENTIFIED BY {ch.quote(B)} RETAIN CURRENT PASSWORD"
 
 
 def alter(service: str, clause: str) -> str:
@@ -101,7 +100,7 @@ def reset(service: str) -> None:
     """Password A, and no retained password."""
     ch.root(
         service,
-        f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY '{A}';"
+        f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY {ch.quote(A)};"
         f"ALTER USER '{ACCOUNT}'@'%' DISCARD OLD PASSWORD",
     )
 
@@ -138,17 +137,17 @@ def probe(service: str) -> None:
 
     reset(service)
     alter(service, RETAIN_B)
-    answer = alter(service, f"IDENTIFIED BY '{C}' RETAIN CURRENT PASSWORD")
+    answer = alter(service, f"IDENTIFIED BY {ch.quote(C)} RETAIN CURRENT PASSWORD")
     case("DP3", answer, logins(service, A, B, C), (OK, REFUSED, OK, OK))
 
     reset(service)
     alter(service, RETAIN_B)
-    answer = alter(service, f"IDENTIFIED BY '{C}'")
+    answer = alter(service, f"IDENTIFIED BY {ch.quote(C)}")
     case("DP4", answer, logins(service, A, B, C), (OK, OK, REFUSED, OK))
 
     reset(service)
     answer = alter(
-        service, f"IDENTIFIED WITH caching_sha2_password BY '{B}' RETAIN CURRENT PASSWORD"
+        service, f"IDENTIFIED WITH caching_sha2_password BY {ch.quote(B)} RETAIN CURRENT PASSWORD"
     )
     case("DP5", answer, logins(service, A, B), (OK, OK, OK))
 
@@ -165,7 +164,10 @@ def probe(service: str) -> None:
     case("DP7", answer, (*logins(service, A, B), attributes(service)), (OK, REFUSED, OK, "NULL"))
 
     reset(service)
-    alter(service, RETAIN_B)
+    # DP8 reads what a retained password looks like, so it checks first that
+    # one is retained.
+    retained = (alter(service, RETAIN_B), attributes(service))
+    ch.check("DP8 retained", retained, (OK, '["additional_password"]'))
     read = ch.as_tool(
         service, f"SELECT User_attributes FROM mysql.user WHERE user = '{ACCOUNT}' AND host = '%'"
     )
@@ -179,7 +181,9 @@ def probe(service: str) -> None:
     ch.check("DP8", (ch.code(read), ch.code(show), hashes), ("1142 (42000)", "1044 (42000)", 1))
 
     reset(service)
-    answer = alter(service, f"IDENTIFIED WITH sha256_password BY '{B}' RETAIN CURRENT PASSWORD")
+    answer = alter(
+        service, f"IDENTIFIED WITH sha256_password BY {ch.quote(B)} RETAIN CURRENT PASSWORD"
+    )
     case("DP9", answer, logins(service, A, B), ("3894 (HY000)", OK, REFUSED))
 
 

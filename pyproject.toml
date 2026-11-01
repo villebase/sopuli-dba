@@ -72,9 +72,10 @@ postgres = [
 mysql = [
   # PyMySQL: pure Python, so no compiled wheel can lag a new Python release, and
   # it speaks `caching_sha2_password` (#1202, decision 8). Over a plain
-  # connection that plugin needs RSA, which is PyMySQL's own `rsa` extra; the
-  # tool connects over TLS by default, so it is not installed here.
-  "PyMySQL>=1.1.1",
+  # connection, a login the server has not cached needs RSA key exchange,
+  # which is PyMySQL's own `rsa` extra (`cryptography`). The config accepts
+  # `ssl_mode: DISABLED` and `PREFERRED`, so the extra comes with it.
+  "PyMySQL[rsa]>=1.1.1",
 ]
 hashicorp = [
   # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than

@@ -20,10 +20,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Application, Config, ExpandedTarget, Override, TargetOracle
+from sopuli.config.model import (
+    Application,
+    Config,
+    ExpandedTarget,
+    Override,
+    Target,
+    TargetOracle,
+)
 from sopuli.config.targets import (
     EXTERNAL,
     MYSQL,
@@ -43,68 +51,121 @@ _HOST_AND_PORT = re.compile(
     rf"(?:\[[0-9A-Fa-f:.]+(?:%[A-Za-z0-9._-]+)?\]|{_LABEL}(?:\.{_LABEL})*\.?):([0-9]{{1,5}})"
 )
 
-#: Each product's name in a message, and the block that holds its own keys.
-_PRODUCTS = {ORACLE: "Oracle", POSTGRESQL: "PostgreSQL", MYSQL: "MySQL"}
-_BLOCKS = {ORACLE: "oracle", POSTGRESQL: "postgres", MYSQL: "mysql"}
 
-_DSN_HINTS = {
-    POSTGRESQL: (
-        "write host:port, such as pg-dev.example.com:5432. The database goes in "
-        "`postgres.database` and TLS in `postgres.sslmode`; the password is never "
-        "written in this file (P2)"
-    ),
-    MYSQL: (
-        "write host:port, such as mysql-dev.example.com:3306. TLS goes in "
-        "`mysql.ssl_mode`; the password is never written in this file (P2)"
-    ),
-}
+@dataclass(frozen=True)
+class _Tls:
+    """A product's TLS keys: the mode, the CA file, the modes that check the
+    server against the file, and the fix a refusal names."""
 
-#: Why a block of another product's keys has nothing to say on this target.
-_NOTHING_TO_SAY = {
-    POSTGRESQL: "A PostgreSQL target is the whole cluster, so there is no container to assert",
-    MYSQL: "A MySQL target is the whole server, so there is no container to assert",
+    mode: str
+    ca: str
+    verifying: tuple[str, ...]
+    fix: str
+
+
+@dataclass(frozen=True)
+class _Product:
+    """What a message says about one product, written once."""
+
+    #: The product's name with its article, as in "an Oracle target".
+    a_name: str
+    #: Its own block of keys on a target.
+    block: str
+    #: What one target of it is.
+    whole: str
+    #: Who on it has a password, and what it belongs to. ``None`` for Oracle,
+    #: where accounts live in a container.
+    owner: str | None = None
+    #: The `dsn:` hint, for a product whose dsn is host:port.
+    dsn_hint: str | None = None
+    tls: _Tls | None = None
+
+    @property
+    def name(self) -> str:
+        return self.a_name.split(" ", 1)[1]
+
+
+_PRODUCTS: dict[str, _Product] = {
+    ORACLE: _Product(a_name="an Oracle", block="oracle", whole="database"),
+    POSTGRESQL: _Product(
+        a_name="a PostgreSQL",
+        block="postgres",
+        whole="cluster",
+        owner="a PostgreSQL role belongs to the whole cluster",
+        dsn_hint=(
+            "write host:port, such as pg-dev.example.com:5432. The database goes in "
+            "`postgres.database` and TLS in `postgres.sslmode`; the password is never "
+            "written in this file (P2)"
+        ),
+        tls=_Tls(
+            mode="sslmode",
+            ca="sslrootcert",
+            verifying=VERIFYING_SSLMODES,
+            fix="use `sslmode: verify-full` (the default) or `verify-ca`",
+        ),
+    ),
+    MYSQL: _Product(
+        a_name="a MySQL",
+        block="mysql",
+        whole="server",
+        owner="a MySQL account belongs to the whole server",
+        dsn_hint=(
+            "write host:port, such as mysql-dev.example.com:3306. TLS goes in "
+            "`mysql.ssl_mode`; the password is never written in this file (P2)"
+        ),
+        tls=_Tls(
+            mode="ssl_mode",
+            ca="ssl_ca",
+            verifying=MYSQL_VERIFYING_SSL_MODES,
+            fix="use `ssl_mode: VERIFY_IDENTITY` (the default) or `VERIFY_CA`",
+        ),
+    ),
 }
 
 
 def check_products(config: Config) -> None:
     """Refuse a key written for another product than the target's own."""
     for expanded in config.expanded_targets:
-        kind = expanded.target.type
-        if kind == POSTGRESQL:
-            _check_postgresql(expanded)
-        elif kind == MYSQL:
-            _check_mysql(expanded)
-        else:
-            _refuse_other_blocks(expanded)
+        _refuse_other_blocks(expanded)
+        if expanded.target.type != ORACLE:
+            _check_host_and_port_product(expanded)
+
+
+def _written_blocks(target: Target) -> dict[str, bool]:
+    """Which product blocks the target writes. `oracle:` always exists on the
+    model, with defaults, so a block that differs from them is a written one."""
+    return {
+        ORACLE: target.oracle != TargetOracle(),
+        POSTGRESQL: target.postgres is not None,
+        MYSQL: target.mysql is not None,
+    }
 
 
 def _refuse_other_blocks(expanded: ExpandedTarget) -> None:
-    """A `postgres:` or `mysql:` block on a target of another type.
-
-    The `oracle:` block is the one exception: it always exists on the model,
-    with defaults, so its rule is the one each product's check writes itself.
-    """
+    """A block of another product's keys on this target."""
     target = expanded.target
-    written = {POSTGRESQL: target.postgres is not None, MYSQL: target.mysql is not None}
-    for kind, present in written.items():
+    own = _PRODUCTS[target.type]
+    for kind, present in _written_blocks(target).items():
         if not present or kind == target.type:
             continue
-        block = _BLOCKS[kind]
-        product = _PRODUCTS[target.type]
+        other = _PRODUCTS[kind]
+        if kind == ORACLE:
+            # Oracle's block asserts a container, which no other product has.
+            way_out = (
+                f"drop `oracle:`. A {own.name} target is the whole {own.whole}, so there is "
+                "no container to assert"
+            )
+        else:
+            way_out = (
+                f"drop `{other.block}:`, or set `type: {kind}` if this is {other.a_name} "
+                f"{other.whole}"
+            )
         raise ConfigError(
-            f"target {expanded.name!r} is {_article(product)} {product} target, so its "
-            f"`{block}:` block would do nothing",
-            at=declared_at(expanded, block),
-            hint=(
-                f"drop `{block}:`, or set `type: {kind}` if this is {_article(_PRODUCTS[kind])} "
-                f"{_PRODUCTS[kind]} {'cluster' if kind == POSTGRESQL else 'server'}"
-                + _one_set_per_product(expanded, block, product)
-            ),
+            f"target {expanded.name!r} is {own.a_name} target, so its `{other.block}:` "
+            f"block would do nothing",
+            at=declared_at(expanded, other.block),
+            hint=way_out + _one_set_per_product(expanded, other.block, own.name),
         )
-
-
-def _article(product: str) -> str:
-    return "an" if product == "Oracle" else "a"
 
 
 def _one_set_per_product(expanded: ExpandedTarget, block: str, product: str) -> str:
@@ -119,87 +180,54 @@ def _one_set_per_product(expanded: ExpandedTarget, block: str, product: str) -> 
     )
 
 
-def _check_postgresql(expanded: ExpandedTarget) -> None:
-    _refuse_an_oracle_block(expanded)
-    _refuse_other_blocks(expanded)
-    postgres = expanded.target.postgres
-    if (
-        postgres is not None
-        and postgres.sslrootcert is not None
-        and postgres.sslmode not in VERIFYING_SSLMODES
-    ):
-        raise ConfigError(
-            f"target {expanded.name!r} names a CA file under `sslmode: {postgres.sslmode}`, "
-            f"which does not verify the server with it",
-            at=declared_at(expanded, "postgres"),
-            hint=(
-                "use `sslmode: verify-full` (the default) or `verify-ca`"
-                # An override cannot clear a key its template wrote.
-                + ("" if "postgres" in expanded.patched else ", or drop `sslrootcert`")
-            ),
-        )
-    _refuse_external(expanded)
-    _check_dsn(expanded)
-
-
-def _check_mysql(expanded: ExpandedTarget) -> None:
-    _refuse_an_oracle_block(expanded)
-    _refuse_other_blocks(expanded)
-    mysql = expanded.target.mysql
-    if (
-        mysql is not None
-        and mysql.ssl_ca is not None
-        and (mysql.ssl_mode not in MYSQL_VERIFYING_SSL_MODES)
-    ):
-        raise ConfigError(
-            f"target {expanded.name!r} names a CA file under `ssl_mode: {mysql.ssl_mode}`, "
-            f"which does not verify the server with it",
-            at=declared_at(expanded, "mysql"),
-            hint=(
-                "use `ssl_mode: VERIFY_IDENTITY` (the default) or `VERIFY_CA`"
-                + ("" if "mysql" in expanded.patched else ", or drop `ssl_ca`")
-            ),
-        )
-    _refuse_external(expanded)
-    _check_dsn(expanded)
-
-
-def _refuse_an_oracle_block(expanded: ExpandedTarget) -> None:
-    kind = expanded.target.type
-    if expanded.target.oracle == TargetOracle():
-        return
-    product = _PRODUCTS[kind]
-    raise ConfigError(
-        f"target {expanded.name!r} is a {product} target, so its `oracle:` block would do nothing",
-        at=declared_at(expanded, "oracle"),
-        hint=(
-            f"drop `oracle:`. {_NOTHING_TO_SAY[kind]}"
-            + _one_set_per_product(expanded, "oracle", product)
-        ),
-    )
-
-
-def _refuse_external(expanded: ExpandedTarget) -> None:
+def _check_host_and_port_product(expanded: ExpandedTarget) -> None:
+    """PostgreSQL's and MySQL's rules: a CA file only under a mode that checks
+    the server with it, no Oracle wallet, and a host:port dsn."""
     target = expanded.target
+    product = _PRODUCTS[target.type]
+    _refuse_an_unused_ca_file(expanded, product)
     auth = None if target.admin is None else target.admin.auth
     if auth is not None and auth.method == EXTERNAL:
         raise ConfigError(
-            f"target {expanded.name!r} is a {_PRODUCTS[target.type]} target, and external "
+            f"target {expanded.name!r} is {product.a_name} target, and external "
             f"authentication is an Oracle wallet",
             at=declared_at(expanded, "admin").key("auth"),
             hint="use `vault`, `prompt` or `env`",
         )
+    _check_dsn(expanded, product)
 
 
-def _check_dsn(expanded: ExpandedTarget) -> None:
+def _refuse_an_unused_ca_file(expanded: ExpandedTarget, product: _Product) -> None:
+    """A CA file the mode ignores. libpq ignores it below `require`, and under
+    `require` turns the mode into `verify-ca` without saying so; MySQL checks
+    the server against it only under its two verifying modes."""
+    tls = product.tls
+    block = getattr(expanded.target, product.block)
+    if tls is None or block is None or getattr(block, tls.ca) is None:
+        return
+    mode = getattr(block, tls.mode)
+    if mode in tls.verifying:
+        return
+    raise ConfigError(
+        f"target {expanded.name!r} names a CA file under `{tls.mode}: {mode}`, "
+        f"which does not verify the server with it",
+        at=declared_at(expanded, product.block),
+        hint=(
+            tls.fix
+            # An override cannot clear a key its template wrote.
+            + ("" if product.block in expanded.patched else f", or drop `{tls.ca}`")
+        ),
+    )
+
+
+def _check_dsn(expanded: ExpandedTarget, product: _Product) -> None:
     """A PostgreSQL or MySQL `dsn:` is `host:port` and nothing more.
 
     A connection URI and a keyword string can both carry a password, which is
     what #891 refused in a vault address. No message here repeats the value, for
     the same reason.
     """
-    kind = expanded.target.type
-    hint = _DSN_HINTS[kind]
+    hint = product.dsn_hint
     dsn = expanded.target.dsn
     at = declared_at(expanded, "dsn")
     if "://" in dsn:
@@ -218,8 +246,7 @@ def _check_dsn(expanded: ExpandedTarget) -> None:
     match = _HOST_AND_PORT.fullmatch(dsn)
     if match is None or not 1 <= int(match.group(1)) <= 65535:
         raise ConfigError(
-            f"target {expanded.name!r} is a {_PRODUCTS[kind]} target, so its `dsn:` must be "
-            f"host:port",
+            f"target {expanded.name!r} is {product.a_name} target, so its `dsn:` must be host:port",
             at=at,
             hint=hint,
         )
@@ -239,8 +266,8 @@ def refuse_a_container_clause(
     names the first place that wrote the clause: the application's own block,
     else the first override.
     """
-    kind = expanded.target.type
-    if kind == ORACLE:
+    product = _PRODUCTS[expanded.target.type]
+    if product.owner is None:
         return
     if application.oracle.container_clause is not None:
         written = at.key("oracle")
@@ -253,17 +280,12 @@ def refuse_a_container_clause(
             return
         written = at.key("overrides").index(position).key("oracle")
     name = "the application" if application.name is None else f"application {application.name!r}"
-    owner = (
-        "a PostgreSQL role belongs to the whole cluster"
-        if kind == POSTGRESQL
-        else "a MySQL account belongs to the whole server"
-    )
     raise ConfigError(
-        f"{name} sets `oracle: container_clause`, and binds to {_PRODUCTS[kind]} target "
+        f"{name} sets `oracle: container_clause`, and binds to {product.name} target "
         f"{expanded.name!r}",
         at=written.key("container_clause"),
         hint=(
-            f"{owner}, so there is no container. Move the Oracle targets to an "
+            f"{product.owner}, so there is no container. Move the Oracle targets to an "
             "application of their own, or narrow this one's `targets:`"
         ),
     )

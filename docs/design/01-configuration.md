@@ -1237,7 +1237,7 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. The `mysql` driver is not written yet, so every command but `doctor` refuses a `mysql` target with `SOPULI-20006`, before connecting. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands refuse it with `SOPULI-20006`, before connecting |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. The `mysql` driver is not written yet, so every command but `doctor` refuses a `mysql` target with `SOPULI-20006`, before connecting. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
 | `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL and MySQL: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
@@ -2002,7 +2002,9 @@ connection** (#1058). That mode never encrypts, so the config already says what
 a connection would. The hint names the key that required encryption and the
 `sslmode` line. `allow` and `prefer` may still negotiate TLS, so the connection
 decides for them, as for every other mode. The setting does not ask for a
-verified server: `require` passes it, and warns with `SOPULI-W058`.
+verified server: `require` passes it, and warns with `SOPULI-W058`. A MySQL
+target under `ssl_mode: DISABLED` is refused the same way (#1221), and
+`PREFERRED` is left to the connection.
 
 Here `encrypted.yaml` sets `defaults.safety.require_encryption: true`, and the
 target's connection has no NNE:
@@ -2077,7 +2079,7 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
 | **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
-| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
+| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
 
@@ -3552,10 +3554,11 @@ match instead:
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
-| `oracle:` only on an Oracle target, and `postgres:` only on a PostgreSQL target | yes |
-| a PostgreSQL target has a `host:port` `dsn` and no `admin.auth: external` | yes |
+| `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, and `mysql:` only on a MySQL target | yes |
+| a PostgreSQL or MySQL target has a `host:port` `dsn` and no `admin.auth: external` | yes |
 | `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
-| an application's `oracle: container_clause` may not bind to a PostgreSQL target | yes |
+| `mysql.ssl_ca` only with `ssl_mode: VERIFY_CA` or `VERIFY_IDENTITY` | yes |
+| an application's `oracle: container_clause` may not bind to a PostgreSQL or MySQL target | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
@@ -3800,23 +3803,28 @@ notices until a rotation.
   rotation (invariant 4). `admin.auth: vault` with no `secret:` is the same rule:
   there is no default admin path, and guessing at one is how a run authenticates as
   something nobody chose
-- `admin.auth: external` on a PostgreSQL target → error, because external
-  authentication is an Oracle wallet
+- `admin.auth: external` on a PostgreSQL or MySQL target → error, because
+  external authentication is an Oracle wallet
 - `admin.auth: external` on an Oracle target whose `dsn` is not a TNS alias →
   error. External auth connects as `/@alias` and the wallet is keyed on that
   alias, so an EZConnect string fails as an *authentication* error, which is the
   most misleading way for a config mistake to surface
-- an `oracle:` block on a PostgreSQL target, or a `postgres:` block on an Oracle
-  target → error naming the target. Either would load and do nothing. Checked
-  after expansion, because an override can change a generated target's `type`
-- a PostgreSQL `dsn` that is not `host:port` → error. A connection URI or a
-  keyword string can carry a password, and the message does not repeat the value
+- an `oracle:`, `postgres:` or `mysql:` block on a target of another product →
+  error naming the target. It would load and do nothing. Checked after
+  expansion, because an override can change a generated target's `type`
+- a PostgreSQL or MySQL `dsn` that is not `host:port` → error. A connection URI
+  or a keyword string can carry a password, and the message does not repeat the
+  value
 - `postgres.sslrootcert` with an `sslmode` other than `verify-ca` or
   `verify-full` → error. libpq ignores the file below `require`, and under
   `require` it turns the mode into `verify-ca` without saying so
+- `mysql.ssl_ca` with an `ssl_mode` other than `VERIFY_CA` or
+  `VERIFY_IDENTITY` → error, because no other mode checks the server against
+  the file
 - an application's or an override's `oracle: container_clause` on an
-  application that binds to a PostgreSQL target → error. A PostgreSQL role
-  belongs to the whole cluster, so there is no container
+  application that binds to a PostgreSQL or MySQL target → error. A role or an
+  account there belongs to the whole cluster or server, so there is no
+  container
 - `admin.auth: external` beside a `username:` → error rather than the username
   being ignored. The wallet decides who connects, and a file that appears to name
   the connecting account while the wallet names another is worth stopping for
@@ -3896,7 +3904,8 @@ notices until a rotation.
   distributed yet is a real situation, and a tool that refused would be unusable
   exactly where an operator most needs it to say what it is doing
 - a PostgreSQL target whose `sslmode` does not verify the server (`disable`,
-  `allow`, `prefer` or `require`) → warning, once per target, carrying
+  `allow`, `prefer` or `require`), or a MySQL target whose `ssl_mode` does not
+  (`DISABLED`, `PREFERRED` or `REQUIRED`) → warning, once per target, carrying
   `SOPULI-W058` and repeated on every run, for the reason `SOPULI-W004` is
 - a `tls.client_key` with no `tls.client_cert` beside it → error. The reverse is
   allowed: a client certificate may be written alone when the file holds both

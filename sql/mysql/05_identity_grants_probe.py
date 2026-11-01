@@ -14,16 +14,19 @@ server:
        accounts it changed
   ID3  a user name that differs from ID1's only in case, and a host that
        differs only in case
-  ID4  ALTER USER for a host pattern the user name does not have
-  TG1  the tool account, with only CREATE USER, alters root@'%' and
-       root@'localhost'
+  ID4  ALTER USER for a host the user name does not have, 192.0.2.99
+  TG1  the tool account, with only CREATE USER, alters root@'%',
+       root@'localhost' and mysql.sys@'localhost', each with a statement that
+       would leave it as it is: ACCOUNT UNLOCK for root, ACCOUNT LOCK for
+       mysql.sys, which is locked
   TG2  the accounts that hold SYSTEM_USER on a new server
   TG3  the tool account alters, then drops, an account that holds every
        privilege but SYSTEM_USER
   TG4  the tool account grants a privilege
-  TG5  the tool account, given SELECT on chosen columns of mysql.user, reads
-       the lock and expiry columns, then authentication_string, then
-       User_attributes
+  TG5  the tool account reads the lock and expiry columns of mysql.user, and
+       runs SHOW CREATE USER. Then, given SELECT on chosen columns of
+       mysql.user, it reads the lock and expiry columns, then
+       authentication_string, then User_attributes
   TG6  the tool account, given SYSTEM_USER as well, alters root@'%'
 
 A login is "ok" and the account CURRENT_USER() names, or the error number and
@@ -52,25 +55,27 @@ RESULTS -- the same on all three releases
        accounts at '%' differ only in case. 'LOCALHOST' is refused, 1396
        (HY000), because 'localhost' exists: host names are not case-sensitive
   ID4  refused, 1396 (HY000)
-  TG1  both refused, 1227 (42000), "you need (at least one of) the
+  TG1  all three refused, 1227 (42000), "you need (at least one of) the
        SYSTEM_USER privilege(s) for this operation"
   TG2  mysql.infoschema@localhost, mysql.session@localhost,
        mysql.sys@localhost, root@% and root@localhost
   TG3  the tool account changes the password of, and then drops, an account
        that holds every privilege but SYSTEM_USER
   TG4  refused, 1044 (42000)
-  TG5  the lock and expiry columns are read. authentication_string and
-       User_attributes are refused, 1143 (42000), "SELECT command denied ...
-       for column"
+  TG5  without the grant, the read is refused, 1142 (42000), and so is SHOW
+       CREATE USER, 1044 (42000). With it, the lock and expiry columns read
+       as ID2 left them. authentication_string and User_attributes are
+       refused, 1143 (42000), "SELECT command denied ... for column"
   TG6  accepted: with SYSTEM_USER the tool account changes root's password
 
   So an account is a user name and a host pattern, the user name is
   case-sensitive, and one name can have a password per host. CREATE USER is
   enough to change other accounts' passwords, and SYSTEM_USER is what keeps
-  it off root and the system accounts, as long as the tool account does not
-  hold it. An administrative account without SYSTEM_USER is not protected.
-  Column grants on mysql.user let the tool read lock and expiry without the
-  hashes, but not a retained password's state.
+  it off root and mysql.sys, as long as the tool account does not hold it. An
+  administrative account without SYSTEM_USER is not protected. CREATE USER
+  alone reads no account's state; column grants on mysql.user let the tool
+  read lock and expiry without the hashes, but not a retained password's
+  state.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -80,11 +85,11 @@ It needs only the standard library and the docker CLI, and
 02_client_hash_probe.py beside it. The container names follow
 COMPOSE_PROJECT_NAME, so a second clone's matrix is the one it uses.
 
-THROWAWAY SERVERS ONLY. On each server it creates the tool account
-sopuli_probe_tool and the accounts sopuli_probe_id and Sopuli_Probe_Id at
-three hosts, and sopuli_probe_dba, and drops them at the end, and before it
-starts it drops ones an interrupted run left. TG6 sets root@'%' to the
-matrix's password it already has.
+THROWAWAY SERVERS ONLY. On each server it creates the accounts
+sopuli_probe_tool and sopuli_probe_hash, as 02 does, sopuli_probe_id at three
+hosts, Sopuli_Probe_Id@'%' and sopuli_probe_dba@'%'. It drops them at the end,
+also after a failed step, and before it starts it drops ones an interrupted
+run left. TG6 sets root@'%' to the matrix's password it already has.
 """
 
 from __future__ import annotations
@@ -143,6 +148,17 @@ def drop(service: str) -> None:
 
 
 def probe(service: str) -> None:
+    """Run the cases, and drop this probe's own accounts whatever happens.
+
+    02's run() drops only the accounts 02's setup() creates.
+    """
+    try:
+        cases(service)
+    finally:
+        drop(service)
+
+
+def cases(service: str) -> None:
     ch.setup(service, "Acme-Probe-pw0")
     drop(service)
     for host, password in HOSTS.items():
@@ -169,15 +185,15 @@ def probe(service: str) -> None:
     )  # fmt: skip
 
     answer = tool(service, f"ALTER USER '{NAME}' ACCOUNT LOCK")
-    print(f"ID2 {answer}; locked: {locked(service)}")
-    ch.check("ID2", (answer, locked(service)), (OK, "%=Y,192.0.2.%=N,localhost=N"))
+    state = locked(service)
+    print(f"ID2 {answer}; locked: {state}")
+    ch.check("ID2", (answer, state), (OK, "%=Y,192.0.2.%=N,localhost=N"))
 
-    other = ch.code(
-        ch.mysql(
-            service, "root", ch.ROOT_PASSWORD,
-            f"CREATE USER '{OTHER_CASE}'@'%' IDENTIFIED BY 'Acme-Id-pw4'",
-        )[1] or OK
+    ok, out = ch.mysql(
+        service, "root", ch.ROOT_PASSWORD,
+        f"CREATE USER '{OTHER_CASE}'@'%' IDENTIFIED BY 'Acme-Id-pw4'",
     )  # fmt: skip
+    other = OK if ok else ch.code(out)
     names = ch.root(
         service,
         f"SELECT COUNT(*) FROM mysql.user WHERE host = '%' AND user IN ('{NAME}', '{OTHER_CASE}')",
@@ -189,16 +205,19 @@ def probe(service: str) -> None:
     print(f"ID3 other case: {other}, accounts at '%': {names}; host in capitals: {host_case}")
     ch.check("ID3", (other, names, host_case), (OK, "2", NO_SUCH))
 
-    answer = tool(service, f"ALTER USER '{NAME}'@'198.51.100.%' ACCOUNT LOCK")
+    answer = tool(service, f"ALTER USER '{NAME}'@'192.0.2.99' ACCOUNT LOCK")
     print(f"ID4 {answer}")
     ch.check("ID4", answer, NO_SUCH)
 
+    # Each statement leaves the account as it is, should it ever be accepted:
+    # root is unlocked and mysql.sys is locked on a new server.
     got = (
-        tool(service, "ALTER USER 'root'@'%' ACCOUNT LOCK"),
-        tool(service, "ALTER USER 'root'@'localhost' ACCOUNT LOCK"),
+        tool(service, "ALTER USER 'root'@'%' ACCOUNT UNLOCK"),
+        tool(service, "ALTER USER 'root'@'localhost' ACCOUNT UNLOCK"),
+        tool(service, "ALTER USER 'mysql.sys'@'localhost' ACCOUNT LOCK"),
     )
-    print(f"TG1 root@'%', root@'localhost': {got}")
-    ch.check("TG1", got, (NEEDS_SYSTEM_USER, NEEDS_SYSTEM_USER))
+    print(f"TG1 root@'%', root@'localhost', mysql.sys@'localhost': {got}")
+    ch.check("TG1", got, (NEEDS_SYSTEM_USER,) * 3)
 
     holders = ch.root(
         service,
@@ -228,29 +247,33 @@ def probe(service: str) -> None:
     print(f"TG4 grants: {got[2]}")
     ch.check("TG3 TG4", got, (OK, OK, "1044 (42000)"))
 
+    read_state = (
+        "SELECT GROUP_CONCAT(CONCAT(host, '=', account_locked, password_expired) "
+        f"ORDER BY host) FROM mysql.user WHERE user = '{NAME}'"
+    )
+    got = (tool(service, read_state), tool(service, f"SHOW CREATE USER '{NAME}'@'%'"))
+    print(f"TG5 without the grant, lock and expiry, SHOW CREATE USER: {got}")
+    ch.check("TG5 without", got, ("1142 (42000)", "1044 (42000)"))
+
     ch.root(
         service,
         "GRANT SELECT (User, Host, account_locked, password_expired, password_last_changed, "
         f"password_lifetime) ON mysql.user TO '{ch.TOOL}'@'%'",
     )
+    ok, state = ch.mysql(service, ch.TOOL, ch.TOOL_PASSWORD, read_state)
     got = (
-        tool(
-            service,
-            "SELECT GROUP_CONCAT(CONCAT(host, '=', account_locked, password_expired) "
-            f"ORDER BY host) FROM mysql.user WHERE user = '{NAME}'",
-        ),
+        state if ok else ch.code(state),
         tool(service, "SELECT authentication_string FROM mysql.user LIMIT 1"),
         tool(service, "SELECT User_attributes FROM mysql.user LIMIT 1"),
     )
-    print(f"TG5 lock and expiry, authentication_string, User_attributes: {got}")
-    ch.check("TG5", got, (OK, "1143 (42000)", "1143 (42000)"))
+    print(f"TG5 with the grant, lock and expiry, authentication_string, User_attributes: {got}")
+    # ID2 locked the '%' account. None is expired.
+    ch.check("TG5 with", got, ("%=YN,192.0.2.%=NN,localhost=NN", "1143 (42000)", "1143 (42000)"))
 
     ch.root(service, f"GRANT SYSTEM_USER ON *.* TO '{ch.TOOL}'@'%'")
     answer = tool(service, f"ALTER USER 'root'@'%' IDENTIFIED BY '{ch.ROOT_PASSWORD}'")
     print(f"TG6 {answer}")
     ch.check("TG6", answer, OK)
-
-    drop(service)
 
 
 def main() -> int:

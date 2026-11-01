@@ -582,8 +582,8 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   `password_expired = 'Y'`; the account logs in, and every statement answers
   `1820` until it sets its own password. A block from `FAILED_LOGIN_ATTEMPTS`
   answers `3955`, also to the right password, and nothing in `mysql.user`
-  shows it, so the tool cannot read it. `ACCOUNT UNLOCK` ends a lock and a
-  block. An account with only `CREATE USER` does all of these.
+  shows it. Other places, such as `performance_schema`, were not measured.
+  `ACCOUNT UNLOCK` ends a lock and a block. An account with only `CREATE USER` does all of these.
   `sql/mysql/04_lock_expiry_probe.py` measures it.
 - `verified` `mysql-identity` (#1202) — **What is one MySQL account?**
   A user name and a host pattern. One name at several hosts is several
@@ -596,12 +596,14 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   changes other accounts' passwords, and what keeps it off the administrative
   ones?**
   `CREATE USER` alone changes, locks, expires and drops other accounts.
-  `SYSTEM_USER` keeps it off root and the `mysql.*` system accounts, which hold
-  it, as long as the tool account does not: with `SYSTEM_USER` it changes
-  root. An administrative account without `SYSTEM_USER` is not protected.
-  Reading lock and expiry needs `SELECT` on `mysql.user`, which a column grant
-  can limit to those columns, away from the hashes; a retained password's
-  state is only in `User_attributes`, beside its hash.
+  `SYSTEM_USER` keeps it off root and `mysql.sys`, which hold it, as long as
+  the tool account does not: with `SYSTEM_USER` it changes root. The other
+  `mysql.*` system accounts hold `SYSTEM_USER` too, and were not tried. An
+  administrative account without `SYSTEM_USER` is not protected. With
+  `CREATE USER` alone, reading `mysql.user` is refused, `1142`, and so is
+  `SHOW CREATE USER`, `1044`. A column grant on `mysql.user` reads lock and
+  expiry, away from the hashes; a retained password's state is only in
+  `User_attributes`, beside its hash.
   `sql/mysql/05_identity_grants_probe.py` measures it.
 
 ### Vault

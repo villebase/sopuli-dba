@@ -24,14 +24,16 @@ only CREATE USER sends every statement:
 A login is "ok", or the error number and SQLSTATE of the refusal. Logins use
 the server's own mysql client, as in 02_client_hash_probe.py.
 
-A wrong password that logs in makes the probe exit 1.
+The probe checks each result against the one RESULTS below records, as 02
+does. A difference, or a step that fails, makes it exit 1.
 
 It MEASURES and decides nothing.
 
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
-times.
+times. The last version, which checks each result against RESULTS, ran twice
+more, exit 0.
 
 RESULTS -- the same on all three releases
 
@@ -86,29 +88,26 @@ ch = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(ch)
 
 ACCOUNT = ch.ACCOUNT
-TOOL = ch.TOOL
-TOOL_PASSWORD = "Acme-Tool-pw1"
 A, B, C = "Acme-Probe-pwA", "Acme-Probe-pwB", "Acme-Probe-pwC"
-WRONG = "Acme-Wrong-pw9"
-
-
-def tool(service: str, statement: str) -> str:
-    ok, out = ch.mysql(service, TOOL, TOOL_PASSWORD, statement)
-    return "ok" if ok else out
+OK, REFUSED = "ok", "1045 (28000)"
+RETAIN_B = f"IDENTIFIED BY '{B}' RETAIN CURRENT PASSWORD"
 
 
 def alter(service: str, clause: str) -> str:
-    return tool(service, f"ALTER USER '{ACCOUNT}'@'%' {clause}")
+    return ch.as_tool(service, f"ALTER USER '{ACCOUNT}'@'%' {clause}")
 
 
 def reset(service: str) -> None:
     """Password A, and no retained password."""
-    ch.root(service, f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY '{A}'")
-    ch.root(service, f"ALTER USER '{ACCOUNT}'@'%' DISCARD OLD PASSWORD")
+    ch.root(
+        service,
+        f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY '{A}';"
+        f"ALTER USER '{ACCOUNT}'@'%' DISCARD OLD PASSWORD",
+    )
 
 
-def logins(service: str, *passwords: str) -> str:
-    return ", ".join(f"{p[-1]}: {ch.login(service, p)}" for p in passwords)
+def logins(service: str, *passwords: str) -> tuple[str, ...]:
+    return tuple(ch.login(service, p) for p in passwords)
 
 
 def attributes(service: str) -> str:
@@ -120,81 +119,72 @@ def attributes(service: str) -> str:
     )
 
 
-def probe(service: str) -> bool:
-    held = True
-    print(f"\n== {service}: {ch.root(service, 'SELECT VERSION()')}")
-    ch.root(service, f"DROP USER IF EXISTS '{ACCOUNT}'@'%', '{TOOL}'@'%'")
-    ch.root(service, f"CREATE USER '{TOOL}'@'%' IDENTIFIED BY '{TOOL_PASSWORD}'")
-    ch.root(service, f"GRANT CREATE USER ON *.* TO '{TOOL}'@'%'")
-    ch.root(service, f"CREATE USER '{ACCOUNT}'@'%' IDENTIFIED BY '{A}'")
+def case(label: str, answer: str, got: tuple[object, ...], recorded: tuple[object, ...]) -> None:
+    """Print one case, and check the answer's code and what followed it."""
+    print(f"{label} {answer}; {' | '.join(str(item) for item in got)}")
+    ch.check(label, (ch.code(answer), *got), recorded)
+
+
+def probe(service: str) -> None:
+    ch.setup(service, A)
+
+    answer = alter(service, "DISCARD OLD PASSWORD")
+    case("DP1", answer, (attributes(service),), (OK, "NULL"))
 
     reset(service)
-    print(f"DP1 {alter(service, 'DISCARD OLD PASSWORD')}; attributes: {attributes(service)}")
-
-    retain_b = f"IDENTIFIED BY '{B}' RETAIN CURRENT PASSWORD"
-    reset(service)
-    answer = alter(service, retain_b)
-    wrong = ch.login(service, WRONG)
-    held &= wrong != "ok"
-    keys = attributes(service)
-    print(f"DP2 {answer}; {logins(service, A, B)}, wrong: {wrong}; attributes: {keys}")
+    answer = alter(service, RETAIN_B)
+    got = (*logins(service, A, B, ch.WRONG), attributes(service))
+    case("DP2", answer, got, (OK, OK, OK, REFUSED, '["additional_password"]'))
 
     reset(service)
-    alter(service, retain_b)
+    alter(service, RETAIN_B)
     answer = alter(service, f"IDENTIFIED BY '{C}' RETAIN CURRENT PASSWORD")
-    print(f"DP3 {answer}; {logins(service, A, B, C)}")
+    case("DP3", answer, logins(service, A, B, C), (OK, REFUSED, OK, OK))
 
     reset(service)
-    alter(service, retain_b)
+    alter(service, RETAIN_B)
     answer = alter(service, f"IDENTIFIED BY '{C}'")
-    print(f"DP4 {answer}; {logins(service, A, B, C)}")
+    case("DP4", answer, logins(service, A, B, C), (OK, OK, REFUSED, OK))
 
     reset(service)
     answer = alter(
         service, f"IDENTIFIED WITH caching_sha2_password BY '{B}' RETAIN CURRENT PASSWORD"
     )
-    print(f"DP5 {answer}; {logins(service, A, B)}")
+    case("DP5", answer, logins(service, A, B), (OK, OK, OK))
 
     reset(service)
     value = ch.caching_sha2_hash(B, ch.draw_salt(), 5000)
     answer = alter(
         service, f"IDENTIFIED WITH caching_sha2_password AS 0x{value.hex()} RETAIN CURRENT PASSWORD"
     )
-    print(f"DP6 {answer}; {logins(service, A, B)}")
+    case("DP6", answer, logins(service, A, B), (OK, OK, OK))
 
     reset(service)
-    alter(service, retain_b)
+    alter(service, RETAIN_B)
     answer = alter(service, "DISCARD OLD PASSWORD")
-    print(f"DP7 {answer}; {logins(service, A, B)}; attributes: {attributes(service)}")
+    case("DP7", answer, (*logins(service, A, B), attributes(service)), (OK, REFUSED, OK, "NULL"))
 
     reset(service)
-    alter(service, retain_b)
-    read = tool(
-        service,
-        f"SELECT User_attributes FROM mysql.user WHERE user = '{ACCOUNT}' AND host = '%'",
+    alter(service, RETAIN_B)
+    read = ch.as_tool(
+        service, f"SELECT User_attributes FROM mysql.user WHERE user = '{ACCOUNT}' AND host = '%'"
     )
-    show = tool(service, f"SHOW CREATE USER '{ACCOUNT}'@'%'")
-    created = ch.root(service, f"SHOW CREATE USER '{ACCOUNT}'@'%'")
-    print(f"DP8 tool reads User_attributes: {read}")
-    print(f"DP8 tool SHOW CREATE USER: {show}")
+    show = ch.as_tool(service, f"SHOW CREATE USER '{ACCOUNT}'@'%'")
     # Each caching_sha2_password hash starts `$A$`. Two would mean the retained
     # password is shown too.
-    print(f"DP8 root SHOW CREATE USER, hashes shown: {created.count('$A$')}")
+    hashes = ch.root(service, f"SHOW CREATE USER '{ACCOUNT}'@'%'").count("$A$")
+    print(f"DP8 tool reads User_attributes: {read}")
+    print(f"DP8 tool SHOW CREATE USER: {show}")
+    print(f"DP8 root SHOW CREATE USER, hashes shown: {hashes}")
+    ch.check("DP8", (ch.code(read), ch.code(show), hashes), ("1142 (42000)", "1044 (42000)", 1))
 
     reset(service)
     answer = alter(service, f"IDENTIFIED WITH sha256_password BY '{B}' RETAIN CURRENT PASSWORD")
-    print(f"DP9 {answer}; {logins(service, A, B)}")
-
-    ch.root(service, f"DROP USER '{ACCOUNT}'@'%', '{TOOL}'@'%'")
-    return held
+    case("DP9", answer, logins(service, A, B), ("3894 (HY000)", OK, REFUSED))
 
 
 def main() -> int:
-    held = True
-    for service in ch.SERVICES:
-        held &= probe(service)
-    print("\nall held" if held else "\nA WRONG PASSWORD LOGGED IN")
-    return 0 if held else 1
+    return ch.run(probe)
 
 
 if __name__ == "__main__":

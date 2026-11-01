@@ -15,7 +15,8 @@ verifier. This measures, on each server:
        password the account had before
   CH3  AS with a value that is not a hash, and with a hash cut short
   CH4  IDENTIFIED WITH mysql_native_password AS '*<hex>', with the hash
-       computed by the probe, then a login with the password
+       computed by the probe, set by the tool account, then a login with the
+       password and with a wrong one
 
 The hash is SHA-crypt with SHA-256, as glibc's `$5$`, with a salt of 20 bytes
 where glibc takes 16 at most. The stored form is `$A$`, the rounds in
@@ -26,15 +27,18 @@ Logins use the server's own mysql client, in its container, over TCP. A
 password reaches it through the environment of `docker exec`, as MYSQL_PWD,
 never through argv.
 
-A wrong or former password that logs in, or a CH1 hash that disagrees, makes
-the probe exit 1.
+The probe checks each result against the one RESULTS below records, and
+prints each that differs. A difference, or a step that fails, makes it exit 1.
+A failed step on one server does not stop the others, and each server's
+accounts are dropped either way. The helpers that 03 and 04 use are here.
 
 It MEASURES and decides nothing.
 
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
-times.
+times. The last version, which checks each result against RESULTS and runs
+CH4 as the tool account, ran twice more, exit 0.
 
 RESULTS -- the same on all three releases, except where noted
 
@@ -47,7 +51,8 @@ RESULTS -- the same on all three releases, except where noted
        1045 (28000)
   CH3  both values are refused, 1827 (HY000), "The password hash doesn't have
        the expected format", and the former password still logs in
-  CH4  8.0.46 accepts the hash, and the password logs in. 8.4.13 and 9.7.4
+  CH4  8.0.46 accepts the hash from the tool account, the password logs in,
+       and a wrong one is refused, 1045 (28000). 8.4.13 and 9.7.4
        refuse it, 1524 (HY000), "Plugin 'mysql_native_password' is not
        loaded": 8.4.13 ships the plugin disabled, and 9.7.4 has none
 
@@ -75,6 +80,7 @@ import re
 import secrets
 import subprocess
 import sys
+from collections.abc import Callable
 
 #: The stack's project name, so a second clone's stack is the one probed.
 PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "sopuli-test")
@@ -83,6 +89,9 @@ SERVICES = ("mysql-80", "mysql-84", "mysql-9")
 ROOT_PASSWORD = "sopuli-test"
 ACCOUNT = "sopuli_probe_hash"
 TOOL = "sopuli_probe_tool"
+#: Test passwords, not credentials.
+TOOL_PASSWORD = "Acme-Tool-pw1"
+WRONG = "Acme-Wrong-pw9"
 #: Test passwords, not credentials. One is not ASCII: e with acute, written as
 #: a code point so the source stays ASCII.
 PASSWORDS = ("Acme-Probe-pw1", "acme probe " + chr(0xE9) + " pw2", "A" * 100)
@@ -187,7 +196,15 @@ def mysql(service: str, user: str, password: str, statement: str) -> tuple[bool,
         return True, out
     # "ERROR 1045 (28000) at line 1: Access denied ..." -> "1045 (28000): Access denied ..."
     found = re.match(r"ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.DOTALL)
-    return False, f"{found[1]}: {found[2][:110]}" if found else err[:140]
+    if found is None:
+        # Not the server's answer: docker, or the client itself.
+        raise StepError(f"{service}: {user}: {(err or out)[:200]}")
+    return False, f"{found[1]}: {found[2][:110]}"
+
+
+def code(answer: str) -> str:
+    """`ok`, or a refusal's error number and SQLSTATE, such as `1045 (28000)`."""
+    return answer.split(":")[0]
 
 
 def root(service: str, statement: str) -> str:
@@ -197,10 +214,67 @@ def root(service: str, statement: str) -> str:
     return out
 
 
+def as_tool(service: str, statement: str) -> str:
+    """`ok`, or the refusal, for a statement the tool account sends."""
+    ok, out = mysql(service, TOOL, TOOL_PASSWORD, statement)
+    return "ok" if ok else out
+
+
 def login(service: str, password: str) -> str:
     """`ok`, or the error number and SQLSTATE of the refusal."""
     ok, out = mysql(service, ACCOUNT, password, "SELECT CURRENT_USER()")
-    return "ok" if ok else out.split(":")[0]
+    return "ok" if ok else code(out)
+
+
+#: Each result that differs from the one this header records.
+DIFFERENCES: list[str] = []
+
+
+def check(label: str, got: object, recorded: object) -> None:
+    if got != recorded:
+        DIFFERENCES.append(f"{label}: got {got!r}, recorded {recorded!r}")
+
+
+def setup(service: str, password: str) -> str:
+    """Create the tool account and the account with `password`; return the release."""
+    release = root(service, "SELECT VERSION()")
+    print(f"\n== {service}: {release}")
+    teardown(service)
+    root(
+        service,
+        f"CREATE USER '{TOOL}'@'%' IDENTIFIED BY '{TOOL_PASSWORD}';"
+        f"GRANT CREATE USER ON *.* TO '{TOOL}'@'%';"
+        f"CREATE USER '{ACCOUNT}'@'%' IDENTIFIED BY {quote(password)}",
+    )
+    return release
+
+
+def teardown(service: str) -> None:
+    root(service, f"DROP USER IF EXISTS '{ACCOUNT}'@'%', '{TOOL}'@'%'")
+
+
+def run(probe: Callable[[str], None]) -> int:
+    """Run `probe` on each server. Exit 1 on a difference or a failed step."""
+    failed = False
+    for service in SERVICES:
+        try:
+            probe(service)
+        except StepError as exc:
+            print(f"STEP FAILED: {exc}")
+            failed = True
+        finally:
+            try:
+                teardown(service)
+            except StepError as exc:
+                print(f"CLEAN-UP FAILED: {exc}")
+                failed = True
+    for difference in DIFFERENCES:
+        print(f"DIFFERS: {difference}")
+    if failed or DIFFERENCES:
+        print("\nA RESULT DIFFERS FROM THE HEADER, OR A STEP FAILED")
+        return 1
+    print("\nevery result as recorded")
+    return 0
 
 
 def quote(text: str) -> str:
@@ -219,73 +293,72 @@ def stored_hash(service: str) -> bytes:
 # ------------------------------------------------------------------ probes --
 
 
-def probe(service: str) -> bool:
-    """Run CH1 to CH4 on one server, print the results, and say whether all held."""
-    held = True
-    print(f"\n== {service}: {root(service, 'SELECT VERSION()')}")
-    root(service, f"DROP USER IF EXISTS '{ACCOUNT}'@'%', '{TOOL}'@'%'")
-    root(service, f"CREATE USER '{TOOL}'@'%' IDENTIFIED BY 'Acme-Tool-pw1'")
-    root(service, f"GRANT CREATE USER ON *.* TO '{TOOL}'@'%'")
-    root(service, f"CREATE USER '{ACCOUNT}'@'%' IDENTIFIED BY 'Acme-Probe-pw0'")
+#: CH4's recorded answer on each release line: 8.0 has the plugin, 8.4 ships it
+#: disabled, and 9 has none.
+NATIVE_REFUSED = "1524 (HY000)"
+
+
+def probe(service: str) -> None:
+    """Run CH1 to CH4 on one server, print each result, and check it."""
+    release = setup(service, "Acme-Probe-pw0")
 
     for password in PASSWORDS:
         root(service, f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY {quote(password)}")
         stored = stored_hash(service)
         rounds = int(stored[3:6], 16) * 1000
         agrees = caching_sha2_hash(password, stored[7:27], rounds) == stored
-        held &= agrees
+        check(f"CH1 {len(password.encode())} bytes", agrees, True)
         print(f"CH1 {len(password.encode())} bytes, {rounds} rounds: agrees={agrees}")
 
     before = PASSWORDS[-1]
     for rounds in (5000, 10000):
         password = f"Acme-Probe-r{rounds}"
         value = caching_sha2_hash(password, draw_salt(), rounds)
-        ok, out = mysql(
-            service, TOOL, "Acme-Tool-pw1",
+        answer = as_tool(
+            service,
             f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED WITH caching_sha2_password AS 0x{value.hex()}",
-        )  # fmt: skip
+        )
         stored = stored_hash(service) == value
-        good = login(service, password)
-        wrong = login(service, "Acme-Wrong-pw9")
+        good, wrong = login(service, password), login(service, WRONG)
         former = login(service, before)
         print(
-            f"CH2 {rounds} rounds, set by the tool: {'ok' if ok else out}; "
+            f"CH2 {rounds} rounds, set by the tool: {answer}; "
             f"stored as sent={stored}; password: {good}; wrong: {wrong}; former: {former}"
         )
-        held &= wrong != "ok" and former != "ok"
+        check(
+            f"CH2 {rounds}",
+            (answer, stored, good, wrong, former),
+            ("ok", True, "ok", "1045 (28000)", "1045 (28000)"),
+        )
         before = password
 
     for label, value in (("not a hash", "'not-a-hash'"), ("cut short", "'$A$005$tooshort'")):
-        ok, out = mysql(
-            service, TOOL, "Acme-Tool-pw1",
-            f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED WITH caching_sha2_password AS {value}",
-        )  # fmt: skip
-        result = "accepted" if ok else out
-        print(f"CH3 {label}: {result}; former password: {login(service, before)}")
+        answer = as_tool(
+            service, f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED WITH caching_sha2_password AS {value}"
+        )
+        former = login(service, before)
+        print(f"CH3 {label}: {answer}; former password: {former}")
+        check(f"CH3 {label}", (code(answer), former), ("1827 (HY000)", "ok"))
 
     password = "Acme-Probe-native"
-    ok, out = mysql(
-        service, "root", ROOT_PASSWORD,
+    answer = as_tool(
+        service,
         f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED WITH mysql_native_password "
         f"AS '{native_hash(password)}'",
-    )  # fmt: skip
-    if ok:
-        wrong = login(service, "Acme-Wrong-pw9")
-        print(f"CH4 accepted; password: {login(service, password)}; wrong: {wrong}")
-        held &= wrong != "ok"
+    )
+    if answer == "ok":
+        good, wrong = login(service, password), login(service, WRONG)
+        print(f"CH4 set by the tool: ok; password: {good}; wrong: {wrong}")
+        got: tuple[str, ...] = (answer, good, wrong)
     else:
-        print(f"CH4 {out}")
-
-    root(service, f"DROP USER '{ACCOUNT}'@'%', '{TOOL}'@'%'")
-    return held
+        print(f"CH4 set by the tool: {answer}")
+        got = (code(answer),)
+    recorded = ("ok", "ok", "1045 (28000)") if release.startswith("8.0.") else (NATIVE_REFUSED,)
+    check("CH4", got, recorded)
 
 
 def main() -> int:
-    held = True
-    for service in SERVICES:
-        held &= probe(service)
-    print("\nall held" if held else "\nA CHECK FAILED")
-    return 0 if held else 1
+    return run(probe)
 
 
 if __name__ == "__main__":

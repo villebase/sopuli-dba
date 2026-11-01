@@ -483,6 +483,72 @@ def live_postgres() -> PostgresStack:
     return stack
 
 
+# ----------------------------------------------------------- tier 1: MySQL ---
+#
+# The `mysql` service of `test/compose.yaml`, in the tier1 profile. A freely
+# pullable image, so a missing one is a skip (§1).
+
+
+@dataclass(frozen=True)
+class MysqlStack:
+    """The running `mysql` service, and root, which reaches it."""
+
+    host: str
+    port: int
+    user: str
+    password: str
+
+    @property
+    def dsn(self) -> str:
+        """The target's `dsn:`, host:port."""
+        return f"{self.host}:{self.port}"
+
+    def connect(self) -> Any:
+        """A root session over TLS that checks nothing about the server, for a
+        test's setup and teardown. PyMySQL is imported here, as in the fixture."""
+        import ssl
+
+        import pymysql
+
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return pymysql.connect(
+            host=self.host,
+            port=self.port,
+            user=self.user,
+            password=self.password,
+            ssl=context,
+            autocommit=True,
+            connect_timeout=5,
+        )
+
+
+@pytest.fixture(scope="session")
+def live_mysql() -> MysqlStack:
+    """A reachable MySQL, or a skip saying which part was missing.
+
+    The port follows `SOPULI_TEST_MYSQL_PORT`, as the compose file's does.
+    PyMySQL is imported here: it is an extra, and a base install must reach the
+    skip.
+    """
+    stack = MysqlStack(
+        host="127.0.0.1",
+        port=int(os.environ.get("SOPULI_TEST_MYSQL_PORT", "3306")),
+        user="root",
+        password="sopuli-test",
+    )
+    try:
+        import pymysql
+    except ImportError:  # pragma: no cover -- reached only in a base install
+        _missing_environment("PyMySQL is not installed; `pip install -e '.[mysql]'`")
+    try:
+        stack.connect().close()
+    except pymysql.err.MySQLError as error:
+        _missing_environment(f"MySQL not reachable at {stack.dsn}: {error}")
+    return stack
+
+
 # -------------------------------------------------------- tier 1: Supabase ---
 #
 # The `supabase` service of `test/compose.yaml`, in the `supabase` profile,

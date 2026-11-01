@@ -1484,8 +1484,7 @@ encryption comes from the session's own `Ssl_version` status: `tls`, `none`
 where it is empty, or `unknown` where there is no such row, with `protocol`
 `tcp`. A server whose version names MariaDB or TiDB is refused, a `config`
 error, before anything else is read: MariaDB gets a driver of its own, and
-neither handles passwords as MySQL does. The
-MySQL driver reports this once it connects, which #1221 adds.
+neither handles passwords as MySQL does.
 
 **`asserted` is absent when the target asserts nothing**, not present with
 `matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is

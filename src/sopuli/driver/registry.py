@@ -183,12 +183,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
             }
         ),
     ),
-    # No module yet: the config can declare a server before the driver can
-    # connect to one (#1221), so a command there is refused with SOPULI-20006.
-    # `session` is the module that will import PyMySQL, for the reason the
-    # Oracle entry names `session`. The package beside it holds only tier-0
-    # modules, so it exists and `find_spec` answers for the module. `pymysql`
-    # is the module the `mysql` extra installs (#1202, decision 8).
+    # The module that imports PyMySQL, for the reason the Oracle entry names
+    # `session`. `pymysql` is the module the `mysql` extra installs (#1202,
+    # decision 8). It connects and reports the server for `doctor`, and lists
+    # no command yet, so every other command refuses with SOPULI-20006 (#1221).
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",

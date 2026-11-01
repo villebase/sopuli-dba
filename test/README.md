@@ -160,24 +160,25 @@ project name of its own, its `up` works on the first clone's containers. It
 recreates them, because the `./oracle-init` mount points at another directory,
 and the database is lost. Its `--profile '*' down` would remove them.
 
-Set five variables in the environment of everything that works in the second
+Set six variables in the environment of everything that works in the second
 clone: its shells, its editor and any agent working in it.
 
 ```bash
 export COMPOSE_PROJECT_NAME=sopuli-test-w2
 export SOPULI_TEST_VAULT_PORT=8300
 export SOPULI_TEST_POSTGRES_PORT=5532
+export SOPULI_TEST_MYSQL_PORT=3406
 export SOPULI_TEST_ORACLE_PORT=1621
 export SOPULI_TEST_YOPASS_PORT=1437
 ```
 
 Compose takes the project name and the ports from them. The suite takes its
-defaults from them too: Vault at `http://127.0.0.1:8300`, Oracle at
-`localhost:1621/FREEPDB1`, Yopass at `http://127.0.0.1:1437`, and the
-container `sopuli-test-w2-oracle-free-1`. So the five variables are the one
-place that names the stack.
+defaults from them too: Vault at `http://127.0.0.1:8300`, MySQL at
+`127.0.0.1:3406`, Oracle at `localhost:1621/FREEPDB1`, Yopass at
+`http://127.0.0.1:1437`, and the container `sopuli-test-w2-oracle-free-1`. So
+the six variables are the one place that names the stack.
 `VAULT_ADDR`, `SOPULI_TEST_ORACLE_DSN` and `SOPULI_TEST_ORACLE_CONTAINER`
-still override the defaults when they are set. A shell that lacks the five
+still override the defaults when they are set. A shell that lacks the six
 variables works on the first clone's stack, without a warning, because both
 stacks publish their ports on loopback and the first one uses the default
 ports.
@@ -212,12 +213,14 @@ them.
 A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
 2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
 idle and 2.8 GB under the suite; `yopass` and `yopass-memcached` add about
-10 MiB.
+10 MiB. Those figures predate `mysql`, which adds about 440 MiB (measured
+after its tier-1 tests, 2026-11-01).
 
 | Service | Port | Notes |
 |---|---|---|
 | vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. A `userpass` mount has users `alice`, `bob` and `carol`, with passwords `sopuli-test-alice` and so on, for the `vault_path` delivery tests; the comment above `vault-init` in `compose.yaml` lists its policies and tokens. **Restarting it loses all of this** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test`. Like the matrix, it preloads `pg_stat_statements` and writes the server log to `log/postgresql.log` in the data directory, so `docker logs` shows only the start of it. Invariant 15's test reads the log back with `pg_read_file()` |
+| mysql | 3306, or `SOPULI_TEST_MYSQL_PORT` | **`--profile tier1`**. `root` / `sopuli-test`, database `sopuli`. MySQL 8.4, with TLS on under a certificate the image generates for itself, so a test that asks for `VERIFY_IDENTITY` meets one it cannot verify |
 | postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
 | mysql-80, mysql-84, mysql-9 | 3380, 3384 and 3390, or `SOPULI_TEST_MYSQL80_PORT`, `SOPULI_TEST_MYSQL84_PORT` and `SOPULI_TEST_MYSQL9_PORT` | **`--profile mysql-matrix` only**. `root` / `sopuli-test`, database `sopuli`. MySQL 8.0, 8.4 and 9 |
 | mariadb-1011, mariadb-123 | 3311 and 3323, or `SOPULI_TEST_MARIADB1011_PORT` and `SOPULI_TEST_MARIADB123_PORT` | **`--profile mariadb-matrix` only**. `root` / `sopuli-test`, database `sopuli`. MariaDB 10.11 and 12.3, with `performance_schema` and the binary log on |

@@ -207,6 +207,13 @@ ignore_missing_imports = true
 module = ["oci", "oci.*"]
 ignore_missing_imports = true
 
+# PyMySQL ships no type information either. In `src/`, only
+# `sopuli.driver.mysql.session` imports it, which ADR-006 requires; the tests
+# that need it import it too. All treat its objects as `Any`.
+[[tool.mypy.overrides]]
+module = ["pymysql", "pymysql.*"]
+ignore_missing_imports = true
+
 # 1Password's SDK ships no type information either. Only
 # `sopuli.delivery.onepassword` imports it, and that module treats it as `Any`.
 [[tool.mypy.overrides]]

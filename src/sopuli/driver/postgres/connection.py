@@ -11,20 +11,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget
 from sopuli.driver.address import host_and_port
+from sopuli.driver.login import require_login, session_label
 from sopuli.driver.protocol import Credential, Timeouts
 
 
 def application_name(correlation_id: str) -> str:
-    """What ``pg_stat_activity`` and the server log show for this run's sessions.
-
-    The correlation id is the join between the tool's output, the server's own
-    log and the vault, as ``DBMS_SESSION.SET_IDENTIFIER`` is on Oracle. 43
-    characters, inside the 63 the server keeps.
-    """
-    return f"sopuli {correlation_id}"
+    """What ``pg_stat_activity`` and the server log show for this run's
+    sessions: :func:`~sopuli.driver.login.session_label`."""
+    return session_label(correlation_id)
 
 
 def connect_arguments(
@@ -53,25 +49,17 @@ def connect_arguments(
     certificate check that ``sslmode`` asks for never runs, and the scope reads
     TLS only.
 
-    A credential with no username or no password is refused. Without one,
-    libpq would take the operating-system user, ``PGPASSWORD`` or
-    ``~/.pgpass`` instead, and the run would log in as someone the config does
-    not name.
+    A credential with no username or no password is refused
+    (:func:`~sopuli.driver.login.require_login`).
     """
-    if credential.username is None:
-        raise ConfigError(
-            f"target {target.name!r} has no username to connect as",
-            hint="write `admin: { username: … }`, or set $SOPULI_DB_ADMIN_USER",
-        )
-    if credential.secret is None:
-        raise ConfigError(f"target {target.name!r} resolved no password")
+    username, password = require_login(target, credential)
     block = target.target.postgres_settings
     host, port = host_and_port(target.target.dsn)
     arguments: dict[str, Any] = {
         "host": host,
         "port": port,
         "dbname": block.database,
-        "user": credential.username,
+        "user": username,
         "sslmode": block.sslmode,
         "gssencmode": "disable",
         "application_name": application_name(correlation_id),
@@ -81,5 +69,5 @@ def connect_arguments(
         arguments["sslrootcert"] = block.sslrootcert
     if timeouts.query_s:
         arguments["options"] = f"-c statement_timeout={timeouts.call_timeout_ms}"
-    arguments["password"] = credential.secret.reveal()
+    arguments["password"] = password.reveal()
     return arguments

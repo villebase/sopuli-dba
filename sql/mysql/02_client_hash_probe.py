@@ -180,7 +180,7 @@ def container(service: str) -> str:
 def client(
     service: str, user: str, password: str, statements: str, *flags: str
 ) -> tuple[int, str, str]:
-    """Run the server's mysql client as `user`: its exit code, output and errors.
+    """Run the server's own client, CLIENT, as `user`: its exit code, output and errors.
 
     Over TCP unless `flags` say otherwise. The client's warning about a password
     in its environment is left out of the errors.

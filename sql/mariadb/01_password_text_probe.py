@@ -130,6 +130,10 @@ def session(service: str) -> list[tuple[str, str]]:
         [
             "SET @saved_output = @@GLOBAL.log_output, @saved_general = @@GLOBAL.general_log, "
             "@saved_slow = @@GLOBAL.slow_query_log",
+            "SET @saved_current = (SELECT enabled FROM performance_schema.setup_consumers "
+            "WHERE name = 'events_statements_current')",
+            "SET @saved_history = (SELECT enabled FROM performance_schema.setup_consumers "
+            "WHERE name = 'events_statements_history')",
             "UPDATE performance_schema.setup_consumers SET enabled = 'YES' "
             f"WHERE name IN {CONSUMERS}",
             "SET GLOBAL log_output = 'TABLE'",
@@ -149,7 +153,8 @@ def session(service: str) -> list[tuple[str, str]]:
             "SET GLOBAL general_log = @saved_general",
             "SET GLOBAL slow_query_log = @saved_slow",
             "SET GLOBAL log_output = @saved_output",
-            "UPDATE performance_schema.setup_consumers SET enabled = 'NO' "
+            "UPDATE performance_schema.setup_consumers SET enabled = "
+            "IF(name = 'events_statements_current', @saved_current, @saved_history) "
             f"WHERE name IN {CONSUMERS}",
             "SELECT 'general log', argument FROM mysql.general_log "
             f"WHERE event_time >= @started AND argument LIKE {NAMES}",
@@ -167,14 +172,13 @@ def session(service: str) -> list[tuple[str, str]]:
 
 
 def probe(service: str) -> None:
-    try:
-        cases(service)
-    finally:
-        ch.root(service, f"DROP USER IF EXISTS {ACCOUNT}")
+    ch.cleaned(
+        service, lambda: cases(service), lambda: ch.root(service, f"DROP USER IF EXISTS {ACCOUNT}")
+    )
 
 
 def cases(service: str) -> None:
-    ch.base.setup(service, "Acme-Probe-pw0")
+    print(f"\n== {service}: {ch.root(service, 'SELECT VERSION()')}")
     ch.root(service, f"DROP USER IF EXISTS {ACCOUNT}")
     consumers = ch.root(
         service,
@@ -191,12 +195,15 @@ def cases(service: str) -> None:
         if place == "digest":
             digest = text
         else:
-            places[place].append(label(text))
+            # A row from a place not listed is reported as a difference below.
+            places.setdefault(place, []).append(label(text))
     events = ch.root(service, f"SHOW BINLOG EVENTS IN '{log_file}' FROM {position}")
+    # Log_name, Pos, Event_type, Server_id, End_log_pos, Info.
+    fields = [line.split("\t") for line in events.splitlines()]
     places["binary log"] = [
-        label(line.split("\t")[5])
-        for line in events.splitlines()
-        if line.split("\t")[2] == "Query" and "sopuli_probe_" in line
+        label(field[5])
+        for field in fields
+        if len(field) >= 6 and field[2] == "Query" and "sopuli_probe_" in field[5]
     ]
 
     as_sent = [
@@ -218,7 +225,7 @@ def cases(service: str) -> None:
     places["history"].sort()
     for place, labels in places.items():
         print(f"{place}: {', '.join(labels)}")
-        ch.check(place, labels, recorded[place])
+        ch.check(place, labels, recorded.get(place, []))
     print(f"digest rows holding a password: {digest}")
     ch.check("digest", digest, "0")
 

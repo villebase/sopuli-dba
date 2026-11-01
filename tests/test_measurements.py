@@ -17,7 +17,7 @@ SQL script's header is
 the comment block at the top, up to its first line that is not a comment. A
 Python probe's header is its module docstring, read with `ast` so that the
 probe, which imports a vendor client, is not imported. A release a header writes
-after "Instant Client", "libpq" or, for MySQL, "client" is the client the probe
+after "Instant Client", "libpq" or, for MySQL and MariaDB, "client" is the client the probe
 ran with, and is not compared. The same number may be a database elsewhere: Oracle Free 23.26.3.0.0
 and Instant Client 23.26.3.0.0 are two products, and so are PostgreSQL 18.6 and
 libpq 18.6.

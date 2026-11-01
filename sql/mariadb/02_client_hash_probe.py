@@ -8,11 +8,12 @@ a password: mysql_native_password, ed25519 and parsec.
 
   CH1  that the value this probe computes agrees with the server's own. The
        server sets the password with USING PASSWORD('<password>'), and the
-       probe recomputes the stored value: for parsec, from the stored salt
+       probe recomputes the stored value: for parsec, from the stored salt and
+       the stored digit
   CH2  a value the probe computes, set with IDENTIFIED VIA ... USING by a tool
        account that holds only CREATE USER, and for mysql_native_password also
-       with IDENTIFIED BY PASSWORD. Then a login with the password and one
-       with a wrong password
+       with IDENTIFIED BY PASSWORD. Then a login with the password, one with a
+       wrong password, and one with the password the account had before
   CH3  USING with a value that is not one, for each plugin, then a login with
        the password the account had before
   CH4  which of the plugins the server has before the probe installs ed25519
@@ -45,7 +46,8 @@ RESULTS -- the same on both releases, except where noted
   CH1  the probe's value agrees with the server's, for each plugin the server
        has
   CH2  the tool account, with only CREATE USER, sets each value. The password
-       logs in, and a wrong password is refused, 1045 (28000)
+       logs in, and a wrong password and the former password are refused,
+       1045 (28000)
   CH3  each value is refused, 1396 (HY000), "Operation ALTER USER failed",
        and the former password still logs in
   CH4  both start with mysql_native_password alone. ed25519 installs on both.
@@ -73,6 +75,7 @@ import hashlib
 import importlib.util
 import secrets
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 # MySQL's 02 holds the client and the checks. Its name starts with a digit, so
@@ -201,9 +204,32 @@ def stored(service: str, account: str = ACCOUNT) -> str:
     )
 
 
-def run(probe: object) -> int:
-    """Run `probe` on each server, as MySQL's run() does."""
-    return int(base.run(probe))  # type: ignore[arg-type]
+run = base.run
+
+
+def cleaned(service: str, body: Callable[[], None], *cleanups: Callable[[], None]) -> None:
+    """Run `body`, then every clean-up, each even when one before it failed.
+
+    When `body` fails, its own error is the one raised, and a clean-up that
+    fails as well is only reported.
+    """
+    try:
+        body()
+    except BaseException:
+        for cleanup in cleanups:
+            try:
+                cleanup()
+            except StepError as exc:
+                print(f"CLEAN-UP FAILED: {service}: {exc}")
+        raise
+    failed: StepError | None = None
+    for cleanup in cleanups:
+        try:
+            cleanup()
+        except StepError as exc:
+            failed = failed or exc
+    if failed is not None:
+        raise failed
 
 
 # ---------------------------------------------------------------- probes --
@@ -211,11 +237,12 @@ def run(probe: object) -> int:
 
 def probe(service: str) -> None:
     """Run CH1 to CH4 on one server, and uninstall the plugins whatever happens."""
-    try:
-        cases(service)
-    finally:
-        base.teardown(service)
-        uninstall_plugins(service)
+    cleaned(
+        service,
+        lambda: cases(service),
+        lambda: base.teardown(service),
+        lambda: uninstall_plugins(service),
+    )
 
 
 def cases(service: str) -> None:
@@ -247,8 +274,9 @@ def cases(service: str) -> None:
         )
         value = stored(service)
         if plugin == "parsec":
-            salt = base64.b64decode(value.split(":")[1])
-            agrees = parsec_value(password, salt) == value
+            # `P<digit>:<salt>:<key>`, the digit giving the rounds.
+            head, salt, _ = value.split(":")
+            agrees = parsec_value(password, base64.b64decode(salt), int(head[1:])) == value
         else:
             agrees = COMPUTE[plugin](password) == value
         print(f"CH1 {plugin}: agrees={agrees}")
@@ -256,15 +284,17 @@ def cases(service: str) -> None:
 
     forms = [(p, f"IDENTIFIED VIA {p} USING '{{}}'") for p in have]
     forms.append(("mysql_native_password", "IDENTIFIED BY PASSWORD '{}'"))
-    before = ""
-    for plugin, form in forms:
-        password = f"Acme-Set-{plugin[:6]}-{len(before)}"
+    # CH1 left the account on the last plugin's password.
+    before = f"Acme-Probe-{have[-1][:6]}"
+    for number, (plugin, form) in enumerate(forms):
+        password = f"Acme-Set-{number}-{plugin[:6]}"
         statement = form.format(COMPUTE[plugin](password))
         answer = as_tool(service, f"ALTER USER '{ACCOUNT}'@'%' {statement}")
         good, wrong = login(service, password), login(service, WRONG)
+        former = login(service, before)
         label = form.split(" USING")[0].split(" '")[0]
-        print(f"CH2 {label}: {answer}; password: {good}; wrong: {wrong}")
-        check(f"CH2 {label}", (answer, good, wrong), (OK, OK, REFUSED))
+        print(f"CH2 {label}: {answer}; password: {good}; wrong: {wrong}; former: {former}")
+        check(f"CH2 {label}", (answer, good, wrong, former), (OK, OK, REFUSED, REFUSED))
         before = password
 
     for plugin in have:

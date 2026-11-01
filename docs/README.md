@@ -623,7 +623,8 @@ full.
   `performance_schema`'s statement history keep `CREATE USER` and `ALTER USER
   … IDENTIFIED BY '…'`, `SET PASSWORD … = PASSWORD('…')` and `USING
   PASSWORD('…')` as sent, also when the statement fails. The binary log keeps
-  all of these but `SET PASSWORD` as sent. Only a value the client computed,
+  only the statements that succeed: `SET PASSWORD` rewritten to the hash, and
+  the others as sent, password included. Only a value the client computed,
   `IDENTIFIED VIA <plugin> USING '<value>'`, keeps the password out of every
   place. `sql/mariadb/01_password_text_probe.py` measures it.
 - `verified` `mariadb-client-hash` (#1220) — **Can the tool compute the

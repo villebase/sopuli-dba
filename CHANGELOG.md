@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.83.0](https://github.com/villebase/sopuli-dba/compare/v0.82.0...v0.83.0) (2026-11-01)
+
+
+### Features
+
+* **config:** declare a MySQL target ([#1221](https://github.com/villebase/sopuli-dba/issues/1221)) ([#1226](https://github.com/villebase/sopuli-dba/issues/1226)) ([710662b](https://github.com/villebase/sopuli-dba/commit/710662bf199e5d15b97e7ef66feca17caef62322))
+* deliver a personal account's password as a 1Password share link ([#446](https://github.com/villebase/sopuli-dba/issues/446)) ([#1192](https://github.com/villebase/sopuli-dba/issues/1192)) ([a40c581](https://github.com/villebase/sopuli-dba/commit/a40c5812dbc686c7dccccfa91e7389fa2047f2a4))
+* **driver:** build the MySQL connection arguments and client line ([#1221](https://github.com/villebase/sopuli-dba/issues/1221)) ([#1230](https://github.com/villebase/sopuli-dba/issues/1230)) ([719102f](https://github.com/villebase/sopuli-dba/commit/719102fd1dc28c7c3229f6e86b0359b7bb0ecc82))
+* **driver:** map a MySQL error number to a category and a hint ([#1221](https://github.com/villebase/sopuli-dba/issues/1221)) ([#1231](https://github.com/villebase/sopuli-dba/issues/1231)) ([58dbc09](https://github.com/villebase/sopuli-dba/commit/58dbc098cb9eb3da1b3a0f86db30dbd2f224e7bb))
+* measure a client-side MySQL hash and dual passwords ([#1202](https://github.com/villebase/sopuli-dba/issues/1202)) ([#1216](https://github.com/villebase/sopuli-dba/issues/1216)) ([e854067](https://github.com/villebase/sopuli-dba/commit/e854067dd48a28d1a2eb7cdfd7ad7925d005faf0))
+* measure MySQL lock, expiry, account identity and tool grants ([#1202](https://github.com/villebase/sopuli-dba/issues/1202)) ([#1217](https://github.com/villebase/sopuli-dba/issues/1217)) ([7e2e855](https://github.com/villebase/sopuli-dba/commit/7e2e855e83f6d8588a1bf0c5c6bfc12ac0d23ed6))
+* measure what MySQL keeps of a password change ([#1202](https://github.com/villebase/sopuli-dba/issues/1202)) ([#1215](https://github.com/villebase/sopuli-dba/issues/1215)) ([fd6b30d](https://github.com/villebase/sopuli-dba/commit/fd6b30dc6b48db4b7f607005dc6bd54a876618c7))
+* name the guardrails that refuse an admitted account in account list ([#1207](https://github.com/villebase/sopuli-dba/issues/1207)) ([#1212](https://github.com/villebase/sopuli-dba/issues/1212)) ([ad385c7](https://github.com/villebase/sopuli-dba/commit/ad385c750b5733d72f9277ed8db722a91297c766))
+* read onepassword_share's keys and check the 1Password account at plan time ([#446](https://github.com/villebase/sopuli-dba/issues/446)) ([#1189](https://github.com/villebase/sopuli-dba/issues/1189)) ([8f4f813](https://github.com/villebase/sopuli-dba/commit/8f4f813f6e475144db2e2ee337413f5bf640e6b0))
+* reset a personal account's password on PostgreSQL ([#1201](https://github.com/villebase/sopuli-dba/issues/1201)) ([#1209](https://github.com/villebase/sopuli-dba/issues/1209)) ([9004b99](https://github.com/villebase/sopuli-dba/commit/9004b990ea98c87af9ca7458057327faac2fe029))
+* run account list on PostgreSQL with a role: predicate ([#1201](https://github.com/villebase/sopuli-dba/issues/1201)) ([#1206](https://github.com/villebase/sopuli-dba/issues/1206)) ([55eb10f](https://github.com/villebase/sopuli-dba/commit/55eb10f7c7fdaa9ad7708059fa1a4b9a21a5fd16))
+* suspend a personal account on PostgreSQL ([#1201](https://github.com/villebase/sopuli-dba/issues/1201)) ([#1211](https://github.com/villebase/sopuli-dba/issues/1211)) ([213a1f4](https://github.com/villebase/sopuli-dba/commit/213a1f41592a9484f47f7f33411dd5e2a86ffed8))
+
+
+### Bug Fixes
+
+* compare account, role and profile names by upper() everywhere ([#1208](https://github.com/villebase/sopuli-dba/issues/1208)) ([#1210](https://github.com/villebase/sopuli-dba/issues/1210)) ([ee4029c](https://github.com/villebase/sopuli-dba/commit/ee4029ca0b3323dddb9340b309d9ad7ad69a0274))
+* refuse at plan time a lock name held by a secret scheduled for deletion ([#1188](https://github.com/villebase/sopuli-dba/issues/1188)) ([#1190](https://github.com/villebase/sopuli-dba/issues/1190)) ([820bbbe](https://github.com/villebase/sopuli-dba/commit/820bbbe866fc9a9ce633a1d8905fb7ff722b9fca))
+
 ## [0.82.0](https://github.com/villebase/sopuli-dba/compare/v0.81.0...v0.82.0) (2026-10-30)
 
 

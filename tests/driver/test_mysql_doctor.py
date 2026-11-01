@@ -104,6 +104,24 @@ def test_doctor_reaches_the_server_and_reports_what_it_is(
     assert "  pymysql" in text.output, "the client section names PyMySQL's release"
 
 
+def test_check_privileges_warns_and_does_not_fail(
+    live_mysql: Any,
+    tool_account: tuple[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The audit is not written yet, and `--check-privileges` reports and never
+    fails, so the target says what was not looked at and the run exits 0."""
+    user, password = tool_account
+    config = _config(tmp_path / "doctor.yaml", live_mysql.dsn, user)
+
+    monkeypatch.setenv(PASSWORD_ENV, password)
+    result = CliRunner().invoke(cli, ["--config", str(config), "doctor", "--check-privileges"])
+
+    assert result.exit_code == 0, result.output
+    assert "does not audit the tool account's grants yet" in result.output
+
+
 def test_verify_identity_meets_the_images_own_certificate(
     live_mysql: Any,
     tool_account: tuple[str, str],

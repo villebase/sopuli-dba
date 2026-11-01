@@ -28,11 +28,12 @@ import pymysql
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import connect_arguments
-from sopuli.driver.mysql.errors import from_error
-from sopuli.driver.mysql.scope import TLS_VERSION, encryption_of, observe
+from sopuli.driver.mysql.errors import AUTH_PLUGIN_ERROR, TLS_CONNECTION_ERROR, from_error
+from sopuli.driver.mysql.scope import observe
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     PASSWORD_ROLLOVER,
+    UNKNOWN,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -83,9 +84,11 @@ class NotWrittenError(DriverError):
 
 
 class UnencryptedSessionError(DriverError):
-    """A mode that requires TLS got a session without it. The session is
-    closed before anything is sent over it. ``connectivity``, as a server that
-    refuses TLS is."""
+    """A mode that requires TLS got a session it could not confirm as TLS. The
+    session is closed before anything is sent over it. ``connectivity``, with
+    the client's ``CR_SSL_CONNECTION_ERROR`` number, which is what PyMySQL
+    raises for a server that offers no TLS: the same refusal, read from the
+    session."""
 
     category = "connectivity"
 
@@ -95,12 +98,21 @@ class PlainLoginError(DriverError):
     plain connection.
 
     Measured on 8.4.13: a login the server has not cached needs the full
-    exchange, and PyMySQL 1.2.3 fails it over a plain connection with an
-    ``AttributeError`` in ``_request_authentication``, not a MySQL error. The
-    same login over TLS succeeds.
+    exchange, and PyMySQL 1.2.3 fails it over a plain connection with
+    ``AttributeError: 'NoneType' object has no attribute
+    'is_auth_switch_request'``, not a MySQL error: its
+    ``caching_sha2_password_auth`` returns nothing after the RSA round trip.
+    The same login over TLS succeeds. ``connectivity``, with the client's
+    ``CR_AUTH_PLUGIN_ERR`` number. When PyMySQL is fixed, the tier-1 test that
+    pins this fails, and this goes.
     """
 
     category = "connectivity"
+
+
+#: The text of PyMySQL 1.2.3's failure that :class:`PlainLoginError` reports.
+#: Matched exactly, so no other ``AttributeError`` is taken for it.
+PLAIN_LOGIN_FAILURE = "'NoneType' object has no attribute 'is_auth_switch_request'"
 
 
 @dataclass
@@ -154,7 +166,13 @@ class MysqlSession:
         raise self._not_written("read an account's password rules")
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
-        raise self._not_written("audit the tool's privileges")
+        """Nothing audited yet, said as such rather than refused: `doctor
+        --check-privileges` reports and never fails, so the audit not being
+        written is a caveat on the target, not an error."""
+        return PrivilegeAudit(
+            unaudited=("every grant of the tool account",),
+            remedies=("the MySQL driver does not audit the tool account's grants yet (#1221)",),
+        )
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         raise self._not_written("set a password")
@@ -221,26 +239,28 @@ class MysqlSession:
             connection.close()
 
 
-def require_tls(connection: Any, target: ExpandedTarget) -> None:
-    """Refuse a session without TLS where ``ssl_mode`` requires it.
+def require_tls(scope: Scope, target: ExpandedTarget) -> None:
+    """Refuse a session not known to be TLS where ``ssl_mode`` requires it.
 
     PyMySQL already refuses a server that offers no TLS when it is given a
     context (:mod:`sopuli.driver.mysql.connection`). This reads the answer from
-    the session itself, so the rule does not rest on the client library alone.
-    Nothing has been sent over the session but the login.
+    the session's own scope, so the rule does not rest on the client library
+    alone. ``unknown`` is refused too, with its own words: a mode that requires
+    TLS needs it confirmed.
     """
     mode = target.target.mysql_settings.ssl_mode
-    if mode not in TLS_REQUIRED_MODES:
+    if mode not in TLS_REQUIRED_MODES or scope.encryption.method == ENCRYPTION_TLS:
         return
-    with connection.cursor() as cursor:
-        cursor.execute(TLS_VERSION)
-        encryption = encryption_of(cursor.fetchone())
-    if encryption.method == ENCRYPTION_TLS:
-        return
-    connection.close()
+    if scope.encryption.method == UNKNOWN:
+        raise UnencryptedSessionError(
+            f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
+            hint=str(scope.encryption.hint),
+            code=str(TLS_CONNECTION_ERROR),
+        )
     raise UnencryptedSessionError(
         f'target "{target.name}" connected without TLS under `ssl_mode: {mode}`',
         hint="the server negotiated no TLS; give it a certificate, and keep the mode",
+        code=str(TLS_CONNECTION_ERROR),
     )
 
 
@@ -279,18 +299,19 @@ class MysqlDriver:
             )
             raise failure.as_error() from error
         except AttributeError as error:
-            # PyMySQL 1.2.3's own failure, measured (PlainLoginError). Only a
-            # plain connection reaches it; under TLS the login succeeds.
-            if "ssl" in arguments:
+            # PyMySQL 1.2.3's own failure, measured (PlainLoginError), matched
+            # by its exact text. Anything else is a fault, and surfaces.
+            if str(error) != PLAIN_LOGIN_FAILURE:
                 raise
             raise PlainLoginError(
                 f'target "{target.name}": PyMySQL could not finish the '
                 f"caching_sha2_password login over a plain connection",
                 hint=(
                     "a login the server has not cached needs the full exchange, which "
-                    "PyMySQL 1.2.3 fails without TLS. Set `mysql.ssl_mode` to "
-                    "VERIFY_IDENTITY, which sends the password over TLS anyway"
+                    "PyMySQL 1.2.3 fails without TLS. Set `mysql.ssl_mode` to REQUIRED, "
+                    "or to VERIFY_IDENTITY with `mysql.ssl_ca`"
                 ),
+                code=str(AUTH_PLUGIN_ERROR),
             ) from error
         LOG.debug(
             "connect to %s as %s in %.3fs",
@@ -298,12 +319,15 @@ class MysqlDriver:
             credential.username,
             time.monotonic() - started,
         )
+        session = MysqlSession(connection=connection, target=target)
         try:
-            require_tls(connection, target)
-        except pymysql.err.MySQLError as error:
-            connection.close()
-            raise from_error(error).as_error() from error
-        return MysqlSession(connection=connection, target=target)
+            # One read: the scope is cached for the session, and the TLS rule
+            # reads its encryption.
+            require_tls(session.scope(), target)
+        except BaseException:
+            session.close()
+            raise
+        return session
 
 
 def build_driver(context: DriverContext) -> MysqlDriver:

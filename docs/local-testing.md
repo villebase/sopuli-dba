@@ -687,7 +687,7 @@ acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not
 
 The stack also runs MySQL 8.4 at `127.0.0.1:3306`, user `root`, password
 `sopuli-test`. `doctor` connects to it and reports what it found. Every other
-command refuses a MySQL target, because the driver is not written past that.
+command refuses a MySQL target.
 
 Connecting needs no privilege. Create the tool account as root, with a
 password of your own, and export the same password as
@@ -711,9 +711,8 @@ targets:
     mysql: { ssl_mode: REQUIRED }
 ```
 
-The image turns TLS on with a certificate it made for itself, which the default
-`VERIFY_IDENTITY` cannot verify, so the target sets `REQUIRED`: encrypted, and
-nothing checked about the server. Run `doctor`:
+The image's certificate is self-signed, so the target sets `REQUIRED`. Run
+`doctor`:
 
 ```
 $ sopuli --config mysql.yaml doctor
@@ -738,9 +737,8 @@ mysql-dev  yes        server  -          READ WRITE  0             tls
     hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
 ```
 
-Do not use `ssl_mode: DISABLED` here. A login the server has not cached then
-fails, because PyMySQL cannot finish `caching_sha2_password` over a plain
-connection.
+Keep TLS on: with `ssl_mode: DISABLED` a login can fail
+(`01-configuration.md` §3a, `mysql:`).
 
 ---
 

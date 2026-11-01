@@ -100,7 +100,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
     [
         lambda s: s.describe_user("acme_app@%"),
         lambda s: s.byte_limit(),
-        lambda s: s.privileges(),
         lambda s: s.set_password("acme_app@%", Secret("x")),
         lambda s: s.suspend_account("acme_app@%"),
         lambda s: s.reset_password("acme_app@%", Secret("x"), expire=True),
@@ -132,6 +131,16 @@ def test_audit_coverage_never_raises() -> None:
     assert _session().audit_coverage("acme_app@%").audited is None
 
 
+def test_the_privilege_audit_says_nothing_was_looked_at() -> None:
+    """`doctor --check-privileges` reports and never fails, so an audit not
+    written yet is a caveat, not a refusal."""
+    audit = _session().privileges()
+
+    assert audit.unaudited == ("every grant of the tool account",)
+    assert audit.over_granted == ()
+    assert "does not audit" in audit.remedies[0]
+
+
 def test_close_is_safe_twice() -> None:
     session = _session()
     connection = session.connection
@@ -142,31 +151,61 @@ def test_close_is_safe_twice() -> None:
     assert connection.closed == 1
 
 
+def _scope(method: str) -> Any:
+    from sopuli.driver.protocol import Encryption, Scope
+
+    return Scope(type="server", encryption=Encryption(method=method, hint="the hint"))
+
+
 @pytest.mark.parametrize("mode", ["REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"])
 def test_a_mode_that_requires_tls_refuses_a_session_without_it(mode: str) -> None:
-    """Read from the session, so the rule does not rest on PyMySQL alone. The
-    connection is closed before anything is sent over it."""
-    connection = _Connection(tls="")
-
+    """Read from the session's scope, so the rule does not rest on PyMySQL alone."""
     with pytest.raises(session_module.UnencryptedSessionError) as caught:
-        session_module.require_tls(connection, _target(mode))
+        session_module.require_tls(_scope("none"), _target(mode))
 
     assert caught.value.category == "connectivity"
+    assert caught.value.code == "2026"
     assert f"without TLS under `ssl_mode: {mode}`" in str(caught.value)
-    assert connection.closed == 1
+
+
+def test_a_session_not_known_to_be_tls_is_refused_in_its_own_words() -> None:
+    with pytest.raises(session_module.UnencryptedSessionError) as caught:
+        session_module.require_tls(_scope("unknown"), _target("REQUIRED"))
+
+    assert "could not confirm TLS" in str(caught.value)
+    assert caught.value.hint == "the hint"
 
 
 @pytest.mark.parametrize("mode", ["DISABLED", "PREFERRED"])
-def test_a_mode_that_does_not_require_tls_reads_nothing(mode: str) -> None:
-    connection = _Connection(tls="")
-
-    session_module.require_tls(connection, _target(mode))
-
-    assert connection.closed == 0
+def test_a_mode_that_does_not_require_tls_accepts_any_session(mode: str) -> None:
+    session_module.require_tls(_scope("none"), _target(mode))
 
 
 def test_a_session_with_tls_passes_the_check() -> None:
-    session_module.require_tls(_Connection(tls="TLSv1.3"), _target("REQUIRED"))
+    session_module.require_tls(_scope("tls"), _target("REQUIRED"))
+
+
+def test_connect_closes_a_session_it_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scope is read once, at connect, and a refused session is closed."""
+    connection = _Connection(tls="")
+    monkeypatch.setattr(session_module.pymysql, "connect", lambda **arguments: connection)
+    driver = session_module.MysqlDriver(correlation_id="run")
+
+    with pytest.raises(session_module.UnencryptedSessionError):
+        driver.connect(_target("REQUIRED"), _credential())
+
+    assert connection.closed == 1
+
+
+def test_connect_reads_the_scope_once_and_keeps_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = _Connection(tls="TLSv1.3")
+    monkeypatch.setattr(session_module.pymysql, "connect", lambda **arguments: connection)
+    session = session_module.MysqlDriver(correlation_id="run").connect(
+        _target("REQUIRED"), _credential()
+    )
+
+    assert session._scope is not None
+    assert session.scope() is session._scope
 
 
 def _credential() -> Credential:
@@ -189,12 +228,16 @@ def test_pymysqls_failure_of_a_plain_login_is_reported_as_what_it_is(
         driver.connect(_target("DISABLED"), _credential())
 
     assert caught.value.category == "connectivity"
-    assert "VERIFY_IDENTITY" in str(caught.value.hint)
+    assert caught.value.code == "2061"
+    assert "REQUIRED" in str(caught.value.hint)
 
 
-def test_an_attribute_error_over_tls_is_not_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Over TLS the login succeeds, so the same error there is a fault, and
-    is left to surface as one."""
+@pytest.mark.parametrize("mode", ["DISABLED", "PREFERRED"])
+def test_any_other_attribute_error_is_not_hidden(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Only PyMySQL's measured failure, by its exact text, is reported as a
+    plain-login failure. Anything else is a fault, and surfaces as one."""
 
     def fail(**arguments: Any) -> Any:
         raise AttributeError("something else")
@@ -203,7 +246,7 @@ def test_an_attribute_error_over_tls_is_not_hidden(monkeypatch: pytest.MonkeyPat
     driver = session_module.MysqlDriver(correlation_id="run")
 
     with pytest.raises(AttributeError, match="something else"):
-        driver.connect(_target("REQUIRED"), _credential())
+        driver.connect(_target(mode), _credential())
 
 
 def test_a_failed_connect_is_classified_as_a_connect(monkeypatch: pytest.MonkeyPatch) -> None:

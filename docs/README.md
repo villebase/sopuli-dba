@@ -579,8 +579,9 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   timed block read back, and what does each answer at login?**
   `ACCOUNT LOCK` reads back as `mysql.user.account_locked = 'Y'`, and the
   password then answers `3118`. `PASSWORD EXPIRE` reads back as
-  `password_expired = 'Y'`; the account logs in, and every statement answers
-  `1820` until it sets its own password. A block from `FAILED_LOGIN_ATTEMPTS`
+  `password_expired = 'Y'`; the account logs in, `SELECT 1` answers `1820`,
+  and `ALTER USER USER()` sets its own password. Other statements were not
+  tried. A block from `FAILED_LOGIN_ATTEMPTS`
   answers `3955`, also to the right password, and nothing in `mysql.user`
   shows it. Other places, such as `performance_schema`, were not measured.
   `ACCOUNT UNLOCK` ends a lock and a block. An account with only `CREATE USER` does all of these.
@@ -597,7 +598,8 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   ones?**
   `CREATE USER` alone changes, locks, expires and drops other accounts.
   `SYSTEM_USER` keeps it off root and `mysql.sys`, which hold it, as long as
-  the tool account does not: with `SYSTEM_USER` it changes root. The other
+  the tool account does not: root's password, and a lock on either, are
+  refused, `1227`. With `SYSTEM_USER` it changes root's password. The other
   `mysql.*` system accounts hold `SYSTEM_USER` too, and were not tried. An
   administrative account without `SYSTEM_USER` is not protected. With
   `CREATE USER` alone, reading `mysql.user` is refused, `1142`, and so is

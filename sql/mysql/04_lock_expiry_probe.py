@@ -14,7 +14,8 @@ mysql.user's account_locked, password_expired and User_attributes:
        with ALTER USER USER(), and runs SELECT again. Then the new password
        and the old one log in
   LE4  FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 1. Two wrong passwords, then
-       the right one. Then whether mysql.user changed. Then ACCOUNT UNLOCK, and
+       the right one. Then whether any column of the account's row in
+       mysql.user changed. Then ACCOUNT UNLOCK, and
        the right one again
 
 A login is "ok", or the error number and SQLSTATE of the refusal. Logins use
@@ -47,9 +48,9 @@ RESULTS -- the same on all three releases
        failed_login_attempts 2 and password_lock_time_days 1. The first wrong
        password answers 1045 (28000), the second 3955 (HY000), "Account is
        blocked for 1 day(s) (1 day(s) remaining) due to 2 consecutive failed
-       logins", and the right password then 3955 too. mysql.user is the same
-       as before the wrong passwords. ACCOUNT UNLOCK is accepted, and the
-       right password logs in
+       logins", and the right password then 3955 too. Every column of the
+       account's row in mysql.user is the same as before the wrong passwords.
+       ACCOUNT UNLOCK is accepted, and the right password logs in
 
   So a lock and an expiry read back from mysql.user, and a timed block does
   not: nothing in mysql.user shows it. ACCOUNT UNLOCK ends both kinds.
@@ -103,6 +104,11 @@ def state(service: str) -> str:
         "' attributes=', IFNULL(User_attributes, 'NULL')) FROM mysql.user "
         f"WHERE user = '{ACCOUNT}' AND host = '%'",
     )
+
+
+def row(service: str) -> str:
+    """The account's whole row of mysql.user, every column, as root reads it."""
+    return ch.root(service, f"SELECT * FROM mysql.user WHERE user = '{ACCOUNT}' AND host = '%'")
 
 
 def client(service: str, password: str, statements: str, *flags: str) -> list[str]:
@@ -165,9 +171,10 @@ def probe(service: str) -> None:
 
     answer = alter(service, "FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 1")
     before = state(service)
+    before_row = row(service)
     first, second = ch.login(service, ch.WRONG), ch.login(service, ch.WRONG)
     right = ch.login(service, B)
-    unchanged = state(service) == before
+    unchanged = row(service) == before_row
     unlock = alter(service, "ACCOUNT UNLOCK")
     after_unlock = ch.login(service, B)
     print(f"LE4 {answer}; {before}")

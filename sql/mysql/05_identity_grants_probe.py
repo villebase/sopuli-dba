@@ -17,8 +17,8 @@ server:
   ID4  ALTER USER for a host the user name does not have, 192.0.2.99
   TG1  the tool account, with only CREATE USER, alters root@'%',
        root@'localhost' and mysql.sys@'localhost', each with a statement that
-       would leave it as it is: ACCOUNT UNLOCK for root, ACCOUNT LOCK for
-       mysql.sys, which is locked
+       would leave it as it is: root@'%''s own password, ACCOUNT UNLOCK for
+       root, and ACCOUNT LOCK for mysql.sys, which is locked
   TG2  the accounts that hold SYSTEM_USER on a new server
   TG3  the tool account alters, then drops, an account that holds every
        privilege but SYSTEM_USER
@@ -55,7 +55,7 @@ RESULTS -- the same on all three releases
        accounts at '%' differ only in case. 'LOCALHOST' is refused, 1396
        (HY000), because 'localhost' exists: host names are not case-sensitive
   ID4  refused, 1396 (HY000)
-  TG1  all three refused, 1227 (42000), "you need (at least one of) the
+  TG1  all four refused, 1227 (42000), "you need (at least one of) the
        SYSTEM_USER privilege(s) for this operation"
   TG2  mysql.infoschema@localhost, mysql.session@localhost,
        mysql.sys@localhost, root@% and root@localhost
@@ -117,6 +117,9 @@ NEEDS_SYSTEM_USER = "1227 (42000)"
 EVERY_ACCOUNT = (
     f"'{NAME}'@'%', '{NAME}'@'localhost', '{NAME}'@'192.0.2.%', '{OTHER_CASE}'@'%', '{DBA}'@'%'"
 )
+#: ID3's attempt, dropped on its own, so that a release which accepted it and
+#: kept the capitals is cleaned up too.
+CAPITAL_HOST = f"'{NAME}'@'LOCALHOST'"
 
 
 def login(service: str, password: str, *, socket: bool) -> str:
@@ -144,7 +147,7 @@ def locked(service: str) -> str:
 
 
 def drop(service: str) -> None:
-    ch.root(service, f"DROP USER IF EXISTS {EVERY_ACCOUNT}")
+    ch.root(service, f"DROP USER IF EXISTS {EVERY_ACCOUNT}; DROP USER IF EXISTS {CAPITAL_HOST}")
 
 
 def probe(service: str) -> None:
@@ -154,8 +157,14 @@ def probe(service: str) -> None:
     """
     try:
         cases(service)
-    finally:
-        drop(service)
+    except BaseException:
+        # Keep the step's own error: a failed clean-up is only reported.
+        try:
+            drop(service)
+        except ch.StepError as exc:
+            print(f"CLEAN-UP FAILED: {exc}")
+        raise
+    drop(service)
 
 
 def cases(service: str) -> None:
@@ -212,12 +221,13 @@ def cases(service: str) -> None:
     # Each statement leaves the account as it is, should it ever be accepted:
     # root is unlocked and mysql.sys is locked on a new server.
     got = (
+        tool(service, f"ALTER USER 'root'@'%' IDENTIFIED BY {ch.quote(ch.ROOT_PASSWORD)}"),
         tool(service, "ALTER USER 'root'@'%' ACCOUNT UNLOCK"),
         tool(service, "ALTER USER 'root'@'localhost' ACCOUNT UNLOCK"),
         tool(service, "ALTER USER 'mysql.sys'@'localhost' ACCOUNT LOCK"),
     )
-    print(f"TG1 root@'%', root@'localhost', mysql.sys@'localhost': {got}")
-    ch.check("TG1", got, (NEEDS_SYSTEM_USER,) * 3)
+    print(f"TG1 root@'%' password, root@'%', root@'localhost', mysql.sys@'localhost': {got}")
+    ch.check("TG1", got, (NEEDS_SYSTEM_USER,) * 4)
 
     holders = ch.root(
         service,

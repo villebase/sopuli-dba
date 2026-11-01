@@ -60,8 +60,8 @@ on which Oracle release, and what it showed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-3.4.schema.json](schemas/sopuli-config-3.4.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.71.schema.json](schemas/sopuli-run-1.71.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-config-3.5.schema.json](schemas/sopuli-config-3.5.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-run-1.72.schema.json](schemas/sopuli-run-1.72.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.21.schema.json](schemas/sopuli-event-1.21.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | [schemas/example-creds-status-rollover.json](schemas/example-creds-status-rollover.json) | Worked example: `creds status` with a rollover window open, a password in its grace period, and a run-level warning |
@@ -82,7 +82,7 @@ the run schema. `tests/test_schemas.py` checks this on every push and pull
 request (invariant 12).
 
 To get completion and inline errors while you edit a config, put
-`# yaml-language-server: $schema=./sopuli-config-3.4.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-3.5.schema.json` on the file's
 first line. [design/01-configuration.md](design/01-configuration.md) §9b says
 why the schema's `$id` is not a URL to paste there.
 
@@ -607,6 +607,38 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   expiry, away from the hashes; a retained password's state is only in
   `User_attributes`, beside its hash.
   `sql/mysql/05_identity_grants_probe.py` measures it.
+- `verified` `mysql-rollover-state` (#1220) — **Is there a source for whether
+  an account has a retained password, other than `User_attributes`?**
+  None the server provides. `INFORMATION_SCHEMA.USER_ATTRIBUTES` holds only the
+  `ATTRIBUTE` metadata, `SHOW CREATE USER` shows only the current hash, and
+  `DISCARD OLD PASSWORD` answers the same with a retained password and without
+  one. A view that root creates with `SQL SECURITY DEFINER`, exposing only
+  `JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password')`, gives
+  the tool account the state without the hash. Such a view is an object owned
+  by an administrator that the tool would install, the shape ADR-001 rejected,
+  and decision 6 of #1202 rules it out. So `finish-rollover` always sends
+  `DISCARD OLD PASSWORD`. `sql/mysql/06_rollover_privileges_probe.py`
+  measures it.
+- `verified` `mysql-admin-privileges` (#1220) — **Which grants let the tool
+  account read another account's global privileges without reading anything
+  sensitive?**
+  `SELECT` on the `*_priv` columns of `mysql.user` for the static privileges,
+  and `SELECT` on `mysql.global_grants`, whose columns are `USER`, `HOST`,
+  `PRIV` and `WITH_GRANT_OPTION`, for the dynamic ones. The hash and
+  `User_attributes` stay refused, `1143`. `SHOW GRANTS FOR` another account is
+  refused, `1142`, with those grants. Administrative power has more sources,
+  each readable with `SELECT` on its table and none holding a hash:
+  - a role, whose privileges show on the role's own rows. Which roles an
+    account has and uses by default is in `mysql.role_edges` and
+    `mysql.default_roles`. A role in the setting `mandatory_roles` goes to
+    every account and has no row in `role_edges`; the tool account can read
+    the setting;
+  - a proxy grant, such as `PROXY ON root`, in `mysql.proxies_priv`;
+  - privileges on the `mysql` schema, such as `UPDATE` on `mysql.user`, in
+    `mysql.db` and `mysql.tables_priv`.
+
+  Nested roles and `activate_all_roles_on_login = ON` were not measured.
+  `sql/mysql/06_rollover_privileges_probe.py` measures it.
 
 ### MariaDB
 

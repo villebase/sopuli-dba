@@ -66,7 +66,8 @@ THIRD_PARTY_NAMESPACE_OVERRIDES = "SOPULI-W052"
 #: only warns, because §6 does not fail a run over another tool's variable.
 THIRD_PARTY_ADDR_USERINFO = "SOPULI-W057"
 
-#: A PostgreSQL target's ``sslmode`` does not verify the server (#1058). The
+#: A PostgreSQL target's ``sslmode``, or a MySQL target's ``ssl_mode``, does
+#: not verify the server (#1058, #1221). The
 #: database counterpart of :data:`UNVERIFIED_TRANSPORT`, with a code of its own
 #: because that one answers whether a run talked to a *vault* unverified.
 UNVERIFIED_DATABASE = "SOPULI-W058"

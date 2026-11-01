@@ -39,10 +39,12 @@ from sopuli.config.model import (
     Config,
     DimensionValue,
     ExpandedTarget,
+    MysqlPatch,
     Pairs,
     PostgresPatch,
     Safety,
     Target,
+    TargetMysql,
     TargetOracle,
     TargetPatch,
     TargetPostgres,
@@ -107,17 +109,18 @@ def declared_at(expanded: ExpandedTarget, field: str | None = None) -> KeyPath:
     return at if field is None else at.key(field)
 
 
-def postgres_key_at(expanded: ExpandedTarget, key: str) -> KeyPath:
-    """Where one key of this target's ``postgres:`` block was written.
+def block_key_at(expanded: ExpandedTarget, block: str, key: str) -> KeyPath:
+    """Where one key of a product's block, such as ``postgres:`` or ``mysql:``,
+    was written.
 
-    An override's ``postgres:`` patch merges key by key, so the block as a
+    An override's patch of the block merges key by key, so the block as a
     whole has no one line. An override that writes only ``database`` leaves
     ``sslmode`` on the template's line.
     """
     at = _location(expanded)
-    if f"postgres.{key}" in expanded.patched and expanded.target_set is not None:
+    if f"{block}.{key}" in expanded.patched and expanded.target_set is not None:
         at = at.key("overrides").key(expanded.name)
-    return at.key("postgres").key(key)
+    return at.key(block).key(key)
 
 
 def _location(expanded: ExpandedTarget) -> KeyPath:
@@ -257,6 +260,7 @@ def _render_target(template: Target, combination: _Combination, *, at: KeyPath) 
         admin=_render_admin(template.admin, variables, at=at.key("admin")),
         oracle=_render_oracle(template.oracle, variables, at=at.key("oracle")),
         postgres=_render_postgres(template.postgres, variables, at=at.key("postgres")),
+        mysql=_render_mysql(template.mysql, variables, at=at.key("mysql")),
         labels=_render_labels(template.labels, combination, at=at.key("labels")),
         safety=_render_safety(template.safety, variables, at=at.key("safety")),
     )
@@ -318,6 +322,18 @@ def _render_postgres(
         database=_substitute(postgres.database, variables, at=at.key("database")),
         sslmode=postgres.sslmode,
         sslrootcert=_maybe(postgres.sslrootcert, variables, at=at.key("sslrootcert")),
+    )
+
+
+def _render_mysql(
+    mysql: TargetMysql | None, variables: dict[str, str], *, at: KeyPath
+) -> TargetMysql | None:
+    """``ssl_mode`` is a closed set, so like ``postgres.sslmode`` it is not rendered."""
+    if mysql is None:
+        return None
+    return TargetMysql(
+        ssl_mode=mysql.ssl_mode,
+        ssl_ca=_maybe(mysql.ssl_ca, variables, at=at.key("ssl_ca")),
     )
 
 
@@ -437,8 +453,8 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
     tuple with an empty default rather than an optional, so "absent" and "given"
     are the same value.
 
-    A ``postgres:`` patch also adds ``postgres.<key>`` for each key it writes,
-    because it merges key by key (:func:`postgres_key_at`).
+    A ``postgres:`` or ``mysql:`` patch also adds ``<block>.<key>`` for each
+    key it writes, because it merges key by key (:func:`block_key_at`).
     """
     given = {
         "type": patch.type is not None,
@@ -448,6 +464,7 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         "admin": patch.admin is not None,
         "oracle": patch.oracle is not None,
         "postgres": patch.postgres is not None,
+        "mysql": patch.mysql is not None,
         "labels": bool(patch.labels),
         "safety": patch.safety is not None,
     }
@@ -455,6 +472,9 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         given["postgres.database"] = patch.postgres.database is not None
         given["postgres.sslmode"] = patch.postgres.sslmode is not None
         given["postgres.sslrootcert"] = patch.postgres.sslrootcert is not None
+    if patch.mysql is not None:
+        given["mysql.ssl_mode"] = patch.mysql.ssl_mode is not None
+        given["mysql.ssl_ca"] = patch.mysql.ssl_ca is not None
     return tuple(sorted(key for key, written in given.items() if written))
 
 
@@ -512,6 +532,7 @@ def _patch_target(
         admin=_patch_admin(target.admin, patch.admin, variables, at=at.key("admin")),
         oracle=_patch_oracle(target.oracle, patch.oracle, variables, at=at.key("oracle")),
         postgres=_patch_postgres(target.postgres, patch.postgres, variables, at=at.key("postgres")),
+        mysql=_patch_mysql(target.mysql, patch.mysql, variables, at=at.key("mysql")),
         labels=_patch_labels(target.labels, patch.labels, variables, at=at.key("labels")),
         safety=_patch_safety(target.safety, patch.safety, variables, at=at.key("safety")),
     )
@@ -581,6 +602,24 @@ def _patch_postgres(
         database=base.database if database is None else database,
         sslmode=base.sslmode if patch.sslmode is None else patch.sslmode,
         sslrootcert=base.sslrootcert if sslrootcert is None else sslrootcert,
+    )
+
+
+def _patch_mysql(
+    current: TargetMysql | None,
+    patch: MysqlPatch | None,
+    variables: dict[str, str],
+    *,
+    at: KeyPath,
+) -> TargetMysql | None:
+    """Key by key, like ``postgres:``."""
+    if patch is None:
+        return current
+    base = current if current is not None else TargetMysql()
+    ssl_ca = _maybe(patch.ssl_ca, variables, at=at.key("ssl_ca"))
+    return TargetMysql(
+        ssl_mode=base.ssl_mode if patch.ssl_mode is None else patch.ssl_mode,
+        ssl_ca=base.ssl_ca if ssl_ca is None else ssl_ca,
     )
 
 

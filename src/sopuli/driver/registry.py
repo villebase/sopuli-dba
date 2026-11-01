@@ -183,6 +183,17 @@ DRIVERS: dict[str, DatabaseDriver] = {
             }
         ),
     ),
+    # No module yet: the config can declare a server before the driver can
+    # connect to one (#1221), so a command there is refused with SOPULI-20006.
+    # The package, not a module inside it, because the first missing name is
+    # the one an import reports and `find_spec` can answer. `pymysql` is the
+    # module the `mysql` extra installs (#1202, decision 8).
+    "mysql": DatabaseDriver(
+        module="sopuli.driver.mysql",
+        extra="mysql",
+        provides=frozenset({"pymysql"}),
+        commands=frozenset(),
+    ),
 }
 
 

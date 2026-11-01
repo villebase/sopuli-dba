@@ -41,6 +41,7 @@ from sopuli.config.model import (
     DimensionValue,
     ForEach,
     InnerDimension,
+    MysqlPatch,
     Pairs,
     PostgresPatch,
     TargetPatch,
@@ -51,6 +52,7 @@ from sopuli.config.targets import (
     TARGET_KEYS,
     TARGET_TYPES,
     read_admin,
+    read_mysql,
     read_oracle,
     read_postgres,
     read_target,
@@ -269,6 +271,11 @@ def _build_patch(raw: Any, *, at: KeyPath) -> TargetPatch:
             None
             if "postgres" not in patch
             else PostgresPatch(**read_postgres(patch["postgres"], at=at.key("postgres")))
+        ),
+        mysql=(
+            None
+            if "mysql" not in patch
+            else MysqlPatch(**read_mysql(patch["mysql"], at=at.key("mysql")))
         ),
         labels=_patch_labels(patch, at=at),
         safety=read_safety(patch, at=at),

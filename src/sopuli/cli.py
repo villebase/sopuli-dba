@@ -110,14 +110,19 @@ from sopuli.config import (
 from sopuli.config import delivery as delivery_config
 from sopuli.config.bindings import check_oci_name
 from sopuli.config.errors import KeyPath
-from sopuli.config.expansion import declared_at, postgres_key_at
+from sopuli.config.expansion import declared_at, mysql_key_at, postgres_key_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
+from sopuli.config.targets import (
+    MYSQL,
+    MYSQL_UNENCRYPTED_SSL_MODE,
+    POSTGRESQL,
+    UNENCRYPTED_SSLMODE,
+)
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -9479,8 +9484,9 @@ def _require_encryption(
     its rows. That is not a way past the check: the run reads the connection it
     sends over again, and :func:`_unencrypted` refuses that row there.
 
-    **A PostgreSQL target under `sslmode: disable` is refused before any
-    connection** (#1058), in a first pass over every target. That mode never
+    **A PostgreSQL target under `sslmode: disable`, or a MySQL target under
+    `ssl_mode: DISABLED`, is refused before any connection** (#1058, #1221), in
+    a first pass over every target. That mode never
     negotiates TLS, so the config already answers what a connection would, and
     the run does not wait on another target's connection to say so. `allow` and
     `prefer` may still negotiate it, so they are read like any other.
@@ -9501,6 +9507,19 @@ def _require_encryption(
                 hint=(
                     f"`{location}` requires it, and `{postgres_key_at(expanded, 'sslmode')}` "
                     f"is `{UNENCRYPTED_SSLMODE}`, which never encrypts: use `sslmode: verify-full`"
+                ),
+            )
+        if (
+            expanded.target.type == MYSQL
+            and expanded.target.mysql_settings.ssl_mode == MYSQL_UNENCRYPTED_SSL_MODE
+        ):
+            raise UnsupportedCapabilityError(
+                ENCRYPTED_CONNECTION,
+                target=expanded.name,
+                hint=(
+                    f"`{location}` requires it, and `{mysql_key_at(expanded, 'ssl_mode')}` "
+                    f"is `{MYSQL_UNENCRYPTED_SSL_MODE}`, which never encrypts: use "
+                    f"`ssl_mode: VERIFY_IDENTITY`"
                 ),
             )
     cache: dict[str, Scope | None] = {} if scopes is None else scopes

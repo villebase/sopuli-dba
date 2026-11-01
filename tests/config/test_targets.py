@@ -108,11 +108,11 @@ def test_a_type_the_config_does_not_know_is_refused() -> None:
     """A target the tool cannot drive should fail while the file is being
     written -- invariant 4 applied to config."""
     with pytest.raises(ConfigError) as caught:
-        build_targets(document({**CDB_ROOT, "type": "mysql"}))
+        build_targets(document({**CDB_ROOT, "type": "mssql"}))
 
     rendered = str(caught.value)
-    assert "unknown target type 'mysql'" in rendered
-    assert "oracle, postgresql" in rendered
+    assert "unknown target type 'mssql'" in rendered
+    assert "oracle, postgresql, mysql" in rendered
 
 
 def test_duplicate_target_names_are_refused() -> None:

@@ -69,6 +69,13 @@ postgres = [
   # was built, so a floor alone does not promise it.
   "psycopg[binary]>=3.1.12",
 ]
+mysql = [
+  # PyMySQL: pure Python, so no compiled wheel can lag a new Python release, and
+  # it speaks `caching_sha2_password` (#1202, decision 8). Over a plain
+  # connection that plugin needs RSA, which is PyMySQL's own `rsa` extra; the
+  # tool connects over TLS by default, so it is not installed here.
+  "PyMySQL>=1.1.1",
+]
 hashicorp = [
   # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than
   # `requests` for explicit default timeouts and a real SSLContext, and here
@@ -120,7 +127,7 @@ onepassword = [
 # everything. It is deliberately not what README recommends -- an install line
 # that reads `sopuli[all]` undoes the split for every reader who copies it.
 all = [
-  "sopuli-dba[oracle,postgres,hashicorp,oci,notify,yopass,onepassword]",
+  "sopuli-dba[oracle,postgres,mysql,hashicorp,oci,notify,yopass,onepassword]",
 ]
 
 dev = [

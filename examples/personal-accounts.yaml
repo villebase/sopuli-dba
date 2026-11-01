@@ -13,7 +13,7 @@
 #
 # Full reference: ../docs/use-cases/uc-02-personal-account-passwords.md
 
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-3.4.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-3.5.schema.json
 
 version: 1
 

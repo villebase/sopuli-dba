@@ -26,11 +26,11 @@ import sys
 from pathlib import Path
 
 #: The clients the extras install, as ADR-006 names them: ``httpx``, the OCI SDK,
-#: ``python-oracledb``, ``psycopg``, ``pysequoia`` and 1Password's SDK. Kept here as a literal
-#: rather than derived from ``BACKENDS`` on purpose: this test is the check *on*
+#: ``python-oracledb``, ``psycopg``, PyMySQL, ``pysequoia`` and 1Password's SDK. Kept here as a
+#: literal rather than derived from ``BACKENDS`` on purpose: this test is the check *on*
 #: that table, and a check that reads its expectation out of the thing it is
 #: checking would pass an empty table.
-CLIENTS = ("httpx", "oci", "onepassword", "oracledb", "psycopg", "pysequoia")
+CLIENTS = ("httpx", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pysequoia")
 
 #: A store the tool cannot reach from this interpreter, declared anyway. §3a's
 #: promise in four lines: the file means the same thing on a machine that has the

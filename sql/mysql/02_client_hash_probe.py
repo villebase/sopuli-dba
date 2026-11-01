@@ -85,6 +85,9 @@ from collections.abc import Callable
 #: The stack's project name, so a second clone's stack is the one probed.
 PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "sopuli-test")
 SERVICES = ("mysql-80", "mysql-84", "mysql-9")
+#: The client binary in each container. sql/mariadb/02_client_hash_probe.py
+#: loads this module and sets it, and SERVICES, to its own.
+CLIENT = "mysql"
 #: The matrix's public root password, from test/compose.yaml.
 ROOT_PASSWORD = "sopuli-test"
 ACCOUNT = "sopuli_probe_hash"
@@ -177,7 +180,7 @@ def container(service: str) -> str:
 def client(
     service: str, user: str, password: str, statements: str, *flags: str
 ) -> tuple[int, str, str]:
-    """Run the server's mysql client as `user`: its exit code, output and errors.
+    """Run the server's own client, CLIENT, as `user`: its exit code, output and errors.
 
     Over TCP unless `flags` say otherwise. The client's warning about a password
     in its environment is left out of the errors.
@@ -185,7 +188,7 @@ def client(
     done = subprocess.run(
         [
             "docker", "exec", "-i", "-e", "MYSQL_PWD", container(service),
-            "mysql", f"-u{user}", "-N", "-B", "--default-character-set=utf8mb4",
+            CLIENT, f"-u{user}", "-N", "-B", "--default-character-set=utf8mb4",
             *(flags or ("-h127.0.0.1",)),
         ],
         input=statements.encode("utf-8"),
@@ -207,7 +210,9 @@ def mysql(service: str, user: str, password: str, statement: str) -> tuple[bool,
     if returncode == 0:
         return True, out
     # "ERROR 1045 (28000) at line 1: Access denied ..." -> "1045 (28000): Access denied ..."
-    found = re.match(r"ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.DOTALL)
+    # The mariadb client prints the failed statement, between lines of dashes,
+    # before its ERROR line, so the line is searched for.
+    found = re.search(r"^ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.DOTALL | re.MULTILINE)
     if found is None:
         # Not the server's answer: docker, or the client itself.
         raise StepError(f"{service}: {user}: {(err or out)[:200]}")

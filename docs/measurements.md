@@ -1,10 +1,11 @@
 # Measurements
 
-This file says what has been run on which Oracle, PostgreSQL or MySQL release,
-when, and what it showed. It is the one place for that. Other documents link
-here instead of listing releases themselves. The PostgreSQL results are in
-[their own part](#postgresql-releases), after the Oracle ones, and the MySQL
-results [after those](#mysql-releases).
+This file says what has been run on which Oracle, PostgreSQL, MySQL or MariaDB
+release, when, and what it showed. It is the one place for that. Other
+documents link here instead of listing releases themselves. The PostgreSQL
+results are in [their own part](#postgresql-releases), after the Oracle ones,
+the MySQL results [after those](#mysql-releases), and the MariaDB results
+[last](#mariadb-releases).
 
 A result holds only for the release it names. Oracle's retention and auditing
 behaviour is not a documented guarantee, and it differs between releases: 11.2
@@ -263,7 +264,8 @@ client the probe ran with, and is not compared.
 | `8.4.13` | The `mysql:8.4` image, the same profile, as pulled on 2026-11-01. 8.4 is a long-term support release |
 | `9.7.4` | The `mysql:9` image, the same profile, as pulled on 2026-11-01 |
 
-Not measured: every other release, MariaDB, and every managed service.
+Not measured: every other release and every managed service. MariaDB has
+[its own part](#mariadb-releases).
 
 ## MySQL scripts
 
@@ -288,3 +290,26 @@ Not measured: every other release, MariaDB, and every managed service.
 | `06_rollover_privileges_probe.py` | `8.0.46` | 2026-11-01 | #1220 | No place the server provides says whether a password is retained, other than `User_attributes`. `INFORMATION_SCHEMA.USER_ATTRIBUTES` holds only the `ATTRIBUTE` metadata, the same before and after `RETAIN`. An account with only `CREATE USER` sees its rows for every account without `SYSTEM_USER`. `SHOW CREATE USER` shows only the current hash. `DISCARD OLD PASSWORD` gives `ROW_COUNT()` 0 and no warnings, with a retained password and without one. The tool account's `DISCARD OLD PASSWORD` does end the rollover: the old password is then refused. An account that holds `SYSTEM_USER` has no row the tool sees. A view root creates with `SQL SECURITY DEFINER`, exposing only `JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password')`, reads 1 and then 0 for the tool account. `SELECT` on `mysql.user`'s 31 `*_priv` columns and on `mysql.global_grants` reads another account's static and dynamic privileges, and the hash and `User_attributes` are refused, `1143`. `SHOW GRANTS FOR` is refused, `1142`, and `USER_PRIVILEGES` shows only the tool account's own. A privilege granted to a role shows on the role's row. Which roles an account has, and which are its defaults, is in `mysql.role_edges` and `mysql.default_roles`, and a mandatory role only in `mandatory_roles`, which the tool account can read: an account never granted the role takes it while the setting holds it. Proxy grants and grants on the `mysql` schema are in `mysql.proxies_priv`, `mysql.db` and `mysql.tables_priv`. Each table is refused, `1142`, until it is granted |
 | `06_rollover_privileges_probe.py` | `8.4.13` | 2026-11-01 | #1220 | As on 8.0.46 |
 | `06_rollover_privileges_probe.py` | `9.7.4` | 2026-11-01 | #1220 | As on 8.0.46 |
+
+## MariaDB releases
+
+A MariaDB release is three numbers, such as `10.11.19`. Name it in full, never
+"10.11". The scripts are in `sql/mariadb/`, and `tests/test_measurements.py`
+checks their headers against the table below in the same way.
+
+| Release | Product, and where it ran |
+|---|---|
+| `10.11.19` | The `mariadb:10.11` image, `test/compose.yaml` profile `mariadb-matrix`, as pulled on 2026-11-01. 10.11 is a long-term support release |
+| `12.3.3` | The `mariadb:12.3` image, the same profile, as pulled on 2026-11-01. 12.3 is the current long-term support release |
+
+Not measured: every other release, Galera, and every managed service.
+
+## MariaDB scripts
+
+<!-- measurements: mariadb scripts -->
+| Script | Release | Date | Issue | Result |
+|---|---|---|---|---|
+| `01_password_text_probe.py` | `10.11.19` | 2026-11-01 | #1220 | **The password stays in clear.** The general log, the slow log and `performance_schema`'s statement history keep `CREATE USER` and `ALTER USER … IDENTIFIED BY '…'`, `SET PASSWORD … = PASSWORD('…')` and `USING PASSWORD('…')` as sent, also when the statement fails to run or to parse. The binary log keeps `CREATE USER`, `ALTER USER … IDENTIFIED BY` and `USING PASSWORD('…')` as sent, and rewrites only `SET PASSWORD` to the hash. `IDENTIFIED VIA mysql_native_password USING '<hash>'` lands everywhere with the hash and no password. The digest holds none. The statement consumers are off by default |
+| `01_password_text_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19 |
+| `02_client_hash_probe.py` | `10.11.19` | 2026-11-01 | #1220 | A `mysql_native_password` or `ed25519` value the probe computes agrees with the server's. An account with only `CREATE USER` sets each with `IDENTIFIED VIA … USING`, and `mysql_native_password` also with `IDENTIFIED BY PASSWORD`, and the password logs in. A malformed value is refused, `1396`. Only `mysql_native_password` is loaded by default; `ed25519` installs. `parsec` is refused, `1126`: the library is not in the image |
+| `02_client_hash_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19, and `parsec` installs. A `parsec` value the probe computes, with its own salt, agrees, is set by the same account, and the password logs in |

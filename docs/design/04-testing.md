@@ -382,20 +382,21 @@ stack is `test/compose.yaml`, and the harness starts nothing itself
   - CI's `install-shape` job installs the base package for real and asserts that
     the clients are absent. Only this check can see a mistake in
     `pyproject.toml` itself.
-- **Names are compared by `upper()`, never by `casefold()`** (invariant 5).
-  The drivers look names up by `upper()`, and the two folds disagree on some
-  names: the dotless `ı` and `i` are one name by `upper()` and two by
-  `casefold()`. `tests/test_name_comparison.py` parses `src/` and fails on a
-  `casefold()` call in a module not on its list. Each listed module has a
-  reason, and the only one is `config/notify.py`, which compares template
-  field names. Like the reveal-site test, it catches only the plain method
-  call.
 - **The absent-backend path, for each backend (ADR-006).** Resolve a store whose
   extra is not installed, and assert the whole contract: the message names the
   right extra, `error.category` is `config`, `error.code` is `SOPULI-20001`, and
   the exit code is 9. Every other test imports the module successfully, so
   without this test a renamed module would turn the clean error into a
   traceback, and nothing would notice.
+- **Names are compared by `upper()`, never by `casefold()`** (invariant 5).
+  The drivers look names up by `upper()`, and the two folds disagree on some
+  names: the dotless `ı` and `i` are one name by `upper()` and two by
+  `casefold()`. `tests/test_name_comparison.py` parses `src/` and fails on any
+  use of `casefold`, called or passed as a key, that its list does not allow.
+  The list names each module, how many uses it has, and why each use is not a
+  comparison of database names. `lower()` breaks the rule in the same way and
+  is not checked, because the code uses it in many places that are not names.
+  Review catches that case.
 - **The advisory lock:** acquire, fence, renew and release, against an in-memory
   KV v2 fake with an injected clock. This includes the fencing case: a lock is
   stolen mid-run, and the original holder must stop before its next change. The

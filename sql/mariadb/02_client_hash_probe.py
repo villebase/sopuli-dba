@@ -194,8 +194,11 @@ def install_plugins(service: str) -> str:
     return OK if ok else code(answer)
 
 
-def uninstall_plugins(service: str) -> None:
-    root(service, "UNINSTALL PLUGIN IF EXISTS ed25519; UNINSTALL PLUGIN IF EXISTS parsec")
+def uninstall_plugins(service: str, keep: str = "") -> None:
+    """Uninstall ed25519 and parsec, except those named in `keep`, as plugins() lists them."""
+    for plugin in ("ed25519", "parsec"):
+        if plugin not in keep.split(","):
+            root(service, f"UNINSTALL PLUGIN IF EXISTS {plugin}")
 
 
 def stored(service: str, account: str = ACCOUNT) -> str:

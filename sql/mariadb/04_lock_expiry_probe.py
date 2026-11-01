@@ -99,10 +99,14 @@ def priv(service: str) -> str:
 
 
 def probe(service: str) -> None:
+    # Put back the value the server had, not the compiled default.
+    saved = ch.root(service, "SELECT @@GLOBAL.max_password_errors")
+    if not saved.isdigit():
+        raise ch.StepError(f"{service}: max_password_errors reads {saved!r}")
     ch.cleaned(
         service,
         lambda: cases(service),
-        lambda: ch.root(service, "SET GLOBAL max_password_errors = DEFAULT"),
+        lambda: ch.root(service, f"SET GLOBAL max_password_errors = {saved}"),
     )
 
 

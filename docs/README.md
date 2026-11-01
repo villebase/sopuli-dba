@@ -646,7 +646,9 @@ full.
   in, also across two plugins, and the new value alone ends it. The tool can
   send it, because it can compute both values from the two passwords it
   holds. Whether a rollover is open is only in `mysql.global_priv`, beside the
-  hashes, and in `SHOW CREATE USER`, which prints them.
+  hashes, and in `SHOW CREATE USER`, which prints them. In `global_priv`,
+  `auth_or` holds 2 values while it is open, and 1 after the new value alone
+  ends it; an account that never had `OR` has no `auth_or`.
   `sql/mariadb/03_dual_password_probe.py` measures it.
 - `verified` `mariadb-lock-expiry` (#1220) — **How do a lock, an expiry and a
   block read back?**

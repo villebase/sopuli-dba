@@ -60,8 +60,9 @@ RESULTS -- the same on both releases
   ID2  accepted, and only sopuli_probe_id@% is locked: a user name alone
        means the host '%'. The 'localhost' account, never locked or
        unlocked, has no account_locked key in global_priv
-  ID3  Sopuli_Probe_Id@% is created beside sopuli_probe_id@%, so two
-       accounts at '%' differ only in case. 'LOCALHOST' is refused, 1396
+  ID3  Sopuli_Probe_Id@% is created beside sopuli_probe_id@%, and a lookup of
+       sopuli_probe_id at '%' finds one account, so the two are two accounts
+       that differ only in case. 'LOCALHOST' is refused, 1396
        (HY000), because 'localhost' exists. A new account at 'LOCALHOST' is
        stored at 'localhost': host names are not case-sensitive
   ID4  refused, 1396 (HY000)
@@ -127,7 +128,7 @@ SPLIT = "sopuli_probe_split"
 ROLE = "sopuli_probe_role"
 HOSTS = {"%": "Acme-Id-pw1", "localhost": "Acme-Id-pw2"}
 OK, REFUSED = ch.OK, ch.REFUSED
-NO_SUCH = "1396 (HY000)"
+NO_SUCH = ch.FAILED
 EVERY_ACCOUNT = (
     f"'{NAME}'@'%', '{NAME}'@'localhost', '{OTHER_CASE}'@'%', '{HOST_CASE}'@'localhost', "
     f"'{DBA}'@'%', '{SPLIT}'@'%'"
@@ -200,9 +201,10 @@ def identity(service: str) -> None:
         f"CREATE USER '{OTHER_CASE}'@'%' IDENTIFIED BY 'Acme-Id-pw4'",
     )
     other = OK if ok else ch.code(out)
+    # The view's User compares as stored, so this counts only the one spelling
+    # if the two are two accounts.
     names = ch.root(
-        service,
-        f"SELECT COUNT(*) FROM mysql.user WHERE host = '%' AND user IN ('{NAME}', '{OTHER_CASE}')",
+        service, f"SELECT COUNT(*) FROM mysql.user WHERE host = '%' AND user = '{NAME}'"
     )
     ok, out = ch.mysql(
         service, "root", ch.ROOT_PASSWORD, f"CREATE USER '{NAME}'@'LOCALHOST' IDENTIFIED BY 'x'"
@@ -211,10 +213,11 @@ def identity(service: str) -> None:
     ch.root(service, f"CREATE USER '{HOST_CASE}'@'LOCALHOST' IDENTIFIED BY 'Acme-Id-pw5'")
     stored = ch.root(service, f"SELECT host FROM mysql.user WHERE user = '{HOST_CASE}'")
     print(
-        f"ID3 other case: {other}, accounts at '%': {names}; 'LOCALHOST' beside 'localhost': "
+        f"ID3 other case: {other}, accounts at '%' named exactly {NAME}: {names}; "
+        f"'LOCALHOST' beside 'localhost': "
         f"{host_case}; a new 'LOCALHOST' is stored as: {stored}"
     )
-    ch.check("ID3", (other, names, host_case, stored), (OK, "2", NO_SUCH, "localhost"))
+    ch.check("ID3", (other, names, host_case, stored), (OK, "1", NO_SUCH, "localhost"))
 
     answer = tool(service, f"ALTER USER '{NAME}'@'192.0.2.99' ACCOUNT LOCK")
     print(f"ID4 {answer}")

@@ -59,7 +59,8 @@ It needs 02_client_hash_probe.py beside it.
 
 THROWAWAY SERVERS ONLY. It installs the ed25519 and parsec plugins, creates
 the accounts sopuli_probe_hash and sopuli_probe_tool, as 02 does, and drops
-them and uninstalls the plugins at the end.
+them at the end. It uninstalls each plugin it installed, and leaves one the
+server had before.
 """
 
 from __future__ import annotations
@@ -100,11 +101,13 @@ def both(service: str, old: tuple[str, str], new: tuple[str, str]) -> str:
 
 
 def probe(service: str) -> None:
+    # A plugin the server had before the run stays installed after it.
+    loaded = ch.plugins(service)
     ch.cleaned(
         service,
         lambda: cases(service),
         lambda: ch.base.teardown(service),
-        lambda: ch.uninstall_plugins(service),
+        lambda: ch.uninstall_plugins(service, keep=loaded),
     )
 
 
@@ -133,7 +136,9 @@ def cases(service: str) -> None:
     old, new = "Acme-Old-four", "Acme-New-four"
     old_value = ch.COMPUTE["mysql_native_password"](old)
     new_value = ch.COMPUTE["ed25519"](new)
-    both(service, ("mysql_native_password", old), ("ed25519", new))
+    answer = both(service, ("mysql_native_password", old), ("ed25519", new))
+    if answer != ch.OK:
+        raise ch.StepError(f"{service}: DP4's OR was refused: {answer}")
     plugin, string = ch.root(
         service,
         "SELECT plugin, authentication_string FROM mysql.user "

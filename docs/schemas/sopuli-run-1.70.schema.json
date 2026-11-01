@@ -1597,7 +1597,7 @@
         },
         "account_status": {
           "type": "string",
-          "description": "Oracle's ACCOUNT_STATUS for this account, as it was read before anything was issued -- the database's own word, never this tool's. Emitted by the account verbs (UC-2), including for a row they refused to touch, because \"I left it alone and here is the state it is in\" is the whole answer for those. Compound values are real: EXPIRED & LOCKED and LOCKED(TIMED) are both ordinary, and LOCKED(TIMED) is a failed-login lock rather than a deliberate one."
+          "description": "The account's status as it was read before anything was issued. On Oracle, ACCOUNT_STATUS -- the database's own word, never this tool's. Compound values are real there: EXPIRED & LOCKED and LOCKED(TIMED) are both ordinary, and LOCKED(TIMED) is a failed-login lock rather than a deliberate one. On PostgreSQL, which has no status column, the driver's word from pg_roles: NOLOGIN where rolcanlogin is false, else EXPIRED where VALID UNTIL has passed, else OPEN. Emitted by the account verbs (UC-2), including for a row they refused to touch, because \"I left it alone and here is the state it is in\" is the whole answer for those."
         },
         "changed": {
           "type": "boolean",

@@ -47,8 +47,10 @@ the tool wrote at paths the config no longer declares (§13).
 There is no `sopuli admin` command. To install the Oracle service account, run
 the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 `psql` (§7). The store backends are `hashicorp` and `oci` (§8.8); `doctor`
-lists the others as `not_implemented`. A PostgreSQL target runs `doctor` and the
-`creds` commands (§7), and refuses the `account` commands.
+lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
+`creds` commands (§7) and the `account` commands (§9). It refuses
+`account expire-password` and the seen reset, because PostgreSQL cannot make a
+role change its password at its next login.
 
 ---
 
@@ -456,9 +458,9 @@ and the run exits 1.
 The stack also runs PostgreSQL 16 at `127.0.0.1:5432`, superuser `postgres`,
 password `sopuli-test`. `doctor` connects to it and reports what it found, and
 the UC-1 commands run against it: `creds generate`, `apply`, `check`, `rotate`,
-`status` and `finish-rollover`, which finds no window to close. Of the UC-2
-commands, `account list` and `account reset-password` run against it, and the
-others refuse a PostgreSQL target with `SOPULI-20006`.
+`status` and `finish-rollover`, which finds no window to close. The UC-2
+commands `account list`, `account reset-password` and `account suspend` run
+against it, and `account expire-password` refuses it with exit 5.
 
 The tool connects as an ordinary role with `CREATEROLE`
 ([`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) §2).
@@ -1458,6 +1460,45 @@ ACCOUNT       TARGET    STATE   STATUS  DETAIL
 acme_dev_bob  free-pdb  LOCKED  LOCKED  the account is already locked
 
 acme_dev_bob was already locked on 1 of 1
+```
+
+### `account suspend` on PostgreSQL
+
+On the cluster of §7, with the grants from `account reset-password` on
+PostgreSQL above, the command sets the role `NOLOGIN`:
+
+```
+$ sopuli --config postgres.yaml account suspend --account acme_dev_bob --confirm
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT       TARGET  INTENT        SECRET
+acme_dev_bob  pg-dev  account_lock  -
+
+ACCOUNT       TARGET  STATE   STATUS  DETAIL
+acme_dev_bob  pg-dev  LOCKED  OPEN    role was open; set NOLOGIN
+
+suspended acme_dev_bob on 1 of 1 targets
+...
+```
+
+A second run changes nothing:
+
+```
+ACCOUNT       TARGET  STATE   STATUS   DETAIL
+acme_dev_bob  pg-dev  LOCKED  NOLOGIN  the role is already NOLOGIN
+
+acme_dev_bob was already locked on 1 of 1
+```
+
+`account reset-password` now skips `acme_dev_bob`. Run `ALTER ROLE acme_dev_bob
+LOGIN` in `psql` to undo the suspension. `account expire-password` is refused
+with exit 5:
+
+```
+$ sopuli --config postgres.yaml account expire-password --account acme_dev_alice --confirm
+...
+sopuli: target "pg-dev" does not support expire_password
+  hint: this target cannot make an account change its password at its next login; hand the owner a new password with an unseen `account reset-password`, or end the account with `account suspend`
 ```
 
 ---

@@ -462,7 +462,8 @@ such as "from 16", means the one release of it that was measured.
   `pg_auth_members.admin_option`, which `pg_has_role(…, 'USAGE WITH ADMIN
   OPTION')` agrees with. `CREATEROLE` with `ADMIN OPTION` is accepted on every
   release measured. From 16, a role that creates another gets `ADMIN OPTION` on
-  it. A refusal is SQLSTATE `42501`.
+  it. A refusal is SQLSTATE `42501`. `ALTER ROLE … NOLOGIN` needs the same
+  grants on every release measured (#1201).
   `sql/postgres/03_createrole_password_probe.sql` measures it.
 - `verified` `pg-md5-line-scram` (#1032) — **Does a SCRAM verifier stored on a
   server with `password_encryption = md5` log in through a `pg_hba.conf` line

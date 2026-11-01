@@ -123,6 +123,14 @@ SEEN_NEEDS_EXPIRY = (
     "unseen delivery method"
 )
 
+#: The hint for `account expire-password` on a target without
+#: :data:`EXPIRE_PASSWORD`, given at plan time and by a driver alike (#1201).
+EXPIRY_UNAVAILABLE = (
+    "this target cannot make an account change its password at its next login; "
+    "hand the owner a new password with an unseen `account reset-password`, or end "
+    "the account with `account suspend`"
+)
+
 #: Lock state can be read and set.
 ACCOUNT_LOCK_STATE = "account_lock_state"
 

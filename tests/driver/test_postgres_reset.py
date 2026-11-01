@@ -1,5 +1,6 @@
-"""UC-2's reset on PostgreSQL in tier 0: what `reset_password` sends, and what
-it refuses before sending anything (#1201).
+"""UC-2 on PostgreSQL in tier 0: what `reset_password` and `suspend_account`
+send, what they refuse before sending anything, and the refusal of
+`expire_password` (#1201).
 
 A scripted connection returns the verifier, as in `test_postgres_password.py`.
 The live test (`test_postgres_reset_live.py`) has libpq compute it and logs in
@@ -16,6 +17,7 @@ import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
     PASSWORD_SET,
     ROLLOVER_FINISH,
@@ -174,3 +176,74 @@ def test_a_nologin_role_reads_as_deliberately_locked() -> None:
 
     assert state.locked is True
     assert state.deliberately_locked is True
+
+
+# ----------------------------------------------------------------- suspend --
+
+
+def test_suspend_sends_alter_role_nologin() -> None:
+    session = _session()
+
+    change = session.suspend_account(ROLE)
+
+    (statement,) = session.connection.sent
+    assert statement.as_string(None) == f'ALTER ROLE "{ROLE}" NOLOGIN'
+    assert change.action == ACCOUNT_LOCK
+    assert change.changed is True
+    assert change.status == roles.OPEN
+    assert change.detail == "role was open; set NOLOGIN"
+
+
+def test_suspend_of_a_nologin_role_sends_nothing() -> None:
+    """Invariant 9: a second NOLOGIN is accepted silently (probe 03, CR8), so
+    the driver reads the state and issues nothing."""
+    session = _session(can_login=False)
+
+    change = session.suspend_account(ROLE)
+
+    assert session.connection.sent == []
+    assert change.changed is False
+    assert change.status == roles.NOLOGIN
+
+
+def test_suspend_of_a_role_past_its_valid_until_still_sets_nologin() -> None:
+    """A past VALID UNTIL stops only a password; NOLOGIN stops every method."""
+    session = _session(expired=True)
+
+    change = session.suspend_account(ROLE)
+
+    assert len(session.connection.sent) == 1
+    assert change.changed is True
+    assert change.detail == "role was expired; set NOLOGIN"
+
+
+def test_suspend_of_a_missing_role_is_refused() -> None:
+    session = _session()
+    session.connection.role_rows = []
+
+    with pytest.raises(DriverError, match="does not exist"):
+        session.suspend_account(ROLE)
+    assert session.connection.sent == []
+
+
+def test_suspend_on_a_read_only_cluster_is_refused_before_anything_is_sent() -> None:
+    session = _session(read_write=False)
+
+    with pytest.raises(DriverError):
+        session.suspend_account(ROLE)
+    assert session.connection.sent == []
+
+
+# ---------------------------------------------------------- expire-password --
+
+
+def test_expire_password_is_refused_by_capability() -> None:
+    session = _session()
+
+    with pytest.raises(UnsupportedCapabilityError) as refused:
+        session.expire_password(ROLE)
+
+    assert refused.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "expire_password" in refused.value.message
+    assert "account suspend" in str(refused.value.hint)
+    assert session.connection.sent == []

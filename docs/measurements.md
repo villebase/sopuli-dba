@@ -213,6 +213,12 @@ Supabase image ran on its own, not as a hosted project.
 | `03_createrole_password_probe.sql` | `16.15` | 2026-10-27 | #1098 | CR6: refused, `42501`, without `ADMIN OPTION` on the built-in role. CR1 to CR5 as on 2026-10-25 |
 | `03_createrole_password_probe.sql` | `17.11` | 2026-10-27 | #1098 | As on 16.15 |
 | `03_createrole_password_probe.sql` | `18.6` | 2026-10-27 | #1098 | As on 16.15 |
+| `03_createrole_password_probe.sql` | `13.23` | 2026-11-01 | #1201 | CR7: `CREATEROLE` alone sets another role `NOLOGIN`. CR8: with `ADMIN OPTION` too, `NOLOGIN` and `LOGIN` are accepted, and a second `NOLOGIN` is accepted silently. CR1 to CR6 as on 2026-10-27 |
+| `03_createrole_password_probe.sql` | `14.24` | 2026-11-01 | #1201 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `15.19` | 2026-11-01 | #1201 | As on 13.23 |
+| `03_createrole_password_probe.sql` | `16.15` | 2026-11-01 | #1201 | CR7: refused, `42501`, without `ADMIN OPTION` on the role. CR8 as on 13.23. CR1 to CR6 as on 2026-10-27 |
+| `03_createrole_password_probe.sql` | `17.11` | 2026-11-01 | #1201 | As on 16.15 |
+| `03_createrole_password_probe.sql` | `18.6` | 2026-11-01 | #1201 | As on 16.15 |
 | `04_md5_line_scram_verifier_probe.py` | `13.23` | 2026-10-25 | #1032 | Under `password_encryption = md5`, a role given a SCRAM verifier logs in with SCRAM through a line that says `md5`. A client held to md5 is refused |
 | `04_md5_line_scram_verifier_probe.py` | `14.24` | 2026-10-25 | #1032 | As on 13.23 |
 | `04_md5_line_scram_verifier_probe.py` | `15.19` | 2026-10-25 | #1032 | As on 13.23 |

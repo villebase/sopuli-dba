@@ -13,7 +13,9 @@ sopuli account expire-password [OPTIONS]
 Make a person change their password at next logon, without setting one.
 
 The command issues `ALTER USER ... PASSWORD EXPIRE` for an account that
-`personal_accounts:` declares. It works on Oracle targets only. It draws,
+`personal_accounts:` declares. It works on Oracle targets only. PostgreSQL
+cannot make a role change its password at its next login, so a PostgreSQL
+target refuses the run with exit 5 before any account is touched. It draws,
 sends and shows no password, so there is nothing to deliver and nothing
 that could leak. That is why it is a separate verb, not a flag on
 `reset-password`.
@@ -150,11 +152,12 @@ sopuli account suspend [OPTIONS]
 
 Lock a person's account, for offboarding. A reset will not unlock it.
 
-The command issues `ALTER USER ... ACCOUNT LOCK` for an account that
-`personal_accounts:` declares. It works on Oracle targets only. The account
-ends up `LOCKED`. That is different from the `LOCKED(TIMED)` state that a
-failed-login limit causes: `LOCKED(TIMED)` ends by itself after
-`PASSWORD_LOCK_TIME`, and `LOCKED` lasts until someone unlocks the account.
+The command locks an account that `personal_accounts:` declares. On Oracle
+it issues `ALTER USER ... ACCOUNT LOCK`, and the account ends up `LOCKED`.
+That is different from the `LOCKED(TIMED)` state that a failed-login limit
+causes: `LOCKED(TIMED)` ends by itself after `PASSWORD_LOCK_TIME`, and
+`LOCKED` lasts until someone unlocks the account. On PostgreSQL it issues
+`ALTER ROLE ... NOLOGIN`, which blocks every way of logging in.
 
 `--account` is required and takes one name, because an offboarding is one
 person leaving, and a mutating verb must name its account instead of
@@ -171,8 +174,8 @@ suspending DBSNMP is refused just as rotating it would be. `--force`
 waives guardrails 2 to 5 and 7, never 1, 6 or 8.
 
 An account that is already locked reports no change, and the command
-issues nothing. The driver reads the state first, because Oracle accepts
-the statement silently for a locked account.
+issues nothing. The driver reads the state first, because Oracle and
+PostgreSQL both accept the statement silently for a locked account.
 
 The command changes no password and writes to no store, so it takes no
 advisory lock and cannot reveal a secret.

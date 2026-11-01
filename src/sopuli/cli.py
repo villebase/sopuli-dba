@@ -1509,11 +1509,12 @@ def account_suspend(
 ) -> str:
     """Lock a person's account, for offboarding. A reset will not unlock it.
 
-    The command issues `ALTER USER ... ACCOUNT LOCK` for an account that
-    `personal_accounts:` declares. It works on Oracle targets only. The account
-    ends up `LOCKED`. That is different from the `LOCKED(TIMED)` state that a
-    failed-login limit causes: `LOCKED(TIMED)` ends by itself after
-    `PASSWORD_LOCK_TIME`, and `LOCKED` lasts until someone unlocks the account.
+    The command locks an account that `personal_accounts:` declares. On Oracle
+    it issues `ALTER USER ... ACCOUNT LOCK`, and the account ends up `LOCKED`.
+    That is different from the `LOCKED(TIMED)` state that a failed-login limit
+    causes: `LOCKED(TIMED)` ends by itself after `PASSWORD_LOCK_TIME`, and
+    `LOCKED` lasts until someone unlocks the account. On PostgreSQL it issues
+    `ALTER ROLE ... NOLOGIN`, which blocks every way of logging in.
 
     `--account` is required and takes one name, because an offboarding is one
     person leaving, and a mutating verb must name its account instead of
@@ -1530,8 +1531,8 @@ def account_suspend(
     waives guardrails 2 to 5 and 7, never 1, 6 or 8.
 
     An account that is already locked reports no change, and the command
-    issues nothing. The driver reads the state first, because Oracle accepts
-    the statement silently for a locked account.
+    issues nothing. The driver reads the state first, because Oracle and
+    PostgreSQL both accept the statement silently for a locked account.
 
     The command changes no password and writes to no store, so it takes no
     advisory lock and cannot reveal a secret.
@@ -1796,7 +1797,9 @@ def account_expire_password(
     """Make a person change their password at next logon, without setting one.
 
     The command issues `ALTER USER ... PASSWORD EXPIRE` for an account that
-    `personal_accounts:` declares. It works on Oracle targets only. It draws,
+    `personal_accounts:` declares. It works on Oracle targets only. PostgreSQL
+    cannot make a role change its password at its next login, so a PostgreSQL
+    target refuses the run with exit 5 before any account is touched. It draws,
     sends and shows no password, so there is nothing to deliver and nothing
     that could leak. That is why it is a separate verb, not a flag on
     `reset-password`.
@@ -1839,6 +1842,20 @@ def account_expire_password(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
     _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
+
+    # Invariant 4: a target that cannot expire a password refuses the run, exit
+    # 5, before the confirmation and before any account is touched (#1201).
+    # Under `--dry-run` too, so a preview never says "would be expired" where
+    # the run would refuse. It is `_require_seen_expiry`'s pattern: one short
+    # login per target, closed before the prompt, so no session waits on a
+    # person. A target whose scope cannot be read is left to the run, where the
+    # driver refuses the same way.
+    scopes: dict[str, Scope | None] = {}
+    for expanded in reached:
+        scope = _plan_scope(expanded, run, config, scopes)
+        if scope is not None:
+            expire.require_expiry(scope, target=expanded.name)
+
     _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     if not reached:

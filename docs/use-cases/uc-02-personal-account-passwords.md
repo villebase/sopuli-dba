@@ -8,9 +8,10 @@ This document specifies `personal_accounts:`, `sopuli account reset-password`,
 `sopuli account list`. The reset is built for the `manual`, `vault_wrapped`,
 `vault_path`, `one_time_link` and `onepassword_share` delivery methods; §6.2
 lists the method that is not built yet. §9 lists the open questions. On
-PostgreSQL, `account list` and the unseen `account reset-password` are built
-(§4.1). The seen reset is refused there with exit 5, and the other verbs refuse
-a PostgreSQL target with `SOPULI-20006`.
+PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
+`account suspend` are built. The seen reset and `account expire-password` are
+refused there with exit 5, because a role cannot be made to change its password
+at its next login.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -284,6 +285,14 @@ nothing, so the run document is its record. **It has no flag to keep the
 window**, because nobody has asked for one. The reset's `--keep-rollover` (§4.3)
 is for an owner who still knows the old password.
 
+**A PostgreSQL target refuses the verb at plan time** (decided in #1201).
+PostgreSQL cannot make a role change its password at its next login, so a
+cluster does not report the `expire_password` capability. The run connects to
+each target first, reads its capabilities, and exits 5, naming the capability
+and the target, before it reads or changes any account. `--dry-run` refuses in
+the same way. The hint names the two verbs that do work there: an unseen
+`account reset-password`, and `account suspend`.
+
 ### `account suspend`
 
 Disabling an account, the offboarding case, is `sopuli account suspend`. The verb
@@ -336,6 +345,19 @@ failed login an offboarding. The status also combines: `EXPIRED & LOCKED`,
 So equality against the whole string calls a deliberately locked account open.
 The driver splits on ` & ` and looks for a `LOCKED` component, as it does for
 `EXPIRED(GRACE)`.
+
+**On PostgreSQL the statement is `ALTER ROLE … NOLOGIN`** (decided in #1201).
+`NOLOGIN` blocks every authentication method. A past `VALID UNTIL` would stop
+only a password, so a role that logs in by certificate, GSS or peer would stay
+usable. `results[].account_status` reads `OPEN`, `EXPIRED` or `NOLOGIN`, and
+`state` is `LOCKED` as on Oracle. PostgreSQL has no timed lock, so every
+`NOLOGIN` counts as already suspended, and the reset refuses it (H4). A second
+`NOLOGIN` is accepted silently on 13.23 to 18.6
+(`03_createrole_password_probe.sql`, CR8), so the driver reads the state first,
+as on Oracle. From PostgreSQL 16 the tool account needs `ADMIN OPTION` on the
+role, the grant it already needs to set the role's password
+(`02-postgres-privileges.md` §2.2). Without it the server refuses with
+`42501` (CR7).
 
 ### `account list`
 

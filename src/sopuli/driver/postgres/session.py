@@ -13,16 +13,18 @@ its encryption, audits the tool account's privileges for
 (:meth:`PostgresSession.describe_user`), verifies a role's password by logging
 in as the role (:meth:`PostgresSession.verify_password`), and sets a role's
 password with a verifier computed on the client
-(:meth:`PostgresSession.set_password`, invariant 15). That ``ALTER ROLE`` is the
-one statement the driver sends that changes anything, and it checks
+(:meth:`PostgresSession.set_password`, invariant 15), and suspends a role with
+``ALTER ROLE … NOLOGIN`` (:meth:`PostgresSession.suspend_account`). Those two
+``ALTER ROLE`` statements are the only ones the driver sends that change
+anything, and each checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. It also resolves
 a `role:` predicate for `account list` (:meth:`PostgresSession.accounts_matching`).
-The registry entry lists the commands it is written for, UC-1's and `account
-list`, and the other UC-2 commands refuse the target with ``SOPULI-20006``
-before it connects (:func:`~sopuli.driver.registry.require_command`). What
-PostgreSQL has no counterpart for, such as a rollover window or a profile, is
-refused by capability, exit 5. The other methods for UC-2 are not written yet,
-and refuse with ``SOPULI-20006`` without a round trip.
+The registry entry lists the commands it is written for: UC-1's, and UC-2's
+`account list`, `reset-password`, `suspend` and `expire-password`. What
+PostgreSQL has no counterpart for, such as a rollover window, a profile, or an
+expired password a role must change at login, is refused by capability, exit 5.
+:meth:`PostgresSession.apply_attributes` is not written, and is never reached:
+the attributes it enforces are refused by capability at plan time.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import psycopg
-from psycopg import pq
+from psycopg import pq, sql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.postgres import roles
@@ -56,8 +58,10 @@ from sopuli.driver.postgres.roles import describe, members_of
 from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
 from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
+    EXPIRY_UNAVAILABLE,
     OFFLINE_VERIFY,
     PASS,
     PASSWORD_ROLLOVER,
@@ -311,7 +315,50 @@ class PostgresSession:
         )
 
     def suspend_account(self, account: str) -> AccountChange:
-        raise self._not_written("suspend a role")
+        """``ALTER ROLE … NOLOGIN``, or report that the role is already
+        ``NOLOGIN`` (#1201).
+
+        ``NOLOGIN`` blocks every authentication method, where a past ``VALID
+        UNTIL`` stops only a password. A reset refuses a ``NOLOGIN`` role (H4),
+        so a suspended role stays suspended until somebody runs ``ALTER ROLE …
+        LOGIN``.
+
+        **The state is read first** (invariant 9): measured on 13.23 to 18.6, a
+        second ``NOLOGIN`` is accepted silently
+        (``03_createrole_password_probe.sql``, CR8). From 16 the tool account
+        needs ``ADMIN OPTION`` on the role, as for a password (CR7); without it
+        the server answers 42501.
+
+        Not gated by ``account_lock_state``, which a cluster does not report:
+        that capability is also what lets UC-1's ``unlock_if_locked`` clear a
+        lock, and every ``NOLOGIN`` here is somebody's decision.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'role "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create roles (Q8); nothing is suspended, and "
+                    "the role name is worth checking against the estate"
+                ),
+            )
+        if state.deliberately_locked:
+            return AccountChange(
+                ACCOUNT_LOCK,
+                changed=False,
+                status=state.status,
+                detail="the role is already NOLOGIN",
+            )
+        with self._cursor() as cursor:
+            cursor.execute(sql.SQL("ALTER ROLE {} NOLOGIN").format(sql.Identifier(state.name)))
+        LOG.debug("ALTER ROLE %s NOLOGIN on %s", state.name, self.target.name)
+        return AccountChange(
+            ACCOUNT_LOCK,
+            changed=True,
+            status=state.status,
+            detail=f"role was {state.status.lower()}; set NOLOGIN",
+        )
 
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
@@ -378,7 +425,16 @@ class PostgresSession:
         )
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
-        raise self._not_written("expire a password")
+        """Refused by capability: PostgreSQL cannot make a role change its
+        password at its next login (#1201). The command refuses at plan time;
+        this is the refusal for a target whose scope plan time could not read."""
+        require_capability(
+            self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=EXPIRY_UNAVAILABLE
+        )
+        # Never reached, as a cluster never reports the capability. If one did,
+        # a refusal is the safe answer: an empty tuple would read as "already
+        # expired" with nothing issued.
+        raise self._not_written("expire a password")  # pragma: no cover
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""

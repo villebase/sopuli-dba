@@ -53,6 +53,11 @@ What `CREATEROLE` reaches depends on the release. The
   of §2.2 limits the tool account to the roles it is granted, and the server
   refuses any other with SQLSTATE `42501`.
 
+`ALTER ROLE … NOLOGIN`, which `account suspend` sends, follows the same rule as
+a password on every release measured: `CREATEROLE` alone on 13.23, 14.24 and
+15.19, and `ADMIN OPTION` as well on 16.15, 17.11 and 18.6
+(`03_createrole_password_probe.sql`, CR7 and CR8).
+
 So from 16 the server enforces the config's whitelist (invariant 5) a second
 time, for the roles a DBA granted. On 13 to 15 only the tool enforces it.
 
@@ -89,7 +94,7 @@ it no other attribute. §3 lists the ones that must not be given.
 
 A managed role is one that the config declares as an account on this target:
 an application's role, or a personal role that `account reset-password` may
-reset. How the tool account is given each one depends on the release.
+reset and `account suspend` may set `NOLOGIN`. How the tool account is given each one depends on the release.
 
 **From 16**, grant each managed role to the tool account with `ADMIN OPTION`,
 and with `INHERIT FALSE` and `SET FALSE`:
@@ -99,9 +104,10 @@ GRANT acme_web_user TO sopuli_admin WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
 ```
 
 `ADMIN OPTION` is what `CREATEROLE` needs before it may change the role's
-password. `INHERIT FALSE` means the tool account does not use the role's
+password or set it `NOLOGIN`. `INHERIT FALSE` means the tool account does not use the role's
 privileges, and `SET FALSE` means it cannot `SET ROLE` to it. So the tool can
-change the role's password and can do nothing else as that role. This was run
+change the role's password and its `LOGIN` attribute, and can do nothing as
+that role. This was run
 on 16.15:
 
 ```text
@@ -369,7 +375,7 @@ longer password is refused before anything is sent.
 |---|---|
 | `sql/postgres/01_password_text_probe.sql` | what the server log, `pg_stat_statements` and `pg_stat_activity` keep of `ALTER ROLE … PASSWORD` (§6) |
 | `sql/postgres/02_system_identifier_probe.sql` | whether a role with no grants can read `system_identifier`, which tells two targets on one cluster apart (`01-configuration.md` §*`postgres:` on a target*) |
-| `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password, and whether it can grant itself a built-in role (§1, §2.2) |
+| `sql/postgres/03_createrole_password_probe.sql` | what a `CREATEROLE` role needs before it can change another role's password or set it `NOLOGIN`, and whether it can grant itself a built-in role (§1, §2.2) |
 | `sql/postgres/04_md5_line_scram_verifier_probe.py` | whether a SCRAM verifier logs in through a `pg_hba.conf` line that says `md5` (§2.3), and which verifier `\password` sends before and after the `SET` (§2.1) |
 | `sql/postgres/05_psycopg_libpq_probe.py` | which libpq each psycopg wheel bundles, and whether it accepts `require_auth` |
 | `sql/postgres/06_saslprep_probe.py` | whether a verifier computed on the client and the server's SASLprep agree on a non-ASCII password (`pg-saslprep`) |

@@ -2007,13 +2007,16 @@ attempt", not as a failure: a redrawn account that ends `IN_SYNC` succeeded.
 
 The UC-2 verbs use the same `results[]` entry, with fields of their own.
 
-**`account_status`** is Oracle's own `ACCOUNT_STATUS`, as read *before* anything
-was issued. It is emitted for a row the verb refused as well as one it changed,
+**`account_status`** is the account's status as read *before* anything was
+issued. It is emitted for a row the verb refused as well as one it changed,
 because "I left it alone, and here is its state" is the whole answer for a
-refused row. Compound values are ordinary: `EXPIRED & LOCKED` is real, and
-`LOCKED(TIMED)` is a lock from failed logins, not a deliberate one. A substring
-test for `LOCKED` cannot tell those apart, which is why the driver parses the
-value.
+refused row. On Oracle it is the database's own `ACCOUNT_STATUS`. Compound
+values are ordinary there: `EXPIRED & LOCKED` is real, and `LOCKED(TIMED)` is a
+lock from failed logins, not a deliberate one. A substring test for `LOCKED`
+cannot tell those apart, which is why the driver parses the value. PostgreSQL
+has no status column, so the driver builds the word from `pg_roles`: `NOLOGIN`
+where the role cannot log in, else `EXPIRED` where its `VALID UNTIL` has
+passed, else `OPEN`.
 
 **`state: LOCKED` from `account suspend` is not enough on its own.** A row can
 read `LOCKED` with `changed: false` because the account was *already* locked, or

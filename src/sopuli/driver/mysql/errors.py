@@ -9,8 +9,9 @@ raises; the caller decides.
 PyMySQL raises a server error, and most failures of its own to reach the
 server, as an exception whose ``args`` are ``(number, message)`` and whose
 ``sqlstate`` is the server's where the reply carried one (PyMySQL 1.2.3,
-``err.raise_mysql_exception``). Numbers from 2000 are the client's own, such as
-2003 for a server it could not reach. Some of its own errors carry no number:
+``err.raise_mysql_exception``). Numbers from 2000 to 2999 are the client's
+own, such as 2003 for a server it could not reach; the server's run below 2000
+and from 3000 up. Some of its own errors carry no number:
 a closed connection is ``(0, "")``, and a broken handshake or packet stream is
 a message alone, such as ``Packet sequence number wrong``. Each of those is a
 connection failure (:func:`from_error`), as a PostgreSQL failure with no
@@ -28,6 +29,7 @@ where the mysql client met `1820` after it.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -74,9 +76,18 @@ PLUGIN_NOT_LOADED = 1524
 RETAIN_WITH_PLUGIN_CHANGE = 3894
 #: ``ER_OPTION_PREVENTS_STATEMENT``: ``read_only`` or ``super_read_only``.
 READ_ONLY = 1290
-#: ``ER_CON_COUNT_ERROR`` and ``ER_TOO_MANY_USER_CONNECTIONS``.
+#: ``ER_CON_COUNT_ERROR``: the server's ``max_connections``.
 TOO_MANY_CONNECTIONS = 1040
+#: ``ER_TOO_MANY_USER_CONNECTIONS``: the server's ``max_user_connections``,
+#: which applies to every account.
 TOO_MANY_USER_CONNECTIONS = 1203
+#: ``ER_USER_LIMIT_REACHED``: one of the account's own limits, such as
+#: ``MAX_USER_CONNECTIONS``.
+USER_LIMIT_REACHED = 1226
+#: The client's ``CR_AUTH_PLUGIN_CANNOT_LOAD`` and ``CR_AUTH_PLUGIN_ERR``: an
+#: account on a plugin PyMySQL cannot speak.
+AUTH_PLUGIN_CANNOT_LOAD = 2059
+AUTH_PLUGIN_ERROR = 2061
 #: ``ER_SECURE_TRANSPORT_REQUIRED``: the server requires TLS.
 SECURE_TRANSPORT_REQUIRED = 3159
 #: The client's own: ``CR_UNKNOWN_ERROR``, ``CR_CONN_HOST_ERROR``,
@@ -89,8 +100,8 @@ SERVER_GONE = 2006
 SERVER_LOST = 2013
 TLS_CONNECTION_ERROR = 2026
 
-#: The first number the client uses for its own errors.
-_CLIENT_ERRORS = 2000
+#: The numbers the client uses for its own errors.
+_CLIENT_ERRORS = range(2000, 3000)
 
 
 @dataclass(frozen=True)
@@ -98,7 +109,6 @@ class _Rule:
     category: str
     exit_code: ExitCode = ExitCode.FAILURE
     hint: str | None = None
-    retryable: bool | None = None
 
 
 _AUTHENTICATION = AuthenticationError.category
@@ -107,6 +117,12 @@ _AUTHENTICATION = AuthenticationError.category
 _LOST = (
     "the connection to the server was lost. A statement in flight may have run: if it "
     "set a password, the change is unknown until the account is checked"
+)
+
+#: The same failures while the session was being opened, when nothing had run.
+_FAILED_TO_CONNECT = (
+    "the connection to the server failed while the session was being opened, before "
+    "any statement ran"
 )
 
 #: The named numbers. Each hint says what to do next; the message says what
@@ -220,7 +236,30 @@ RULES: dict[int, _Rule] = {
     ),
     TOO_MANY_USER_CONNECTIONS: _Rule(
         "database",
-        hint="the account is at its MAX_USER_CONNECTIONS; raise the limit or end a session",
+        hint=(
+            "the account is at the server's max_user_connections, a setting for every "
+            "account; raise it or end a session"
+        ),
+    ),
+    USER_LIMIT_REACHED: _Rule(
+        "database",
+        hint=(
+            "the account reached one of its own limits, such as MAX_USER_CONNECTIONS; "
+            "ALTER USER raises it"
+        ),
+    ),
+    AUTH_PLUGIN_CANNOT_LOAD: _Rule(
+        _AUTHENTICATION,
+        exit_code=ExitCode.AUTH_FAILURE,
+        hint=(
+            "the account is on an authentication plugin PyMySQL cannot speak. The tool "
+            "logs in to caching_sha2_password accounts"
+        ),
+    ),
+    AUTH_PLUGIN_ERROR: _Rule(
+        _AUTHENTICATION,
+        exit_code=ExitCode.AUTH_FAILURE,
+        hint="the authentication plugin failed in the client; the message says why",
     ),
     SECURE_TRANSPORT_REQUIRED: _Rule(
         "connectivity",
@@ -257,7 +296,6 @@ class Diagnosis:
     message: str
     sqlstate: str | None = None
     hint: str | None = None
-    retryable: bool | None = None
 
     @property
     def code(self) -> str:
@@ -277,9 +315,7 @@ class Diagnosis:
         its message. An authentication failure is an
         :class:`~sopuli.driver.protocol.AuthenticationError`, exit 6."""
         if self.category == AuthenticationError.category:
-            return AuthenticationError(
-                self.coded_message, hint=self.hint, code=self.code, retryable=self.retryable
-            )
+            return AuthenticationError(self.coded_message, hint=self.hint, code=self.code)
         return MappedError(self)
 
 
@@ -288,23 +324,18 @@ class MappedError(DriverError):
     code on the instance, as :class:`sopuli.driver.postgres.errors.MappedError`."""
 
     def __init__(self, diagnosis: Diagnosis) -> None:
-        super().__init__(
-            diagnosis.coded_message,
-            hint=diagnosis.hint,
-            code=diagnosis.code,
-            retryable=diagnosis.retryable,
-        )
+        super().__init__(diagnosis.coded_message, hint=diagnosis.hint, code=diagnosis.code)
         self.category = diagnosis.category
         self.exit_code = diagnosis.exit_code
         self.diagnosis = diagnosis
 
 
 def classify(number: int, message: str, *, sqlstate: str | None = None) -> Diagnosis:
-    """What ``number`` means. A named row first; otherwise a client error (from
-    2000) is a connection failure, and any other number is the database's."""
+    """What ``number`` means. A named row first; otherwise a client error (2000
+    to 2999) is a connection failure, and any other number is the database's."""
     rule = RULES.get(number)
     if rule is None:
-        rule = _Rule("connectivity") if number >= _CLIENT_ERRORS else _Rule("database")
+        rule = _Rule("connectivity") if number in _CLIENT_ERRORS else _Rule("database")
     return Diagnosis(
         number=number,
         category=rule.category,
@@ -312,11 +343,16 @@ def classify(number: int, message: str, *, sqlstate: str | None = None) -> Diagn
         message=message,
         sqlstate=sqlstate,
         hint=rule.hint,
-        retryable=rule.retryable,
     )
 
 
-def from_error(exc: Any) -> Diagnosis:
+def _unchanged(message: str) -> str:
+    return message
+
+
+def from_error(
+    exc: Any, *, connecting: bool = False, scrub: Callable[[str], str] = _unchanged
+) -> Diagnosis:
     """Classify a PyMySQL exception without importing PyMySQL.
 
     The number is the first of ``args`` and the message the second. PyMySQL
@@ -325,6 +361,15 @@ def from_error(exc: Any) -> Diagnosis:
     stream. Each of those is :data:`UNKNOWN_CLIENT_ERROR`, a connection
     failure, with the exception's own text as the message. A caller passes only
     PyMySQL's errors: anything else is a fault in this tool, and not mapped.
+
+    ``connecting`` is true for a failure while the session is being opened. No
+    statement has run then, so the hint about a change in flight is dropped.
+
+    ``scrub`` is applied to the message before anything keeps it, as the Oracle
+    driver's ``Statement.scrub`` is (#786). The server may quote the statement
+    it refused, as a syntax error (1064) does, and the statement that changes a
+    password carries its hash. The statement that failed is the caller's to
+    know, so the caller supplies the scrub.
     """
     args = exc.args
     number = args[0] if args else None
@@ -334,7 +379,10 @@ def from_error(exc: Any) -> Diagnosis:
         # A message alone is its args; `(0, "")` and no args at all say nothing.
         text = " ".join(str(arg) for arg in args if arg not in (0, "")).strip()
         number, message = UNKNOWN_CLIENT_ERROR, text or "the connection is closed"
+    message = scrub(message)
     diagnosis = classify(number, message, sqlstate=getattr(exc, "sqlstate", None))
     if diagnosis.number == CANNOT_CONNECT and _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)
+    if connecting and diagnosis.hint == _LOST:
+        return replace(diagnosis, hint=_FAILED_TO_CONNECT)
     return diagnosis

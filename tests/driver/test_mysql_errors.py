@@ -169,10 +169,51 @@ def test_a_login_refused_for_the_host_has_a_row(number: int, category: str) -> N
     assert diagnosis.hint
 
 
-@pytest.mark.parametrize("number", [1040, 1203])
-def test_a_connection_limit_is_not_called_retryable(number: int) -> None:
-    """A limit stays until someone raises it, as PostgreSQL's 53300 says."""
-    assert classify(number, "").retryable is None
+@pytest.mark.parametrize(
+    ("number", "setting"),
+    [(1203, "max_user_connections, a setting for every account"), (1226, "its own limits")],
+)
+def test_the_servers_limit_and_the_accounts_own_are_told_apart(number: int, setting: str) -> None:
+    """1203 is the global `max_user_connections`; an account's own
+    `MAX_USER_CONNECTIONS` answers 1226."""
+    assert setting in str(classify(number, "").hint)
+
+
+@pytest.mark.parametrize("number", [3024, 3572, 3819, 4031])
+def test_a_server_number_from_3000_up_is_the_databases(number: int) -> None:
+    """The client's own numbers stop at 2999."""
+    assert classify(number, "").category == "database"
+
+
+@pytest.mark.parametrize("number", [2059, 2061])
+def test_a_plugin_pymysql_cannot_speak_is_an_authentication_failure(number: int) -> None:
+    diagnosis = classify(number, "Authentication plugin 'auth_pam' not configured")
+
+    assert diagnosis.category == "authentication"
+    assert "plugin" in str(diagnosis.hint)
+
+
+def test_a_failure_while_connecting_says_nothing_ran() -> None:
+    """The handshake's own errors carry no number; no statement had been sent."""
+    diagnosis = from_error(
+        MessageOnlyError("unexpected packet during authentication"), connecting=True
+    )
+
+    assert diagnosis.category == "connectivity"
+    assert "before any statement ran" in str(diagnosis.hint)
+    assert "may have run" not in str(diagnosis.hint)
+
+
+def test_the_message_is_scrubbed_before_anything_keeps_it() -> None:
+    """A syntax error quotes the statement, and the statement carries a hash."""
+    verifier = "0x2441243030352433"
+    exc = FakeMysqlError(1064, f"You have an error in your SQL syntax near 'AS {verifier}'")
+
+    diagnosis = from_error(exc, scrub=lambda text: text.replace(verifier, "***"))
+
+    assert verifier not in diagnosis.coded_message
+    assert verifier not in str(diagnosis.as_error())
+    assert "AS ***" in diagnosis.message
 
 
 def test_a_message_with_no_sqlstate_has_only_the_number_in_front() -> None:

@@ -671,6 +671,51 @@ full.
   and `parsec` too, on 12.3 only. `caching_sha2_password` does not exist.
   Whether PyMySQL logs in on `ed25519` and `parsec` was not measured.
   `sql/mariadb/02_client_hash_probe.py` measures it.
+- `verified` `mariadb-dual-password` (#1220) — **Does MariaDB have a rollover
+  window?**
+  Not `RETAIN CURRENT PASSWORD`, which is a syntax error. `IDENTIFIED VIA
+  <plugin> USING '<old>' OR <plugin> USING '<new>'` lets both passwords log
+  in, also across two plugins, and the new value alone ends it. The tool can
+  send it, because it can compute both values from the two passwords it
+  holds. Whether a rollover is open is only in `mysql.global_priv`, beside the
+  hashes, and in `SHOW CREATE USER`, which prints them. In `global_priv`,
+  `auth_or` holds 2 values while it is open, and 1 after the new value alone
+  ends it; an account that never had `OR` has no `auth_or`.
+  `sql/mariadb/03_dual_password_probe.py` measures it.
+- `verified` `mariadb-lock-expiry` (#1220) — **How do a lock, an expiry and a
+  block read back?**
+  A lock answers `4151` and is readable only in `mysql.global_priv` and `SHOW
+  CREATE USER`: the `mysql.user` view has no `account_locked`. An expiry reads
+  back as the view's `password_expired = 'Y'`, and `SELECT 1` then answers
+  `1820`. A `max_password_errors` block answers `4150`, neither
+  `mysql.global_priv` nor `SHOW CREATE USER` shows it (no other place was
+  read), and `ACCOUNT UNLOCK` ends it. An account with only `CREATE USER` does
+  all of these. `sql/mariadb/04_lock_expiry_probe.py` measures it.
+- `verified` `mariadb-tool-grants` (#1220) — **What is one account, and what
+  keeps `CREATE USER` off root?**
+  An account is a user name and a host, as on MySQL: user names are
+  case-sensitive, a host is stored in lower case, and a name with no host
+  means `'%'`. **Nothing keeps `CREATE USER` off root**: MariaDB has no
+  `SYSTEM_USER`, and an account with `CREATE USER` alone changes root's
+  password and any administrative account's. Column grants on the `mysql.user`
+  view read the `*_priv` columns and `password_expired` without the hash, but
+  the privileges split from `SUPER` since 10.5, such as `BINLOG ADMIN`, have
+  no column: they are in `mysql.global_priv`'s access bits, beside the hash,
+  and `SHOW GRANTS` prints them with the hash. Roles are in
+  `mysql.roles_mapping`. `sql/mariadb/05_identity_grants_probe.py` measures it.
+- `verified` `mariadb-driver-shape` (#1220) — **Is MariaDB a variant of the
+  MySQL driver, or a driver of its own, and what can the two share?**
+  A driver of its own, as decided. The two differ where a driver's work is:
+  the password plugins and their stored values, the rollover (`OR` against
+  `RETAIN`), where lock and rollover state are kept (JSON in
+  `mysql.global_priv` against columns of `mysql.user`), the error for a
+  locked account (`4151` against `3118`), and what protects root (nothing
+  against `SYSTEM_USER`). They can share a connection layer, PyMySQL over the
+  same protocol; the account model, a user name and a host compared the same
+  way; the tool account's `CREATE USER`; the statements `ACCOUNT LOCK`,
+  `ACCOUNT UNLOCK` and `PASSWORD EXPIRE`; the error numbers both send, such as
+  `1045`, `1396`, `1044`, `1142` and `1143`; and the `mysql_native_password`
+  hash. Every result above is in `sql/mariadb/` and `sql/mysql/`.
 
 ### Vault
 

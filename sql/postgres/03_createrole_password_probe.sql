@@ -36,7 +36,7 @@
 -- and the same result every time. An earlier CR6, not counted, had the role
 -- of CR1 to CR5 grant itself the role, with the grants those cases left; it
 -- gave the same result. Run again with CR7 and CR8 on the same six releases
--- on 2026-11-01 (#1201): twice on each, exit 0, CR1 to CR6 as below, and the
+-- on 2026-11-01 (#1201): twice on each, exit 0, CR1 to CR8 as below, and the
 -- same result every time.
 --
 -- RESULTS

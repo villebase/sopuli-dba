@@ -431,7 +431,10 @@ class PostgresSession:
         require_capability(
             self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=EXPIRY_UNAVAILABLE
         )
-        return ()  # pragma: no cover -- the capability is never reported
+        # Never reached, as a cluster never reports the capability. If one did,
+        # a refusal is the safe answer: an empty tuple would read as "already
+        # expired" with nothing issued.
+        raise self._not_written("expire a password")  # pragma: no cover
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""

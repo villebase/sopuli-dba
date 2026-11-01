@@ -1842,25 +1842,34 @@ def account_expire_password(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
     _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
-
-    if not reached:
-        document.finish(ExitCode.SUCCESS, Summary())
-        return render_plan(plan, noun="account") + "\n\nnothing to expire"
 
     # Invariant 4: a target that cannot expire a password refuses the run, exit
-    # 5, before any account is touched (#1201). Under `--dry-run` too, so a
-    # preview never says "would be expired" where the run would refuse.
-    scopes: dict[str, Scope | None] = {}
-    for expanded in reached:
-        scope = _plan_scope(expanded, run, config, scopes)
-        if scope is not None:
-            expire.require_expiry(scope, target=expanded.name)
+    # 5, before the confirmation and before any account is touched (#1201).
+    # Under `--dry-run` too, so a preview never says "would be expired" where
+    # the run would refuse. Each target is logged in to once: the run uses the
+    # session this opened, or reports the error opening it gave.
+    opened = _open_for_expiry(reached, run, config)
+    try:
+        _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
-    found = [
-        _expire_one(target, account, run, config, force=force, preview=run.dry_run)
-        for target in reached
-    ]
+        if not reached:
+            document.finish(ExitCode.SUCCESS, Summary())
+            return render_plan(plan, noun="account") + "\n\nnothing to expire"
+
+        found = [
+            _expire_one(
+                target,
+                account,
+                run,
+                config,
+                force=force,
+                preview=run.dry_run,
+                opened=opened.pop(target.name),
+            )
+            for target in reached
+        ]
+    finally:
+        _close_unused(opened)
 
     document.results = [record.as_json() for record in found]
     unchecked = _account_caveats(found)
@@ -1950,6 +1959,46 @@ def _expire_detail(changes: Sequence[AccountChange]) -> str | None:
     return next((change.detail for change in changes if change.action == PASSWORD_EXPIRE), None)
 
 
+def _open_for_expiry(
+    targets: Sequence[ExpandedTarget], run: Invocation, config: Config
+) -> dict[str, Session | Exception]:
+    """One session per target for `account expire-password`, after refusing a
+    target that cannot expire a password (exit 5, #1201).
+
+    A target that could not be opened keeps its error, so the run reports it on
+    the row without a second login: a wrong admin password typed at the prompt
+    then fails once per target, not twice. A target whose scope cannot be read
+    is left to the driver, which refuses the same way when the run reaches it.
+    On a refusal every session opened so far is closed.
+    """
+    opened: dict[str, Session | Exception] = {}
+    try:
+        for expanded in targets:
+            try:
+                session = _open_session(expanded, run, config)
+            except Exception as error:  # noqa: BLE001 -- the run reports it on the row
+                opened[expanded.name] = error
+                continue
+            opened[expanded.name] = session
+            try:
+                scope = session.scope()
+            except Exception:  # noqa: BLE001 -- the driver asks again
+                continue
+            expire.require_expiry(scope, target=expanded.name)
+    except BaseException:
+        _close_unused(opened)
+        raise
+    return opened
+
+
+def _close_unused(opened: Mapping[str, Session | Exception]) -> None:
+    """Close the sessions the run did not take."""
+    for session in opened.values():
+        if not isinstance(session, Exception):
+            with suppress(Exception):
+                session.close()
+
+
 def _expire_one(
     target: ExpandedTarget,
     account: str,
@@ -1958,17 +2007,24 @@ def _expire_one(
     *,
     force: bool,
     preview: bool,
+    opened: Session | Exception | None = None,
 ) -> _Expired:
     """One target: read the account, decide, and expire it or say why not.
 
     ``_suspend_one``'s shape: the state is read before anything is decided, and
     under ``--dry-run`` the read happens and the statements do not.
+
+    ``opened`` is what the plan-time check got for this target, a session or
+    the error opening one gave (:func:`_open_for_expiry`). This closes the
+    session either way.
     """
     started = time.monotonic()
     session = None
     try:
         try:
-            session = _open_session(target, run, config)
+            if isinstance(opened, Exception):
+                raise opened
+            session = opened if opened is not None else _open_session(target, run, config)
             state = session.describe_user(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _finding(error)

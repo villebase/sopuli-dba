@@ -24,7 +24,10 @@
 -- STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and
 -- mysql:9 images of test/compose.yaml profile mysql-matrix, as root, on
 -- 2026-11-01 (#1202). Twice on each release, with the release's own mysql
--- client, and the same result both times. After the runs, the general log and
+-- client, and the same result both times. The last version, which reads the
+-- digest only for this run and reports pt1_read, ran twice more on each
+-- release, 65 s apart so that the digest samples aged out, with the same
+-- result, and pt1_read = 1 with a history of 10 rows. After the runs, the general log and
 -- slow log files in /var/lib/mysql held no test password either.
 --
 -- RESULTS -- the same on all three releases, except where noted
@@ -42,7 +45,9 @@
 --   PT4  as PT1, written `SET PASSWORD FOR ... =<secret>`
 --   PT5  the server stores the hash as sent. The general log keeps the
 --        statement as sent, with the hash in hex. The slow log, the statement
---        history and the binary log keep it with the hash as a string. On
+--        history (the EXECUTE's row) and the binary log keep it with the hash
+--        as a string. On 9.7.4 the history's PREPARE and DEALLOCATE rows also
+--        hold the statement as sent, with the hash in hex. On
 --        9.7.4 the hash reads `$A$00A$`, 10,000 rounds, and `$A$005$`, 5,000,
 --        on 8.0.46 and 8.4.13
 --
@@ -132,13 +137,18 @@ SELECT 'PT5' AS probe, authentication_string = UNHEX(@seed_hash) AS stored_as_se
 -- account that starts sopuli_probe_, so every row that names one is shown.
 SELECT 'general log' AS place, argument AS text, argument LIKE '%Marker%' AS has_password
   FROM mysql.general_log
- WHERE event_time >= @started AND argument LIKE '%sopuli\_probe\_%'
-   AND argument NOT LIKE '%general_log%' AND argument NOT LIKE '%slow_log%';
+ WHERE event_time >= @started AND argument LIKE '%sopuli\_probe\_%';
 
 SELECT 'slow log' AS place, sql_text AS text, sql_text LIKE '%Marker%' AS has_password
   FROM mysql.slow_log
- WHERE start_time >= @started AND sql_text LIKE '%sopuli\_probe\_%'
-   AND sql_text NOT LIKE '%general_log%' AND sql_text NOT LIKE '%slow_log%';
+ WHERE start_time >= @started AND sql_text LIKE '%sopuli\_probe\_%';
+
+-- With 10 rows, PT1 is the oldest the history can hold. pt1_read = 0 means
+-- it was pushed out, not that the server did not keep it.
+SELECT @@performance_schema_events_statements_history_size AS history_size,
+       JSON_SEARCH(@history, 'one',
+                   'ALTER USER ''sopuli\_probe\_pw''@''\%'' IDENTIFIED BY <secret>') IS NOT NULL
+         AS pt1_read;
 
 SELECT 'statement history' AS place, sql_text AS text, mysql_errno,
        sql_text LIKE '%Marker%' AS has_password
@@ -149,13 +159,17 @@ SELECT 'statement history' AS place, sql_text AS text, mysql_errno,
 SELECT 'digest' AS place, digest_text, query_sample_text AS text,
        query_sample_text LIKE '%Marker%' AS has_password
   FROM performance_schema.events_statements_summary_by_digest
- WHERE query_sample_text LIKE '%sopuli\_probe\_%'
+ WHERE query_sample_seen >= @started AND query_sample_text LIKE '%sopuli\_probe\_%'
    AND query_sample_text NOT LIKE '%performance_schema%'
    AND query_sample_text NOT LIKE '%general_log%' AND query_sample_text NOT LIKE '%slow_log%';
 
 -- The binary log, from where it was when the run started. SHOW BINLOG EVENTS
--- takes no expression, so it is prepared.
-SET @show_binlog = CONCAT('SHOW BINLOG EVENTS IN ''', @binlog_file, ''' FROM ', @binlog_position);
+-- takes no expression, so it is prepared. A server with the binary log off has
+-- no file to name.
+SET @show_binlog = IF(@binlog_file IS NULL OR @binlog_file = '',
+                      'SELECT ''the binary log is off'' AS binary_log',
+                      CONCAT('SHOW BINLOG EVENTS IN ''', @binlog_file, ''' FROM ',
+                             @binlog_position));
 PREPARE show_binlog FROM @show_binlog;
 EXECUTE show_binlog;
 DEALLOCATE PREPARE show_binlog;

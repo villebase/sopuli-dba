@@ -64,8 +64,9 @@ COMPOSE_PROJECT_NAME, so a second clone's matrix is the one it uses.
 
 THROWAWAY SERVERS ONLY. On each server it installs the ed25519 and parsec
 plugins, creates the accounts sopuli_probe_hash and sopuli_probe_tool, and
-drops the accounts and uninstalls the plugins at the end. Before it starts, it drops accounts an
-interrupted run left.
+drops the accounts and uninstalls the plugins at the end. Before it starts, it
+drops accounts an interrupted run left, and uninstalls ed25519 and parsec even
+where the server had them, because CH4 measures what a new server loads.
 """
 
 from __future__ import annotations

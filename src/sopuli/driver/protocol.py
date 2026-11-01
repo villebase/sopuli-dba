@@ -164,13 +164,27 @@ CAPABILITIES = frozenset(
 #: since it was written. ``config/targets.py`` accepts the Oracle words as
 #: ``oracle.scope`` -- so the word a file *asserts* and the word the tool
 #: *reports* are the same word, and a mismatch between them needs no translation
-#: to explain (``01-configuration.md`` §3a). :data:`CLUSTER` is PostgreSQL's,
-#: and a file never asserts it: a PostgreSQL target is always the cluster.
-SCOPE_TYPES = ("non_cdb", "cdb_root", "pdb", "app_root", "app_pdb", "cluster", "unknown")
+#: to explain (``01-configuration.md`` §3a). :data:`CLUSTER` is PostgreSQL's
+#: and :data:`SERVER` MySQL's, and a file asserts neither: such a target is
+#: always the whole cluster or server.
+SCOPE_TYPES = (
+    "non_cdb",
+    "cdb_root",
+    "pdb",
+    "app_root",
+    "app_pdb",
+    "cluster",
+    "server",
+    "unknown",
+)
 
 #: A PostgreSQL cluster. Every role belongs to the whole cluster, so there is no
 #: container.
 CLUSTER = "cluster"
+
+#: A MySQL server. Every account belongs to the whole server, so there is no
+#: container.
+SERVER = "server"
 
 #: Observation-only, and the one scope a config file may never claim. A driver
 #: that cannot tell says so; a file that said so would be asserting nothing.

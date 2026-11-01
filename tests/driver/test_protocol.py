@@ -39,6 +39,7 @@ from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
     SCOPE_TYPES,
+    SERVER,
     UNKNOWN,
     VERIFY_METHODS,
     VERIFY_RESULTS,
@@ -127,11 +128,13 @@ def test_scope_types_are_the_config_vocabulary_plus_unknown() -> None:
 
     ``unknown`` is the deliberate asymmetry: the driver may find it, a config
     file may never claim it, and ``01-configuration.md`` §3a says so.
-    ``cluster`` is PostgreSQL's, where there is no scope to assert.
+    ``cluster`` is PostgreSQL's and ``server`` MySQL's, where there is no scope
+    to assert.
     """
-    assert set(SCOPE_TYPES) == set(ORACLE_SCOPES) | {CLUSTER, UNKNOWN}
+    assert set(SCOPE_TYPES) == set(ORACLE_SCOPES) | {CLUSTER, SERVER, UNKNOWN}
     assert UNKNOWN not in ORACLE_SCOPES
     assert CLUSTER not in ORACLE_SCOPES
+    assert SERVER not in ORACLE_SCOPES
 
 
 def test_verification_vocabularies_are_the_run_documents() -> None:

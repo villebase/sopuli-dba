@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.72.schema.json`](../schemas/sopuli-run-1.72.schema.json),
+Schemas: [`../schemas/sopuli-run-1.73.schema.json`](../schemas/sopuli-run-1.73.schema.json),
 [`../schemas/sopuli-event-1.21.schema.json`](../schemas/sopuli-event-1.21.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1474,6 +1474,18 @@ standby, and `read_write` is false for the last two. `capabilities` is empty,
 because the PostgreSQL driver does none of what a capability names yet. The
 encryption comes from the session's own row in `pg_stat_ssl`: `tls` or `none`,
 with `protocol` `tcp`. `error.code` is the SQLSTATE (§2, `error`).
+
+**A MySQL target's `scope.type` is `server`**, from run schema 1.73.
+`container` and `db_unique_name` are null. `open_mode` is `READ WRITE`, or
+`READ ONLY` where the server's `read_only` or `super_read_only`, or the
+session's `transaction_read_only`, is on, and `read_write` is false then.
+`db_version` is `VERSION()` up to its first `-`. `capabilities` is empty. The
+encryption comes from the session's own `Ssl_version` status: `tls`, `none`
+where it is empty, or `unknown` where there is no such row, with `protocol`
+`tcp`. A server whose version names MariaDB or TiDB is refused, a `config`
+error, before anything else is read: MariaDB gets a driver of its own, and
+neither handles passwords as MySQL does. The
+MySQL driver reports this once it connects, which #1221 adds.
 
 **`asserted` is absent when the target asserts nothing**, not present with
 `matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is

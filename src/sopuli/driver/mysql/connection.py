@@ -5,7 +5,7 @@ the config or a log line holds. The password is never in ``argv`` (invariant
 1), and never in any other argument here.
 
 **TLS is a context this module builds, not PyMySQL's TLS options.** Read from
-PyMySQL 1.2.3's source (``Connection._create_ssl_ctx``):
+PyMySQL 1.2.3's source (``Connection.__init__`` and ``_create_ssl_ctx``):
 
 - PyMySQL checks the host name only when a CA file is given, so its own
   options cannot express `VERIFY_IDENTITY` against the system's CAs.
@@ -28,44 +28,59 @@ from typing import Any
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget
 from sopuli.driver.address import host_and_port
+from sopuli.driver.login import require_login, session_label
 from sopuli.driver.protocol import Credential, Timeouts
 
 
-def program_name(correlation_id: str) -> str:
-    """What ``performance_schema.session_connect_attrs`` shows for this run's
-    sessions, as ``application_name`` does on PostgreSQL. The correlation id is
-    the join between the tool's output, the server and the vault."""
-    return f"sopuli {correlation_id}"
+def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
+    """PyMySQL's TLS arguments for the target's ``ssl_mode``, all five modes
+    in one place:
 
-
-def tls_context(ssl_mode: str, ssl_ca: str | None) -> ssl.SSLContext | None:
-    """The TLS context for a mode, or ``None`` where PyMySQL is to decide.
-
-    ``DISABLED`` and ``PREFERRED`` return ``None``; :func:`connect_arguments`
-    tells PyMySQL which of the two it is. The other modes require TLS:
-
+    - ``DISABLED`` turns TLS off;
+    - ``PREFERRED`` passes nothing, which is PyMySQL's own negotiation;
     - ``REQUIRED`` encrypts and checks nothing about the server, as MySQL's own
       client does under that mode;
     - ``VERIFY_CA`` checks the certificate against ``ssl_ca``, or the system's
       CAs where none is named, and not the host name;
     - ``VERIFY_IDENTITY`` checks both.
 
+    The last three pass a context, so PyMySQL refuses a server with no TLS.
     ``VERIFY_X509_STRICT`` is cleared, as PyMySQL clears it in its own context,
     because the certificates a MySQL server generates for itself fail it.
+
+    A CA file that cannot be read, or holds no certificate, is refused here,
+    naming the target and the key, before any socket opens. The run would
+    otherwise end in a traceback with neither.
+
+    A new context per connection. Building one reads the trust store, which
+    costs far less than the connection it is for, and a context shared across
+    connections would be shared mutable state.
     """
-    if ssl_mode in ("DISABLED", "PREFERRED"):
-        return None
-    context = ssl.create_default_context(cafile=ssl_ca)
+    block = target.target.mysql_settings
+    if block.ssl_mode == "DISABLED":
+        return {"ssl_disabled": True}
+    if block.ssl_mode == "PREFERRED":
+        return {}
+    try:
+        context = ssl.create_default_context(cafile=block.ssl_ca)
+    except OSError as error:
+        # `ssl.SSLError` is an `OSError` too: a file that is not PEM.
+        raise ConfigError(
+            f"target {target.name!r}: `mysql.ssl_ca` could not be loaded: {error}",
+            hint=(
+                "point `mysql.ssl_ca` at the PEM file of the CA that issued the server certificate"
+            ),
+        ) from error
     context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-    if ssl_mode == "REQUIRED":
+    if block.ssl_mode == "REQUIRED":
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-    elif ssl_mode == "VERIFY_CA":
+    elif block.ssl_mode == "VERIFY_CA":
         context.check_hostname = False
         context.verify_mode = ssl.CERT_REQUIRED
-    elif ssl_mode != "VERIFY_IDENTITY":
-        raise ValueError(f"not a MySQL ssl_mode: {ssl_mode!r}")
-    return context
+    elif block.ssl_mode != "VERIFY_IDENTITY":
+        raise ValueError(f"not a MySQL ssl_mode: {block.ssl_mode!r}")
+    return {"ssl": context}
 
 
 def connect_arguments(
@@ -78,44 +93,38 @@ def connect_arguments(
     """The keyword arguments for one connection to ``target`` as ``credential``.
 
     The settings are :attr:`~sopuli.config.model.Target.mysql_settings`: the
-    ``mysql:`` block, or its defaults where the file wrote none.
+    ``mysql:`` block, or its defaults where the file wrote none. PyMySQL reads
+    no option file unless asked to, so nothing on the machine fills a gap.
 
-    A query budget of 0 sets no read or write timeout on the socket, for the
-    reason :data:`~sopuli.settings.registry.NO_QUERY_TIMEOUT` gives. MySQL's
-    ``max_execution_time`` would not do instead: it bounds a ``SELECT`` only,
-    and the statements that matter here are ``ALTER USER``.
+    **A query budget is a socket timeout, and a timed-out call's outcome is
+    unknown.** MySQL has nothing like PostgreSQL's ``statement_timeout`` for
+    ``ALTER USER``: ``max_execution_time`` bounds a ``SELECT`` only. So the
+    budget becomes PyMySQL's read and write timeouts, which drop the connection
+    and leave the statement running on the server. A call that times out may
+    have changed the password, which is what
+    :class:`~sopuli.driver.protocol.Timeouts` says of every call; the session
+    reports such a change as unknown, never as not applied. A budget of 0 sets
+    no timeout, for the reason
+    :data:`~sopuli.settings.registry.NO_QUERY_TIMEOUT` gives.
 
-    A credential with no username or no password is refused. Without one,
-    PyMySQL would log in as the operating-system user, or with an empty
-    password, and the run would log in as someone the config does not name.
-    PyMySQL reads no option file unless asked to, so nothing else fills a gap.
+    A credential with no username or no password is refused
+    (:func:`~sopuli.driver.login.require_login`).
     """
-    if credential.username is None:
-        raise ConfigError(
-            f"target {target.name!r} has no username to connect as",
-            hint="write `admin: { username: … }`, or set $SOPULI_DB_ADMIN_USER",
-        )
-    if credential.secret is None:
-        raise ConfigError(f"target {target.name!r} resolved no password")
-    block = target.target.mysql_settings
+    username, password = require_login(target, credential)
     host, port = host_and_port(target.target.dsn)
     arguments: dict[str, Any] = {
         "host": host,
         "port": port,
-        "user": credential.username,
+        "user": username,
         "connect_timeout": timeouts.connect_s,
-        "program_name": program_name(correlation_id),
+        "program_name": session_label(correlation_id),
         # Every statement stands alone. `ALTER USER` commits on its own anyway,
         # and a read must not hold a transaction open over a later change.
         "autocommit": True,
+        **tls_arguments(target),
     }
-    if block.ssl_mode == "DISABLED":
-        arguments["ssl_disabled"] = True
-    context = tls_context(block.ssl_mode, block.ssl_ca)
-    if context is not None:
-        arguments["ssl"] = context
     if timeouts.query_s:
         arguments["read_timeout"] = timeouts.query_s
         arguments["write_timeout"] = timeouts.query_s
-    arguments["password"] = credential.secret.reveal()
+    arguments["password"] = password.reveal()
     return arguments

@@ -31,12 +31,14 @@ from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.diagnostics import GUARDRAIL_UNCHECKED
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
+    EXPIRE_PASSWORD,
     PASSWORD_EXPIRE,
     ROLLOVER_FINISH,
     AccountChange,
     AuditCoverage,
     DriverError,
     PartialAccountChangeError,
+    Scope,
     UserState,
 )
 from sopuli.exit_codes import ExitCode
@@ -74,6 +76,9 @@ class FakeSession:
         self.status = status
         self.fail = fail
         self.expired: list[str] = []
+        #: What the plan-time check reads (#1201). A test of a target that
+        #: cannot expire a password empties it.
+        self.capabilities: frozenset[str] = frozenset({EXPIRE_PASSWORD})
         #: Check 3's input. `False` is a target that took §2's optional grant;
         #: a test about the unread check sets `None`.
         self.password_file_member: bool | None = False
@@ -88,6 +93,9 @@ class FakeSession:
             # Every role a test gives this fake is one guardrail 4 refuses.
             admin_roles=self.roles,
         )
+
+    def scope(self) -> Scope:
+        return Scope(type="pdb", capabilities=self.capabilities)
 
     def byte_limit(self) -> None:
         """A `reset-password` preview asks it. `None` is a target with no limit."""
@@ -157,7 +165,7 @@ def test_a_preview_reads_and_issues_nothing(
     )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert len(fake) == 1, "a preview still connects and reads"
+    assert len(fake) == 2, "a preview still asks the capability, then connects and reads"
     assert fake[0].expired == [], "and issues nothing"
     row = document(result)["results"][0]
     assert row["changed"] is False
@@ -165,6 +173,40 @@ def test_a_preview_reads_and_issues_nothing(
         {"kind": PASSWORD_EXPIRE, "applied": False, "detail": row["actions"][0]["detail"]}
     ]
     assert "would be expired" in row["actions"][0]["detail"]
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_a_target_that_cannot_expire_refuses_the_run_at_plan_time(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    preview: bool,
+) -> None:
+    """Invariant 4 (#1201): exit 5, naming the capability and the target,
+    before any account is read or expired. A preview refuses too."""
+    session = FakeSession()
+    session.capabilities = frozenset()
+    opened: list[FakeSession] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> FakeSession:
+        opened.append(session)
+        return session
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    args = ["--account", ACCOUNT, "--output", "json", *(["--dry-run"] if preview else [])]
+
+    result = run(runner, write_config(OFFLINE), *args)
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    assert len(opened) == 1, "only the plan-time check connected"
+    assert session.expired == []
+    assert not found.get("results")
+    error = found["error"]
+    assert error["target_capability"] == EXPIRE_PASSWORD
+    assert "expire_password" in error["message"]
+    assert "tier1-oracle" in error["message"]
+    assert "account suspend" in error["hint"]
 
 
 #: What `reset-password` needs as well: a policy, and an unseen delivery so that

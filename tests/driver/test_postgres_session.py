@@ -97,16 +97,9 @@ def test_a_role_has_no_password_rules_beyond_the_length() -> None:
     assert session.password_constraints("acme_app_user") is None
 
 
-@pytest.mark.parametrize(
-    "call",
-    [
-        lambda s: s.suspend_account("acme_app_user"),
-        lambda s: s.apply_attributes("acme_app_user", AccountAttributes()),
-    ],
-)
-def test_an_operation_not_written_yet_is_sopuli_20006(call: Any) -> None:
+def test_an_operation_not_written_yet_is_sopuli_20006() -> None:
     with pytest.raises(session_module.NotWrittenError) as refused:
-        call(_session())
+        _session().apply_attributes("acme_app_user", AccountAttributes())
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
@@ -120,7 +113,7 @@ def test_a_write_not_written_yet_refuses_without_reading_the_scope() -> None:
     session = _session(recovery=True)
 
     with pytest.raises(session_module.NotWrittenError):
-        session.suspend_account("acme_app_user")
+        session.apply_attributes("acme_app_user", AccountAttributes())
 
     assert session._scope is None
 

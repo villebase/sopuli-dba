@@ -1,9 +1,11 @@
-"""UC-2's reset against the tier-1 `postgres` service (#1201).
+"""UC-2 against the tier-1 `postgres` service (#1201).
 
 Tier 1. What only a server can answer: that a `CREATEROLE` tool account with
 `ADMIN OPTION` on a role can send `ALTER ROLE … PASSWORD … VALID UNTIL
 'infinity'`, that the role then logs in with the new password, and that a role
-past its `VALID UNTIL` cannot log in before the reset and can after it.
+past its `VALID UNTIL` cannot log in before the reset and can after it. Also
+that the same tool account can send `ALTER ROLE … NOLOGIN`, after which the
+role cannot log in and the reset refuses it.
 """
 
 from __future__ import annotations
@@ -162,3 +164,33 @@ def test_a_nologin_role_is_refused_and_keeps_its_password(
 def test_a_seen_reset_is_refused_by_capability(session: Any, roles: dict[str, str]) -> None:
     with pytest.raises(UnsupportedCapabilityError):
         session.reset_password(roles["open"], Secret(uuid.uuid4().hex), expire=True)
+
+
+def test_suspend_sets_nologin_and_the_role_cannot_log_in(
+    live_postgres: Any, session: Any, roles: dict[str, str]
+) -> None:
+    assert _logs_in(live_postgres, roles["open"], roles["old"])
+
+    change = session.suspend_account(roles["open"])
+
+    assert change.changed is True
+    assert not _logs_in(live_postgres, roles["open"], roles["old"])
+    state = session.describe_user(roles["open"])
+    assert state is not None
+    assert state.deliberately_locked
+
+    again = session.suspend_account(roles["open"])
+    assert again.changed is False, "invariant 9: the second run changes nothing"
+
+
+def test_a_suspended_role_is_refused_by_the_reset(session: Any, roles: dict[str, str]) -> None:
+    """H4: suspend, then reset, and the reset refuses."""
+    session.suspend_account(roles["open"])
+
+    with pytest.raises(DriverError, match="NOLOGIN"):
+        session.reset_password(roles["open"], Secret(uuid.uuid4().hex), expire=False)
+
+
+def test_expire_password_is_refused_by_capability(session: Any, roles: dict[str, str]) -> None:
+    with pytest.raises(UnsupportedCapabilityError):
+        session.expire_password(roles["open"])

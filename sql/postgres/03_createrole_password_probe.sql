@@ -8,7 +8,7 @@
 -- CREATEROLE role and each target: rolcreaterole, the target's rolsuper, the
 -- admin_option of pg_auth_members, and pg_has_role(..., 'USAGE WITH ADMIN
 -- OPTION'). Then, after SET ROLE, it sends ALTER ROLE ... PASSWORD with a
--- verifier:
+-- verifier. CR7 and CR8 send ALTER ROLE ... NOLOGIN instead:
 --
 --   CR1  CREATEROLE, and no membership in the target
 --   CR2  CREATEROLE, and ADMIN OPTION on the target. From 16 the grant is
@@ -19,6 +19,10 @@
 --   CR5  a role that the CREATEROLE role created itself
 --   CR6  a new role with only CREATEROLE, and no membership in any role,
 --        grants itself the built-in role pg_execute_server_program (#1098)
+--   CR7  CREATEROLE, and no membership in the target: ALTER ROLE ... NOLOGIN,
+--        which is what `account suspend` sends (#1201)
+--   CR8  CREATEROLE and ADMIN OPTION on the target (the grant of CR2):
+--        NOLOGIN, NOLOGIN again on the NOLOGIN role, then LOGIN
 --
 -- psql runs with VERBOSITY verbose, so each error shows its SQLSTATE.
 --
@@ -31,7 +35,9 @@
 -- releases on 2026-10-27 (#1098): twice on each, exit 0, CR1 to CR5 as below,
 -- and the same result every time. An earlier CR6, not counted, had the role
 -- of CR1 to CR5 grant itself the role, with the grants those cases left; it
--- gave the same result.
+-- gave the same result. Run again with CR7 and CR8 on the same six releases
+-- on 2026-11-01 (#1201): twice on each, exit 0, CR1 to CR6 as below, and the
+-- same result every time.
 --
 -- RESULTS
 --
@@ -56,6 +62,14 @@
 --        16.15, 17.11, 18.6: refused, 42501 "permission denied to grant role
 --        "pg_execute_server_program"", DETAIL "Only roles with the ADMIN
 --        option on role "pg_execute_server_program" may grant this role."
+--   CR7  13.23, 14.24, 15.19: accepted, and rolcanlogin reads false.
+--        16.15, 17.11, 18.6: refused, 42501 "permission denied to alter
+--        role", DETAIL "Only roles with the CREATEROLE attribute and the ADMIN
+--        option on role "sopuli_probe_bare" may alter this role.", and
+--        rolcanlogin still reads true
+--   CR8  accepted on all six: NOLOGIN, then NOLOGIN again on the NOLOGIN role
+--        with no error or notice, then LOGIN. rolcanlogin reads false, then
+--        true
 --
 --   In every case, the admin_option column and pg_has_role(..., 'USAGE WITH
 --   ADMIN OPTION') agree, also with INHERIT FALSE and SET FALSE. So the
@@ -68,7 +82,7 @@
 --     docker exec -i sopuli-test-postgres-16-1 psql -U postgres -d sopuli -X \
 --         < sql/postgres/03_createrole_password_probe.sql
 --
--- THROWAWAY SERVERS ONLY. Creates and drops six roles, one of them a
+-- THROWAWAY SERVERS ONLY. Creates and drops seven roles, one of them a
 -- superuser. On 13 to 15, CR6 gives one of them pg_execute_server_program,
 -- which runs programs as the server's operating system user. A run stopped
 -- before the cleanup leaves that role, and the next run drops it.
@@ -83,6 +97,7 @@ SELECT current_setting('server_version') AS server_version,
 \echo pg16 :pg16
 
 -- ------------------------------------------------------------------ setup --
+DROP ROLE IF EXISTS sopuli_probe_bare;
 DROP ROLE IF EXISTS sopuli_probe_app;
 DROP ROLE IF EXISTS sopuli_probe_super;
 DROP ROLE IF EXISTS sopuli_probe_own;
@@ -186,7 +201,40 @@ SELECT m.roleid::regrole AS role, m.admin_option, m.grantor::regrole AS grantor
   FROM pg_auth_members m
  WHERE m.member = 'sopuli_probe_cr'::regrole;
 
+-- ---------------------------------------------------------------- CR7 --
+\echo CR7 CREATEROLE, no membership in the target, ALTER ROLE ... NOLOGIN:
+CREATE ROLE sopuli_probe_bare LOGIN;
+SET ROLE sopuli_probe_admin;
+\set ON_ERROR_STOP 0
+ALTER ROLE sopuli_probe_bare NOLOGIN;
+\set ON_ERROR_STOP 1
+RESET ROLE;
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'sopuli_probe_bare';
+
+-- ---------------------------------------------------------------- CR8 --
+\echo CR8 CREATEROLE and ADMIN OPTION on the target, the grant of CR2, NOLOGIN then LOGIN:
+SELECT * FROM pg_temp.sopuli_probe_read WHERE target = 'sopuli_probe_app';
+SET ROLE sopuli_probe_admin;
+\set ON_ERROR_STOP 0
+ALTER ROLE sopuli_probe_app NOLOGIN;
+\set ON_ERROR_STOP 1
+RESET ROLE;
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'sopuli_probe_app';
+SET ROLE sopuli_probe_admin;
+\set ON_ERROR_STOP 0
+ALTER ROLE sopuli_probe_app NOLOGIN;
+\set ON_ERROR_STOP 1
+RESET ROLE;
+\echo CR8 a second NOLOGIN on a NOLOGIN role, above; now LOGIN:
+SET ROLE sopuli_probe_admin;
+\set ON_ERROR_STOP 0
+ALTER ROLE sopuli_probe_app LOGIN;
+\set ON_ERROR_STOP 1
+RESET ROLE;
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'sopuli_probe_app';
+
 -- ---------------------------------------------------------------- cleanup --
+DROP ROLE sopuli_probe_bare;
 DROP ROLE sopuli_probe_cr;
 DROP ROLE sopuli_probe_own;
 DROP ROLE sopuli_probe_app;

@@ -13,12 +13,22 @@ the word a permitted row reports: ``EXPIRED``, the state the verb produces.
 
 **Pure, and it issues nothing**, as :mod:`sopuli.suspend` is -- every refusal is
 tier 0.
+
+**A target that cannot expire a password is refused at plan time**, exit 5
+(:func:`require_expiry`, invariant 4). PostgreSQL has no "change the password at
+next login" (#1201).
 """
 
 from __future__ import annotations
 
 from sopuli.config.model import Config
-from sopuli.driver.protocol import UserState
+from sopuli.driver.protocol import (
+    EXPIRE_PASSWORD,
+    EXPIRY_UNAVAILABLE,
+    Scope,
+    UserState,
+    require_capability,
+)
 from sopuli.suspend import ACCOUNT_MISSING, SKIPPED, Decision
 from sopuli.suspend import decide as _decide
 
@@ -27,7 +37,7 @@ from sopuli.suspend import decide as _decide
 #: contract was written.
 EXPIRED = "EXPIRED"
 
-__all__ = ["ACCOUNT_MISSING", "EXPIRED", "SKIPPED", "Decision", "decide"]
+__all__ = ["ACCOUNT_MISSING", "EXPIRED", "SKIPPED", "Decision", "decide", "require_expiry"]
 
 
 def decide(
@@ -53,3 +63,10 @@ def decide(
         force=force,
         proceeding_as=EXPIRED,
     )
+
+
+def require_expiry(scope: Scope, *, target: str) -> None:
+    """Refuse the verb, exit 5, on a target that cannot expire a password
+    (#1201). Asked at plan time for every target, and again by the driver for
+    one whose scope plan time could not read."""
+    require_capability(scope, EXPIRE_PASSWORD, target=target, hint=EXPIRY_UNAVAILABLE)

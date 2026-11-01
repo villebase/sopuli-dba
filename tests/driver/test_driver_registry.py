@@ -211,15 +211,15 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
     (#1040). The message names what the driver can run, and the hint the
     command asked for."""
     with pytest.raises(DriverNotImplementedError) as refused:
-        require_command(target("pg-dev", "postgresql"), "account.suspend")
+        require_command(target("pg-dev", "postgresql"), "account.unlock")
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
     assert (
-        "can run only `doctor`, `account list`, `account reset-password`, `creds apply`, "
-        "`creds check`, `creds finish-rollover`, `creds generate`, `creds rotate`, "
-        "`creds status` there yet"
+        "can run only `doctor`, `account expire-password`, `account list`, "
+        "`account reset-password`, `account suspend`, `creds apply`, `creds check`, "
+        "`creds finish-rollover`, `creds generate`, `creds rotate`, `creds status` there yet"
     ) in refused.value.message
-    assert "`account suspend` is not written for it" in str(refused.value.hint)
+    assert "`account unlock` is not written for it" in str(refused.value.hint)
 
 
 def test_creds_check_is_let_through_on_postgresql() -> None:
@@ -248,12 +248,15 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
     assert "can run only `doctor`, `creds apply` there yet" in refused.value.message
 
 
-def test_postgresql_is_written_for_uc1_and_part_of_uc2() -> None:
-    """Pinned so that adding a command is a deliberate, reviewed line."""
+def test_postgresql_is_written_for_uc1_and_uc2() -> None:
+    """Pinned so that adding a command is a deliberate, reviewed line. It is
+    every command that connects to a target (#1201)."""
     assert DRIVERS["postgresql"].commands == frozenset(
         {
             "account.list",
             "account.reset-password",
+            "account.suspend",
+            "account.expire-password",
             "creds.check",
             "creds.apply",
             "creds.rotate",

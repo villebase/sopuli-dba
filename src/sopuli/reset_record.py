@@ -157,14 +157,15 @@ def record_path(records: ResetRecords, *, target: str, account: str) -> str:
     person across targets, which is a question `account list` answers from the
     configuration without reading this prefix at all.
 
-    **Case is folded on the account and not on the target.** An Oracle account
-    name is matched case-insensitively everywhere else in this codebase --
-    `sopuli/config/selection.py` casefolds before comparing, so ``--account
+    **Case is folded on the account and not on the target.** An account name is
+    compared by ``upper()`` everywhere else in this codebase --
+    `sopuli/config/selection.py` upper-cases before comparing, so ``--account
     jdoe`` reaches a declared ``JDOE`` -- and a path that did not fold would let
     one account own two records that never find each other, which is two
-    concurrent resets not colliding. A target name is a `targets:` key, matched
-    exactly, and folding it would merge two targets an operator declared as
-    distinct.
+    concurrent resets not colliding. The path segment is ``upper().lower()``: it
+    takes ``upper()``'s notion of one account and stays lower-case for an ASCII
+    name. A target name is a `targets:` key, matched exactly, and folding it
+    would merge two targets an operator declared as distinct.
 
     **A name that is not a single path segment is refused here** rather than
     interpolated, because interpolating one is how two different (target,
@@ -184,7 +185,7 @@ def record_path(records: ResetRecords, *, target: str, account: str) -> str:
     """
     for noun, value in (("target", target), ("account", account)):
         _reject_unusable_component(noun, value)
-    return normalise_path(f"{records.prefix}/{target}/{account.casefold()}")
+    return normalise_path(f"{records.prefix}/{target}/{account.upper().lower()}")
 
 
 def _reject_unusable_component(noun: str, value: str) -> None:

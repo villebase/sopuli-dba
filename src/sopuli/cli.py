@@ -3869,7 +3869,7 @@ def _declared_names(
 ) -> list[str]:
     """Every account the declaration admits here, once each.
 
-    **Deduplicated across rules, case-insensitively.** An account may be admitted
+    **Deduplicated across rules, by ``upper()``.** An account may be admitted
     by more than one rule -- UC-2 2 calls that ordinary -- and an enumerated rule
     yields the *file's* spelling while a predicate yields the *dictionary's*. So
     ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE`` carrying the profile are
@@ -3887,12 +3887,12 @@ def _declared_names(
     seen: dict[str, str] = {}
     for rule in account_list.rules_on(config, target.name):
         for name in _resolve_rule(session, rule, target):
-            seen.setdefault(name.casefold(), name)
+            seen.setdefault(name.upper(), name)
 
     names = list(seen.values())
     if wanted is not None:
-        folded = wanted.casefold()
-        names = [name for name in names if name.casefold() == folded]
+        spelled = wanted.upper()
+        names = [name for name in names if name.upper() == spelled]
     return names
 
 
@@ -9810,7 +9810,7 @@ def _preflight_target(
     missing_accounts: list[str] = []
     missing_profiles: list[tuple[str, str]] = []
     unreadable: list[Finding] = []
-    # Accounts the guardrails refuse whatever is granted (#1117), case-folded.
+    # Accounts the guardrails refuse whatever is granted (#1117), upper-cased.
     # The pre-flight asks nothing further about them: not their grants in the
     # audit below, and not their profile. The guardrails skip each one in the
     # run itself.
@@ -9851,7 +9851,7 @@ def _preflight_target(
         if guardrails.server_reserved(state):
             # Its profile move and reuse limits are for a change that will not
             # happen, so a profile that is not there must not refuse the run.
-            reserved.add(binding.account.casefold())
+            reserved.add(binding.account.upper())
             continue
 
         # §5's profile assignment, asked before anything is written (decision #301).
@@ -9924,7 +9924,7 @@ def _preflight_target(
         surveyed = tuple(
             account
             for account in _declared_on(bindings, target.name)
-            if account.casefold() not in reserved
+            if account.upper() not in reserved
         )
         audit = session.privileges(accounts=surveyed)
         missing_privileges = tuple(audit.missing)

@@ -109,24 +109,23 @@ def _build_accounts(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...]:
 def _reject_duplicate_names(entries: list[PersonalAccountRule], *, at: KeyPath) -> None:
     """One account name may appear once across the whole section.
 
-    Compared **case-insensitively**, because that is how a name is matched
-    everywhere it is used: ``sopuli/config/selection.py`` casefolds before
-    comparing, so ``--account jdoe`` selects a declared ``JDOE``. A rule that
-    compared exactly would call two spellings distinct and then let one selector
-    reach both.
+    Compared by ``upper()``, because that is how a name is matched everywhere it
+    is used: ``sopuli/config/selection.py`` upper-cases before comparing, so
+    ``--account jdoe`` selects a declared ``JDOE``. A rule that compared exactly
+    would call two spellings distinct and then let one selector reach both.
     """
     seen: dict[str, KeyPath] = {}
     for index, entry in enumerate(entries):
         where = at.index(index).key("accounts")
         for position, account in enumerate(entry.accounts):
-            folded = account.casefold()
-            if folded in seen:
+            spelled = account.upper()
+            if spelled in seen:
                 raise ConfigError(
                     f"duplicate personal account {account!r}",
                     at=where.index(position),
-                    hint=f"already declared at {seen[folded]}",
+                    hint=f"already declared at {seen[spelled]}",
                 )
-            seen[folded] = where.index(position)
+            seen[spelled] = where.index(position)
 
 
 def reject_cross_declaration(
@@ -149,11 +148,11 @@ def reject_cross_declaration(
     owners: dict[str, str] = {}
     for application in applications:
         for account in application.accounts:
-            owners[account.casefold()] = application.label
+            owners[account.upper()] = application.label
 
     for index, entry in enumerate(personal):
         for position, account in enumerate(entry.accounts):
-            owner = owners.get(account.casefold())
+            owner = owners.get(account.upper())
             if owner is None:
                 continue
             raise ConfigError(

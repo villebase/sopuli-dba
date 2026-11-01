@@ -109,10 +109,29 @@ def test_one_name_may_not_be_declared_twice_in_the_section() -> None:
 
 
 def test_duplicates_are_found_across_case() -> None:
-    """``selection.py`` casefolds, so two spellings are one account to a selector."""
+    """``selection.py`` compares by ``upper()``, so two spellings are one account
+    to a selector."""
     with pytest.raises(ConfigError) as caught:
         build_personal_accounts(document({"accounts": ["jdoe"]}, {"accounts": ["JDOE"]}))
     assert "duplicate personal account" in str(caught.value)
+
+
+def test_duplicates_and_cross_declarations_compare_by_upper() -> None:
+    """`'jdoe_ıt'.upper()` is `'JDOE_IT'`, while its casefold keeps the dotless
+    i. One user to the driver is one name to the file (#1208)."""
+    with pytest.raises(ConfigError) as caught:
+        build_personal_accounts(document({"accounts": ["jdoe_ıt"]}, {"accounts": ["JDOE_IT"]}))
+    assert "duplicate personal account" in str(caught.value)
+
+    with pytest.raises(ConfigError) as crossed:
+        build_config(
+            {
+                "version": 1,
+                "accounts": ["ACME_IT_USER"],
+                "personal_accounts": [{"accounts": ["acme_ıt_user"]}],
+            }
+        )
+    assert "declared both as a personal account" in str(crossed.value)
 
 
 def test_a_name_may_not_be_both_an_application_account_and_a_personal_one() -> None:

@@ -64,10 +64,20 @@ def test_an_enumerated_rule_admits_the_names_it_lists() -> None:
     assert not admits(rule, "bcarter")
 
 
-def test_names_are_compared_case_folded() -> None:
+def test_names_are_compared_by_upper() -> None:
     """A file writes `jdoe`; Oracle hands back `JDOE`, having upper-cased it."""
     assert admits(PersonalAccountRule(accounts=("jdoe",)), "JDOE")
     assert admits(PersonalAccountRule(accounts=("JDOE",)), "jdoe")
+
+
+def test_a_predicate_uses_the_drivers_upper_and_not_casefold() -> None:
+    """The drivers resolve `role:` and `profile:` by `upper()`, so `account list`
+    lists the members of `acme_it` for `role: acme_ıt` (dotless i). A verb must
+    admit the accounts the listing shows (#1208). `'acme_ıt'.casefold()` keeps
+    the dotless i, so a casefold comparison refused them."""
+    assert admits(PersonalAccountRule(role="acme_ıt"), "jdoe", roles=("ACME_IT",))
+    assert admits(PersonalAccountRule(profile="acme_ıt"), "jdoe", profile="ACME_IT")
+    assert admits(PersonalAccountRule(accounts=("jdoe_ıt",)), "JDOE_IT")
 
 
 def test_a_profile_predicate_reads_the_profile_it_was_given() -> None:

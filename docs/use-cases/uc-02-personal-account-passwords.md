@@ -574,8 +574,9 @@ rules apply:
   read. An unseen delivery whose store a target or `defaults.vault` supplies is
   refused before the reset builds its plan, `--dry-run` included. Both are
   config errors, exit 9. Reasons: [#1138](../decisions/log.md#1138).
-- **The account is case-folded into the path, and the target is not.** An Oracle
-  account name is matched case-insensitively everywhere else. A path that did not
+- **The account is case-folded into the path, and the target is not.** The path
+  segment is the account's `upper()`, written in lower case. An account name is
+  compared by `upper()` everywhere else. A path that did not
   fold would let one account own two records that never find each other, so two
   concurrent resets would not collide. That is the failure §3.3 keys the lock to
   prevent. A target name is a `targets:` key, matched exactly. Folding it would

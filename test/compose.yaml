@@ -10,6 +10,7 @@
 #   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525; see README.md
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
+#   docker compose --profile mysql-matrix up -d    # MySQL 8.0, 8.4, 9.7, on 3380, 3384, 3397
 #   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
 #   docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
@@ -62,6 +63,18 @@ x-postgres-matrix: &postgres-matrix
     interval: 5s
     timeout: 3s
     retries: 20
+
+# The settings mysql-80 to mysql-97 share.
+x-mysql-matrix: &mysql-matrix
+  profiles: [mysql-matrix]
+  environment:
+    MYSQL_ROOT_PASSWORD: sopuli-test
+    MYSQL_DATABASE: sopuli
+  healthcheck:
+    test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -psopuli-test --silent"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
 
 services:
 
@@ -272,6 +285,32 @@ services:
     ports:
       - "127.0.0.1:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
       - "[::1]:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
+
+  # MySQL 8.0, 8.4 LTS and 9.7, for the probes in sql/mysql/ (#1202). Moving
+  # tags, as postgres-13 to postgres-18: a probe's header records the release
+  # `SELECT VERSION()` read, never the tag. Each has its own port variable, so a
+  # second clone can run the matrix beside the first. The servers run with the
+  # image's defaults; a probe sets any log it reads and puts it back.
+  mysql-80:
+    <<: *mysql-matrix
+    image: mysql:8.0
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL80_PORT:-3380}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL80_PORT:-3380}:3306"
+
+  mysql-84:
+    <<: *mysql-matrix
+    image: mysql:8.4
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL84_PORT:-3384}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL84_PORT:-3384}:3306"
+
+  mysql-97:
+    <<: *mysql-matrix
+    image: mysql:9
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL97_PORT:-3397}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL97_PORT:-3397}:3306"
 
   # ------------------------------------------------------------ pgbouncer ---
   # PgBouncer in front of postgres above, for sql/postgres/08_pgbouncer_probe.py

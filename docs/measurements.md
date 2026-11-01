@@ -1,9 +1,10 @@
 # Measurements
 
-This file says what has been run on which Oracle or PostgreSQL release, when,
-and what it showed. It is the one place for that. Other documents link here
-instead of listing releases themselves. The PostgreSQL results are in
-[their own part](#postgresql-releases), after the Oracle ones.
+This file says what has been run on which Oracle, PostgreSQL or MySQL release,
+when, and what it showed. It is the one place for that. Other documents link
+here instead of listing releases themselves. The PostgreSQL results are in
+[their own part](#postgresql-releases), after the Oracle ones, and the MySQL
+results [after those](#mysql-releases).
 
 A result holds only for the release it names. Oracle's retention and auditing
 behaviour is not a documented guarantee, and it differs between releases: 11.2
@@ -247,3 +248,28 @@ Supabase image ran on its own, not as a hosted project.
 | `08_pgbouncer_probe.py` | `16.15` | 2026-10-27 | #1045 | Behind PgBouncer 1.26.0, in session and transaction pooling. A connection that sends `options=-c statement_timeout=…` is refused, "unsupported startup parameter in options"; with `ignore_startup_parameters = options` the budget is dropped without a message. A plain `SET` reaches other clients under transaction pooling, and stays on the server connection after its client closes. `SET LOCAL` holds inside an explicit transaction and is gone after its COMMIT or rollback, and in autocommit it only warns, `25P01`. PgBouncer refuses a wrong password with "SASL authentication failed" and no SQLSTATE, so `creds check` reports drift as `ERROR`, and `creds apply` and `rotate` cannot change a password. `doctor`, and `check` of roles in sync, work |
 | `08_pgbouncer_probe.py` | `16.15` | 2026-10-27 | #1105 | PgBouncer 1.26.0's refusals of a login, with no SQLSTATE. A role the server does not have reads "no such user". A role with no password, and a wrong password under `auth_query` and under `auth_file`, read "SASL authentication failed". The server sends neither message. Where `auth_file` holds another password than the server, PgBouncer passes on the server's "password authentication failed for user", which the driver reads as `28P01`. With the server stopped, only a wrong `auth_file` password reads "SASL authentication failed"; other logins time out, or read "server login has been failing" |
 | `09_supabase_roles_probe.sql` | `17.6` | 2026-10-28 | #1111 | On Supabase's database, a `CREATEROLE` tool account that `postgres` created reads `supautils.reserved_roles` and `supautils.reserved_memberships`. supautils refuses `postgres` and the tool account a password change on each role in `reserved_roles`, `42501`, "is a reserved role, only superusers can modify it". The tool account changes the password of a role it created. `postgres` is refused a change to itself and to `supabase_privileged_role`, "Only superusers can alter privileged roles", and grants `pg_read_all_data`. A grant of `authenticator` is refused: its memberships are reserved |
+
+## MySQL releases
+
+A MySQL release is three numbers, such as `8.4.13`. Name it in full, never
+"8.4": a release update can change what a release does. The scripts are in
+`sql/mysql/`, and `tests/test_measurements.py` checks their headers against the
+table below in the same way. A release a header writes after "client" is the
+client the probe ran with, and is not compared.
+
+| Release | Product, and where it ran |
+|---|---|
+| `8.0.46` | The `mysql:8.0` image, `test/compose.yaml` profile `mysql-matrix`, as pulled on 2026-11-01 |
+| `8.4.13` | The `mysql:8.4` image, the same profile, as pulled on 2026-11-01. 8.4 is a long-term support release |
+| `9.7.4` | The `mysql:9` image, the same profile, as pulled on 2026-11-01 |
+
+Not measured: every other release, MariaDB, and every managed service.
+
+## MySQL scripts
+
+<!-- measurements: mysql scripts -->
+| Script | Release | Date | Issue | Result |
+|---|---|---|---|---|
+| `01_password_text_probe.sql` | `8.0.46` | 2026-11-01 | #1202 | Once `ALTER USER … IDENTIFIED BY` or `SET PASSWORD` parses, the general log, the slow log, `performance_schema`'s statement history and its digest sample show the password as `<secret>`, also when the statement fails. The binary log keeps a statement that succeeded, rewritten with the stored `caching_sha2_password` hash. A statement that fails to parse, `1064`, stays in the statement history as sent, password included, and nowhere else. `IDENTIFIED WITH caching_sha2_password AS 0x…` stores the hash as sent |
+| `01_password_text_probe.sql` | `8.4.13` | 2026-11-01 | #1202 | As on 8.0.46 |
+| `01_password_text_probe.sql` | `9.7.4` | 2026-11-01 | #1202 | As on 8.0.46. The hash is `$A$00A$`, 10,000 rounds, where 8.0.46 and 8.4.13 store `$A$005$`, 5,000 |

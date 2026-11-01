@@ -241,9 +241,10 @@ it resolves a credential or connects. The PostgreSQL entry lists UC-1's
 commands, `creds generate`, `apply`, `check`, `rotate`, `status` and
 `finish-rollover`, and UC-2's `account list`, `reset-password`, `suspend` and
 `expire-password`. That is every command that connects to a target. The config
-also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`. Its
-driver module is not written yet, so every command but `doctor` refuses a MySQL
-target with `SOPULI-20006` (#1221). What
+also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`.
+`doctor` connects to a MySQL server and reports the scope, `server`. The MySQL
+entry lists no command yet, so every other command refuses a MySQL target with
+`SOPULI-20006` (#1221). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -467,7 +468,7 @@ These commands install the base and each extra:
 pip install sopuli-dba                 # config, selection, schema — no network client
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
 pip install "sopuli-dba[postgres]"     # + psycopg, to reach PostgreSQL
-pip install "sopuli-dba[mysql]"        # + PyMySQL, for MySQL; the driver is not written yet
+pip install "sopuli-dba[mysql]"        # + PyMySQL, for MySQL; so far `doctor` only
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel

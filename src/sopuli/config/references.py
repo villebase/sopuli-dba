@@ -39,17 +39,12 @@ from sopuli.config.codes import (
     UNVERIFIED_TRANSPORT,
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.expansion import declared_at, mysql_key_at, postgres_key_at
+from sopuli.config.expansion import declared_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
+from sopuli.config.products import tls_setting
 from sopuli.config.scope import refuse_personal_on
-from sopuli.config.targets import (
-    EXTERNAL,
-    MYSQL,
-    MYSQL_VERIFYING_SSL_MODES,
-    POSTGRESQL,
-    VERIFYING_SSLMODES,
-)
+from sopuli.config.targets import EXTERNAL
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
@@ -653,32 +648,20 @@ def _warn_about_unverified_databases(config: Config) -> tuple[ConfigWarning, ...
     """
     warnings = []
     for expanded in config.expanded_targets:
-        target = expanded.target
-        if target.type == POSTGRESQL and target.postgres_settings.sslmode not in VERIFYING_SSLMODES:
-            setting = f"sslmode: {target.postgres_settings.sslmode}"
-            at = postgres_key_at(expanded, "sslmode")
-            fix = (
-                "Use `sslmode: verify-full` (the default), with `sslrootcert` naming the "
-                "CA that issued the server's certificate"
-            )
-        elif target.type == MYSQL and target.mysql_settings.ssl_mode not in (
-            MYSQL_VERIFYING_SSL_MODES
-        ):
-            setting = f"ssl_mode: {target.mysql_settings.ssl_mode}"
-            at = mysql_key_at(expanded, "ssl_mode")
-            fix = (
-                "Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the "
-                "CA that issued the server's certificate"
-            )
-        else:
+        tls = tls_setting(expanded)
+        if tls is None or tls.verifies:
             continue
         warnings.append(
             ConfigWarning(
-                message=f"target {expanded.name!r} does not verify the server (`{setting}`)",
-                at=str(at),
+                message=(
+                    f"target {expanded.name!r} does not verify the server (`{tls.key}: {tls.mode}`)"
+                ),
+                at=str(tls.at),
                 hint=(
                     "anything between this run and the server can present its own "
-                    f"certificate and read the password a run sets. {fix}"
+                    f"certificate and read the password a run sets. Use `{tls.key}: "
+                    f"{tls.default}` (the default), with `{tls.ca}` naming the CA that "
+                    "issued the server's certificate"
                 ),
                 code=UNVERIFIED_DATABASE,
             )

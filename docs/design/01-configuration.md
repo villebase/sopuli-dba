@@ -2078,7 +2078,7 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 | | |
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
-| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
+| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `mysql.ssl_ca`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
 | **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |

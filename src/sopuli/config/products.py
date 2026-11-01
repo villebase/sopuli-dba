@@ -19,25 +19,29 @@ its targets (:mod:`sopuli.config.bindings`), with
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from sopuli.config.errors import ConfigError, KeyPath
-from sopuli.config.expansion import declared_at
+from sopuli.config.expansion import block_key_at, declared_at
 from sopuli.config.model import (
     Application,
     Config,
     ExpandedTarget,
     Override,
     Target,
+    TargetMysql,
     TargetOracle,
+    TargetPostgres,
 )
 from sopuli.config.targets import (
     EXTERNAL,
     MYSQL,
+    MYSQL_UNENCRYPTED_SSL_MODE,
     MYSQL_VERIFYING_SSL_MODES,
     ORACLE,
     POSTGRESQL,
+    UNENCRYPTED_SSLMODE,
     VERIFYING_SSLMODES,
 )
 
@@ -54,21 +58,30 @@ _HOST_AND_PORT = re.compile(
 
 @dataclass(frozen=True)
 class _Tls:
-    """A product's TLS keys: the mode, the CA file, the modes that check the
-    server against the file, and the fix a refusal names."""
+    """A product's TLS keys, and the values that matter about them."""
 
+    #: The key that holds the mode, and the key that holds the CA file.
     mode: str
     ca: str
+    #: The modes that check the server against the CA file.
     verifying: tuple[str, ...]
-    fix: str
+    #: The one mode certain to connect without encryption.
+    unencrypted: str
+    #: The default mode, which is the one a message recommends.
+    default: str
+    #: The other verifying mode, named beside the default in a refusal.
+    alternative: str
+    #: The block as the run reads it, with its defaults filled in.
+    settings: Callable[[Target], TargetPostgres | TargetMysql]
 
 
 @dataclass(frozen=True)
 class _Product:
     """What a message says about one product, written once."""
 
-    #: The product's name with its article, as in "an Oracle target".
-    a_name: str
+    name: str
+    #: The article before the name, as in "an Oracle target".
+    article: str
     #: Its own block of keys on a target.
     block: str
     #: What one target of it is.
@@ -81,14 +94,15 @@ class _Product:
     tls: _Tls | None = None
 
     @property
-    def name(self) -> str:
-        return self.a_name.split(" ", 1)[1]
+    def a_name(self) -> str:
+        return f"{self.article} {self.name}"
 
 
 _PRODUCTS: dict[str, _Product] = {
-    ORACLE: _Product(a_name="an Oracle", block="oracle", whole="database"),
+    ORACLE: _Product(name="Oracle", article="an", block="oracle", whole="database"),
     POSTGRESQL: _Product(
-        a_name="a PostgreSQL",
+        name="PostgreSQL",
+        article="a",
         block="postgres",
         whole="cluster",
         owner="a PostgreSQL role belongs to the whole cluster",
@@ -101,11 +115,15 @@ _PRODUCTS: dict[str, _Product] = {
             mode="sslmode",
             ca="sslrootcert",
             verifying=VERIFYING_SSLMODES,
-            fix="use `sslmode: verify-full` (the default) or `verify-ca`",
+            unencrypted=UNENCRYPTED_SSLMODE,
+            default="verify-full",
+            alternative="verify-ca",
+            settings=lambda target: target.postgres_settings,
         ),
     ),
     MYSQL: _Product(
-        a_name="a MySQL",
+        name="MySQL",
+        article="a",
         block="mysql",
         whole="server",
         owner="a MySQL account belongs to the whole server",
@@ -117,10 +135,56 @@ _PRODUCTS: dict[str, _Product] = {
             mode="ssl_mode",
             ca="ssl_ca",
             verifying=MYSQL_VERIFYING_SSL_MODES,
-            fix="use `ssl_mode: VERIFY_IDENTITY` (the default) or `VERIFY_CA`",
+            unencrypted=MYSQL_UNENCRYPTED_SSL_MODE,
+            default="VERIFY_IDENTITY",
+            alternative="VERIFY_CA",
+            settings=lambda target: target.mysql_settings,
         ),
     ),
 }
+
+
+@dataclass(frozen=True)
+class TlsSetting:
+    """A target's TLS mode as the run reads it, and what it means.
+
+    The one place the warning (:mod:`sopuli.config.references`), the
+    ``require_encryption`` refusal and this module read each product's TLS
+    keys from, so a product is added in :data:`_PRODUCTS` and nowhere else.
+    """
+
+    #: Where the mode is written: the override's line where one wrote it.
+    at: KeyPath
+    #: The key, such as ``sslmode``, and its value.
+    key: str
+    mode: str
+    #: The key that names a CA file.
+    ca: str
+    #: The default mode, which is the one to recommend.
+    default: str
+    #: Whether the mode checks the server's certificate.
+    verifies: bool
+    #: Whether the mode is certain to connect without encryption.
+    never_encrypts: bool
+
+
+def tls_setting(expanded: ExpandedTarget) -> TlsSetting | None:
+    """The target's TLS mode, or ``None`` for a product that has no TLS keys
+    of its own (Oracle, whose transport is NNE or TLS by the connect string)."""
+    product = _PRODUCTS[expanded.target.type]
+    tls = product.tls
+    if tls is None:
+        return None
+    mode = getattr(tls.settings(expanded.target), tls.mode)
+    return TlsSetting(
+        at=block_key_at(expanded, product.block, tls.mode),
+        key=tls.mode,
+        mode=mode,
+        ca=tls.ca,
+        default=tls.default,
+        verifies=mode in tls.verifying,
+        never_encrypts=mode == tls.unencrypted,
+    )
 
 
 def check_products(config: Config) -> None:
@@ -208,14 +272,19 @@ def _refuse_an_unused_ca_file(expanded: ExpandedTarget, product: _Product) -> No
     mode = getattr(block, tls.mode)
     if mode in tls.verifying:
         return
+    # An override cannot clear a key its template wrote. Dropping the file is a
+    # way out unless the template wrote it and an override changed the block.
+    template_wrote_it = (
+        product.block in expanded.patched and f"{product.block}.{tls.ca}" not in expanded.patched
+    )
     raise ConfigError(
         f"target {expanded.name!r} names a CA file under `{tls.mode}: {mode}`, "
         f"which does not verify the server with it",
-        at=declared_at(expanded, product.block),
+        # The line to change: the mode, where only the mode can change.
+        at=block_key_at(expanded, product.block, tls.mode if template_wrote_it else tls.ca),
         hint=(
-            tls.fix
-            # An override cannot clear a key its template wrote.
-            + ("" if product.block in expanded.patched else f", or drop `{tls.ca}`")
+            f"use `{tls.mode}: {tls.default}` (the default) or `{tls.alternative}`"
+            + ("" if template_wrote_it else f", or drop `{tls.ca}`")
         ),
     )
 

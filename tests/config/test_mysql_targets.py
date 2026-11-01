@@ -197,7 +197,42 @@ def test_a_ca_file_without_a_verifying_ssl_mode_is_refused(mode: str) -> None:
 
     assert f"names a CA file under `ssl_mode: {mode}`" in rendered
     assert "or drop `ssl_ca`" in rendered
-    assert "targets[0].mysql" in rendered
+    assert "targets[0].mysql.ssl_ca" in rendered
+
+
+def _set_with(template: dict[str, Any], override: dict[str, Any]) -> str:
+    return refused(
+        {
+            "target_sets": {
+                "mysql": {
+                    "name": "mysql-{env}",
+                    "type": "mysql",
+                    "dsn": "mysql-{env}.example.com:3306",
+                    "mysql": template,
+                    "for_each": {"env": {"dev": {}, "qa": {}}},
+                    "overrides": {"mysql-qa": {"mysql": override}},
+                }
+            }
+        }
+    )
+
+
+def test_a_ca_file_an_override_wrote_under_the_templates_weak_mode_can_be_dropped() -> None:
+    """The override wrote the file, so dropping it from the override is a way
+    out, and the error names the override's `ssl_ca` line."""
+    rendered = _set_with({"ssl_mode": "REQUIRED"}, {"ssl_ca": "/etc/ca.pem"})
+
+    assert "or drop `ssl_ca`" in rendered
+    assert "target_sets.mysql.overrides.mysql-qa.mysql.ssl_ca" in rendered
+
+
+def test_a_mode_an_override_weakened_under_the_templates_ca_file_is_the_line_to_change() -> None:
+    """An override cannot clear the template's file, so the hint does not offer
+    that, and the error names the override's `ssl_mode` line."""
+    rendered = _set_with({"ssl_ca": "/etc/ca.pem"}, {"ssl_mode": "REQUIRED"})
+
+    assert "drop `ssl_ca`" not in rendered
+    assert "target_sets.mysql.overrides.mysql-qa.mysql.ssl_mode" in rendered
 
 
 def test_an_override_patches_the_mysql_block_key_by_key() -> None:

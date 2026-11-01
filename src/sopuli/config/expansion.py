@@ -109,23 +109,14 @@ def declared_at(expanded: ExpandedTarget, field: str | None = None) -> KeyPath:
     return at if field is None else at.key(field)
 
 
-def postgres_key_at(expanded: ExpandedTarget, key: str) -> KeyPath:
-    """Where one key of this target's ``postgres:`` block was written.
+def block_key_at(expanded: ExpandedTarget, block: str, key: str) -> KeyPath:
+    """Where one key of a product's block, such as ``postgres:`` or ``mysql:``,
+    was written.
 
-    An override's ``postgres:`` patch merges key by key, so the block as a
+    An override's patch of the block merges key by key, so the block as a
     whole has no one line. An override that writes only ``database`` leaves
     ``sslmode`` on the template's line.
     """
-    return _block_key_at(expanded, "postgres", key)
-
-
-def mysql_key_at(expanded: ExpandedTarget, key: str) -> KeyPath:
-    """Where one key of this target's ``mysql:`` block was written, for the
-    reason :func:`postgres_key_at` gives."""
-    return _block_key_at(expanded, "mysql", key)
-
-
-def _block_key_at(expanded: ExpandedTarget, block: str, key: str) -> KeyPath:
     at = _location(expanded)
     if f"{block}.{key}" in expanded.patched and expanded.target_set is not None:
         at = at.key("overrides").key(expanded.name)
@@ -463,7 +454,7 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
     are the same value.
 
     A ``postgres:`` or ``mysql:`` patch also adds ``<block>.<key>`` for each
-    key it writes, because it merges key by key (:func:`postgres_key_at`).
+    key it writes, because it merges key by key (:func:`block_key_at`).
     """
     given = {
         "type": patch.type is not None,

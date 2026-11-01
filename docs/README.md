@@ -624,13 +624,20 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   sensitive?**
   `SELECT` on the `*_priv` columns of `mysql.user` for the static privileges,
   and `SELECT` on `mysql.global_grants`, whose columns are `USER`, `HOST`,
-  `PRIV` and `WITH_GRANT_OPTION`, for the dynamic ones. The hash stays refused,
-  `1143`. `SHOW GRANTS FOR` another account is refused, `1142`, because it
-  needs all of `mysql.user`. A privilege can come through a role, which shows
-  on the role's own rows; which roles an account has and uses by default is
-  only in `mysql.role_edges` and `mysql.default_roles`, each readable with
-  `SELECT` on it. Nested roles and roles that are not default were not
-  measured. `sql/mysql/06_rollover_privileges_probe.py` measures it.
+  `PRIV` and `WITH_GRANT_OPTION`, for the dynamic ones. The hash and
+  `User_attributes` stay refused, `1143`. `SHOW GRANTS FOR` another account is
+  refused, `1142`, with those grants. Administrative power has more sources,
+  each readable with `SELECT` on its table and none holding a hash:
+  - a role, whose privileges show on the role's own rows. Which roles an
+    account has and uses by default is in `mysql.role_edges` and
+    `mysql.default_roles`. A role in the setting `mandatory_roles` goes to
+    every account and has no row in `role_edges`; the tool reads the setting;
+  - a proxy grant, such as `PROXY ON root`, in `mysql.proxies_priv`;
+  - privileges on the `mysql` schema, such as `UPDATE` on `mysql.user`, in
+    `mysql.db` and `mysql.tables_priv`.
+
+  Nested roles and `activate_all_roles_on_login = ON` were not measured.
+  `sql/mysql/06_rollover_privileges_probe.py` measures it.
 
 ### Vault
 

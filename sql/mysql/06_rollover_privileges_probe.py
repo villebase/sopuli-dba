@@ -10,21 +10,23 @@ sensitive. This measures, on each server:
 
   RS1  INFORMATION_SCHEMA.USER_ATTRIBUTES, read by the tool account with only
        CREATE USER: which accounts it sees, and the account's row before
-       and after ALTER USER ... RETAIN CURRENT PASSWORD
+       and after ALTER USER ... RETAIN CURRENT PASSWORD. Then the account's
+       row while root has granted it SYSTEM_USER
   RS2  SHOW CREATE USER for the account after RETAIN, run by root: how many
        hashes it shows, and whether it says anything of a retained password
   RS3  ALTER USER ... DISCARD OLD PASSWORD from the tool account, with a
        retained password and again without one: ROW_COUNT() and SHOW WARNINGS
-       in the same session
+       in the same session. After the first, the state as root reads it, and
+       a login with the old password
   RS4  a view that root creates with SQL SECURITY DEFINER, exposing only
        JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password') for
        each account, and SELECT on the view granted to the tool account. The
        tool reads it with a password retained and after DISCARD, and then
-       reads User_attributes itself
-  PV1  SELECT on the columns User, Host, Super_priv, Create_user_priv and
-       Grant_priv of mysql.user, granted to the tool account. It reads them
-       for an account that holds SUPER and CREATE USER WITH GRANT OPTION, then
-       reads authentication_string
+       reads User_attributes itself, holding no grant on mysql.user yet
+  PV1  SELECT on User, Host and every *_priv column of mysql.user, granted to
+       the tool account. It reads which of them are Y for an account that
+       holds SUPER and CREATE USER WITH GRANT OPTION, then reads
+       authentication_string and User_attributes
   PV2  SELECT on mysql.global_grants, granted to the tool account. It reads
        that account's dynamic privileges, and the table's columns
   PV3  INFORMATION_SCHEMA.USER_PRIVILEGES, read by the tool account: whose
@@ -35,6 +37,12 @@ sensitive. This measures, on each server:
        its default role. The tool reads the account's and the role's
        Super_priv, the role's dynamic privileges, then mysql.role_edges and
        mysql.default_roles without and with SELECT on each
+  PV6  mandatory_roles set to that role, by root, for the case. The tool reads
+       mandatory_roles and activate_all_roles_on_login, and mysql.role_edges
+       for the account of PV1, which every account now has the role through
+  PV7  PROXY on root@'localhost', UPDATE on mysql.* and UPDATE on mysql.user,
+       granted to PV1's account. The tool reads mysql.proxies_priv, mysql.db
+       and mysql.tables_priv for it, without and with SELECT on each
 
 The probe checks each result against the one RESULTS below records, as 02
 does. A difference, or a step that fails, makes it exit 1.
@@ -51,15 +59,18 @@ RESULTS -- the same on all three releases
   RS1  the tool sees the rows of sopuli_probe_hash and of itself, and not
        those of root, mysql.infoschema, mysql.session and mysql.sys, which
        hold SYSTEM_USER. The account's row is its ATTRIBUTE metadata,
-       {"tenant": "alpha"}, the same before and after RETAIN
+       {"tenant": "alpha"}, the same before and after RETAIN. While the
+       account holds SYSTEM_USER, the tool sees no row for it
   RS2  one hash, the current one, and nothing that says a password is
        retained
   RS3  ROW_COUNT() is 0 and there are no warnings, with a retained password
-       and without one
+       and without one. After the first, root reads no retained password, and
+       the old password is refused, 1045 (28000)
   RS4  the tool reads 1 with a password retained and 0 after DISCARD, and is
        refused User_attributes, 1142 (42000)
-  PV1  the tool reads Y for each of the three privileges, and is refused
-       authentication_string, 1143 (42000)
+  PV1  31 *_priv columns are granted. Grant_priv, Super_priv and
+       Create_user_priv read Y, and no other. authentication_string and
+       User_attributes are refused, 1143 (42000)
   PV2  the tool reads BINLOG_ADMIN without and SYSTEM_VARIABLES_ADMIN with
        the grant option. The table's columns are USER, HOST, PRIV and
        WITH_GRANT_OPTION
@@ -70,6 +81,12 @@ RESULTS -- the same on all three releases
        1142 (42000), without the grant. With it, mysql.role_edges shows the
        role granted to the account, and mysql.default_roles shows it as the
        account's default role
+  PV6  the tool reads mandatory_roles as the role and
+       activate_all_roles_on_login as 0, and mysql.role_edges has no row for
+       PV1's account: a mandatory role is in the setting, not in role_edges
+  PV7  each table is refused, 1142 (42000), without the grant. With it,
+       proxies_priv shows the proxy on root, mysql.db UPDATE on the schema
+       mysql, and tables_priv UPDATE on mysql.user
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -83,7 +100,8 @@ THROWAWAY SERVERS ONLY. On each server it creates the accounts
 sopuli_probe_tool and sopuli_probe_hash, as 02 does, sopuli_probe_admin@'%',
 the role sopuli_probe_role and the schema sopuli_probe. It drops them at the
 end, also after a failed step, and before it starts it drops ones an
-interrupted run left.
+interrupted run left. It sets mandatory_roles for PV6 and empties it again,
+also at the end; a server that had its own mandatory_roles loses them.
 """
 
 from __future__ import annotations
@@ -118,6 +136,8 @@ def tool(service: str, statement: str) -> str:
 def drop(service: str) -> None:
     ch.root(
         service,
+        # A role in mandatory_roles cannot be dropped, so PV6 is undone first.
+        "SET GLOBAL mandatory_roles = '';"
         f"DROP USER IF EXISTS '{ADMIN}'@'%'; DROP ROLE IF EXISTS '{ROLE}';"
         f"DROP DATABASE IF EXISTS {SCHEMA}",
     )
@@ -169,6 +189,12 @@ def rollover(service: str) -> None:
         (seen, before, after),
         (f"{ch.ACCOUNT}@%,{ch.TOOL}@%", ATTRIBUTE, ATTRIBUTE),
     )
+    # Whether SYSTEM_USER is what hides an account: the same account, given it.
+    ch.root(service, f"GRANT SYSTEM_USER ON *.* TO {ACCOUNT}")
+    hidden = tool(service, attributes)
+    ch.root(service, f"REVOKE SYSTEM_USER ON *.* FROM {ACCOUNT}")
+    print(f"RS1 the account's row while it holds SYSTEM_USER: {hidden!r}")
+    ch.check("RS1 SYSTEM_USER", hidden, "")
 
     shown = ch.root(service, f"SHOW CREATE USER {ACCOUNT}")
     hashes = shown.count("$A$")
@@ -178,9 +204,20 @@ def rollover(service: str) -> None:
 
     discard = f"ALTER USER {ACCOUNT} DISCARD OLD PASSWORD; SELECT ROW_COUNT(); SHOW WARNINGS"
     with_retained = tool(service, discard)
+    # That the tool's DISCARD took effect: the state, as root reads it, and the
+    # old password.
+    state = ch.root(
+        service,
+        "SELECT JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password') "
+        f"FROM mysql.user WHERE user = '{ch.ACCOUNT}' AND host = '%'",
+    )
+    old = ch.login(service, "Acme-Probe-old1")
     without = tool(service, discard)
-    print(f"RS3 ROW_COUNT() and warnings, retained: {with_retained!r}; none: {without!r}")
-    ch.check("RS3", (with_retained, without), ("0", "0"))
+    print(
+        f"RS3 ROW_COUNT() and warnings, retained: {with_retained!r}; none: {without!r}; "
+        f"after the first, retained: {state}, old password: {old}"
+    )
+    ch.check("RS3", (with_retained, without, state, old), ("0", "0", "0", "1045 (28000)"))
 
     ch.root(
         service,
@@ -203,24 +240,39 @@ def rollover(service: str) -> None:
 
 
 def privileges(service: str) -> None:
+    priv_columns = ch.root(
+        service,
+        "SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION) "
+        "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'mysql' "
+        "AND TABLE_NAME = 'user' AND COLUMN_NAME LIKE '%\\_priv'",
+    )
     ch.root(
         service,
         f"CREATE USER '{ADMIN}'@'%' IDENTIFIED BY 'Acme-Admin-pw1';"
         f"GRANT SUPER, CREATE USER ON *.* TO '{ADMIN}'@'%' WITH GRANT OPTION;"
         f"GRANT BINLOG_ADMIN ON *.* TO '{ADMIN}'@'%';"
         f"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO '{ADMIN}'@'%' WITH GRANT OPTION;"
-        f"GRANT SELECT (User, Host, Super_priv, Create_user_priv, Grant_priv) "
-        f"ON mysql.user TO '{ch.TOOL}'@'%';"
+        f"GRANT SELECT (User, Host, {priv_columns}) ON mysql.user TO '{ch.TOOL}'@'%';"
         f"GRANT SELECT ON mysql.global_grants TO '{ch.TOOL}'@'%'",
     )
-    flags = tool(
+    yes = tool(
         service,
-        "SELECT CONCAT(Super_priv, Create_user_priv, Grant_priv) FROM mysql.user "
-        f"WHERE user = '{ADMIN}' AND host = '%'",
+        "SELECT CONCAT_WS(',', "
+        + ", ".join(f"IF({c} = 'Y', '{c}', NULL)" for c in priv_columns.split(","))
+        + f") FROM mysql.user WHERE user = '{ADMIN}' AND host = '%'",
     )
     secret = tool(service, "SELECT authentication_string FROM mysql.user LIMIT 1")
-    print(f"PV1 Super_priv, Create_user_priv, Grant_priv: {flags}; hash: {secret}")
-    ch.check("PV1", (flags, secret), ("YYY", DENIED_COLUMN))
+    attributes = tool(service, "SELECT User_attributes FROM mysql.user LIMIT 1")
+    count = len(priv_columns.split(","))
+    print(
+        f"PV1 *_priv columns granted: {count}; reading Y: {yes}; "
+        f"hash: {secret}; User_attributes: {attributes}"
+    )
+    ch.check(
+        "PV1",
+        (yes, secret, attributes),
+        ("Grant_priv,Super_priv,Create_user_priv", DENIED_COLUMN, DENIED_COLUMN),
+    )
 
     dynamic = tool(
         service,
@@ -293,6 +345,58 @@ def privileges(service: str) -> None:
             "CONNECTION_ADMIN",
             (DENIED_TABLE, DENIED_TABLE),
             (f"{ROLE}>{ch.ACCOUNT}", f"{ch.ACCOUNT}>{ROLE}"),
+        ),
+    )
+
+    ch.root(service, f"SET GLOBAL mandatory_roles = '`{ROLE}`@`%`'")
+    settings = tool(
+        service,
+        "SELECT CONCAT(@@GLOBAL.mandatory_roles, ';', @@GLOBAL.activate_all_roles_on_login)",
+    )
+    admin_edges = tool(service, f"SELECT COUNT(*) FROM mysql.role_edges WHERE to_user = '{ADMIN}'")
+    ch.root(service, "SET GLOBAL mandatory_roles = ''")
+    print(
+        f"PV6 mandatory_roles;activate_all_roles_on_login: {settings}; "
+        f"role_edges rows for {ADMIN}: {admin_edges}"
+    )
+    ch.check("PV6", (settings, admin_edges), (f"`{ROLE}`@`%`;0", "0"))
+
+    # Only root@'localhost' holds PROXY WITH GRANT OPTION, so this grant goes
+    # over the socket, where root logs in as that account.
+    returncode, _, err = ch.client(
+        service,
+        "root",
+        ch.ROOT_PASSWORD,
+        f"GRANT PROXY ON 'root'@'localhost' TO '{ADMIN}'@'%'",
+        "--protocol=SOCKET",
+    )
+    if returncode:
+        raise ch.StepError(f"{service}: GRANT PROXY: {err[:200]}")
+    ch.root(
+        service,
+        f"GRANT UPDATE ON mysql.* TO '{ADMIN}'@'%';GRANT UPDATE ON mysql.user TO '{ADMIN}'@'%'",
+    )
+    reads = (
+        f"SELECT CONCAT(user, '>', proxied_user) FROM mysql.proxies_priv WHERE user = '{ADMIN}'",
+        f"SELECT CONCAT(db, ':', update_priv) FROM mysql.db WHERE user = '{ADMIN}'",
+        "SELECT CONCAT(db, '.', table_name, ':', table_priv) FROM mysql.tables_priv "
+        f"WHERE user = '{ADMIN}'",
+    )
+    without = tuple(tool(service, read) for read in reads)
+    ch.root(
+        service,
+        f"GRANT SELECT ON mysql.proxies_priv TO '{ch.TOOL}'@'%';"
+        f"GRANT SELECT ON mysql.db TO '{ch.TOOL}'@'%';"
+        f"GRANT SELECT ON mysql.tables_priv TO '{ch.TOOL}'@'%'",
+    )
+    with_grant = tuple(tool(service, read) for read in reads)
+    print(f"PV7 proxies_priv, db, tables_priv without the grant: {without}; with it: {with_grant}")
+    ch.check(
+        "PV7",
+        (without, with_grant),
+        (
+            (DENIED_TABLE,) * 3,
+            (f"{ADMIN}>root", "mysql:Y", "mysql.user:Update"),
         ),
     )
 

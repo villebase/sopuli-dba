@@ -3852,7 +3852,7 @@ def _declared_names(
 ) -> list[str]:
     """Every account the declaration admits here, once each.
 
-    **Deduplicated across rules, case-insensitively.** An account may be admitted
+    **Deduplicated across rules, by ``upper()``.** An account may be admitted
     by more than one rule -- UC-2 2 calls that ordinary -- and an enumerated rule
     yields the *file's* spelling while a predicate yields the *dictionary's*. So
     ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE`` carrying the profile are

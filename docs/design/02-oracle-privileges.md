@@ -936,9 +936,11 @@ These rules apply:
   unquoted identifier. An exact comparison would refuse every correctly declared
   account. It is `upper()` and not `casefold()` because the drivers look names
   up by `upper()`, and the two differ outside ASCII: `acme_ıt` upper-cases to
-  `ACME_IT`, and its casefold keeps the dotless i. A personal account's `role:`
-  and `profile:` predicates are compared the same way. The remaining risk is an estate that holds both `ACME_WEB_USER` and a
-  quoted `"acme_web_user"`. The tool does not handle that case.
+  `ACME_IT`, and its casefold keeps the dotless i. For a personal account,
+  "declared" means a rule admits it, and `sopuli.personal.admits` compares
+  names and the `role:` and `profile:` predicates by `upper()` too. The
+  remaining risk is an estate that holds both `ACME_WEB_USER` and a quoted
+  `"acme_web_user"`. The tool does not handle that case.
 - **Check 1 uses the unfiltered config.** A selector narrows what a run touches.
   It cannot remove an account from the declared set (invariant 5). So the
   whitelist is the file's declared set, not this run's part of it.

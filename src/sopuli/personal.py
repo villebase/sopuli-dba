@@ -36,6 +36,7 @@ from collections.abc import Collection
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config, PersonalAccountRule
 from sopuli.config.selection import select
+from sopuli.driver.guardrails import is_declared
 
 
 def rules_for(config: Config, target: str) -> tuple[PersonalAccountRule, ...]:
@@ -68,10 +69,8 @@ def admits(
     `account list`, so a verb admits exactly the accounts the listing shows
     (#1208).
     """
-    spelled = account.upper()
-
     if rule.accounts:
-        return spelled in {name.upper() for name in rule.accounts}
+        return is_declared(account, rule.accounts)
 
     if rule.profile is not None:
         # `None` is a profile that could not be read, not a profile named

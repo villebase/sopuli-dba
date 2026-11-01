@@ -374,6 +374,27 @@ def test_a_pair_set_is_not_a_cross_product() -> None:
     assert len(bound().bindings) == 4
 
 
+def test_every_account_selector_compares_by_upper_and_not_casefold() -> None:
+    """`'acme_ıt_user'.upper()` is `'ACME_IT_USER'`, while its casefold keeps the
+    dotless i. The drivers look a user up by `upper()`, so every selector must
+    take the two spellings as one account (#1208)."""
+    document = {
+        **BOUND,
+        "applications": [{**BOUND["applications"][0], "accounts": ["ACME_IT_USER"]}],
+    }
+    config = build_config(document)
+    typed = Selection(accounts=("acme_ıt_user",))
+
+    assert typed.names("ACME_IT_USER")
+    refuse_unknown(config, typed)
+    assert {binding.account for binding in filter_estate(config, typed).bindings} == {
+        "ACME_IT_USER"
+    }
+    assert pairs_of(filter_to_pairs(config, [("acme_ıt_user", "appdb-dev-alpha")])) == {
+        ("ACME_IT_USER", "appdb-dev-alpha")
+    }
+
+
 def test_an_account_is_matched_case_folded() -> None:
     """A pair set that has been through a database carries Oracle's spelling.
     `--account` already folds for this reason and a pair must not differ."""

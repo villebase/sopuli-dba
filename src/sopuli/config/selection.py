@@ -489,7 +489,7 @@ def refuse_unknown(config: Config, selection: Selection) -> None:
         "--account",
         selection.accounts,
         {name for entry in config.applications for name in entry.accounts},
-        folded=True,
+        by_upper=True,
     )
 
 
@@ -504,18 +504,18 @@ def refuse_unknown_vaults(config: Config, names: Sequence[str]) -> None:
 
 
 def _refuse_missing(
-    flag: str, given: Sequence[str], declared: set[str], *, folded: bool = False
+    flag: str, given: Sequence[str], declared: set[str], *, by_upper: bool = False
 ) -> None:
     """One flag's names against what the file declares.
 
-    ``folded`` for accounts, and only accounts: the file writes
+    ``by_upper`` compares by ``upper()``, for accounts and only accounts: the file writes
     ``acme_web_user`` where Oracle stores ``ACME_WEB_USER``, and an operator
     copying a name out of a database into ``--account`` is doing the obvious
     thing. Target, group and application names are the tool's own vocabulary and
     are compared as written.
     """
-    known = {name.upper() for name in declared} if folded else set(declared)
-    missing = [name for name in given if (name.upper() if folded else name) not in known]
+    known = {name.upper() for name in declared} if by_upper else set(declared)
+    missing = [name for name in given if (name.upper() if by_upper else name) not in known]
     if not missing:
         return
     named = ", ".join(f"`{name}`" for name in missing)

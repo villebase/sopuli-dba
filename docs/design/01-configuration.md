@@ -117,7 +117,7 @@ no accounts is a true answer about today's estate and is not an error.
 here and once as an application account. The two carry different guarantees, one
 mastered by a secret and one handed to a person, so a name in both leaves the
 whitelist ambiguous about which applies and the validator refuses rather than
-picking (§10). Compared case-insensitively, because that is how a selector
+picking (§10). Compared by `upper()`, because that is how a selector
 matches: `--account jdoe` reaches a declared `JDOE`. **The enumerated form is all
 a file can check** — an account that a *predicate* admits and an application
 declares is a collision only a database can see, which is the cost H1 accepted,

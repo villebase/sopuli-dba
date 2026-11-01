@@ -16,9 +16,11 @@ measures, on each server:
   ID4  ALTER USER for a host the user name does not have, 192.0.2.99
   TG1  the tool account, with only CREATE USER, alters root@'%',
        root@'localhost' and mariadb.sys@'localhost', each with a statement that
-       would leave it as it is: root@'%''s own password, ACCOUNT UNLOCK for
-       root, and ACCOUNT LOCK for mariadb.sys, which is locked. Then whether
-       root@'%' still logs in
+       leaves its password, plugin and lock as they were: root@'%''s own
+       password on mysql_native_password, which root@'%' is on in these images
+       (the probe stops if it is not), ACCOUNT UNLOCK for root, and ACCOUNT LOCK
+       for mariadb.sys, which is locked. password_last_changed does change.
+       Then whether root@'%' still logs in, and its plugin
   TG2  GRANT SYSTEM_USER, as root
   TG3  the tool account alters, then drops, an account that holds ALL
        PRIVILEGES WITH GRANT OPTION
@@ -63,8 +65,9 @@ RESULTS -- the same on both releases
        (HY000), because 'localhost' exists. A new account at 'LOCALHOST' is
        stored at 'localhost': host names are not case-sensitive
   ID4  refused, 1396 (HY000)
-  TG1  all four accepted, and root@'%' still logs in: nothing keeps an
-       account with CREATE USER off root
+  TG1  all four accepted, root@'%' still logs in and is still on
+       mysql_native_password: nothing keeps an account with CREATE USER off
+       root
   TG2  refused, 1064 (42000): MariaDB has no SYSTEM_USER
   TG3  the tool account changes the password of, and then drops, an account
        that holds ALL PRIVILEGES WITH GRANT OPTION
@@ -73,7 +76,8 @@ RESULTS -- the same on both releases
        USER and SHOW GRANTS, 1044 (42000). USER_PRIVILEGES shows only the tool
        account's own privileges. With the column grant, the columns read, and
        Password and authentication_string are refused, 1143 (42000)
-  TG6  none of the view's *_priv columns reads Y. The access bits are not 0.
+  TG6  none of the view's *_priv columns reads Y. The access bits are a
+       number above 0.
        SHOW GRANTS names the three privileges and prints the hash, IDENTIFIED
        BY PASSWORD '*...'
   TG7  the account's Super_priv is N, and the role's is Y with is_role Y.
@@ -134,12 +138,8 @@ COLUMNS = "User, Host, password_expired, is_role, Super_priv, Create_user_priv, 
 def login(service: str, password: str, *, socket: bool) -> str:
     """`ok` and CURRENT_USER(), or the refusal, over TCP or over the socket."""
     flags = ("--protocol=SOCKET",) if socket else ("-h127.0.0.1",)
-    returncode, out, err = ch.client(service, NAME, password, "SELECT CURRENT_USER()", *flags)
-    if returncode == 0:
-        return f"ok {out}"
-    if "ERROR " not in err:
-        raise ch.StepError(f"{service}: login: {err[:200]}")
-    return err.split("ERROR ", 1)[1].split(":")[0].split(" at line")[0]
+    ok, out = ch.mysql(service, NAME, password, "SELECT CURRENT_USER()", *flags)
+    return f"ok {out}" if ok else ch.code(out)
 
 
 def tool(service: str, statement: str) -> str:
@@ -154,10 +154,7 @@ def drop(service: str) -> None:
 
 def probe(service: str) -> None:
     """Run the cases, and drop this probe's own accounts whatever happens."""
-    try:
-        cases(service)
-    finally:
-        drop(service)
+    ch.cleaned(service, lambda: cases(service), lambda: drop(service))
 
 
 def cases(service: str) -> None:
@@ -232,6 +229,11 @@ def grants(service: str) -> None:
     )
     if sys_locked != "1":
         raise ch.StepError(f"{service}: mariadb.sys is not locked, so TG1 would change it")
+    # IDENTIFIED BY sets the default plugin, so TG1 leaves root@'%' on the
+    # plugin it had only if that is mysql_native_password, as on these images.
+    root_plugin = "SELECT plugin FROM mysql.user WHERE user = 'root' AND host = '%'"
+    if ch.root(service, root_plugin) != "mysql_native_password":
+        raise ch.StepError(f"{service}: root@'%' is on another plugin, so TG1 would change it")
     got = (
         tool(service, f"ALTER USER 'root'@'%' IDENTIFIED BY {ch.quote(ch.ROOT_PASSWORD)}"),
         tool(service, "ALTER USER 'root'@'%' ACCOUNT UNLOCK"),
@@ -239,11 +241,12 @@ def grants(service: str) -> None:
         tool(service, "ALTER USER 'mariadb.sys'@'localhost' ACCOUNT LOCK"),
     )
     still = ch.login(service, ch.ROOT_PASSWORD, "root")
+    plugin = ch.root(service, root_plugin)
     print(
         f"TG1 root@'%' password, root@'%', root@'localhost', mariadb.sys: {got}; "
-        f"root logs in: {still}"
+        f"root logs in: {still}; root@'%''s plugin: {plugin}"
     )
-    ch.check("TG1", (*got, still), (OK, OK, OK, OK, OK))
+    ch.check("TG1", (*got, still, plugin), (OK, OK, OK, OK, OK, "mysql_native_password"))
 
     ok, out = ch.mysql(
         service, "root", ch.ROOT_PASSWORD, f"GRANT SYSTEM_USER ON *.* TO '{ch.TOOL}'@'%'"
@@ -320,7 +323,9 @@ def reading(service: str) -> None:
         f"TG6 *_priv columns reading Y: {yes} of {len(priv_columns)}; access: {access}; "
         f"SHOW GRANTS names them: {names}, prints the hash: {hashed}"
     )
-    ch.check("TG6", (yes, access != "0", names, hashed), ("0", True, True, True))
+    # A missing key reads NULL, which is not a number.
+    bits = access.isdigit() and int(access) > 0
+    ch.check("TG6", (yes, bits, names, hashed), ("0", True, True, True))
 
     ch.root(
         service,

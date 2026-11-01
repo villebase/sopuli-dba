@@ -653,8 +653,9 @@ full.
   A lock answers `4151` and is readable only in `mysql.global_priv` and `SHOW
   CREATE USER`: the `mysql.user` view has no `account_locked`. An expiry reads
   back as the view's `password_expired = 'Y'`, and `SELECT 1` then answers
-  `1820`. A `max_password_errors` block answers `4150`, nothing readable shows
-  it, and `ACCOUNT UNLOCK` ends it. An account with only `CREATE USER` does
+  `1820`. A `max_password_errors` block answers `4150`, neither
+  `mysql.global_priv` nor `SHOW CREATE USER` shows it (no other place was
+  read), and `ACCOUNT UNLOCK` ends it. An account with only `CREATE USER` does
   all of these. `sql/mariadb/04_lock_expiry_probe.py` measures it.
 - `verified` `mariadb-tool-grants` (#1220) — **What is one account, and what
   keeps `CREATE USER` off root?**

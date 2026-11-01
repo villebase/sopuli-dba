@@ -12,11 +12,13 @@ measures what MariaDB has instead, on each server:
        a login with the old password, with the new one and with a wrong one
   DP3  the same with the old password on mysql_native_password and the new
        one on ed25519, so that the rollover also changes the plugin
-  DP4  what DP2 leaves to read: the mysql.user view's plugin and how many
-       values the account has in mysql.global_priv's auth_or, as root, and what
-       SHOW CREATE USER shows
-  DP5  IDENTIFIED VIA <plugin> USING '<new>' alone, from the tool account,
-       after DP2. Then a login with each password, and auth_or again
+  DP4  what an OR leaves to read, with the old password on
+       mysql_native_password and the new one on ed25519, so that the two
+       methods can be told apart: the mysql.user view's plugin and
+       authentication_string, how many values the account has in
+       mysql.global_priv's auth_or, as root, and what SHOW CREATE USER shows
+  DP5  IDENTIFIED VIA ed25519 USING '<new>' alone, from the tool account,
+       after DP4. Then a login with each password, and auth_or again
 
 auth_or is read with JSON_LENGTH(Priv, '$.auth_or'): an account that has
 never had OR has no auth_or, and reads NULL.
@@ -38,8 +40,9 @@ RESULTS -- the same on both releases, except that 10.11.19 has no parsec
        new password both log in, and a wrong one is refused, 1045 (28000)
   DP3  as DP2: the old password logs in on mysql_native_password and the new
        one on ed25519
-  DP4  the mysql.user view shows only the first method's plugin, and auth_or
-       holds 2 values. SHOW CREATE USER shows both values and OR
+  DP4  the mysql.user view's plugin and authentication_string are the first
+       method's, mysql_native_password and the old value. auth_or holds 2
+       values. SHOW CREATE USER shows both values and OR
   DP5  the old password is refused, 1045 (28000), the new one logs in, and
        auth_or holds 1 value
 
@@ -97,11 +100,12 @@ def both(service: str, old: tuple[str, str], new: tuple[str, str]) -> str:
 
 
 def probe(service: str) -> None:
-    try:
-        cases(service)
-    finally:
-        ch.base.teardown(service)
-        ch.uninstall_plugins(service)
+    ch.cleaned(
+        service,
+        lambda: cases(service),
+        lambda: ch.base.teardown(service),
+        lambda: ch.uninstall_plugins(service),
+    )
 
 
 def cases(service: str) -> None:
@@ -125,22 +129,35 @@ def cases(service: str) -> None:
         print(f"{case} {old_plugin} OR {new_plugin}: set, old, new, wrong: {got}")
         ch.check(f"{case} {old_plugin} {new_plugin}", got, (ch.OK, ch.OK, ch.OK, ch.REFUSED))
 
+    # Two plugins, so that the view's row tells the first method from the second.
     old, new = "Acme-Old-four", "Acme-New-four"
-    both(service, ("ed25519", old), ("ed25519", new))
-    plugin = ch.root(
-        service, f"SELECT plugin FROM mysql.user WHERE user = '{ch.ACCOUNT}' AND host = '%'"
+    old_value = ch.COMPUTE["mysql_native_password"](old)
+    new_value = ch.COMPUTE["ed25519"](new)
+    both(service, ("mysql_native_password", old), ("ed25519", new))
+    plugin, string = ch.root(
+        service,
+        "SELECT plugin, authentication_string FROM mysql.user "
+        f"WHERE user = '{ch.ACCOUNT}' AND host = '%'",
+    ).split("\t")
+    view = (
+        "first"
+        if (plugin, string) == ("mysql_native_password", old_value)
+        else "second"
+        if (plugin, string) == ("ed25519", new_value)
+        else f"neither: {plugin}"
     )
     shown = ch.root(service, f"SHOW CREATE USER {ACCOUNT}")
-    values = sum(shown.count(ch.COMPUTE["ed25519"](p)) for p in (old, new))
+    values = sum(shown.count(value) for value in (old_value, new_value))
+    count = auth_or(service)
     print(
-        f"DP4 view's plugin: {plugin}; auth_or: {auth_or(service)}; "
+        f"DP4 view's plugin and value: the {view} method's; auth_or: {count}; "
         f"SHOW CREATE USER values: {values}, OR: {' OR ' in shown}"
     )
-    ch.check("DP4", (plugin, auth_or(service), values, " OR " in shown), ("ed25519", "2", 2, True))
+    ch.check("DP4", (view, count, values, " OR " in shown), ("first", "2", 2, True))
 
     answer = ch.as_tool(
         service,
-        f"ALTER USER {ACCOUNT} IDENTIFIED VIA ed25519 USING '{ch.COMPUTE['ed25519'](new)}'",
+        f"ALTER USER {ACCOUNT} IDENTIFIED VIA ed25519 USING '{new_value}'",
     )
     got = (answer, ch.login(service, old), ch.login(service, new), auth_or(service))
     print(f"DP5 new alone: set, old, new, auth_or: {got}")

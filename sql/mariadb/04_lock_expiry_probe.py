@@ -49,8 +49,9 @@ RESULTS -- the same on both releases
 
   So the tool account can lock, unlock and expire an account with CREATE USER
   alone. The lock can be read only where the hash is too, in global_priv or in
-  SHOW CREATE USER. The block that max_password_errors sets cannot be read at
-  all.
+  SHOW CREATE USER. The block that max_password_errors sets shows in neither of
+  those; other places, such as information_schema and performance_schema,
+  were not read.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -98,10 +99,11 @@ def priv(service: str) -> str:
 
 
 def probe(service: str) -> None:
-    try:
-        cases(service)
-    finally:
-        ch.root(service, "SET GLOBAL max_password_errors = DEFAULT")
+    ch.cleaned(
+        service,
+        lambda: cases(service),
+        lambda: ch.root(service, "SET GLOBAL max_password_errors = DEFAULT"),
+    )
 
 
 def cases(service: str) -> None:

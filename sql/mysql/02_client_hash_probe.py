@@ -204,9 +204,12 @@ def client(
     return done.returncode, done.stdout.decode("utf-8", "replace").strip(), err
 
 
-def mysql(service: str, user: str, password: str, statement: str) -> tuple[bool, str]:
-    """Run one statement as `user` over TCP. True and the output, or False and the error."""
-    returncode, out, err = client(service, user, password, statement)
+def mysql(service: str, user: str, password: str, statement: str, *flags: str) -> tuple[bool, str]:
+    """Run one statement as `user`, over TCP unless `flags` say otherwise.
+
+    True and the output, or False and the error.
+    """
+    returncode, out, err = client(service, user, password, statement, *flags)
     if returncode == 0:
         return True, out
     # "ERROR 1045 (28000) at line 1: Access denied ..." -> "1045 (28000): Access denied ..."

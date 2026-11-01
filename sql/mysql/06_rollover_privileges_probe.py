@@ -382,18 +382,18 @@ def privileges(service: str) -> None:
         "SELECT CONCAT(db, '.', table_name, ':', table_priv) FROM mysql.tables_priv "
         f"WHERE user = '{ADMIN}'",
     )
-    without = tuple(tool(service, read) for read in reads)
+    before = tuple(tool(service, read) for read in reads)
     ch.root(
         service,
         f"GRANT SELECT ON mysql.proxies_priv TO '{ch.TOOL}'@'%';"
         f"GRANT SELECT ON mysql.db TO '{ch.TOOL}'@'%';"
         f"GRANT SELECT ON mysql.tables_priv TO '{ch.TOOL}'@'%'",
     )
-    with_grant = tuple(tool(service, read) for read in reads)
-    print(f"PV7 proxies_priv, db, tables_priv without the grant: {without}; with it: {with_grant}")
+    after = tuple(tool(service, read) for read in reads)
+    print(f"PV7 proxies_priv, db, tables_priv without the grant: {before}; with it: {after}")
     ch.check(
         "PV7",
-        (without, with_grant),
+        (before, after),
         (
             (DENIED_TABLE,) * 3,
             (f"{ADMIN}>root", "mysql:Y", "mysql.user:Update"),

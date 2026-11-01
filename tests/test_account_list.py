@@ -42,7 +42,7 @@ from sopuli.diagnostics import (
     no_reset_journal,
     reset_journal_unread,
 )
-from sopuli.driver.guardrails import NUMBERS, SUPERUSER, UNWAIVABLE_REMEDIES, review
+from sopuli.driver.guardrails import NUMBERS, review
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
     build_result,
@@ -183,7 +183,7 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
 def test_a_member_of_an_administrative_role_gets_a_notice_force_overrides() -> None:
     """On Oracle a `role:` predicate can admit a member of `DBA`. Check 4
     refuses it in a verb, and `--force` overrides that."""
-    message = guardrail_refusal(user("JDOE", admin_roles=frozenset({"DBA"})))
+    message = guardrail_refusal(user("JDOE", admin_roles=frozenset({"DBA"})), admitted=True)
 
     assert message == (
         "a mutating verb refuses this account at plan time: check 4 (the account holds DBA). "
@@ -191,21 +191,32 @@ def test_a_member_of_an_administrative_role_gets_a_notice_force_overrides() -> N
     )
 
 
-def test_a_superuser_gets_the_remedy_a_verb_gives_for_check_6() -> None:
+def test_a_superuser_is_named_with_the_check_no_flag_overrides() -> None:
     """Check 6 is never waived, so the notice must not send the reader to
-    `--force`, even beside a check that `--force` does override. The remedy is
-    the one `account reset-password` prints."""
-    message = guardrail_refusal(user("ADMIN", superuser=True, session_account=True))
+    `--force`, even beside a check that `--force` does override. Nor to the
+    config: a predicate's member is not written there."""
+    message = guardrail_refusal(user("ADMIN", superuser=True, session_account=True), admitted=True)
 
     assert message is not None
     assert "check 6 (the account is a superuser), check 7 (this is the account" in message
-    assert message.endswith(UNWAIVABLE_REMEDIES[SUPERUSER])
+    assert message.endswith("no flag overrides check 6, so no verb will act on this account")
     assert "--force" not in message
+    assert "config" not in message
+
+
+def test_an_account_no_rule_admits_names_check_1() -> None:
+    """The verbs review the account as undeclared when no rule admits it as
+    the database describes it, so the listing must too (#1207)."""
+    message = guardrail_refusal(user("JDOE"), admitted=False)
+
+    assert message is not None
+    assert message.startswith("a mutating verb refuses this account at plan time: check 1 (")
+    assert message.endswith("no flag overrides check 1, so no verb will act on this account")
 
 
 def test_two_checks_force_overrides_are_them() -> None:
     message = guardrail_refusal(
-        user("SYSTEM", admin_roles=frozenset({"DBA"}), session_account=True)
+        user("SYSTEM", admin_roles=frozenset({"DBA"}), session_account=True), admitted=True
     )
 
     assert message is not None
@@ -233,8 +244,8 @@ def test_every_check_the_review_returns_has_a_number() -> None:
 def test_guardrail_2_alone_and_an_unread_check_get_no_such_notice() -> None:
     """Guardrail 2 has `SOPULI-W041`. An unread password file is a caveat in a
     verb and refuses nothing, so it is not a refusal here either."""
-    assert guardrail_refusal(user("ACME_OWNED", vendor_maintained=True)) is None
-    assert guardrail_refusal(user("JDOE", password_file_member=None)) is None
+    assert guardrail_refusal(user("ACME_OWNED", vendor_maintained=True), admitted=True) is None
+    assert guardrail_refusal(user("JDOE", password_file_member=None), admitted=True) is None
 
 
 def test_oracle_system_carries_both_codes() -> None:

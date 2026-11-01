@@ -135,14 +135,6 @@ NUMBERS = {
     RESERVED: 8,
 }
 
-#: What to do about each check that no flag waives, by check. One entry for each
-#: member of :data:`NEVER_WAIVED`, which a test holds it to.
-UNWAIVABLE_REMEDIES = {
-    DECLARED: "declare it in `accounts:` first; no flag extends the whitelist",
-    SUPERUSER: "this tool does not change a superuser; leave it out of the config",
-    RESERVED: "this tool does not change a role the server reserves; leave it out of the config",
-}
-
 
 @dataclass(frozen=True)
 class Refusal:

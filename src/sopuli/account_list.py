@@ -208,7 +208,7 @@ def cross_declared(config: Config, account: str) -> str | None:
     return None
 
 
-def guardrail_refusal(state: UserState) -> str | None:
+def guardrail_refusal(state: UserState, *, admitted: bool) -> str | None:
     """Why a mutating verb would refuse this listed account, or ``None`` (#1207).
 
     A predicate can admit an account that a guardrail refuses: a member of
@@ -216,28 +216,32 @@ def guardrail_refusal(state: UserState) -> str | None:
     listing that shows such an account with nothing said shows a wider whitelist
     than the verbs act on.
 
-    The account is reviewed as declared, because the listing admitted it.
-    Guardrail 2 is left out, because ``SOPULI-W041`` already says it. A check
-    that could not run is left out too: it refuses nothing in a verb either.
-    The answer is the review's, so the listing and the verbs cannot disagree.
-    The remedy for a check no flag waives is the one a verb gives
-    (:data:`~sopuli.driver.guardrails.UNWAIVABLE_REMEDIES`).
+    ``admitted`` is whether a rule admits the account as the database now
+    describes it. The verbs review the account as declared only then, so this
+    does too, and check 1 is named where no rule admits it. Guardrail 2 is left
+    out, because ``SOPULI-W041`` already says it. A check that could not run is
+    left out too: it refuses nothing in a verb either.
+
+    The remedy is worded for a listing, not taken from a verb. A verb's remedy
+    for a superuser says to leave the account out of the config, but a
+    predicate's member is not written in the config.
 
     An account the database owns can carry this and ``SOPULI-W041`` both:
     Oracle's ``SYSTEM`` holds ``DBA``. The two codes name different checks,
     and each needs its own fix.
     """
-    found = guardrails.review(state, declared=(state.name,)).refusals
+    declared = (state.name,) if admitted else ()
+    found = guardrails.review(state, declared=declared).refusals
     refusals = [one for one in found if one.check != guardrails.VENDOR_MAINTAINED]
     if not refusals:
         return None
-    # `.get` so that a check added to the review without a number still lists.
-    checks = ", ".join(
-        f"check {guardrails.NUMBERS.get(one.check, one.check)} ({one.reason})" for one in refusals
-    )
+    checks = ", ".join(f"check {guardrails.NUMBERS[one.check]} ({one.reason})" for one in refusals)
     fixed = next((one for one in refusals if not one.overridable), None)
     if fixed is not None:
-        remedy = guardrails.UNWAIVABLE_REMEDIES.get(fixed.check, "no flag overrides it")
+        remedy = (
+            f"no flag overrides check {guardrails.NUMBERS[fixed.check]}, so no verb will "
+            "act on this account"
+        )
     else:
         pronoun = "it" if len(refusals) == 1 else "them"
         remedy = f"`--force` overrides {pronoun}, and the override is recorded"

@@ -43,6 +43,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "sopuli"
 PERMITTED = {
     "driver/oracle/client.py": "the driver call -- invariant 2's second exception",
     "driver/postgres/connection.py": "the driver call, for PostgreSQL",
+    "driver/mysql/connection.py": "the driver call, for MySQL",
     "driver/postgres/password.py": (
         "the driver call, for PostgreSQL: the password goes to libpq on this machine, "
         "which computes the SCRAM verifier the statement carries (invariant 15). The "

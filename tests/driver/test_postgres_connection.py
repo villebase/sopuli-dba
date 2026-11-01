@@ -6,10 +6,10 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget, Target, TargetPostgres
+from sopuli.driver.address import host_and_port
 from sopuli.driver.postgres.connection import (
     application_name,
     connect_arguments,
-    host_and_port,
 )
 from sopuli.driver.protocol import Credential, Timeouts
 from sopuli.secrets import Secret

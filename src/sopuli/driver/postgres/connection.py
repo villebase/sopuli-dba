@@ -13,19 +13,8 @@ from typing import Any
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget
+from sopuli.driver.address import host_and_port
 from sopuli.driver.protocol import Credential, Timeouts
-
-
-def host_and_port(dsn: str) -> tuple[str, int]:
-    """Split a ``host:port`` dsn. ``01-configuration.md`` §3a has the format,
-    and :mod:`sopuli.config.products` has already refused any other.
-
-    An IPv6 address loses its brackets, because libpq takes the bare address.
-    """
-    host, _, port = dsn.rpartition(":")
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
-    return host, int(port)
 
 
 def application_name(correlation_id: str) -> str:

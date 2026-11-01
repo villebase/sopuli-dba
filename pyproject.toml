@@ -74,8 +74,10 @@ mysql = [
   # it speaks `caching_sha2_password` (#1202, decision 8). Over a plain
   # connection, a login the server has not cached needs RSA key exchange,
   # which is PyMySQL's own `rsa` extra (`cryptography`). The config accepts
-  # `ssl_mode: DISABLED` and `PREFERRED`, so the extra comes with it.
-  "PyMySQL[rsa]>=1.1.1",
+  # `ssl_mode: DISABLED` and `PREFERRED`, so the extra comes with it. 1.2.3
+  # is the release whose TLS handling src/sopuli/driver/mysql/connection.py
+  # was written from: given a context, it refuses a server that offers no TLS.
+  "PyMySQL[rsa]>=1.2.3",
 ]
 hashicorp = [
   # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than

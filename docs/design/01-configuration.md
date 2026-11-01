@@ -714,7 +714,7 @@ Names are checked against the **unfiltered** estate, so a name that exists but
 was excluded by another selector is an empty run rather than a misspelling —
 those are different mistakes with different fixes.
 
-`--account` is compared case-folded, for the reason §4 of
+`--account` is compared by `upper()`, for the reason §4 of
 `02-oracle-privileges.md` gives about check 1: the file writes `acme_web_user`
 where Oracle stores `ACME_WEB_USER`, and an operator copying a name out of a
 database is doing the obvious thing. Target, group and application names are the
@@ -3697,8 +3697,8 @@ notices until a rotation.
 - a name declared **both** as an application account and a personal one → error
   naming both sections ([H1](../decisions/log.md#h1)). The two carry different guarantees — mastered
   by a secret, or handed to a person — so a name in both is ambiguous about which
-  applies, and the tool refuses rather than choosing. Compared
-  case-insensitively, because `sopuli/config/selection.py` casefolds and one
+  applies, and the tool refuses rather than choosing. Compared by
+  `upper()`, because `sopuli/config/selection.py` compares that way and one
   `--account` would otherwise reach two "distinct" spellings. **Only the
   enumerated form is checkable here**: an account a predicate admits and an
   application declares collides where no file can see it, and the verb that

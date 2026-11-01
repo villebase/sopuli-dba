@@ -585,7 +585,7 @@ def test_a_binding_left_out_is_named_with_the_flag_that_did_it(
     selection: Selection, flag: str
 ) -> None:
     """Checked against what `filter_estate` removes, so the two agree. The
-    account in the first case is matched case-folded."""
+    account in the first case is matched by `upper()`."""
     config = build_config(GROUPED)
     kept = pairs_of(filter_estate(config, selection))
 

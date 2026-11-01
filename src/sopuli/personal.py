@@ -60,25 +60,27 @@ def admits(
 ) -> bool:
     """Whether ``rule`` declares ``account``.
 
-    Comparison is case-folded throughout, for
-    :func:`~sopuli.driver.guardrails.is_declared`'s reason: a config file writes
-    ``jdoe`` and Oracle stores ``JDOE``, since an unquoted identifier is
-    upper-cased on the way in, and comparing exactly would refuse every correctly
-    declared account.
+    Every name is compared by ``upper()``, as
+    :func:`~sopuli.driver.guardrails.is_declared` compares them and for its
+    reasons. A config file writes ``jdoe`` and Oracle stores ``JDOE``, so an
+    exact comparison would refuse every correctly declared account. And
+    ``upper()`` is how the drivers resolve a ``role:`` or ``profile:`` for
+    `account list`, so a verb admits exactly the accounts the listing shows
+    (#1208).
     """
-    folded = account.casefold()
+    spelled = account.upper()
 
     if rule.accounts:
-        return folded in {name.casefold() for name in rule.accounts}
+        return spelled in {name.upper() for name in rule.accounts}
 
     if rule.profile is not None:
         # `None` is a profile that could not be read, not a profile named
         # `None`, so it admits nothing -- see the module docstring on why the
         # missing-input direction differs from guardrail 4's.
-        return profile is not None and profile.casefold() == rule.profile.casefold()
+        return profile is not None and profile.upper() == rule.profile.upper()
 
     if rule.role is not None:
-        return rule.role.casefold() in {held.casefold() for held in roles}
+        return rule.role.upper() in {held.upper() for held in roles}
 
     # Unreachable through the config layer, which refuses an entry declaring
     # none of the three. Answered rather than asserted: a rule that says

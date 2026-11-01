@@ -84,7 +84,7 @@ class Selection:
     select: Pairs = ()
     #: Target names, from ``--target``.
     targets: tuple[str, ...] = ()
-    #: Account names, from ``--account``. Matched case-folded, for the reason
+    #: Account names, from ``--account``. Matched by ``upper()``, for the reason
     #: :func:`sopuli.driver.guardrails.is_declared` gives: the file writes
     #: ``acme_web_user`` and Oracle stores ``ACME_WEB_USER``, and neither is
     #: wrong.
@@ -117,8 +117,7 @@ class Selection:
         change behaviour according to how many rows an estate happens to have
         today, which is the one thing a safety rule must not do.
         """
-        folded = {name.casefold() for name in self.accounts}
-        return account.casefold() in folded
+        return account.upper() in {name.upper() for name in self.accounts}
 
     def as_json(self) -> dict[str, object]:
         """``invocation.selection``, omitting the members nobody used.
@@ -312,10 +311,10 @@ def narrow_to_pairs(
 
     Everything is left out by the flag that hands in a pair set, ``--repair``.
     """
-    wanted = {(account.casefold(), target) for account, target in pairs}
+    wanted = {(account.upper(), target) for account, target in pairs}
 
     def binding(one: Binding) -> str | None:
-        return None if (one.account.casefold(), one.target) in wanted else "--repair"
+        return None if (one.account.upper(), one.target) in wanted else "--repair"
 
     return _walk(config, lambda expanded: None, binding, prune="--repair")
 
@@ -380,7 +379,7 @@ class _Tests:
     selection: Selection
     groups: tuple[Pairs, ...]
     targets: frozenset[str]
-    #: ``--account``, case-folded for the reason :attr:`Selection.accounts` gives.
+    #: ``--account``, upper-cased for the reason :attr:`Selection.accounts` gives.
     accounts: frozenset[str]
 
     @classmethod
@@ -389,7 +388,7 @@ class _Tests:
             selection,
             tuple(_group_match(config, name) for name in selection.groups),
             frozenset(selection.targets),
-            frozenset(name.casefold() for name in selection.accounts),
+            frozenset(name.upper() for name in selection.accounts),
         )
 
     def target(self, expanded: ExpandedTarget) -> str | None:
@@ -404,7 +403,7 @@ class _Tests:
 
     def binding(self, binding: Binding) -> str | None:
         """The first binding-level flag that excludes this binding, or ``None``."""
-        if self.accounts and binding.account.casefold() not in self.accounts:
+        if self.accounts and binding.account.upper() not in self.accounts:
             return "--account"
         applications = self.selection.applications
         if applications and binding.application not in applications:
@@ -435,7 +434,7 @@ def filter_to_pairs(config: Config, pairs: Iterable[AccountTarget]) -> Config:
     would make a document unusable for the accounts it is still right about,
     which is the whole of what it was read for.
 
-    Accounts are compared case-folded, for the reason ``--account`` already is:
+    Accounts are compared by ``upper()``, for the reason ``--account`` already is:
     the file writes ``acme_web_user`` where Oracle stores ``ACME_WEB_USER``, and
     a pair set that has been through a database carries the second spelling.
     Target names are the tool's own vocabulary and are compared as written.
@@ -515,8 +514,8 @@ def _refuse_missing(
     thing. Target, group and application names are the tool's own vocabulary and
     are compared as written.
     """
-    known = {name.casefold() for name in declared} if folded else set(declared)
-    missing = [name for name in given if (name.casefold() if folded else name) not in known]
+    known = {name.upper() for name in declared} if folded else set(declared)
+    missing = [name for name in given if (name.upper() if folded else name) not in known]
     if not missing:
         return
     named = ", ".join(f"`{name}`" for name in missing)

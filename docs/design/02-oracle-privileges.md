@@ -931,10 +931,13 @@ These rules apply:
   whitelist that nobody agreed to. The list is long rather than exact. A missing
   entry means one old release misses one check. An extra entry means an audited
   `--force`. The first cost is the larger one.
-- **Check 1 compares names case-folded.** `01-configuration.md` writes
+- **Check 1 compares names by `upper()`.** `01-configuration.md` writes
   `acme_web_user`, and Oracle stores `ACME_WEB_USER`, because it upper-cases an
   unquoted identifier. An exact comparison would refuse every correctly declared
-  account. The remaining risk is an estate that holds both `ACME_WEB_USER` and a
+  account. It is `upper()` and not `casefold()` because the drivers look names
+  up by `upper()`, and the two differ outside ASCII: `acme_ıt` upper-cases to
+  `ACME_IT`, and its casefold keeps the dotless i. A personal account's `role:`
+  and `profile:` predicates are compared the same way. The remaining risk is an estate that holds both `ACME_WEB_USER` and a
   quoted `"acme_web_user"`. The tool does not handle that case.
 - **Check 1 uses the unfiltered config.** A selector narrows what a run touches.
   It cannot remove an account from the declared set (invariant 5). So the

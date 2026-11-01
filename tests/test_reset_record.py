@@ -149,7 +149,7 @@ def test_the_pair_that_would_have_collided_cannot_be_built() -> None:
 
 
 def test_an_account_name_is_folded_and_a_target_name_is_not() -> None:
-    """An Oracle account is matched case-insensitively everywhere else here, so a
+    """An account is compared by `upper()` everywhere else here, so a
     path that did not fold would let one account own two records that never find
     each other -- two concurrent resets not colliding. A target name is a
     `targets:` key, matched exactly, and folding it would merge two targets an
@@ -159,6 +159,18 @@ def test_an_account_name_is_folded_and_a_target_name_is_not() -> None:
     )
     assert record_path(RECORDS, target="APPDB-DEV-ALPHA", account="jdoe") != record_path(
         RECORDS, target="appdb-dev-alpha", account="jdoe"
+    )
+
+
+def test_the_account_segment_follows_upper_and_stays_lower_case() -> None:
+    """Two spellings that `upper()` makes one account share one record (#1208).
+    `'jdoe_ıt'.upper()` is `'JDOE_IT'`, while its casefold keeps the dotless i.
+    An ASCII name keeps the lower-case segment it had."""
+    assert record_path(RECORDS, target="appdb-dev-alpha", account="jdoe_ıt") == record_path(
+        RECORDS, target="appdb-dev-alpha", account="JDOE_IT"
+    )
+    assert record_path(RECORDS, target="appdb-dev-alpha", account="JDoe").endswith(
+        "/appdb-dev-alpha/jdoe"
     )
 
 

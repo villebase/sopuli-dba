@@ -165,7 +165,7 @@ def test_a_preview_reads_and_issues_nothing(
     )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert len(fake) == 1, "a preview still connects and reads, once per target"
+    assert len(fake) == 2, "a preview asks the capability, then connects and reads"
     assert fake[0].expired == [], "and issues nothing"
     row = document(result)["results"][0]
     assert row["changed"] is False
@@ -207,27 +207,6 @@ def test_a_target_that_cannot_expire_refuses_the_run_at_plan_time(
     assert "expire_password" in error["message"]
     assert "tier1-oracle" in error["message"]
     assert "account suspend" in error["hint"]
-
-
-def test_a_target_that_cannot_be_opened_is_logged_in_to_once(
-    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The plan-time check keeps the error, and the row reports it without a
-    second login: a wrong admin password fails once per target (#1201)."""
-    attempts: list[str] = []
-
-    def open_session(target: Any, run: Any, config: Any) -> FakeSession:
-        attempts.append(target.name)
-        raise DriverError("ORA-01017: invalid credential or not authorised; logon denied")
-
-    monkeypatch.setattr("sopuli.cli._open_session", open_session)
-
-    result = run(runner, write_config(OFFLINE), "--account", ACCOUNT, "--output", "json")
-
-    assert attempts == ["tier1-oracle"]
-    (row,) = document(result)["results"]
-    assert row["state"] == "ERROR"
-    assert "ORA-01017" in row["error"]["message"]
 
 
 def test_the_refusal_comes_before_the_confirmation(

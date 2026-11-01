@@ -19,6 +19,7 @@ from sopuli.driver.protocol import (
     ENCRYPTION_NONE,
     ENCRYPTION_TLS,
     SERVER,
+    UNKNOWN,
     DriverError,
     Encryption,
     Scope,
@@ -29,14 +30,24 @@ from sopuli.exit_codes import ExitCode
 READ_WRITE = "READ WRITE"
 READ_ONLY = "READ ONLY"
 
-#: The server's version and the three settings that stop the tool account
-#: writing. `read_only` stops every account without `CONNECTION_ADMIN`, which
-#: the tool account does not hold; `super_read_only` stops every account; a
-#: session's `transaction_read_only` stops that session. Readable by any account.
-SESSION_FACTS = (
-    "select version(), @@global.read_only, @@global.super_read_only, "
-    "@@session.transaction_read_only"
+#: The server's version, read alone and first: another product that speaks the
+#: protocol may lack the settings below, and is refused by name before they are
+#: read. MariaDB 10.11.19 has no `super_read_only` (measured: `1193`).
+VERSION = "select version()"
+
+#: The three settings that stop the tool account writing. `read_only` stops
+#: every account without `CONNECTION_ADMIN` or `SUPER`, which the tool account
+#: holds neither of; `super_read_only` stops every account; a session's
+#: `transaction_read_only` stops that session. Readable by any account, on
+#: 8.0, 8.4 and 9 (#1202).
+READ_ONLY_SETTINGS = (
+    "select @@global.read_only, @@global.super_read_only, @@session.transaction_read_only"
 )
+
+#: Products that speak MySQL's protocol and are not MySQL, as their
+#: ``VERSION()`` names them. MariaDB gets a driver of its own (#1202, decision
+#: 2). TiDB's version names it, as `8.0.11-TiDB-v7.5.0`, and it is not measured.
+OTHER_PRODUCTS = {"mariadb": "MariaDB", "tidb": "TiDB"}
 
 #: The session's TLS version, or an empty string on a plain connection. Any
 #: account reads its own session status. Measured on 8.4.13 with PyMySQL 1.2.3:
@@ -47,6 +58,7 @@ TLS_VERSION = "show session status like 'Ssl_version'"
 TCP = "tcp"
 
 UNENCRYPTED_HINT = "set `mysql.ssl_mode` to VERIFY_IDENTITY, and give the server a certificate"
+NO_ROW_HINT = "SHOW SESSION STATUS has no Ssl_version row for this session"
 
 
 class Cursor(Protocol):
@@ -62,7 +74,8 @@ class NotMysqlError(DriverError):
 
     MariaDB speaks MySQL's protocol and answers to the same client, and it
     stores and changes passwords differently (#1220), so it gets a driver of
-    its own. ``config``, exit 9: the file names the wrong type.
+    its own. TiDB is refused for the same reason, unmeasured. ``config``, exit
+    9: the file names the wrong type.
     """
 
     category = "config"
@@ -73,9 +86,11 @@ def encryption_of(row: Any) -> Encryption:
     """The session's encryption, from its ``Ssl_version`` status row.
 
     ``protocol`` is the transport, ``tcp``: TLS runs inside the TCP connection.
+    No row is ``unknown``, not ``none``: not knowing is not a finding.
     """
-    version = "" if row is None else str(row[1] or "")
-    if version:
+    if row is None:
+        return Encryption(method=UNKNOWN, protocol=TCP, hint=NO_ROW_HINT)
+    if row[1]:
         return Encryption(method=ENCRYPTION_TLS, protocol=TCP)
     return Encryption(method=ENCRYPTION_NONE, protocol=TCP, hint=UNENCRYPTED_HINT)
 
@@ -86,19 +101,23 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
 
     ``db_version`` is the part of ``VERSION()`` before the first ``-``, so
     ``8.0.46-log`` is reported as ``8.0.46``. A server whose version names
-    MariaDB is refused (:class:`NotMysqlError`).
+    another product is refused (:class:`NotMysqlError`), before anything else is
+    read.
     """
-    cursor.execute(SESSION_FACTS)
-    version, read_only, super_read_only, transaction_read_only = cursor.fetchone()
-    version = str(version)
-    if "mariadb" in version.lower():
-        raise NotMysqlError(
-            f'target "{target}" declares type "mysql", and the server is MariaDB ({version})',
-            hint=(
-                "MariaDB gets a driver of its own, which is not written yet (#1202). "
-                "It stores and changes passwords differently from MySQL"
-            ),
-        )
+    cursor.execute(VERSION)
+    version = str(cursor.fetchone()[0])
+    for word, product in OTHER_PRODUCTS.items():
+        if word in version.lower():
+            raise NotMysqlError(
+                f'target "{target}" declares type "mysql", and the server is {product} ({version})',
+                hint=(
+                    f"{product} speaks MySQL's protocol and handles passwords differently; "
+                    "the MySQL driver does not support it. MariaDB gets a driver of its "
+                    "own, which is not written yet (#1202)"
+                ),
+            )
+    cursor.execute(READ_ONLY_SETTINGS)
+    read_only, super_read_only, transaction_read_only = cursor.fetchone()
     writable = not (read_only or super_read_only or transaction_read_only)
     open_mode = READ_WRITE if writable else READ_ONLY
 

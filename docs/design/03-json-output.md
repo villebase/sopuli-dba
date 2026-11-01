@@ -1480,9 +1480,11 @@ with `protocol` `tcp`. `error.code` is the SQLSTATE (§2, `error`).
 `READ ONLY` where the server's `read_only` or `super_read_only`, or the
 session's `transaction_read_only`, is on, and `read_write` is false then.
 `db_version` is `VERSION()` up to its first `-`. `capabilities` is empty. The
-encryption comes from the session's own `Ssl_version` status: `tls`, or `none`
-where it is empty, with `protocol` `tcp`. A server whose version names MariaDB
-is refused, a `config` error, because MariaDB gets a driver of its own. The
+encryption comes from the session's own `Ssl_version` status: `tls`, `none`
+where it is empty, or `unknown` where there is no such row, with `protocol`
+`tcp`. A server whose version names MariaDB or TiDB is refused, a `config`
+error, before anything else is read: MariaDB gets a driver of its own, and
+neither handles passwords as MySQL does. The
 MySQL driver reports this once it connects, which #1221 adds.
 
 **`asserted` is absent when the target asserts nothing**, not present with

@@ -16,7 +16,6 @@ without a round trip. The driver sends nothing that changes the server.
 
 from __future__ import annotations
 
-import importlib.metadata
 import logging
 import time
 from collections.abc import Mapping
@@ -27,9 +26,9 @@ import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql.client import client_lines
-from sopuli.driver.mysql.connection import connect_arguments
-from sopuli.driver.mysql.errors import AUTH_PLUGIN_ERROR, TLS_CONNECTION_ERROR, from_error
-from sopuli.driver.mysql.scope import observe
+from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
+from sopuli.driver.mysql.errors import TLS_CONNECTION_ERROR, UNKNOWN_CLIENT_ERROR, from_error
+from sopuli.driver.mysql.scope import observe, read_encryption
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     PASSWORD_ROLLOVER,
@@ -43,6 +42,7 @@ from sopuli.driver.protocol import (
     Credential,
     DriverContext,
     DriverError,
+    Encryption,
     PrivilegeAudit,
     Scope,
     Timeouts,
@@ -57,9 +57,6 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("mysql")
-
-#: The `ssl_mode` values under which a session without TLS is refused.
-TLS_REQUIRED_MODES = ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
 
 
 class NotWrittenError(DriverError):
@@ -102,9 +99,10 @@ class PlainLoginError(DriverError):
     ``AttributeError: 'NoneType' object has no attribute
     'is_auth_switch_request'``, not a MySQL error: its
     ``caching_sha2_password_auth`` returns nothing after the RSA round trip.
-    The same login over TLS succeeds. ``connectivity``, with the client's
-    ``CR_AUTH_PLUGIN_ERR`` number. When PyMySQL is fixed, the tier-1 test that
-    pins this fails, and this goes.
+    The same login over TLS succeeds. ``connectivity``, with ``2000``
+    (``CR_UNKNOWN_ERROR``), the number :mod:`~sopuli.driver.mysql.errors` gives
+    every client failure that carries none, in the same category. When PyMySQL
+    is fixed, the tier-1 test that pins this fails, and this goes.
     """
 
     category = "connectivity"
@@ -122,13 +120,19 @@ class MysqlSession:
 
     connection: Any
     target: ExpandedTarget
+    #: The session's encryption, where connect already read it to hold a mode
+    #: that requires TLS to it, so :meth:`scope` does not read it again.
+    encryption: Encryption | None = None
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its encryption.
 
-        Probed on the first call and cached for the session (invariant 3).
+        Probed on the first call and cached for the session (invariant 3). Not
+        at connect: a server that answers and is not MySQL, or a read that
+        fails on a session that opened, is about a target that was reached, and
+        `doctor` keeps the two apart.
         """
         if self._scope is None:
             if self.connection is None:
@@ -138,7 +142,9 @@ class MysqlSession:
                 )
             try:
                 with self.connection.cursor() as cursor:
-                    self._scope = observe(cursor, target=self.target.name)
+                    self._scope = observe(
+                        cursor, target=self.target.name, encryption=self.encryption
+                    )
             except pymysql.err.MySQLError as error:
                 raise from_error(error).as_error() from error
             if LOG.isEnabledFor(logging.DEBUG):
@@ -239,22 +245,22 @@ class MysqlSession:
             connection.close()
 
 
-def require_tls(scope: Scope, target: ExpandedTarget) -> None:
+def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
     """Refuse a session not known to be TLS where ``ssl_mode`` requires it.
 
     PyMySQL already refuses a server that offers no TLS when it is given a
     context (:mod:`sopuli.driver.mysql.connection`). This reads the answer from
-    the session's own scope, so the rule does not rest on the client library
-    alone. ``unknown`` is refused too, with its own words: a mode that requires
-    TLS needs it confirmed.
+    the session itself, so the rule does not rest on the client library alone.
+    ``unknown`` is refused too, with its own words: a mode that requires TLS
+    needs it confirmed.
     """
     mode = target.target.mysql_settings.ssl_mode
-    if mode not in TLS_REQUIRED_MODES or scope.encryption.method == ENCRYPTION_TLS:
+    if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
         return
-    if scope.encryption.method == UNKNOWN:
+    if encryption.method == UNKNOWN:
         raise UnencryptedSessionError(
             f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
-            hint=str(scope.encryption.hint),
+            hint=encryption.hint or "the server did not say whether the session is TLS",
             code=str(TLS_CONNECTION_ERROR),
         )
     raise UnencryptedSessionError(
@@ -308,10 +314,11 @@ class MysqlDriver:
                 f"caching_sha2_password login over a plain connection",
                 hint=(
                     "a login the server has not cached needs the full exchange, which "
-                    "PyMySQL 1.2.3 fails without TLS. Set `mysql.ssl_mode` to REQUIRED, "
-                    "or to VERIFY_IDENTITY with `mysql.ssl_ca`"
+                    "PyMySQL 1.2.3 fails without TLS. Set `mysql.ssl_mode` to "
+                    "VERIFY_IDENTITY, with `mysql.ssl_ca` naming the CA that issued the "
+                    "server's certificate"
                 ),
-                code=str(AUTH_PLUGIN_ERROR),
+                code=str(UNKNOWN_CLIENT_ERROR),
             ) from error
         LOG.debug(
             "connect to %s as %s in %.3fs",
@@ -319,15 +326,19 @@ class MysqlDriver:
             credential.username,
             time.monotonic() - started,
         )
-        session = MysqlSession(connection=connection, target=target)
         try:
-            # One read: the scope is cached for the session, and the TLS rule
-            # reads its encryption.
-            require_tls(session.scope(), target)
+            # Only the encryption here, which the TLS rule needs before anything
+            # is sent. The session keeps it, so the scope does not read it again.
+            with connection.cursor() as cursor:
+                encryption = read_encryption(cursor)
+            require_tls(encryption, target)
+        except pymysql.err.MySQLError as error:
+            connection.close()
+            raise from_error(error).as_error() from error
         except BaseException:
-            session.close()
+            connection.close()
             raise
-        return session
+        return MysqlSession(connection=connection, target=target, encryption=encryption)
 
 
 def build_driver(context: DriverContext) -> MysqlDriver:
@@ -337,6 +348,8 @@ def build_driver(context: DriverContext) -> MysqlDriver:
 
 
 def client_report(*, env: Mapping[str, str], runtime: Runtime) -> dict[str, Any]:
-    """`doctor`'s client line: PyMySQL's release, from its distribution's
-    metadata. Neither argument is read."""
-    return client_lines(pymysql_version=importlib.metadata.version("PyMySQL"))
+    """`doctor`'s client line: PyMySQL's release, from ``pymysql.VERSION``,
+    ``(1, 2, 3, 'final')`` on 1.2.3. Not ``pymysql.__version__``, a
+    MySQLdb-compatible string (``2.2.8`` there), and not the distribution's
+    metadata, which an unusual install may lack. Neither argument is read."""
+    return client_lines(pymysql_version=".".join(str(part) for part in pymysql.VERSION[:3]))

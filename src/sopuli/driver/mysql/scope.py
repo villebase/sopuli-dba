@@ -95,14 +95,22 @@ def encryption_of(row: Any) -> Encryption:
     return Encryption(method=ENCRYPTION_NONE, protocol=TCP, hint=UNENCRYPTED_HINT)
 
 
-def observe(cursor: Cursor, *, target: str) -> Scope:
+def read_encryption(cursor: Cursor) -> Encryption:
+    """The session's encryption alone: what the session reads at connect, to
+    hold a mode that requires TLS to it, and hands to :func:`observe`."""
+    cursor.execute(TLS_VERSION)
+    return encryption_of(cursor.fetchone())
+
+
+def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None) -> Scope:
     """This session's scope: a server, whether it takes writes, and how the
     session is encrypted.
 
     ``db_version`` is the part of ``VERSION()`` before the first ``-``, so
     ``8.0.46-log`` is reported as ``8.0.46``. A server whose version names
     another product is refused (:class:`NotMysqlError`), before anything else is
-    read.
+    read. ``encryption`` is the session's, where :func:`read_encryption`
+    already read it; otherwise it is read here.
     """
     cursor.execute(VERSION)
     version = str(cursor.fetchone()[0])
@@ -121,8 +129,8 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
     writable = not (read_only or super_read_only or transaction_read_only)
     open_mode = READ_WRITE if writable else READ_ONLY
 
-    cursor.execute(TLS_VERSION)
-    encryption = encryption_of(cursor.fetchone())
+    if encryption is None:
+        encryption = read_encryption(cursor)
 
     return Scope(
         type=SERVER,

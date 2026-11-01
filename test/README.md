@@ -213,7 +213,8 @@ them.
 A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
 2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
 idle and 2.8 GB under the suite; `yopass` and `yopass-memcached` add about
-10 MiB.
+10 MiB. Those figures predate `mysql`, which adds about 440 MiB (measured
+after its tier-1 tests, 2026-11-01).
 
 | Service | Port | Notes |
 |---|---|---|

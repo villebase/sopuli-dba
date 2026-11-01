@@ -31,6 +31,10 @@ from sopuli.driver.address import host_and_port
 from sopuli.driver.login import require_login, session_label
 from sopuli.driver.protocol import Credential, Timeouts
 
+#: The `ssl_mode` values that require TLS: :func:`tls_arguments` gives each a
+#: context, and the session refuses one that is not TLS.
+TLS_REQUIRED_MODES = ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
+
 
 def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     """PyMySQL's TLS arguments for the target's ``ssl_mode``, all five modes
@@ -61,6 +65,8 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
         return {"ssl_disabled": True}
     if block.ssl_mode == "PREFERRED":
         return {}
+    if block.ssl_mode not in TLS_REQUIRED_MODES:
+        raise ValueError(f"not a MySQL ssl_mode: {block.ssl_mode!r}")
     try:
         context = ssl.create_default_context(cafile=block.ssl_ca)
     except OSError as error:

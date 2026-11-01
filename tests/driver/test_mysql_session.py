@@ -34,15 +34,17 @@ scope_module = pytest.importorskip("sopuli.driver.mysql.scope")
 
 
 class _Cursor:
-    def __init__(self, tls: str) -> None:
+    def __init__(self, connection: _Connection) -> None:
+        self._connection = connection
         self._rows = {
-            scope_module.VERSION: ("8.4.13",),
+            scope_module.VERSION: (connection.version,),
             scope_module.READ_ONLY_SETTINGS: (0, 0, 0),
-            scope_module.TLS_VERSION: ("Ssl_version", tls),
+            scope_module.TLS_VERSION: ("Ssl_version", connection.tls),
         }
         self._last = ""
 
     def execute(self, query: str, args: Any = None, /) -> None:
+        self._connection.queries.append(query)
         self._last = query
 
     def fetchone(self) -> Any:
@@ -50,13 +52,15 @@ class _Cursor:
 
 
 class _Connection:
-    def __init__(self, tls: str = "TLSv1.3") -> None:
+    def __init__(self, tls: str = "TLSv1.3", version: str = "8.4.13") -> None:
         self.tls = tls
+        self.version = version
         self.closed = 0
+        self.queries: list[str] = []
 
     @contextmanager
     def cursor(self) -> Iterator[_Cursor]:
-        yield _Cursor(self.tls)
+        yield _Cursor(self)
 
     def close(self) -> None:
         self.closed += 1
@@ -151,17 +155,17 @@ def test_close_is_safe_twice() -> None:
     assert connection.closed == 1
 
 
-def _scope(method: str) -> Any:
-    from sopuli.driver.protocol import Encryption, Scope
+def _encryption(method: str, hint: str | None = "the hint") -> Any:
+    from sopuli.driver.protocol import Encryption
 
-    return Scope(type="server", encryption=Encryption(method=method, hint="the hint"))
+    return Encryption(method=method, hint=hint)
 
 
 @pytest.mark.parametrize("mode", ["REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"])
 def test_a_mode_that_requires_tls_refuses_a_session_without_it(mode: str) -> None:
-    """Read from the session's scope, so the rule does not rest on PyMySQL alone."""
+    """Read from the session, so the rule does not rest on PyMySQL alone."""
     with pytest.raises(session_module.UnencryptedSessionError) as caught:
-        session_module.require_tls(_scope("none"), _target(mode))
+        session_module.require_tls(_encryption("none"), _target(mode))
 
     assert caught.value.category == "connectivity"
     assert caught.value.code == "2026"
@@ -170,42 +174,66 @@ def test_a_mode_that_requires_tls_refuses_a_session_without_it(mode: str) -> Non
 
 def test_a_session_not_known_to_be_tls_is_refused_in_its_own_words() -> None:
     with pytest.raises(session_module.UnencryptedSessionError) as caught:
-        session_module.require_tls(_scope("unknown"), _target("REQUIRED"))
+        session_module.require_tls(_encryption("unknown"), _target("REQUIRED"))
 
     assert "could not confirm TLS" in str(caught.value)
     assert caught.value.hint == "the hint"
 
 
+def test_an_unknown_encryption_without_a_hint_still_says_something() -> None:
+    with pytest.raises(session_module.UnencryptedSessionError) as caught:
+        session_module.require_tls(_encryption("unknown", hint=None), _target("REQUIRED"))
+
+    assert caught.value.hint
+    assert caught.value.hint != "None"
+
+
 @pytest.mark.parametrize("mode", ["DISABLED", "PREFERRED"])
 def test_a_mode_that_does_not_require_tls_accepts_any_session(mode: str) -> None:
-    session_module.require_tls(_scope("none"), _target(mode))
+    session_module.require_tls(_encryption("none"), _target(mode))
 
 
 def test_a_session_with_tls_passes_the_check() -> None:
-    session_module.require_tls(_scope("tls"), _target("REQUIRED"))
+    session_module.require_tls(_encryption("tls"), _target("REQUIRED"))
+
+
+def _connected(monkeypatch: pytest.MonkeyPatch, connection: _Connection) -> Any:
+    monkeypatch.setattr(session_module.pymysql, "connect", lambda **arguments: connection)
+    return session_module.MysqlDriver(correlation_id="run").connect(
+        _target("REQUIRED"), _credential()
+    )
 
 
 def test_connect_closes_a_session_it_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The scope is read once, at connect, and a refused session is closed."""
     connection = _Connection(tls="")
-    monkeypatch.setattr(session_module.pymysql, "connect", lambda **arguments: connection)
-    driver = session_module.MysqlDriver(correlation_id="run")
 
     with pytest.raises(session_module.UnencryptedSessionError):
-        driver.connect(_target("REQUIRED"), _credential())
+        _connected(monkeypatch, connection)
 
     assert connection.closed == 1
 
 
-def test_connect_reads_the_scope_once_and_keeps_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connect_reads_only_the_encryption_and_the_scope_does_not_read_it_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     connection = _Connection(tls="TLSv1.3")
-    monkeypatch.setattr(session_module.pymysql, "connect", lambda **arguments: connection)
-    session = session_module.MysqlDriver(correlation_id="run").connect(
-        _target("REQUIRED"), _credential()
-    )
 
-    assert session._scope is not None
-    assert session.scope() is session._scope
+    session = _connected(monkeypatch, connection)
+
+    assert connection.queries == [scope_module.TLS_VERSION]
+    assert session.scope().encryption.method == "tls"
+    assert connection.queries.count(scope_module.TLS_VERSION) == 1
+
+
+def test_a_mariadb_server_connects_and_is_refused_by_its_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not at connect: `doctor` reports a server that answered and is the
+    wrong product as a configuration error, not as unreachable."""
+    session = _connected(monkeypatch, _Connection(version="10.11.19-MariaDB-ubu2204-log"))
+
+    with pytest.raises(scope_module.NotMysqlError):
+        session.scope()
 
 
 def _credential() -> Credential:
@@ -228,8 +256,8 @@ def test_pymysqls_failure_of_a_plain_login_is_reported_as_what_it_is(
         driver.connect(_target("DISABLED"), _credential())
 
     assert caught.value.category == "connectivity"
-    assert caught.value.code == "2061"
-    assert "REQUIRED" in str(caught.value.hint)
+    assert caught.value.code == "2000"
+    assert "VERIFY_IDENTITY" in str(caught.value.hint)
 
 
 @pytest.mark.parametrize("mode", ["DISABLED", "PREFERRED"])

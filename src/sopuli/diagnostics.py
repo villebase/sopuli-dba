@@ -555,6 +555,11 @@ GUARDRAIL_REFUSES_AHEAD = "SOPULI-W060"
 #: password until somebody deletes it.
 HANDOVER_LEFT_BEHIND = "SOPULI-W061"
 
+#: `account list` admitted an account that a guardrail other than guardrail 2
+#: refuses, so a mutating verb would not act on it (#1207). Guardrail 2 is
+#: :data:`ADMITTED_VENDOR_ACCOUNT`.
+ADMITTED_REFUSED_ACCOUNT = "SOPULI-W062"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -758,6 +763,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "afterwards. The link works and the password changed, so the run does not fail. "
             "The item holds a working password until somebody deletes it, so delete it by "
             "hand. The message names the item and 1Password's reason."
+        ),
+        ADMITTED_REFUSED_ACCOUNT: (
+            "`account list` admitted an account that a guardrail refuses, so a mutating verb "
+            "does not act on it: a superuser, a holder of an administrative role, the tool's "
+            "own account, or another check of `02-oracle-privileges.md` §4 except guardrail "
+            "2, which is `SOPULI-W041`. One entry per row. The message names every check "
+            "that refuses and says whether `--force` overrides them."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

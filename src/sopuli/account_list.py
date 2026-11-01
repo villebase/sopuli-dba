@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sopuli.config.model import Config, PersonalAccountRule
+from sopuli.driver import guardrails
 from sopuli.driver.protocol import UserState
 from sopuli.personal import declared_on, rules_for
 
@@ -205,3 +206,43 @@ def cross_declared(config: Config, account: str) -> str | None:
         if any(declared.upper() == spelled for declared in application.accounts):
             return application.label
     return None
+
+
+#: §4's number for each check, as the notice names it.
+CHECK_NUMBERS = {
+    guardrails.DECLARED: 1,
+    guardrails.VENDOR_MAINTAINED: 2,
+    guardrails.PASSWORD_FILE: 3,
+    guardrails.PRIVILEGED_ROLE: 4,
+    guardrails.DENY_LIST: 5,
+    guardrails.SUPERUSER: 6,
+    guardrails.OWN_ACCOUNT: 7,
+    guardrails.RESERVED: 8,
+}
+
+
+def guardrail_refusal(state: UserState) -> str | None:
+    """Why a mutating verb would refuse this listed account, or ``None`` (#1207).
+
+    A predicate can admit an account that a guardrail refuses: a member of
+    ``DBA`` on Oracle, a superuser on PostgreSQL, or the tool's own account. A
+    listing that shows such an account with nothing said shows a wider whitelist
+    than the verbs act on.
+
+    The account is reviewed as declared, because the listing admitted it.
+    Guardrail 2 is left out, because ``SOPULI-W041`` already says it. A check
+    that could not run is left out too: it refuses nothing in a verb either.
+    The answer is the review's, so the listing and the verbs cannot disagree.
+    """
+    found = guardrails.review(state, declared=(state.name,)).refusals
+    refusals = [one for one in found if one.check != guardrails.VENDOR_MAINTAINED]
+    if not refusals:
+        return None
+    reasons = "; ".join(f"check {CHECK_NUMBERS[one.check]}, {one.reason}" for one in refusals)
+    fixed = next((one for one in refusals if not one.overridable), None)
+    remedy = (
+        f"no flag overrides check {CHECK_NUMBERS[fixed.check]}"
+        if fixed is not None
+        else "`--force` overrides it, and the override is recorded"
+    )
+    return f"a mutating verb refuses this account at plan time ({reasons}); {remedy}"

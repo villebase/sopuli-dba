@@ -123,6 +123,7 @@ from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
 from sopuli.diagnostics import (
     ADMITTED_CROSS_DECLARED,
+    ADMITTED_REFUSED_ACCOUNT,
     ADMITTED_VENDOR_ACCOUNT,
     CONSTRAINTS_UNREAD,
     LOCK_LOST,
@@ -4050,6 +4051,12 @@ def _describe_row(
                 "will touch, and creating a role grants it to the creator",
             )
         )
+    # The other guardrails, by the review the verbs run (#1207): a `role:`
+    # predicate can admit a member of `DBA`, a superuser, or the tool's own
+    # account.
+    refused = account_list.guardrail_refusal(state) if state is not None else None
+    if refused is not None:
+        notices.append(account_list.Notice(ADMITTED_REFUSED_ACCOUNT, refused))
     owner = account_list.cross_declared(config, name)
     if owner is not None:
         notices.append(

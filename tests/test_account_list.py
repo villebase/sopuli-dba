@@ -29,6 +29,7 @@ from sopuli.account_list import (
     Row,
     cross_declared,
     enumerated_names,
+    guardrail_refusal,
     rule_for,
     rules_on,
 )
@@ -36,6 +37,7 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.diagnostics import (
     ADMITTED_CROSS_DECLARED,
+    ADMITTED_REFUSED_ACCOUNT,
     ADMITTED_VENDOR_ACCOUNT,
     no_reset_journal,
     reset_journal_unread,
@@ -172,6 +174,56 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
     ]
     assert "as its own" in row.notices[0].message
     assert "also declared by acme" in row.notices[1].message
+
+
+# ------------------------------------------------- guardrail refusals (#1207) ---
+
+
+def test_a_member_of_an_administrative_role_gets_a_notice_force_overrides() -> None:
+    """On Oracle a `role:` predicate can admit a member of `DBA`. Check 4
+    refuses it in a verb, and `--force` overrides that."""
+    message = guardrail_refusal(user("JDOE", admin_roles=frozenset({"DBA"})))
+
+    assert message is not None
+    assert "check 4, the account holds DBA" in message
+    assert "`--force` overrides it" in message
+
+
+def test_a_superuser_is_named_with_the_check_no_flag_overrides() -> None:
+    """Check 6 is never waived, so the notice must not send the reader to
+    `--force`, even beside a check that `--force` does override."""
+    message = guardrail_refusal(user("ADMIN", superuser=True, session_account=True))
+
+    assert message is not None
+    assert "check 6, the account is a superuser" in message
+    assert "check 7, this is the account the tool is connected as" in message
+    assert message.endswith("no flag overrides check 6")
+    assert "--force" not in message
+
+
+def test_guardrail_2_and_an_unread_check_get_no_such_notice() -> None:
+    """Guardrail 2 has `SOPULI-W041`. An unread password file is a caveat in a
+    verb and refuses nothing, so it is not a refusal here either."""
+    assert guardrail_refusal(user("SYSTEM", vendor_maintained=True)) is None
+    assert guardrail_refusal(user("JDOE", password_file_member=None)) is None
+
+
+def test_the_row_carries_the_refusal_under_its_own_code() -> None:
+    from sopuli.cli import _describe_row, _JournalFailures
+
+    built = config(personal_accounts=[{"role": "ACME_DEV_TEAM"}])
+    target = next(one for one in built.targets if one.name == TARGET)
+
+    class Session:
+        def describe_user(self, name: str) -> UserState:
+            return user(name.upper(), roles=("ACME_DEV_TEAM",), admin_roles=frozenset({"DBA"}))
+
+    row = _describe_row(Session(), "jdoe", target, built, unread=_JournalFailures())
+
+    assert [notice.code for notice in row.notices] == [ADMITTED_REFUSED_ACCOUNT]
+    assert [warning["code"] for warning in build_result(row)["warnings"]] == [
+        ADMITTED_REFUSED_ACCOUNT
+    ]
 
 
 # ------------------------------------------------------------------ rows ---

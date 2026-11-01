@@ -52,6 +52,11 @@ What each environment is, and what to know before using it:
   md5` and an `md5` line in `pg_hba.conf`. The others use `scram-sha-256`. Each
   server keeps its data in an anonymous volume, which a recreate keeps. To start
   one from a new data directory, add `--renew-anon-volumes` to `up`.
+- **mysql-matrix** (`mysql-80`, `mysql-84` and `mysql-9`, ports 3380, 3384
+  and 3390) is one server each of MySQL 8.0, 8.4 and 9, for the probes in
+  `sql/mysql/`. The servers run with the image's defaults, so the binary log
+  is on and the general log and slow log are off. A probe turns on any log it
+  reads, and sets it back.
 - **pgbouncer** (`pgbouncer` and `pgbouncer-ignore`, ports 6432 and 6433) is
   PgBouncer 1.26.0 in front of tier 0's `postgres`, for
   `sql/postgres/08_pgbouncer_probe.py`. Start it with tier 0:
@@ -90,6 +95,7 @@ docker compose --profile tier2 up -d      # + 21c/18c/11g XE, about 90 s once pu
 docker compose --profile nne   up -d      # Vault + Oracle requiring NNE, on 1525
 docker compose --profile emulators up -d  # lowkey-vault, on 8443
 docker compose --profile postgres-matrix up -d  # PostgreSQL 13 to 18, on 5413 to 5418
+docker compose --profile mysql-matrix up -d     # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
 docker compose --profile tier0 --profile pgbouncer up -d  # + PgBouncer, on 6432 and 6433
 docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
@@ -178,7 +184,7 @@ fell back. `tests/test_compose_ports.py` checks the bindings.
 Everything else in the documentation uses the default names and ports: the
 `docker exec` commands, the Vault UI link below, the configuration samples in
 `docs/local-testing.md` and the run instructions in the headers of the scripts in
-`sql/oracle/` and `sql/postgres/`. In the second clone, change the name and the
+`sql/oracle/`, `sql/postgres/` and `sql/mysql/`. In the second clone, change the name and the
 port in them. The tier2's Oracle services, `oracle-nne`, `lowkey-vault` and the
 maintainer-only services keep fixed ports, so only one clone can run each of
 them. The `postgres-matrix` services each take a port variable of their own,
@@ -188,7 +194,10 @@ clone that starts the matrix sets them too, for example to 5613 to 5618. The
 same holds for `SOPULI_TEST_PGBOUNCER_PORT` and
 `SOPULI_TEST_PGBOUNCER_IGNORE_PORT`, defaults 6432 and 6433, for the
 `pgbouncer` profile. A second clone that starts the `supabase` profile sets
-`SOPULI_TEST_SUPABASE_PORT`, default 5440, which the suite does read.
+`SOPULI_TEST_SUPABASE_PORT`, default 5440, which the suite does read. One that
+starts `mysql-matrix` sets `SOPULI_TEST_MYSQL80_PORT`, `SOPULI_TEST_MYSQL84_PORT`
+and `SOPULI_TEST_MYSQL9_PORT`, defaults 3380, 3384 and 3390, which the suite
+does not read.
 
 A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
 2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
@@ -200,6 +209,7 @@ idle and 2.8 GB under the suite; `yopass` and `yopass-memcached` add about
 | vault | 8200, or `SOPULI_TEST_VAULT_PORT` | dev mode, root token `sopuli-test-root`; `kv` (v2) and `kv1` (v1) both mounted. A `userpass` mount has users `alice`, `bob` and `carol`, with passwords `sopuli-test-alice` and so on, for the `vault_path` delivery tests; the comment above `vault-init` in `compose.yaml` lists its policies and tokens. **Restarting it loses all of this** — dev mode is in-memory and `vault-init` only runs on `up`, so a `stop`/`start` leaves a healthy Vault with no mounts and every tier-1 store test failing on a 404. `docker compose --profile tier0 up -d vault-init` puts them back. **UI at <http://127.0.0.1:8200/ui>**, on the published port — enabled by default in dev mode, log in with the root token. Dev mode also mounts `secret/` (KV v2) and `agent-registry/`, which is not a KV mount. So three KV mounts exist, and a test asserting on the mount list must expect all of these |
 | postgres | 5432, or `SOPULI_TEST_POSTGRES_PORT` | `postgres` / `sopuli-test`. Like the matrix, it preloads `pg_stat_statements` and writes the server log to `log/postgresql.log` in the data directory, so `docker logs` shows only the start of it. Invariant 15's test reads the log back with `pg_read_file()` |
 | postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
+| mysql-80, mysql-84, mysql-9 | 3380, 3384 and 3390, or `SOPULI_TEST_MYSQL80_PORT`, `SOPULI_TEST_MYSQL84_PORT` and `SOPULI_TEST_MYSQL9_PORT` | **`--profile mysql-matrix` only**. `root` / `sopuli-test`, database `sopuli`. MySQL 8.0, 8.4 and 9 |
 | supabase | 5440, or `SOPULI_TEST_SUPABASE_PORT` | **`--profile supabase` only**. `postgres` / `sopuli-test`, and `supabase_admin`, the superuser, with the same password. Supabase's database alone, PostgreSQL 17.6 with supautils |
 | pgbouncer, pgbouncer-ignore | 6432 and 6433, or `SOPULI_TEST_PGBOUNCER_PORT` and `SOPULI_TEST_PGBOUNCER_IGNORE_PORT` | **`--profile pgbouncer` only**, with tier 0. PgBouncer 1.26.0 in front of postgres; databases `session` and `transaction`. `pgbouncer-ignore` drops the startup parameter `options` |
 | yopass | 1337, or `SOPULI_TEST_YOPASS_PORT` | Yopass 16.0.1 with default flags, for the `one_time_link` delivery tests; it stores secrets in `yopass-memcached`, which publishes no port. The image has no shell, so it has no healthcheck: `curl http://127.0.0.1:1337/health` answers `{"status":"healthy"}`. The web page is at <http://127.0.0.1:1337/> |

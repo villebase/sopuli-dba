@@ -3,18 +3,20 @@
 Tier 0: reads Markdown, SQL comments and Python docstrings.
 
 `docs/measurements.md` is the one place that says which script ran on which
-release. It has one part for Oracle, for the scripts in `sql/oracle/`, and one
-for PostgreSQL, for the scripts in `sql/postgres/`. Each script's header records
+release. It has one part for Oracle, for the scripts in `sql/oracle/`, one for
+PostgreSQL, for the scripts in `sql/postgres/`, and one for MySQL, for the
+scripts in `sql/mysql/`. Each script's header records
 the same runs in more detail. This module checks that the two name the same
 releases, so a run recorded in one and not the other fails here.
 
 An Oracle release is written in full, five numbers: `19.32.0.0.0`, not `19c`. A
-PostgreSQL release is two numbers: `16.15`, not `16`. A SQL script's header is
+PostgreSQL release is two numbers: `16.15`, not `16`. A MySQL release is three:
+`8.4.13`, not `8.4`. A SQL script's header is
 the comment block at the top, up to its first line that is not a comment. A
 Python probe's header is its module docstring, read with `ast` so that the
 probe, which imports a vendor client, is not imported. A release a header writes
-after "Instant Client" or "libpq" is the client the probe ran with, and is not
-compared. The same number may be a database elsewhere: Oracle Free 23.26.3.0.0
+after "Instant Client", "libpq" or, for MySQL, "client" is the client the probe
+ran with, and is not compared. The same number may be a database elsewhere: Oracle Free 23.26.3.0.0
 and Instant Client 23.26.3.0.0 are two products, and so are PostgreSQL 18.6 and
 libpq 18.6.
 
@@ -61,6 +63,9 @@ _ORACLE_RELEASE = r"\b\d{2}\.\d{1,2}\.\d\.\d\.\d\b"
 #: A PostgreSQL release, such as `16.15` or `18.6`. Not part of a longer number,
 #: so `3.13.12` and `19.3.0.0.0` hold none. A full stop after it ends a sentence.
 _POSTGRES_RELEASE = r"(?<![\d.])\d{2}\.\d{1,2}(?!\d|\.\d)"
+#: A MySQL release, such as `8.0.46` or `9.7.4`. The major release is 8, 9 or
+#: two digits from 10, so Python's `3.13.12` and psycopg's `3.3.6` hold none.
+_MYSQL_RELEASE = r"(?<![\d.])(?:8|9|1\d)\.\d{1,2}\.\d{1,3}(?!\d|\.\d)"
 
 ORACLE = Product(
     name="oracle",
@@ -78,7 +83,15 @@ POSTGRES = Product(
     release=re.compile(_POSTGRES_RELEASE),
     client=re.compile(r"libpq(?:\s|--)+`?" + _POSTGRES_RELEASE + "`?"),
 )
-PRODUCTS = (ORACLE, POSTGRES)
+MYSQL = Product(
+    name="mysql",
+    scripts=ROOT / "sql" / "mysql",
+    releases_heading="## MySQL releases",
+    marker="<!-- measurements: mysql scripts -->",
+    release=re.compile(_MYSQL_RELEASE),
+    client=re.compile(r"client(?:\s|--)+`?" + _MYSQL_RELEASE + "`?"),
+)
+PRODUCTS = (ORACLE, POSTGRES, MYSQL)
 
 #: Every script and probe whose header is checked, with its product.
 PROBES = [
@@ -215,6 +228,9 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(
         (POSTGRES, "Python 3.13.12, psycopg 3.3.6, on 2026-10-25", set()),
         (POSTGRES, "Oracle 19.3.0.0.0 is not a PostgreSQL release", set()),
         (POSTGRES, "As on 13.23. Run on 17.11.", {"13.23", "17.11"}),
+        (MYSQL, "run on 8.0.46, 8.4.13 and 9.7.4.", {"8.0.46", "8.4.13", "9.7.4"}),
+        (MYSQL, "-- the mysql client\n-- 8.4.13, on 8.0.46", {"8.0.46"}),
+        (MYSQL, "Python 3.13.12, psycopg 3.3.6, Oracle 19.3.0.0.0", set()),
     ],
     ids=[
         "client-dropped",
@@ -226,6 +242,9 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(
         "longer-numbers-are-not-releases",
         "an-oracle-release-is-not-one",
         "a-release-that-ends-a-sentence",
+        "mysql-releases",
+        "mysql-client-wrapped",
+        "mysql-other-numbers-are-not-releases",
     ],
 )
 def test_a_client_is_told_from_a_database_by_its_words(

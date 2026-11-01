@@ -70,7 +70,7 @@ on which Oracle release, and what it showed.
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/` |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/`. `mysql-matrix`: MySQL 8.0, 8.4 and 9, for the probes in `sql/mysql/` |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
@@ -537,6 +537,24 @@ such as "from 16", means the one release of it that was measured.
   floor ([#1076](decisions/log.md#1076)) depends on the answer: a wheel that
   bundles an older libpq would reach the refusal that #1076 accepts only
   because the measured installs cannot.
+
+### MySQL
+
+These entries are measured before a MySQL driver is designed (#1202). The
+probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
+`mysql-matrix` profile of `test/compose.yaml`.
+[measurements.md](measurements.md) names each release in full.
+
+- `verified` `mysql-password-text` (#1202) — **What does MySQL keep of the text
+  of `ALTER USER … IDENTIFIED BY`?**
+  Once the statement parses, the server replaces the password with `<secret>`
+  in the general log, the slow log, and `performance_schema`'s statement
+  history and digest sample, also for a statement that fails when it runs. The
+  binary log keeps a statement that succeeded, rewritten with the stored
+  `caching_sha2_password` hash. A statement that fails to parse stays in
+  `performance_schema.events_statements_history` as sent, password included.
+  A server started with `--log-raw` was not measured.
+  `sql/mysql/01_password_text_probe.sql` measures it.
 
 ### Vault
 

@@ -10,6 +10,7 @@
 #   docker compose --profile nne   up -d     # Vault + Oracle requiring NNE, on 1525; see README.md
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
+#   docker compose --profile mysql-matrix up -d    # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
 #   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
 #   docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
@@ -37,8 +38,9 @@
 # environment; the suite reads the same five. The project name overrides `name:`
 # below. Without a project name of its own, a second clone's `up` recreates the
 # first clone's containers. A second clone that starts postgres-matrix also sets
-# SOPULI_TEST_POSTGRES13_PORT to SOPULI_TEST_POSTGRES18_PORT, which the suite
-# does not read. See README.md.
+# SOPULI_TEST_POSTGRES13_PORT to SOPULI_TEST_POSTGRES18_PORT, and one that
+# starts mysql-matrix sets SOPULI_TEST_MYSQL80_PORT, SOPULI_TEST_MYSQL84_PORT and
+# SOPULI_TEST_MYSQL9_PORT. The suite reads none of them. See README.md.
 
 name: sopuli-test
 
@@ -62,6 +64,18 @@ x-postgres-matrix: &postgres-matrix
     interval: 5s
     timeout: 3s
     retries: 20
+
+# The settings mysql-80, mysql-84 and mysql-9 share.
+x-mysql-matrix: &mysql-matrix
+  profiles: [mysql-matrix]
+  environment:
+    MYSQL_ROOT_PASSWORD: sopuli-test
+    MYSQL_DATABASE: sopuli
+  healthcheck:
+    test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -psopuli-test --silent"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
 
 services:
 
@@ -272,6 +286,32 @@ services:
     ports:
       - "127.0.0.1:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
       - "[::1]:${SOPULI_TEST_POSTGRES18_PORT:-5418}:5432"
+
+  # MySQL 8.0, 8.4 LTS and 9, for the probes in sql/mysql/ (#1202). Moving
+  # tags, as postgres-13 to postgres-18: a probe's header records the release
+  # `SELECT VERSION()` read, never the tag. Each has its own port variable, so a
+  # second clone can run the matrix beside the first. The servers run with the
+  # image's defaults; a probe sets any log it reads and puts it back.
+  mysql-80:
+    <<: *mysql-matrix
+    image: mysql:8.0
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL80_PORT:-3380}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL80_PORT:-3380}:3306"
+
+  mysql-84:
+    <<: *mysql-matrix
+    image: mysql:8.4
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL84_PORT:-3384}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL84_PORT:-3384}:3306"
+
+  mysql-9:
+    <<: *mysql-matrix
+    image: mysql:9
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL9_PORT:-3390}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL9_PORT:-3390}:3306"
 
   # ------------------------------------------------------------ pgbouncer ---
   # PgBouncer in front of postgres above, for sql/postgres/08_pgbouncer_probe.py

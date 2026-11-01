@@ -36,7 +36,14 @@ from sopuli.config.fields import (
     required_string,
     sequence,
 )
-from sopuli.config.model import AdminAuth, AdminCredential, Target, TargetOracle, TargetPostgres
+from sopuli.config.model import (
+    AdminAuth,
+    AdminCredential,
+    Target,
+    TargetMysql,
+    TargetOracle,
+    TargetPostgres,
+)
 from sopuli.config.safety import read_safety
 from sopuli.config.secret_refs import parse_secret_ref
 
@@ -49,18 +56,21 @@ TARGET_KEYS = (
     "admin",
     "oracle",
     "postgres",
+    "mysql",
     "labels",
     "safety",
 )
 
 ORACLE = "oracle"
 POSTGRESQL = "postgresql"
+MYSQL = "mysql"
 
 #: The driver selector (P1). Any other value is refused here, which is
 #: invariant 4 applied to config: a target the tool cannot drive should fail
 #: while the file is being written, not at the first connection. A PostgreSQL
-#: target is the cluster, not one database in it.
-TARGET_TYPES = (ORACLE, POSTGRESQL)
+#: target is the cluster, not one database in it, and a MySQL target is the
+#: server.
+TARGET_TYPES = (ORACLE, POSTGRESQL, MYSQL)
 
 ADMIN_KEYS = ("username", "auth")
 
@@ -119,6 +129,20 @@ VERIFYING_SSLMODES = ("verify-ca", "verify-full")
 #: `prefer` may still negotiate TLS.
 UNENCRYPTED_SSLMODE = "disable"
 
+MYSQL_KEYS = ("ssl_mode", "ssl_ca")
+
+#: MySQL's own `--ssl-mode` values, from weakest to strongest, spelled as the
+#: mysql client spells them. The weak ones are accepted for the reason
+#: :data:`POSTGRES_SSLMODES` gives.
+MYSQL_SSL_MODES = ("DISABLED", "PREFERRED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
+
+#: The `ssl_mode` values under which the server's certificate is checked
+#: against `ssl_ca`. Below them a CA file would be ignored.
+MYSQL_VERIFYING_SSL_MODES = ("VERIFY_CA", "VERIFY_IDENTITY")
+
+#: The one `ssl_mode` certain to connect without encryption.
+MYSQL_UNENCRYPTED_SSL_MODE = "DISABLED"
+
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:
     """Read ``targets:`` -- the explicitly listed endpoints (§2)."""
@@ -156,7 +180,7 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             entry,
             "dsn",
             at=at,
-            hint="Oracle: host:port/service, or a TNS alias; PostgreSQL: host:port",
+            hint="Oracle: host:port/service, or a TNS alias; PostgreSQL and MySQL: host:port",
         ),
         environment=optional_string(entry, "environment", at=at),
         vault=optional_string(entry, "vault", at=at),
@@ -166,6 +190,11 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             None
             if "postgres" not in entry
             else TargetPostgres(**read_postgres(entry["postgres"], at=at.key("postgres")))
+        ),
+        mysql=(
+            None
+            if "mysql" not in entry
+            else TargetMysql(**read_mysql(entry["mysql"], at=at.key("mysql")))
         ),
         labels=() if "labels" not in entry else pairs(entry["labels"], at=at.key("labels")),
         safety=read_safety(entry, at=at),
@@ -289,6 +318,24 @@ def read_postgres(raw: Any, *, at: KeyPath) -> dict[str, str]:
     sslmode = written["sslmode"]
     if sslmode is not None:
         choice(sslmode, allowed=POSTGRES_SSLMODES, at=at.key("sslmode"), noun="sslmode")
+    return {key: value for key, value in written.items() if value is not None}
+
+
+def read_mysql(raw: Any, *, at: KeyPath) -> dict[str, str]:
+    """``mysql:`` on a target -- the keys it writes, and nothing else.
+
+    Returned as the written keys for the reason :func:`read_postgres` gives: an
+    ``overrides:`` patch builds a :class:`~sopuli.config.model.MysqlPatch` from
+    the same keys.
+    """
+    options = mapping(raw, at=at)
+    reject_unknown_keys(options, allowed=MYSQL_KEYS, at=at)
+    _reject_empty(options, at=at, block_name="mysql")
+
+    written = {key: optional_string(options, key, at=at) for key in MYSQL_KEYS}
+    ssl_mode = written["ssl_mode"]
+    if ssl_mode is not None:
+        choice(ssl_mode, allowed=MYSQL_SSL_MODES, at=at.key("ssl_mode"), noun="ssl_mode")
     return {key: value for key, value in written.items() if value is not None}
 
 

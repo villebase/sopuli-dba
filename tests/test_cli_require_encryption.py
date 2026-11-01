@@ -425,6 +425,29 @@ def test_sslmode_disable_is_refused_before_anything_connects(
     assert changed(harness) == []
 
 
+def test_mysql_ssl_mode_disabled_is_refused_before_anything_connects(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The same rule for a MySQL server under `ssl_mode: DISABLED` (#1221). It
+    comes before the driver refusal, so it holds while the driver is unwritten."""
+    harness = estate({"appdb-alpha": NATIVE, "appdb-beta": TLS})
+    config = REQUIRED.replace(
+        "    type: oracle\n    dsn: db-prod.example.com:1521/beta.pdb.example.com\n",
+        "    type: mysql\n    dsn: mysql-prod.example.com:3306\n"
+        "    mysql: { ssl_mode: DISABLED }\n",
+    )
+    result = apply(runner, write_config(config), "--output", "json")
+
+    assert exit_of(result) == ExitCode.UNSUPPORTED_CAPABILITY
+    error = json.loads(result.output)["error"]
+    assert error["target_capability"] == "encrypted_connection"
+    assert error["hint"] == (
+        "`defaults.safety.require_encryption` requires it, and `targets[1].mysql.ssl_mode` "
+        "is `DISABLED`, which never encrypts: use `ssl_mode: VERIFY_IDENTITY`"
+    )
+    assert harness["sessions"] == []
+
+
 def test_sslmode_disable_is_refused_in_a_dry_run(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

@@ -110,14 +110,14 @@ from sopuli.config import (
 from sopuli.config import delivery as delivery_config
 from sopuli.config.bindings import check_oci_name
 from sopuli.config.errors import KeyPath
-from sopuli.config.expansion import declared_at, postgres_key_at
+from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
+from sopuli.config.products import tls_setting
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import POSTGRESQL, UNENCRYPTED_SSLMODE
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -9479,11 +9479,12 @@ def _require_encryption(
     its rows. That is not a way past the check: the run reads the connection it
     sends over again, and :func:`_unencrypted` refuses that row there.
 
-    **A PostgreSQL target under `sslmode: disable` is refused before any
-    connection** (#1058), in a first pass over every target. That mode never
-    negotiates TLS, so the config already answers what a connection would, and
-    the run does not wait on another target's connection to say so. `allow` and
-    `prefer` may still negotiate it, so they are read like any other.
+    **A PostgreSQL target under `sslmode: disable`, or a MySQL target under
+    `ssl_mode: DISABLED`, is refused before any connection** (#1058, #1221), in
+    a first pass over every target. That mode never negotiates TLS, so the
+    config already answers what a connection would, and the run does not wait
+    on another target's connection to say so. libpq's `allow` and `prefer`, and
+    MySQL's `PREFERRED`, may still negotiate it, so they are read like any other.
     """
     required = [
         (expanded, location)
@@ -9491,16 +9492,14 @@ def _require_encryption(
         if (location := encryption_required_at(expanded, config, run.resolved)) is not None
     ]
     for expanded, location in required:
-        if (
-            expanded.target.type == POSTGRESQL
-            and expanded.target.postgres_settings.sslmode == UNENCRYPTED_SSLMODE
-        ):
+        tls = tls_setting(expanded)
+        if tls is not None and tls.never_encrypts:
             raise UnsupportedCapabilityError(
                 ENCRYPTED_CONNECTION,
                 target=expanded.name,
                 hint=(
-                    f"`{location}` requires it, and `{postgres_key_at(expanded, 'sslmode')}` "
-                    f"is `{UNENCRYPTED_SSLMODE}`, which never encrypts: use `sslmode: verify-full`"
+                    f"`{location}` requires it, and `{tls.at}` is `{tls.mode}`, which never "
+                    f"encrypts: use `{tls.key}: {tls.default}`"
                 ),
             )
     cache: dict[str, Scope | None] = {} if scopes is None else scopes

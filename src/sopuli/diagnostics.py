@@ -957,12 +957,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "something else on this machine."
         ),
         UNVERIFIED_DATABASE: (
-            "A PostgreSQL target in this file has an `sslmode` that does not verify the "
-            "server: `disable`, `allow`, `prefer` or `require`. The connection may still be "
+            "A target in this file has a TLS mode that does not verify the server: a "
+            "PostgreSQL `sslmode` of `disable`, `allow`, `prefer` or `require`, or a MySQL "
+            "`ssl_mode` of `DISABLED`, `PREFERRED` or `REQUIRED`. The connection may still be "
             "encrypted, but anything on the path can present its own certificate and read "
             "the password a run sets. One entry per target. `safety.require_encryption` "
-            "refuses `disable` and a connection that is not encrypted; it does not ask for a "
-            "verified server."
+            "refuses `disable`, `DISABLED` and a connection that is not encrypted; it does "
+            "not ask for a verified server."
         ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "

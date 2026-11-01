@@ -214,7 +214,10 @@ bare ORA error.
 
 ### Adding a second product later
 
-Intended order after Oracle: PostgreSQL, SQL Server, MySQL. Nothing in the config
+Intended order after Oracle: PostgreSQL, MySQL, MariaDB, SQL Server
+([#1202](../decisions/log.md#1202)). MariaDB gets a driver of its own, not a
+variant of MySQL's, because the two differ in how they store and change a
+password. Nothing in the config
 schema, CLI grammar, or vault layout may be Oracle-specific at the top level.
 Vendor-specific settings live in a namespaced block:
 
@@ -237,7 +240,10 @@ is written for. Any other command refuses the target with `SOPULI-20006` before
 it resolves a credential or connects. The PostgreSQL entry lists UC-1's
 commands, `creds generate`, `apply`, `check`, `rotate`, `status` and
 `finish-rollover`, and UC-2's `account list`, `reset-password`, `suspend` and
-`expire-password`. That is every command that connects to a target. What
+`expire-password`. That is every command that connects to a target. The config
+also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`. Its
+driver module is not written yet, so every command but `doctor` refuses a MySQL
+target with `SOPULI-20006` (#1221). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -461,6 +467,7 @@ These commands install the base and each extra:
 pip install sopuli-dba                 # config, selection, schema — no network client
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
 pip install "sopuli-dba[postgres]"     # + psycopg, to reach PostgreSQL
+pip install "sopuli-dba[mysql]"        # + PyMySQL, for MySQL; the driver is not written yet
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
@@ -758,7 +765,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.4.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-3.5.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

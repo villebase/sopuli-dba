@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.4.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.5.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.4"
+SCHEMA_VERSION = "3.5"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -567,8 +567,8 @@ _TARGET_TYPES: dict[str, Schema] = {
     "dsn": {
         **STRING,
         "description": (
-            "Oracle: host:port/service, or a TNS alias. PostgreSQL: host:port, never a "
-            "connection URI or a keyword string, which can carry a password."
+            "Oracle: host:port/service, or a TNS alias. PostgreSQL and MySQL: host:port, "
+            "never a connection URI or a keyword string, which can carry a password."
         ),
     },
     "environment": STRING,
@@ -576,6 +576,7 @@ _TARGET_TYPES: dict[str, Schema] = {
     "admin": _ref("admin"),
     "oracle": _ref("target_oracle"),
     "postgres": _ref("target_postgres"),
+    "mysql": _ref("target_mysql"),
     "labels": _ref("labels"),
     "safety": _ref("safety"),
 }
@@ -683,6 +684,24 @@ def _target_postgres() -> Schema:
         description=(
             "How the tool connects to a PostgreSQL cluster. Only on a `type: postgresql` target."
         ),
+    )
+
+
+def _target_mysql() -> Schema:
+    return _object(
+        keys=targets.MYSQL_KEYS,
+        types={
+            "ssl_mode": {
+                **_enum(targets.MYSQL_SSL_MODES),
+                "description": "MySQL's --ssl-mode. Default `VERIFY_IDENTITY`.",
+            },
+            "ssl_ca": {
+                **STRING,
+                "description": "The CA file that issued the server certificate.",
+            },
+        },
+        min_properties=1,
+        description="How the tool connects to a MySQL server. Only on a `type: mysql` target.",
     )
 
 
@@ -1311,6 +1330,7 @@ def build_schema() -> Schema:
             "admin_auth": _admin_auth(),
             "target_oracle": _target_oracle(),
             "target_postgres": _target_postgres(),
+            "target_mysql": _target_mysql(),
             "target_set": _target_set(),
             "target_patch": _target_patch(),
             "for_each": _for_each(),

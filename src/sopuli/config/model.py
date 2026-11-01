@@ -544,6 +544,29 @@ class PostgresPatch:
 
 
 @dataclass(frozen=True)
+class TargetMysql:
+    """``mysql:`` on a target -- how the tool connects to a MySQL server.
+
+    Settings, like :class:`TargetPostgres`. Every account belongs to the whole
+    server, so there is no database to name. ``Target.mysql`` is ``None`` where
+    the file wrote no block, and ``Target.mysql_settings`` reads these defaults.
+    """
+
+    #: One of :data:`~sopuli.config.targets.MYSQL_SSL_MODES`, MySQL's own values.
+    ssl_mode: str = "VERIFY_IDENTITY"
+    #: The CA file that issued the server certificate.
+    ssl_ca: str | None = None
+
+
+@dataclass(frozen=True)
+class MysqlPatch:
+    """``mysql:`` in an ``overrides:`` patch. ``None`` is a key it does not change."""
+
+    ssl_mode: str | None = None
+    ssl_ca: str | None = None
+
+
+@dataclass(frozen=True)
 class Target:
     """One database endpoint.
 
@@ -562,6 +585,7 @@ class Target:
     admin: AdminCredential | None = None
     oracle: TargetOracle = field(default_factory=TargetOracle)
     postgres: TargetPostgres | None = None
+    mysql: TargetMysql | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 
@@ -570,6 +594,12 @@ class Target:
         """How to connect to this PostgreSQL target: the block the file wrote,
         or the defaults where it wrote none."""
         return self.postgres if self.postgres is not None else TargetPostgres()
+
+    @property
+    def mysql_settings(self) -> TargetMysql:
+        """How to connect to this MySQL target: the block the file wrote, or the
+        defaults where it wrote none."""
+        return self.mysql if self.mysql is not None else TargetMysql()
 
 
 @dataclass(frozen=True)
@@ -589,6 +619,7 @@ class TargetPatch:
     admin: AdminCredential | None = None
     oracle: TargetOracle | None = None
     postgres: PostgresPatch | None = None
+    mysql: MysqlPatch | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 

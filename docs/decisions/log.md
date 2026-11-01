@@ -3905,3 +3905,75 @@ the register.
     reset clears an expired password: PostgreSQL defines `VALID UNTIL` as the
     end of the password's validity, not the account's. UC-2 §4.1 says to end
     an account with `NOLOGIN` instead.
+
+## #1202
+
+- **Decided:** 2026-11-01, #1202
+- **Question:** The MySQL driver. Which product comes after PostgreSQL? Is
+  MariaDB in scope? How are names compared, and how is an account declared?
+  What happens to an account on another plugin, to the rollover state, and to
+  an account with administrative privileges? Which client library?
+- **Decision:**
+  1. The order after PostgreSQL is MySQL, MariaDB, SQL Server.
+  2. MariaDB gets its own driver after MySQL, measured first (#1220).
+  3. The config's duplicate check keeps `upper()` (invariant 5). Matching a
+     declared account to the server compares the user name exactly and the
+     host case-insensitively.
+  4. A MySQL account names its host, in the account name, as
+     `acme_app@10.%` (decided on #1221). A bare name is a config error. `doctor` warns when a
+     declared user name exists at a host the config does not declare. `{user}`
+     and `{host}` tokens let a `secret_template` keep `@` and `%` out of a
+     vault path.
+  5. An account on a plugin other than `caching_sha2_password` is refused at
+     plan time. Nothing migrates it.
+  6. The tool account never reads `mysql.user.User_attributes`.
+     `finish-rollover` always sends `DISCARD OLD PASSWORD`, and reports
+     `changed: true`, an exception to invariant 9 that the rollover PR records
+     (#1224).
+  7. A guardrail no flag waives refuses a managed account that holds `SUPER`,
+     global `CREATE USER`, `GRANT OPTION`, or another global administrative
+     privilege (#1222).
+  8. The client is PyMySQL, in the `mysql` extra.
+- **Why:**
+  1. The measurements on #1202 answered every question a MySQL driver needs
+     answered first.
+  2. MariaDB has no `caching_sha2_password` and no `RETAIN CURRENT PASSWORD`,
+     and keeps accounts in `mysql.global_priv`, so the password path, which is
+     what this tool is for, differs.
+  3. MySQL user names are case-sensitive, so `Acme_App` and `acme_app` are two
+     accounts. A match by `upper()` would let a declared `acme_app` touch
+     `Acme_App`, which the config never declared. Refusing a config that
+     declares both costs only an estate that has such twins.
+  4. `acme_app@'%'` and `acme_app@localhost` are separate accounts with
+     separate passwords, and which one a login reaches depends on how the
+     client connects. Reading a bare name as `%` would rotate one and leave the
+     other on the old password. In the name, the host goes wherever the account
+     does: selectors, `account list`, and the duplicate check.
+  5. Moving an account to `caching_sha2_password` can break a client that
+     speaks only `mysql_native_password`, and the tool cannot see the clients.
+  6. `User_attributes` holds every retained hash, which allows offline
+     guessing of old passwords. No narrower source exists (#1220): `SHOW
+     CREATE USER` shows one hash, and `DISCARD` answers the same either way.
+     `DISCARD` is accepted when nothing is retained, so sending it always is
+     safe.
+  7. MySQL protects only accounts that hold `SYSTEM_USER`. The tool account
+     can set any other account's password, including one with every other
+     privilege, and then log in as it.
+  8. PyMySQL is pure Python and MIT licensed, so no compiled wheel can lag a
+     new Python release, and it also connects to MariaDB.
+- **Rejected:**
+  - Keeping P1's old order, SQL Server before MySQL. MySQL was the product
+    measured next.
+  - One driver for MySQL and MariaDB, branching by capability. The password
+    paths differ too much to share.
+  - A host key per application entry. Every place that compares accounts would
+    have to learn that a MySQL account is a pair.
+  - Migrating an account to `caching_sha2_password` in `apply`.
+  - A column grant on `User_attributes`. It exposes the retained hashes.
+  - A definer view that exposes only whether a password is retained. It is an
+    installed definer-rights object, which ADR-001 rejected for Oracle.
+  - A login with the old password to see whether it is retained. A failure
+    counts toward `FAILED_LOGIN_ATTEMPTS`, and the block it causes cannot be
+    read back, so no lockout margin can be computed.
+  - `mysql-connector-python`. It is larger and GPL with an exception.
+  - `mysqlclient`. It needs the MySQL C library to build.

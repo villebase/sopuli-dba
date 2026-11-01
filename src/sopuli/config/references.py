@@ -39,11 +39,12 @@ from sopuli.config.codes import (
     UNVERIFIED_TRANSPORT,
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.expansion import declared_at, postgres_key_at
+from sopuli.config.expansion import declared_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
+from sopuli.config.products import tls_setting
 from sopuli.config.scope import refuse_personal_on
-from sopuli.config.targets import EXTERNAL, POSTGRESQL, VERIFYING_SSLMODES
+from sopuli.config.targets import EXTERNAL
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
@@ -636,32 +637,36 @@ def _warn_about_unverified_transport(config: Config) -> tuple[ConfigWarning, ...
 
 
 def _warn_about_unverified_databases(config: Config) -> tuple[ConfigWarning, ...]:
-    """§2: a PostgreSQL target whose ``sslmode`` does not verify the server says
-    so on every run, once per target (#1058).
+    """§2: a PostgreSQL target whose ``sslmode``, or a MySQL target whose
+    ``ssl_mode``, does not verify the server says so on every run, once per
+    target (#1058, #1221).
 
     The database counterpart of ``SOPULI-W004``, for the same reason: the
     weakening is one line in a file, and it applies to every password a run
     sets on that target. A warning and not an error, because §2 accepts the weak
     modes and ``require_encryption`` is the rule that refuses one.
     """
-    return tuple(
-        ConfigWarning(
-            message=(
-                f"target {expanded.name!r} does not verify the server "
-                f"(`sslmode: {expanded.target.postgres_settings.sslmode}`)"
-            ),
-            at=str(postgres_key_at(expanded, "sslmode")),
-            hint=(
-                "anything between this run and the server can present its own certificate "
-                "and read the password a run sets. Use `sslmode: verify-full` (the default), "
-                "with `sslrootcert` naming the CA that issued the server's certificate"
-            ),
-            code=UNVERIFIED_DATABASE,
+    warnings = []
+    for expanded in config.expanded_targets:
+        tls = tls_setting(expanded)
+        if tls is None or tls.verifies:
+            continue
+        warnings.append(
+            ConfigWarning(
+                message=(
+                    f"target {expanded.name!r} does not verify the server (`{tls.key}: {tls.mode}`)"
+                ),
+                at=str(tls.at),
+                hint=(
+                    "anything between this run and the server can present its own "
+                    f"certificate and read the password a run sets. Use `{tls.key}: "
+                    f"{tls.default}` (the default), with `{tls.ca}` naming the CA that "
+                    "issued the server's certificate"
+                ),
+                code=UNVERIFIED_DATABASE,
+            )
         )
-        for expanded in config.expanded_targets
-        if expanded.target.type == POSTGRESQL
-        and expanded.target.postgres_settings.sslmode not in VERIFYING_SSLMODES
-    )
+    return tuple(warnings)
 
 
 def _environments(config: Config) -> set[str]:

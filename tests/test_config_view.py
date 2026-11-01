@@ -276,6 +276,31 @@ def test_an_unmanaged_target_says_so(config: Config) -> None:
     assert root["managed"] is False
     assert root["target_set"] is None
     assert root["postgres"] is None
+    assert root["mysql"] is None
+
+
+def test_a_mysql_target_shows_how_the_run_will_connect() -> None:
+    """As for PostgreSQL: the defaults are filled in, so the TLS mode is on the
+    page where the file wrote no `mysql:` block (#1221)."""
+    document = {
+        "version": 1,
+        "targets": [
+            {"name": "mysql-dev", "type": "mysql", "dsn": "mysql-dev.example.com:3306"},
+            {
+                "name": "mysql-qa",
+                "type": "mysql",
+                "dsn": "mysql-qa.example.com:3306",
+                "mysql": {"ssl_mode": "VERIFY_CA", "ssl_ca": "/etc/sopuli/ca.pem"},
+            },
+        ],
+    }
+    section = build_section(PATHS, build_config(document), document, resolved=True)
+
+    assert [target["mysql"] for target in section["targets"]] == [
+        {"ssl_mode": "VERIFY_IDENTITY", "ssl_ca": None},
+        {"ssl_mode": "VERIFY_CA", "ssl_ca": "/etc/sopuli/ca.pem"},
+    ]
+    assert [target["postgres"] for target in section["targets"]] == [None, None]
 
 
 def test_a_postgresql_target_shows_how_the_run_will_connect() -> None:

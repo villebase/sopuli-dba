@@ -250,8 +250,12 @@ it, and fixing it later means rewriting a pushed branch.
 Copilot's. When the maintainer's Copilot budget for additional usage is spent,
 it is a Claude Code review (`/code-review`) instead, because Copilot reviews
 cost money past the included allowance. `/request-copilot-review` checks the
-budget before it requests anything. Wait for the review, and resolve each comment
-by one of these:
+budget before it requests anything. **When Copilot does not take the request, it
+is always a Claude Code review**, with no need to ask. Copilot has not taken it
+when the request returns `201` but the PR timeline shows no `review_requested`
+event, or when no review arrives within ten minutes. This happens when the
+maintainer's Copilot subscription is stopped. Wait for the review, and resolve
+each comment by one of these:
 
 - **change the code**, or
 - **decline the change**, because it is wrong or the existing form is right for a

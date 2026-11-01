@@ -671,38 +671,6 @@ full.
   and `parsec` too, on 12.3 only. `caching_sha2_password` does not exist.
   Whether PyMySQL logs in on `ed25519` and `parsec` was not measured.
   `sql/mariadb/02_client_hash_probe.py` measures it.
-
-### MariaDB
-
-These entries are measured before the MySQL driver is built, so that its
-capabilities assume nothing MariaDB breaks (#1220). MariaDB gets a driver of
-its own after MySQL (decision 2 of #1202). The probes are in `sql/mariadb/`,
-and the matrix of 10.11 and 12.3 is the `mariadb-matrix` profile of
-`test/compose.yaml`. [measurements.md](measurements.md) names each release in
-full.
-
-- `verified` `mariadb-password-text` (#1220) — **What does MariaDB keep of the
-  text of a password change?**
-  The password, in clear. The general log, the slow log and
-  `performance_schema`'s statement history keep `CREATE USER` and `ALTER USER
-  … IDENTIFIED BY '…'`, `SET PASSWORD … = PASSWORD('…')` and `USING
-  PASSWORD('…')` as sent, also when the statement fails. The binary log keeps
-  only the statements that succeed: `SET PASSWORD` rewritten to the hash, and
-  the others as sent, password included. Only a value the client computed,
-  `IDENTIFIED VIA <plugin> USING '<value>'`, keeps the password out of every
-  place. `sql/mariadb/01_password_text_probe.py` measures it.
-- `verified` `mariadb-client-hash` (#1220) — **Can the tool compute the
-  stored value, and set it so that the password logs in?**
-  Yes, for `mysql_native_password`, `ed25519` and `parsec`. `ed25519` stores
-  the Ed25519 public key whose seed is the password; `parsec` stores a salt
-  and the public key whose seed is PBKDF2-HMAC-SHA512 of the password. Values
-  computed in Python agree with the server's, an account with only `CREATE
-  USER` sets them with `IDENTIFIED VIA … USING`, and the password logs in. A
-  malformed value is refused with the plain `1396`. Only
-  `mysql_native_password` is loaded by default: `ed25519` must be installed,
-  and `parsec` too, on 12.3 only. `caching_sha2_password` does not exist.
-  Whether PyMySQL logs in on `ed25519` and `parsec` was not measured.
-  `sql/mariadb/02_client_hash_probe.py` measures it.
 - `verified` `mariadb-dual-password` (#1220) — **Does MariaDB have a rollover
   window?**
   Not `RETAIN CURRENT PASSWORD`, which is a syntax error. `IDENTIFIED VIA

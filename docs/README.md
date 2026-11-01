@@ -555,6 +555,26 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   `performance_schema.events_statements_history` as sent, password included.
   A server started with `--log-raw` was not measured.
   `sql/mysql/01_password_text_probe.sql` measures it.
+- `verified` `mysql-client-hash` (#1202) — **Can the tool compute a
+  `caching_sha2_password` hash, and set it so that the password logs in?**
+  Yes. The hash is SHA-crypt with SHA-256 and a 20-byte salt, stored as `$A$`,
+  the rounds, the salt and the digest. A hash computed in Python agrees with the
+  server's own. One with a salt the tool draws is set with `IDENTIFIED WITH
+  caching_sha2_password AS 0x…` by an account that holds only `CREATE USER`, and
+  the password logs in, at 5,000 or 10,000 rounds. The server refuses a value
+  of the wrong form, `1827`, but cannot tell whether it matches a password.
+  `mysql_native_password` works on 8.0.46 only: 8.4.13 ships it disabled and
+  9.7.4 has none. `sql/mysql/02_client_hash_probe.py` measures it.
+- `verified` `mysql-dual-password` (#1202) — **Does `RETAIN CURRENT PASSWORD`
+  give UC-1 a rollover window, and can its state be read?**
+  Yes, as long as the account's plugin stays the same: a `RETAIN` that changes
+  it is refused, `3894`. The old and new passwords both log in, with
+  `IDENTIFIED BY` or with a hash the client computed. A second `RETAIN`
+  replaces the retained password, a change without `RETAIN` keeps it, and
+  `DISCARD OLD PASSWORD` ends it, also when nothing is retained. The state is
+  the key `additional_password` in `mysql.user`'s `User_attributes`, which an
+  account with only `CREATE USER` cannot read, and `SHOW CREATE USER` does not
+  show. `sql/mysql/03_dual_password_probe.py` measures it.
 
 ### Vault
 

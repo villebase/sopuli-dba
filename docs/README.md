@@ -607,6 +607,30 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   expiry, away from the hashes; a retained password's state is only in
   `User_attributes`, beside its hash.
   `sql/mysql/05_identity_grants_probe.py` measures it.
+- `verified` `mysql-rollover-state` (#1220) — **Is there a source for whether
+  an account has a retained password, other than `User_attributes`?**
+  None the server provides. `INFORMATION_SCHEMA.USER_ATTRIBUTES` holds only the
+  `ATTRIBUTE` metadata, `SHOW CREATE USER` shows only the current hash, and
+  `DISCARD OLD PASSWORD` answers the same with a retained password and without
+  one. A view that root creates with `SQL SECURITY DEFINER`, exposing only
+  `JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password')`, gives
+  the tool account the state without the hash. Such a view is an object owned
+  by an administrator that the tool would install, the shape ADR-001 rejected,
+  and decision 6 of #1202 rules it out. So `finish-rollover` always sends
+  `DISCARD OLD PASSWORD`. `sql/mysql/06_rollover_privileges_probe.py`
+  measures it.
+- `verified` `mysql-admin-privileges` (#1220) — **Which grants let the tool
+  account read another account's global privileges without reading anything
+  sensitive?**
+  `SELECT` on the `*_priv` columns of `mysql.user` for the static privileges,
+  and `SELECT` on `mysql.global_grants`, whose columns are `USER`, `HOST`,
+  `PRIV` and `WITH_GRANT_OPTION`, for the dynamic ones. The hash stays refused,
+  `1143`. `SHOW GRANTS FOR` another account is refused, `1142`, because it
+  needs all of `mysql.user`. A privilege can come through a role, which shows
+  on the role's own rows; which roles an account has and uses by default is
+  only in `mysql.role_edges` and `mysql.default_roles`, each readable with
+  `SELECT` on it. Nested roles and roles that are not default were not
+  measured. `sql/mysql/06_rollover_privileges_probe.py` measures it.
 
 ### Vault
 

@@ -122,6 +122,19 @@ RESERVED = "reserved"
 #: The checks no flag waives.
 NEVER_WAIVED = frozenset({DECLARED, SUPERUSER, RESERVED})
 
+#: §4's number for each check, for a message that names one. A test holds it to
+#: every check :func:`review` can return.
+NUMBERS = {
+    DECLARED: 1,
+    VENDOR_MAINTAINED: 2,
+    PASSWORD_FILE: 3,
+    PRIVILEGED_ROLE: 4,
+    DENY_LIST: 5,
+    SUPERUSER: 6,
+    OWN_ACCOUNT: 7,
+    RESERVED: 8,
+}
+
 
 @dataclass(frozen=True)
 class Refusal:
@@ -231,11 +244,16 @@ class Review:
 def is_declared(account: str, declared: Collection[str]) -> bool:
     """Whether ``account`` is in the config's declared set (§4 check 1).
 
-    **Case-folded**, because the two sides spell accounts differently and
-    neither is wrong: `01-configuration.md` writes `acme_web_user` and Oracle
+    **Compared by ``upper()``**, because the two sides spell accounts differently
+    and neither is wrong: `01-configuration.md` writes `acme_web_user` and Oracle
     stores `ACME_WEB_USER`, since an unquoted identifier is upper-cased on the
     way in. Comparing exactly would refuse every correctly-declared account on
     Oracle, which is a guardrail that fires only on its own users.
+
+    ``upper()`` and not ``casefold()``, because ``upper()`` is how the drivers
+    look a name up and how invariant 5 compares names. The two differ outside
+    ASCII: ``'acme_ıt'.upper()`` is ``'ACME_IT'``, while its casefold keeps the
+    dotless i (#1208).
 
     The residual risk is an estate holding both `ACME_WEB_USER` and a quoted
     `"acme_web_user"` as genuinely different accounts, where this would accept
@@ -243,8 +261,7 @@ def is_declared(account: str, declared: Collection[str]) -> bool:
     worth solving: a binding addresses one account, and an estate spelling two
     accounts the same way has a problem this check would not be the first to hit.
     """
-    folded = {name.casefold() for name in declared}
-    return account.casefold() in folded
+    return account.upper() in {name.upper() for name in declared}
 
 
 def server_reserved(state: UserState) -> bool:

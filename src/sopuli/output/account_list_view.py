@@ -269,7 +269,7 @@ def _or_dash(value: str | None) -> str:
 def _count(rows: Sequence[Row]) -> str:
     missing = sum(1 for row in rows if not row.exists and not row.failed)
     failed = sum(1 for row in rows if row.failed)
-    accounts = len({row.account.casefold() for row in rows if not row.failed})
+    accounts = len({row.account.upper() for row in rows if not row.failed})
     noun = "account" if accounts == 1 else "accounts"
     line = f"{accounts} declared {noun}, {len(rows) - failed} on the selected targets"
     if missing:

@@ -377,9 +377,13 @@ question, so it is one verb, not two.
 - **A predicate can admit an account that no reset will touch, and the listing
   says so.** Creating a role grants it to the creator, so `role: ACME_DEV_TEAM`
   admits whoever ran the `CREATE ROLE`. On the tier-1 stack that was `SYSTEM`.
-  Guardrail 2 refuses it at plan time, and the row carries a notice saying so.
-  The text output prints the notice under the table. This makes H1's cost
-  visible, which is why the verb exists.
+  Guardrail 2 refuses it at plan time, and the row carries a notice saying so
+  (`SOPULI-W041`). A predicate can also admit an account that another guardrail
+  refuses: a member of `DBA`, a superuser, or the tool's own account. The row
+  then carries `SOPULI-W062`, which names each check that refuses, from the
+  same review a mutating verb runs. `SYSTEM` holds `DBA`, so its row carries
+  both codes. The text output prints the notices under the
+  table. This makes H1's cost visible, which is why the verb exists.
 - **The refusals are the ones this section specifies.** The two-rules,
   two-policies refusal fires here exactly as it does in the mutating verbs. A
   listing that quietly showed the first match would be where an operator formed
@@ -469,7 +473,8 @@ role's creator holds the role by such a grant by default, with `ADMIN OPTION`,
 which lets it manage the role's members and nothing else. A server whose
 `createrole_self_grant` adds `inherit` or `set` gives the creator a grant that
 counts. The creator then holds `CREATEROLE` or is a superuser, so a mutating
-verb refuses it (checks 4 and 6), but `account list` shows it. A group role in the chain and a
+verb refuses it (checks 4 and 6). `account list` shows it, with `SOPULI-W062`
+saying so. A group role in the chain and a
 `NOLOGIN` member are admitted: PostgreSQL cannot tell a group role from a
 suspended person, and `account list` must show exactly the accounts a mutating
 verb would admit. Reasons: [#1201](../decisions/log.md#1201).
@@ -574,8 +579,9 @@ rules apply:
   read. An unseen delivery whose store a target or `defaults.vault` supplies is
   refused before the reset builds its plan, `--dry-run` included. Both are
   config errors, exit 9. Reasons: [#1138](../decisions/log.md#1138).
-- **The account is case-folded into the path, and the target is not.** An Oracle
-  account name is matched case-insensitively everywhere else. A path that did not
+- **The account is case-folded into the path, and the target is not.** The path
+  segment is the account's `upper()`, written in lower case. An account name is
+  compared by `upper()` everywhere else. A path that did not
   fold would let one account own two records that never find each other, so two
   concurrent resets would not collide. That is the failure §3.3 keys the lock to
   prevent. A target name is a `targets:` key, matched exactly. Folding it would

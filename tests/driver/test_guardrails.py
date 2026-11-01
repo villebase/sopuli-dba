@@ -76,6 +76,13 @@ def test_the_two_sides_spell_an_account_differently_and_both_are_right() -> None
     assert not is_declared("ACME_OTHER_USER", DECLARED_SET)
 
 
+def test_check_1_compares_by_the_drivers_upper() -> None:
+    """`upper()` is how a driver looks a user up, and it is not `casefold()`
+    outside ASCII: `'acme_ıt_user'.upper()` is `'ACME_IT_USER'`, while its
+    casefold keeps the dotless i (#1208)."""
+    assert is_declared("ACME_IT_USER", ("acme_ıt_user",))
+
+
 # ------------------------------------------------------------- the refusals ---
 
 

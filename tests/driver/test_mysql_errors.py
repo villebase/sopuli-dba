@@ -124,6 +124,57 @@ def test_an_unreachable_server_is_a_connection_failure_with_no_certificate_hint(
     assert diagnosis.coded_message.startswith("2003: ")
 
 
+def test_a_closed_connection_with_no_number_is_a_connection_failure() -> None:
+    """PyMySQL's ``InterfaceError(0, "")`` once the socket is closed."""
+    diagnosis = from_error(FakeMysqlError(0, ""))
+
+    assert diagnosis.category == "connectivity"
+    assert diagnosis.coded_message == "2000: the connection is closed"
+    assert "may have run" in str(diagnosis.hint)
+
+
+class MessageOnlyError(Exception):
+    """PyMySQL's errors that carry a message and no number."""
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        MessageOnlyError("Packet sequence number wrong - got 3 expected 1"),
+        MessageOnlyError("Received extra packet for auth method %r", "caching_sha2_password"),
+        MessageOnlyError(),
+    ],
+)
+def test_an_error_with_no_number_is_classified_not_raised(exc: Exception) -> None:
+    diagnosis = from_error(exc)
+
+    assert diagnosis.code == "2000"
+    assert diagnosis.category == "connectivity"
+    assert diagnosis.message
+
+
+@pytest.mark.parametrize("number", [2006, 2013])
+def test_a_lost_connection_says_a_change_in_flight_is_unknown(number: int) -> None:
+    assert "unknown until the account is checked" in str(classify(number, "").hint)
+
+
+@pytest.mark.parametrize(
+    ("number", "category"),
+    [(1130, "authentication"), (1698, "authentication"), (1129, "connectivity")],
+)
+def test_a_login_refused_for_the_host_has_a_row(number: int, category: str) -> None:
+    diagnosis = classify(number, "Host '192.0.2.1' is not allowed to connect")
+
+    assert diagnosis.category == category
+    assert diagnosis.hint
+
+
+@pytest.mark.parametrize("number", [1040, 1203])
+def test_a_connection_limit_is_not_called_retryable(number: int) -> None:
+    """A limit stays until someone raises it, as PostgreSQL's 53300 says."""
+    assert classify(number, "").retryable is None
+
+
 def test_a_message_with_no_sqlstate_has_only_the_number_in_front() -> None:
     exc: Any = FakeMysqlError(2013, "Lost connection to MySQL server during query")
 

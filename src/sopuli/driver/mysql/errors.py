@@ -6,16 +6,23 @@ category and a hint. The message is the server's, with the number and the
 SQLSTATE put in front of it, as the mysql client prints them. Nothing here
 raises; the caller decides.
 
-PyMySQL raises every server error, and every failure of its own to reach the
+PyMySQL raises a server error, and most failures of its own to reach the
 server, as an exception whose ``args`` are ``(number, message)`` and whose
 ``sqlstate`` is the server's where the reply carried one (PyMySQL 1.2.3,
 ``err.raise_mysql_exception``). Numbers from 2000 are the client's own, such as
-2003 for a server it could not reach.
+2003 for a server it could not reach. Some of its own errors carry no number:
+a closed connection is ``(0, "")``, and a broken handshake or packet stream is
+a message alone, such as ``Packet sequence number wrong``. Each of those is a
+connection failure (:func:`from_error`), as a PostgreSQL failure with no
+SQLSTATE is.
 
 Which rows were measured: `3118`, `1820`, `3955`, `1227`, `1142`, `1044`,
 `1827` and `3894` on 8.0.46, 8.4.13 and 9.7.4 with the mysql client (#1202,
-``docs/README.md`` §*MySQL*). The others are from MySQL's error reference, and
-the PyMySQL shape of every row is measured with the driver (#1221).
+``docs/README.md`` §*MySQL*). The others are from MySQL's error reference.
+The shapes here are read from PyMySQL 1.2.3's source, and PR 3 of #1221
+measures them against a server. One difference is expected: PyMySQL does not
+say it can handle an expired password, so it should meet `1862` at login
+where the mysql client met `1820` after it.
 """
 
 from __future__ import annotations
@@ -29,6 +36,14 @@ from sopuli.exit_codes import ExitCode
 
 #: ``ER_ACCESS_DENIED_ERROR``: a wrong password, or no account at this host.
 ACCESS_DENIED = 1045
+#: ``ER_HOST_NOT_PRIVILEGED``: no account of any name allows the client's host.
+HOST_NOT_PRIVILEGED = 1130
+#: ``ER_HOST_IS_BLOCKED``: too many broken connections from the client's host
+#: (``max_connect_errors``).
+HOST_BLOCKED = 1129
+#: ``ER_ACCESS_DENIED_NO_PASSWORD_ERROR``: an account on a plugin that takes no
+#: password, such as ``auth_socket``.
+ACCESS_DENIED_NO_PASSWORD = 1698
 #: ``ER_ACCOUNT_HAS_BEEN_LOCKED``: ``ACCOUNT LOCK``.
 ACCOUNT_LOCKED = 3118
 #: ``ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK``: a block
@@ -64,8 +79,11 @@ TOO_MANY_CONNECTIONS = 1040
 TOO_MANY_USER_CONNECTIONS = 1203
 #: ``ER_SECURE_TRANSPORT_REQUIRED``: the server requires TLS.
 SECURE_TRANSPORT_REQUIRED = 3159
-#: The client's own: ``CR_CONN_HOST_ERROR``, ``CR_SERVER_GONE_ERROR``,
-#: ``CR_SERVER_LOST`` and ``CR_SSL_CONNECTION_ERROR``.
+#: The client's own: ``CR_UNKNOWN_ERROR``, ``CR_CONN_HOST_ERROR``,
+#: ``CR_SERVER_GONE_ERROR``, ``CR_SERVER_LOST`` and ``CR_SSL_CONNECTION_ERROR``.
+#: ``CR_UNKNOWN_ERROR`` is the number this module gives a PyMySQL error that
+#: carries none.
+UNKNOWN_CLIENT_ERROR = 2000
 CANNOT_CONNECT = 2003
 SERVER_GONE = 2006
 SERVER_LOST = 2013
@@ -83,11 +101,41 @@ class _Rule:
     retryable: bool | None = None
 
 
-_AUTHENTICATION = "authentication"
+_AUTHENTICATION = AuthenticationError.category
+
+#: What a connection lost mid-call leaves behind, for the rows that say so.
+_LOST = (
+    "the connection to the server was lost. A statement in flight may have run: if it "
+    "set a password, the change is unknown until the account is checked"
+)
 
 #: The named numbers. Each hint says what to do next; the message says what
 #: happened.
 RULES: dict[int, _Rule] = {
+    HOST_NOT_PRIVILEGED: _Rule(
+        _AUTHENTICATION,
+        exit_code=ExitCode.AUTH_FAILURE,
+        hint=(
+            "no account allows a login from the host the server sees for this machine. "
+            "Check the tool account's host part against the address the server sees"
+        ),
+    ),
+    HOST_BLOCKED: _Rule(
+        "connectivity",
+        hint=(
+            "the server blocked this machine's host after too many broken connections "
+            "(max_connect_errors). FLUSH HOSTS, or TRUNCATE "
+            "performance_schema.host_cache, ends it"
+        ),
+    ),
+    ACCESS_DENIED_NO_PASSWORD: _Rule(
+        _AUTHENTICATION,
+        exit_code=ExitCode.AUTH_FAILURE,
+        hint="the account's plugin takes no password, such as auth_socket",
+    ),
+    UNKNOWN_CLIENT_ERROR: _Rule("connectivity", hint=_LOST),
+    SERVER_GONE: _Rule("connectivity", hint=_LOST),
+    SERVER_LOST: _Rule("connectivity", hint=_LOST),
     ACCESS_DENIED: _Rule(
         _AUTHENTICATION,
         exit_code=ExitCode.AUTH_FAILURE,
@@ -129,10 +177,15 @@ RULES: dict[int, _Rule] = {
         ),
     ),
     DATABASE_ACCESS_DENIED: _Rule(
-        "authorization", hint="the tool account cannot read what the statement names"
+        "authorization",
+        hint="the tool account has no grant on the database the statement names",
     ),
     TABLE_ACCESS_DENIED: _Rule(
-        "authorization", hint="the tool account cannot read the table the statement names"
+        "authorization",
+        hint=(
+            "the tool account lacks the grant the statement needs on the table it names; "
+            "the message says which command"
+        ),
     ),
     COLUMN_ACCESS_DENIED: _Rule(
         "authorization",
@@ -163,12 +216,11 @@ RULES: dict[int, _Rule] = {
         ),
     ),
     TOO_MANY_CONNECTIONS: _Rule(
-        "database", hint="the server is at max_connections", retryable=True
+        "database", hint="the server is at max_connections; raise it or end a session"
     ),
     TOO_MANY_USER_CONNECTIONS: _Rule(
         "database",
         hint="the account is at its MAX_USER_CONNECTIONS; raise the limit or end a session",
-        retryable=True,
     ),
     SECURE_TRANSPORT_REQUIRED: _Rule(
         "connectivity",
@@ -267,13 +319,22 @@ def classify(number: int, message: str, *, sqlstate: str | None = None) -> Diagn
 def from_error(exc: Any) -> Diagnosis:
     """Classify a PyMySQL exception without importing PyMySQL.
 
-    The number is the first of ``args`` and the message the second. An
-    exception without a number is not one the server or the connection raised,
-    and is a fault in this tool, so it is not mapped: a caller passes only
-    PyMySQL's errors.
+    The number is the first of ``args`` and the message the second. PyMySQL
+    raises some of its own errors with no number: ``(0, "")`` for a connection
+    already closed, and a message alone for a broken handshake or packet
+    stream. Each of those is :data:`UNKNOWN_CLIENT_ERROR`, a connection
+    failure, with the exception's own text as the message. A caller passes only
+    PyMySQL's errors: anything else is a fault in this tool, and not mapped.
     """
-    number, message = exc.args[0], str(exc.args[1]) if len(exc.args) > 1 else ""
-    diagnosis = classify(int(number), message, sqlstate=getattr(exc, "sqlstate", None))
+    args = exc.args
+    number = args[0] if args else None
+    if isinstance(number, int) and not isinstance(number, bool) and number:
+        message = str(args[1]) if len(args) > 1 else ""
+    else:
+        # A message alone is its args; `(0, "")` and no args at all say nothing.
+        text = " ".join(str(arg) for arg in args if arg not in (0, "")).strip()
+        number, message = UNKNOWN_CLIENT_ERROR, text or "the connection is closed"
+    diagnosis = classify(number, message, sqlstate=getattr(exc, "sqlstate", None))
     if diagnosis.number == CANNOT_CONNECT and _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)
     return diagnosis

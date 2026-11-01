@@ -24,11 +24,10 @@
 -- STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and
 -- mysql:9 images of test/compose.yaml profile mysql-matrix, as root, on
 -- 2026-11-01 (#1202). Twice on each release, with the release's own mysql
--- client, and the same result both times. The last version, which reads the
--- digest only for this run and reports pt1_read, ran twice more on each
--- release, 65 s apart so that the digest samples aged out, with the same
--- result, and pt1_read = 1 with a history of 10 rows. After the runs, the general log and
--- slow log files in /var/lib/mysql held no test password either.
+-- client, 65 s apart so that the digest samples aged out, and the same result
+-- both times, with pt1_read = 1 and a history of 10 rows. After the runs, the
+-- general log and slow log files in /var/lib/mysql held no test password
+-- either.
 --
 -- RESULTS -- the same on all three releases, except where noted
 --

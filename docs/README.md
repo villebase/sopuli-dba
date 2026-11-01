@@ -631,7 +631,8 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   - a role, whose privileges show on the role's own rows. Which roles an
     account has and uses by default is in `mysql.role_edges` and
     `mysql.default_roles`. A role in the setting `mandatory_roles` goes to
-    every account and has no row in `role_edges`; the tool reads the setting;
+    every account and has no row in `role_edges`; the tool account can read
+    the setting;
   - a proxy grant, such as `PROXY ON root`, in `mysql.proxies_priv`;
   - privileges on the `mysql` schema, such as `UPDATE` on `mysql.user`, in
     `mysql.db` and `mysql.tables_priv`.

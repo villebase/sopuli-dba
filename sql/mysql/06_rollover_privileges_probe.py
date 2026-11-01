@@ -37,9 +37,10 @@ sensitive. This measures, on each server:
        its default role. The tool reads the account's and the role's
        Super_priv, the role's dynamic privileges, then mysql.role_edges and
        mysql.default_roles without and with SELECT on each
-  PV6  mandatory_roles set to that role, by root, for the case. The tool reads
-       mandatory_roles and activate_all_roles_on_login, and mysql.role_edges
-       for the account of PV1, which every account now has the role through
+  PV6  mandatory_roles set to that role, by root, for the case. PV1's account,
+       which was never granted the role, runs SET ROLE to it before and while
+       the setting holds it. The tool reads mandatory_roles and
+       activate_all_roles_on_login, and mysql.role_edges for that account
   PV7  PROXY on root@'localhost', UPDATE on mysql.* and UPDATE on mysql.user,
        granted to PV1's account. The tool reads mysql.proxies_priv, mysql.db
        and mysql.tables_priv for it, without and with SELECT on each
@@ -81,9 +82,11 @@ RESULTS -- the same on all three releases
        1142 (42000), without the grant. With it, mysql.role_edges shows the
        role granted to the account, and mysql.default_roles shows it as the
        account's default role
-  PV6  the tool reads mandatory_roles as the role and
-       activate_all_roles_on_login as 0, and mysql.role_edges has no row for
-       PV1's account: a mandatory role is in the setting, not in role_edges
+  PV6  before, SET ROLE is refused, 3530 (HY000); while the setting holds the
+       role, it is accepted and the role is current. The tool reads
+       mandatory_roles as the role and activate_all_roles_on_login as 0, and
+       mysql.role_edges has no row for the account: a mandatory role is in the
+       setting, not in role_edges
   PV7  each table is refused, 1142 (42000), without the grant. With it,
        proxies_priv shows the proxy on root, mysql.db UPDATE on the schema
        mysql, and tables_priv UPDATE on mysql.user
@@ -270,8 +273,8 @@ def privileges(service: str) -> None:
     )
     ch.check(
         "PV1",
-        (yes, secret, attributes),
-        ("Grant_priv,Super_priv,Create_user_priv", DENIED_COLUMN, DENIED_COLUMN),
+        (count, yes, secret, attributes),
+        (31, "Grant_priv,Super_priv,Create_user_priv", DENIED_COLUMN, DENIED_COLUMN),
     )
 
     dynamic = tool(
@@ -348,7 +351,14 @@ def privileges(service: str) -> None:
         ),
     )
 
+    # Whether PV1's account holds the role: it can make the role current only
+    # if it does.
+    take_role = f"SET ROLE '{ROLE}'; SELECT CURRENT_ROLE()"
+    ok, out = ch.mysql(service, ADMIN, "Acme-Admin-pw1", take_role)
+    before = out if ok else ch.code(out)
     ch.root(service, f"SET GLOBAL mandatory_roles = '`{ROLE}`@`%`'")
+    ok, out = ch.mysql(service, ADMIN, "Acme-Admin-pw1", take_role)
+    during = out if ok else ch.code(out)
     settings = tool(
         service,
         "SELECT CONCAT(@@GLOBAL.mandatory_roles, ';', @@GLOBAL.activate_all_roles_on_login)",
@@ -356,10 +366,15 @@ def privileges(service: str) -> None:
     admin_edges = tool(service, f"SELECT COUNT(*) FROM mysql.role_edges WHERE to_user = '{ADMIN}'")
     ch.root(service, "SET GLOBAL mandatory_roles = ''")
     print(
-        f"PV6 mandatory_roles;activate_all_roles_on_login: {settings}; "
+        f"PV6 {ADMIN} takes the role, before: {before}; while mandatory: {during}; "
+        f"mandatory_roles;activate_all_roles_on_login: {settings}; "
         f"role_edges rows for {ADMIN}: {admin_edges}"
     )
-    ch.check("PV6", (settings, admin_edges), (f"`{ROLE}`@`%`;0", "0"))
+    ch.check(
+        "PV6",
+        (before, during, settings, admin_edges),
+        ("3530 (HY000)", f"`{ROLE}`@`%`", f"`{ROLE}`@`%`;0", "0"),
+    )
 
     # Only root@'localhost' holds PROXY WITH GRANT OPTION, so this grant goes
     # over the socket, where root logs in as that account.

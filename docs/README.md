@@ -575,6 +575,34 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   the key `additional_password` in `mysql.user`'s `User_attributes`, which an
   account with only `CREATE USER` cannot read, and `SHOW CREATE USER` does not
   show. `sql/mysql/03_dual_password_probe.py` measures it.
+- `verified` `mysql-lock-expiry` (#1202) — **How do a lock, an expiry and a
+  timed block read back, and what does each answer at login?**
+  `ACCOUNT LOCK` reads back as `mysql.user.account_locked = 'Y'`, and the
+  password then answers `3118`. `PASSWORD EXPIRE` reads back as
+  `password_expired = 'Y'`; the account logs in, and every statement answers
+  `1820` until it sets its own password. A block from `FAILED_LOGIN_ATTEMPTS`
+  answers `3955`, also to the right password, and nothing in `mysql.user`
+  shows it, so the tool cannot read it. `ACCOUNT UNLOCK` ends a lock and a
+  block. An account with only `CREATE USER` does all of these.
+  `sql/mysql/04_lock_expiry_probe.py` measures it.
+- `verified` `mysql-identity` (#1202) — **What is one MySQL account?**
+  A user name and a host pattern. One name at several hosts is several
+  accounts, each with its own password, and which one a login uses depends on
+  how the client connects. A name with no host means `'%'`. User names are
+  case-sensitive and host names are not, so `Acme_App` and `acme_app` are two
+  accounts, which invariant 5's `upper()` comparison would take as one.
+  `sql/mysql/05_identity_grants_probe.py` measures it.
+- `verified` `mysql-tool-grants` (#1202) — **What is the least privilege that
+  changes other accounts' passwords, and what keeps it off the administrative
+  ones?**
+  `CREATE USER` alone changes, locks, expires and drops other accounts.
+  `SYSTEM_USER` keeps it off root and the `mysql.*` system accounts, which hold
+  it, as long as the tool account does not: with `SYSTEM_USER` it changes
+  root. An administrative account without `SYSTEM_USER` is not protected.
+  Reading lock and expiry needs `SELECT` on `mysql.user`, which a column grant
+  can limit to those columns, away from the hashes; a retained password's
+  state is only in `User_attributes`, beside its hash.
+  `sql/mysql/05_identity_grants_probe.py` measures it.
 
 ### Vault
 

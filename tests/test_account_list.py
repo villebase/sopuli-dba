@@ -29,6 +29,7 @@ from sopuli.account_list import (
     Row,
     cross_declared,
     enumerated_names,
+    guardrail_refusal,
     rule_for,
     rules_on,
 )
@@ -36,10 +37,12 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.diagnostics import (
     ADMITTED_CROSS_DECLARED,
+    ADMITTED_REFUSED_ACCOUNT,
     ADMITTED_VENDOR_ACCOUNT,
     no_reset_journal,
     reset_journal_unread,
 )
+from sopuli.driver.guardrails import NUMBERS, review
 from sopuli.driver.protocol import UserState
 from sopuli.output.account_list_view import (
     build_result,
@@ -172,6 +175,123 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
     ]
     assert "as its own" in row.notices[0].message
     assert "also declared by acme" in row.notices[1].message
+
+
+# ------------------------------------------------- guardrail refusals (#1207) ---
+
+
+def test_a_member_of_an_administrative_role_gets_a_notice_force_overrides() -> None:
+    """On Oracle a `role:` predicate can admit a member of `DBA`. Check 4
+    refuses it in a verb, and `--force` overrides that."""
+    message = guardrail_refusal(user("JDOE", admin_roles=frozenset({"DBA"})), admitted=True)
+
+    assert message == (
+        "a mutating verb refuses this account at plan time: check 4 (the account holds DBA). "
+        "`--force` overrides it, and the override is recorded"
+    )
+
+
+def test_a_superuser_is_named_with_the_check_no_flag_overrides() -> None:
+    """Check 6 is never waived, so the notice must not send the reader to
+    `--force`, even beside a check that `--force` does override. Nor to the
+    config: a predicate's member is not written there."""
+    message = guardrail_refusal(user("ADMIN", superuser=True, session_account=True), admitted=True)
+
+    assert message is not None
+    assert "check 6 (the account is a superuser), check 7 (this is the account" in message
+    assert message.endswith("no flag overrides check 6, so no verb will act on this account")
+    assert "--force" not in message
+    assert "config" not in message
+
+
+def test_an_account_no_rule_admits_names_check_1() -> None:
+    """The verbs review the account as undeclared when no rule admits it as
+    the database describes it, so the listing must too (#1207)."""
+    message = guardrail_refusal(user("JDOE"), admitted=False)
+
+    assert message is not None
+    assert message.startswith("a mutating verb refuses this account at plan time: check 1 (")
+    assert message.endswith("no flag overrides check 1, so no verb will act on this account")
+
+
+def test_two_checks_force_overrides_are_them() -> None:
+    message = guardrail_refusal(
+        user("SYSTEM", admin_roles=frozenset({"DBA"}), session_account=True), admitted=True
+    )
+
+    assert message is not None
+    assert message.endswith("`--force` overrides them, and the override is recorded")
+
+
+def test_every_check_the_review_returns_has_a_number() -> None:
+    """A check added to the review without a number would print its id, not
+    its number. Every flag set at once reaches every refusal the review has."""
+    every = user(
+        "ANYONE",
+        vendor_maintained=True,
+        password_file_member=True,
+        admin_roles=frozenset({"DBA"}),
+        superuser=True,
+        session_account=True,
+        reserved_by="supautils.reserved_roles",
+    )
+    found = {one.check for one in review(every, declared=()).refusals}
+    found |= {one.check for one in review(user("X", supplied_name=True), declared=()).refusals}
+
+    assert found == set(NUMBERS)
+
+
+def test_guardrail_2_alone_and_an_unread_check_get_no_such_notice() -> None:
+    """Guardrail 2 has `SOPULI-W041`. An unread password file is a caveat in a
+    verb and refuses nothing, so it is not a refusal here either."""
+    assert guardrail_refusal(user("ACME_OWNED", vendor_maintained=True), admitted=True) is None
+    assert guardrail_refusal(user("JDOE", password_file_member=None), admitted=True) is None
+
+
+def test_oracle_system_carries_both_codes() -> None:
+    """Oracle's `SYSTEM` is the database's own and holds `DBA`, so a `role:`
+    predicate that admits it gets `SOPULI-W041` for check 2 and `SOPULI-W062`
+    for check 4. The fixes differ: one is in the predicate, the other in the
+    grants."""
+    from sopuli.cli import _describe_row, _JournalFailures
+
+    built = config(personal_accounts=[{"role": "ACME_DEV_TEAM"}])
+    target = next(one for one in built.targets if one.name == TARGET)
+
+    class Session:
+        def describe_user(self, name: str) -> UserState:
+            return user(
+                "SYSTEM",
+                roles=("ACME_DEV_TEAM", "DBA"),
+                admin_roles=frozenset({"DBA"}),
+                vendor_maintained=True,
+            )
+
+    row = _describe_row(Session(), "SYSTEM", target, built, unread=_JournalFailures())
+
+    assert [notice.code for notice in row.notices] == [
+        ADMITTED_VENDOR_ACCOUNT,
+        ADMITTED_REFUSED_ACCOUNT,
+    ]
+    assert "check 4 (the account holds DBA)" in row.notices[1].message
+
+
+def test_the_row_carries_the_refusal_under_its_own_code() -> None:
+    from sopuli.cli import _describe_row, _JournalFailures
+
+    built = config(personal_accounts=[{"role": "ACME_DEV_TEAM"}])
+    target = next(one for one in built.targets if one.name == TARGET)
+
+    class Session:
+        def describe_user(self, name: str) -> UserState:
+            return user(name.upper(), roles=("ACME_DEV_TEAM",), admin_roles=frozenset({"DBA"}))
+
+    row = _describe_row(Session(), "jdoe", target, built, unread=_JournalFailures())
+
+    assert [notice.code for notice in row.notices] == [ADMITTED_REFUSED_ACCOUNT]
+    assert [warning["code"] for warning in build_result(row)["warnings"]] == [
+        ADMITTED_REFUSED_ACCOUNT
+    ]
 
 
 # ------------------------------------------------------------------ rows ---

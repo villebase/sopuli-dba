@@ -122,6 +122,19 @@ RESERVED = "reserved"
 #: The checks no flag waives.
 NEVER_WAIVED = frozenset({DECLARED, SUPERUSER, RESERVED})
 
+#: §4's number for each check, for a message that names one. A test holds it to
+#: every check :func:`review` can return.
+NUMBERS = {
+    DECLARED: 1,
+    VENDOR_MAINTAINED: 2,
+    PASSWORD_FILE: 3,
+    PRIVILEGED_ROLE: 4,
+    DENY_LIST: 5,
+    SUPERUSER: 6,
+    OWN_ACCOUNT: 7,
+    RESERVED: 8,
+}
+
 
 @dataclass(frozen=True)
 class Refusal:

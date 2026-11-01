@@ -70,7 +70,7 @@ on which Oracle release, and what it showed.
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/`. `mysql-matrix`: MySQL 8.0, 8.4 and 9, for the probes in `sql/mysql/` |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/`. `mysql-matrix`: MySQL 8.0, 8.4 and 9, for the probes in `sql/mysql/`. `mariadb-matrix`: MariaDB 10.11 and 12.3, for the probes in `sql/mariadb/` |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
@@ -607,6 +607,37 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   expiry, away from the hashes; a retained password's state is only in
   `User_attributes`, beside its hash.
   `sql/mysql/05_identity_grants_probe.py` measures it.
+
+### MariaDB
+
+These entries are measured before the MySQL driver is built, so that its
+capabilities assume nothing MariaDB breaks (#1220). MariaDB gets a driver of
+its own after MySQL (decision 2 of #1202). The probes are in `sql/mariadb/`,
+and the matrix of 10.11 and 12.3 is the `mariadb-matrix` profile of
+`test/compose.yaml`. [measurements.md](measurements.md) names each release in
+full.
+
+- `verified` `mariadb-password-text` (#1220) — **What does MariaDB keep of the
+  text of a password change?**
+  The password, in clear. The general log, the slow log and
+  `performance_schema`'s statement history keep `CREATE USER` and `ALTER USER
+  … IDENTIFIED BY '…'`, `SET PASSWORD … = PASSWORD('…')` and `USING
+  PASSWORD('…')` as sent, also when the statement fails. The binary log keeps
+  all of these but `SET PASSWORD` as sent. Only a value the client computed,
+  `IDENTIFIED VIA <plugin> USING '<value>'`, keeps the password out of every
+  place. `sql/mariadb/01_password_text_probe.py` measures it.
+- `verified` `mariadb-client-hash` (#1220) — **Can the tool compute the
+  stored value, and set it so that the password logs in?**
+  Yes, for `mysql_native_password`, `ed25519` and `parsec`. `ed25519` stores
+  the Ed25519 public key whose seed is the password; `parsec` stores a salt
+  and the public key whose seed is PBKDF2-HMAC-SHA512 of the password. Values
+  computed in Python agree with the server's, an account with only `CREATE
+  USER` sets them with `IDENTIFIED VIA … USING`, and the password logs in. A
+  malformed value is refused with the plain `1396`. Only
+  `mysql_native_password` is loaded by default: `ed25519` must be installed,
+  and `parsec` too, on 12.3 only. `caching_sha2_password` does not exist.
+  Whether PyMySQL logs in on `ed25519` and `parsec` was not measured.
+  `sql/mariadb/02_client_hash_probe.py` measures it.
 
 ### Vault
 

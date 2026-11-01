@@ -11,6 +11,7 @@
 #   docker compose --profile emulators up -d # lowkey-vault, on 8443
 #   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
 #   docker compose --profile mysql-matrix up -d    # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
+#   docker compose --profile mariadb-matrix up -d  # MariaDB 10.11, 12.3, on 3311, 3323
 #   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
 #   docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
@@ -40,7 +41,9 @@
 # first clone's containers. A second clone that starts postgres-matrix also sets
 # SOPULI_TEST_POSTGRES13_PORT to SOPULI_TEST_POSTGRES18_PORT, and one that
 # starts mysql-matrix sets SOPULI_TEST_MYSQL80_PORT, SOPULI_TEST_MYSQL84_PORT and
-# SOPULI_TEST_MYSQL9_PORT. The suite reads none of them. See README.md.
+# SOPULI_TEST_MYSQL9_PORT, and one that starts mariadb-matrix sets
+# SOPULI_TEST_MARIADB1011_PORT and SOPULI_TEST_MARIADB123_PORT. The suite reads
+# none of them. See README.md.
 
 name: sopuli-test
 
@@ -73,6 +76,21 @@ x-mysql-matrix: &mysql-matrix
     MYSQL_DATABASE: sopuli
   healthcheck:
     test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -psopuli-test --silent"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+
+# The settings mariadb-1011 and mariadb-123 share. MariaDB starts with
+# performance_schema and the binary log off, and MySQL with both on, so they are
+# turned on here: the probes measure what each keeps of a password.
+x-mariadb-matrix: &mariadb-matrix
+  profiles: [mariadb-matrix]
+  command: ["--performance-schema=ON", "--log-bin=mariadb-bin"]
+  environment:
+    MARIADB_ROOT_PASSWORD: sopuli-test
+    MARIADB_DATABASE: sopuli
+  healthcheck:
+    test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
     interval: 5s
     timeout: 3s
     retries: 30
@@ -312,6 +330,23 @@ services:
     ports:
       - "127.0.0.1:${SOPULI_TEST_MYSQL9_PORT:-3390}:3306"
       - "[::1]:${SOPULI_TEST_MYSQL9_PORT:-3390}:3306"
+
+  # MariaDB 10.11 and 12.3, both long-term support releases, for the probes in
+  # sql/mariadb/ (#1220). Moving tags, as mysql-80 to mysql-9: a probe's header
+  # records the release `SELECT VERSION()` read, never the tag.
+  mariadb-1011:
+    <<: *mariadb-matrix
+    image: mariadb:10.11
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MARIADB1011_PORT:-3311}:3306"
+      - "[::1]:${SOPULI_TEST_MARIADB1011_PORT:-3311}:3306"
+
+  mariadb-123:
+    <<: *mariadb-matrix
+    image: mariadb:12.3
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MARIADB123_PORT:-3323}:3306"
+      - "[::1]:${SOPULI_TEST_MARIADB123_PORT:-3323}:3306"
 
   # ------------------------------------------------------------ pgbouncer ---
   # PgBouncer in front of postgres above, for sql/postgres/08_pgbouncer_probe.py

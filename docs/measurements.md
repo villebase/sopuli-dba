@@ -1,10 +1,11 @@
 # Measurements
 
-This file says what has been run on which Oracle, PostgreSQL or MySQL release,
-when, and what it showed. It is the one place for that. Other documents link
-here instead of listing releases themselves. The PostgreSQL results are in
-[their own part](#postgresql-releases), after the Oracle ones, and the MySQL
-results [after those](#mysql-releases).
+This file says what has been run on which Oracle, PostgreSQL, MySQL or MariaDB
+release, when, and what it showed. It is the one place for that. Other
+documents link here instead of listing releases themselves. The PostgreSQL
+results are in [their own part](#postgresql-releases), after the Oracle ones,
+the MySQL results [after those](#mysql-releases), and the MariaDB results
+[last](#mariadb-releases).
 
 A result holds only for the release it names. Oracle's retention and auditing
 behaviour is not a documented guarantee, and it differs between releases: 11.2
@@ -263,7 +264,8 @@ client the probe ran with, and is not compared.
 | `8.4.13` | The `mysql:8.4` image, the same profile, as pulled on 2026-11-01. 8.4 is a long-term support release |
 | `9.7.4` | The `mysql:9` image, the same profile, as pulled on 2026-11-01 |
 
-Not measured: every other release, MariaDB, and every managed service.
+Not measured: every other release and every managed service. MariaDB has
+[its own part](#mariadb-releases).
 
 ## MySQL scripts
 
@@ -285,3 +287,26 @@ Not measured: every other release, MariaDB, and every managed service.
 | `05_identity_grants_probe.py` | `8.0.46` | 2026-11-01 | #1202 | One user name at the hosts `%`, `localhost` and `192.0.2.%` is three accounts with three passwords: under `skip_name_resolve`, a TCP login from 127.0.0.1 uses the `%` one and a socket login the `localhost` one. A user name with no host means `%`. User names are case-sensitive, host names are not. An account with only `CREATE USER` is refused root's password, and `ACCOUNT LOCK` or `UNLOCK` on root and `mysql.sys`, `1227` for `SYSTEM_USER`, and can change and drop an account with every other privilege. It cannot grant, `1044`, nor read `mysql.user`, `1142`, nor run `SHOW CREATE USER`, `1044`. Given `SELECT` on chosen columns of `mysql.user`, it reads lock and expiry and is refused the hash and `User_attributes`, `1143`. With `SYSTEM_USER` it changes root |
 | `05_identity_grants_probe.py` | `8.4.13` | 2026-11-01 | #1202 | As on 8.0.46 |
 | `05_identity_grants_probe.py` | `9.7.4` | 2026-11-01 | #1202 | As on 8.0.46 |
+
+## MariaDB releases
+
+A MariaDB release is three numbers, such as `10.11.19`. Name it in full, never
+"10.11". The scripts are in `sql/mariadb/`, and `tests/test_measurements.py`
+checks their headers against the table below in the same way.
+
+| Release | Product, and where it ran |
+|---|---|
+| `10.11.19` | The `mariadb:10.11` image, `test/compose.yaml` profile `mariadb-matrix`, as pulled on 2026-11-01. 10.11 is a long-term support release |
+| `12.3.3` | The `mariadb:12.3` image, the same profile, as pulled on 2026-11-01. 12.3 is the current long-term support release |
+
+Not measured: every other release, Galera, and every managed service.
+
+## MariaDB scripts
+
+<!-- measurements: mariadb scripts -->
+| Script | Release | Date | Issue | Result |
+|---|---|---|---|---|
+| `01_password_text_probe.py` | `10.11.19` | 2026-11-01 | #1220 | **The password stays in clear.** The general log, the slow log and `performance_schema`'s statement history keep `CREATE USER` and `ALTER USER … IDENTIFIED BY '…'`, `SET PASSWORD … = PASSWORD('…')` and `USING PASSWORD('…')` as sent, also when the statement fails to run or to parse. The binary log keeps `CREATE USER`, `ALTER USER … IDENTIFIED BY` and `USING PASSWORD('…')` as sent, and rewrites only `SET PASSWORD` to the hash. `IDENTIFIED VIA mysql_native_password USING '<hash>'` lands everywhere with the hash and no password. The digest holds none. The statement consumers are off by default |
+| `01_password_text_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19 |
+| `02_client_hash_probe.py` | `10.11.19` | 2026-11-01 | #1220 | A `mysql_native_password` or `ed25519` value the probe computes agrees with the server's. An account with only `CREATE USER` sets each with `IDENTIFIED VIA … USING`, and `mysql_native_password` also with `IDENTIFIED BY PASSWORD`, and the password logs in. A malformed value is refused, `1396`. Only `mysql_native_password` is loaded by default; `ed25519` installs. `parsec` is refused, `1126`: the library is not in the image |
+| `02_client_hash_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19, and `parsec` installs. A `parsec` value the probe computes, with its own salt, agrees, is set by the same account, and the password logs in |

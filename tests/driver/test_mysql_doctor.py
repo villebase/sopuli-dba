@@ -104,6 +104,41 @@ def test_doctor_reaches_the_server_and_reports_what_it_is(
     assert "  pymysql" in text.output, "the client section names PyMySQL's release"
 
 
+@pytest.mark.parametrize("through_role", [False, True], ids=["granted", "role-not-active"])
+def test_doctor_refuses_a_tool_account_that_can_use_system_user(
+    live_mysql: Any,
+    tool_account: tuple[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    through_role: bool,
+) -> None:
+    """SYSTEM_USER lets the tool change root's password. A role that is
+    granted and not a default role counts: the account can `SET ROLE` to it."""
+    user, password = tool_account
+    role = f"acme_ops_{uuid.uuid4().hex[:8]}"
+    with live_mysql.connect() as admin, admin.cursor() as cursor:
+        if through_role:
+            cursor.execute("create role %s", (role,))
+            cursor.execute("grant system_user on *.* to %s", (role,))
+            cursor.execute("grant %s to %s@'%%'", (role, user))
+        else:
+            cursor.execute("grant system_user on *.* to %s@'%%'", (user,))
+    try:
+        config = _config(tmp_path / "doctor.yaml", live_mysql.dsn, user)
+
+        result = _doctor(monkeypatch, password, config, "--output", "json")
+
+        assert result.exit_code == 9, result.output
+        (entry,) = json.loads(result.stdout)["targets"]
+        assert entry["reachable"] is True
+        assert entry["error"]["code"] == "SOPULI-20007"
+        assert entry["error"]["category"] == "config"
+        assert "can use SYSTEM_USER" in entry["error"]["message"]
+    finally:
+        with live_mysql.connect() as admin, admin.cursor() as cursor, suppress(pymysql.Error):
+            cursor.execute("drop role if exists %s", (role,))
+
+
 def test_check_privileges_warns_and_does_not_fail(
     live_mysql: Any,
     tool_account: tuple[str, str],

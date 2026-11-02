@@ -364,6 +364,12 @@ ATTRIBUTE_KINDS = (ACCOUNT_UNLOCK, ATTRIBUTE_SET)
 # ------------------------------------------------------------------ errors ---
 
 
+#: ``error.code`` for a tool account that holds the administrative power the
+#: tool does not run with: a PostgreSQL superuser, or a MySQL account that can
+#: use ``SYSTEM_USER``. The login succeeded, so the code is the tool's own.
+ADMIN_REFUSED = "SOPULI-20007"
+
+
 class DriverError(Exception):
     """A driver could not do what was asked.
 

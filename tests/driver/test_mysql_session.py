@@ -31,6 +31,7 @@ from sopuli.secrets import Secret
 
 session_module = pytest.importorskip("sopuli.driver.mysql.session")
 scope_module = pytest.importorskip("sopuli.driver.mysql.scope")
+grants_module = pytest.importorskip("sopuli.driver.mysql.grants")
 
 
 class _Cursor:
@@ -49,6 +50,12 @@ class _Cursor:
 
     def fetchone(self) -> Any:
         return self._rows[self._last]
+
+    def fetchall(self) -> Any:
+        """No role, and only `CREATE USER`, as 8.4.13 printed it."""
+        if self._last == grants_module.DIRECT_ROLES:
+            return []
+        return [("GRANT CREATE USER ON *.* TO `sopuli_admin`@`%`",)]
 
 
 class _Connection:

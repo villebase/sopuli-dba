@@ -73,7 +73,7 @@ the agent cannot read this skill.
 | output-2 | `docs/design/03-json-output.md`, from `` ### `orphans`, emitted by `vault orphans` `` to the end |
 | uc1 | `docs/use-cases/uc-01-app-credential-sync.md`, `docs/scenarios/*.md` |
 | uc2 | `docs/use-cases/uc-02-personal-account-passwords.md` |
-| oracle | `docs/design/00-principles.md`, `docs/design/02-oracle-privileges.md`, `docs/design/02-postgres-privileges.md`, `docs/measurements.md` |
+| oracle | `docs/design/00-principles.md`, `docs/design/02-oracle-privileges.md`, `docs/design/02-postgres-privileges.md`, `docs/design/02-mysql-privileges.md`, `docs/measurements.md` |
 | process | `docs/design/04-testing.md`, `docs/workflow.md`, `docs/maintainer-environments.md`, `test/README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.github/copilot-instructions.md` |
 | front | `README.md`, `SECURITY.md`, `docs/getting-started.md`, `docs/security-model.md`, `docs/local-testing.md` |
 | register | `docs/README.md` |

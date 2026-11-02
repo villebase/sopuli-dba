@@ -13,13 +13,14 @@ either rule sees a password that arrives as a hash:
        mysql.password_history holds for the account after each, and whether
        A then logs in
   PR2  as PR1, with PASSWORD REUSE INTERVAL 1 DAY and no history count
-  PR3  the validate_password component installed by root, at its default
-       policy. The tool account sets the password "acme" with AS, then with
-       IDENTIFIED BY; whether "acme" then logs in. The component is
-       uninstalled afterwards
+  PR3  on a new account with no reuse rule, the validate_password component
+       installed by root, at its default policy. The tool account sets the
+       password "acme" with AS, then with IDENTIFIED BY; whether "acme" then
+       logs in. The component is uninstalled afterwards
 
 The hash is computed as 02_client_hash_probe.py computes it, with the
-server's own rounds.
+server's own rounds and a fresh salt each time, as the driver does. Sending a
+hash the history already holds, with its salt, is not measured.
 
 The probe checks each result against the one RESULTS below records, and
 prints each that differs. A difference, or a step that fails, makes it exit 1.
@@ -29,7 +30,9 @@ It MEASURES and decides nothing.
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-02 (#1223), with
 Python 3.13.12 on Windows 11 AMD64. Three times, the last two exit 0 (the first
-filled in RESULTS), and the same result each time.
+filled in RESULTS), and the same result each time. PR3 was moved to a new
+account and the whole probe run again the same day, twice, exit 0, with the
+same result.
 
 RESULTS -- the same on all three releases
 
@@ -60,7 +63,8 @@ THROWAWAY SERVERS ONLY. On each server it creates the accounts
 sopuli_probe_hash and sopuli_probe_tool and drops them at the end, and before
 it starts it drops ones an interrupted run left. PR3 installs the
 validate_password component, server-wide, and uninstalls it at the end, also
-when a step fails.
+when a step fails; one an interrupted run left installed is uninstalled before
+the probe starts.
 """
 
 from __future__ import annotations
@@ -86,13 +90,14 @@ WEAK = "acme"
 COMPONENT = "file://component_validate_password"
 
 
-def rounds(service: str) -> int:
-    return int(ch.root(service, "SELECT @@global.caching_sha2_password_digest_rounds"))
+#: The server's rounds, read once per server in probe().
+ROUNDS: dict[str, int] = {}
 
 
 def by_hash(service: str, password: str) -> str:
-    """`ok`, or the refusal's code, for the tool setting `password` as a hash."""
-    stored = ch.caching_sha2_hash(password, ch.draw_salt(), rounds(service))
+    """`ok`, or the refusal's code, for the tool setting `password` as a hash,
+    with a fresh salt, as the driver does."""
+    stored = ch.caching_sha2_hash(password, ch.draw_salt(), ROUNDS[service])
     answer = ch.as_tool(
         service,
         f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED WITH caching_sha2_password AS 0x{stored.hex()}",
@@ -127,8 +132,21 @@ def reuse(service: str, clause: str) -> tuple[object, ...]:
     return (first, hashed, after_hash, text, after_text, ch.login(service, A))
 
 
+def uninstall_leftover(service: str) -> None:
+    """The component an interrupted run left installed, which would make
+    INSTALL fail and change other probes' results."""
+    installed = ch.root(
+        service, f"SELECT COUNT(*) FROM mysql.component WHERE component_urn = '{COMPONENT}'"
+    )
+    if installed != "0":
+        ch.root(service, f"UNINSTALL COMPONENT '{COMPONENT}'")
+
+
 def validation(service: str) -> tuple[object, ...]:
-    """PR3, with the component installed for the length of it."""
+    """PR3, on a new account with no reuse rule, so only the component can
+    refuse, with the component installed for the length of it."""
+    ch.root(service, f"DROP USER '{ACCOUNT}'@'%'")
+    ch.root(service, f"CREATE USER '{ACCOUNT}'@'%' IDENTIFIED BY {ch.quote(A)}")
     ch.root(service, f"INSTALL COMPONENT '{COMPONENT}'")
     try:
         policy = ch.root(service, "SELECT @@global.validate_password.policy")
@@ -150,7 +168,9 @@ PR3 = ("MEDIUM", "ok", "ok", "1819 (HY000)")
 
 
 def probe(service: str) -> None:
+    uninstall_leftover(service)
     ch.setup(service, A)
+    ROUNDS[service] = int(ch.root(service, "SELECT @@global.caching_sha2_password_digest_rounds"))
     pr1 = reuse(service, "PASSWORD HISTORY 2")
     print(f"PR1  history rows, by hash, rows, by text, rows, login: {pr1}")
     ch.check(f"{service} PR1", pr1, PR1)

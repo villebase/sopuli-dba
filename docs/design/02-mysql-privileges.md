@@ -359,12 +359,16 @@ run of 16 or more hex digits as `***`, before the message is kept.
 
 **The server's password rules do not apply.** Neither an account's
 `PASSWORD HISTORY` or `PASSWORD REUSE INTERVAL` nor the `validate_password`
-component checks a password that arrives as a hash. The server accepts a
-password from the history, or one that `validate_password` would refuse, on
-8.0.46, 8.4.13 and 9.7.4 (`08_password_rules_probe.py`). The policy in the
-tool's config is the only check on what the tool sets. The server still adds
-each such password to the history, so a person who later sets the same
-password with `IDENTIFIED BY` is refused, `3638`.
+component checks a password that arrives as a hash. The server accepts a new
+hash of a password from the history, or a password that `validate_password`
+would refuse, on 8.0.46, 8.4.13 and 9.7.4 (`08_password_rules_probe.py`).
+Nothing on the server checks what the tool sets. The config's policy checks
+what `creds generate` draws, unless `--no-policy-check` is given, and nothing
+checks a value put in the vault some other way. A DBA who relies on
+`validate_password` or a reuse rule for accounts the tool manages should know
+that the tool goes around them. The server still adds each such password to
+the history, so a person who later sets the same password with
+`IDENTIFIED BY` is refused, `3638`.
 
 **A password is at most 256 bytes of UTF-8.** The server stores the hash of a
 longer one and then refuses it at login, `1045`, on 8.0.46, 8.4.13 and 9.7.4

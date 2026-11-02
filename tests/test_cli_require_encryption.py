@@ -435,6 +435,15 @@ def test_mysql_ssl_mode_disabled_is_refused_before_anything_connects(
         "    type: oracle\n    dsn: db-prod.example.com:1521/beta.pdb.example.com\n",
         "    type: mysql\n    dsn: mysql-prod.example.com:3306\n"
         "    mysql: { ssl_mode: DISABLED }\n",
+    ).replace(
+        "    accounts: [acme_web_user]\n",
+        "    targets: [appdb-alpha]\n    accounts: [acme_web_user]\n",
+    ) + (
+        # A MySQL account names its host (#1202, decision 4).
+        "  - name: acme-mysql\n"
+        "    targets: [appdb-beta]\n"
+        "    accounts: [acme_web_user@%]\n"
+        '    secret_template: "apps/acme/mysql#DB_CREDENTIALS/{user}"\n'
     )
     result = apply(runner, write_config(config), "--output", "json")
 

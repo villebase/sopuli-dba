@@ -78,10 +78,13 @@ ACCOUNT_KEYS = ("account", "accounts")
 
 TARGET_SELECTOR_KEYS = ("group", "match")
 
-#: `{account}`, `{account_lower}`, `{account_upper}` -- the tokens that make a
-#: rendered ref differ between two accounts. §7 fixes the token list (C3: no
-#: arbitrary expressions), so matching them literally is enough.
-ACCOUNT_TOKEN = re.compile(r"\{account(_lower|_upper)?\}")
+#: `{account}`, `{account_lower}`, `{account_upper}`, `{user}` and `{host}` --
+#: the tokens that can make a rendered ref differ between two accounts. §7 fixes
+#: the token list (C3: no arbitrary expressions), so matching them literally is
+#: enough. `{user}` or `{host}` alone can still render two accounts alike, such
+#: as `acme_app@10.%` and `acme_app@%` under `{user}`, and the bindings refuse
+#: that pair where it happens.
+ACCOUNT_TOKEN = re.compile(r"\{(?:account(?:_lower|_upper)?|user|host)\}")
 
 
 def build_applications(document: dict[str, Any]) -> tuple[Application, ...]:
@@ -268,8 +271,9 @@ def _require_distinguishable_accounts(application: Application, *, at: KeyPath) 
         f"{len(application.accounts)} accounts would share one secret ref",
         at=at.key(field),
         hint=(
-            "add {account} (or {account_lower} / {account_upper}) so each account "
-            "gets its own ref; without it the second password written overwrites the first"
+            "add {account} (or {account_lower} / {account_upper}, or {user} and {host} on "
+            "MySQL) so each account gets its own ref; without it the second password "
+            "written overwrites the first"
         ),
     )
 

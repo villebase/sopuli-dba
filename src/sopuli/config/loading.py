@@ -57,7 +57,7 @@ from sopuli.config.notify import unserviceable as unserviceable_notify
 from sopuli.config.permissions import check_permissions
 from sopuli.config.personal_accounts import build_personal_accounts, reject_cross_declaration
 from sopuli.config.policies import build_policies
-from sopuli.config.products import check_products
+from sopuli.config.products import check_personal_mysql_accounts, check_products
 from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
 from sopuli.config.reset_records import build_reset_records
@@ -598,6 +598,7 @@ def build_config(
     # application naming a target that does not exist should say so, rather than
     # silently selecting nothing and producing no bindings at all.
     warnings = check_references(config)
+    check_personal_mysql_accounts(config)
     config = replace(config, bindings=build_bindings(config))
     check_admin_refs(config)
     return replace(

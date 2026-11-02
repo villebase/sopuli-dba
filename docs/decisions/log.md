@@ -3923,7 +3923,8 @@ the register.
      `acme_app@10.%` (decided on #1221). A bare name is a config error. `doctor` warns when a
      declared user name exists at a host the config does not declare. `{user}`
      and `{host}` tokens let a `secret_template` keep `@` and `%` out of a
-     vault path.
+     vault path: `{host}` writes `%` as `any` and `_` as `one`, so `10.%`
+     renders as `10.any` (decided 2026-11-02 on #1221).
   5. An account on a plugin other than `caching_sha2_password` is refused at
      plan time. Nothing migrates it.
   6. The tool account never reads `mysql.user.User_attributes`.
@@ -3968,6 +3969,10 @@ the register.
     paths differ too much to share.
   - A host key per application entry. Every place that compares accounts would
     have to learn that a MySQL account is a pair.
+  - `{host}` as written, which leaves `%` in vault paths and URLs; and no
+    `{host}` token at all, which drops half of decision 4. Two hosts that
+    render alike, such as `10.%` and a host named `10.any`, are refused as two
+    accounts on one password.
   - Migrating an account to `caching_sha2_password` in `apply`.
   - A column grant on `User_attributes`. It exposes the retained hashes.
   - A definer view that exposes only whether a password is retained. It is an

@@ -47,7 +47,11 @@ from sopuli.config.model import (
     as_dict,
 )
 from sopuli.config.password_keys import PasswordKey, declared_password_key
-from sopuli.config.products import refuse_a_container_clause
+from sopuli.config.products import (
+    mysql_account,
+    refuse_a_bare_mysql_account,
+    refuse_a_container_clause,
+)
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import (
     FIELD_SEPARATOR,
@@ -60,6 +64,7 @@ from sopuli.config.secret_refs import (
 )
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
+from sopuli.config.targets import MYSQL
 from sopuli.config.templates import PLACEHOLDER, substitute
 from sopuli.config.vaults import (
     OCI_NAME,
@@ -451,7 +456,13 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
         vault = _effective(application.vault, patches, key="vault")
         policy = _effective(application.policy, patches, key="policy")
 
-        for account in application.accounts:
+        for position, account in enumerate(application.accounts):
+            refuse_a_bare_mysql_account(
+                expanded,
+                account,
+                declared_by=_name(application),
+                at=at.key("accounts").index(position),
+            )
             secret = _render(ref, application, account, expanded, at=where)
             store = _vault_for(secret, vault, expanded, config)
             _check_store_declared(secret, config, at=where)
@@ -468,6 +479,11 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
                 )
             )
     return bound
+
+
+def _name(application: Application) -> str:
+    """An application entry, as a message names it."""
+    return "the application" if application.name is None else f"application {application.name!r}"
 
 
 def _check_store_declared(secret: SecretRef | None, config: Config, *, at: KeyPath) -> None:
@@ -759,6 +775,16 @@ def _render(
     if ref is None:
         return None
     tokens = _tokens(application, account, expanded)
+    if "host" not in tokens and "host" in PLACEHOLDER.findall(ref):
+        raise ConfigError(
+            f"secret ref {ref!r} uses {{host}}, and target {expanded.name!r} is "
+            f"{expanded.target.type}, where an account has no host",
+            at=at,
+            hint=(
+                "{host} is a MySQL account's host. Use {account} or {user} here, or give "
+                "the MySQL targets an application entry of their own"
+            ),
+        )
     rendered = substitute(ref, tokens, at=at, source=_SCOPE)
     _refuse_a_separator_in_a_name(ref, tokens, expanded, at=at)
     _refuse_a_name_in_a_separators_place(ref, rendered, tokens, expanded, at=at)
@@ -776,9 +802,12 @@ def _is_name(token: str, expanded: ExpandedTarget) -> bool:
     matches, so a new case variant is covered there and here at once. An
     application is a name, and so is a container, when the target has one: a label
     called ``container`` fills ``{container}`` on a target without one (see
-    :func:`_tokens`), and a label is not a name. ``{target}``, ``{env}`` and the
-    labels are values whoever writes the template also chose.
+    :func:`_tokens`), and a label is not a name. ``{host}`` is a name on a MySQL
+    target only, for the same reason. ``{target}``, ``{env}`` and the labels are
+    values whoever writes the template also chose.
     """
+    if token == "host":
+        return expanded.target.type == MYSQL
     if ACCOUNT_TOKEN.fullmatch(f"{{{token}}}") or token == "application":
         return True
     return token == "container" and expanded.target.oracle.container is not None
@@ -900,12 +929,15 @@ def _tokens(application: Application, account: str, expanded: ExpandedTarget) ->
     are documented and a label is whatever somebody typed; the one that is
     specified wins.
 
-    Two absences are deliberate. A target with no `environment` contributes no
-    `{env}`, and one with no container no `{container}` -- so a template using
-    either against a target that has neither fails to render, which §10 requires
-    of any unresolved token. `{application}` is the documented exception: §7 says
-    it is empty in the inline form, so it is present and empty rather than
-    missing.
+    Three absences are deliberate. A target with no `environment` contributes no
+    `{env}`, one with no container no `{container}`, and one that is not MySQL
+    no `{host}` -- so a template using one against a target that has none fails
+    to render, which §10 requires of any unresolved token. `{application}` is
+    the documented exception: §7 says it is empty in the inline form, so it is
+    present and empty rather than missing.
+
+    `{user}` is the account's user: on MySQL the part before the last `@`, and
+    elsewhere the whole name, so one template serves both.
     """
     target = expanded.target
     tokens = dict(as_dict(target.labels))
@@ -922,4 +954,16 @@ def _tokens(application: Application, account: str, expanded: ExpandedTarget) ->
         tokens["env"] = target.environment
     if target.oracle.container is not None:
         tokens["container"] = target.oracle.container
+    split = mysql_account(account) if target.type == MYSQL else None
+    if split is None:
+        tokens["user"] = account
+    else:
+        tokens["user"], tokens["host"] = split[0], host_token(split[1])
     return tokens
+
+
+def host_token(host: str) -> str:
+    """A MySQL host pattern as ``{host}`` writes it: ``%`` as ``any`` and ``_``
+    as ``one``, so that no vault path holds a MySQL wildcard. ``10.%`` is
+    ``10.any``."""
+    return host.replace("%", "any").replace("_", "one")

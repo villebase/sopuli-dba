@@ -10,10 +10,12 @@ After expansion, because a target set's `overrides:` may change a target's
 `type` or add a block, so the pair only exists on the rendered target. The same
 reason :mod:`sopuli.config.references` gives for the `auth: external` rules.
 
-An application's `oracle: container_clause` is the one rule about an
-application rather than a target. It is checked where the application binds to
-its targets (:mod:`sopuli.config.bindings`), with
-:func:`refuse_a_container_clause`.
+Two rules are about what an application binds rather than about a target. An
+application's `oracle: container_clause`, and an account on a MySQL target that
+does not name its host, are checked where the application binds to its targets
+(:mod:`sopuli.config.bindings`), with :func:`refuse_a_container_clause` and
+:func:`refuse_a_bare_mysql_account`. A personal account names its host too,
+checked by :func:`check_personal_mysql_accounts`.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from sopuli.config.errors import ConfigError, KeyPath
+from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import block_key_at, declared_at
 from sopuli.config.model import (
     Application,
@@ -34,6 +36,7 @@ from sopuli.config.model import (
     TargetOracle,
     TargetPostgres,
 )
+from sopuli.config.selection import select
 from sopuli.config.targets import (
     EXTERNAL,
     MYSQL,
@@ -358,3 +361,66 @@ def refuse_a_container_clause(
             "application of their own, or narrow this one's `targets:`"
         ),
     )
+
+
+#: Where a MySQL account name puts its host: after the last `@`.
+MYSQL_HOST_SEPARATOR = "@"
+
+
+def mysql_account(name: str) -> tuple[str, str] | None:
+    """The user and the host of a MySQL account written as ``user@host``.
+
+    Split at the last ``@``, because MySQL allows ``@`` in a user name and not
+    in a host. ``None`` where either part is empty, which includes a name with
+    no ``@`` at all.
+    """
+    user, separator, host = name.rpartition(MYSQL_HOST_SEPARATOR)
+    if not separator or not user or not host:
+        return None
+    return user, host
+
+
+def refuse_a_bare_mysql_account(
+    expanded: ExpandedTarget, account: str, *, declared_by: str, at: KeyPath
+) -> None:
+    """A MySQL account names its host, as ``acme_app@10.%`` (#1202, decision 4).
+
+    MySQL keeps ``acme_app@%`` and ``acme_app@localhost`` as two accounts with
+    two passwords, and which one a login reaches depends on how the client
+    connects. Reading a bare name as one of them would rotate it and leave the
+    other on the old password. ``declared_by`` is who declares the account,
+    such as "application 'acme'", and ``at`` is where the name is written. A
+    name on another product's target is not checked.
+    """
+    if expanded.target.type != MYSQL or mysql_account(account) is not None:
+        return
+    raise ConfigError(
+        f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
+        "and a MySQL account must name its host as user@host",
+        at=at,
+        hint=(
+            "write the host after the last `@`, as `acme_app@10.%`, or `acme_app@%` for "
+            "the account any host reaches: MySQL keeps one account per host, each with "
+            "its own password"
+        ),
+    )
+
+
+def check_personal_mysql_accounts(config: Config) -> None:
+    """A `personal_accounts:` rule names its hosts on a MySQL target too.
+
+    Personal accounts never become bindings, so :mod:`sopuli.config.bindings`
+    does not see them. A rule declared by ``profile:`` or ``role:`` names no
+    account, and has nothing to check. Run after references are resolved, so
+    the rule's ``targets:`` names exist.
+    """
+    for index, rule in enumerate(config.personal_accounts):
+        at = ROOT.key("personal_accounts").index(index)
+        for expanded in select(config, rule.targets):
+            for position, account in enumerate(rule.accounts):
+                refuse_a_bare_mysql_account(
+                    expanded,
+                    account,
+                    declared_by="a personal account rule",
+                    at=at.key("accounts").index(position),
+                )

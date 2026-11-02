@@ -59,8 +59,9 @@ RESULTS -- the same on all three releases, except OG5's CURRENT_ROLE()
        IS_MANDATORY YES beside r1 and r3. USING m is accepted, and lists
        SUPER and not r1's PROCESS: USING expands the roles it names and no
        others. Its line of role grants names r1 and r3 and not m, so only
-       APPLICABLE_ROLES shows the mandatory role. CURRENT_ROLE() is r1 on 8.0.46 and 8.4.13, and m and r1 on
-       9.7.4, with activate_all_roles_on_login 0 on all three: 9.7.4
+       APPLICABLE_ROLES shows the mandatory role. CURRENT_ROLE() is r1 on
+       8.0.46 and 8.4.13, and m and r1 on 9.7.4, with
+       activate_all_roles_on_login 0 on all three: 9.7.4
        activates a mandatory role at login. Granting SYSTEM_USER to m is
        refused, 3897 (HY000)
   OG6  granting r3 to m is refused, 4027 (HY000), with a message about a

@@ -216,9 +216,14 @@ class MysqlSession(ClosesConnection):
         return LIMIT
 
     def password_constraints(self, account: str) -> None:
-        """Not on the protocol: ``creds generate`` asks it of a driver that
-        has it, and would read a missing method as no answer."""
-        raise self._not_written("read an account's password rules")
+        """Nothing beyond the length, read without a round trip. Not on the
+        protocol: ``creds generate`` asks it of a driver that has it.
+
+        The server's own rules never see a password the tool sets: neither an
+        account's ``PASSWORD HISTORY`` or ``PASSWORD REUSE INTERVAL`` nor the
+        ``validate_password`` component checks a hash sent with ``AS``
+        (``08_password_rules_probe.py``). So there is nothing for the server
+        to refuse, and nothing to report."""
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         """What the tool account holds, needs and should not hold

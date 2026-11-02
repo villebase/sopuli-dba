@@ -327,6 +327,16 @@ def test_byte_limit_is_256_bytes_of_utf8() -> None:
     assert (limit.max_bytes, limit.encoding) == (256, "utf-8")
 
 
+def test_password_constraints_reports_nothing_and_reads_nothing() -> None:
+    """The server's rules never see a hash (probe 08), so there is nothing to
+    read."""
+    session = _session()
+    sent = len(session.connection.queries)
+
+    assert session.password_constraints("acme_app@10.%") is None
+    assert len(session.connection.queries) == sent
+
+
 def test_a_message_that_quotes_from_inside_the_hash_does_not_keep_it() -> None:
     session = _session()
     session.connection.accounts = [_account_row("10.%")]

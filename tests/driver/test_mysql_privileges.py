@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from sopuli.driver.mysql import grants as grants_module
 from sopuli.driver.mysql.grants import parse_all
 from sopuli.driver.mysql.privileges import (
@@ -88,6 +90,56 @@ def test_every_privilege_outside_section_2_is_over_granted() -> None:
     assert "CREATE USER" in found.held
     assert "SELECT (User) ON mysql.user" in found.held
     assert found.remedies == (OVER_GRANTED_REMEDY,)
+
+
+@pytest.mark.parametrize(
+    ("line", "over"),
+    [
+        (f"GRANT SELECT ON `mysql`.`user` TO {TOOL}", "SELECT ON mysql.user"),
+        (f"GRANT SELECT ON `mysql`.* TO {TOOL}", "SELECT ON mysql.*"),
+        (f"GRANT SELECT ON *.* TO {TOOL}", "SELECT ON *.*"),
+    ],
+)
+def test_a_broader_select_covers_the_columns_and_is_over_granted(line: str, over: str) -> None:
+    """The tool can read what it needs, so nothing is missing, and it reads
+    the hashes too, so the grant is over-granted."""
+    found = _classify([INSTALL[0], line])
+
+    assert found.missing == ()
+    assert found.over_granted == (over,)
+
+
+def test_all_privileges_on_every_object_covers_section_2() -> None:
+    found = _classify([f"GRANT ALL PRIVILEGES ON *.* TO {TOOL}"])
+
+    assert found.missing == ()
+    assert found.over_granted == ("ALL PRIVILEGES ON *.*",)
+
+
+def test_a_schema_that_differs_only_in_case_is_not_the_system_schema() -> None:
+    """Names are case-sensitive on Linux: `MYSQL`.`USER` is another table."""
+    line = COLUMN_GRANT.replace("`mysql`.`user`", "`MYSQL`.`USER`")
+    found = _classify([INSTALL[0], line])
+
+    assert len(found.missing) == len(COLUMNS)
+
+
+def test_the_hint_gives_the_statements_for_what_is_missing() -> None:
+    found = _classify([f"GRANT SELECT (`User`, `Host`) ON `mysql`.`user` TO {TOOL}"])
+
+    assert found.hint == (
+        "02-mysql-privileges.md section 2 has the grants for the tool account "
+        "`sopuli_admin@192.0.2.10`: GRANT CREATE USER ON *.* TO "
+        "'sopuli_admin'@'192.0.2.10'; GRANT SELECT (plugin, account_locked, "
+        "password_expired, password_last_changed, password_lifetime) ON mysql.user "
+        "TO 'sopuli_admin'@'192.0.2.10';"
+    )
+
+
+def test_a_proxy_grant_on_the_anonymous_account_is_named_so() -> None:
+    found = _classify([*INSTALL, f"GRANT PROXY ON ``@`` TO {TOOL} WITH GRANT OPTION"])
+
+    assert found.over_granted == ("GRANT OPTION ON ''@''", "PROXY ON ''@''")
 
 
 def test_a_line_the_parser_cannot_read_is_unaudited() -> None:

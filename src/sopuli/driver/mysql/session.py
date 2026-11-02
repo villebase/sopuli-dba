@@ -7,20 +7,22 @@ rule 1). The modules beside it are tier 0.
 
 **What this build does.** It connects, labels the session with the run's
 correlation id, checks that a mode which requires TLS got it, and reports the
-scope: ``server``, whether it takes writes, and its encryption. Only `doctor`
-gets this far: the registry entry lists no command, so every other command
-refuses the target with ``SOPULI-20006`` before it connects. The methods past
-the scope are a second line behind that, and refuse with ``SOPULI-20006``
-without a round trip. The driver sends nothing that changes the server.
+scope: ``server``, whether it takes writes, and its encryption. It refuses a
+tool account that can use ``SYSTEM_USER``, and audits the tool account's grants
+for ``doctor --check-privileges``. Only `doctor` gets this far: the registry
+entry lists no command, so every other command refuses the target with
+``SOPULI-20006`` before it connects. The methods past the privilege audit are
+a second line behind that, and refuse with ``SOPULI-20006`` without a round
+trip. The driver sends nothing that changes the server.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 
 import pymysql
 
@@ -58,6 +60,8 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("mysql")
+
+T = TypeVar("T")
 
 
 class NotWrittenError(DriverError):
@@ -136,18 +140,9 @@ class MysqlSession:
         `doctor` keeps the two apart.
         """
         if self._scope is None:
-            if self.connection is None:
-                raise DriverError(
-                    f'the session to target "{self.target.name}" is closed',
-                    hint="this is a fault in sopuli: a closed session was used again",
-                )
-            try:
-                with self.connection.cursor() as cursor:
-                    self._scope = observe(
-                        cursor, target=self.target.name, encryption=self.encryption
-                    )
-            except pymysql.err.MySQLError as error:
-                raise from_error(error).as_error() from error
+            self._scope = self._read(
+                lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
+            )
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -179,6 +174,12 @@ class MysqlSession:
         ``accounts`` is not read: the driver does not read accounts yet, and
         the tool account's grants do not depend on which accounts it manages.
         """
+        return self._read(privilege_audit)
+
+    def _read(self, reader: Callable[[Any], T]) -> T:
+        """Run ``reader`` on a cursor of this session. A closed session is a
+        fault in sopuli, and a MySQL error is classified by
+        :mod:`~sopuli.driver.mysql.errors`."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -186,7 +187,7 @@ class MysqlSession:
             )
         try:
             with self.connection.cursor() as cursor:
-                return privilege_audit(cursor)
+                return reader(cursor)
         except pymysql.err.MySQLError as error:
             raise from_error(error).as_error() from error
 

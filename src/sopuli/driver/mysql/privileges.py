@@ -17,9 +17,8 @@ that comes through a role. §3 explains the ones that matter most.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Protocol
 
-from sopuli.driver.mysql.grants import GLOBAL, Grant, Grants
+from sopuli.driver.mysql.grants import ALL_PRIVILEGES, GLOBAL, Cursor, Grant, Grants
 from sopuli.driver.mysql.grants import read as read_grants
 from sopuli.driver.protocol import PrivilegeAudit
 
@@ -60,16 +59,6 @@ OVER_GRANTED_REMEDY = (
 )
 
 
-class Cursor(Protocol):
-    """The part of a PyMySQL cursor this module uses."""
-
-    def execute(self, query: Any, args: Any = None, /) -> Any: ...
-
-    def fetchone(self) -> Any: ...
-
-    def fetchall(self) -> Any: ...
-
-
 def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAudit:
     """§2's list against what was read. Pure, and the whole judgement.
 
@@ -93,12 +82,38 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
         roles=tuple(sorted(set(roles))),
         unaudited=unaudited,
         remedies=(OVER_GRANTED_REMEDY,) if over else (),
-        hint=f"{DOCUMENT} section 2 has the grants for the tool account `{user}`",
+        hint=_hint(user, missing),
     )
 
 
+def _hint(user: str, missing: list[str]) -> str:
+    """Where §2 is, and the statements that grant what is missing."""
+    hint = f"{DOCUMENT} section 2 has the grants for the tool account `{user}`"
+    name, _, host = user.rpartition("@")
+    account = f"'{name}'@'{host}'"
+    statements = []
+    if CREATE_USER in missing:
+        statements.append(f"GRANT CREATE USER ON *.* TO {account};")
+    columns = [name for name in COLUMNS if _column(name) in missing]
+    if columns:
+        statements.append(f"GRANT SELECT ({', '.join(columns)}) ON {USER_TABLE} TO {account};")
+    return f"{hint}: {' '.join(statements)}" if statements else hint
+
+
+#: Objects on which a privilege without a column list covers every column of
+#: ``mysql.user``. Database and table names are compared exactly: on Linux
+#: they are case-sensitive, and the server prints the system schema in lower
+#: case.
+COVERS_USER_TABLE = (GLOBAL, "mysql.*", USER_TABLE)
+
+
 def _sort(grant: Grant, held: set[str], over: set[str]) -> None:
-    """Put each privilege of one ``SHOW GRANTS`` line in ``held`` or ``over``.
+    """Put each privilege of one ``SHOW GRANTS`` line in ``held``, ``over``
+    or both.
+
+    A broader grant that includes §2's, such as ``SELECT ON mysql.*``, counts
+    as held, because the tool can read what it needs, and as over-granted,
+    because it reads more.
 
     A role grant gives nothing itself: its roles' privileges are on lines of
     their own, because the read names every role in ``USING``. Its ``ADMIN
@@ -109,23 +124,44 @@ def _sort(grant: Grant, held: set[str], over: set[str]) -> None:
         if grant.admin_option:
             over.update(f"ADMIN OPTION ON {role}" for role in grant.roles)
         return
+    on = _object(grant)
     if grant.grant_option:
-        over.add(f"GRANT OPTION ON {grant.on}")
+        over.add(f"GRANT OPTION ON {on}")
     for privilege in grant.privileges:
         if privilege.name == USAGE:
             continue
         if grant.on == GLOBAL and privilege.name == CREATE_USER:
             held.add(CREATE_USER)
-        elif grant.on.lower() == USER_TABLE and privilege.name == "SELECT" and privilege.columns:
+            continue
+        if grant.on == USER_TABLE and privilege.name == "SELECT" and privilege.columns:
             for column in privilege.columns:
                 needed = _needed_column(column)
                 if needed is None:
                     over.add(f"SELECT ({column}) ON {USER_TABLE}")
                 else:
                     held.add(_column(needed))
-        else:
-            columns = f" ({', '.join(privilege.columns)})" if privilege.columns else ""
-            over.add(f"{privilege.name}{columns} ON {grant.on}")
+            continue
+        if grant.on == GLOBAL and privilege.name == ALL_PRIVILEGES:
+            held.add(CREATE_USER)
+        if (
+            grant.on in COVERS_USER_TABLE
+            and privilege.name in ("SELECT", ALL_PRIVILEGES)
+            and not privilege.columns
+        ):
+            held.update(_column(name) for name in COLUMNS)
+        columns = f" ({', '.join(privilege.columns)})" if privilege.columns else ""
+        over.add(f"{privilege.name}{columns} ON {on}")
+
+
+def _object(grant: Grant) -> str:
+    """The object as a reader can name it again. A proxy grant is on an
+    account, and an empty user or host, as in the anonymous ``''@''``, is
+    written as ``''``."""
+    if grant.on is None or grant.names() != frozenset({"PROXY"}):
+        return grant.on or ""
+    name, _, host = grant.on.rpartition("@")
+    empty = "''"
+    return f"{name or empty}@{host or empty}"
 
 
 def _needed_column(column: str) -> str | None:

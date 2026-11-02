@@ -154,6 +154,14 @@ granted directly is, because the account can use it either way. The report
 lists every role the account reaches, so a reader can see where an over-grant
 comes from.
 
+A broader grant that includes one of §2.1's counts as held, because the tool
+can do what it needs, and as over-granted, because it can do more. `SELECT` on
+`mysql.user` as a whole, on `mysql.*` or on `*.*` holds the column grant, and
+`ALL PRIVILEGES ON *.*` holds both grants. Database and table names are
+compared exactly, as a Linux server compares them, so a grant on `MYSQL`.`USER`
+is not the system table's. Where something is missing, the hint gives the
+statements that grant it.
+
 `USAGE` is not reported. It means no privilege, and every account has it.
 
 ---

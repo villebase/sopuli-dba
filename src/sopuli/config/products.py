@@ -388,6 +388,13 @@ def mysql_account(name: str) -> tuple[str, str] | None:
     return user, host
 
 
+def quoted_or_padded(split: tuple[str, str]) -> bool:
+    """Whether a part of a split MySQL account name starts or ends with SQL's
+    quotes or a space, as in ``'acme_app'@'%'``. It splits, but the quotes
+    would become part of the name the driver looks for."""
+    return any(part.startswith(_NOT_AT_AN_END) or part.endswith(_NOT_AT_AN_END) for part in split)
+
+
 #: ASCII letters to lower case and nothing else: MySQL's ``Host`` column is
 #: ``ascii_general_ci``, so only ASCII letters fold.
 _ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
@@ -464,7 +471,7 @@ def refuse_a_bare_mysql_account(
                 "with its own password"
             ),
         )
-    if any(part.startswith(_NOT_AT_AN_END) or part.endswith(_NOT_AT_AN_END) for part in split):
+    if quoted_or_padded(split):
         raise ConfigError(
             f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
             "whose user or host starts or ends with a quote or a space",

@@ -113,7 +113,7 @@ from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
-from sopuli.config.products import mysql_account, tls_setting
+from sopuli.config.products import mysql_account, quoted_or_padded, tls_setting
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
@@ -2606,14 +2606,22 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     person's account is ``jdoe`` on Oracle and ``jdoe@%`` on MySQL, so one
     ``--account`` cannot name both, and a run that went ahead on the others
     would report the MySQL target as a failure the operator could only fix by
-    running again. The hint says how to narrow the run instead.
+    running again. The hint says how to narrow the run instead. A ``user@host``
+    name on an Oracle or PostgreSQL target is not refused: there it reports
+    ``ACCOUNT_MISSING``, an ordinary outcome, and PostgreSQL allows ``@`` in a
+    role name.
+
+    A part quoted as SQL quotes it, or padded, is refused too, by the config's
+    own rule (:func:`~sopuli.config.products.quoted_or_padded`).
     """
     mysql = [target.name for target in reached if target.target.type == MYSQL]
-    if not mysql or mysql_account(account) is not None:
+    split = mysql_account(account)
+    if not mysql or (split is not None and not quoted_or_padded(split)):
         return
+    user = (split[0] if split else account).strip("'\"` \t@") or "jdoe"
     hint = (
-        "name the host after the last `@`, as `jdoe@%` or `jdoe@10.%`: MySQL keeps one "
-        "account per host, each with its own password"
+        f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
+        "MySQL keeps one account per host, each with its own password"
     )
     if len(mysql) < len(reached):
         hint += (
@@ -2621,7 +2629,8 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
             "`--select`, and run once for each spelling"
         )
     raise ConfigError(
-        f"account {account!r} is not user@host, and target {mysql[0]!r} is MySQL", hint=hint
+        f"account {account!r} is not user@host without quotes, and target {mysql[0]!r} is MySQL",
+        hint=hint,
     )
 
 

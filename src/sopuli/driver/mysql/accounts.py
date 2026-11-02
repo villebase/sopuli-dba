@@ -28,7 +28,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sopuli.config.products import same_mysql_host
+from sopuli.config.products import same_mysql_account, same_mysql_host
 from sopuli.driver.mysql import admin
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
@@ -237,7 +237,7 @@ def describe(
     *,
     target: str,
     now: datetime | None = None,
-    session_user: tuple[str, str] | None = None,
+    session_user: str | None = None,
 ) -> UserState | None:
     """The declared account's state, ``None`` where it does not exist.
 
@@ -264,24 +264,23 @@ def describe(
 CURRENT_USER = "select current_user()"
 
 
-def current_user(cursor: Cursor) -> tuple[str, str]:
-    """The account this session is connected as, as ``(user, host)``. It is
-    the account the server matched at login, so a tool connected as
+def current_user(cursor: Cursor) -> str:
+    """The account this session is connected as, ``user@host``. It is the
+    account the server matched at login, so a tool connected as
     ``sopuli_svc@%`` is that account, whichever address it came from. It does
     not change for the life of a connection, so a session reads it once."""
     cursor.execute(CURRENT_USER)
     (value,) = cursor.fetchone()
-    user, _, host = admin.text(value).rpartition("@")
-    return user, host
+    return admin.text(value)
 
 
-def is_session_account(account: Account, session_user: tuple[str, str]) -> bool:
+def is_session_account(account: Account, session_user: str) -> bool:
     """Whether ``account`` is the one this session is connected as: the tool's
     own. Guardrail 7 refuses it unless ``--force`` waives that, and guardrail 9
-    lets it through (#1225). Compared as the server compares accounts: the user
-    exactly, the host without ASCII case."""
-    user, host = session_user
-    return user == account.user and same_host(host, account.host)
+    lets it through (#1225). Compared by
+    :func:`~sopuli.config.products.same_mysql_account`, the one copy of the
+    rule: the user exactly, the host without ASCII case."""
+    return same_mysql_account(account.name, session_user)
 
 
 def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:

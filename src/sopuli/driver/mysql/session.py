@@ -128,10 +128,10 @@ class MysqlSession(ClosesConnection):
     encryption: Encryption | None = None
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
-    #: ``CURRENT_USER()`` as ``(user, host)``, read on the first
+    #: ``CURRENT_USER()``, ``user@host``, read on the first
     #: :meth:`describe_user`. It does not change for the life of a connection,
     #: as the Oracle session's ``_session_user`` does not.
-    _session_user: tuple[str, str] | None = field(default=None, init=False, repr=False)
+    _session_user: str | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its encryption.

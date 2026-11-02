@@ -151,7 +151,7 @@ def test_a_session_user_already_read_is_not_read_again() -> None:
     cursor = _Cursor([_row()])
 
     state = describe(
-        cursor, "acme_app@10.%", target="mysql-dev", now=NOW, session_user=("acme_app", "10.%")
+        cursor, "acme_app@10.%", target="mysql-dev", now=NOW, session_user="acme_app@10.%"
     )
 
     assert state is not None

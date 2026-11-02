@@ -49,9 +49,29 @@ def test_a_bare_name_is_refused_on_a_mysql_target(write_config: WriteConfig, ver
 
     assert exit_of(result) == ExitCode.CONFIG_INVALID, result.output
     error = json.loads(result.output)["error"]
-    assert error["message"] == "account 'jdoe' is not user@host, and target 'mysql-dev' is MySQL"
+    assert error["message"] == (
+        "account 'jdoe' is not user@host without quotes, and target 'mysql-dev' is MySQL"
+    )
     assert "jdoe@%" in error["hint"]
     assert "--target" not in error["hint"]
+
+
+@pytest.mark.parametrize(
+    ("typed", "example"), [("'acme_ops'@'%'", "acme_ops@%"), ("acme_ops", "acme_ops@%")]
+)
+def test_a_quoted_name_is_refused_and_the_hint_uses_the_typed_user(
+    write_config: WriteConfig, typed: str, example: str
+) -> None:
+    """The config's own rule: the file holds names, not the SQL that quotes
+    them, so `'acme_ops'@'%'` is refused at plan time too."""
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(write_config(CONFIG)), "account", "suspend", "--account", typed]
+        + ["--dry-run", "--output", "json"],
+    )
+
+    assert exit_of(result) == ExitCode.CONFIG_INVALID, result.output
+    assert f"`{example}`" in json.loads(result.output)["error"]["hint"]
 
 
 def test_a_mixed_estate_is_refused_with_a_hint_to_narrow_it(write_config: WriteConfig) -> None:

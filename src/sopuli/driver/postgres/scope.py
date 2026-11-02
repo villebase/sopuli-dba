@@ -157,6 +157,8 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
 def require_read_write(scope: Scope, *, target: str) -> None:
     """Refuse a write where :func:`observe` found the session read-only, as
     :func:`sopuli.driver.protocol.require_read_write`."""
+    if scope.read_write is not False:
+        return
     if scope.open_mode == IN_RECOVERY:
         hint = "this cluster is a standby; point the target at the primary"
     else:

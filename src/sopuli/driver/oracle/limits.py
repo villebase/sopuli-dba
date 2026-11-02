@@ -44,7 +44,8 @@ message rather than a surprise.
 
 from __future__ import annotations
 
-from sopuli.driver.oracle.capabilities import Cursor, read
+from sopuli.driver.oracle.capabilities import read
+from sopuli.driver.protocol import Cursor
 from sopuli.passwords import ByteLimit
 
 #: The *database* character set (§8), not the session's.

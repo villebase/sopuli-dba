@@ -106,11 +106,11 @@ from datetime import datetime
 from typing import Any
 
 from sopuli.constraints import AccountConstraints
-from sopuli.driver.oracle.capabilities import Cursor, read
+from sopuli.driver.oracle.capabilities import read
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.oracle.rollover import days, is_enabled, window_end
-from sopuli.driver.protocol import DriverError, UserState
+from sopuli.driver.protocol import Cursor, DriverError, UserState
 
 #: The roles guardrail 4 refuses (`02-oracle-privileges.md` §4), reported as
 #: :attr:`UserState.admin_roles`. Upper-cased, because that is how a database

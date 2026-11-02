@@ -307,7 +307,7 @@ def test_check_nine_names_five_privileges_and_counts_the_rest() -> None:
     (refusal,) = review(state, declared=("acme_app@%",)).refusals
     assert refusal.reason == (
         "the account holds PRIV_00 ON *.*, PRIV_01 ON *.*, PRIV_02 ON *.*, "
-        "PRIV_03 ON *.*, PRIV_04 ON *.* and 7 more"
+        "PRIV_03 ON *.*, PRIV_04 ON *.* and 7 more grants"
     )
 
 

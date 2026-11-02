@@ -293,6 +293,19 @@ def test_an_account_that_does_not_exist_is_reported_not_failed() -> None:
     assert answer.state == ACCOUNT_MISSING
 
 
+def test_an_account_with_a_global_privilege_is_refused_even_under_force() -> None:
+    """A reset sets a password, and the tool could then log in with the
+    account's power, so guardrail 9 refuses it and no flag waives it (#1222)."""
+    answer = decision(
+        state(global_privileges=frozenset({"SELECT ON *.*"})),
+        force=True,
+    )
+
+    assert answer.proceed is False
+    assert answer.state == SKIPPED
+    assert "the account holds SELECT ON *.*" in answer.detail
+
+
 def test_an_undeclared_account_is_refused() -> None:
     """Invariant 5: the config is the whitelist, and a reset touches nothing it
     does not declare."""

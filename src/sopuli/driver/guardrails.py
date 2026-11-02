@@ -338,10 +338,12 @@ def review(
     ``force`` waives checks 2 to 5 and 7 and never 1, 6, 8 or 9, and what it waives
     is reported in :attr:`Review.overridden` rather than dropped.
 
-    ``sets_password`` is false for a verb that sets no password, `account
-    suspend` and `account expire-password`. Check 9 does not run for those: its
-    reason is that the tool could log in with a password it set, and locking an
-    account or expiring its password takes power away instead (#1222).
+    ``sets_password`` says whether the verb sets a password. `account suspend`
+    and `account expire-password` pass ``False``, and check 9 does not run for
+    them: its reason is that the tool could log in with a password it set, and
+    locking an account or expiring its password takes power away instead
+    (#1222). It defaults to ``True``, the safe side: a new verb that forgets it
+    refuses more, never less.
 
     **A check with no input is neither**, and that is the third answer:
     it lands in :attr:`Review.caveats`, refuses nothing, and survives ``force``
@@ -427,7 +429,9 @@ def review(
         named = ", ".join(privileges[:NAMED_PRIVILEGES])
         rest = len(privileges) - NAMED_PRIVILEGES
         if rest > 0:
-            named += f" and {rest} more"
+            # Grants, not privileges: one privilege held directly and through
+            # a role is two entries.
+            named += f" and {rest} more grant{'s' if rest > 1 else ''}"
         found.append(Refusal(GLOBAL_PRIVILEGE, name, f"the account holds {named}"))
 
     if not force:

@@ -7999,8 +7999,9 @@ def _apply_estate(
     refused: dict[Credential, dict[str, guardrails.Review]] = {}
     unreachable: dict[str, BaseException] = {}
     if ask_first:
-        # Under `--force` too: it does not waive a superuser or a reserved role
-        # (#1111), and either can refuse a shared credential on one target.
+        # Under `--force` too: it does not waive a superuser, a reserved role or
+        # a global privilege (#1111, #1222), and any of them can refuse a shared
+        # credential on one target.
         shared = _shared_credentials(sources)
         try:
             if surveyed is not None and all(

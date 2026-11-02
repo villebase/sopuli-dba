@@ -264,16 +264,17 @@ def privileges(service: str) -> None:
         + ", ".join(f"IF({c} = 'Y', '{c}', NULL)" for c in priv_columns.split(","))
         + f") FROM mysql.user WHERE user = '{ADMIN}' AND host = '%'",
     )
-    secret = tool(service, "SELECT authentication_string FROM mysql.user LIMIT 1")
+    # The server's refusal: PV1 records that the tool cannot read this column.
+    auth_column = tool(service, "SELECT authentication_string FROM mysql.user LIMIT 1")
     attributes = tool(service, "SELECT User_attributes FROM mysql.user LIMIT 1")
     count = len(priv_columns.split(","))
     print(
         f"PV1 *_priv columns granted: {count}; reading Y: {yes}; "
-        f"hash: {secret}; User_attributes: {attributes}"
+        f"hash: {auth_column}; User_attributes: {attributes}"
     )
     ch.check(
         "PV1",
-        (count, yes, secret, attributes),
+        (count, yes, auth_column, attributes),
         (31, "Grant_priv,Super_priv,Create_user_priv", DENIED_COLUMN, DENIED_COLUMN),
     )
 

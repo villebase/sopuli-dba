@@ -1,7 +1,10 @@
 """What a MySQL session finds when it looks at itself. Tier 0.
 
-Two reads, both open to any account that can log in: the server's version and
-read-only settings, and the session's own TLS version. Nothing here branches on
+Every read is open to any account that can log in: the server's version, the
+tool account's own grants (:mod:`~sopuli.driver.mysql.grants`), the read-only
+settings, and the session's own TLS version. An account that can use
+``SYSTEM_USER`` is refused after the version, before anything else is read
+(``02-mysql-privileges.md`` §1). Nothing here branches on
 the server's version (invariant 3); it is read to report it, and to tell MySQL
 from MariaDB, which answers the same protocol and gets a driver of its own
 (#1202, decision 2).
@@ -15,7 +18,9 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from sopuli.driver.mysql import grants
 from sopuli.driver.protocol import (
+    ADMIN_REFUSED,
     ENCRYPTION_NONE,
     ENCRYPTION_TLS,
     SERVER,
@@ -68,6 +73,8 @@ class Cursor(Protocol):
 
     def fetchone(self) -> Any: ...
 
+    def fetchall(self) -> Any: ...
+
 
 class NotMysqlError(DriverError):
     """A `type: mysql` target reached a server that is not MySQL.
@@ -80,6 +87,46 @@ class NotMysqlError(DriverError):
 
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
+
+
+class SystemUserError(DriverError):
+    """The target's admin can use ``SYSTEM_USER``, and the tool does not run
+    with it.
+
+    ``SYSTEM_USER`` is what keeps an account with ``CREATE USER`` off root's
+    password and the ``mysql.*`` accounts (``05_identity_grants_probe.py``,
+    TG1 and TG6). ``config``, exit 9: the fix is in the config, which names
+    another account.
+    """
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, target: str) -> None:
+        super().__init__(
+            f'target "{target}" connects as an account that can use SYSTEM_USER, and '
+            "sopuli does not run with it",
+            hint=(
+                "SYSTEM_USER lets the tool change root's password. Revoke it from the "
+                "account and from every role granted to it, or point the target's admin "
+                "at another account; 02-mysql-privileges.md section 2 has its grants. "
+                "SHOW GRANTS FOR CURRENT_USER() USING <each role> shows where it comes from"
+            ),
+            code=ADMIN_REFUSED,
+        )
+
+
+def refuse_system_user(cursor: Cursor, *, target: str) -> None:
+    """Raise :class:`SystemUserError` where the session's account holds
+    ``SYSTEM_USER``, itself or through any role granted to it, active or not.
+
+    A role that is not active counts: the account can ``SET ROLE`` to it, as a
+    PostgreSQL member of a superuser role can, which is refused too. A line of
+    ``SHOW GRANTS`` that cannot be parsed is not a finding here; the privilege
+    audit reports it.
+    """
+    if grants.read(cursor).holds_system_user():
+        raise SystemUserError(target)
 
 
 def encryption_of(row: Any) -> Encryption:
@@ -109,7 +156,8 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     ``db_version`` is the part of ``VERSION()`` before the first ``-``, so
     ``8.0.46-log`` is reported as ``8.0.46``. A server whose version names
     another product is refused (:class:`NotMysqlError`), before anything else is
-    read. ``encryption`` is the session's, where :func:`read_encryption`
+    read. Then an account that can use ``SYSTEM_USER`` is refused
+    (:class:`SystemUserError`). ``encryption`` is the session's, where :func:`read_encryption`
     already read it; otherwise it is read here.
     """
     cursor.execute(VERSION)
@@ -124,6 +172,7 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
                     "own, which is not written yet (#1202)"
                 ),
             )
+    refuse_system_user(cursor, target=target)
     cursor.execute(READ_ONLY_SETTINGS)
     read_only, super_read_only, transaction_read_only = cursor.fetchone()
     writable = not (read_only or super_read_only or transaction_read_only)

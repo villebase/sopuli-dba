@@ -12,13 +12,12 @@ from sopuli.driver.postgres.scope import (
     READ_WRITE,
     SESSION_FACTS,
     SSL_ROW,
-    SUPERUSER_REFUSED,
     ReadOnlyTargetError,
     SuperuserError,
     observe,
     require_read_write,
 )
-from sopuli.driver.protocol import CLUSTER, ROLE_LOOKUP, Scope
+from sopuli.driver.protocol import ADMIN_REFUSED, CLUSTER, ROLE_LOOKUP, Scope
 from sopuli.exit_codes import ExitCode
 
 
@@ -57,7 +56,7 @@ def test_a_member_of_a_superuser_role_is_refused_as_a_superuser_is() -> None:
     with pytest.raises(SuperuserError) as refused:
         observe(cursor, target="pg-dev")
 
-    assert refused.value.code == SUPERUSER_REFUSED
+    assert refused.value.code == ADMIN_REFUSED
     assert refused.value.message == (
         'target "pg-dev" connects as "sopuli_admin", a member of the superuser role '
         '"postgres", and sopuli does not run as a superuser'
@@ -70,7 +69,7 @@ def test_a_superuser_is_refused_before_the_second_read() -> None:
     with pytest.raises(SuperuserError) as refused:
         observe(cursor, target="pg-dev")
 
-    assert refused.value.code == SUPERUSER_REFUSED
+    assert refused.value.code == ADMIN_REFUSED
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
     assert refused.value.category == "config"
     assert refused.value.message == (

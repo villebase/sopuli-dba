@@ -1718,6 +1718,11 @@ The `dsn` is `host:port`, by the rule above for PostgreSQL: a connection URI
 (`mysql://…`) and a keyword string are refused, because both can carry a
 password.
 
+The target's `admin` is an account with `CREATE USER` that cannot use
+`SYSTEM_USER`. [`02-mysql-privileges.md`](02-mysql-privileges.md) has its
+grants, and the tool refuses an account that can use `SYSTEM_USER`, with
+`SOPULI-20007`.
+
 `doctor` connects to the server and reports it. A mode that requires TLS,
 `REQUIRED` or a verifying one, refuses a session that has none. Under
 `DISABLED`, or `PREFERRED` against a server without TLS, a login the server

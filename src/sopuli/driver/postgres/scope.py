@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from sopuli.driver.protocol import (
+    ADMIN_REFUSED,
     CLUSTER,
     ENCRYPTION_NONE,
     ENCRYPTION_TLS,
@@ -31,9 +32,6 @@ from sopuli.driver.protocol import (
     Scope,
 )
 from sopuli.exit_codes import ExitCode
-
-#: ``error.code`` for a tool account that is a superuser.
-SUPERUSER_REFUSED = "SOPULI-20007"
 
 #: ``scope.open_mode``, in the words P1 uses for an Oracle database, and a third
 #: for a standby, in PostgreSQL's own word for it.
@@ -118,7 +116,7 @@ class SuperuserError(DriverError):
                 "point the target's admin at a role with CREATEROLE that is not a "
                 "superuser; 02-postgres-privileges.md section 2 has its grants"
             ),
-            code=SUPERUSER_REFUSED,
+            code=ADMIN_REFUSED,
         )
 
 

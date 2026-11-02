@@ -33,7 +33,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from sopuli.driver.protocol import AuthenticationError, DriverError
+from sopuli.driver import errors
+from sopuli.driver.errors import MappedError as MappedError
+from sopuli.driver.protocol import AuthenticationError
 from sopuli.exit_codes import ExitCode
 
 #: ``ER_ACCESS_DENIED_ERROR``: a wrong password, or no account at this host.
@@ -287,7 +289,7 @@ CERTIFICATE_HINT = (
 
 
 @dataclass(frozen=True)
-class Diagnosis:
+class Diagnosis(errors.Diagnosis):
     """One failure, classified. ``message`` is PyMySQL's, unchanged."""
 
     number: int
@@ -298,36 +300,15 @@ class Diagnosis:
     hint: str | None = None
 
     @property
-    def code(self) -> str:
+    def code(self) -> str:  # type: ignore[override]
         """The vendor code: the error number, as the server sends it."""
         return str(self.number)
 
     @property
-    def coded_message(self) -> str:
-        """The message with the number and SQLSTATE in front, as the mysql
-        client prints them: ``1045 (28000): Access denied for user …``."""
-        prefix = self.code if self.sqlstate is None else f"{self.code} ({self.sqlstate})"
-        message = self.message.strip()
-        return f"{prefix}: {message}" if message else prefix
-
-    def as_error(self) -> DriverError:
-        """This diagnosis as something to raise, with :attr:`coded_message` as
-        its message. An authentication failure is an
-        :class:`~sopuli.driver.protocol.AuthenticationError`, exit 6."""
-        if self.category == AuthenticationError.category:
-            return AuthenticationError(self.coded_message, hint=self.hint, code=self.code)
-        return MappedError(self)
-
-
-class MappedError(DriverError):
-    """A :class:`Diagnosis` that a caller raised, with its own category and exit
-    code on the instance, as :class:`sopuli.driver.postgres.errors.MappedError`."""
-
-    def __init__(self, diagnosis: Diagnosis) -> None:
-        super().__init__(diagnosis.coded_message, hint=diagnosis.hint, code=diagnosis.code)
-        self.category = diagnosis.category
-        self.exit_code = diagnosis.exit_code
-        self.diagnosis = diagnosis
+    def prefix(self) -> str:
+        """The number and SQLSTATE, as the mysql client prints them in front
+        of the message: ``1045 (28000): Access denied for user …``."""
+        return self.code if self.sqlstate is None else f"{self.code} ({self.sqlstate})"
 
 
 def classify(number: int, message: str, *, sqlstate: str | None = None) -> Diagnosis:

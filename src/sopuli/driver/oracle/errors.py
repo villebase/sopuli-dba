@@ -48,8 +48,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from sopuli.driver import errors
+from sopuli.driver.errors import MappedError as MappedError
 from sopuli.driver.oracle.client import TOO_NEW_WARNING, describes_unreachable_server
-from sopuli.driver.protocol import AuthenticationError, DriverError
+from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 
 #: The script that grants the service account what it needs, as a hint names it.
@@ -362,7 +364,7 @@ RULES: dict[str, _Rule] = {
 
 
 @dataclass(frozen=True)
-class Diagnosis:
+class Diagnosis(errors.Diagnosis):
     """One failure, classified. Never raised by this module -- see the note above.
 
     ``message`` is the server's own, preserved rather than replaced. A DBA
@@ -415,54 +417,22 @@ class Diagnosis:
             first = f"{self.code}: {first}" if first else self.code
         return first or "no code"
 
+    @property
+    def coded_message(self) -> str:
+        """The server's message, unchanged: Oracle writes the code into it."""
+        return self.message
+
     def as_error(self) -> DriverError:
         """This diagnosis as something to raise, when the caller decides it is.
 
-        An authentication failure comes back as
-        :class:`~sopuli.driver.protocol.AuthenticationError` so that a caller
-        which wants ``except AuthenticationError`` has one; everything else is a
-        :class:`MappedError` carrying this row's own category and exit code.
-
-        A code that says the client is too new for the server sets
-        ``reach_warning`` here, so every path that raises it carries it.
+        As :meth:`sopuli.driver.errors.Diagnosis.as_error`. A code that says the
+        client is too new for the server also sets ``reach_warning`` here, so
+        every path that raises it carries it.
         """
-        raised: DriverError
-        if self.category == AuthenticationError.category:
-            raised = AuthenticationError(
-                self.message, hint=self.hint, code=self.code, retryable=self.retryable
-            )
-        else:
-            raised = MappedError(self)
+        raised = super().as_error()
         if describes_unreachable_server(self.code):
             raised.reach_warning = TOO_NEW_WARNING
         return raised
-
-
-class MappedError(DriverError):
-    """A :class:`Diagnosis` that a caller decided to raise.
-
-    ``category`` and ``exit_code`` are set on the *instance*, shadowing the class
-    attributes :class:`~sopuli.driver.protocol.DriverError` declares. The class
-    ones are the default for a driver failure nobody classified; these are what
-    the code actually means, and the boundary reads the same attribute either
-    way.
-    """
-
-    def __init__(self, diagnosis: Diagnosis) -> None:
-        super().__init__(
-            diagnosis.message,
-            hint=diagnosis.hint,
-            code=diagnosis.code,
-            retryable=diagnosis.retryable,
-        )
-        self.category = diagnosis.category
-        self.exit_code = diagnosis.exit_code
-        # The one thing above the driver that needs this answer cannot ask a
-        # `Diagnosis` for it: `sopuli.apply` is vendor-neutral and does not import
-        # this module. Carried onto the instance, where `DriverError`
-        # declares it, so the boundary reads one attribute whoever raised it.
-        self.regenerate = diagnosis.regenerate
-        self.diagnosis = diagnosis
 
 
 def classify(code: str, message: str) -> Diagnosis:

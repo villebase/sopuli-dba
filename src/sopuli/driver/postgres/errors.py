@@ -19,7 +19,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any
 
-from sopuli.driver.protocol import AuthenticationError, DriverError
+from sopuli.driver import errors
+from sopuli.driver.errors import MappedError as MappedError
 from sopuli.exit_codes import ExitCode
 
 WRONG_PASSWORD = "28P01"
@@ -188,8 +189,12 @@ CERTIFICATE_HINT = (
 
 
 @dataclass(frozen=True)
-class Diagnosis:
-    """One failure, classified. ``message`` is psycopg's, unchanged."""
+class Diagnosis(errors.Diagnosis):
+    """One failure, classified. ``message`` is psycopg's, unchanged.
+
+    :attr:`coded_message` puts the code in front, as an ``ORA-`` message
+    carries its own. A PostgreSQL message never contains its SQLSTATE, so every
+    view that prints the message would otherwise print no code."""
 
     code: str
     category: str
@@ -204,40 +209,6 @@ class Diagnosis:
         lines = self.message.strip().splitlines()
         first = lines[0].strip() if lines else ""
         return f"{self.code}: {first}" if first else self.code
-
-    @property
-    def coded_message(self) -> str:
-        """The message with the code in front, as an ``ORA-`` message carries its
-        own. A PostgreSQL message never contains its SQLSTATE, so every view
-        that prints the message would otherwise print no code."""
-        message = self.message.strip()
-        return f"{self.code}: {message}" if message else self.code
-
-    def as_error(self) -> DriverError:
-        """This diagnosis as something to raise, with :attr:`coded_message` as
-        its message. An authentication failure is an
-        :class:`~sopuli.driver.protocol.AuthenticationError`, exit 6."""
-        if self.category == AuthenticationError.category:
-            return AuthenticationError(
-                self.coded_message, hint=self.hint, code=self.code, retryable=self.retryable
-            )
-        return MappedError(self)
-
-
-class MappedError(DriverError):
-    """A :class:`Diagnosis` that a caller raised, with its own category and exit
-    code on the instance, as :class:`sopuli.driver.oracle.errors.MappedError`."""
-
-    def __init__(self, diagnosis: Diagnosis) -> None:
-        super().__init__(
-            diagnosis.coded_message,
-            hint=diagnosis.hint,
-            code=diagnosis.code,
-            retryable=diagnosis.retryable,
-        )
-        self.category = diagnosis.category
-        self.exit_code = diagnosis.exit_code
-        self.diagnosis = diagnosis
 
 
 def classify(code: str, message: str) -> Diagnosis:

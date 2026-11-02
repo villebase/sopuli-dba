@@ -32,6 +32,7 @@ from sopuli.secrets import Secret
 session_module = pytest.importorskip("sopuli.driver.mysql.session")
 scope_module = pytest.importorskip("sopuli.driver.mysql.scope")
 grants_module = pytest.importorskip("sopuli.driver.mysql.grants")
+privileges_module = pytest.importorskip("sopuli.driver.mysql.privileges")
 
 
 class _Cursor:
@@ -41,6 +42,7 @@ class _Cursor:
             scope_module.VERSION: (connection.version,),
             scope_module.READ_ONLY_SETTINGS: (0, 0, 0),
             scope_module.TLS_VERSION: ("Ssl_version", connection.tls),
+            privileges_module.SELF: ("sopuli_admin@%",),
         }
         self._last = ""
 
@@ -53,7 +55,7 @@ class _Cursor:
 
     def fetchall(self) -> Any:
         """No role, and only `CREATE USER`, as 8.4.13 printed it."""
-        if self._last == grants_module.DIRECT_ROLES:
+        if self._last in (grants_module.DIRECT_ROLES, privileges_module.ALL_ROLES):
             return []
         return [("GRANT CREATE USER ON *.* TO `sopuli_admin`@`%`",)]
 
@@ -142,14 +144,15 @@ def test_audit_coverage_never_raises() -> None:
     assert _session().audit_coverage("acme_app@%").audited is None
 
 
-def test_the_privilege_audit_says_nothing_was_looked_at() -> None:
-    """`doctor --check-privileges` reports and never fails, so an audit not
-    written yet is a caveat, not a refusal."""
+def test_the_privilege_audit_reads_the_tool_accounts_grants() -> None:
+    """The fake account holds only `CREATE USER`, so the column grant is
+    missing and nothing is over-granted."""
     audit = _session().privileges()
 
-    assert audit.unaudited == ("every grant of the tool account",)
+    assert audit.held == ("CREATE USER",)
+    assert "SELECT (account_locked) ON mysql.user" in audit.missing
     assert audit.over_granted == ()
-    assert "does not audit" in audit.remedies[0]
+    assert audit.unaudited == ()
 
 
 def test_close_is_safe_twice() -> None:

@@ -68,10 +68,17 @@ targets:
     return path
 
 
-def _doctor(monkeypatch: pytest.MonkeyPatch, password: str, config: Path, *extra: str) -> Any:
-    """The password reaches the tool through the environment (invariant 1)."""
+def _doctor(
+    monkeypatch: pytest.MonkeyPatch,
+    password: str,
+    config: Path,
+    *extra: str,
+    doctor: tuple[str, ...] = (),
+) -> Any:
+    """The password reaches the tool through the environment (invariant 1).
+    ``extra`` goes before ``doctor``, and ``doctor`` after it."""
     monkeypatch.setenv(PASSWORD_ENV, password)
-    return CliRunner().invoke(cli, ["--config", str(config), *extra, "doctor"])
+    return CliRunner().invoke(cli, ["--config", str(config), *extra, "doctor", *doctor])
 
 
 def test_doctor_reaches_the_server_and_reports_what_it_is(
@@ -145,16 +152,59 @@ def test_check_privileges_warns_and_does_not_fail(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The audit is not written yet, and `--check-privileges` reports and never
-    fails, so the target says what was not looked at and the run exits 0."""
+    """An account with no privileges misses all of section 2, and
+    `--check-privileges` reports it and exits 0."""
     user, password = tool_account
     config = _config(tmp_path / "doctor.yaml", live_mysql.dsn, user)
 
-    monkeypatch.setenv(PASSWORD_ENV, password)
-    result = CliRunner().invoke(cli, ["--config", str(config), "doctor", "--check-privileges"])
+    result = _doctor(
+        monkeypatch, password, config, "--output", "json", doctor=("--check-privileges",)
+    )
 
     assert result.exit_code == 0, result.output
-    assert "does not audit the tool account's grants yet" in result.output
+    (entry,) = json.loads(result.stdout)["targets"]
+    assert entry["privileges"]["held"] == []
+    assert "CREATE USER" in entry["privileges"]["missing"]
+    assert "over_granted" not in entry["scope"], "omitted when empty"
+
+
+def test_check_privileges_reports_section_2_and_an_over_grant_through_a_role(
+    live_mysql: Any,
+    tool_account: tuple[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grants of 02-mysql-privileges.md section 2, and PROCESS through a
+    role that is not active: held is section 2, nothing is missing, and the
+    role's PROCESS is over-granted."""
+    user, password = tool_account
+    role = f"acme_ops_{uuid.uuid4().hex[:8]}"
+    with live_mysql.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("grant create user on *.* to %s@'%%'", (user,))
+        cursor.execute(
+            "grant select (User, Host, plugin, account_locked, password_expired, "
+            "password_last_changed, password_lifetime) on mysql.user to %s@'%%'",
+            (user,),
+        )
+        cursor.execute("create role %s", (role,))
+        cursor.execute("grant process on *.* to %s", (role,))
+        cursor.execute("grant %s to %s@'%%'", (role, user))
+    try:
+        config = _config(tmp_path / "doctor.yaml", live_mysql.dsn, user)
+
+        result = _doctor(
+            monkeypatch, password, config, "--output", "json", doctor=("--check-privileges",)
+        )
+
+        assert result.exit_code == 0, result.output
+        (entry,) = json.loads(result.stdout)["targets"]
+        assert entry["privileges"]["missing"] == []
+        assert "CREATE USER" in entry["privileges"]["held"]
+        assert entry["privileges"]["roles"] == [f"{role}@%"]
+        assert entry["scope"]["over_granted"] == ["PROCESS ON *.*"]
+    finally:
+        with live_mysql.connect() as admin, admin.cursor() as cursor, suppress(pymysql.Error):
+            cursor.execute("drop role if exists %s", (role,))
 
 
 def test_verify_identity_meets_the_images_own_certificate(

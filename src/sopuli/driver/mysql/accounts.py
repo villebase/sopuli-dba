@@ -250,7 +250,28 @@ def describe(
     # Guardrail 9 reads it (`02-mysql-privileges.md` §5). Read here, so every
     # command that describes the account before it changes it has it.
     held = admin.global_privileges(cursor, admin.Principal(found.user, found.host))
-    return replace(state, global_privileges=held)
+    return replace(state, global_privileges=held, session_account=is_session_account(cursor, found))
+
+
+#: The account the session authenticated as: ``user@host``, with the host as
+#: the account's own pattern (``%``), not the client's address.
+CURRENT_USER = "select current_user()"
+
+
+def is_session_account(cursor: Cursor, account: Account) -> bool:
+    """Whether ``account`` is the one this session is connected as: the tool's
+    own. Guardrail 7 refuses it unless ``--force`` waives that, and guardrail 9
+    lets it through (#1225).
+
+    Compared as the server compares accounts: the user exactly, the host
+    without ASCII case. ``CURRENT_USER()`` is the account the server matched,
+    so a tool connected as ``sopuli_svc@%`` is that account, whichever address
+    it came from.
+    """
+    cursor.execute(CURRENT_USER)
+    row = cursor.fetchone()
+    user, _, host = admin.text(row[0]).rpartition("@")
+    return user == account.user and same_host(host, account.host)
 
 
 def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:

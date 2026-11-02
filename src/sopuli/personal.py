@@ -31,12 +31,12 @@ opposite ways because one check permits and the other forbids.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config, PersonalAccountRule
+from sopuli.config.products import account_matcher, same_name
 from sopuli.config.selection import select
-from sopuli.driver.guardrails import is_declared
 
 
 def rules_for(config: Config, target: str) -> tuple[PersonalAccountRule, ...]:
@@ -58,19 +58,25 @@ def admits(
     *,
     profile: str | None = None,
     roles: Collection[str] = (),
+    same: Callable[[str, str], bool] = same_name,
 ) -> bool:
     """Whether ``rule`` declares ``account``.
 
-    Every name is compared by ``upper()``, as
-    :func:`~sopuli.driver.guardrails.is_declared` compares them and for its
-    reasons. A config file writes ``jdoe`` and Oracle stores ``JDOE``, so an
-    exact comparison would refuse every correctly declared account. And
-    ``upper()`` is how the drivers resolve a ``role:`` or ``profile:`` for
-    `account list`, so a verb admits exactly the accounts the listing shows
-    (#1208).
+    ``same`` compares an account name with a declared one. By default it is
+    ``upper()``, as :func:`~sopuli.driver.guardrails.is_declared` compares them
+    and for its reasons: a config file writes ``jdoe`` and Oracle stores
+    ``JDOE``, so an exact comparison would refuse every correctly declared
+    account. On MySQL :func:`rules_admitting` passes
+    :func:`~sopuli.config.products.same_mysql_account`, because user names there
+    are case-sensitive: ``JDOE@%`` is another account than a declared
+    ``jdoe@%``, and ``upper()`` would admit it (#1225).
+
+    A ``role:`` or ``profile:`` is compared by ``upper()`` on every product,
+    which is how the drivers resolve one for `account list`, so a verb admits
+    exactly the accounts the listing shows (#1208).
     """
     if rule.accounts:
-        return is_declared(account, rule.accounts)
+        return any(same(account, declared) for declared in rule.accounts)
 
     if rule.profile is not None:
         # `None` is a profile that could not be read, not a profile named
@@ -101,10 +107,20 @@ def rules_admitting(
     and a profile predicate can both be true of one person, and both carry the
     same guarantee. What it costs is settled in :func:`declared_on`.
     """
+    same = account_matcher(_product(config, target))
     return tuple(
         rule
         for rule in rules_for(config, target)
-        if admits(rule, account, profile=profile, roles=roles)
+        if admits(rule, account, profile=profile, roles=roles, same=same)
+    )
+
+
+def _product(config: Config, target: str) -> str:
+    """The ``type`` of ``target``, by its expanded name. An unknown name has
+    none, and is compared by :func:`~sopuli.config.products.same_name`."""
+    return next(
+        (expanded.target.type for expanded in config.expanded_targets if expanded.name == target),
+        "",
     )
 
 

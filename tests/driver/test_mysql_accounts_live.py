@@ -94,6 +94,28 @@ def test_describe_reads_a_locked_account_at_its_host(stage: Stage) -> None:
     assert stage.session.describe_user(f"{user}@192.0.2.%") is None
 
 
+def test_the_tool_s_own_account_is_the_session_s_and_only_check_7_refuses_it(
+    stage: Stage,
+) -> None:
+    """`CURRENT_USER()` names the tool account, which holds `CREATE USER ON
+    *.*`. Check 7 refuses it and `--force` waives that; check 9 exempts it, so
+    #1059's rotation of the tool's own password works on MySQL (#1225)."""
+    from sopuli.driver import guardrails
+
+    own = stage.session.describe_user(f"{stage.tool}@%")
+    other = stage.session.describe_user(f"{stage.account('%')}@%")
+
+    assert own is not None
+    assert other is not None
+    assert own.session_account is True
+    assert other.session_account is False
+    assert any(held.startswith("CREATE USER ON *.*") for held in own.global_privileges)
+
+    reviewed = guardrails.review(own, declared=(own.name,))
+    assert [refusal.check for refusal in reviewed.refusals] == [guardrails.OWN_ACCOUNT]
+    assert guardrails.review(own, declared=(own.name,), force=True).permitted
+
+
 def test_another_plugin_is_refused(stage: Stage) -> None:
     """8.4.13 ships sha256_password, deprecated; mysql_native_password is off."""
     user = stage.account("%", extra="with sha256_password by %s")

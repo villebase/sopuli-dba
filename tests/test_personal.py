@@ -64,6 +64,46 @@ def test_an_enumerated_rule_admits_the_names_it_lists() -> None:
     assert not admits(rule, "bcarter")
 
 
+MYSQL_TARGET = {
+    "name": "mysql-dev",
+    "type": "mysql",
+    "environment": "dev",
+    "dsn": "mysql-dev.example.com:3306",
+    "admin": {"username": "sopuli_svc@%", "auth": "prompt"},
+}
+
+
+def mysql_config(*accounts: str) -> Any:
+    return build_config(
+        {
+            "version": 1,
+            "targets": [MYSQL_TARGET],
+            "personal_accounts": [{"accounts": list(accounts)}],
+        }
+    )
+
+
+def test_a_mysql_user_name_is_compared_by_case() -> None:
+    """`JDOE@%` is another MySQL account than a declared `jdoe@%`, which
+    `upper()` would admit (#1225)."""
+    loaded = mysql_config("jdoe@%")
+
+    assert declared_on(loaded, "jdoe@%", "mysql-dev") is not None
+    assert declared_on(loaded, "JDOE@%", "mysql-dev") is None
+
+
+def test_a_mysql_host_is_compared_without_case() -> None:
+    loaded = mysql_config("jdoe@db.example.com")
+
+    assert declared_on(loaded, "jdoe@DB.EXAMPLE.COM", "mysql-dev") is not None
+
+
+def test_a_bare_name_matches_no_mysql_account() -> None:
+    loaded = mysql_config("jdoe@%")
+
+    assert declared_on(loaded, "jdoe", "mysql-dev") is None
+
+
 def test_names_are_compared_by_upper() -> None:
     """A file writes `jdoe`; Oracle hands back `JDOE`, having upper-cased it."""
     assert admits(PersonalAccountRule(accounts=("jdoe",)), "JDOE")

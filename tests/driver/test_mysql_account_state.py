@@ -12,6 +12,7 @@ import pytest
 
 from sopuli.driver.mysql import admin
 from sopuli.driver.mysql.accounts import (
+    CURRENT_USER,
     DEFAULT_LIFETIME,
     EXPIRED,
     EXPIRED_AND_LOCKED,
@@ -54,6 +55,8 @@ class _Cursor:
         self.default_lifetime = default_lifetime
         #: The account's `*_priv` row, for guardrail 9's read; none by default.
         self.global_row: tuple[str, ...] | None = None
+        #: What `CURRENT_USER()` answers: the tool's own account.
+        self.current_user = "sopuli_svc@%"
         self.queries: list[tuple[str, Any]] = []
         self._last = ""
         self._users: tuple[str, ...] = ()
@@ -72,6 +75,8 @@ class _Cursor:
             return ("",)
         if self._last == admin.PARTIAL_REVOKES:
             return (0,)
+        if self._last == CURRENT_USER:
+            return (self.current_user,)
         assert self._last == admin.GLOBAL_ROW
         return self.global_row
 
@@ -118,6 +123,36 @@ def test_describe_reads_the_account_by_user_and_host() -> None:
     assert state.password_expires_at is None
     assert state.failed_logins is None
     assert state.vendor_maintained is False
+
+
+def test_another_account_is_not_the_session_s_own() -> None:
+    state = describe(_Cursor([_row()]), "acme_app@10.%", target="mysql-dev", now=NOW)
+
+    assert state is not None
+    assert state.session_account is False
+
+
+@pytest.mark.parametrize(("current", "own"), [("acme_app@10.%", True), ("ACME_APP@10.%", False)])
+def test_the_account_current_user_names_is_the_session_s_own(current: str, own: bool) -> None:
+    """`CURRENT_USER()` is the account the server matched. Its user compares by
+    case, so `ACME_APP@10.%` is another account (#1225)."""
+    cursor = _Cursor([_row()])
+    cursor.current_user = current
+
+    state = describe(cursor, "acme_app@10.%", target="mysql-dev", now=NOW)
+
+    assert state is not None
+    assert state.session_account is own
+
+
+def test_the_session_account_s_host_compares_without_case() -> None:
+    cursor = _Cursor([_row(host="db.example.com")])
+    cursor.current_user = "acme_app@DB.EXAMPLE.COM"
+
+    state = describe(cursor, "acme_app@db.example.com", target="mysql-dev", now=NOW)
+
+    assert state is not None
+    assert state.session_account is True
 
 
 def test_the_host_compares_without_case_and_the_name_is_the_servers() -> None:

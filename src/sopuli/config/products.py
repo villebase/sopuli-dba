@@ -388,6 +388,40 @@ def mysql_account(name: str) -> tuple[str, str] | None:
     return user, host
 
 
+#: ASCII letters to lower case and nothing else: MySQL's ``Host`` column is
+#: ``ascii_general_ci``, so only ASCII letters fold.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def same_name(left: str, right: str) -> bool:
+    """Two account names are one account, compared by ``upper()``: invariant
+    5's rule, and how the Oracle and PostgreSQL drivers look a name up (#1208)."""
+    return left.upper() == right.upper()
+
+
+def same_mysql_account(left: str, right: str) -> bool:
+    """Two MySQL account names are one account: the user exactly, the host
+    without ASCII case, as the server compares them (#1202, decision 3).
+
+    ``JDOE@%`` and ``jdoe@%`` are two accounts here, which :func:`same_name`
+    would take as one. A name that is not ``user@host`` is no MySQL account,
+    so it matches nothing.
+    """
+    first, second = mysql_account(left), mysql_account(right)
+    if first is None or second is None:
+        return False
+    return first[0] == second[0] and (
+        first[1].translate(_ASCII_LOWER) == second[1].translate(_ASCII_LOWER)
+    )
+
+
+def account_matcher(product: str) -> Callable[[str, str], bool]:
+    """How a verb compares an account name with a declared one on a target of
+    ``product``: :func:`same_mysql_account` on MySQL, :func:`same_name`
+    elsewhere."""
+    return same_mysql_account if product == MYSQL else same_name
+
+
 def mysql_host_token(host: str) -> str:
     """A MySQL host pattern as ``{host}`` writes it: ``%`` as ``any`` and ``_``
     as ``one``, so that no vault path holds a MySQL wildcard. ``10.%`` is

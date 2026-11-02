@@ -14,7 +14,7 @@ is `user@%`, and no other account has that user name (decided on #1223,
 :data:`~sopuli.driver.protocol.UNAVAILABLE` without a login, saying why. After
 a login, ``CURRENT_USER()`` confirms which account answered.
 
-What a login answers, measured on 8.4.13 with PyMySQL 1.2.3:
+What the server answers at a login, measured on 8.4.13 with PyMySQL 1.2.3:
 
 | Account | Right password | Wrong password |
 |---|---|---|
@@ -22,7 +22,9 @@ What a login answers, measured on 8.4.13 with PyMySQL 1.2.3:
 | expired | `1862` at connect | `1045` |
 | locked | `3118` | `1045` |
 
-`1862` and `3118` therefore say the password is right. PyMySQL does not say
+`1862` and `3118` therefore say the password is right. The tool does not log
+in as an account `mysql.user` reports locked, so it meets `3118` only where
+the lock is set between the read and the login. PyMySQL does not say
 it can handle an expired password, so the server refuses at connect with
 `1862`, and the mysql client's `1820` after login does not arise. A block
 after failed logins (`3955`) answers the right password too, so it says

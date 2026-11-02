@@ -386,19 +386,28 @@ does not, because at one host a named user wins. Any other declared account is
 `unavailable`, with no login, and the detail says why. After a login,
 `CURRENT_USER()` confirms which account answered.
 
-What a login answers, measured on 8.4.13 with PyMySQL 1.2.3:
+What the server answers at a login, measured on 8.4.13 with PyMySQL 1.2.3:
 
 | Account | Right password | Wrong password |
 |---|---|---|
-| open | logs in: `pass` | `1045`: `fail` |
-| expired | `1862` at connect: `pass` | `1045`: `fail` |
-| locked | `3118`: `pass` | `1045`: `fail` |
+| open | logs in | `1045` |
+| expired | `1862` at connect | `1045` |
+| locked | `3118` | `1045` |
 
-PyMySQL does not say it can handle an expired password, so the server refuses
-it at connect with `1862`; the mysql client's `1820` after login does not
-arise. Both say the password is right. A block after failed logins, `3955`,
-answers the right password too, so it is `unavailable`. An account that does
-not exist, or that `mysql.user` reports locked, is `unavailable` with no login.
+The tool reports `1045` as `fail`, and a login, `1862` or `3118` as `pass`:
+each of those three needs the right password. PyMySQL does not say it can
+handle an expired password, so the server refuses it at connect with `1862`;
+the mysql client's `1820` after login does not arise. A block after failed
+logins, `3955`, answers the right password too, so it is `unavailable`.
+
+The tool does not log in as an account that does not exist, or that
+`mysql.user` reports locked: each is `unavailable` with no login. So `3118`
+arises only where the lock is set between the read and the login. A login
+that reaches another account than the declared one, or whose
+`CURRENT_USER()` read fails, is `unavailable`. One over a plain connection
+that PyMySQL 1.2.3 cannot finish is `unavailable` too, and a session that a
+mode requiring TLS cannot confirm as TLS is refused, as the tool's own is
+([`01-configuration.md`](01-configuration.md), `mysql:` on a target).
 
 **There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` and its counter are in
 `User_attributes`, which the tool account does not read (#1202, decision 6).

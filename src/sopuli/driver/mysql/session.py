@@ -400,10 +400,20 @@ class MysqlSession(ClosesConnection):
         user, host = accounts_module.split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login (`verification.not_tried_reason`).
-        found = self._read(lambda cursor: accounts_module.read(cursor, [user, ""]))
+        try:
+            found = self._read(lambda cursor: accounts_module.read(cursor, [user, ""]))
+        except DriverError as error:
+            if error.code in REFUSED_READ:
+                error.hint = MISSING_GRANT_HINT
+            raise
         declared = accounts_module.find(found[user], host)
         if declared is None:
             return _not_tried(f'there is no account "{account}" on this target')
+        if declared.plugin != accounts_module.SUPPORTED_PLUGIN:
+            # As `describe_user` refuses it: the tool manages no other plugin.
+            raise accounts_module.OtherPluginError(
+                declared.name, declared.plugin, target=self.target.name
+            )
         reason = verification.not_tried_reason(declared, found[user], found[""])
         if reason is not None:
             return _not_tried(reason)
@@ -434,9 +444,27 @@ class MysqlSession(ClosesConnection):
             return VerifyResult(
                 method=VERIFY_LOGIN, result=result, latency_ms=latency, detail=detail
             )
+        except AttributeError as error:
+            # PyMySQL 1.2.3's failure over a plain connection, as
+            # `MysqlDriver.connect` meets it. The password was not tried.
+            if str(error) != PLAIN_LOGIN_FAILURE:
+                raise
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                latency_ms=_ms(started),
+                detail=(
+                    "PyMySQL could not finish the caching_sha2_password login over a plain "
+                    "connection, so the password was not tried: set `mysql.ssl_mode` to "
+                    "VERIFY_IDENTITY"
+                ),
+            )
         latency = _ms(started)
         try:
             with connection.cursor() as cursor:
+                # The same TLS rule as the tool's own session (`require_tls`),
+                # before anything else is read over this one.
+                require_tls(read_encryption(cursor), self.target)
                 answered = accounts_module.current_user(cursor)
         except pymysql.err.MySQLError as error:
             # The password was accepted, and which account accepted it is
@@ -459,10 +487,16 @@ class MysqlSession(ClosesConnection):
                 connection.close()
         if not same_mysql_account(answered, declared.name):
             # Unreachable for a user's sole `%` account, and checked anyway:
-            # a pass on another account's password would be a false pass.
-            return _not_tried(
-                f"the login reached {answered}, not {declared.name}, so it says nothing "
-                "about the declared account's password"
+            # a pass on another account's password would be a false pass. A
+            # login was made, so its latency is kept.
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                latency_ms=latency,
+                detail=(
+                    f"the login reached {answered}, not {declared.name}, so it says nothing "
+                    "about the declared account's password"
+                ),
             )
         LOG.debug("login as %s: pass in %.3fs", declared.name, latency / 1000)
         return VerifyResult(

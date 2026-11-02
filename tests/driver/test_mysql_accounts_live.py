@@ -185,6 +185,14 @@ def test_an_anonymous_account_at_a_named_host_stops_the_login(stage: Stage) -> N
     assert result.latency_ms is None, "no login was made"
 
 
+def test_an_account_on_another_plugin_is_refused_before_a_login(stage: Stage) -> None:
+    """As `describe_user` refuses it: the tool manages no other plugin."""
+    user = stage.account("%", extra="with sha256_password by %s")
+
+    with pytest.raises(accounts_module.OtherPluginError, match="uses sha256_password"):
+        stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+
 def test_hash_verification_is_refused_by_capability(stage: Stage) -> None:
     from sopuli.driver.protocol import UnsupportedCapabilityError
 

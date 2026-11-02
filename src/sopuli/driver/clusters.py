@@ -5,12 +5,14 @@ of roles. Two targets that reach one cluster would change those roles under two
 names, so the second is refused, as a name declared twice is
 (``01-configuration.md`` §*``postgres:`` on a target*).
 
-A session that can say which cluster it reached has ``cluster_identity()``
-and ``identity_caveat`` (:class:`ClusterIdentity`). Only the PostgreSQL
-session does, so the check asks for them by name rather than through
-:class:`~sopuli.driver.protocol.Session`, which every driver and test fake
-implements. ``tests/test_cli_one_cluster.py`` checks that the PostgreSQL
-session still has both.
+A MySQL server is one set of accounts too, known by its ``server_uuid``.
+
+A session that can say which cluster it reached has ``cluster_identity()``,
+``identity_caveat`` and the words for its refusal (:class:`ClusterIdentity`).
+The PostgreSQL and MySQL sessions do, so the check asks for them by name
+rather than through :class:`~sopuli.driver.protocol.Session`, which every
+driver and test fake implements. ``tests/test_cli_one_cluster.py`` checks
+that both sessions still have them.
 """
 
 from __future__ import annotations
@@ -30,6 +32,12 @@ class ClusterIdentity(Protocol):
 
     #: Why :meth:`cluster_identity` found no answer, or ``None``.
     identity_caveat: str | None
+    #: What one identity names, and what the identity is, for the refusal:
+    #: ``PostgreSQL cluster`` and ``system_identifier``.
+    identity_kind: str
+    identity_key: str
+    #: What to do about two targets that are one, for the refusal's hint.
+    identity_hint: str
 
     def cluster_identity(self) -> str | None: ...
 
@@ -72,12 +80,7 @@ def claim(session: object, target: str, clusters: dict[str, str]) -> None:
     first = clusters.setdefault(identity, target)
     if first != target:
         raise OneClusterError(
-            f'targets "{first}" and "{target}" are one PostgreSQL cluster '
-            f"(system_identifier {identity})",
-            hint=(
-                "declare each cluster once. A primary and its standbys share their "
-                "roles, so one target covers them all. If one is a pg_basebackup copy "
-                "or a promoted standby, a separate server, give each its own secret and "
-                "run one of them per run with --target"
-            ),
+            f'targets "{first}" and "{target}" are one {session.identity_kind} '
+            f"({session.identity_key} {identity})",
+            hint=session.identity_hint,
         )

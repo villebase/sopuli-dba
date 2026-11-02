@@ -51,7 +51,8 @@ lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target runs `doctor` and
-the `creds` commands (§7), and refuses the `account` commands.
+the `creds` commands but `finish-rollover` (§7), and refuses the `account`
+commands.
 
 ---
 
@@ -687,9 +688,9 @@ acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not
 
 The stack also runs MySQL 8.4 at `127.0.0.1:3306`, user `root`, password
 `sopuli-test`. `doctor` connects to it and reports what it found, and the UC-1
-commands run against it: `creds generate`, `apply`, `check`, `rotate`, `status`
-and `finish-rollover`, which finds no window to close. The `account` commands
-refuse a MySQL target.
+commands run against it: `creds generate`, `apply`, `check`, `rotate` and
+`status`. `creds finish-rollover` and the `account` commands refuse a MySQL
+target.
 
 Connecting needs no privilege. Create the tool account as root, with a
 password of your own, and export the same password as
@@ -749,7 +750,7 @@ and one at a named host:
 
 ```
 mysql> CREATE USER 'acme_app'@'%' IDENTIFIED BY '…';
-mysql> CREATE USER 'acme_batch'@'10.%' IDENTIFIED BY '…';
+mysql> CREATE USER 'acme_batch'@'192.0.2.%' IDENTIFIED BY '…';
 ```
 
 Add the vault from §5 and an application to `mysql.yaml`. An account on a MySQL
@@ -764,7 +765,7 @@ targets:
 applications:
   - name: acme-mysql
     targets: [mysql-dev]
-    accounts: [acme_app@%, acme_batch@10.%]
+    accounts: [acme_app@%, acme_batch@192.0.2.%]
     secret_template: "vault-dev:acme/mysql/{host}#DB_CREDENTIALS/{user}"
 ```
 
@@ -774,17 +775,17 @@ Stage passwords with `creds generate`, then run `creds apply`:
 $ sopuli --config mysql.yaml creds apply
 Plan: 2 accounts x 1 target = 2 applys   [dev]
 
-ACCOUNT          TARGET     INTENT                               SECRET
-acme_app@%       mysql-dev  verify, password_set, vault_promote  vault-dev:acme/mysql/any
-acme_batch@10.%  mysql-dev  verify, password_set, vault_promote  vault-dev:acme/mysql/10.any
+ACCOUNT               TARGET     INTENT                               SECRET
+acme_app@%            mysql-dev  verify, password_set, vault_promote  vault-dev:acme/mysql/any
+acme_batch@192.0.2.%  mysql-dev  verify, password_set, vault_promote  vault-dev:acme/mysql/192.0.2.any
 
-ACCOUNT          TARGET     SECRET                       SOURCE
-acme_app@%       mysql-dev  vault-dev:acme/mysql/any     pending
-acme_batch@10.%  mysql-dev  vault-dev:acme/mysql/10.any  pending
+ACCOUNT               TARGET     SECRET                            SOURCE
+acme_app@%            mysql-dev  vault-dev:acme/mysql/any          pending
+acme_batch@192.0.2.%  mysql-dev  vault-dev:acme/mysql/192.0.2.any  pending
 
-ACCOUNT          TARGET     STATE    DETAIL
-acme_app@%       mysql-dev  IN_SYNC  changed and verified by login
-acme_batch@10.%  mysql-dev  IN_SYNC  changed, and the server records the change; no login can reach this account to verify it
+ACCOUNT               TARGET     STATE    DETAIL
+acme_app@%            mysql-dev  IN_SYNC  changed and verified by login
+acme_batch@192.0.2.%  mysql-dev  IN_SYNC  changed, and the server records the change; no login can reach this account to verify it
 
 2 changed, 2 promoted to `current`
 
@@ -797,7 +798,7 @@ The server never sees the password: the statement carries a
 `caching_sha2_password` hash computed on this machine. `apply` does not log in
 before the change, because on MySQL one wrong login can block an account. After
 it, a login checks `acme_app@%`. A login from the tool's host could reach
-another account than `acme_batch@10.%`, so the server's record of the change
+another account than `acme_batch@192.0.2.%`, so the server's record of the change
 stands in for it, as the verification result `stored`.
 
 Run `creds apply` again and it changes nothing. With only `current` in the
@@ -807,9 +808,9 @@ whether a change is needed, so it skips each account:
 ```
 $ sopuli --config mysql.yaml creds apply
 ...
-ACCOUNT          TARGET     STATE    DETAIL
-acme_app@%       mysql-dev  SKIPPED  not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
-acme_batch@10.%  mysql-dev  SKIPPED  not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
+ACCOUNT               TARGET     STATE    DETAIL
+acme_app@%            mysql-dev  SKIPPED  not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
+acme_batch@192.0.2.%  mysql-dev  SKIPPED  not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
 
 nothing changed, 2 not confirmed
 ...
@@ -822,13 +823,13 @@ can answer:
 $ sopuli --config mysql.yaml creds check
 Plan: 2 accounts x 1 target = 2 checks   [dev]
 
-ACCOUNT          TARGET     INTENT  SECRET
-acme_app@%       mysql-dev  verify  vault-dev:acme/mysql/any
-acme_batch@10.%  mysql-dev  verify  vault-dev:acme/mysql/10.any
+ACCOUNT               TARGET     INTENT  SECRET
+acme_app@%            mysql-dev  verify  vault-dev:acme/mysql/any
+acme_batch@192.0.2.%  mysql-dev  verify  vault-dev:acme/mysql/192.0.2.any
 
-ACCOUNT          TARGET     STATE         DETAIL
-acme_app@%       mysql-dev  IN_SYNC       vault v2 verified by login; the lockout guard is unavailable: MySQL keeps FAILED_LOGIN_ATTEMPTS and its counter in mysql.user.User_attributes, which the tool account does not read
-acme_batch@10.%  mysql-dev  UNVERIFIABLE  a login reaches the account the server matches from the tool's host, which may not be acme_batch@10.%, so its password is checked by login only where its host is `%` and it is the user's only account; no login was attempted
+ACCOUNT               TARGET     STATE         DETAIL
+acme_app@%            mysql-dev  IN_SYNC       vault v2 verified by login; the lockout guard is unavailable: MySQL keeps FAILED_LOGIN_ATTEMPTS and its counter in mysql.user.User_attributes, which the tool account does not read
+acme_batch@192.0.2.%  mysql-dev  UNVERIFIABLE  a login reaches the account the server matches from the tool's host, which may not be acme_batch@192.0.2.%, so its password is checked by login only where its host is `%` and it is the user's only account; no login was attempted
 
 1 unverifiable
 ...
@@ -837,8 +838,9 @@ acme_batch@10.%  mysql-dev  UNVERIFIABLE  a login reaches the account the server
 A wrong password counts toward the account's `FAILED_LOGIN_ATTEMPTS`, which the
 tool cannot read. With `FAILED_LOGIN_ATTEMPTS 1`, one `check` of a drifted
 account blocks it, and the block lasts `PASSWORD_LOCK_TIME` days, through a new
-password, until `ALTER USER … ACCOUNT UNLOCK`. Use the default `--method login`:
-`hash` and `both` are refused on MySQL.
+password, until `ALTER USER … ACCOUNT UNLOCK`. `--lockout-margin` has nothing to
+guard here, as the detail says. Use the default `--method login`: `hash` and
+`both` are refused on MySQL.
 
 `creds rotate` draws, stages, applies and promotes in one run:
 
@@ -846,13 +848,13 @@ password, until `ALTER USER … ACCOUNT UNLOCK`. Use the default `--method login
 $ sopuli --config mysql.yaml creds rotate --confirm
 Plan: 2 accounts x 1 target = 2 rotations   [dev]
 
-ACCOUNT          TARGET     INTENT                                                              SECRET
-acme_app@%       mysql-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/mysql/any
-acme_batch@10.%  mysql-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/mysql/10.any
+ACCOUNT               TARGET     INTENT                                                              SECRET
+acme_app@%            mysql-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/mysql/any
+acme_batch@192.0.2.%  mysql-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/mysql/192.0.2.any
 
-ACCOUNT          TARGET     STATE    DETAIL
-acme_app@%       mysql-dev  IN_SYNC  changed and verified by login
-acme_batch@10.%  mysql-dev  IN_SYNC  changed, and the server records the change; no login can reach this account to verify it
+ACCOUNT               TARGET     STATE    DETAIL
+acme_app@%            mysql-dev  IN_SYNC  changed and verified by login
+acme_batch@192.0.2.%  mysql-dev  IN_SYNC  changed, and the server records the change; no login can reach this account to verify it
 
 2 changed, 2 promoted to `current`
 
@@ -861,8 +863,13 @@ rotation: staged 2 documents, promoted 2 documents
 ```
 
 `--strategy rollover` is refused with exit 5: the tool does not open MySQL's
-dual-password window yet. `creds status` shows when the server last changed
-each password. `ROLLOVER` reads `not supported`.
+dual-password window. `creds finish-rollover` refuses a MySQL target, because
+the tool cannot read whether an account keeps an old password. `creds status`
+shows when the server last changed each password. `ROLLOVER` reads `not
+supported`.
+
+Two targets that reach one server are refused with `SOPULI-20008`: the tool
+knows a server by its `server_uuid`.
 
 ---
 

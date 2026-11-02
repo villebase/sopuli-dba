@@ -1237,7 +1237,7 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mysql` target and reports the server; every other command refuses it with `SOPULI-20006`, before connecting, until the driver is written. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mysql` target and reports the server, and UC-1's `creds generate`, `apply`, `check`, `rotate` and `status` run against it; every other command refuses it with `SOPULI-20006`, before connecting. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
 | `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL and MySQL: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
@@ -1752,10 +1752,12 @@ full exchange over a plain connection (measured on 8.4.13).
 `doctor --check-privileges` also reads the accounts the config declares on
 the target, and names one that does not exist, one on another plugin, and a
 declared user name that also exists at a host the config does not declare
-([`02-mysql-privileges.md`](02-mysql-privileges.md) §4). Every other command
-refuses a MySQL target until the driver is written
-([#1221](https://github.com/villebase/sopuli-dba/issues/1221)). What it will do
-is decided in [#1202](../decisions/log.md#1202).
+([`02-mysql-privileges.md`](02-mysql-privileges.md) §4). UC-1's `creds
+generate`, `apply`, `check`, `rotate` and `status` run against a MySQL target
+([#1223](../decisions/log.md#1223)); every other command refuses it. Two
+targets that reach one server, known by its `server_uuid`, are refused with
+`SOPULI-20008`, as two targets on one PostgreSQL cluster are. A replica has
+its own `server_uuid`, and while it is read-only a write to it is refused.
 
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:

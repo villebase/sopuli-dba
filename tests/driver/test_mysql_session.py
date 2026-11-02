@@ -49,6 +49,7 @@ class _Cursor:
             accounts_module.DEFAULT_LIFETIME: (0,),
             "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
             session_module.SERVER_NOW: (connection.now,),
+            session_module.SERVER_UUID: ("8747dbf7-d699-11f1-a32f-ce3a34795652",),
         }
         self._last = ""
 

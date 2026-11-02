@@ -10,12 +10,12 @@ correlation id, checks that a mode which requires TLS got it, and reports the
 scope: ``server``, whether it takes writes, and its encryption. It refuses a
 tool account that can use ``SYSTEM_USER``, audits the tool account's grants
 and the declared accounts for ``doctor --check-privileges``, and describes an
-account. Only `doctor` gets this far: the registry entry lists no command, so
-every other command refuses the target with ``SOPULI-20006`` before it
-connects. Every other method, such as the ones that change an account, verify
-a password, size a password or look up a role, is a second line behind that,
-and refuses with ``SOPULI-20006`` without a round trip. The
-driver sends nothing that changes the server.
+account. For UC-1 it sets a password from a hash computed on the client,
+verifies one by login where only the declared account can answer, and names
+the server by its ``server_uuid``. The registry lists `doctor` and the `creds`
+commands but `finish-rollover`. The methods that change an account otherwise,
+look up a role or end a rollover refuse with ``SOPULI-20006`` without a round
+trip.
 """
 
 from __future__ import annotations
@@ -165,6 +165,22 @@ class MysqlSession(ClosesConnection):
     #: The server's clock just before :meth:`set_password` sent its statement,
     #: per account, for :meth:`confirm_change`.
     _changed_since: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
+    #: Always ``None``: any account reads ``server_uuid`` (probe 02, CH5).
+    identity_caveat: str | None = field(default=None, init=False)
+    #: The words for two targets that are one server
+    #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
+    identity_kind = "MySQL server"
+    identity_key = "server_uuid"
+    identity_hint = (
+        "declare each server once: two targets on one server would change its "
+        "accounts under two names. A replica has its own server_uuid, and is "
+        "refused writes while it is read-only"
+    )
+
+    def cluster_identity(self) -> str | None:
+        """The server's ``server_uuid``, which the CLI uses to refuse two
+        targets that are one server. Any account reads it."""
+        return str(self._read(lambda cursor: _one(cursor, SERVER_UUID)))
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its encryption.
@@ -582,11 +598,11 @@ class MysqlSession(ClosesConnection):
         require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        """No window is opened yet (#1224), so there is none to end (invariant
-        4). `creds finish-rollover` settles every account before it gets here;
-        this refuses by capability for any other caller."""
+        """Refused by capability: the tool opens no rollover window on MySQL,
+        and `apply --strategy direct` is the caller that reaches this. `creds
+        finish-rollover` is not listed for MySQL."""
         self.require_rollover(account)
-        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
+        raise self._not_written("end a rollover window")
 
 
 def _ms(started: float) -> int:
@@ -597,6 +613,15 @@ def _ms(started: float) -> int:
 def _not_tried(detail: str) -> VerifyResult:
     """A login :meth:`MysqlSession.verify_password` settled without trying."""
     return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
+
+
+#: Which server this is, for two targets that are one (probe 02, CH5).
+SERVER_UUID = "select @@global.server_uuid"
+
+
+def _one(cursor: Any, query: str) -> Any:
+    cursor.execute(query)
+    return cursor.fetchone()[0]
 
 
 #: The server's clock, in the session's time zone, which is UTC

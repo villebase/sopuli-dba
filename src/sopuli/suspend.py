@@ -84,11 +84,13 @@ def decide(
 
     **`--force` waives guardrails 2 to 5 and 7 and never the declaration**, which is
     invariant 5's own sentence: ``--force`` overrides other guardrails, never the
-    whitelist. It does not waive checks 6 and 8 either, a superuser and a role the
-    server reserves. That is enforced by :func:`~sopuli.driver.guardrails.review` rather
-    than here, and it is why the declaration is expressed *through* the review's
-    check 1 instead of short-circuiting it -- one refusal vocabulary, one place
-    that decides what ``--force`` may do.
+    whitelist. It does not waive checks 6 and 8 either: a superuser and a role the
+    server reserves. Check 9 does not run here, because neither verb sets a
+    password (#1222). That is enforced by
+    :func:`~sopuli.driver.guardrails.review` rather than here, and it is why the
+    declaration is expressed *through* the review's check 1 instead of
+    short-circuiting it -- one refusal vocabulary, one place that decides what
+    ``--force`` may do.
 
     **An account an application binds here is refused** where a predicate
     admits it, before the review, and ``--force`` does not waive it
@@ -116,7 +118,14 @@ def decide(
     # in the vocabulary the guardrails already refuse in. The alternative was a
     # second kind of "not declared" refusal that renders differently from the one
     # every other verb produces.
-    found = review(state, declared=[state.name] if rule is not None else [], force=force)
+    # Neither verb sets a password, so check 9 does not run: locking an account
+    # with a global privilege takes power away rather than handing it over (#1222).
+    found = review(
+        state,
+        declared=[state.name] if rule is not None else [],
+        force=force,
+        sets_password=False,
+    )
 
     if not found.permitted:
         return Decision(

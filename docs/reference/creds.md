@@ -106,7 +106,7 @@ Options:
 - `--preflight`: Check every target before writing anything: that it is reachable, is the container the config names, is open read-write, has the declared accounts and the profiles their policies assign, and grants the tool account what it needs. Refuses the run if a check fails, instead of finding the problem part way through.
 - `--lockout-margin` `INTEGER` (0 to 100, default `2`): Refuse to attempt a login within this many tries of the lockout limit.
 - `--repair` `FILE`: Act only on what a previous run left unconfirmed. Takes a run document -- an apply or a rotate that exited 4, or a check that exited 3. Narrows the run; it cannot extend it.
-- `--force`: Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the password file, an admin role, the deny list and the tool's own account. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. The run document records every waiver.
+- `--force`: Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the password file, an admin role, the deny list and the tool's own account. Nothing waives guardrails 1, 6, 8 and 9: an account the config does not declare, a superuser, a role the server reserves, and an account with a global privilege. The run document records every waiver.
 
 It also takes the [global options](README.md#global-options).
 
@@ -388,7 +388,7 @@ Options:
 - `--finish-rollover`: End every rollover window at the end of the run, once every target has been applied and verified. Not the same as --strategy direct.
 - `--confirm`: Proceed without asking. Required where there is nobody to ask.
 - `--lockout-margin` `INTEGER` (0 to 100, default `2`): Refuse to attempt a login within this many tries of the lockout limit.
-- `--force`: Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the password file, an admin role, the deny list and the tool's own account. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. The run document records every waiver.
+- `--force`: Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the password file, an admin role, the deny list and the tool's own account. Nothing waives guardrails 1, 6, 8 and 9: an account the config does not declare, a superuser, a role the server reserves, and an account with a global privilege. The run document records every waiver.
 
 It also takes the [global options](README.md#global-options).
 

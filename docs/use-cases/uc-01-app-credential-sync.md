@@ -301,9 +301,10 @@ sopuli creds generate --application acme [--account acme_web_user]
    step.
 
    The same connection describes each account. An account that guardrail
-   check 6 (a superuser) or check 8 (a role the server reserves) refuses is
-   skipped: no flag waives either, so a `pending` staged for it could never be
-   applied ([#1117](../decisions/log.md#1117)). A
+   check 6 (a superuser), check 8 (a role the server reserves) or check 9 (a
+   global privilege) refuses is skipped: no flag waives any of them, so a
+   `pending` staged for it could never be applied
+   ([#1117](../decisions/log.md#1117), [#1222](../decisions/log.md#1222)). A
    password that one target refuses is skipped on every binding that shares it,
    as `creds apply` changes on no target a credential that one target refuses
    (#872). Each skipped binding is a `SKIPPED` row with the refusal's reason,
@@ -613,7 +614,7 @@ These rules decide what `apply` does with each account:
   survey. `apply` cannot do what it was run to do.
 
 `--force` waives account guardrails 2 to 5 and 7 in `02-oracle-privileges.md`
-§4, and never checks 1, 6 and 8. The run document records each waiver in `results[].overridden`.
+§4, and never checks 1, 6, 8 and 9. The run document records each waiver in `results[].overridden`.
 `--lockout-margin` sets the lockout guard that §7 describes, for the logins
 `apply` makes.
 
@@ -659,8 +660,9 @@ run asks the guardrails there before the change anyway. A target this read
 cannot reach is reported on its rows without a second attempt, and an account it
 cannot read is left to the run. The same applies to `creds rotate`, but not to
 `--dry-run`, which does not make the read. Under `--force` only the checks no
-flag waives refuse: a superuser and a role the server reserves. Reasons:
-[#872](../decisions/log.md#872), [#1111](../decisions/log.md#1111).
+flag waives refuse: a superuser, a role the server reserves, and an account
+with a global privilege. Reasons: [#872](../decisions/log.md#872),
+[#1111](../decisions/log.md#1111), [#1222](../decisions/log.md#1222).
 
 **After a survey, the read is the survey's.** Under `--preflight`, and on every
 `creds rotate`, the survey has just read each of these accounts under the run's
@@ -2004,7 +2006,7 @@ exits 1, and nothing is applied to any database.
 Step 3 makes the common failures (wrong privileges, closed PDB, unreachable host)
 happen *before* anything is written anywhere. `creds apply` offers the same
 survey as `--preflight` (§5). A grant step 3 finds missing on an account that
-guardrail check 6 or 8 refuses whatever is granted is not a failure: no grant
+guardrail check 6, 8 or 9 refuses whatever is granted is not a failure: no grant
 could make the account changeable, and step 5 skips it
 ([#1117](../decisions/log.md#1117)). Step 5 begins by asking the guardrails on every
 target a credential is bound to, before the first database is changed, so a

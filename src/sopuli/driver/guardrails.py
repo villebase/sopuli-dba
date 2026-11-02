@@ -46,6 +46,12 @@ the command layer applies.
 8. **reserved by the server**, which lets only a superuser change it: on
    PostgreSQL, a role in supautils' ``reserved_roles``. Never waived, like
    check 6 (#1111).
+9. **holds a global privilege**, a privilege beyond the account's own data
+   that the driver reports in ``global_privileges``: on MySQL, any privilege
+   ``ON *.*`` but ``USAGE``, any on the ``mysql`` schema, and any ``PROXY``
+   grant, held or reached through a role. Never waived (#1222). It runs only
+   for a verb that sets a password, and not on the session's own account,
+   which check 7 covers.
 
 ### Refused, permitted, or *could not establish*
 
@@ -60,14 +66,24 @@ settle it. "I looked and found nothing" and "I could not look" are answers a
 safety report must never merge, which is what
 :mod:`sopuli.driver.oracle.privileges` says one layer up about the same view.
 
-### `--force` overrides 2 to 5 and 7, and never 1, 6 or 8
+### `--force` overrides 2 to 5 and 7, and never 1, 6, 8 or 9
 
 Checks 6 and 8 are never waived because nothing could use the waiver: only a
 superuser can change a superuser's password or a reserved role's, and a tool
 account that is a superuser is refused when it connects. A waiver would only
-move the refusal to the server, after the run had started. Check 7 is waived
-for the deliberate rotation of the tool's own password, which is ordinary work
-(#1059).
+move the refusal to the server, after the run had started.
+
+Check 9 is never waived for the opposite reason: the server would allow it. A
+MySQL tool account with ``CREATE USER`` can set the password of any account
+that lacks ``SYSTEM_USER``, however much else it holds, so whoever runs the tool
+could log in as that account. One mistaken config entry would be enough, and a
+flag would be one more mistake (#1202, decision 7). The same reason limits it:
+`account suspend` and `account expire-password` set no password, so they may
+lock such an account, and the tool's own account hands over no power the tool
+does not already have.
+
+Check 7 is waived for the deliberate rotation of the tool's own password, which
+is ordinary work (#1059).
 
 This is decision P3 in ``docs/decisions/log.md``. `DBSNMP` is the case it exists
 for: rotating its password is ordinary DBA work and it is `ORACLE_MAINTAINED`, so a
@@ -119,8 +135,16 @@ OWN_ACCOUNT = "own_account"
 #: Check 8. Never waived (:data:`NEVER_WAIVED`).
 RESERVED = "reserved"
 
+#: Check 9. Never waived (:data:`NEVER_WAIVED`).
+GLOBAL_PRIVILEGE = "global_privilege"
+
 #: The checks no flag waives.
-NEVER_WAIVED = frozenset({DECLARED, SUPERUSER, RESERVED})
+NEVER_WAIVED = frozenset({DECLARED, SUPERUSER, RESERVED, GLOBAL_PRIVILEGE})
+
+#: The checks no flag waives that refuse a declared account: whatever is granted
+#: to the tool, no run changes such an account. :func:`server_refusal` and
+#: `creds apply`'s "run `creds generate` first" row both read it.
+UNWAIVABLE = NEVER_WAIVED - {DECLARED}
 
 #: §4's number for each check, for a message that names one. A test holds it to
 #: every check :func:`review` can return.
@@ -133,6 +157,7 @@ NUMBERS = {
     SUPERUSER: 6,
     OWN_ACCOUNT: 7,
     RESERVED: 8,
+    GLOBAL_PRIVILEGE: 9,
 }
 
 
@@ -153,11 +178,13 @@ class Refusal:
     def overridable(self) -> bool:
         """Whether `--force` can waive this one.
 
-        Everything except checks 1, 6 and 8. Acting on an account absent from
+        Everything except checks 1, 6, 8 and 9. Acting on an account absent from
         the config would make the tool's own audit trail meaningless, so no flag
         reaches it (invariant 5). A superuser's password, and a reserved role's,
         are ones the tool cannot change, so waiving check 6 or 8 would only move
-        the refusal to the server.
+        the refusal to the server. An account with a global privilege is one the
+        tool could change, and changing it hands its power to whoever runs the
+        tool, so no flag reaches check 9 either.
         """
         return self.check not in NEVER_WAIVED
 
@@ -266,12 +293,13 @@ def is_declared(account: str, declared: Collection[str]) -> bool:
 
 def server_reserved(state: UserState) -> bool:
     """Whether a check no flag waives refuses the account whatever is granted:
-    check 6 (a superuser) and check 8 (a role the server reserves) today.
+    check 6 (a superuser), check 8 (a role the server reserves) and check 9 (a
+    global privilege) today.
 
-    No grant to the tool account changes either answer, because the server is
-    what refuses the change. So the pre-flight asks for no grant on such an
-    account (#1117): one it could ask for could never be made, and the
-    guardrails skip the account anyway.
+    No grant to the tool account changes any of these answers. For checks 6 and
+    8 the server is what refuses the change; for check 9 the tool refuses it,
+    whatever the server would allow. So the pre-flight asks for no grant on such
+    an account (#1117), because the guardrails skip the account anyway.
 
     Read from :func:`review` and :data:`NEVER_WAIVED`, not restated, so a later
     check of the same kind is included without an edit here. Check 1 is left
@@ -284,20 +312,38 @@ def server_reserved(state: UserState) -> bool:
 def server_refusal(state: UserState) -> Refusal | None:
     """The first refusal :func:`server_reserved` is true for, with its reason, or
     ``None``. `creds generate` reports it on the account it skips (#1174)."""
-    unwaivable = NEVER_WAIVED - {DECLARED}
     found = review(state, declared=(state.name,)).refusals
-    return next((refusal for refusal in found if refusal.check in unwaivable), None)
+    return next((refusal for refusal in found if refusal.check in UNWAIVABLE), None)
 
 
-def review(state: UserState, *, declared: Collection[str], force: bool = False) -> Review:
+#: How many of an account's global privileges check 9's reason names before it
+#: counts the rest. ``ALL PRIVILEGES ON *.*`` is about 90 of them on MySQL, and
+#: the reason is printed on every row and target that refuses the account.
+NAMED_PRIVILEGES = 5
+
+
+def review(
+    state: UserState,
+    *,
+    declared: Collection[str],
+    force: bool = False,
+    sets_password: bool = True,
+) -> Review:
     """Every §4 check, against one account.
 
     ``state.name`` is the spelling the **database** gave back, which is what the
     checks run on: config says which accounts may be touched, and the database
     says what they are.
 
-    ``force`` waives checks 2 to 5 and 7 and never 1, 6 or 8, and what it waives
+    ``force`` waives checks 2 to 5 and 7 and never 1, 6, 8 or 9, and what it waives
     is reported in :attr:`Review.overridden` rather than dropped.
+
+    ``sets_password`` says whether the verb sets a password. `account suspend`
+    and `account expire-password` pass ``False``, and check 9 does not run for
+    them: its reason is that the tool could log in with a password it set, and
+    locking an account or expiring its password takes power away instead
+    (#1222). It defaults to ``True``, the safe side: a new verb that forgets it
+    refuses more, never less.
 
     **A check with no input is neither**, and that is the third answer:
     it lands in :attr:`Review.caveats`, refuses nothing, and survives ``force``
@@ -374,6 +420,19 @@ def review(state: UserState, *, declared: Collection[str], force: bool = False) 
                 "superuser may change it",
             )
         )
+
+    # The session's own account is exempt: the tool already has its power, so
+    # setting its password hands over nothing. Check 7 still refuses it unless
+    # `--force` waives that (#1059, #1222).
+    privileges = sorted(state.global_privileges)
+    if privileges and sets_password and not state.session_account:
+        named = ", ".join(privileges[:NAMED_PRIVILEGES])
+        rest = len(privileges) - NAMED_PRIVILEGES
+        if rest > 0:
+            # Grants, not privileges: one privilege held directly and through
+            # a role is two entries.
+            named += f" and {rest} more grant{'s' if rest > 1 else ''}"
+        found.append(Refusal(GLOBAL_PRIVILEGE, name, f"the account holds {named}"))
 
     if not force:
         return Review(account=name, refusals=tuple(found), caveats=tuple(caveats))

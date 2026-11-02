@@ -53,7 +53,8 @@ def decide(
     :func:`sopuli.suspend.decide`, reporting ``EXPIRED`` where it proceeds. Its
     docstring is the specification: a missing account is a finding rather than
     an error, and ``--force`` waives guardrails 2 to 5 and 7 and never 1, 6 or
-    8: the whitelist, a superuser, or a role the server reserves.
+    8: the whitelist, a superuser, or a role the server reserves. Guardrail 9
+    does not run, because expiring sets no password.
     """
     return _decide(
         state,

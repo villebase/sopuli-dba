@@ -769,7 +769,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "does not act on it: a superuser, a holder of an administrative role, the tool's "
             "own account, or another check of `02-oracle-privileges.md` §4 except guardrail "
             "2, which is `SOPULI-W041`. One entry per row. The message names every check "
-            "that refuses and says whether `--force` overrides them."
+            "that refuses and says whether `--force` overrides them. Guardrail 9, a global "
+            "privilege, refuses only the verbs that set a password, and the message says so."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1031,9 +1032,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "target confirmed; a failure is reported as the reason first. The same run "
             "again skips the same pair, so the run prints no `repair with:` line when this "
             "is all that held it back. The remedy is to clear what the guardrail reported "
-            "on that target and run the same command again. `--force` overrides it, and "
-            "waives the guardrails for every account the run selects, so the message "
-            "spells out no `--force` command."
+            "on that target and run the same command again. `--force` overrides it, unless "
+            "it refused a superuser, a role the server reserves or an account with a global "
+            "privilege, and waives the guardrails for every account the run selects, so the "
+            "message spells out no `--force` command."
         ),
         GUARDRAIL_UNCHECKED: (
             "One of `02-oracle-privileges.md` §4's account guardrails could not be run "
@@ -1748,8 +1750,9 @@ def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagno
         message=(
             f"{document} was not promoted: a guardrail skipped {named}, and {targets} the "
             "old password -- clear what the guardrail reported and run the same command "
-            "again. `--force` overrides it, unless it refused a superuser or a role the "
-            "server reserves, and waives the guardrails for every account the run selects"
+            "again. `--force` overrides it, unless it refused a superuser, a role the "
+            "server reserves or an account with a global privilege, and waives the "
+            "guardrails for every account the run selects"
         ),
     )
 

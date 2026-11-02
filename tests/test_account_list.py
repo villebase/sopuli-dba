@@ -191,6 +191,38 @@ def test_a_member_of_an_administrative_role_gets_a_notice_force_overrides() -> N
     )
 
 
+def test_a_global_privilege_is_named_as_refusing_only_a_password_change() -> None:
+    """Check 9 refuses the verbs that set a password, and `account suspend`
+    may still lock the account, so the notice does not say no verb acts (#1222)."""
+    held = frozenset({"SELECT ON *.*"})
+    message = guardrail_refusal(user("dba_jane@%", global_privileges=held), admitted=True)
+
+    assert message == (
+        "a mutating verb refuses this account at plan time: check 9 (the account holds "
+        "SELECT ON *.*). no flag overrides check 9, so no verb will set this account's password"
+    )
+
+
+def test_a_global_privilege_beside_a_waivable_check_says_what_force_does() -> None:
+    """Check 4 still refuses `account suspend` unless `--force` waives it, so
+    the notice must not suggest suspend works as it is (#1222)."""
+    message = guardrail_refusal(
+        user(
+            "dba_jane@%",
+            admin_roles=frozenset({"DBA"}),
+            global_privileges=frozenset({"SELECT ON *.*"}),
+        ),
+        admitted=True,
+    )
+
+    assert message is not None
+    assert message.endswith(
+        "no flag overrides check 9, so no verb will set this account's password; "
+        "`account suspend` and `account expire-password` need `--force` for the rest, "
+        "and the override is recorded"
+    )
+
+
 def test_a_superuser_is_named_with_the_check_no_flag_overrides() -> None:
     """Check 6 is never waived, so the notice must not send the reader to
     `--force`, even beside a check that `--force` does override. Nor to the
@@ -237,6 +269,9 @@ def test_every_check_the_review_returns_has_a_number() -> None:
     )
     found = {one.check for one in review(every, declared=()).refusals}
     found |= {one.check for one in review(user("X", supplied_name=True), declared=()).refusals}
+    # Check 9 exempts the session's own account, which `every` is (#1222).
+    held = user("Y", global_privileges=frozenset({"SELECT ON *.*"}))
+    found |= {one.check for one in review(held, declared=()).refusals}
 
     assert found == set(NUMBERS)
 

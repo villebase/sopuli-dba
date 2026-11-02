@@ -299,6 +299,47 @@ def test_an_account_with_a_global_privilege_is_refused_and_force_does_not_waive_
     assert forced.overridden == ()
 
 
+def test_check_nine_names_five_privileges_and_counts_the_rest() -> None:
+    """`ALL PRIVILEGES ON *.*` is about 90 on MySQL, printed on every row."""
+    held = frozenset(f"PRIV_{index:02} ON *.*" for index in range(12))
+    state = UserState(name="acme_app@%", status="OPEN", global_privileges=held)
+
+    (refusal,) = review(state, declared=("acme_app@%",)).refusals
+    assert refusal.reason == (
+        "the account holds PRIV_00 ON *.*, PRIV_01 ON *.*, PRIV_02 ON *.*, "
+        "PRIV_03 ON *.*, PRIV_04 ON *.* and 7 more"
+    )
+
+
+def test_a_verb_that_sets_no_password_is_not_refused_by_check_nine() -> None:
+    """`account suspend` and `expire-password` take power away, so they may
+    lock a departed DBA who holds `ALL ON *.*` (#1222)."""
+    state = UserState(
+        name="dba_jane@%", status="OPEN", global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})
+    )
+
+    assert review(state, declared=("dba_jane@%",), sets_password=False).permitted
+    assert not review(state, declared=("dba_jane@%",)).permitted
+
+
+def test_the_tool_s_own_account_is_exempt_from_check_nine() -> None:
+    """On MySQL the tool account holds `CREATE USER ON *.*`. Check 7 still
+    refuses it, and `--force` waives that, so #1059's rotation works (#1222)."""
+    state = UserState(
+        name="sopuli_svc@%",
+        status="OPEN",
+        session_account=True,
+        global_privileges=frozenset({"CREATE USER ON *.*"}),
+    )
+
+    refused = review(state, declared=("sopuli_svc@%",))
+    assert [refusal.check for refusal in refused.refusals] == [OWN_ACCOUNT]
+
+    forced = review(state, declared=("sopuli_svc@%",), force=True)
+    assert forced.permitted
+    assert [refusal.check for refusal in forced.overridden] == [OWN_ACCOUNT]
+
+
 def test_an_account_with_no_global_privilege_passes_check_nine() -> None:
     """Every driver but MySQL's leaves the field empty, so an Oracle or
     PostgreSQL account is never refused by it."""

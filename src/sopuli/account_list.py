@@ -238,9 +238,15 @@ def guardrail_refusal(state: UserState, *, admitted: bool) -> str | None:
     checks = ", ".join(f"check {guardrails.NUMBERS[one.check]} ({one.reason})" for one in refusals)
     fixed = next((one for one in refusals if not one.overridable), None)
     if fixed is not None:
+        # Check 9 refuses only the verbs that set a password (#1222), and it is
+        # last in §4's order, so it is `fixed` only when no other check is.
+        acts = (
+            "set this account's password"
+            if fixed.check == guardrails.GLOBAL_PRIVILEGE
+            else "act on this account"
+        )
         remedy = (
-            f"no flag overrides check {guardrails.NUMBERS[fixed.check]}, so no verb will "
-            "act on this account"
+            f"no flag overrides check {guardrails.NUMBERS[fixed.check]}, so no verb will {acts}"
         )
     else:
         pronoun = "it" if len(refusals) == 1 else "them"

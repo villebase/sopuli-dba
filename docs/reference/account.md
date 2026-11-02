@@ -29,7 +29,8 @@ only the old password needs a reset.
 `--account` names one account, and a profile or role rule in
 `personal_accounts:` never widens it, as for `account suspend`. The command
 uses the same account guardrails as every mutating verb. `--force` waives
-guardrails 2 to 5 and 7, never 1, 6, 8 or 9.
+guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not apply,
+because expiring sets no password.
 
 An account that is already expired, with no window open, reports no
 change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
@@ -46,7 +47,7 @@ Options:
 - `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
-- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6, 8 and 9: an account the config does not declare, a superuser, a role the server reserves, and an account with a global privilege.
+- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, does not apply: this verb sets no password.
 
 It also takes the [global options](README.md#global-options).
 
@@ -171,7 +172,8 @@ turn one named account into several.
 
 The command uses the same account guardrails as every mutating verb, so
 suspending DBSNMP is refused just as rotating it would be. `--force`
-waives guardrails 2 to 5 and 7, never 1, 6, 8 or 9.
+waives guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not
+apply, because suspending sets no password.
 
 An account that is already locked reports no change, and the command
 issues nothing. The driver reads the state first, because Oracle and
@@ -187,6 +189,6 @@ Options:
 - `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
-- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6, 8 and 9: an account the config does not declare, a superuser, a role the server reserves, and an account with a global privilege.
+- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, does not apply: this verb sets no password.
 
 It also takes the [global options](README.md#global-options).

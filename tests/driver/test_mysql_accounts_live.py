@@ -116,6 +116,91 @@ def test_the_tool_s_own_account_is_the_session_s_and_only_check_7_refuses_it(
     assert guardrails.review(own, declared=(own.name,), force=True).permitted
 
 
+PASSWORD = "Acme-pw1"
+
+
+def test_check_logs_in_as_a_user_s_only_account_at_any_host(stage: Stage) -> None:
+    """The one kind of account a login can only reach (#1223)."""
+    user = stage.account("%")
+    stage.admin("alter user %s@'%%' identified by %s", (user, PASSWORD))
+
+    right = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+    wrong = stage.session.verify_password(f"{user}@%", Secret("Not-the-pw9"))
+
+    assert right.result == "pass"
+    assert right.latency_ms is not None
+    assert "lockout guard is unavailable" in str(right.detail)
+    assert wrong.result == "fail"
+    assert "(1045)" in str(wrong.detail)
+
+
+def test_an_expired_password_that_logs_in_passes(stage: Stage) -> None:
+    """PyMySQL 1.2.3 meets `1862` at connect, after the password was accepted."""
+    user = stage.account("%")
+    stage.admin("alter user %s@'%%' identified by %s password expire", (user, PASSWORD))
+
+    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert result.result == "pass"
+    assert "(1862)" in str(result.detail)
+
+
+def test_a_locked_account_is_not_logged_in_as(stage: Stage) -> None:
+    user = stage.account("%")
+    stage.admin("alter user %s@'%%' account lock", (user,))
+
+    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert result.result == "unavailable"
+    assert "no login was attempted" in str(result.detail)
+
+
+@pytest.mark.parametrize("hosts", [("10.%",), ("%", "10.%")])
+def test_an_account_another_host_could_answer_for_is_not_logged_in_as(
+    stage: Stage, hosts: tuple[str, ...]
+) -> None:
+    """Measured: a login from the tool's host reaches the `%` account, so the
+    `10.%` account's own password is refused with 1045 (#1223)."""
+    user = stage.account(hosts[0])
+    for host in hosts[1:]:
+        stage.account(host, user)
+
+    result = stage.session.verify_password(f"{user}@{hosts[-1]}", Secret(PASSWORD))
+
+    assert result.result == "unavailable"
+    assert result.latency_ms is None, "no login was made"
+
+
+def test_an_anonymous_account_at_a_named_host_stops_the_login(stage: Stage) -> None:
+    """`''@localhost` would win over `acme_app@%` for a client on localhost, so
+    the tool does not log in where one exists (#1223)."""
+    user = stage.account("%")
+    stage.created.append(("", "localhost"))
+    stage.admin("create user ''@'localhost'")
+
+    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert result.result == "unavailable"
+    assert "anonymous account ''@localhost" in str(result.detail)
+    assert result.latency_ms is None, "no login was made"
+
+
+def test_an_account_on_another_plugin_is_refused_before_a_login(stage: Stage) -> None:
+    """As `describe_user` refuses it: the tool manages no other plugin."""
+    user = stage.account("%", extra="with sha256_password by %s")
+
+    with pytest.raises(accounts_module.OtherPluginError, match="uses sha256_password"):
+        stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+
+def test_hash_verification_is_refused_by_capability(stage: Stage) -> None:
+    from sopuli.driver.protocol import UnsupportedCapabilityError
+
+    user = stage.account("%")
+    with pytest.raises(UnsupportedCapabilityError, match="offline_verify"):
+        stage.session.verify_password(f"{user}@%", Secret(PASSWORD), method="hash")
+
+
 def test_another_plugin_is_refused(stage: Stage) -> None:
     """8.4.13 ships sha256_password, deprecated; mysql_native_password is off."""
     user = stage.account("%", extra="with sha256_password by %s")

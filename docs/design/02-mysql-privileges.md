@@ -361,3 +361,55 @@ run of 16 or more hex digits as `***`, before the message is kept.
 longer one and then refuses it at login, `1045`, on 8.0.46, 8.4.13 and 9.7.4
 (CH6). The driver refuses such a password before anything is sent, as it
 refuses an empty one and one with control characters.
+
+---
+
+## 7. Checking a password by login
+
+`creds check` verifies a password by logging in as the account, over the
+target's own TLS settings, timeouts and `program_name`. It cannot compare a
+hash: the hash is in `authentication_string`, which the tool account does not
+read, so the driver reports no `offline_verify`, and `--method hash` or
+`both` is refused at plan time, exit 5.
+
+**A login reaches the account the server matches from the client's host.**
+The tool sends only the user name, and the server picks the account by host.
+Measured on 8.4.13: with `acme_app@%` and `acme_app@10.%`, a login from the
+tool's host reached `acme_app@%`, and `acme_app@10.%`'s own password was
+refused with `1045`. A refusal names the client's host, not the account, so it
+cannot be told apart from a wrong password. **The tool therefore logs in only
+as a `user@%` account that is the user's only account** (decided on
+[#1223](../decisions/log.md#1223)). An anonymous account at a named host,
+such as `''@localhost`, also stops the login: the server matches the host
+first, so it wins over `acme_app@%` for a client from that host. One at `%`
+does not, because at one host a named user wins. Any other declared account is
+`unavailable`, with no login, and the detail says why. After a login,
+`CURRENT_USER()` confirms which account answered.
+
+What the server answers at a login, measured on 8.4.13 with PyMySQL 1.2.3:
+
+| Account | Right password | Wrong password |
+|---|---|---|
+| open | logs in | `1045` |
+| expired | `1862` at connect | `1045` |
+| locked | `3118` | `1045` |
+
+The tool reports `1045` as `fail`, and a login, `1862` or `3118` as `pass`:
+each of those three needs the right password. PyMySQL does not say it can
+handle an expired password, so the server refuses it at connect with `1862`;
+the mysql client's `1820` after login does not arise. A block after failed
+logins, `3955`, answers the right password too, so it is `unavailable`.
+
+The tool does not log in as an account that does not exist, or that
+`mysql.user` reports locked: each is `unavailable` with no login. So `3118`
+arises only where the lock is set between the read and the login. A login
+that reaches another account than the declared one, or whose
+`CURRENT_USER()` read fails, is `unavailable`. One over a plain connection
+that PyMySQL 1.2.3 cannot finish is `unavailable` too, and a session that a
+mode requiring TLS cannot confirm as TLS is refused, as the tool's own is
+([`01-configuration.md`](01-configuration.md), `mysql:` on a target).
+
+**There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` and its counter are in
+`User_attributes`, which the tool account does not read (#1202, decision 6).
+A login goes ahead, as on Oracle without the `SYS.USER$` grant, and each
+result's detail says the guard is unavailable.

@@ -19,11 +19,12 @@ SQLSTATE is.
 
 Which rows were measured: `3118`, `1820`, `3955`, `1227`, `1142`, `1044`,
 `1827` and `3894` on 8.0.46, 8.4.13 and 9.7.4 with the mysql client (#1202,
-``docs/README.md`` §*MySQL*). The others are from MySQL's error reference.
-The shapes here are read from PyMySQL 1.2.3's source, and PR 3 of #1221
-measures them against a server. One difference is expected: PyMySQL does not
-say it can handle an expired password, so it should meet `1862` at login
-where the mysql client met `1820` after it.
+``docs/README.md`` §*MySQL*), and at login through PyMySQL 1.2.3 on 8.4.13:
+`1045` for a wrong password, `3118` for a locked account's right one, and
+`1862` for an expired account's right one, because PyMySQL does not say it can
+handle an expired password (:mod:`sopuli.driver.mysql.verification`). The
+others are from MySQL's error reference, and the exception shapes are read from
+PyMySQL 1.2.3's source.
 """
 
 from __future__ import annotations

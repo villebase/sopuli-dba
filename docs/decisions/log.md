@@ -4034,3 +4034,40 @@ the register.
   such as `SELECT ON *.*`, is refused until the grant is narrowed to its own
   schema. On MySQL, `account reset-password` refuses most DBA personal
   accounts, which hold something `ON *.*`; their passwords are reset by hand.
+
+## #1223
+
+- **Decided:** 2026-11-02, #1223
+- **Question:** `creds check` verifies a MySQL password by logging in. The
+  server picks the account a login reaches from the client's host, so a login
+  as `acme_app` from the tool's host may reach another account than the
+  declared `acme_app@10.%`, or none. Which accounts may the tool verify by
+  login?
+- **Decision:** Only a `user@%` account that is the user's only account. Any
+  other declared account is `unavailable` with no login, and the detail says
+  why. After a login, `CURRENT_USER()` confirms which account answered.
+- **Why:** Measured on 8.4.13: with `acme_app@%` and `acme_app@10.%`, a login
+  from the tool's host reached `acme_app@%`, and `acme_app@10.%`'s own
+  password was refused with `1045`. A refusal names the client's host, not the
+  account, so a wrong password and another account's refusal look the same.
+  Only an account that no other account can stand in for gives an answer that
+  is about it.
+- **Rejected:**
+  - Matching host patterns: reading the tool's client host from `USER()` and
+    logging in only where MySQL's matching order picks the declared account.
+    It checks more accounts, but reimplements the server's host matching
+    (wildcards, netmasks, name resolution), and a mistake reports the wrong
+    account's password.
+  - Logging in always and judging afterwards. A refusal still cannot be
+    attributed, and the attempt spends a failed login on whichever account
+    the host reaches.
+- **Accepted cost:** an account at a named host, or a `%` account whose user
+  also exists at another host, cannot be verified by login.
+- **Then, for such an account after a change:** `creds apply` confirms the
+  change by `mysql.user.password_last_changed` moving past the run's start, not
+  by a login, so its new password can be promoted. It is reported as a result
+  of its own, weaker than a login's `pass`: it shows the server holds the hash
+  the tool computed, not that a client logs in with the password. Decided by
+  the maintainer the same day; built with `creds apply` on MySQL.
+- **Rejected for that:** leaving such accounts unpromoted, which would mean no
+  rotation of them could finish.

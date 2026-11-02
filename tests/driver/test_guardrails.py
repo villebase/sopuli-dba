@@ -13,6 +13,7 @@ import pytest
 from sopuli.driver.guardrails import (
     DECLARED,
     DENY_LIST,
+    GLOBAL_PRIVILEGE,
     OWN_ACCOUNT,
     PASSWORD_FILE,
     PRIVILEGED_ROLE,
@@ -22,6 +23,8 @@ from sopuli.driver.guardrails import (
     Refusal,
     is_declared,
     review,
+    server_refusal,
+    server_reserved,
 )
 from sopuli.driver.protocol import UserState
 
@@ -268,6 +271,50 @@ def test_a_reserved_account_is_refused_and_force_does_not_waive_it() -> None:
     forced = review(state, declared=("authenticator",), force=True)
     assert not forced.permitted
     assert forced.overridden == ()
+
+
+# ------------------------------------------------------- check 9 (#1222) ---
+
+
+def test_an_account_with_a_global_privilege_is_refused_and_force_does_not_waive_it() -> None:
+    """Check 9. The server would allow the change, which is the danger: the
+    tool could then log in with the account's administrative power."""
+    state = UserState(
+        name="acme_app@%",
+        status="OPEN",
+        global_privileges=frozenset(
+            {"SELECT ON *.*", "PROXY ON ''@''", "SUPER ON *.* through acme_admin@%"}
+        ),
+    )
+
+    refused = review(state, declared=("acme_app@%",))
+    assert [refusal.check for refusal in refused.refusals] == [GLOBAL_PRIVILEGE]
+    assert refused.refusals[0].reason == (
+        "the account holds PROXY ON ''@'', SELECT ON *.*, SUPER ON *.* through acme_admin@%"
+    )
+    assert not refused.refusals[0].overridable
+
+    forced = review(state, declared=("acme_app@%",), force=True)
+    assert not forced.permitted
+    assert forced.overridden == ()
+
+
+def test_an_account_with_no_global_privilege_passes_check_nine() -> None:
+    """Every driver but MySQL's leaves the field empty, so an Oracle or
+    PostgreSQL account is never refused by it."""
+    assert GLOBAL_PRIVILEGE not in checks(account())
+
+
+def test_a_global_privilege_is_one_no_grant_to_the_tool_changes() -> None:
+    """`creds generate` and the pre-flight skip it as they skip checks 6 and 8."""
+    state = UserState(
+        name="acme_app@%", status="OPEN", global_privileges=frozenset({"SELECT ON *.*"})
+    )
+
+    refusal = server_refusal(state)
+    assert refusal is not None
+    assert refusal.check == GLOBAL_PRIVILEGE
+    assert server_reserved(state)
 
 
 # -------------------------------------------------- the third answer (§4.3) ---

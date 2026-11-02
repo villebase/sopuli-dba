@@ -1748,8 +1748,9 @@ def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagno
         message=(
             f"{document} was not promoted: a guardrail skipped {named}, and {targets} the "
             "old password -- clear what the guardrail reported and run the same command "
-            "again. `--force` overrides it, unless it refused a superuser or a role the "
-            "server reserves, and waives the guardrails for every account the run selects"
+            "again. `--force` overrides it, unless it refused a superuser, a role the "
+            "server reserves or an account with a global privilege, and waives the "
+            "guardrails for every account the run selects"
         ),
     )
 

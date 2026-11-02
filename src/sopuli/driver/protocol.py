@@ -832,6 +832,13 @@ class UserState:
     #: supautils, as on Supabase, it is ``supautils.reserved_roles``. Guardrail 8
     #: refuses the account, and no flag waives that (#1111).
     reserved_by: str | None = None
+    #: The privileges the account holds or can activate beyond its own data,
+    #: each spelled ``"<PRIVILEGE> ON <object>"``, sometimes with
+    #: ``" through <role>"`` appended. The MySQL driver fills it; the Oracle and
+    #: PostgreSQL drivers leave it empty, because their administrative power is
+    #: in :attr:`admin_roles` and :attr:`superuser`. Guardrail 9 refuses an
+    #: account with any, and no flag waives that (#1222).
+    global_privileges: frozenset[str] = frozenset()
     #: The account this session is connected as: the tool's own. Guardrail 7
     #: refuses it unless ``--force`` waives it (#1059). A plain ``bool``, unlike
     #: the three-valued fields above, because every driver can answer it: the

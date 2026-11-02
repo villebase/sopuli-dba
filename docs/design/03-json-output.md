@@ -2007,8 +2007,9 @@ no re-run at all.
 **`overridden`** lists the account guardrails (`02-oracle-privileges.md` §4) that
 `--force` waived on this row: the check that refused, and what it observed. It is
 absent where nothing was waived, because the field records overrides, not
-intent. Its `check` enum has no `declared`, `superuser` or `reserved`: checks 1,
-6 and 8 are the refusals `--force` cannot waive, so a document can never carry them
+intent. Its `check` enum has no `declared`, `superuser`, `reserved` or
+`global_privilege`: checks 1, 6, 8 and 9 are the refusals `--force` cannot
+waive, so a document can never carry them
 here, and an enum that admitted them would advertise an override the tool
 refuses to make. `own_account`, check 7, is in it from run schema 1.62 (#1059).
 
@@ -2826,7 +2827,7 @@ which is logic this tool already owns. The notes the reading produced
 `run.finished`.
 
 - **An account no run could apply is `SKIPPED`** (#1174): one that guardrail
-  check 6 or 8 refuses on its target, and every binding that shares its
+  check 6, 8 or 9 refuses on its target, and every binding that shares its
   password. Its `results[]` entry has `changed: false`, its
   `vault_write_pending` action has `applied: false` and the refusal as
   `detail`, and `summary.skipped` counts it. Nothing is written for it, so it

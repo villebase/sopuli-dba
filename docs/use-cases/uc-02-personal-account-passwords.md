@@ -320,7 +320,8 @@ The target selectors narrow *where*, not *who*.
 
 The guardrails are the ones every mutating verb uses, so suspending `DBSNMP` is
 refused exactly as rotating it would be. `--force` waives checks 2 to 5 and 7, and never
-checks 1, 6 and 8: the whitelist, a superuser, and a role the server reserves. A refusal exits **0**: `SKIPPED` means the guardrails worked, and
+checks 1, 6, 8 and 9: the whitelist, a superuser, a role the server reserves, and
+an account with a global privilege. A refusal exits **0**: `SKIPPED` means the guardrails worked, and
 only an unreachable target sets exit 4. The action kind is `account_lock`. The
 run document carries `results[].account_status`, the state the database was in
 *before* anything was issued, because `state: LOCKED` with `changed: false`

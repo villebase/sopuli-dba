@@ -234,6 +234,7 @@ def test_every_check_the_review_returns_has_a_number() -> None:
         superuser=True,
         session_account=True,
         reserved_by="supautils.reserved_roles",
+        global_privileges=frozenset({"SELECT ON *.*"}),
     )
     found = {one.check for one in review(every, declared=()).refusals}
     found |= {one.check for one in review(user("X", supplied_name=True), declared=()).refusals}

@@ -488,7 +488,8 @@ the register.
   document. [#1059](#1059) added check 7, the tool's own account, to the checks
   it overrides, and check 6, a superuser, to the ones it never overrides.
   [#1111](#1111) added check 8, a role the server reserves, to the ones it never
-  overrides.
+  overrides. [#1222](#1222) added check 9, an account with a global privilege,
+  to the ones it never overrides.
 - **Why:** Managing the password of an Oracle-maintained account such as
   `DBSNMP` is ordinary DBA work. A tool with no override does not stop that
   change. It moves it to SQL\*Plus, where nothing records it. An audited
@@ -3982,3 +3983,35 @@ the register.
     read back, so no lockout margin can be computed.
   - `mysql-connector-python`. It is larger and GPL with an exception.
   - `mysqlclient`. It needs the MySQL C library to build.
+
+## #1222
+
+- **Decided:** 2026-11-02, #1222
+- **Question:** Decision 7 of [#1202](#1202) refuses a managed MySQL account
+  that holds administrative privileges. Which privileges count, and can
+  `--force` waive the refusal?
+- **Decision:** An account is refused when it holds, or can activate, any of
+  these: any privilege `ON *.*` except `USAGE`, static or dynamic; any privilege
+  on the `mysql` schema or one of its tables; any `PROXY` grant. The check
+  follows roles: granted roles, default or not, transitively, and the roles in
+  `mandatory_roles`. It is check 9 in `02-oracle-privileges.md` §4,
+  `global_privilege`, and nothing waives it. It reads
+  `UserState.global_privileges`, which only the MySQL driver fills. Each entry
+  is `<PRIVILEGE> ON <object>`, with ` through <role>` where a role grants it,
+  and the refusal names them all.
+- **Why:** MySQL protects only accounts that hold `SYSTEM_USER`. A tool account
+  with `CREATE USER` can set the password of any other account, however much
+  it holds, and then log in as it. Checks 6 and 8 are never waived because the
+  server would refuse the change. Check 9 is never waived because the server
+  would allow it. One mistaken config entry would be enough, and a flag would
+  be one more mistake. `SELECT ON *.*` and `INSERT ON *.*` count, because they
+  read or rewrite `mysql.user`.
+- **Rejected:**
+  - MySQL's own list of administrative privileges. It lets `SELECT ON *.*`
+    and `INSERT ON *.*` through, and the code would have to keep a list of
+    static privileges current.
+  - A short list of the most dangerous privileges, which is the most likely to
+    miss a path to administrative power.
+- **Accepted cost:** an application account given a global privilege by habit,
+  such as `SELECT ON *.*`, is refused until the grant is narrowed to its own
+  schema.

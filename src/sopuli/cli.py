@@ -438,9 +438,9 @@ def help_with(**facts: str) -> Callable[[F], F]:
 GUARDRAIL_WAIVER_HELP = (
     "Waive account guardrails 2 to 5 and 7: a vendor-maintained account, the "
     "password file, an admin role, the deny list and the tool's own account. "
-    "Nothing waives guardrails 1, 6 and 8: an account the config does not "
-    "declare, a superuser, and a role the server reserves. The run document "
-    "records every waiver."
+    "Nothing waives guardrails 1, 6, 8 and 9: an account the config does not "
+    "declare, a superuser, a role the server reserves, and an account with a "
+    "global privilege. The run document records every waiver."
 )
 
 
@@ -1495,8 +1495,9 @@ def account_group() -> None:
     is_flag=True,
     default=False,
     help=(
-        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account "
-        "the config does not declare, a superuser, and a role the server reserves."
+        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6, 8 and 9: an "
+        "account the config does not declare, a superuser, a role the server reserves, "
+        "and an account with a global privilege."
     ),
 )
 @global_options
@@ -1530,7 +1531,7 @@ def account_suspend(
 
     The command uses the same account guardrails as every mutating verb, so
     suspending DBSNMP is refused just as rotating it would be. `--force`
-    waives guardrails 2 to 5 and 7, never 1, 6 or 8.
+    waives guardrails 2 to 5 and 7, never 1, 6, 8 or 9.
 
     An account that is already locked reports no change, and the command
     issues nothing. The driver reads the state first, because Oracle and
@@ -1782,8 +1783,9 @@ def _suspend_one(
     is_flag=True,
     default=False,
     help=(
-        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account "
-        "the config does not declare, a superuser, and a role the server reserves."
+        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6, 8 and 9: an "
+        "account the config does not declare, a superuser, a role the server reserves, "
+        "and an account with a global privilege."
     ),
 )
 @global_options
@@ -1815,7 +1817,7 @@ def account_expire_password(
     `--account` names one account, and a profile or role rule in
     `personal_accounts:` never widens it, as for `account suspend`. The command
     uses the same account guardrails as every mutating verb. `--force` waives
-    guardrails 2 to 5 and 7, never 1, 6 or 8.
+    guardrails 2 to 5 and 7, never 1, 6, 8 or 9.
 
     An account that is already expired, with no window open, reports no
     change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
@@ -2116,9 +2118,9 @@ def _unseen_methods_built() -> str:
     is_flag=True,
     default=False,
     help=(
-        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8 (an account "
-        "the config does not declare, a superuser, and a role the server reserves), or an "
-        "account locked on purpose."
+        "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6, 8 and 9 (an "
+        "account the config does not declare, a superuser, a role the server reserves, "
+        "and an account with a global privilege), or an account locked on purpose."
     ),
 )
 @global_options
@@ -6250,7 +6252,7 @@ def _constraints_for(
 def _reserved_on(
     session: Any, target: str, bindings: Sequence[Binding]
 ) -> dict[tuple[str, str], str]:
-    """Each account on ``target`` that guardrail check 6 or 8 refuses whatever
+    """Each account on ``target`` that guardrail check 6, 8 or 9 refuses whatever
     is granted, keyed ``(target, account)``, with the refusal's reason (#1174).
 
     `creds generate` skips such an account, so it stages no `pending` that no
@@ -8522,7 +8524,7 @@ def _apply_target(
 
 def _skipped_by_generate(refusing: Mapping[str, guardrails.Review]) -> bool:
     """Whether some target refuses this credential with a check `creds generate`
-    skips for: one no flag waives, check 6 or 8 (#1174).
+    skips for: one no flag waives, check 6, 8 or 9 (#1174).
 
     Only then has the vault no password because `generate` skipped it. A
     refusal `--force` could waive leaves `generate` staging the password, so
@@ -9189,6 +9191,10 @@ UNWAIVABLE_REMEDIES = {
     guardrails.SUPERUSER: "this tool does not change a superuser; leave it out of the config",
     guardrails.RESERVED: (
         "this tool does not change a role the server reserves; leave it out of the config"
+    ),
+    guardrails.GLOBAL_PRIVILEGE: (
+        "this tool does not change an account with a global privilege; narrow its grants "
+        "to its own schema, or leave it out of the config"
     ),
 }
 

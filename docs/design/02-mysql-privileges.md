@@ -50,8 +50,7 @@ The refusal covers `SYSTEM_USER` that the account holds or can activate. It
 does not cover a privilege that lets the account grant itself more, such as
 `ROLE_ADMIN`, which grants any role, or `SET_USER_ID` and `SET_ANY_DEFINER`,
 which create a routine that runs as root. The tool account must not hold
-these either. The privilege audit of `doctor --check-privileges` reports them
-as over-granted (open: #1221).
+these either. `doctor --check-privileges` reports them as over-granted (§2.3).
 
 A mandatory role, which the server gives every account, is read as any other
 role is. The server refuses to make a role that holds `SYSTEM_USER` mandatory,
@@ -129,4 +128,48 @@ Neither statement is enough alone (`07_own_grants_probe.py`, OG2 and OG3):
 
 `SHOW GRANTS` prints one line per grant. The tool parses each line by its
 shape. A line of another shape, such as the `REVOKE` lines that
-`partial_revokes` prints, is not a finding for the refusal of §1.
+`partial_revokes` prints, is kept as text. §1 says when such a line is
+refused, and §2.3 how the audit reports it.
+
+### 2.3 What `doctor --check-privileges` reads
+
+`sopuli doctor --check-privileges` reports what the tool account holds. It
+warns and never fails ([P5](../decisions/log.md#p5)). It reads the grants of
+§2.2, with every role expanded, the account's name from `CURRENT_USER()`, and
+every role the account reaches from `INFORMATION_SCHEMA.APPLICABLE_ROLES`. None
+of these reads needs a grant.
+
+| Reported as | What it is |
+|---|---|
+| held or missing | `CREATE USER` on `*.*` |
+| held or missing | `SELECT` on each of the seven columns of `mysql.user` in §2.1. Column names are compared without case, as MySQL compares them |
+| over-granted | every other privilege the account holds or can activate, on any object, each as `<privilege> ON <object>`. This includes `GRANT OPTION`, and `ADMIN OPTION` on a role |
+| unaudited | a line of `SHOW GRANTS` that the tool cannot parse |
+
+**Everything outside §2.1 is over-granted.** The audit does not keep a list of
+dangerous privileges. MySQL adds dynamic privileges in new releases, and a list
+would miss them. A privilege that comes through a role is reported as one
+granted directly is, because the account can use it either way. The report
+lists every role the account reaches, so a reader can see where an over-grant
+comes from.
+
+`USAGE` is not reported. It means no privilege, and every account has it.
+
+---
+
+## 3. What must not be granted
+
+Every privilege outside §2.1 is over-granted (§2.3). These matter most:
+
+| Not granted | Why |
+|---|---|
+| `SYSTEM_USER` | it lets the tool account change root's password. The tool refuses to run with it (§1) |
+| `ROLE_ADMIN` | it grants any role, also one that holds `SYSTEM_USER`, to any account, the tool account included |
+| `SET_USER_ID`, `SET_ANY_DEFINER` | they create a stored routine or view that runs as another account, such as root |
+| `GRANT OPTION`, and `ADMIN OPTION` on a role | they let the tool account pass its privileges or a role on to another account |
+| `SUPER` | it bypasses `read_only` and other server-wide limits, and no operation of the tool needs it |
+| `PROCESS` | it shows every session's current statement in `SHOW PROCESSLIST`, and no operation of the tool needs it |
+| `SELECT` on `mysql.user` as a whole, or on its columns `authentication_string` or `User_attributes` | they read every stored hash, and every retained one |
+| any privilege on `performance_schema` | its statement history keeps a statement that fails to parse as it was sent, password included (`01_password_text_probe.sql`) |
+| `FILE` | it reads and writes files on the database server, as the server's operating system user |
+| `PROXY` | it lets the tool account log in as another account |

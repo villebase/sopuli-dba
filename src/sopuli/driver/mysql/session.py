@@ -28,6 +28,7 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
 from sopuli.driver.mysql.errors import TLS_CONNECTION_ERROR, UNKNOWN_CLIENT_ERROR, from_error
+from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
@@ -172,13 +173,22 @@ class MysqlSession:
         raise self._not_written("read an account's password rules")
 
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
-        """Nothing audited yet, said as such rather than refused: `doctor
-        --check-privileges` reports and never fails, so the audit not being
-        written is a caveat on the target, not an error."""
-        return PrivilegeAudit(
-            unaudited=("every grant of the tool account",),
-            remedies=("the MySQL driver does not audit the tool account's grants yet (#1221)",),
-        )
+        """What the tool account holds, needs and should not hold
+        (:mod:`~sopuli.driver.mysql.privileges`). Uncached: a run asks once.
+
+        ``accounts`` is not read: the driver does not read accounts yet, and
+        the tool account's grants do not depend on which accounts it manages.
+        """
+        if self.connection is None:
+            raise DriverError(
+                f'the session to target "{self.target.name}" is closed',
+                hint="this is a fault in sopuli: a closed session was used again",
+            )
+        try:
+            with self.connection.cursor() as cursor:
+                return privilege_audit(cursor)
+        except pymysql.err.MySQLError as error:
+            raise from_error(error).as_error() from error
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         raise self._not_written("set a password")

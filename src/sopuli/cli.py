@@ -2601,16 +2601,28 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     bare name names none of them. Refused at plan time (invariant 4), before
     anything connects, with :class:`ConfigError` and exit 9, as
     :func:`_record_paths` refuses a name it cannot use (#1225).
+
+    **The whole run is refused, also where other targets are not MySQL.** One
+    person's account is ``jdoe`` on Oracle and ``jdoe@%`` on MySQL, so one
+    ``--account`` cannot name both, and a run that went ahead on the others
+    would report the MySQL target as a failure the operator could only fix by
+    running again. The hint says how to narrow the run instead.
     """
     mysql = [target.name for target in reached if target.target.type == MYSQL]
-    if mysql and mysql_account(account) is None:
-        raise ConfigError(
-            f"account {account!r} is not user@host, and target {mysql[0]!r} is MySQL",
-            hint=(
-                "name the host after the last `@`, as `jdoe@%` or `jdoe@10.%`: MySQL keeps "
-                "one account per host, each with its own password"
-            ),
+    if not mysql or mysql_account(account) is not None:
+        return
+    hint = (
+        "name the host after the last `@`, as `jdoe@%` or `jdoe@10.%`: MySQL keeps one "
+        "account per host, each with its own password"
+    )
+    if len(mysql) < len(reached):
+        hint += (
+            ". For the other targets, leave the MySQL ones out with `--target`, `--group` or "
+            "`--select`, and run once for each spelling"
         )
+    raise ConfigError(
+        f"account {account!r} is not user@host, and target {mysql[0]!r} is MySQL", hint=hint
+    )
 
 
 def _reset_lock_keys(

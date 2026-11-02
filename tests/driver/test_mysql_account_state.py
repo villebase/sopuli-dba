@@ -145,6 +145,20 @@ def test_the_account_current_user_names_is_the_session_s_own(current: str, own: 
     assert state.session_account is own
 
 
+def test_a_session_user_already_read_is_not_read_again() -> None:
+    """The session reads `CURRENT_USER()` once and passes it to every
+    describe: it does not change for the life of a connection."""
+    cursor = _Cursor([_row()])
+
+    state = describe(
+        cursor, "acme_app@10.%", target="mysql-dev", now=NOW, session_user=("acme_app", "10.%")
+    )
+
+    assert state is not None
+    assert state.session_account is True
+    assert all(query != CURRENT_USER for query, _ in cursor.queries)
+
+
 def test_the_session_account_s_host_compares_without_case() -> None:
     cursor = _Cursor([_row(host="db.example.com")])
     cursor.current_user = "acme_app@DB.EXAMPLE.COM"

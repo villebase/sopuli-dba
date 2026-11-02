@@ -399,6 +399,13 @@ def same_name(left: str, right: str) -> bool:
     return left.upper() == right.upper()
 
 
+def same_mysql_host(left: str, right: str) -> bool:
+    """Two MySQL host patterns are one host: compared without ASCII case, as
+    the server compares them (``05_identity_grants_probe.py``, ID3). The one
+    copy of the rule: the driver's reads use it too."""
+    return left.translate(_ASCII_LOWER) == right.translate(_ASCII_LOWER)
+
+
 def same_mysql_account(left: str, right: str) -> bool:
     """Two MySQL account names are one account: the user exactly, the host
     without ASCII case, as the server compares them (#1202, decision 3).
@@ -410,9 +417,7 @@ def same_mysql_account(left: str, right: str) -> bool:
     first, second = mysql_account(left), mysql_account(right)
     if first is None or second is None:
         return False
-    return first[0] == second[0] and (
-        first[1].translate(_ASCII_LOWER) == second[1].translate(_ASCII_LOWER)
-    )
+    return first[0] == second[0] and same_mysql_host(first[1], second[1])
 
 
 def account_matcher(product: str) -> Callable[[str, str], bool]:

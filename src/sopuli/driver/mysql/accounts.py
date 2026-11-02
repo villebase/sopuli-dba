@@ -28,6 +28,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sopuli.config.products import same_mysql_host
 from sopuli.driver.mysql import admin
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
@@ -139,14 +140,11 @@ def split(account: str) -> tuple[str, str]:
     return user, host
 
 
-#: ASCII letters to lower case and nothing else: the ``Host`` column's
-#: collation is ``ascii_general_ci``, so only ASCII letters fold.
-_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
-
-
 def same_host(left: str, right: str) -> bool:
-    """Hosts compare without case, as the server compares them (ID3)."""
-    return left.translate(_ASCII_LOWER) == right.translate(_ASCII_LOWER)
+    """Hosts compare without case, as the server compares them (ID3). The rule
+    is :func:`sopuli.config.products.same_mysql_host`'s, so the config's
+    matcher and the driver's reads cannot drift apart."""
+    return same_mysql_host(left, right)
 
 
 def account_of(row: Sequence[Any]) -> Account:
@@ -234,11 +232,18 @@ def _status(*, locked: bool, expired: bool) -> str:
 
 
 def describe(
-    cursor: Cursor, account: str, *, target: str, now: datetime | None = None
+    cursor: Cursor,
+    account: str,
+    *,
+    target: str,
+    now: datetime | None = None,
+    session_user: tuple[str, str] | None = None,
 ) -> UserState | None:
     """The declared account's state, ``None`` where it does not exist.
 
     Raises :class:`OtherPluginError` for an account on another plugin.
+    ``session_user`` is :func:`current_user` where the session already read it;
+    without it, this reads it.
     """
     user, host = split(account)
     found = find(read(cursor, [user])[user], host)
@@ -250,7 +255,8 @@ def describe(
     # Guardrail 9 reads it (`02-mysql-privileges.md` §5). Read here, so every
     # command that describes the account before it changes it has it.
     held = admin.global_privileges(cursor, admin.Principal(found.user, found.host))
-    return replace(state, global_privileges=held, session_account=is_session_account(cursor, found))
+    own = is_session_account(found, session_user or current_user(cursor))
+    return replace(state, global_privileges=held, session_account=own)
 
 
 #: The account the session authenticated as: ``user@host``, with the host as
@@ -258,19 +264,23 @@ def describe(
 CURRENT_USER = "select current_user()"
 
 
-def is_session_account(cursor: Cursor, account: Account) -> bool:
+def current_user(cursor: Cursor) -> tuple[str, str]:
+    """The account this session is connected as, as ``(user, host)``. It is
+    the account the server matched at login, so a tool connected as
+    ``sopuli_svc@%`` is that account, whichever address it came from. It does
+    not change for the life of a connection, so a session reads it once."""
+    cursor.execute(CURRENT_USER)
+    (value,) = cursor.fetchone()
+    user, _, host = admin.text(value).rpartition("@")
+    return user, host
+
+
+def is_session_account(account: Account, session_user: tuple[str, str]) -> bool:
     """Whether ``account`` is the one this session is connected as: the tool's
     own. Guardrail 7 refuses it unless ``--force`` waives that, and guardrail 9
-    lets it through (#1225).
-
-    Compared as the server compares accounts: the user exactly, the host
-    without ASCII case. ``CURRENT_USER()`` is the account the server matched,
-    so a tool connected as ``sopuli_svc@%`` is that account, whichever address
-    it came from.
-    """
-    cursor.execute(CURRENT_USER)
-    row = cursor.fetchone()
-    user, _, host = admin.text(row[0]).rpartition("@")
+    lets it through (#1225). Compared as the server compares accounts: the user
+    exactly, the host without ASCII case."""
+    user, host = session_user
     return user == account.user and same_host(host, account.host)
 
 

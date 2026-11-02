@@ -51,3 +51,27 @@ def test_a_bare_name_is_refused_on_a_mysql_target(write_config: WriteConfig, ver
     error = json.loads(result.output)["error"]
     assert error["message"] == "account 'jdoe' is not user@host, and target 'mysql-dev' is MySQL"
     assert "jdoe@%" in error["hint"]
+    assert "--target" not in error["hint"]
+
+
+def test_a_mixed_estate_is_refused_with_a_hint_to_narrow_it(write_config: WriteConfig) -> None:
+    """One person is `jdoe` on Oracle and `jdoe@%` on MySQL, so one `--account`
+    cannot name both. The run is refused, and the hint says how to narrow it."""
+    mixed = CONFIG.replace(
+        "personal_accounts:",
+        "  - name: appdb-dev\n"
+        "    type: oracle\n"
+        "    environment: dev\n"
+        "    dsn: db-dev.example.com:1521/alpha.pdb.example.com\n"
+        "    admin: { username: SOPULI_SVC, auth: { method: env } }\n"
+        "personal_accounts:",
+    )
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(write_config(mixed)), "account", "suspend", "--account", "jdoe"]
+        + ["--dry-run", "--output", "json"],
+    )
+
+    assert exit_of(result) == ExitCode.CONFIG_INVALID, result.output
+    hint = json.loads(result.output)["error"]["hint"]
+    assert "leave the MySQL ones out with `--target`, `--group` or `--select`" in hint

@@ -112,6 +112,13 @@ SCHEMA = (
     f"select {', '.join(DB_PRIV_COLUMNS)} from mysql.db "
     "where User = %s and Host = %s and 'mysql' like Db"
 )
+#: With ``partial_revokes`` on, the server reads ``%`` and ``_`` in a schema
+#: grant as themselves, so only a grant on ``mysql`` itself reaches it.
+SCHEMA_LITERAL = (
+    f"select {', '.join(DB_PRIV_COLUMNS)} from mysql.db "
+    "where User = %s and Host = %s and Db = 'mysql'"
+)
+PARTIAL_REVOKES = "select @@global.partial_revokes"
 TABLE_GRANTS = (
     "select Table_name, Table_priv from mysql.tables_priv "
     "where User = %s and Host = %s and Db = 'mysql'"
@@ -199,9 +206,10 @@ def roles_of(cursor: Cursor, account: Principal) -> tuple[Principal, ...]:
     return tuple(sorted(seen.values()))
 
 
-def held_by(cursor: Cursor, principal: Principal) -> tuple[str, ...]:
+def held_by(cursor: Cursor, principal: Principal, *, literal_db: bool = False) -> tuple[str, ...]:
     """What one account or role holds itself, by the rule of the module
-    docstring. Roles granted to it are not followed here."""
+    docstring. Roles granted to it are not followed here. ``literal_db``: the
+    server has ``partial_revokes`` on, so a schema grant names no pattern."""
     args = (principal.user, principal.host)
     found: list[str] = []
 
@@ -217,7 +225,7 @@ def held_by(cursor: Cursor, principal: Principal) -> tuple[str, ...]:
     cursor.execute(DYNAMIC, args)
     found += [f"{text(priv)} ON *.*" for (priv,) in cursor.fetchall()]
 
-    cursor.execute(SCHEMA, args)
+    cursor.execute(SCHEMA_LITERAL if literal_db else SCHEMA, args)
     for row in cursor.fetchall():
         found += [
             f"{PRIV_COLUMNS[column]} ON mysql.*"
@@ -254,13 +262,18 @@ def _set(value: object) -> Iterable[str]:
         members = [text(member) for member in value]
     else:
         members = text(value).split(",") if value else []
-    return sorted(member.strip().upper() for member in members if member.strip())
+    names = (member.strip().upper() for member in members if member.strip())
+    # The SET member is `Grant`; GRANT and REVOKE spell it GRANT OPTION.
+    return sorted("GRANT OPTION" if name == "GRANT" else name for name in names)
 
 
 def global_privileges(cursor: Cursor, account: Principal) -> frozenset[str]:
     """Everything of the module docstring's kind the account holds or can
     activate, each naming the role it comes through."""
-    found = set(held_by(cursor, account))
+    cursor.execute(PARTIAL_REVOKES)
+    row = cursor.fetchone()
+    literal_db = bool(row and row[0] and int(row[0]))
+    found = set(held_by(cursor, account, literal_db=literal_db))
     for role in roles_of(cursor, account):
-        found |= {f"{held} through {role}" for held in held_by(cursor, role)}
+        found |= {f"{held} through {role}" for held in held_by(cursor, role, literal_db=literal_db)}
     return frozenset(found)

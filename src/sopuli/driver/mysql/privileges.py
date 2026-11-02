@@ -46,10 +46,6 @@ COLUMNS = (
     *PRIV_COLUMNS,
 )
 
-#: §2's whole tables, each granted ``SELECT``: the rest of what guardrail 9
-#: reads. None of them holds a hash.
-TABLES = TABLES_READ
-
 #: The account the session runs as, for the hint.
 SELF = "select current_user()"
 
@@ -84,7 +80,7 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
 
     no_create_user = CREATE_USER not in held
     columns = [name for name in COLUMNS if _column(name) not in held]
-    tables = [table for table in TABLES if _table(table) not in held]
+    tables = [table for table in TABLES_READ if _table(table) not in held]
     missing = (
         ([CREATE_USER] if no_create_user else [])
         + [_column(name) for name in columns]
@@ -166,10 +162,10 @@ def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -
                 else:
                     held.add(_column(needed))
             continue
-        if grant.on in TABLES and privilege.name == "SELECT" and not privilege.columns:
+        if grant.on in TABLES_READ and privilege.name == "SELECT" and not privilege.columns:
             held.add(_table(grant.on))
             continue
-        if broad and grant.on in TABLES and privilege.name == ALL_PRIVILEGES:
+        if broad and grant.on in TABLES_READ and privilege.name == ALL_PRIVILEGES:
             held.add(_table(grant.on))
         if grant.on == GLOBAL and privilege.name == ALL_PRIVILEGES:
             held.add(CREATE_USER)
@@ -177,7 +173,7 @@ def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -
         if broad and reads_all and grant.on in COVERS_USER_TABLE:
             held.update(_column(name) for name in COLUMNS)
         if broad and reads_all and grant.on in (GLOBAL, "mysql.*"):
-            held.update(_table(table) for table in TABLES)
+            held.update(_table(table) for table in TABLES_READ)
         columns = f" ({', '.join(privilege.columns)})" if privilege.columns else ""
         over.add(f"{privilege.name}{columns} ON {on}")
 

@@ -61,6 +61,8 @@ class _Cursor:
             return None
         if self._last == "select @@global.mandatory_roles":
             return ("",)
+        if self._last == "select @@global.partial_revokes":
+            return (0,)
         return self._rows[self._last]
 
     def fetchall(self) -> Any:

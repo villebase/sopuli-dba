@@ -14,11 +14,13 @@ from sopuli.driver.mysql.admin import (
     DYNAMIC,
     GLOBAL_ROW,
     MANDATORY_ROLES,
+    PARTIAL_REVOKES,
     PRIV_COLUMNS,
     PROXIES,
     ROLE_EDGES,
     ROUTINE_GRANTS,
     SCHEMA,
+    SCHEMA_LITERAL,
     TABLE_GRANTS,
     Principal,
     global_privileges,
@@ -35,8 +37,11 @@ def _flags(*set_: str) -> tuple[str, ...]:
 class _Cursor:
     """Rows per query and principal. A principal with no entry has none."""
 
-    def __init__(self, mandatory: str = "", **rows: dict[tuple[str, str], Any]) -> None:
+    def __init__(
+        self, mandatory: str = "", partial_revokes: int = 0, **rows: dict[tuple[str, str], Any]
+    ) -> None:
         self.mandatory = mandatory
+        self.partial_revokes = partial_revokes
         self.rows = rows
         self.query = ""
         self.args: Any = None
@@ -52,6 +57,8 @@ class _Cursor:
     def fetchone(self) -> Any:
         if self.query == MANDATORY_ROLES:
             return (self.mandatory,)
+        if self.query == PARTIAL_REVOKES:
+            return (self.partial_revokes,)
         assert self.query == GLOBAL_ROW
         return self._for("global_row")
 
@@ -59,6 +66,7 @@ class _Cursor:
         names = {
             DYNAMIC: "dynamic",
             SCHEMA: "schema",
+            SCHEMA_LITERAL: "schema",
             TABLE_GRANTS: "tables",
             COLUMN_GRANTS: "columns",
             ROUTINE_GRANTS: "routines",
@@ -143,6 +151,27 @@ def test_mandatory_roles_are_parsed_as_the_server_accepts_them(
     setting: str, roles: tuple[Principal, ...]
 ) -> None:
     assert mandatory_roles(setting) == roles
+
+
+@pytest.mark.parametrize(("partial_revokes", "query"), [(0, SCHEMA), (1, SCHEMA_LITERAL)])
+def test_a_schema_pattern_reaches_mysql_only_without_partial_revokes(
+    partial_revokes: int, query: str
+) -> None:
+    """With partial_revokes on, `%` and `_` in a schema grant are themselves."""
+    cursor = _Cursor(partial_revokes=partial_revokes)
+
+    global_privileges(cursor, APP)
+
+    assert query in [read for read, _ in cursor.reads]
+
+
+def test_the_grant_member_of_a_privilege_set_is_named_grant_option() -> None:
+    cursor = _Cursor(tables={("acme_app", "10.%"): [("user", "Select,Grant")]})
+
+    assert global_privileges(cursor, APP) == {
+        "SELECT ON mysql.user",
+        "GRANT OPTION ON mysql.user",
+    }
 
 
 def test_a_role_reached_in_two_host_spellings_is_read_once() -> None:

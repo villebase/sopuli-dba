@@ -294,7 +294,7 @@ hosts compare without case.
 |---|---|
 | the `*_priv` columns of `mysql.user` | static privileges `ON *.*` |
 | `mysql.global_grants` | dynamic privileges, which are all `ON *.*` |
-| `mysql.db` | privileges on a schema. A pattern that matches `mysql`, such as `mysq%`, counts |
+| `mysql.db` | privileges on a schema. A pattern that matches `mysql`, such as `mysq%`, counts, unless `partial_revokes` is on: the server then reads `%` and `_` as themselves, so only a grant on `mysql` itself counts |
 | `mysql.tables_priv`, `mysql.columns_priv` | privileges on a table or column of `mysql` |
 | `mysql.procs_priv` | privileges on a stored routine in `mysql` |
 | `mysql.proxies_priv` | `PROXY` grants |

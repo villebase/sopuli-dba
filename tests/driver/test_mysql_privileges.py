@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql import grants as grants_module
+from sopuli.driver.mysql.admin import TABLES_READ as TABLES
 from sopuli.driver.mysql.grants import parse_all
 from sopuli.driver.mysql.privileges import (
     ALL_ROLES,
@@ -16,7 +17,6 @@ from sopuli.driver.mysql.privileges import (
     CREATE_USER,
     OVER_GRANTED_REMEDY,
     SELF,
-    TABLES,
     audit,
     classify,
 )
@@ -32,6 +32,25 @@ TABLE_GRANTS = [
 INSTALL = [f"GRANT CREATE USER ON *.* TO {TOOL}", COLUMN_GRANT, *TABLE_GRANTS]
 #: §2.1 but the column grant on mysql.user.
 WITHOUT_COLUMNS = [INSTALL[0], *TABLE_GRANTS]
+
+
+def test_every_column_and_table_the_driver_reads_is_in_section_2() -> None:
+    """A tripwire: a read the audit does not know of would fail with 1142 or
+    1143, and the session's hint would then send the operator to an audit
+    that reports nothing missing."""
+    import re
+
+    from sopuli.driver.mysql import accounts, admin
+
+    user_columns = re.search(r"select (.*) from mysql\.user", accounts.ROWS_FOR_USERS)
+    assert user_columns is not None
+    assert set(user_columns.group(1).split(", ")) <= set(COLUMNS)
+    assert set(admin.PRIV_COLUMNS) <= set(COLUMNS)
+    queries = [
+        value for name, value in vars(admin).items() if name.isupper() and isinstance(value, str)
+    ]
+    tables = {table for query in queries for table in re.findall(r"from (mysql\.\w+)", query)}
+    assert tables - {"mysql.user"} <= set(TABLES)
 
 
 def _classify(lines: list[str], roles: tuple[str, ...] = ()) -> Any:

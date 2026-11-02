@@ -70,6 +70,8 @@ class _Cursor:
             return (self.default_lifetime,)
         if self._last == admin.MANDATORY_ROLES:
             return ("",)
+        if self._last == admin.PARTIAL_REVOKES:
+            return (0,)
         assert self._last == admin.GLOBAL_ROW
         return self.global_row
 

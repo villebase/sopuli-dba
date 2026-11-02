@@ -44,13 +44,14 @@ class _Cursor:
             scope_module.READ_ONLY_SETTINGS: (0, 0, 0),
             scope_module.TLS_VERSION: ("Ssl_version", connection.tls),
             privileges_module.SELF: ("sopuli_admin@%",),
+            accounts_module.DEFAULT_LIFETIME: (0,),
         }
         self._last = ""
 
     def execute(self, query: str, args: Any = None, /) -> None:
         self._connection.queries.append(query)
         self._last = query
-        if query == accounts_module.ROWS_FOR_USER and self._connection.refuse is not None:
+        if query.startswith("select User,") and self._connection.refuse is not None:
             raise self._connection.refuse
 
     def fetchone(self) -> Any:
@@ -61,7 +62,7 @@ class _Cursor:
         from the connection."""
         if self._last in (grants_module.DIRECT_ROLES, privileges_module.ALL_ROLES):
             return []
-        if self._last == accounts_module.ROWS_FOR_USER:
+        if self._last.startswith("select User,"):
             return self._connection.accounts
         return [("GRANT CREATE USER ON *.* TO `sopuli_admin`@`%`",)]
 
@@ -189,14 +190,16 @@ def test_a_refused_read_of_mysql_user_makes_the_audit_partial() -> None:
     assert audit.held == ("CREATE USER",)
 
 
-def test_any_other_failure_of_the_read_fails_the_audit() -> None:
+def test_any_other_failure_of_the_read_keeps_the_tool_accounts_audit() -> None:
+    """A pre-flight still sees a missing grant, and `doctor` the rest."""
     session = _session()
     session.connection.refuse = session_module.pymysql.err.OperationalError(2013, "Lost connection")
 
-    with pytest.raises(DriverError) as caught:
-        session.privileges(accounts=("acme_app@10.%",))
+    audit = session.privileges(accounts=("acme_app@10.%",))
 
-    assert caught.value.code == "2013"
+    assert audit.unreadable == ("mysql.user",)
+    assert "SELECT (plugin) ON mysql.user" in audit.missing
+    assert audit.remedies[-1].startswith("the declared accounts were not read: 2013")
 
 
 def test_describe_user_reads_the_account() -> None:

@@ -168,6 +168,82 @@ def test_guardrail_9_refuses_a_described_account_with_a_global_privilege(stage: 
     assert [refusal.check for refusal in review.refusals] == [guardrails.GLOBAL_PRIVILEGE]
 
 
+def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
+    stage: Stage, live_mysql: Any
+) -> None:
+    """Invariant 15 on MySQL. With the general log on, written to a table, and
+    performance_schema's long statement history on, the driver sets a
+    password. The statement is in both, and the password is in neither. The
+    account then logs in with it."""
+    user = stage.account("%")
+    password = f"Acme-Leak-{uuid.uuid4().hex[:12]}"
+    consumer = (
+        "select enabled from performance_schema.setup_consumers "
+        "where name = 'events_statements_history_long'"
+    )
+    with live_mysql.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("select @@global.log_output, @@global.general_log")
+        log_output, general_log = cursor.fetchone()
+        cursor.execute(consumer)
+        (enabled,) = cursor.fetchone()
+    stage.admin("set global log_output = 'TABLE'")
+    stage.admin("set global general_log = 'ON'")
+    stage.admin(
+        "update performance_schema.setup_consumers set enabled = 'YES' "
+        "where name = 'events_statements_history_long'"
+    )
+    try:
+        result = stage.session.set_password(f"{user}@%", Secret(password))
+        with live_mysql.connect() as admin, admin.cursor() as cursor:
+            cursor.execute(
+                "select convert(argument using utf8mb4) from mysql.general_log "
+                "where convert(argument using utf8mb4) like %s",
+                (f"%{user}%",),
+            )
+            logged = [row[0] for row in cursor.fetchall()]
+            cursor.execute(
+                "select sql_text from performance_schema.events_statements_history_long "
+                "where sql_text like %s",
+                (f"%{user}%",),
+            )
+            history = [row[0] for row in cursor.fetchall()]
+    finally:
+        # The server as it was, and none of the rows this test made it log.
+        stage.admin("set global general_log = 'OFF'")
+        stage.admin("truncate table mysql.general_log")
+        stage.admin("set global log_output = %s", (log_output,))
+        stage.admin("set global general_log = %s", (general_log,))
+        stage.admin(
+            "update performance_schema.setup_consumers set enabled = %s "
+            "where name = 'events_statements_history_long'",
+            (enabled,),
+        )
+
+    assert result.changed is True
+    assert any("ALTER USER" in line for line in logged), "the log saw the statement"
+    assert any("ALTER USER" in line for line in history), "the history saw it"
+    assert not any(password in line for line in [*logged, *history])
+    login = live_mysql.connect_as(user, password)
+    login.close()
+
+
+@pytest.mark.parametrize("sql_mode", ["", "NO_BACKSLASH_ESCAPES", "ANSI_QUOTES"])
+def test_a_name_with_a_quote_and_a_backslash_gets_its_password(
+    stage: Stage, live_mysql: Any, sql_mode: str
+) -> None:
+    """The statement names the account between backquotes, which no
+    `sql_mode` reads differently."""
+    user = stage.account("%", f"acme_o'b\\{uuid.uuid4().hex[:8]}")
+    stage.session.connection.query(f"set session sql_mode = '{sql_mode}'")
+    password = f"Acme-Mode-{uuid.uuid4().hex[:12]}"
+
+    result = stage.session.set_password(f"{user}@%", Secret(password))
+
+    assert result.changed is True
+    login = live_mysql.connect_as(user, password)
+    login.close()
+
+
 def test_without_the_column_grant_mysql_user_is_unreadable(stage: Stage) -> None:
     """A column privilege applies to the session's next statement. The server
     refuses the read, and the audit is partial rather than failed."""

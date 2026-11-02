@@ -163,6 +163,18 @@ class Principal:
         only ASCII letters, as ``ascii_general_ci`` does."""
         return (self.user, self.host.translate(_ASCII_LOWER))
 
+    def sql(self) -> str:
+        """The account as a statement names it, each part between backquotes.
+        A backquoted name escapes only a doubled backquote, so it names the
+        same account under every ``sql_mode``. A string literal does not:
+        ``NO_BACKSLASH_ESCAPES`` changes what a backslash in it means, and
+        ``ANSI_QUOTES`` makes a double-quoted one an identifier."""
+        return f"{_backquote(self.user)}@{_backquote(self.host)}"
+
+
+def _backquote(name: str) -> str:
+    return "`" + name.replace("`", "``") + "`"
+
 
 _ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 

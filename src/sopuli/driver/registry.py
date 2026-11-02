@@ -192,6 +192,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.mysql.session",
         extra="mysql",
         provides=frozenset({"pymysql"}),
+        password_limit="256",
         commands=frozenset(),
     ),
 }

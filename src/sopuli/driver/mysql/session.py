@@ -21,6 +21,7 @@ driver sends nothing that changes the server.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -30,6 +31,7 @@ import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql import accounts as accounts_module
+from sopuli.driver.mysql import password as password_module
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
 from sopuli.driver.mysql.errors import (
@@ -37,10 +39,12 @@ from sopuli.driver.mysql.errors import (
     TABLE_ACCESS_DENIED,
     TLS_CONNECTION_ERROR,
     UNKNOWN_CLIENT_ERROR,
+    UNKNOWN_SYSTEM_VARIABLE,
     from_error,
 )
+from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
-from sopuli.driver.mysql.scope import observe, read_encryption
+from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     PASSWORD_ROLLOVER,
@@ -183,7 +187,9 @@ class MysqlSession(ClosesConnection):
             raise
 
     def byte_limit(self) -> ByteLimit:
-        raise self._not_written("size a password")
+        """256 bytes of UTF-8, whatever the server: a longer password is stored
+        and then refused at login (:mod:`~sopuli.driver.mysql.limits`)."""
+        return LIMIT
 
     def password_constraints(self, account: str) -> None:
         """Not on the protocol: ``creds generate`` asks it of a driver that
@@ -217,10 +223,15 @@ class MysqlSession(ClosesConnection):
             )
         return replace(audit, remedies=(*audit.remedies, *lines))
 
-    def _read(self, reader: Callable[[Any], T]) -> T:
+    def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a
         fault in sopuli, and a MySQL error is classified by
-        :mod:`~sopuli.driver.mysql.errors`."""
+        :mod:`~sopuli.driver.mysql.errors`.
+
+        With ``scrub``, the message passes through it, and the error is raised
+        without PyMySQL's as its cause: that one keeps the message as the
+        server sent it, and a traceback or a log with ``exc_info`` would print
+        it."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -230,10 +241,71 @@ class MysqlSession(ClosesConnection):
             with self.connection.cursor() as cursor:
                 return reader(cursor)
         except pymysql.err.MySQLError as error:
-            raise from_error(error).as_error() from error
+            if scrub is None:
+                raise from_error(error).as_error() from error
+            raise from_error(error, scrub=scrub).as_error() from None
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        raise self._not_written("set a password")
+        """``ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…``, with
+        the hash computed here (invariant 15, :mod:`~sopuli.driver.mysql.password`).
+
+        As on the other drivers, ``changed`` is ``True`` whenever the statement
+        succeeded: whether the account already had this password is not a
+        question the server can answer, so the command decides it first.
+
+        Refused before anything is sent, with ``password_sent`` left ``False``:
+        a password the target cannot take, a read-only session, an account that
+        does not exist, and one on another plugin. Once the statement is handed
+        to the server, a failure has ``password_sent`` set. What crossed is a
+        hash, which still allows an offline guessing attack. A timeout (``2013``)
+        leaves the outcome unknown, and the error's hint says so.
+        """
+        password_module.admit(secret)
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); `creds check` reports this "
+                    "as ACCOUNT_MISSING rather than failing"
+                ),
+            )
+        user, host = accounts_module.split(state.name)
+        try:
+            rounds = self._read(_digest_rounds)
+        except DriverError as error:
+            if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
+                raise
+            raise DriverError(
+                f'target "{self.target.name}" has no caching_sha2_password_digest_rounds',
+                code=error.code,
+                hint=(
+                    "the tool sets a password with the server's own rounds, and does not "
+                    "guess them; a server without the variable is not supported for this"
+                ),
+            ) from error
+        if rounds % 1000:
+            raise DriverError(
+                f"caching_sha2_password_digest_rounds is {rounds} on target "
+                f'"{self.target.name}", which is not a multiple of 1000',
+                hint=(
+                    "the stored hash writes the rounds in thousands, so the tool does not "
+                    "know what the server would store; set the variable to a multiple of 1000"
+                ),
+            )
+        statement = password_module.alter_user(
+            user, host, password_module.caching_sha2_hash(secret, rounds)
+        )
+        try:
+            # The read above found the session open, so a failure here is the
+            # server's answer to the statement.
+            self._read(lambda cursor: cursor.execute(statement), scrub=_scrub_hash)
+        except DriverError as failure:
+            failure.password_sent = True
+            raise
+        LOG.debug("password set for %s on %s", state.name, self.target.name)
+        return ChangeResult(changed=True, detail="password set")
 
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend an account")
@@ -289,6 +361,31 @@ class MysqlSession(ClosesConnection):
 
     def finish_rollover(self, account: str) -> ChangeResult:
         raise self._not_written("end a rollover window")
+
+
+def _digest_rounds(cursor: Any) -> int:
+    """The server's ``caching_sha2_password_digest_rounds`` (CH5)."""
+    cursor.execute(password_module.DIGEST_ROUNDS)
+    row = cursor.fetchone()
+    return int(row[0])
+
+
+#: A hex literal, such as the hash in the statement that sets a password, or a
+#: run of 16 or more hex digits: a message that quotes the statement from the
+#: middle of the literal starts without the ``0x``.
+_HEX = re.compile(r"0x[0-9a-fA-F]+|[0-9a-fA-F]{16,}")
+
+#: The hash as text, ``$A$`` and the rounds, then the salt and the digest.
+_STORED = re.compile(r"\$A\$[0-9A-Fa-f]{3}\$\S*")
+
+
+def _scrub_hash(message: str) -> str:
+    """The server's message about the statement that sets a password, with any
+    hex literal written as ``0x***``, any other long run of hex digits as
+    ``***``, and the hash as text as ``$A$***``. The server may quote part of
+    the statement, and the hash is worth an offline guessing attack."""
+    message = _STORED.sub("$A$***", message)
+    return _HEX.sub(lambda found: "0x***" if found[0].startswith("0x") else "***", message)
 
 
 def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:

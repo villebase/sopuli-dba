@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ
+from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ, Principal
 from sopuli.driver.mysql.grants import ALL_PRIVILEGES, GLOBAL, Grant, Grants
 from sopuli.driver.mysql.grants import read as read_grants
 from sopuli.driver.protocol import Cursor, PrivilegeAudit
@@ -104,7 +104,7 @@ def _hint(user: str, *, create_user: bool, columns: list[str], tables: list[str]
     """Where §2 is, and the statements that grant what is missing."""
     hint = f"{DOCUMENT} section 2 has the grants for the tool account `{user}`"
     name, _, host = user.rpartition("@")
-    account = f"{_quote(name)}@{_quote(host)}"
+    account = Principal(name, host).sql()
     statements = []
     if create_user:
         statements.append(f"GRANT CREATE USER ON *.* TO {account};")
@@ -112,12 +112,6 @@ def _hint(user: str, *, create_user: bool, columns: list[str], tables: list[str]
         statements.append(f"GRANT SELECT ({', '.join(columns)}) ON {USER_TABLE} TO {account};")
     statements += [f"GRANT SELECT ON {table} TO {account};" for table in tables]
     return f"{hint}: {' '.join(statements)}" if statements else hint
-
-
-def _quote(text: str) -> str:
-    """``text`` as a MySQL string literal, so a pasted statement names that
-    account."""
-    return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 #: Objects on which a privilege without a column list covers every column of

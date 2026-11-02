@@ -505,7 +505,12 @@ class MysqlStack:
 
     def connect(self) -> Any:
         """A root session over TLS that checks nothing about the server, for a
-        test's setup and teardown. PyMySQL is imported here, as in the fixture."""
+        test's setup and teardown."""
+        return self.connect_as(self.user, self.password)
+
+    def connect_as(self, user: str, password: str) -> Any:
+        """A session as ``user`` over TLS that checks nothing about the
+        server. PyMySQL is imported here, as in the fixture."""
         import ssl
 
         import pymysql
@@ -516,8 +521,8 @@ class MysqlStack:
         return pymysql.connect(
             host=self.host,
             port=self.port,
-            user=self.user,
-            password=self.password,
+            user=user,
+            password=password,
             ssl=context,
             autocommit=True,
             connect_timeout=5,

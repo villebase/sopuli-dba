@@ -35,6 +35,9 @@ from sopuli.driver.protocol import Credential, Timeouts
 #: context, and the session refuses one that is not TLS.
 TLS_REQUIRED_MODES = ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
 
+#: Sent once at login: every TIMESTAMP the session reads is then in UTC.
+UTC_SESSION = "SET time_zone = '+00:00'"
+
 
 def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     """PyMySQL's TLS arguments for the target's ``ssl_mode``, all five modes
@@ -127,6 +130,10 @@ def connect_arguments(
         # Every statement stands alone. `ALTER USER` commits on its own anyway,
         # and a read must not hold a transaction open over a later change.
         "autocommit": True,
+        # A TIMESTAMP, such as `mysql.user.password_last_changed`, comes back in
+        # the session's time zone, which is the server's own by default. UTC
+        # makes it the UTC time the rest of the tool reads a naive time as.
+        "init_command": UTC_SESSION,
         **tls_arguments(target),
     }
     if timeouts.query_s:

@@ -99,7 +99,7 @@ state and password expiry. It names columns, so the tool account cannot read
 the stored hash, `authentication_string`, or `User_attributes`, which holds a
 retained password's hash. The server refuses both with `1143`
 (`05_identity_grants_probe.py`, TG5). Do not grant `SELECT` on the whole table
-instead. No command reads accounts on MySQL yet (open: #1221).
+instead. §4 says what the tool reads with it.
 
 Give the account no other privilege, and no role.
 
@@ -146,6 +146,8 @@ of these reads needs a grant.
 | held or missing | `SELECT` on each of the seven columns of `mysql.user` in §2.1. Column names are compared without case, as MySQL compares them |
 | over-granted | every other privilege the account holds or can activate, on any object, each as `<privilege> ON <object>`. This includes `GRANT OPTION`, and `ADMIN OPTION` on a role |
 | unaudited | a line of `SHOW GRANTS` that the tool cannot parse |
+| unreadable | `mysql.user`, where the server refuses the read of §4 with `1142` or `1143`: the column grant of §2.1 is missing |
+| a remedy line | each declared account that does not exist, that uses another plugin, or whose user name also exists at a host the config does not declare (§4) |
 
 **Everything outside §2.1 is over-granted.** The audit does not keep a list of
 dangerous privileges. MySQL adds dynamic privileges in new releases, and a list
@@ -186,3 +188,49 @@ Every privilege outside §2.1 is over-granted (§2.3). These matter most:
 | any privilege on `performance_schema` | its statement history keeps a statement that fails to parse as it was sent, password included (`01_password_text_probe.sql`) |
 | `FILE` | it reads and writes files on the database server, as the server's operating system user |
 | `PROXY` | it lets the tool account log in as another account |
+
+---
+
+## 4. Managed accounts
+
+A managed account is one the config declares on a MySQL target, as
+`user@host`: `acme_app@10.%`. A bare name is a config error (#1202, decision 4).
+The tool splits the name at the last `@`, because a user name may hold `@` and
+a host pattern may not.
+
+The tool reads an account from the columns of `mysql.user` that §2.1 grants.
+It sends the user name as a bind value and gets every account with that user
+name, at any host. It reads all the declared user names in one statement. The
+user name compares by case: the column's collation is binary, so `acme_app`
+and `Acme_App` are two users. Trailing spaces do not count. The column is
+`char(32)`, and 8.4.13 refused `CREATE USER 'acme_app '` beside `'acme_app'`
+with `1396`, so the two are one account. The tool drops them too. The host
+compares without case,
+as the server compares it (`05_identity_grants_probe.py`, ID3): only ASCII
+letters fold, as in the column's `ascii_general_ci` collation. The
+account's name in a report is the server's spelling.
+
+| Read from | Reported as |
+|---|---|
+| `account_locked` | locked. A person set it with `ACCOUNT LOCK`. The temporary lock after failed logins is not in `mysql.user` (`04_lock_expiry_probe.py`), so the tool does not know of it |
+| `password_expired` | expired. Only `PASSWORD EXPIRE` sets it |
+| `password_last_changed` | when the password changed. The session sets `time_zone` to UTC at login, so the server returns this `TIMESTAMP` in UTC |
+| `password_lifetime` | when the password expires: that many days after it changed. Once that date has passed, the password is reported as expired too: the server refuses it, and does not set `password_expired`. `NULL` follows the server's `default_password_lifetime`, which any account can read. `0`, in either place, is no limit |
+| `plugin` | the refusal below |
+
+**The tool changes only `caching_sha2_password` accounts** (#1202, decision
+5). An account on another plugin, such as `sha256_password`, is refused with a
+config error, exit 9, when the tool reads it. Every command reads an account
+before it changes it, so the refusal comes before anything is sent. The tool
+does not move an account to another plugin.
+
+**A user name at an undeclared host is reported.** One user name can exist at
+several hosts, each with a password of its own (ID1). The tool changes the
+password of the account the config declares, and the other one keeps logging
+in with its own password. `doctor --check-privileges` names it (§2.3). It does
+not name a locked one, which cannot log in. A role is a locked account with
+an expired password, so a role with the same name is not named either.
+
+Where the read of the declared accounts fails, `mysql.user` is unreadable, and
+a line says why. The audit of the tool account's own grants is kept, so a
+missing grant is still reported.

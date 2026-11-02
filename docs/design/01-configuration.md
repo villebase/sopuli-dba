@@ -1748,8 +1748,12 @@ grants, and the tool refuses an account that can use `SYSTEM_USER`, with
 `REQUIRED` or a verifying one, refuses a session that has none. Under
 `DISABLED`, or `PREFERRED` against a server without TLS, a login the server
 has not cached fails: PyMySQL 1.2.3 cannot finish `caching_sha2_password`'s
-full exchange over a plain connection (measured on 8.4.13). Every other
-command refuses a MySQL target until the driver is written
+full exchange over a plain connection (measured on 8.4.13).
+`doctor --check-privileges` also reads the accounts the config declares on
+the target, and names one that does not exist, one on another plugin, and a
+declared user name that also exists at a host the config does not declare
+([`02-mysql-privileges.md`](02-mysql-privileges.md) §4). Every other command
+refuses a MySQL target until the driver is written
 ([#1221](https://github.com/villebase/sopuli-dba/issues/1221)). What it will do
 is decided in [#1202](../decisions/log.md#1202).
 

@@ -8,12 +8,14 @@ rule 1). The modules beside it are tier 0.
 **What this build does.** It connects, labels the session with the run's
 correlation id, checks that a mode which requires TLS got it, and reports the
 scope: ``server``, whether it takes writes, and its encryption. It refuses a
-tool account that can use ``SYSTEM_USER``, and audits the tool account's grants
-for ``doctor --check-privileges``. Only `doctor` gets this far: the registry
-entry lists no command, so every other command refuses the target with
-``SOPULI-20006`` before it connects. The methods past the privilege audit are
-a second line behind that, and refuse with ``SOPULI-20006`` without a round
-trip. The driver sends nothing that changes the server.
+tool account that can use ``SYSTEM_USER``, audits the tool account's grants
+and the declared accounts for ``doctor --check-privileges``, and describes an
+account. Only `doctor` gets this far: the registry entry lists no command, so
+every other command refuses the target with ``SOPULI-20006`` before it
+connects. Every other method, such as the ones that change an account, verify
+a password, size a password or look up a role, is a second line behind that,
+and refuses with ``SOPULI-20006`` without a round trip. The
+driver sends nothing that changes the server.
 """
 
 from __future__ import annotations
@@ -21,12 +23,13 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, TypeVar
 
 import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
 from sopuli.driver.mysql.errors import TLS_CONNECTION_ERROR, UNKNOWN_CLIENT_ERROR, from_error
@@ -138,13 +141,19 @@ class MysqlSession(ClosesConnection):
             product="a MySQL server",
             what=what,
             hint=(
-                "the MySQL driver connects and reports the server, and the rest of it "
-                "is not written yet"
+                "the MySQL driver connects, reports the server and reads accounts, and "
+                "the rest of it is not written yet"
             ),
         )
 
     def describe_user(self, account: str) -> UserState | None:
-        raise self._not_written("read an account")
+        """The account's state, ``None`` where it does not exist
+        (:mod:`~sopuli.driver.mysql.accounts`). An account on another plugin
+        is refused with
+        :class:`~sopuli.driver.mysql.accounts.OtherPluginError`."""
+        return self._read(
+            lambda cursor: accounts_module.describe(cursor, account, target=self.target.name)
+        )
 
     def byte_limit(self) -> ByteLimit:
         raise self._not_written("size a password")
@@ -158,10 +167,28 @@ class MysqlSession(ClosesConnection):
         """What the tool account holds, needs and should not hold
         (:mod:`~sopuli.driver.mysql.privileges`). Uncached: a run asks once.
 
-        ``accounts`` is not read: the driver does not read accounts yet, and
-        the tool account's grants do not depend on which accounts it manages.
+        ``accounts`` are the accounts the config declares on this target. Each
+        one that does not exist, uses another plugin, or shares its user name
+        with an account at an undeclared host gets a line in ``remedies``
+        (:func:`~sopuli.driver.mysql.accounts.survey`). Where that read fails,
+        as it does with ``1142`` or ``1143`` when §2.1's column grant is
+        missing, ``mysql.user`` is unreadable, a line says why, and the audit
+        of the tool account's grants is kept.
         """
-        return self._read(privilege_audit)
+        audit = self._read(privilege_audit)
+        if not accounts:
+            return audit
+        try:
+            lines = self._read(lambda cursor: accounts_module.survey(cursor, accounts))
+        except DriverError as error:
+            # The tool account's audit above stands: a pre-flight still sees a
+            # missing grant, and `doctor` still reports the rest.
+            return replace(
+                audit,
+                unreadable=(*audit.unreadable, "mysql.user"),
+                remedies=(*audit.remedies, f"the declared accounts were not read: {error}"),
+            )
+        return replace(audit, remedies=(*audit.remedies, *lines))
 
     def _read(self, reader: Callable[[Any], T]) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

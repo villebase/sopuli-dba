@@ -602,6 +602,28 @@ These rules decide what `apply` does with each account:
   works alone. The two logins are budgeted as one run's attempts. A `pass` under
   an open rollover window is also a reason not to act, because applying again
   would restart the window and report a change nobody asked for.
+- **On MySQL, `apply` and `rotate` do not log in before a change**
+  ([#1223](../decisions/log.md#1223)). During a rotation that login would use
+  the new password and fail once, and on an account with
+  `FAILED_LOGIN_ATTEMPTS 1` one failure blocks it for `PASSWORD_LOCK_TIME`
+  days, which a new password does not clear. So they set a password only for
+  a rotation in flight, from the vault's `pending`, or for a rollback. With
+  only `current` the account is `SKIPPED`: nothing is sent, and the run exits
+  0. Setting `current` on every run instead would reset the server's password
+  expiry and fill its password history. `apply` therefore does not repair a
+  MySQL account whose password drifted from `current`: `creds check` finds it,
+  and `creds rotate` changes it. While a rotation's promotion is held, because
+  another target failed, each `apply` sets the `pending` on a MySQL target
+  again and reports `changed: true`, an exception to invariant 9 that ends
+  when the rotation completes. After a change they verify by a login with
+  the new password, but a login reaches only a `user@%` account that is the
+  user's only one, with no anonymous account at a named host. For any other
+  account the server's `password_last_changed` stands in for the login: no
+  earlier than the server's clock just before the statement, it is the
+  verification result `stored`, the account is `IN_SYNC`, and its pending
+  password can be promoted. `stored` is weaker than `pass`: the server records
+  a password change at or after the tool's statement, and no client has
+  logged in with the password.
 - **A locked account is not changed at all,** unless the policy asks for an
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,

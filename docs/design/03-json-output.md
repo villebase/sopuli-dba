@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.73.schema.json`](../schemas/sopuli-run-1.73.schema.json),
+Schemas: [`../schemas/sopuli-run-1.74.schema.json`](../schemas/sopuli-run-1.74.schema.json),
 [`../schemas/sopuli-event-1.21.schema.json`](../schemas/sopuli-event-1.21.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -2250,6 +2250,15 @@ fixes one, and nothing the operator installs fixes the other.
 `lockout_margin_hit` records the UC-1 §7 case where the tool *declined* to try a
 login because the account was near its lockout threshold. That outcome is not a
 failed verification, and must not be reported as drift.
+
+**`verification.result`** — `pass`, `fail`, `skipped`, `unavailable`, and
+`stored` from run schema 1.74. `stored` comes only after a change, from
+`creds apply` and `creds rotate` on a MySQL account the tool cannot log in as
+(#1223). The server's `password_last_changed` for the account is no earlier
+than the server's clock as read just before the tool's statement. It is weaker
+than `pass`: it shows a change at or after the statement, which is almost
+always the tool's, and no client logged in with the password. The account's `state` is `IN_SYNC`, and its pending password can be
+promoted. `method` is `none`, because no login and no hash comparison was made.
 
 ### Diagnostic codes
 

@@ -25,6 +25,7 @@ from sopuli.driver.protocol import (
     FAIL,
     PASS,
     SKIPPED,
+    STORED,
     UNAVAILABLE,
     VERIFY_LOGIN,
     AccountAttributes,
@@ -525,6 +526,30 @@ def test_a_change_that_could_not_be_verified_is_unverifiable() -> None:
 
     assert outcome.state == check.UNVERIFIABLE
     assert "within 2" in outcome.detail
+
+
+def test_a_change_the_server_records_is_in_sync_and_promotable() -> None:
+    """#1223: MySQL, for an account no login can reach. Weaker than a login,
+    and the verification says so; the pending password can be promoted."""
+    stored = VerifyResult(method="none", result=STORED, detail="not verified by login")
+
+    outcome = apply.after_change(user(), stored)
+
+    assert outcome.state == check.IN_SYNC
+    assert apply.is_confirmed(outcome.state)
+    assert outcome.verification is stored
+    assert "no login can reach" in outcome.detail
+
+
+def test_a_stored_change_under_an_open_window_is_not_confirmed() -> None:
+    """A confirmed state under an open window lets `--strategy direct` close
+    it, discarding the old password on a timestamp alone."""
+    stored = VerifyResult(method="none", result=STORED, detail="not verified by login")
+
+    outcome = apply.after_change(user(rollover_active=True), stored)
+
+    assert outcome.state == check.UNVERIFIABLE
+    assert not apply.is_confirmed(outcome.state)
 
 
 def test_a_lock_that_arrived_during_the_run_is_reported_as_the_lock() -> None:

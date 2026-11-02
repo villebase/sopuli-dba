@@ -87,6 +87,7 @@ from sopuli.config.secret_refs import SecretRef
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
+    STORED,
     UNAVAILABLE,
     AccountAttributes,
     UserState,
@@ -528,6 +529,26 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
                 verification,
             )
         return Outcome(IN_SYNC, "changed and verified by login", verification)
+    if verification.result == STORED:
+        # Weaker than a login, and promotable all the same (#1223): the server
+        # records a password change at or after the tool's statement. The
+        # verification's own result says which kind of confirmation this was.
+        if user.rollover_active:
+            # Not confirmed: closing the window (`--strategy direct`) would then
+            # discard the old password on a timestamp alone, with no login
+            # showing the new one works.
+            return Outcome(
+                UNVERIFIABLE,
+                "changed, and the server records the change, but a rollover window "
+                "is open and no login can show the new password works",
+                verification,
+            )
+        return Outcome(
+            IN_SYNC,
+            "changed, and the server records the change; no login can reach this "
+            "account to verify it",
+            verification,
+        )
     if verification.result in (VERIFY_SKIPPED, UNAVAILABLE):
         return Outcome(
             UNVERIFIABLE,

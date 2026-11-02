@@ -4064,10 +4064,57 @@ the register.
 - **Accepted cost:** an account at a named host, or a `%` account whose user
   also exists at another host, cannot be verified by login.
 - **Then, for such an account after a change:** `creds apply` confirms the
-  change by `mysql.user.password_last_changed` moving past the run's start, not
-  by a login, so its new password can be promoted. It is reported as a result
-  of its own, weaker than a login's `pass`: it shows the server holds the hash
-  the tool computed, not that a client logs in with the password. Decided by
-  the maintainer the same day; built with `creds apply` on MySQL.
+  change by `mysql.user.password_last_changed` being no earlier than the
+  server's clock, read just before the tool's statement, not by a login, so its
+  new password can be promoted. It is reported as the verification result
+  `stored` (run schema 1.74), weaker than a login's `pass`: it shows the server
+  holds the hash the tool computed, not that a client logs in with the
+  password. Decided by the maintainer the same day.
 - **Rejected for that:** leaving such accounts unpromoted, which would mean no
   rotation of them could finish.
+- **And before a change, for every MySQL account:** `creds apply` and `creds
+  rotate` do not log in, so they cannot tell whether the account already has
+  the vault's password. They set it only when the source is the vault's
+  `pending`, or a rollback's `previous`. With only `current`, the account is
+  `SKIPPED`: no login, no statement, `changed: false`, so invariant 9 holds.
+  Decided by the maintainer the same day (#1223, comments 6585067228 and
+  6586120430).
+- **Why not log in first where a login can reach the account:** during a
+  rotation that login uses the new password, so it always fails once. Measured
+  on 8.0.46, 8.4.13 and 9.7.4 (`04_lock_expiry_probe.py`, LE5): with
+  `FAILED_LOGIN_ATTEMPTS 1` and `PASSWORD_LOCK_TIME 1`, one wrong login answers
+  `3955` and blocks the account, and after the tool sets the new password by
+  hash it still answers `3955`, until `ACCOUNT UNLOCK`. With
+  `FAILED_LOGIN_ATTEMPTS 2`, one wrong login is harmless. The tool cannot read
+  the setting, which is in `User_attributes` (decision 6 of
+  [#1202](#1202)), so it cannot log in only where the login is safe. Also
+  rejected: logging in first only for `current`, because a drifted `current`
+  still spends a failed login.
+- **Rejected for that:**
+  - Setting the password on every run, which was decided first and then
+    replaced. Each `ALTER USER` resets `password_last_changed`, so a
+    `PASSWORD EXPIRE INTERVAL` never fires. It adds a `mysql.password_history`
+    row (`08_password_rules_probe.py`), so n runs push the real old passwords
+    out of a `PASSWORD HISTORY n`. MySQL's documentation also says it empties
+    the account's `caching_sha2_password` fast-auth cache, so an application
+    without TLS or the server's RSA key would fail with `2061` after every
+    scheduled run; that is not measured here.
+  - Comparing `password_last_changed` with the time the vault value was
+    written. A change someone made after the vault write would go unseen, and
+    the account would be reported in sync.
+  - Reading `authentication_string` to compare the hash exactly. The tool
+    account would then read every account's hash, which
+    `02-mysql-privileges.md` §2.1 withholds (probe 06, PV1).
+- **Accepted cost:** `creds apply` does not repair a MySQL account whose
+  password drifted from `current`. `creds check` finds it, and `creds rotate`
+  changes it.
+- **And while a promotion is held:** if a rotation's `pending` is applied to a
+  MySQL target but not promoted, because another target failed, each later
+  `apply` sets it on the MySQL target again and reports `changed: true`. The
+  vault records the confirming targets only at promotion, and MySQL has no
+  safe login to check, so a run cannot tell. This is an exception to invariant
+  9, and it lasts until the rotation completes. Decided by the maintainer the
+  same day (#1223, comment 6586757670). Rejected: recording per-target
+  progress beside `pending` (a new vault write and a payload change), and
+  comparing `password_last_changed` with the vault version (someone else's
+  change would be taken as the rotation's).

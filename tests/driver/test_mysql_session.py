@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -47,6 +48,7 @@ class _Cursor:
             privileges_module.SELF: ("sopuli_admin@%",),
             accounts_module.DEFAULT_LIFETIME: (0,),
             "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
+            session_module.SERVER_NOW: (connection.now,),
         }
         self._last = ""
 
@@ -97,6 +99,8 @@ class _Connection:
         self.fail_alter: Exception | None = None
         #: The server's `caching_sha2_password_digest_rounds`.
         self.rounds = 5000
+        #: The server's clock, as `select now()` returns it: naive, UTC.
+        self.now = datetime(2026, 11, 2, 12, 0, 0)
         #: An error the read of the rounds raises instead.
         self.fail_rounds: Exception | None = None
 
@@ -325,6 +329,60 @@ def test_byte_limit_is_256_bytes_of_utf8() -> None:
     limit = _session().byte_limit()
 
     assert (limit.max_bytes, limit.encoding) == (256, "utf-8")
+
+
+def test_apply_finds_the_hooks_it_looks_up_by_name() -> None:
+    """`creds apply` reads these with getattr, outside the protocol, and a
+    missing `verifies_before_change` means a login before the change: the
+    lockout #1223 exists to prevent. A rename must fail here."""
+    session = _session()
+
+    assert getattr(session, "verifies_before_change", True) is False
+    assert callable(getattr(session, "confirm_change", None))
+
+
+def _changed_at(host: str, changed: datetime) -> tuple[Any, ...]:
+    return ("acme_app", host, "caching_sha2_password", "N", "N", changed, None)
+
+
+def test_a_change_no_login_can_check_is_confirmed_as_stored() -> None:
+    """`acme_app@10.%` is not a sole `%` account, so no login reaches it; the
+    server's change time, no earlier than its clock before the statement,
+    stands in for one (#1223)."""
+    session = _session()
+    session.connection.accounts = [_changed_at("10.%", datetime(2026, 11, 2, 12, 0, 0))]
+    session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
+
+    confirmed = session.confirm_change("acme_app@10.%")
+
+    assert confirmed is not None
+    assert (confirmed.method, confirmed.result) == ("none", "stored")
+    assert "2026-11-02 12:00:00 UTC" in str(confirmed.detail)
+
+
+def test_a_change_time_before_the_statement_confirms_nothing() -> None:
+    session = _session()
+    session.connection.accounts = [_changed_at("10.%", datetime(2026, 11, 2, 11, 59, 59))]
+    session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
+
+    assert session.confirm_change("acme_app@10.%") is None
+
+
+def test_an_account_a_login_reaches_is_never_confirmed_by_time() -> None:
+    """A sole `user@%` account is verified by login, never by the clock."""
+    session = _session()
+    session.connection.accounts = [_changed_at("%", datetime(2026, 11, 2, 12, 0, 1))]
+    session.set_password("acme_app@%", Secret("Acme-App-pw1"))
+
+    assert session.confirm_change("acme_app@%") is None
+
+
+def test_an_account_this_session_did_not_change_is_not_confirmed() -> None:
+    session = _session()
+    session.connection.accounts = [_changed_at("10.%", datetime(2026, 11, 2, 12, 0, 1))]
+
+    assert session.confirm_change("acme_app@10.%") is None
+    assert not any(q == session_module.SERVER_NOW for q in session.connection.queries)
 
 
 def test_password_constraints_reports_nothing_and_reads_nothing() -> None:

@@ -26,7 +26,8 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeVar
+from datetime import UTC, datetime
+from typing import Any, ClassVar, TypeVar
 
 import pymysql
 
@@ -53,11 +54,13 @@ from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
     PASS,
     PASSWORD_ROLLOVER,
+    STORED,
     UNAVAILABLE,
     UNKNOWN,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
+    VERIFY_NONE,
     AccountAttributes,
     AccountChange,
     AttributeChange,
@@ -134,6 +137,14 @@ class MysqlSession(ClosesConnection):
     """One open connection to a server. A
     :class:`~sopuli.driver.protocol.Session` by its methods."""
 
+    #: ``creds apply`` and ``creds rotate`` do not log in before a change
+    #: (#1223). During a rotation that login always fails once, and on an
+    #: account with ``FAILED_LOGIN_ATTEMPTS 1`` one failure blocks it for
+    #: ``PASSWORD_LOCK_TIME`` days, a block a new password does not clear
+    #: (probe 04, LE5). The tool cannot read the setting, which is in
+    #: ``User_attributes``. Not on the protocol: a driver without it logs in.
+    verifies_before_change: ClassVar[bool] = False
+
     connection: Any
     target: ExpandedTarget
     #: The run's, for the login :meth:`verify_password` makes as a managed
@@ -151,6 +162,9 @@ class MysqlSession(ClosesConnection):
     #: :meth:`describe_user`. It does not change for the life of a connection,
     #: as the Oracle session's ``_session_user`` does not.
     _session_user: str | None = field(default=None, init=False, repr=False)
+    #: The server's clock just before :meth:`set_password` sent its statement,
+    #: per account, for :meth:`confirm_change`.
+    _changed_since: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its encryption.
@@ -326,6 +340,9 @@ class MysqlSession(ClosesConnection):
         statement = password_module.alter_user(
             user, host, password_module.caching_sha2_hash(secret, rounds)
         )
+        # The server's clock before the statement: confirm_change compares
+        # password_last_changed with it. The session's time zone is UTC.
+        since = self._read(_server_now)
         try:
             # The read above found the session open, so a failure here is the
             # server's answer to the statement.
@@ -333,6 +350,7 @@ class MysqlSession(ClosesConnection):
         except DriverError as failure:
             failure.password_sent = True
             raise
+        self._changed_since[state.name] = since
         LOG.debug("password set for %s on %s", state.name, self.target.name)
         return ChangeResult(changed=True, detail="password set")
 
@@ -425,6 +443,43 @@ class MysqlSession(ClosesConnection):
         if declared.locked:
             return _not_tried("the account is locked; no login was attempted")
         return self._login(declared, secret)
+
+    def confirm_change(self, account: str) -> VerifyResult | None:
+        """After :meth:`set_password`, for an account no login can reach: a
+        :data:`~sopuli.driver.protocol.STORED` result where the server's
+        ``password_last_changed`` for it is no earlier than the server's clock
+        read just before the statement (#1223). ``None`` otherwise: for an
+        account a login can reach, for one this session did not change, and
+        where the time did not move. Not on the protocol: ``creds apply`` asks
+        it of a driver that has it, after a login that was unavailable.
+
+        Weaker than a login: it shows a password change at or after the
+        statement, almost always the tool's, not that a client logs in with
+        the password.
+        """
+        since = self._changed_since.get(account)
+        if since is None:
+            return None
+        user, host = accounts_module.split(account)
+        # The read verify_password makes, so the two agree on which accounts a
+        # login can reach.
+        found = self._read(lambda cursor: accounts_module.read(cursor, [user, ""]))
+        declared = accounts_module.find(found[user], host)
+        if declared is None or declared.changed_at is None:
+            return None
+        reason = verification.not_tried_reason(declared, found[user], found[""])
+        if reason is None or declared.changed_at < since:
+            return None
+        changed = declared.changed_at.strftime("%Y-%m-%d %H:%M:%S")
+        return VerifyResult(
+            method=VERIFY_NONE,
+            result=STORED,
+            detail=(
+                f"not verified by login: {reason}. The server records the password as "
+                f"changed at {changed} UTC, no earlier than its clock just before this "
+                f"run's statement"
+            ),
+        )
 
     def _login(self, declared: accounts_module.Account, secret: Secret) -> VerifyResult:
         arguments = connect_arguments(
@@ -538,6 +593,18 @@ def _ms(started: float) -> int:
 def _not_tried(detail: str) -> VerifyResult:
     """A login :meth:`MysqlSession.verify_password` settled without trying."""
     return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
+
+
+#: The server's clock, in the session's time zone, which is UTC
+#: (:data:`~sopuli.driver.mysql.connection.UTC_SESSION`).
+SERVER_NOW = "select now()"
+
+
+def _server_now(cursor: Any) -> datetime:
+    cursor.execute(SERVER_NOW)
+    (now,) = cursor.fetchone()
+    found: datetime = now.replace(tzinfo=UTC)
+    return found
 
 
 def _digest_rounds(cursor: Any) -> int:

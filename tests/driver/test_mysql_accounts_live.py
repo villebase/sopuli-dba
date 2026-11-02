@@ -334,6 +334,26 @@ def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
     login.close()
 
 
+def test_a_change_no_login_can_reach_is_confirmed_by_the_server(stage: Stage) -> None:
+    """#1223. `user@10.%` is not reached by a login from the tool's host. After
+    set_password, the server's password_last_changed is no earlier than its
+    clock before the statement, and confirm_change says `stored`. The login
+    still says `unavailable`, and an account this session did not change is
+    not confirmed."""
+    user = stage.account("10.%")
+    other = stage.account("10.%")
+    name = f"{user}@10.%"
+
+    stage.session.set_password(name, Secret(f"Acme-Stored-{uuid.uuid4().hex[:12]}"))
+
+    login = stage.session.verify_password(name, Secret("Acme-not-tried-1"))
+    confirmed = stage.session.confirm_change(name)
+    assert login.result == "unavailable"
+    assert confirmed is not None
+    assert (confirmed.method, confirmed.result) == ("none", "stored")
+    assert stage.session.confirm_change(f"{other}@10.%") is None
+
+
 @pytest.mark.parametrize("sql_mode", ["", "NO_BACKSLASH_ESCAPES", "ANSI_QUOTES"])
 def test_a_name_with_a_quote_and_a_backslash_gets_its_password(
     stage: Stage, live_mysql: Any, sql_mode: str

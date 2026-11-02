@@ -171,7 +171,7 @@ def test_missing_is_sorted() -> None:
 def test_the_hint_quotes_the_account_name() -> None:
     found = classify(user="o'brien@%", grants=parse_all([]), roles=())
 
-    assert "TO 'o''brien'@'%';" in str(found.hint)
+    assert "TO `o'brien`@`%`;" in str(found.hint)
 
 
 def test_all_privileges_on_every_object_covers_section_2() -> None:
@@ -196,7 +196,7 @@ def test_the_hint_gives_the_statements_for_what_is_missing() -> None:
             *TABLE_GRANTS[1:],
         ]
     )
-    account = "'sopuli_admin'@'192.0.2.10'"
+    account = "`sopuli_admin`@`192.0.2.10`"
     rest = ", ".join(COLUMNS[2:])
 
     assert found.hint == (

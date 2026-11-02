@@ -27,8 +27,9 @@ would itself have stored.
 **A password is at most 256 bytes.** Longer ones are accepted as a hash and then
 refused at login, ``1045``, on every release measured (CH6).
 
-The account is named as ``mysql.user`` spells it, each part a string literal:
-``ALTER USER`` takes no bind parameters.
+The account is named as ``mysql.user`` spells it, each part between
+backquotes (:meth:`~sopuli.driver.mysql.admin.Principal.sql`): ``ALTER USER``
+takes no bind parameters.
 """
 
 from __future__ import annotations
@@ -37,11 +38,10 @@ import hashlib
 import secrets as random
 
 from sopuli.config import charsets
+from sopuli.driver.mysql.accounts import SUPPORTED_PLUGIN as PLUGIN
+from sopuli.driver.mysql.admin import Principal
 from sopuli.driver.protocol import DriverError
 from sopuli.secrets import Secret
-
-#: The plugin the hash is for (#1202, decision 5).
-PLUGIN = "caching_sha2_password"
 
 #: The rounds variable, which any account reads (CH5).
 DIGEST_ROUNDS = "select @@global.caching_sha2_password_digest_rounds"
@@ -151,12 +151,8 @@ def caching_sha2_hash(secret: Secret, rounds: int, *, salt: bytes | None = None)
     return b"$A$%03X$" % (rounds // 1000) + salt + digest.encode("ascii")
 
 
-def quote(text: str) -> str:
-    """``text`` as a MySQL string literal."""
-    return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
-
-
 def alter_user(user: str, host: str, stored: bytes) -> str:
     """The one statement that sets the password: the account as the server
     spells it, and the hash as a hex literal."""
-    return f"ALTER USER {quote(user)}@{quote(host)} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}"
+    account = Principal(user, host).sql()
+    return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}"

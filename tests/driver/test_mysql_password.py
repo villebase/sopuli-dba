@@ -57,15 +57,17 @@ def test_the_statement_carries_the_hash_as_hex_and_never_the_password() -> None:
     statement = alter_user("acme_app", "10.%", stored)
 
     assert statement == (
-        f"ALTER USER 'acme_app'@'10.%' IDENTIFIED WITH caching_sha2_password AS 0x{stored.hex()}"
+        f"ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x{stored.hex()}"
     )
     assert "Acme-App-pw1" not in statement
 
 
-def test_quotes_in_the_account_are_doubled() -> None:
-    statement = alter_user("o'brien", "%", b"$A$005$x")
+def test_the_account_is_backquoted_whatever_it_holds() -> None:
+    """Only a backquote is doubled: a quote and a backslash are themselves,
+    whatever the session's `sql_mode`."""
+    statement = alter_user("o'b\\r`n", "%", b"$A$005$x")
 
-    assert statement.startswith("ALTER USER 'o''brien'@'%' ")
+    assert statement.startswith("ALTER USER `o'b\\r``n`@`%` ")
 
 
 @pytest.mark.parametrize(

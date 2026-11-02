@@ -45,7 +45,7 @@ class _Cursor:
             scope_module.TLS_VERSION: ("Ssl_version", connection.tls),
             privileges_module.SELF: ("sopuli_admin@%",),
             accounts_module.DEFAULT_LIFETIME: (0,),
-            "select @@global.caching_sha2_password_digest_rounds": (5000,),
+            "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
         }
         self._last = ""
 
@@ -92,6 +92,8 @@ class _Connection:
         self.refuse: Exception | None = None
         #: An error the statement that sets a password raises instead.
         self.fail_alter: Exception | None = None
+        #: The server's `caching_sha2_password_digest_rounds`.
+        self.rounds = 5000
 
     @contextmanager
     def cursor(self) -> Iterator[_Cursor]:
@@ -239,7 +241,7 @@ def test_set_password_sends_one_alter_user_with_the_hash() -> None:
 
     (statement,) = [q for q in session.connection.queries if q.startswith("ALTER USER")]
     assert statement.startswith(
-        "ALTER USER 'acme_app'@'10.%' IDENTIFIED WITH caching_sha2_password AS 0x2441243030352"
+        "ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x2441243030352"
     )
     assert "Acme-App-pw1" not in statement
     assert result.changed is True
@@ -278,6 +280,33 @@ def test_a_failure_once_sent_says_so_and_does_not_quote_the_hash() -> None:
     assert caught.value.password_sent is True
     assert "0x24412430" not in str(caught.value)
     assert "0x***" in str(caught.value)
+
+
+def test_a_message_that_quotes_from_inside_the_hash_does_not_keep_it() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.fail_alter = session_module.pymysql.err.ProgrammingError(
+        1064, "You have an error in your SQL syntax near '2430303524416a4b3c' at line 1"
+    )
+
+    with pytest.raises(DriverError) as caught:
+        session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
+
+    assert "2430303524416a4b3c" not in str(caught.value)
+    assert "near '***'" in str(caught.value)
+
+
+def test_rounds_the_stored_hash_cannot_write_are_refused_before_sending() -> None:
+    """The stored hash writes the rounds in thousands."""
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.rounds = 5500
+
+    with pytest.raises(DriverError, match="not a multiple of 1000") as caught:
+        session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
+
+    assert caught.value.password_sent is False
+    assert not any(q.startswith("ALTER USER") for q in session.connection.queries)
 
 
 def test_describe_user_reads_the_account() -> None:

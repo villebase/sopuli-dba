@@ -177,6 +177,15 @@ def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
     account then logs in with it."""
     user = stage.account("%")
     password = f"Acme-Leak-{uuid.uuid4().hex[:12]}"
+    consumer = (
+        "select enabled from performance_schema.setup_consumers "
+        "where name = 'events_statements_history_long'"
+    )
+    with live_mysql.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("select @@global.log_output, @@global.general_log")
+        log_output, general_log = cursor.fetchone()
+        cursor.execute(consumer)
+        (enabled,) = cursor.fetchone()
     stage.admin("set global log_output = 'TABLE'")
     stage.admin("set global general_log = 'ON'")
     stage.admin(
@@ -199,16 +208,38 @@ def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
             )
             history = [row[0] for row in cursor.fetchall()]
     finally:
+        # The server as it was, and none of the rows this test made it log.
         stage.admin("set global general_log = 'OFF'")
+        stage.admin("truncate table mysql.general_log")
+        stage.admin("set global log_output = %s", (log_output,))
+        stage.admin("set global general_log = %s", (general_log,))
         stage.admin(
-            "update performance_schema.setup_consumers set enabled = 'NO' "
-            "where name = 'events_statements_history_long'"
+            "update performance_schema.setup_consumers set enabled = %s "
+            "where name = 'events_statements_history_long'",
+            (enabled,),
         )
 
     assert result.changed is True
     assert any("ALTER USER" in line for line in logged), "the log saw the statement"
     assert any("ALTER USER" in line for line in history), "the history saw it"
     assert not any(password in line for line in [*logged, *history])
+    login = live_mysql.connect_as(user, password)
+    login.close()
+
+
+@pytest.mark.parametrize("sql_mode", ["", "NO_BACKSLASH_ESCAPES", "ANSI_QUOTES"])
+def test_a_name_with_a_quote_and_a_backslash_gets_its_password(
+    stage: Stage, live_mysql: Any, sql_mode: str
+) -> None:
+    """The statement names the account between backquotes, which no
+    `sql_mode` reads differently."""
+    user = stage.account("%", f"acme_o'b\\{uuid.uuid4().hex[:8]}")
+    stage.session.connection.query(f"set session sql_mode = '{sql_mode}'")
+    password = f"Acme-Mode-{uuid.uuid4().hex[:12]}"
+
+    result = stage.session.set_password(f"{user}@%", Secret(password))
+
+    assert result.changed is True
     login = live_mysql.connect_as(user, password)
     login.close()
 

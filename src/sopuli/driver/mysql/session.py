@@ -219,10 +219,11 @@ class MysqlSession(ClosesConnection):
             )
         return replace(audit, remedies=(*audit.remedies, *lines))
 
-    def _read(self, reader: Callable[[Any], T]) -> T:
+    def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a
         fault in sopuli, and a MySQL error is classified by
-        :mod:`~sopuli.driver.mysql.errors`."""
+        :mod:`~sopuli.driver.mysql.errors`, its message passed through
+        ``scrub`` where one is given."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -232,7 +233,8 @@ class MysqlSession(ClosesConnection):
             with self.connection.cursor() as cursor:
                 return reader(cursor)
         except pymysql.err.MySQLError as error:
-            raise from_error(error).as_error() from error
+            diagnosis = from_error(error, scrub=scrub) if scrub else from_error(error)
+            raise diagnosis.as_error() from error
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         """``ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…``, with
@@ -261,22 +263,26 @@ class MysqlSession(ClosesConnection):
                 ),
             )
         user, host = accounts_module.split(state.name)
-        rounds = self._read(lambda cursor: _digest_rounds(cursor))
+        rounds = self._read(_digest_rounds)
+        if rounds % 1000:
+            raise DriverError(
+                f"caching_sha2_password_digest_rounds is {rounds} on target "
+                f'"{self.target.name}", which is not a multiple of 1000',
+                hint=(
+                    "the stored hash writes the rounds in thousands, so the tool does not "
+                    "know what the server would store; set the variable to a multiple of 1000"
+                ),
+            )
         statement = password_module.alter_user(
             user, host, password_module.caching_sha2_hash(secret, rounds)
         )
-        if self.connection is None:
-            raise DriverError(
-                f'the session to target "{self.target.name}" is closed',
-                hint="this is a fault in sopuli: a closed session was used again",
-            )
         try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(statement)
-        except pymysql.err.MySQLError as error:
-            failure = from_error(error, scrub=_scrub_hash).as_error()
+            # The read above found the session open, so a failure here is the
+            # server's answer to the statement.
+            self._read(lambda cursor: cursor.execute(statement), scrub=_scrub_hash)
+        except DriverError as failure:
             failure.password_sent = True
-            raise failure from error
+            raise
         LOG.debug("password set for %s on %s", state.name, self.target.name)
         return ChangeResult(changed=True, detail="password set")
 
@@ -343,15 +349,18 @@ def _digest_rounds(cursor: Any) -> int:
     return int(row[0])
 
 
-#: A hex literal, such as the hash in the statement that sets a password.
-_HEX = re.compile(r"0x[0-9a-fA-F]+")
+#: A hex literal, such as the hash in the statement that sets a password, or a
+#: run of 16 or more hex digits: a message that quotes the statement from the
+#: middle of the literal starts without the ``0x``.
+_HEX = re.compile(r"0x[0-9a-fA-F]+|[0-9a-fA-F]{16,}")
 
 
 def _scrub_hash(message: str) -> str:
     """The server's message about the statement that sets a password, with any
-    hex literal written as ``0x***``. The server may quote part of the
-    statement, and the hash is worth an offline guessing attack."""
-    return _HEX.sub("0x***", message)
+    hex literal written as ``0x***`` and any other long run of hex digits as
+    ``***``. The server may quote part of the statement, and the hash is worth
+    an offline guessing attack."""
+    return _HEX.sub(lambda found: "0x***" if found[0].startswith("0x") else "***", message)
 
 
 def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:

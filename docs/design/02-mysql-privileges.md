@@ -311,16 +311,23 @@ The refusal names each privilege as `<privilege> ON <object>`, with
 computes the account's `caching_sha2_password` hash on the client and sends:
 
 ```sql
-ALTER USER 'acme_app'@'10.%' IDENTIFIED WITH caching_sha2_password AS 0x2441243030...
+ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x2441243030...
 ```
 
 The hash is SHA-crypt with SHA-256, a 20-byte salt the driver draws, and the
 server's own rounds, from `caching_sha2_password_digest_rounds`, which any
 account reads. It agrees with the hash the server computes for the same
 password, salt and rounds, and a password set this way logs in
-(`02_client_hash_probe.py`, CH1, CH2 and CH5). The account is named as
-`mysql.user` spells it, with each part a quoted string: `ALTER USER` takes no
-bind parameters.
+(`02_client_hash_probe.py`, CH1, CH2 and CH5). The stored hash writes the
+rounds in thousands, so a server whose rounds are not a multiple of 1,000 is
+refused before anything is sent.
+
+The account is named as `mysql.user` spells it, each part between backquotes:
+`ALTER USER` takes no bind parameters. A backquoted name escapes only a doubled
+backquote, so it names the same account under every `sql_mode`. A string
+literal does not: `NO_BACKSLASH_ESCAPES` changes what a backslash in it means.
+A tier-1 test sets the password of an account whose name holds a quote and a
+backslash, under the default mode, `NO_BACKSLASH_ESCAPES` and `ANSI_QUOTES`.
 
 **Why not `IDENTIFIED BY`.** The server writes a password it parsed as
 `<secret>` in the general log, the slow log and `performance_schema`'s
@@ -335,8 +342,8 @@ and the history keeps it with the hash as a string. Neither holds the
 password, and the account then logs in with it. The hash still allows an
 offline guessing attack, so treat it as sensitive. The policy's length is the
 protection against that. Where the server's error message quotes the
-statement, the driver writes any hex literal in it as `0x***` before the
-message is kept.
+statement, the driver writes any hex literal in it as `0x***`, and any other
+run of 16 or more hex digits as `***`, before the message is kept.
 
 **A password is at most 256 bytes of UTF-8.** The server stores the hash of a
 longer one and then refuses it at login, `1045`, on 8.0.46, 8.4.13 and 9.7.4

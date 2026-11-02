@@ -113,11 +113,12 @@ from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
-from sopuli.config.products import tls_setting
+from sopuli.config.products import mysql_account, quoted_or_padded, tls_setting
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
+from sopuli.config.targets import MYSQL
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -1555,6 +1556,7 @@ def account_suspend(
     refuse_if_readonly(run.resolved, action=action, estate=config)
 
     reached = config.expanded_targets
+    _refuse_a_bare_mysql_name(account, reached)
     plan = plan_builder.build_for_accounts(
         config, [(account, target.name) for target in reached], intent=["account_lock"]
     )
@@ -1844,6 +1846,7 @@ def account_expire_password(
     refuse_if_readonly(run.resolved, action=action, estate=config)
 
     reached = config.expanded_targets
+    _refuse_a_bare_mysql_name(account, reached)
     plan = plan_builder.build_for_accounts(
         config, [(account, target.name) for target in reached], intent=[PASSWORD_EXPIRE]
     )
@@ -2225,6 +2228,7 @@ def account_reset_password(
     refuse_disallowed_method(run.resolved, delivery.method)
 
     reached = config.expanded_targets
+    _refuse_a_bare_mysql_name(account, reached)
     # Before the plan, the prompt and any event, `--dry-run` included: a preview
     # must not say "would be reset" for a run that will be refused.
     _refuse_personal_delivery_store(config, delivery, reached)
@@ -2586,6 +2590,48 @@ def _reset_lock_key(config: Config, account: str, target: ExpandedTarget) -> Loc
     if records is None:
         return None
     return reset_record.record_lock_key(records, target=target.name, account=account)
+
+
+def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -> None:
+    """Refuse an `--account` that is not ``user@host`` where a target is MySQL.
+
+    The config refuses such a name when the file declares it (#1202, decision
+    4), but a ``profile:`` or ``role:`` rule admits a name typed on the command
+    line, which the file never held. MySQL keeps one account per host, so a
+    bare name names none of them. Refused at plan time (invariant 4), before
+    anything connects, with :class:`ConfigError` and exit 9, as
+    :func:`_record_paths` refuses a name it cannot use (#1225).
+
+    **The whole run is refused, also where other targets are not MySQL.** One
+    person's account is ``jdoe`` on Oracle and ``jdoe@%`` on MySQL, so one
+    ``--account`` cannot name both, and a run that went ahead on the others
+    would report the MySQL target as a failure the operator could only fix by
+    running again. The hint says how to narrow the run instead. A ``user@host``
+    name on an Oracle or PostgreSQL target is not refused: there it reports
+    ``ACCOUNT_MISSING``, an ordinary outcome, and PostgreSQL allows ``@`` in a
+    role name.
+
+    A part quoted as SQL quotes it, or padded, is refused too, by the config's
+    own rule (:func:`~sopuli.config.products.quoted_or_padded`).
+    """
+    mysql = [target.name for target in reached if target.target.type == MYSQL]
+    split = mysql_account(account)
+    if not mysql or (split is not None and not quoted_or_padded(split)):
+        return
+    user = (split[0] if split else account).strip("'\"` \t@") or "jdoe"
+    hint = (
+        f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
+        "MySQL keeps one account per host, each with its own password"
+    )
+    if len(mysql) < len(reached):
+        hint += (
+            ". For the other targets, leave the MySQL ones out with `--target`, `--group` or "
+            "`--select`, and run once for each spelling"
+        )
+    raise ConfigError(
+        f"account {account!r} is not user@host without quotes, and target {mysql[0]!r} is MySQL",
+        hint=hint,
+    )
 
 
 def _reset_lock_keys(

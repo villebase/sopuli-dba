@@ -482,6 +482,18 @@ saying so. A group role in the chain and a
 suspended person, and `account list` must show exactly the accounts a mutating
 verb would admit. Reasons: [#1201](../decisions/log.md#1201).
 
+**On MySQL, a name is `user@host`, compared as the server compares it.** The
+user part is compared exactly and the host part without ASCII case
+([#1202](../decisions/log.md#1202), decision 3). A declared `jdoe@%` admits
+`jdoe@%` and not `JDOE@%`, which is another account that `upper()` would have
+admitted. A `profile:` or `role:` rule admits a name typed on the command line,
+which the file never held. So `reset-password`, `expire-password` and
+`suspend` refuse a name without a host, or with a part in SQL's quotes, as the
+config does, at plan time and with exit 9, before anything connects, where
+any selected target is MySQL. A run that also reaches other products is
+refused as a whole, because one person's name differs between them; the hint
+says how to leave the MySQL targets out ([#1225](https://github.com/villebase/sopuli-dba/issues/1225)).
+
 ---
 
 ## 3. What is recorded

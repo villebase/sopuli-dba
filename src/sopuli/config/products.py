@@ -388,6 +388,52 @@ def mysql_account(name: str) -> tuple[str, str] | None:
     return user, host
 
 
+def quoted_or_padded(split: tuple[str, str]) -> bool:
+    """Whether a part of a split MySQL account name starts or ends with SQL's
+    quotes or a space, as in ``'acme_app'@'%'``. It splits, but the quotes
+    would become part of the name the driver looks for."""
+    return any(part.startswith(_NOT_AT_AN_END) or part.endswith(_NOT_AT_AN_END) for part in split)
+
+
+#: ASCII letters to lower case and nothing else: MySQL's ``Host`` column is
+#: ``ascii_general_ci``, so only ASCII letters fold.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def same_name(left: str, right: str) -> bool:
+    """Two account names are one account, compared by ``upper()``: invariant
+    5's rule, and how the Oracle and PostgreSQL drivers look a name up (#1208)."""
+    return left.upper() == right.upper()
+
+
+def same_mysql_host(left: str, right: str) -> bool:
+    """Two MySQL host patterns are one host: compared without ASCII case, as
+    the server compares them (``05_identity_grants_probe.py``, ID3). The one
+    copy of the rule: the driver's reads use it too."""
+    return left.translate(_ASCII_LOWER) == right.translate(_ASCII_LOWER)
+
+
+def same_mysql_account(left: str, right: str) -> bool:
+    """Two MySQL account names are one account: the user exactly, the host
+    without ASCII case, as the server compares them (#1202, decision 3).
+
+    ``JDOE@%`` and ``jdoe@%`` are two accounts here, which :func:`same_name`
+    would take as one. A name that is not ``user@host`` is no MySQL account,
+    so it matches nothing.
+    """
+    first, second = mysql_account(left), mysql_account(right)
+    if first is None or second is None:
+        return False
+    return first[0] == second[0] and same_mysql_host(first[1], second[1])
+
+
+def account_matcher(product: str) -> Callable[[str, str], bool]:
+    """How a verb compares an account name with a declared one on a target of
+    ``product``: :func:`same_mysql_account` on MySQL, :func:`same_name`
+    elsewhere."""
+    return same_mysql_account if product == MYSQL else same_name
+
+
 def mysql_host_token(host: str) -> str:
     """A MySQL host pattern as ``{host}`` writes it: ``%`` as ``any`` and ``_``
     as ``one``, so that no vault path holds a MySQL wildcard. ``10.%`` is
@@ -425,7 +471,7 @@ def refuse_a_bare_mysql_account(
                 "with its own password"
             ),
         )
-    if any(part.startswith(_NOT_AT_AN_END) or part.endswith(_NOT_AT_AN_END) for part in split):
+    if quoted_or_padded(split):
         raise ConfigError(
             f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
             "whose user or host starts or ends with a quote or a space",

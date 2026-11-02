@@ -260,6 +260,18 @@ Where the read of the declared accounts fails, `mysql.user` is unreadable, and
 a line says why. The audit of the tool account's own grants is kept, so a
 missing grant is still reported.
 
+**The tool knows its own account.** When it reads an account, the tool reads
+`CURRENT_USER()`, the account the server matched at login, and compares it as
+above: the user exactly, the host without ASCII case. The match is the tool's
+own account. Guardrail 7 refuses it unless `--force` waives that, and
+guardrail 9 (§5) does not apply to it (#1225, [#1222](../decisions/log.md#1222)).
+
+**A name typed on the command line is compared the same way.** An `account`
+verb admits `jdoe@%` for a declared `jdoe@%`, and not `JDOE@%`, which is
+another account. It refuses a name without a host at plan time, with exit 9,
+because a `profile:` or `role:` rule admits names the file never held
+([UC-2](../use-cases/uc-02-personal-account-passwords.md) §2, #1225).
+
 ---
 
 ## 5. Guardrail 9: a managed account with a global privilege

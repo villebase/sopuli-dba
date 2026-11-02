@@ -275,8 +275,8 @@ FAIL = "fail"
 SKIPPED = "skipped"
 UNAVAILABLE = "unavailable"
 #: After a change only, and weaker than ``pass``: the server's record of the
-#: password's last change moved past the moment before the tool's statement,
-#: so the server holds what the tool sent, and no client logged in with it.
+#: password's last change is no earlier than its clock just before the tool's
+#: statement, and no client logged in with the password.
 #: MySQL, for an account no login can reach (#1223).
 STORED = "stored"
 

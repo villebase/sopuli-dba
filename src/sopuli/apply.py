@@ -531,13 +531,19 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
         return Outcome(IN_SYNC, "changed and verified by login", verification)
     if verification.result == STORED:
         # Weaker than a login, and promotable all the same (#1223): the server
-        # holds the hash the tool sent. The verification's own result says
-        # which kind of confirmation this was.
+        # records a password change at or after the tool's statement. The
+        # verification's own result says which kind of confirmation this was.
+        if user.rollover_active:
+            return Outcome(
+                ROLLOVER_ACTIVE,
+                "changed, and the server records the change; a rollover window is "
+                "open, so the previous password authenticates until it closes",
+                verification,
+            )
         return Outcome(
             IN_SYNC,
-            "changed, and the server records the change. No login can reach this "
-            "account, so nothing shows whether it already had the password: the tool "
-            "sets it on every run",
+            "changed, and the server records the change; no login can reach this "
+            "account to verify it",
             verification,
         )
     if verification.result in (VERIFY_SKIPPED, UNAVAILABLE):

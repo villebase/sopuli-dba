@@ -2254,10 +2254,10 @@ failed verification, and must not be reported as drift.
 **`verification.result`** — `pass`, `fail`, `skipped`, `unavailable`, and
 `stored` from run schema 1.74. `stored` comes only after a change, from
 `creds apply` and `creds rotate` on a MySQL account the tool cannot log in as
-(#1223). The server's `password_last_changed` for the account moved past the
-server's clock as read just before the tool's statement, so the server holds
-the hash the tool sent. It is weaker than `pass`: no client logged in with the
-password. The account's `state` is `IN_SYNC`, and its pending password can be
+(#1223). The server's `password_last_changed` for the account is no earlier
+than the server's clock as read just before the tool's statement. It is weaker
+than `pass`: it shows a change at or after the statement, which is almost
+always the tool's, and no client logged in with the password. The account's `state` is `IN_SYNC`, and its pending password can be
 promoted. `method` is `none`, because no login and no hash comparison was made.
 
 ### Diagnostic codes

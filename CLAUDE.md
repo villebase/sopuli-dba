@@ -128,11 +128,7 @@ detail.
    random password has nothing to converge on, so it is outside this rule:
    `creds generate` and `account reset-password` report `changed: true` and say
    what they replaced. Any verb with an observable target state is convergent.
-   One exception: on MySQL, `creds apply` and `creds rotate` do not log in
-   before a change, because a failed login can block an account for days. They
-   cannot observe whether it already has the password, so they set it on every
-   run and report `changed: true`. Reasons:
-   [H7](docs/decisions/log.md#h7), [#1223](docs/decisions/log.md#1223).
+   Reasons: [H7](docs/decisions/log.md#h7).
 
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
     `max_targets`, `confirm_environments`, `safety.delivery.allowed_methods`

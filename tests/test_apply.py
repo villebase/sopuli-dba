@@ -538,7 +538,15 @@ def test_a_change_the_server_records_is_in_sync_and_promotable() -> None:
     assert outcome.state == check.IN_SYNC
     assert apply.is_confirmed(outcome.state)
     assert outcome.verification is stored
-    assert "every run" in outcome.detail
+    assert "no login can reach" in outcome.detail
+
+
+def test_a_stored_change_under_an_open_window_says_so() -> None:
+    stored = VerifyResult(method="none", result=STORED, detail="not verified by login")
+
+    outcome = apply.after_change(user(rollover_active=True), stored)
+
+    assert outcome.state == check.ROLLOVER_ACTIVE
 
 
 def test_a_lock_that_arrived_during_the_run_is_reported_as_the_lock() -> None:

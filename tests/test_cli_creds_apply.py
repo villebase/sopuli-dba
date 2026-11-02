@@ -813,30 +813,51 @@ def test_a_change_no_login_can_verify_is_confirmed_by_the_server_and_promoted(
     assert harness["sessions"][0].changed
 
 
-def test_a_driver_that_must_not_log_in_first_sets_the_password_every_run(
+def test_without_a_login_first_a_pending_is_set_and_verified_after(
     runner: CliRunner,
     write_config: Callable[[str], Path],
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#1223: MySQL. A login before the change could block an account with
-    FAILED_LOGIN_ATTEMPTS 1, so the only login is the one after it, with the
-    new password, and a run that would otherwise be a no-op changes the
-    password again: the invariant-9 exception."""
+    FAILED_LOGIN_ATTEMPTS 1, so a rotation's only login is the one after the
+    change, with the new password."""
     monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
-    harness = estate(
-        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
-        answers={"ACME_WEB_USER": passes(1)},
-    )
+    harness = estate(answers={"ACME_WEB_USER": passes(1)})
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     session = harness["sessions"][0]
     assert len(session.attempts) == 1, "only the login after the change"
-    assert session.changed == [("ACME_WEB_USER", LIVE)]
+    assert session.changed == [("ACME_WEB_USER", STAGED)]
     row = document(result)["results"][0]
     assert (row["state"], row["changed"]) == ("IN_SYNC", True)
-    assert [action["kind"] for action in row["actions"]][:2] == ["password_set", "verify"]
+    assert row["secret"]["stage"] == "current"
+
+
+def test_without_a_login_first_a_current_is_left_alone(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1223: with nothing staged there is no rotation, and no way to tell
+    without a login whether a change is needed. A change on every run would
+    reset the server's expiry and fill its history, so nothing is sent, and a
+    second run is a no-op (invariant 9). Skipped, so it exits 0."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    session = harness["sessions"][0]
+    assert (session.attempts, session.changed) == ([], [])
+    row = document(result)["results"][0]
+    assert (row["state"], row["changed"]) == ("SKIPPED", False)
+    assert row["actions"][0]["kind"] == "none"
+    assert "creds rotate" in row["actions"][0]["detail"]
 
 
 def test_without_confirm_change_an_unavailable_login_stays_unverifiable(

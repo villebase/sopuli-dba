@@ -331,6 +331,16 @@ def test_byte_limit_is_256_bytes_of_utf8() -> None:
     assert (limit.max_bytes, limit.encoding) == (256, "utf-8")
 
 
+def test_apply_finds_the_hooks_it_looks_up_by_name() -> None:
+    """`creds apply` reads these with getattr, outside the protocol, and a
+    missing `verifies_before_change` means a login before the change: the
+    lockout #1223 exists to prevent. A rename must fail here."""
+    session = _session()
+
+    assert getattr(session, "verifies_before_change", True) is False
+    assert callable(getattr(session, "confirm_change", None))
+
+
 def _changed_at(host: str, changed: datetime) -> tuple[Any, ...]:
     return ("acme_app", host, "caching_sha2_password", "N", "N", changed, None)
 

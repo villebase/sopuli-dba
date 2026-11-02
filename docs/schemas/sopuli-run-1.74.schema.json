@@ -1505,7 +1505,7 @@
             "unavailable",
             "stored"
           ],
-          "description": "\"stored\" (added in 1.74) is weaker than \"pass\": after a change, the server's record of the password's last change moved past the moment before the tool's statement, so the server holds the hash the tool sent. No client logged in with the password. MySQL reports it for an account the tool cannot log in as (#1223)."
+          "description": "\"stored\" (added in 1.74) is weaker than \"pass\": after a change, the server's record of the password's last change is no earlier than its clock just before the tool's statement. No client logged in with the password. MySQL reports it for an account the tool cannot log in as (#1223)."
         },
         "latency_ms": {
           "type": [

@@ -4074,11 +4074,11 @@ the register.
   rotation of them could finish.
 - **And before a change, for every MySQL account:** `creds apply` and `creds
   rotate` do not log in, so they cannot tell whether the account already has
-  the vault's password. They set it on every run and report `changed: true`.
-  This is an exception to invariant 9, beside `creds generate` and `account
-  reset-password`. Decided by the maintainer the same day, first for accounts
-  no login can reach (#1223, comment 6584422960), then for all (comment
-  6585067228).
+  the vault's password. They set it only when the source is the vault's
+  `pending`, or a rollback's `previous`. With only `current`, the account is
+  `SKIPPED`: no login, no statement, `changed: false`, so invariant 9 holds.
+  Decided by the maintainer the same day (#1223, comments 6585067228 and
+  6586120430).
 - **Why not log in first where a login can reach the account:** during a
   rotation that login uses the new password, so it always fails once. Measured
   on 8.0.46, 8.4.13 and 9.7.4 (`04_lock_expiry_probe.py`, LE5): with
@@ -4091,12 +4091,20 @@ the register.
   rejected: logging in first only for `current`, because a drifted `current`
   still spends a failed login.
 - **Rejected for that:**
+  - Setting the password on every run, which was decided first and then
+    replaced. Each `ALTER USER` resets `password_last_changed`, so a
+    `PASSWORD EXPIRE INTERVAL` never fires. It adds a `mysql.password_history`
+    row (`08_password_rules_probe.py`), so n runs push the real old passwords
+    out of a `PASSWORD HISTORY n`. MySQL's documentation also says it empties
+    the account's `caching_sha2_password` fast-auth cache, so an application
+    without TLS or the server's RSA key would fail with `2061` after every
+    scheduled run; that is not measured here.
   - Comparing `password_last_changed` with the time the vault value was
     written. A change someone made after the vault write would go unseen, and
     the account would be reported in sync.
   - Reading `authentication_string` to compare the hash exactly. The tool
     account would then read every account's hash, which
     `02-mysql-privileges.md` §2.1 withholds (probe 06, PV1).
-  - Refusing such accounts. UC-1 could then not manage them at all.
-- **Accepted cost:** every run on such an account is a mutation, with an audit
-  record.
+- **Accepted cost:** `creds apply` does not repair a MySQL account whose
+  password drifted from `current`. `creds check` finds it, and `creds rotate`
+  changes it.

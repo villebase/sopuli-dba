@@ -141,7 +141,7 @@ class MysqlSession(ClosesConnection):
     #: (#1223). During a rotation that login always fails once, and on an
     #: account with ``FAILED_LOGIN_ATTEMPTS 1`` one failure blocks it for
     #: ``PASSWORD_LOCK_TIME`` days, a block a new password does not clear
-    #: (measured on 8.4.13). The tool cannot read the setting, which is in
+    #: (probe 04, LE5). The tool cannot read the setting, which is in
     #: ``User_attributes``. Not on the protocol: a driver without it logs in.
     verifies_before_change: ClassVar[bool] = False
 
@@ -475,8 +475,8 @@ class MysqlSession(ClosesConnection):
             result=STORED,
             detail=(
                 f"not verified by login: {reason}. The server records the password as "
-                f"changed at {changed} UTC, after this run's statement was sent, so it "
-                f"holds the hash the tool sent"
+                f"changed at {changed} UTC, no earlier than its clock just before this "
+                f"run's statement"
             ),
         )
 

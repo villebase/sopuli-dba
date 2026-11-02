@@ -168,6 +168,51 @@ def test_guardrail_9_refuses_a_described_account_with_a_global_privilege(stage: 
     assert [refusal.check for refusal in review.refusals] == [guardrails.GLOBAL_PRIVILEGE]
 
 
+def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
+    stage: Stage, live_mysql: Any
+) -> None:
+    """Invariant 15 on MySQL. With the general log on, written to a table, and
+    performance_schema's long statement history on, the driver sets a
+    password. The statement is in both, and the password is in neither. The
+    account then logs in with it."""
+    user = stage.account("%")
+    password = f"Acme-Leak-{uuid.uuid4().hex[:12]}"
+    stage.admin("set global log_output = 'TABLE'")
+    stage.admin("set global general_log = 'ON'")
+    stage.admin(
+        "update performance_schema.setup_consumers set enabled = 'YES' "
+        "where name = 'events_statements_history_long'"
+    )
+    try:
+        result = stage.session.set_password(f"{user}@%", Secret(password))
+        with live_mysql.connect() as admin, admin.cursor() as cursor:
+            cursor.execute(
+                "select convert(argument using utf8mb4) from mysql.general_log "
+                "where convert(argument using utf8mb4) like %s",
+                (f"%{user}%",),
+            )
+            logged = [row[0] for row in cursor.fetchall()]
+            cursor.execute(
+                "select sql_text from performance_schema.events_statements_history_long "
+                "where sql_text like %s",
+                (f"%{user}%",),
+            )
+            history = [row[0] for row in cursor.fetchall()]
+    finally:
+        stage.admin("set global general_log = 'OFF'")
+        stage.admin(
+            "update performance_schema.setup_consumers set enabled = 'NO' "
+            "where name = 'events_statements_history_long'"
+        )
+
+    assert result.changed is True
+    assert any("ALTER USER" in line for line in logged), "the log saw the statement"
+    assert any("ALTER USER" in line for line in history), "the history saw it"
+    assert not any(password in line for line in [*logged, *history])
+    login = live_mysql.connect_as(user, password)
+    login.close()
+
+
 def test_without_the_column_grant_mysql_user_is_unreadable(stage: Stage) -> None:
     """A column privilege applies to the session's next statement. The server
     refuses the read, and the audit is partial rather than failed."""

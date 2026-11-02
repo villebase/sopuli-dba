@@ -17,6 +17,9 @@ verifier. This measures, on each server:
   CH4  IDENTIFIED WITH mysql_native_password AS '*<hex>', with the hash
        computed by the probe, set by the tool account, then a login with the
        password and with a wrong one
+  CH5  @@global.caching_sha2_password_digest_rounds, read by the tool account
+  CH6  a hash the probe computes for passwords of 255, 256, 257 and 512
+       bytes, set by root with AS, then a login with each password
 
 The hash is SHA-crypt with SHA-256, as glibc's `$5$`, with a salt of 20 bytes
 where glibc takes 16 at most. The stored form is `$A$`, the rounds in
@@ -38,7 +41,8 @@ It MEASURES and decides nothing.
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
-times.
+times. CH5 and CH6 were added and the whole probe run again on 2026-11-02
+(#1223), twice, exit 0, with the same result.
 
 RESULTS -- the same on all three releases, except where noted
 
@@ -55,10 +59,14 @@ RESULTS -- the same on all three releases, except where noted
        and a wrong one is refused, 1045 (28000). 8.4.13 and 9.7.4
        refuse it, 1524 (HY000), "Plugin 'mysql_native_password' is not
        loaded": 8.4.13 ships the plugin disabled, and 9.7.4 has none
+  CH5  5000 on 8.0.46 and 8.4.13, and 10000 on 9.7.4: the rounds of CH1
+  CH6  every hash is accepted. 255 and 256 bytes log in, and 257 and 512 are
+       refused, 1045 (28000)
 
   So the tool can compute the hash, a server accepts it from an account with
   only CREATE USER, and the password logs in. The server checks the hash's
-  form, not that it matches a password.
+  form, not that it matches a password. Any account reads the server's
+  rounds, and a password logs in only up to 256 bytes.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -321,7 +329,7 @@ NATIVE_REFUSED = "1524 (HY000)"
 
 
 def probe(service: str) -> None:
-    """Run CH1 to CH4 on one server, print each result, and check it."""
+    """Run CH1 to CH6 on one server, print each result, and check it."""
     release = setup(service, "Acme-Probe-pw0")
 
     for password in PASSWORDS:
@@ -377,6 +385,29 @@ def probe(service: str) -> None:
         got = (code(answer),)
     recorded = ("ok", "ok", "1045 (28000)") if release.startswith("8.0.") else (NATIVE_REFUSED,)
     check("CH4", got, recorded)
+
+    ok, rounds_read = mysql(
+        service, TOOL, TOOL_PASSWORD, "SELECT @@global.caching_sha2_password_digest_rounds"
+    )
+    print(f"CH5 digest rounds, read by the tool: {rounds_read}")
+    check("CH5", (ok, rounds_read), (True, {"9.7.4": "10000"}.get(release, "5000")))
+
+    lengths = []
+    for size in (255, 256, 257, 512):
+        password = ("Ab3" * 200)[:size]
+        value = caching_sha2_hash(password, draw_salt(), 5000)
+        set_by_root = root(
+            service,
+            f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED WITH caching_sha2_password AS 0x{value.hex()}",
+        )
+        outcome = "set" if set_by_root == "" else set_by_root
+        lengths.append(f"{size}:{outcome}:{login(service, password)}")
+    print(f"CH6 size:set:login: {lengths}")
+    check(
+        "CH6",
+        lengths,
+        ["255:set:ok", "256:set:ok", "257:set:1045 (28000)", "512:set:1045 (28000)"],
+    )
 
 
 def main() -> int:

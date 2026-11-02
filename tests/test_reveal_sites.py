@@ -49,6 +49,11 @@ PERMITTED = {
         "which computes the SCRAM verifier the statement carries (invariant 15). The "
         "password itself is not sent"
     ),
+    "driver/mysql/password.py": (
+        "the driver call, for MySQL: the password is hashed on this machine into the "
+        "caching_sha2_password value the statement carries (invariant 15). The "
+        "password itself is not sent"
+    ),
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
     "output/reset_view.py": (
         "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"

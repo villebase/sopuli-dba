@@ -302,3 +302,43 @@ hosts compare without case.
 
 The refusal names each privilege as `<privilege> ON <object>`, with
 `through <role>` where a role gives it.
+
+---
+
+## 6. Where the password text can surface
+
+**The password never reaches the server** (invariant 15). The driver
+computes the account's `caching_sha2_password` hash on the client and sends:
+
+```sql
+ALTER USER 'acme_app'@'10.%' IDENTIFIED WITH caching_sha2_password AS 0x2441243030...
+```
+
+The hash is SHA-crypt with SHA-256, a 20-byte salt the driver draws, and the
+server's own rounds, from `caching_sha2_password_digest_rounds`, which any
+account reads. It agrees with the hash the server computes for the same
+password, salt and rounds, and a password set this way logs in
+(`02_client_hash_probe.py`, CH1, CH2 and CH5). The account is named as
+`mysql.user` spells it, with each part a quoted string: `ALTER USER` takes no
+bind parameters.
+
+**Why not `IDENTIFIED BY`.** The server writes a password it parsed as
+`<secret>` in the general log, the slow log and `performance_schema`'s
+statement history. A statement that fails to parse is kept in that history as
+it was sent, password included (`01_password_text_probe.sql`). A hex literal
+always parses, so that cannot happen with the hash.
+
+**What the server keeps is the hash.** With the general log written to a table
+and `events_statements_history_long` on, a tier-1 test has the driver set a
+password on 8.4.13. The general log keeps the statement with the hex literal,
+and the history keeps it with the hash as a string. Neither holds the
+password, and the account then logs in with it. The hash still allows an
+offline guessing attack, so treat it as sensitive. The policy's length is the
+protection against that. Where the server's error message quotes the
+statement, the driver writes any hex literal in it as `0x***` before the
+message is kept.
+
+**A password is at most 256 bytes of UTF-8.** The server stores the hash of a
+longer one and then refuses it at login, `1045`, on 8.0.46, 8.4.13 and 9.7.4
+(CH6). The driver refuses such a password before anything is sent, as it
+refuses an empty one and one with control characters.

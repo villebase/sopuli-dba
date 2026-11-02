@@ -21,6 +21,7 @@ driver sends nothing that changes the server.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -30,6 +31,7 @@ import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql import accounts as accounts_module
+from sopuli.driver.mysql import password as password_module
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
 from sopuli.driver.mysql.errors import (
@@ -40,7 +42,7 @@ from sopuli.driver.mysql.errors import (
     from_error,
 )
 from sopuli.driver.mysql.privileges import audit as privilege_audit
-from sopuli.driver.mysql.scope import observe, read_encryption
+from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     PASSWORD_ROLLOVER,
@@ -233,7 +235,50 @@ class MysqlSession(ClosesConnection):
             raise from_error(error).as_error() from error
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
-        raise self._not_written("set a password")
+        """``ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…``, with
+        the hash computed here (invariant 15, :mod:`~sopuli.driver.mysql.password`).
+
+        As on the other drivers, ``changed`` is ``True`` whenever the statement
+        succeeded: whether the account already had this password is not a
+        question the server can answer, so the command decides it first.
+
+        Refused before anything is sent, with ``password_sent`` left ``False``:
+        a password the target cannot take, a read-only session, an account that
+        does not exist, and one on another plugin. Once the statement is handed
+        to the server, a failure has ``password_sent`` set. What crossed is a
+        hash, which still allows an offline guessing attack. A timeout (``2013``)
+        leaves the outcome unknown, and the error's hint says so.
+        """
+        password_module.admit(secret)
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); `creds check` reports this "
+                    "as ACCOUNT_MISSING rather than failing"
+                ),
+            )
+        user, host = accounts_module.split(state.name)
+        rounds = self._read(lambda cursor: _digest_rounds(cursor))
+        statement = password_module.alter_user(
+            user, host, password_module.caching_sha2_hash(secret, rounds)
+        )
+        if self.connection is None:
+            raise DriverError(
+                f'the session to target "{self.target.name}" is closed',
+                hint="this is a fault in sopuli: a closed session was used again",
+            )
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(statement)
+        except pymysql.err.MySQLError as error:
+            failure = from_error(error, scrub=_scrub_hash).as_error()
+            failure.password_sent = True
+            raise failure from error
+        LOG.debug("password set for %s on %s", state.name, self.target.name)
+        return ChangeResult(changed=True, detail="password set")
 
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend an account")
@@ -289,6 +334,24 @@ class MysqlSession(ClosesConnection):
 
     def finish_rollover(self, account: str) -> ChangeResult:
         raise self._not_written("end a rollover window")
+
+
+def _digest_rounds(cursor: Any) -> int:
+    """The server's ``caching_sha2_password_digest_rounds`` (CH5)."""
+    cursor.execute(password_module.DIGEST_ROUNDS)
+    row = cursor.fetchone()
+    return int(row[0])
+
+
+#: A hex literal, such as the hash in the statement that sets a password.
+_HEX = re.compile(r"0x[0-9a-fA-F]+")
+
+
+def _scrub_hash(message: str) -> str:
+    """The server's message about the statement that sets a password, with any
+    hex literal written as ``0x***``. The server may quote part of the
+    statement, and the hash is worth an offline guessing attack."""
+    return _HEX.sub("0x***", message)
 
 
 def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:

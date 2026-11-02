@@ -49,6 +49,7 @@ def test_a_target_with_no_block_connects_verifying_the_server_and_its_name() -> 
         "connect_timeout": Timeouts().connect_s,
         "program_name": f"sopuli {RUN}",
         "autocommit": True,
+        "init_command": "SET time_zone = '+00:00'",
         "password": PASSWORD,
     }
     assert isinstance(context, ssl.SSLContext)

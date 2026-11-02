@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sopuli.driver.protocol import Cursor, DriverError, UserState
@@ -78,14 +78,23 @@ class OtherPluginError(DriverError):
 
     def __init__(self, account: str, plugin: str, *, target: str) -> None:
         super().__init__(
-            f'account "{account}" on target "{target}" uses {plugin}, and sopuli '
-            f"changes only {SUPPORTED_PLUGIN} accounts",
-            hint=(
-                f"move the account to {SUPPORTED_PLUGIN} with ALTER USER … IDENTIFIED "
-                "WITH, or remove it from the config. The tool does not change an "
-                "account's plugin"
-            ),
+            f'account "{account}" on target "{target}" {other_plugin(plugin)}',
+            hint=OTHER_PLUGIN_HINT,
         )
+
+
+#: What to do about an account on another plugin: the refusal's hint, and the
+#: end of `doctor`'s line about it.
+OTHER_PLUGIN_HINT = (
+    f"move the account to {SUPPORTED_PLUGIN} with ALTER USER … IDENTIFIED WITH, or "
+    "remove it from the config. The tool does not change an account's plugin"
+)
+
+
+def other_plugin(plugin: str) -> str:
+    """The words for an account on another plugin, shared by the refusal and
+    `doctor`'s line, so the two say the same."""
+    return f"uses {plugin}, and sopuli changes only {SUPPORTED_PLUGIN} accounts"
 
 
 @dataclass(frozen=True)
@@ -115,9 +124,14 @@ def split(account: str) -> tuple[str, str]:
     return user, host
 
 
+#: ASCII letters to lower case and nothing else: the ``Host`` column's
+#: collation is ``ascii_general_ci``, so only ASCII letters fold.
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
 def same_host(left: str, right: str) -> bool:
     """Hosts compare without case, as the server compares them (ID3)."""
-    return left.lower() == right.lower()
+    return left.translate(_ASCII_LOWER) == right.translate(_ASCII_LOWER)
 
 
 def account_of(row: Sequence[Any]) -> Account:
@@ -128,7 +142,8 @@ def account_of(row: Sequence[Any]) -> Account:
         plugin=_text(plugin),
         locked=_text(locked) == "Y",
         expired=_text(expired) == "Y",
-        changed_at=changed_at if isinstance(changed_at, datetime) else None,
+        # The session's time zone is UTC (connection.UTC_SESSION).
+        changed_at=changed_at.replace(tzinfo=UTC) if isinstance(changed_at, datetime) else None,
         lifetime_days=None if lifetime is None else int(lifetime),
     )
 
@@ -139,9 +154,13 @@ def _text(value: Any) -> str:
 
 
 def read(cursor: Cursor, user: str) -> list[Account]:
-    """Every account with this user name, at any host."""
+    """Every account with this user name, at any host.
+
+    Compared again here: the binary collation of ``User`` pads with spaces, so
+    the server's ``=`` also matches a name that differs by trailing spaces.
+    """
     cursor.execute(ROWS_FOR_USER, (user,))
-    return [account_of(row) for row in cursor.fetchall()]
+    return [found for found in map(account_of, cursor.fetchall()) if found.user == user]
 
 
 def find(accounts: Iterable[Account], host: str) -> Account | None:
@@ -152,7 +171,7 @@ def find(accounts: Iterable[Account], host: str) -> Account | None:
     return None
 
 
-def state_of(account: Account) -> UserState:
+def state_of(account: Account, *, now: datetime) -> UserState:
     """One account as a :class:`~sopuli.driver.protocol.UserState`.
 
     A lock is always a person's: ``account_locked`` is set by ``ACCOUNT
@@ -161,16 +180,20 @@ def state_of(account: Account) -> UserState:
     password expires ``password_lifetime`` days after it changed. A lifetime of
     ``NULL`` follows the server's ``default_password_lifetime``, which the
     account's row does not say, so the date is unknown there too.
+
+    The password has expired where ``password_expired`` says so, which only
+    ``PASSWORD EXPIRE`` sets, or where its lifetime has run out at ``now``.
     """
     expires_at = None
     if account.changed_at is not None and account.lifetime_days:
         expires_at = account.changed_at + timedelta(days=account.lifetime_days)
+    expired = account.expired or (expires_at is not None and expires_at <= now)
     return UserState(
         name=account.name,
-        status=_status(locked=account.locked, expired=account.expired),
+        status=_status(locked=account.locked, expired=expired),
         locked=account.locked,
         deliberately_locked=account.locked,
-        expired=account.expired,
+        expired=expired,
         password_changed_at=account.changed_at,
         password_changed_unknown=None if account.changed_at else NO_CHANGE_DATE,
         password_expires_at=expires_at,
@@ -189,7 +212,9 @@ def _status(*, locked: bool, expired: bool) -> str:
     return OPEN
 
 
-def describe(cursor: Cursor, account: str, *, target: str) -> UserState | None:
+def describe(
+    cursor: Cursor, account: str, *, target: str, now: datetime | None = None
+) -> UserState | None:
     """The declared account's state, ``None`` where it does not exist.
 
     Raises :class:`OtherPluginError` for an account on another plugin.
@@ -200,7 +225,7 @@ def describe(cursor: Cursor, account: str, *, target: str) -> UserState | None:
         return None
     if found.plugin != SUPPORTED_PLUGIN:
         raise OtherPluginError(found.name, found.plugin, target=target)
-    return state_of(found)
+    return state_of(found, now=now or datetime.now(UTC))
 
 
 def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:
@@ -226,10 +251,7 @@ def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:
                     "it from the config. The tool does not create accounts"
                 )
             elif found.plugin != SUPPORTED_PLUGIN:
-                lines.append(
-                    f"{found.name} uses {found.plugin}: the tool changes only "
-                    f"{SUPPORTED_PLUGIN} accounts. Move it, or remove it from the config"
-                )
+                lines.append(f"{found.name} {other_plugin(found.plugin)}: {OTHER_PLUGIN_HINT}")
         for row in rows:
             if not any(same_host(row.host, host) for host in wanted):
                 lines.append(

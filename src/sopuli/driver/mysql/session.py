@@ -12,8 +12,9 @@ tool account that can use ``SYSTEM_USER``, audits the tool account's grants
 and the declared accounts for ``doctor --check-privileges``, and describes an
 account. Only `doctor` gets this far: the registry entry lists no command, so
 every other command refuses the target with ``SOPULI-20006`` before it
-connects. The methods that change an account or verify a password are a second
-line behind that, and refuse with ``SOPULI-20006`` without a round trip. The
+connects. Every other method, such as the ones that change an account, verify
+a password, size a password or look up a role, is a second line behind that,
+and refuses with ``SOPULI-20006`` without a round trip. The
 driver sends nothing that changes the server.
 """
 
@@ -31,7 +32,13 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
-from sopuli.driver.mysql.errors import TLS_CONNECTION_ERROR, UNKNOWN_CLIENT_ERROR, from_error
+from sopuli.driver.mysql.errors import (
+    COLUMN_ACCESS_DENIED,
+    TABLE_ACCESS_DENIED,
+    TLS_CONNECTION_ERROR,
+    UNKNOWN_CLIENT_ERROR,
+    from_error,
+)
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption
 from sopuli.driver.protocol import (
@@ -64,7 +71,7 @@ from sopuli.secrets import Secret
 LOG = logger("mysql")
 
 #: The server refused a read of a table (``1142``) or a column (``1143``).
-REFUSED_READ = frozenset({"1142", "1143"})
+REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
 
 T = TypeVar("T")
 

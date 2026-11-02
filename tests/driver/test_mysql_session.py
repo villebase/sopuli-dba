@@ -33,6 +33,7 @@ session_module = pytest.importorskip("sopuli.driver.mysql.session")
 scope_module = pytest.importorskip("sopuli.driver.mysql.scope")
 grants_module = pytest.importorskip("sopuli.driver.mysql.grants")
 privileges_module = pytest.importorskip("sopuli.driver.mysql.privileges")
+accounts_module = pytest.importorskip("sopuli.driver.mysql.accounts")
 
 
 class _Cursor:
@@ -49,14 +50,19 @@ class _Cursor:
     def execute(self, query: str, args: Any = None, /) -> None:
         self._connection.queries.append(query)
         self._last = query
+        if query == accounts_module.ROWS_FOR_USER and self._connection.refuse is not None:
+            raise self._connection.refuse
 
     def fetchone(self) -> Any:
         return self._rows[self._last]
 
     def fetchall(self) -> Any:
-        """No role, and only `CREATE USER`, as 8.4.13 printed it."""
+        """No role, and only `CREATE USER`, as 8.4.13 printed it. Accounts
+        from the connection."""
         if self._last in (grants_module.DIRECT_ROLES, privileges_module.ALL_ROLES):
             return []
+        if self._last == accounts_module.ROWS_FOR_USER:
+            return self._connection.accounts
         return [("GRANT CREATE USER ON *.* TO `sopuli_admin`@`%`",)]
 
 
@@ -66,6 +72,9 @@ class _Connection:
         self.version = version
         self.closed = 0
         self.queries: list[str] = []
+        #: `mysql.user` rows, and an error the read of them raises instead.
+        self.accounts: list[tuple[Any, ...]] = []
+        self.refuse: Exception | None = None
 
     @contextmanager
     def cursor(self) -> Iterator[_Cursor]:
@@ -152,6 +161,53 @@ def test_the_privilege_audit_reads_the_tool_accounts_grants() -> None:
     assert "SELECT (account_locked) ON mysql.user" in audit.missing
     assert audit.over_granted == ()
     assert audit.unaudited == ()
+
+
+def _account_row(host: str) -> tuple[Any, ...]:
+    return ("acme_app", host, "caching_sha2_password", "N", "N", None, None)
+
+
+def test_the_audit_adds_a_line_for_each_declared_account_finding() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%"), _account_row("localhost")]
+
+    audit = session.privileges(accounts=("acme_app@10.%",))
+
+    assert audit.unreadable == ()
+    assert audit.remedies[-1].startswith("acme_app@localhost exists and the config")
+
+
+def test_a_refused_read_of_mysql_user_makes_the_audit_partial() -> None:
+    session = _session()
+    session.connection.refuse = session_module.pymysql.err.OperationalError(
+        1143, "SELECT command denied to user for column 'plugin' in table 'user'"
+    )
+
+    audit = session.privileges(accounts=("acme_app@10.%",))
+
+    assert audit.unreadable == ("mysql.user",)
+    assert audit.held == ("CREATE USER",)
+
+
+def test_any_other_failure_of_the_read_fails_the_audit() -> None:
+    session = _session()
+    session.connection.refuse = session_module.pymysql.err.OperationalError(2013, "Lost connection")
+
+    with pytest.raises(DriverError) as caught:
+        session.privileges(accounts=("acme_app@10.%",))
+
+    assert caught.value.code == "2013"
+
+
+def test_describe_user_reads_the_account() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+
+    state = session.describe_user("acme_app@10.%")
+
+    assert state is not None
+    assert state.name == "acme_app@10.%"
+    assert session.describe_user("acme_app@192.0.2.%") is None
 
 
 def test_close_is_safe_twice() -> None:

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.driver.mysql import admin
 from sopuli.driver.mysql.accounts import (
     DEFAULT_LIFETIME,
     EXPIRED,
@@ -51,6 +52,8 @@ class _Cursor:
     def __init__(self, rows: list[tuple[Any, ...]], default_lifetime: int | None = 0) -> None:
         self.rows = rows
         self.default_lifetime = default_lifetime
+        #: The account's `*_priv` row, for guardrail 9's read; none by default.
+        self.global_row: tuple[str, ...] | None = None
         self.queries: list[tuple[str, Any]] = []
         self._last = ""
         self._users: tuple[str, ...] = ()
@@ -63,11 +66,20 @@ class _Cursor:
             self._users = tuple(user.rstrip(" ") for user in args)
 
     def fetchone(self) -> Any:
-        assert self._last == DEFAULT_LIFETIME
-        return (self.default_lifetime,)
+        if self._last == DEFAULT_LIFETIME:
+            return (self.default_lifetime,)
+        if self._last == admin.MANDATORY_ROLES:
+            return ("",)
+        if self._last == admin.PARTIAL_REVOKES:
+            return (0,)
+        assert self._last == admin.GLOBAL_ROW
+        return self.global_row
 
     def fetchall(self) -> Any:
-        return [row for row in self.rows if _decoded(row[0]) in self._users]
+        if self._last.startswith("select User,"):
+            return [row for row in self.rows if _decoded(row[0]) in self._users]
+        # The other grant tables of guardrail 9's read: nothing held.
+        return []
 
 
 def _reads(cursor: _Cursor) -> int:
@@ -199,6 +211,18 @@ def test_only_the_servers_own_accounts_are_vendor_maintained(
 
     assert state is not None
     assert state.vendor_maintained is vendor
+
+
+def test_describe_reads_the_global_privileges_guardrail_9_refuses() -> None:
+    cursor = _Cursor([_row()])
+    cursor.global_row = tuple(
+        "Y" if column == "Super_priv" else "N" for column in admin.PRIV_COLUMNS
+    )
+
+    state = describe(cursor, "acme_app@10.%", target="mysql-dev", now=NOW)
+
+    assert state is not None
+    assert state.global_privileges == {"SUPER ON *.*"}
 
 
 def test_another_plugin_is_refused_naming_it() -> None:

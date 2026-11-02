@@ -523,6 +523,20 @@ class MysqlStack:
             connect_timeout=5,
         )
 
+    def grant_section_2(self, user: str, host: str = "%") -> None:
+        """Give an account the tool account's grants of
+        `02-mysql-privileges.md` §2.1, from the lists the audit checks."""
+        from sopuli.driver.mysql.admin import TABLES_READ
+        from sopuli.driver.mysql.privileges import COLUMNS
+
+        with self.connect() as admin, admin.cursor() as cursor:
+            cursor.execute("grant create user on *.* to %s@%s", (user, host))
+            cursor.execute(
+                f"grant select ({', '.join(COLUMNS)}) on mysql.user to %s@%s", (user, host)
+            )
+            for table in TABLES_READ:
+                cursor.execute(f"grant select on {table} to %s@%s", (user, host))
+
 
 @pytest.fixture(scope="session")
 def live_mysql() -> MysqlStack:

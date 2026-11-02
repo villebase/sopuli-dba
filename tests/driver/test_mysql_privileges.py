@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql import grants as grants_module
+from sopuli.driver.mysql.admin import TABLES_READ as TABLES
 from sopuli.driver.mysql.grants import parse_all
 from sopuli.driver.mysql.privileges import (
     ALL_ROLES,
@@ -21,11 +22,35 @@ from sopuli.driver.mysql.privileges import (
 )
 
 TOOL = "`sopuli_admin`@`192.0.2.10`"
+#: §2.1's grants, as SHOW GRANTS prints them.
 COLUMN_GRANT = (
-    "GRANT SELECT (`Host`, `User`, `account_locked`, `password_expired`, "
-    "`password_last_changed`, `password_lifetime`, `plugin`) ON `mysql`.`user` TO " + TOOL
+    "GRANT SELECT (" + ", ".join(f"`{name}`" for name in COLUMNS) + f") ON `mysql`.`user` TO {TOOL}"
 )
-INSTALL = [f"GRANT CREATE USER ON *.* TO {TOOL}", COLUMN_GRANT]
+TABLE_GRANTS = [
+    f"GRANT SELECT ON `{table.split('.')[0]}`.`{table.split('.')[1]}` TO {TOOL}" for table in TABLES
+]
+INSTALL = [f"GRANT CREATE USER ON *.* TO {TOOL}", COLUMN_GRANT, *TABLE_GRANTS]
+#: §2.1 but the column grant on mysql.user.
+WITHOUT_COLUMNS = [INSTALL[0], *TABLE_GRANTS]
+
+
+def test_every_column_and_table_the_driver_reads_is_in_section_2() -> None:
+    """A tripwire: a read the audit does not know of would fail with 1142 or
+    1143, and the session's hint would then send the operator to an audit
+    that reports nothing missing."""
+    import re
+
+    from sopuli.driver.mysql import accounts, admin
+
+    user_columns = re.search(r"select (.*) from mysql\.user", accounts.ROWS_FOR_USERS)
+    assert user_columns is not None
+    assert set(user_columns.group(1).split(", ")) <= set(COLUMNS)
+    assert set(admin.PRIV_COLUMNS) <= set(COLUMNS)
+    queries = [
+        value for name, value in vars(admin).items() if name.isupper() and isinstance(value, str)
+    ]
+    tables = {table for query in queries for table in re.findall(r"from (mysql\.\w+)", query)}
+    assert tables - {"mysql.user"} <= set(TABLES)
 
 
 def _classify(lines: list[str], roles: tuple[str, ...] = ()) -> Any:
@@ -38,7 +63,13 @@ def test_the_grants_of_section_2_are_held_and_nothing_is_missing() -> None:
     assert found.missing == ()
     assert found.over_granted == ()
     assert found.held == tuple(
-        sorted([CREATE_USER, *(f"SELECT ({name}) ON mysql.user" for name in COLUMNS)])
+        sorted(
+            [
+                CREATE_USER,
+                *(f"SELECT ({name}) ON mysql.user" for name in COLUMNS),
+                *(f"SELECT ON {table}" for table in TABLES),
+            ]
+        )
     )
     assert found.remedies == ()
     assert found.hint == (
@@ -52,11 +83,11 @@ def test_what_is_not_granted_is_missing() -> None:
 
     assert found.held == ()
     assert found.missing[0] == CREATE_USER
-    assert len(found.missing) == 1 + len(COLUMNS)
+    assert len(found.missing) == 1 + len(COLUMNS) + len(TABLES)
 
 
 def test_column_names_are_compared_without_case() -> None:
-    lines = [INSTALL[0], COLUMN_GRANT.replace("`plugin`", "`Plugin`")]
+    lines = [*WITHOUT_COLUMNS, COLUMN_GRANT.replace("`plugin`", "`Plugin`")]
 
     assert _classify(lines).missing == ()
 
@@ -103,17 +134,28 @@ def test_every_privilege_outside_section_2_is_over_granted() -> None:
 def test_a_broader_select_covers_the_columns_and_is_over_granted(line: str, over: str) -> None:
     """The tool can read what it needs, so nothing is missing, and it reads
     the hashes too, so the grant is over-granted."""
-    found = _classify([INSTALL[0], line])
+    found = _classify([*WITHOUT_COLUMNS, line])
 
     assert found.missing == ()
     assert found.over_granted == (over,)
+
+
+def test_select_on_the_mysql_schema_covers_the_tables_of_section_2() -> None:
+    found = _classify([INSTALL[0], COLUMN_GRANT, f"GRANT SELECT ON `mysql`.* TO {TOOL}"])
+
+    assert found.missing == ()
+    assert found.over_granted == ("SELECT ON mysql.*",)
 
 
 def test_a_broader_select_does_not_count_beside_a_line_the_parser_cannot_read() -> None:
     """With `partial_revokes`, a REVOKE line may take `mysql` out of
     `SELECT ON *.*`, so only the exact column grant counts as held."""
     found = _classify(
-        [INSTALL[0], f"GRANT SELECT ON *.* TO {TOOL}", f"REVOKE SELECT ON `mysql`.* FROM {TOOL}"]
+        [
+            *WITHOUT_COLUMNS,
+            f"GRANT SELECT ON *.* TO {TOOL}",
+            f"REVOKE SELECT ON `mysql`.* FROM {TOOL}",
+        ]
     )
 
     assert len(found.missing) == len(COLUMNS)
@@ -142,20 +184,26 @@ def test_all_privileges_on_every_object_covers_section_2() -> None:
 def test_a_schema_that_differs_only_in_case_is_not_the_system_schema() -> None:
     """Names are case-sensitive on Linux: `MYSQL`.`USER` is another table."""
     line = COLUMN_GRANT.replace("`mysql`.`user`", "`MYSQL`.`USER`")
-    found = _classify([INSTALL[0], line])
+    found = _classify([*WITHOUT_COLUMNS, line])
 
     assert len(found.missing) == len(COLUMNS)
 
 
 def test_the_hint_gives_the_statements_for_what_is_missing() -> None:
-    found = _classify([f"GRANT SELECT (`User`, `Host`) ON `mysql`.`user` TO {TOOL}"])
+    found = _classify(
+        [
+            f"GRANT SELECT (`User`, `Host`) ON `mysql`.`user` TO {TOOL}",
+            *TABLE_GRANTS[1:],
+        ]
+    )
+    account = "'sopuli_admin'@'192.0.2.10'"
+    rest = ", ".join(COLUMNS[2:])
 
     assert found.hint == (
         "02-mysql-privileges.md section 2 has the grants for the tool account "
-        "`sopuli_admin@192.0.2.10`: GRANT CREATE USER ON *.* TO "
-        "'sopuli_admin'@'192.0.2.10'; GRANT SELECT (plugin, account_locked, "
-        "password_expired, password_last_changed, password_lifetime) ON mysql.user "
-        "TO 'sopuli_admin'@'192.0.2.10';"
+        f"`sopuli_admin@192.0.2.10`: GRANT CREATE USER ON *.* TO {account}; "
+        f"GRANT SELECT ({rest}) ON mysql.user TO {account}; "
+        f"GRANT SELECT ON {TABLES[0]} TO {account};"
     )
 
 
@@ -203,6 +251,7 @@ class _Cursor:
         return [
             (f"GRANT PROCESS, CREATE USER ON *.* TO {TOOL}",),
             (COLUMN_GRANT,),
+            *((line,) for line in TABLE_GRANTS),
             (f"GRANT `acme_ops`@`%` TO {TOOL}",),
         ]
 

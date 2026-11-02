@@ -357,6 +357,15 @@ protection against that. Where the server's error message quotes the
 statement, the driver writes any hex literal in it as `0x***`, and any other
 run of 16 or more hex digits as `***`, before the message is kept.
 
+**The server's password rules do not apply.** Neither an account's
+`PASSWORD HISTORY` or `PASSWORD REUSE INTERVAL` nor the `validate_password`
+component checks a password that arrives as a hash. The server accepts a
+password from the history, or one that `validate_password` would refuse, on
+8.0.46, 8.4.13 and 9.7.4 (`08_password_rules_probe.py`). The policy in the
+tool's config is the only check on what the tool sets. The server still adds
+each such password to the history, so a person who later sets the same
+password with `IDENTIFIED BY` is refused, `3638`.
+
 **A password is at most 256 bytes of UTF-8.** The server stores the hash of a
 longer one and then refuses it at login, `1045`, on 8.0.46, 8.4.13 and 9.7.4
 (CH6). The driver refuses such a password before anything is sent, as it

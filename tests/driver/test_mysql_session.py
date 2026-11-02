@@ -23,6 +23,7 @@ from sopuli.driver.protocol import (
     DriverContext,
     DriverError,
     Session,
+    Timeouts,
     UnsupportedCapabilityError,
 )
 from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
@@ -119,7 +120,12 @@ def _target(mode: str = "VERIFY_IDENTITY") -> ExpandedTarget:
 
 
 def _session(tls: str = "TLSv1.3") -> Any:
-    return session_module.MysqlSession(connection=_Connection(tls), target=_target())
+    return session_module.MysqlSession(
+        connection=_Connection(tls),
+        target=_target(),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
 
 
 def test_the_session_and_the_driver_satisfy_the_protocol() -> None:
@@ -150,8 +156,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
         lambda s: s.resolve_profile("default"),
         lambda s: s.resolve_role("acme_role"),
         lambda s: s.accounts_matching(role="acme_role"),
-        lambda s: s.verify_password("acme_app@%", Secret("x")),
-        lambda s: s.require_verifier("acme_app@%", Secret("x")),
         lambda s: s.finish_rollover("acme_app@%"),
     ],
 )

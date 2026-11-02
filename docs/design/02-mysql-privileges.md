@@ -361,3 +361,43 @@ run of 16 or more hex digits as `***`, before the message is kept.
 longer one and then refuses it at login, `1045`, on 8.0.46, 8.4.13 and 9.7.4
 (CH6). The driver refuses such a password before anything is sent, as it
 refuses an empty one and one with control characters.
+
+---
+
+## 7. Checking a password by login
+
+`creds check` verifies a password by logging in as the account, over the
+target's own TLS settings, timeouts and `program_name`. It cannot compare a
+hash: the hash is in `authentication_string`, which the tool account does not
+read, so the driver reports no `offline_verify`, and `--method hash` or
+`both` is refused at plan time, exit 5.
+
+**A login reaches the account the server matches from the client's host.**
+The tool sends only the user name, and the server picks the account by host.
+Measured on 8.4.13: with `acme_app@%` and `acme_app@10.%`, a login from the
+tool's host reached `acme_app@%`, and `acme_app@10.%`'s own password was
+refused with `1045`. A refusal names the client's host, not the account, so it
+cannot be told apart from a wrong password. **The tool therefore logs in only
+as a `user@%` account that is the user's only account** (decided on
+[#1223](../decisions/log.md#1223)). Any other declared account is
+`unavailable`, with no login, and the detail says why. After a login,
+`CURRENT_USER()` confirms which account answered.
+
+What a login answers, measured on 8.4.13 with PyMySQL 2.2.8:
+
+| Account | Right password | Wrong password |
+|---|---|---|
+| open | logs in: `pass` | `1045`: `fail` |
+| expired | `1862` at connect: `pass` | `1045`: `fail` |
+| locked | `3118`: `pass` | `1045`: `fail` |
+
+PyMySQL does not say it can handle an expired password, so the server refuses
+it at connect with `1862`; the mysql client's `1820` after login does not
+arise. Both say the password is right. A block after failed logins, `3955`,
+answers the right password too, so it is `unavailable`. An account that does
+not exist, or that `mysql.user` reports locked, is `unavailable` with no login.
+
+**There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` and its counter are in
+`User_attributes`, which the tool account does not read (#1202, decision 6).
+A login goes ahead, as on Oracle without the `SYS.USER$` grant, and each
+result's detail says the guard is unavailable.

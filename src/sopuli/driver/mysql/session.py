@@ -24,14 +24,17 @@ import logging
 import re
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import Any, TypeVar
 
 import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
+from sopuli.driver.mysql import verification
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
 from sopuli.driver.mysql.errors import (
@@ -47,8 +50,13 @@ from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
+    OFFLINE_VERIFY,
+    PASS,
     PASSWORD_ROLLOVER,
+    UNAVAILABLE,
     UNKNOWN,
+    VERIFY_BOTH,
+    VERIFY_HASH,
     VERIFY_LOGIN,
     AccountAttributes,
     AccountChange,
@@ -63,6 +71,7 @@ from sopuli.driver.protocol import (
     PrivilegeAudit,
     Scope,
     Timeouts,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
     require_capability,
@@ -127,6 +136,12 @@ class MysqlSession(ClosesConnection):
 
     connection: Any
     target: ExpandedTarget
+    #: The run's, for the login :meth:`verify_password` makes as a managed
+    #: account, which carries the same ``program_name`` and timeouts. No
+    #: defaults, so a session cannot be built that loses the run's id or its
+    #: budgets, as on PostgreSQL.
+    correlation_id: str
+    timeouts: Timeouts
     #: The session's encryption, where connect already read it to hold a mode
     #: that requires TLS to it, so :meth:`scope` does not read it again.
     encryption: Encryption | None = None
@@ -358,10 +373,102 @@ class MysqlSession(ClosesConnection):
         lockout_margin: int = 2,
         attempts: int = 1,
     ) -> VerifyResult:
-        raise self._not_written("verify a password")
+        """Log in once as ``account`` with ``secret``, and say what that showed
+        (:mod:`sopuli.driver.mysql.verification`).
+
+        ``login`` only: ``hash`` and ``both`` need ``offline_verify``, which this
+        driver never reports, because the hash is in ``authentication_string``,
+        which the tool account does not read. :meth:`require_verifier` refuses
+        them at plan time, and this refuses them again.
+
+        The tool logs in only where nothing but the declared account can answer:
+        a ``user@%`` account that is the user's only one. Any other is
+        :data:`~sopuli.driver.protocol.UNAVAILABLE` without a login, as is an
+        account that does not exist or is locked. MySQL gives the tool no
+        lockout counter to read, so ``lockout_margin`` and ``attempts`` have
+        nothing to guard, and the detail says so.
+        """
+        if method in (VERIFY_HASH, VERIFY_BOTH):
+            self.require_verifier(account, secret)
+        if method != VERIFY_LOGIN:
+            raise UnsupportedCapabilityError(
+                f"verification method {method!r}",
+                target=self.target.name,
+                hint="this driver verifies by `login` only",
+            )
+        state = self.describe_user(account)
+        if state is None:
+            return _not_tried(f'there is no account "{account}" on this target')
+        user, host = accounts_module.split(state.name)
+        same_user = self._read(lambda cursor: accounts_module.read(cursor, [user])[user])
+        declared = accounts_module.find(same_user, host)
+        if declared is None:  # Dropped between the two reads.
+            return _not_tried(f'there is no account "{account}" on this target')
+        reason = verification.not_tried_reason(declared, same_user)
+        if reason is not None:
+            return _not_tried(reason)
+        if state.locked:
+            return _not_tried(f"the account is locked ({state.status}); no login was attempted")
+        return self._login(declared, secret)
+
+    def _login(self, declared: accounts_module.Account, secret: Secret) -> VerifyResult:
+        arguments = connect_arguments(
+            self.target,
+            Credential(username=declared.user, secret=secret),
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+        )
+        started = time.monotonic()
+        try:
+            connection = pymysql.connect(**arguments)
+        except pymysql.err.MySQLError as error:
+            latency = _ms(started)
+            failure = from_error(error, connecting=True)
+            LOG.debug(
+                "login as %s failed with %s in %.3fs", declared.name, failure.code, latency / 1000
+            )
+            outcome = verification.login_outcome(failure)
+            if outcome is None:
+                raise failure.as_error() from error
+            result, detail = outcome
+            return VerifyResult(
+                method=VERIFY_LOGIN, result=result, latency_ms=latency, detail=detail
+            )
+        latency = _ms(started)
+        try:
+            with connection.cursor() as cursor:
+                answered = accounts_module.current_user(cursor)
+        except pymysql.err.MySQLError as error:
+            raise from_error(error).as_error() from error
+        finally:
+            # The login has answered. A socket that drops as it closes does
+            # not change the answer.
+            with suppress(pymysql.err.MySQLError):
+                connection.close()
+        if not same_mysql_account(answered, declared.name):
+            # Unreachable for a user's sole `%` account, and checked anyway:
+            # a pass on another account's password would be a false pass.
+            return _not_tried(
+                f"the login reached {answered}, not {declared.name}, so it says nothing "
+                "about the declared account's password"
+            )
+        LOG.debug("login as %s: pass in %.3fs", declared.name, latency / 1000)
+        return VerifyResult(
+            method=VERIFY_LOGIN, result=PASS, latency_ms=latency, detail=verification.UNGUARDED
+        )
 
     def require_verifier(self, account: str, secret: Secret) -> None:
-        raise self._not_written("compare a stored hash")
+        """Refuse ``hash`` and ``both`` at plan time (invariant 4): this driver
+        never reports ``offline_verify``."""
+        require_capability(
+            self.scope(),
+            OFFLINE_VERIFY,
+            target=self.target.name,
+            hint=(
+                "the hash is in mysql.user.authentication_string, which the tool account "
+                "does not read; use --method login, the default"
+            ),
+        )
 
     def require_rollover(self, account: str) -> None:
         """Refused by capability until the rollover is written (#1224): no
@@ -370,6 +477,16 @@ class MysqlSession(ClosesConnection):
 
     def finish_rollover(self, account: str) -> ChangeResult:
         raise self._not_written("end a rollover window")
+
+
+def _ms(started: float) -> int:
+    """Milliseconds since ``started``, a :func:`time.monotonic` reading."""
+    return round((time.monotonic() - started) * 1000)
+
+
+def _not_tried(detail: str) -> VerifyResult:
+    """A login :meth:`MysqlSession.verify_password` settled without trying."""
+    return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
 
 
 def _digest_rounds(cursor: Any) -> int:
@@ -490,7 +607,13 @@ class MysqlDriver:
         except BaseException:
             connection.close()
             raise
-        return MysqlSession(connection=connection, target=target, encryption=encryption)
+        return MysqlSession(
+            connection=connection,
+            target=target,
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+            encryption=encryption,
+        )
 
 
 def build_driver(context: DriverContext) -> MysqlDriver:

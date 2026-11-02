@@ -24,10 +24,11 @@ not move an account to another plugin.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sopuli.driver.mysql import admin
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
@@ -250,7 +251,11 @@ def describe(
         return None
     if found.plugin != SUPPORTED_PLUGIN:
         raise OtherPluginError(found.name, found.plugin, target=target)
-    return state_of(found, now=now or datetime.now(UTC), default_days=default_lifetime(cursor))
+    state = state_of(found, now=now or datetime.now(UTC), default_days=default_lifetime(cursor))
+    # Guardrail 9 reads it (`02-mysql-privileges.md` §5). Read here, so every
+    # command that describes the account before it changes it has it.
+    held = admin.global_privileges(cursor, admin.Principal(found.user, found.host))
+    return replace(state, global_privileges=held)
 
 
 def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:

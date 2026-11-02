@@ -55,6 +55,12 @@ class _Cursor:
             raise self._connection.refuse
 
     def fetchone(self) -> Any:
+        """Guardrail 9's reads find nothing held: no `*_priv` row, and no
+        mandatory role."""
+        if self._last.startswith("select Select_priv"):
+            return None
+        if self._last == "select @@global.mandatory_roles":
+            return ("",)
         return self._rows[self._last]
 
     def fetchall(self) -> Any:
@@ -64,6 +70,9 @@ class _Cursor:
             return []
         if self._last.startswith("select User,"):
             return self._connection.accounts
+        if not self._last.startswith("show grants"):
+            # Guardrail 9's grant-table reads: nothing held.
+            return []
         return [("GRANT CREATE USER ON *.* TO `sopuli_admin`@`%`",)]
 
 

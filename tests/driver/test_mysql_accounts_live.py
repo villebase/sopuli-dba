@@ -151,6 +151,23 @@ def test_global_privileges_are_read_through_every_path(stage: Stage) -> None:
     }
 
 
+def test_guardrail_9_refuses_a_described_account_with_a_global_privilege(stage: Stage) -> None:
+    """End to end: the driver reads the privilege, and the guardrail refuses
+    the account even with --force."""
+    from sopuli.driver import guardrails
+
+    user = stage.account("10.%")
+    stage.admin("grant select on *.* to %s@'10.%%'", (user,))
+    name = f"{user}@10.%"
+
+    state = stage.session.describe_user(name)
+
+    assert state is not None
+    assert state.global_privileges == {"SELECT ON *.*"}
+    review = guardrails.review(state, declared=[name], force=True)
+    assert [refusal.check for refusal in review.refusals] == [guardrails.GLOBAL_PRIVILEGE]
+
+
 def test_without_the_column_grant_mysql_user_is_unreadable(stage: Stage) -> None:
     """A column privilege applies to the session's next statement. The server
     refuses the read, and the audit is partial rather than failed."""

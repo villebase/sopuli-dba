@@ -602,6 +602,20 @@ These rules decide what `apply` does with each account:
   works alone. The two logins are budgeted as one run's attempts. A `pass` under
   an open rollover window is also a reason not to act, because applying again
   would restart the window and report a change nobody asked for.
+- **On MySQL, `apply` and `rotate` do not log in before a change**
+  ([#1223](../decisions/log.md#1223)). During a rotation that login would use
+  the new password and fail once, and on an account with
+  `FAILED_LOGIN_ATTEMPTS 1` one failure blocks it for `PASSWORD_LOCK_TIME`
+  days, which a new password does not clear. So they set the password on every
+  run and report `changed: true`, an exception to invariant 9. After the
+  change they verify by a login with the new password, but a login reaches
+  only a `user@%` account that is the user's only one, with no anonymous
+  account at a named host. For any other account the server's
+  `password_last_changed` stands in for the login: no
+  earlier than the server's clock just before the statement, it is the
+  verification result `stored`, the account is `IN_SYNC`, and its pending
+  password can be promoted. `stored` is weaker than `pass`: the server holds
+  the hash the tool sent, and no client has logged in with the password.
 - **A locked account is not changed at all,** unless the policy asks for an
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,

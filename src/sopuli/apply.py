@@ -87,6 +87,7 @@ from sopuli.config.secret_refs import SecretRef
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
+    STORED,
     UNAVAILABLE,
     AccountAttributes,
     UserState,
@@ -528,6 +529,17 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
                 verification,
             )
         return Outcome(IN_SYNC, "changed and verified by login", verification)
+    if verification.result == STORED:
+        # Weaker than a login, and promotable all the same (#1223): the server
+        # holds the hash the tool sent. The verification's own result says
+        # which kind of confirmation this was.
+        return Outcome(
+            IN_SYNC,
+            "changed, and the server records the change. No login can reach this "
+            "account, so nothing shows whether it already had the password: the tool "
+            "sets it on every run",
+            verification,
+        )
     if verification.result in (VERIFY_SKIPPED, UNAVAILABLE):
         return Outcome(
             UNVERIFIABLE,

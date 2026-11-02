@@ -17,6 +17,11 @@ mysql.user's account_locked, password_expired and User_attributes:
        the right one. Then whether any column of the account's row in
        mysql.user changed. Then ACCOUNT UNLOCK, and
        the right one again
+  LE5  FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1. A login with a new
+       password the account does not have yet, as a rotation's login before
+       the change would make, then the current password. Then the tool sets
+       the new password by hash, as the driver does, and logs in with it. Then
+       ACCOUNT UNLOCK, and the new password again (#1223)
 
 A login is "ok", or the error number and SQLSTATE of the refusal. Logins use
 the server's own mysql client, as in 02_client_hash_probe.py.
@@ -29,7 +34,8 @@ It MEASURES and decides nothing.
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
-times.
+times. LE5 was added and the whole probe run again on 2026-11-02 (#1223),
+twice, exit 0, with the same result.
 
 RESULTS -- the same on all three releases
 
@@ -51,9 +57,17 @@ RESULTS -- the same on all three releases
        logins", and the right password then 3955 too. Every column of the
        account's row in mysql.user is the same as before the wrong passwords.
        ACCOUNT UNLOCK is accepted, and the right password logs in
+  LE5  accepted. The new password, which the account does not have yet,
+       answers 3955 (HY000) at once, and the current password 3955 too. The
+       tool's ALTER USER ... AS with the new password's hash is accepted, and
+       the new password still answers 3955. ACCOUNT UNLOCK is accepted, and
+       the new password then logs in
 
   So a lock and an expiry read back from mysql.user, and a timed block does
-  not: nothing in mysql.user shows it. ACCOUNT UNLOCK ends both kinds.
+  not: nothing in mysql.user shows it. ACCOUNT UNLOCK ends both kinds. A
+  password change does not end a timed block, so with FAILED_LOGIN_ATTEMPTS 1
+  one wrong login, such as one before a rotation's change, blocks the account
+  for PASSWORD_LOCK_TIME days.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -84,7 +98,7 @@ ch = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(ch)
 
 ACCOUNT = ch.ACCOUNT
-A, B = "Acme-Probe-pwA", "Acme-Probe-pwB"
+A, B, C = "Acme-Probe-pwA", "Acme-Probe-pwB", "Acme-Probe-pwC"
 OK, REFUSED = "ok", "1045 (28000)"
 LOCKED = "3118 (HY000)"
 BLOCKED = "3955 (HY000)"
@@ -188,6 +202,26 @@ def probe(service: str) -> None:
         "LE4",
         (answer, before, first, second, right, unchanged, unlock, after_unlock),
         (OK, attributes, REFUSED, BLOCKED, BLOCKED, True, OK, OK),
+    )
+
+    # LE5: a rotation's login before the change uses the new password, C, which
+    # the server does not have yet. Then the tool sets C by hash.
+    answer = alter(service, "FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1")
+    wrong = ch.login(service, C)
+    old = ch.login(service, B)
+    rounds = int(ch.root(service, "SELECT @@global.caching_sha2_password_digest_rounds"))
+    stored = ch.caching_sha2_hash(C, ch.draw_salt(), rounds)
+    set_c = alter(service, f"IDENTIFIED WITH caching_sha2_password AS 0x{stored.hex()}")
+    new = ch.login(service, C)
+    unlock = alter(service, "ACCOUNT UNLOCK")
+    after_unlock = ch.login(service, C)
+    print(f"LE5 {answer}; the new password first: {wrong}; the old one: {old}")
+    print(f"LE5 set by hash: {set_c}; the new password: {new}")
+    print(f"LE5 ACCOUNT UNLOCK: {unlock}; the new password: {after_unlock}")
+    ch.check(
+        "LE5",
+        (answer, wrong, old, set_c, new, unlock, after_unlock),
+        (OK, BLOCKED, BLOCKED, OK, BLOCKED, OK, OK),
     )
 
 

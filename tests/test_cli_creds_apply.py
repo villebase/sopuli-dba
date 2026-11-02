@@ -61,6 +61,8 @@ from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
     PROFILE_MANAGEMENT,
     SKIPPED,
+    STORED,
+    UNAVAILABLE,
     VERIFY_LOGIN,
     AccountAttributes,
     AttributeChange,
@@ -784,6 +786,71 @@ def test_the_document_validates_and_reports_the_promotion(
     kinds = [action["kind"] for action in body["results"][0]["actions"]]
     assert kinds == ["verify", "password_set", "verify", "vault_promote"]
     assert body["results"][0]["secret"]["stage"] == "current"
+
+
+def test_a_change_no_login_can_verify_is_confirmed_by_the_server_and_promoted(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1223: on MySQL a login cannot reach every account. Where the login is
+    unavailable, the driver's `confirm_change` stands in, as `stored`, and the
+    pending password is promoted all the same."""
+    stored = VerifyResult("none", STORED, detail="not verified by login")
+    monkeypatch.setattr(FakeSession, "confirm_change", lambda self, account: stored, raising=False)
+    unavailable = VerifyResult(VERIFY_LOGIN, UNAVAILABLE, detail="no login can reach it")
+    harness = estate(answers={"ACME_WEB_USER": [unavailable, unavailable]})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    row = body["results"][0]
+    assert (row["state"], row["changed"]) == ("IN_SYNC", True)
+    assert row["verification"]["result"] == "stored"
+    assert row["secret"]["stage"] == "current"
+    assert harness["sessions"][0].changed
+
+
+def test_a_driver_that_must_not_log_in_first_sets_the_password_every_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1223: MySQL. A login before the change could block an account with
+    FAILED_LOGIN_ATTEMPTS 1, so the only login is the one after it, with the
+    new password, and a run that would otherwise be a no-op changes the
+    password again: the invariant-9 exception."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        answers={"ACME_WEB_USER": passes(1)},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    session = harness["sessions"][0]
+    assert len(session.attempts) == 1, "only the login after the change"
+    assert session.changed == [("ACME_WEB_USER", LIVE)]
+    row = document(result)["results"][0]
+    assert (row["state"], row["changed"]) == ("IN_SYNC", True)
+    assert [action["kind"] for action in row["actions"]][:2] == ["password_set", "verify"]
+
+
+def test_without_confirm_change_an_unavailable_login_stays_unverifiable(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Oracle and PostgreSQL have no weaker confirmation, so nothing changes
+    for them: the account is not promoted."""
+    unavailable = VerifyResult(VERIFY_LOGIN, UNAVAILABLE, detail="no login can reach it")
+    estate(answers={"ACME_WEB_USER": [unavailable, unavailable]})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    row = document(result)["results"][0]
+    assert row["state"] == "UNVERIFIABLE"
+    assert row["secret"]["stage"] != "current"
 
 
 # ------------------------------------------------------------ idempotency ---

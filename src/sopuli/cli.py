@@ -184,6 +184,7 @@ from sopuli.driver.protocol import (
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLLOVER_FINISH,
+    UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
@@ -8726,6 +8727,24 @@ STOPPED_BEFORE_PASSWORD = (
 )
 
 
+def _verify_before_change(
+    session: Session, account: str, secret: Secret, margin: int, *, attempts: int
+) -> VerifyResult | None:
+    """The login before a change that shows whether one is needed, or ``None``
+    where the driver says a login must not be spent there.
+
+    MySQL says so (#1223): a wrong login during a rotation can block an account
+    with ``FAILED_LOGIN_ATTEMPTS 1`` for days, a new password does not clear the
+    block, and the tool cannot read the setting. Without the login there is no
+    answer, so the password is set on every run, an exception to invariant 9.
+    """
+    if not getattr(session, "verifies_before_change", True):
+        return None
+    return session.verify_password(
+        account, secret, method=VERIFY_LOGIN, lockout_margin=margin, attempts=attempts
+    )
+
+
 def _apply_one(
     binding: Binding,
     session: Any,
@@ -8943,10 +8962,12 @@ def _apply_one(
                 return _Applied(
                     binding, source, locked, changed=False, duration_ms=_elapsed(started)
                 )
-            before = session.verify_password(
-                user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=1
+            before = _verify_before_change(session, user.name, source.value, margin, attempts=1)
+            done = (
+                None
+                if before is None
+                else apply_states.already_applied(user, before, source=source)
             )
-            done = apply_states.already_applied(user, before, source=source)
             if done is not None:
                 _left_alone(binding.account, binding.target, done.state, done.detail)
                 return _Applied(
@@ -9018,10 +9039,8 @@ def _apply_one(
                 )
 
         regime = strategy or strategies.default_for(session.scope(), user)
-        before = session.verify_password(
-            user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
-        )
-        done = apply_states.already_applied(user, before, source=source)
+        before = _verify_before_change(session, user.name, source.value, margin, attempts=2)
+        done = None if before is None else apply_states.already_applied(user, before, source=source)
         if done is not None:
             _left_alone(binding.account, binding.target, done.state, done.detail)
             return _Applied(
@@ -9070,6 +9089,14 @@ def _apply_one(
         after = session.verify_password(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
+        if after.result == UNAVAILABLE:
+            # MySQL, for an account no login can reach (#1223): the server's
+            # record of the change stands in for the login, as `stored`. A
+            # driver without the method has nothing weaker to offer.
+            confirm = getattr(session, "confirm_change", None)
+            stored = confirm(after_user.name) if confirm is not None else None
+            if isinstance(stored, VerifyResult):
+                after = stored
         outcome = apply_states.after_change(after_user, after)
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(

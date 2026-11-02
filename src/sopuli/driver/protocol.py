@@ -274,11 +274,16 @@ PASS = "pass"
 FAIL = "fail"
 SKIPPED = "skipped"
 UNAVAILABLE = "unavailable"
+#: After a change only, and weaker than ``pass``: the server's record of the
+#: password's last change moved past the moment before the tool's statement,
+#: so the server holds what the tool sent, and no client logged in with it.
+#: MySQL, for an account no login can reach (#1223).
+STORED = "stored"
 
 #: The run document's ``verification.result``. ``skipped`` and ``unavailable``
 #: are not the same answer and the difference matters at 03:00: *we chose not to
 #: try* (the lockout margin, UC-1 §7 mitigation 2) versus *we could not*.
-VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE)
+VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE, STORED)
 
 
 # -------------------------------------------------------------- attributes ---

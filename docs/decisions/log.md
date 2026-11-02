@@ -4064,10 +4064,39 @@ the register.
 - **Accepted cost:** an account at a named host, or a `%` account whose user
   also exists at another host, cannot be verified by login.
 - **Then, for such an account after a change:** `creds apply` confirms the
-  change by `mysql.user.password_last_changed` moving past the run's start, not
-  by a login, so its new password can be promoted. It is reported as a result
-  of its own, weaker than a login's `pass`: it shows the server holds the hash
-  the tool computed, not that a client logs in with the password. Decided by
-  the maintainer the same day; built with `creds apply` on MySQL.
+  change by `mysql.user.password_last_changed` being no earlier than the
+  server's clock, read just before the tool's statement, not by a login, so its
+  new password can be promoted. It is reported as the verification result
+  `stored` (run schema 1.74), weaker than a login's `pass`: it shows the server
+  holds the hash the tool computed, not that a client logs in with the
+  password. Decided by the maintainer the same day.
 - **Rejected for that:** leaving such accounts unpromoted, which would mean no
   rotation of them could finish.
+- **And before a change, for every MySQL account:** `creds apply` and `creds
+  rotate` do not log in, so they cannot tell whether the account already has
+  the vault's password. They set it on every run and report `changed: true`.
+  This is an exception to invariant 9, beside `creds generate` and `account
+  reset-password`. Decided by the maintainer the same day, first for accounts
+  no login can reach (#1223, comment 6584422960), then for all (comment
+  6585067228).
+- **Why not log in first where a login can reach the account:** during a
+  rotation that login uses the new password, so it always fails once. Measured
+  on 8.0.46, 8.4.13 and 9.7.4 (`04_lock_expiry_probe.py`, LE5): with
+  `FAILED_LOGIN_ATTEMPTS 1` and `PASSWORD_LOCK_TIME 1`, one wrong login answers
+  `3955` and blocks the account, and after the tool sets the new password by
+  hash it still answers `3955`, until `ACCOUNT UNLOCK`. With
+  `FAILED_LOGIN_ATTEMPTS 2`, one wrong login is harmless. The tool cannot read
+  the setting, which is in `User_attributes` (decision 6 of
+  [#1202](#1202)), so it cannot log in only where the login is safe. Also
+  rejected: logging in first only for `current`, because a drifted `current`
+  still spends a failed login.
+- **Rejected for that:**
+  - Comparing `password_last_changed` with the time the vault value was
+    written. A change someone made after the vault write would go unseen, and
+    the account would be reported in sync.
+  - Reading `authentication_string` to compare the hash exactly. The tool
+    account would then read every account's hash, which
+    `02-mysql-privileges.md` §2.1 withholds (probe 06, PV1).
+  - Refusing such accounts. UC-1 could then not manage them at all.
+- **Accepted cost:** every run on such an account is a mutation, with an audit
+  record.

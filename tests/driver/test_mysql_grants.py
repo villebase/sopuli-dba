@@ -109,3 +109,20 @@ def test_unparsed_lines_are_kept() -> None:
 )
 def test_system_user_is_a_global_privilege(lines: list[str], holds: bool) -> None:
     assert parse_all(lines).holds_system_user() is holds
+
+
+@pytest.mark.parametrize(
+    ("line", "holds"),
+    [
+        # A shape the parser does not know: refused rather than guessed.
+        ("GRANT SYSTEM_USER ON *.* FOR `t`@`%`", True),
+        ("GRANT ALL   PRIVILEGES TO", True),
+        # A REVOKE is not a grant, whatever it names.
+        ("REVOKE INSERT ON `mysql`.* FROM `t`@`%`", False),
+    ],
+)
+def test_an_unparsed_grant_line_naming_system_user_counts(line: str, holds: bool) -> None:
+    found = parse_all([line])
+
+    assert found.unparsed == (line,)
+    assert found.holds_system_user() is holds

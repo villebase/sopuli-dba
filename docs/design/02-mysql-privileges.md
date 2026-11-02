@@ -42,7 +42,16 @@ The login itself succeeds, so the refusal is the tool's and not the server's.
 `SYSTEM_USER` through a role granted to it, whether the role is active or not,
 and through a role granted to that role. The account can `SET ROLE` to a role
 that is not active, so the privilege is one statement away. PostgreSQL refuses
-a member of a superuser role for the same reason.
+a member of a superuser role for the same reason. A `GRANT` line of
+`SHOW GRANTS` that the tool cannot parse, and that names `SYSTEM_USER` or
+`ALL PRIVILEGES`, is refused too: the tool cannot tell where it applies.
+
+The refusal covers `SYSTEM_USER` that the account holds or can activate. It
+does not cover a privilege that lets the account grant itself more, such as
+`ROLE_ADMIN`, which grants any role, or `SET_USER_ID` and `SET_ANY_DEFINER`,
+which create a routine that runs as root. The tool account must not hold
+these either. The privilege audit of `doctor --check-privileges` reports them
+as over-granted (open: #1221).
 
 A mandatory role, which the server gives every account, is read as any other
 role is. The server refuses to make a role that holds `SYSTEM_USER` mandatory,

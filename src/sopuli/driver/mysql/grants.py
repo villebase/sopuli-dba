@@ -1,7 +1,7 @@
 """The tool account's own grants on a MySQL server, as ``SHOW GRANTS`` prints
 them. Tier 0.
 
-``02-mysql-privileges.md`` §2.3 says what is read. Two reads, both open to any
+``02-mysql-privileges.md`` §2.2 says what is read. Two reads, both open to any
 account that can log in, with no grant of their own:
 
 1. the roles granted straight to the tool account, from
@@ -19,7 +19,9 @@ enough alone.
 
 A line is parsed by its shape, not by a grammar of the whole statement. A line
 this module cannot parse, such as the ``REVOKE`` that ``partial_revokes``
-prints, is kept as text, so a caller can say that it was not read.
+prints, is kept as text. A ``GRANT`` line kept this way that names
+``SYSTEM_USER`` or ``ALL PRIVILEGES`` counts as holding ``SYSTEM_USER``
+(:meth:`Grants.holds_system_user`).
 """
 
 from __future__ import annotations
@@ -105,8 +107,20 @@ class Grants:
         return frozenset(found)
 
     def holds_system_user(self) -> bool:
+        """Whether ``SYSTEM_USER`` is held ``ON *.*``, or may be.
+
+        A ``GRANT`` line this module cannot parse counts when it names
+        ``SYSTEM_USER`` or ``ALL PRIVILEGES`` anywhere: the tool cannot tell
+        where such a grant applies, so it refuses rather than guesses.
+        """
         names = self.global_names()
-        return SYSTEM_USER in names or ALL_PRIVILEGES in names
+        if SYSTEM_USER in names or ALL_PRIVILEGES in names:
+            return True
+        return any(
+            line.upper().startswith("GRANT ")
+            and (SYSTEM_USER in line.upper() or ALL_PRIVILEGES in " ".join(line.upper().split()))
+            for line in self.unparsed
+        )
 
 
 def read(cursor: Cursor) -> Grants:

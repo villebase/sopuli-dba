@@ -121,9 +121,10 @@ def refuse_system_user(cursor: Cursor, *, target: str) -> None:
     ``SYSTEM_USER``, itself or through any role granted to it, active or not.
 
     A role that is not active counts: the account can ``SET ROLE`` to it, as a
-    PostgreSQL member of a superuser role can, which is refused too. A line of
-    ``SHOW GRANTS`` that cannot be parsed is not a finding here; the privilege
-    audit reports it.
+    PostgreSQL member of a superuser role can, which is refused too. A
+    ``GRANT`` line that cannot be parsed and names ``SYSTEM_USER`` or ``ALL
+    PRIVILEGES`` is refused as well: where the answer is unknown, the tool
+    refuses (:meth:`~sopuli.driver.mysql.grants.Grants.holds_system_user`).
     """
     if grants.read(cursor).holds_system_user():
         raise SystemUserError(target)

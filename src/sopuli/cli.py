@@ -1001,7 +1001,8 @@ def _refused_for_setup(entry: dict[str, Any], error: Exception | None = None) ->
     the check of the setup, so it says *fix the configuration* too:
 
     * an error that asks for exit 9 after the session opened, such as
-      ``SOPULI-20007`` (a superuser admin);
+      ``SOPULI-20007`` (a PostgreSQL superuser admin, or a MySQL admin that
+      can use ``SYSTEM_USER``);
     * an error that asks for exit 9 at login and carries the server's own code,
       such as ORA-28009 (SYS as the admin) or PostgreSQL's 3D000 (no such
       database) -- :func:`_server_answered`;

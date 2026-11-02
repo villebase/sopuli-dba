@@ -453,8 +453,9 @@ class MysqlSession(ClosesConnection):
         where the time did not move. Not on the protocol: ``creds apply`` asks
         it of a driver that has it, after a login that was unavailable.
 
-        Weaker than a login: it shows the server holds the hash the tool sent,
-        not that a client logs in with the password.
+        Weaker than a login: it shows a password change at or after the
+        statement, almost always the tool's, not that a client logs in with
+        the password.
         """
         since = self._changed_since.get(account)
         if since is None:

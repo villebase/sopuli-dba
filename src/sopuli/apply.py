@@ -534,10 +534,13 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
         # records a password change at or after the tool's statement. The
         # verification's own result says which kind of confirmation this was.
         if user.rollover_active:
+            # Not confirmed: closing the window (`--strategy direct`) would then
+            # discard the old password on a timestamp alone, with no login
+            # showing the new one works.
             return Outcome(
-                ROLLOVER_ACTIVE,
-                "changed, and the server records the change; a rollover window is "
-                "open, so the previous password authenticates until it closes",
+                UNVERIFIABLE,
+                "changed, and the server records the change, but a rollover window "
+                "is open and no login can show the new password works",
                 verification,
             )
         return Outcome(

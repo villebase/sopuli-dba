@@ -4108,3 +4108,13 @@ the register.
 - **Accepted cost:** `creds apply` does not repair a MySQL account whose
   password drifted from `current`. `creds check` finds it, and `creds rotate`
   changes it.
+- **And while a promotion is held:** if a rotation's `pending` is applied to a
+  MySQL target but not promoted, because another target failed, each later
+  `apply` sets it on the MySQL target again and reports `changed: true`. The
+  vault records the confirming targets only at promotion, and MySQL has no
+  safe login to check, so a run cannot tell. This is an exception to invariant
+  9, and it lasts until the rotation completes. Decided by the maintainer the
+  same day (#1223, comment 6586757670). Rejected: recording per-target
+  progress beside `pending` (a new vault write and a payload change), and
+  comparing `password_last_changed` with the vault version (someone else's
+  change would be taken as the rotation's).

@@ -612,7 +612,10 @@ These rules decide what `apply` does with each account:
   0. Setting `current` on every run instead would reset the server's password
   expiry and fill its password history. `apply` therefore does not repair a
   MySQL account whose password drifted from `current`: `creds check` finds it,
-  and `creds rotate` changes it. After a change they verify by a login with
+  and `creds rotate` changes it. While a rotation's promotion is held, because
+  another target failed, each `apply` sets the `pending` on a MySQL target
+  again and reports `changed: true`, an exception to invariant 9 that ends
+  when the rotation completes. After a change they verify by a login with
   the new password, but a login reaches only a `user@%` account that is the
   user's only one, with no anonymous account at a named host. For any other
   account the server's `password_last_changed` stands in for the login: no

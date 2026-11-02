@@ -165,12 +165,12 @@ def parse(line: str) -> Grant | None:
     admin_option = tail_upper.endswith(" WITH ADMIN OPTION")
     on = _keyword(head, "ON")
     if on is None:
-        roles = tuple(_account(part) for part in _top_level(head, ","))
+        roles = tuple(_account(part) for part in top_level(head, ","))
         if not all(roles):
             return None
         return Grant(roles=roles, admin_option=admin_option)
-    privileges = tuple(_privilege(part) for part in _top_level(head[:on], ","))
-    target = _unquote(head[on + len(" ON ") :].strip())
+    privileges = tuple(_privilege(part) for part in top_level(head[:on], ","))
+    target = unquote(head[on + len(" ON ") :].strip())
     if not privileges or not target:
         return None
     return Grant(privileges=privileges, on=target, grant_option=grant_option)
@@ -196,7 +196,7 @@ def _keyword(text: str, word: str) -> int | None:
     return None
 
 
-def _top_level(text: str, separator: str) -> list[str]:
+def top_level(text: str, separator: str) -> list[str]:
     """``text`` split at ``separator`` outside quotes and brackets, each part
     stripped, empty parts dropped. A doubled quote inside a quoted name closes
     and reopens it, which leaves the split unchanged."""
@@ -226,20 +226,20 @@ def _privilege(text: str) -> Privilege:
         name, _, columns = text.partition("(")
         return Privilege(
             name=" ".join(name.split()).upper(),
-            columns=tuple(_unquote(column) for column in _top_level(columns[:-1], ",")),
+            columns=tuple(unquote(column) for column in top_level(columns[:-1], ",")),
         )
     return Privilege(name=" ".join(text.split()).upper())
 
 
 def _account(text: str) -> str:
     """```r1`@`%``` as ``r1@%``, or an empty string for anything else."""
-    parts = _top_level(text, "@")
+    parts = top_level(text, "@")
     if len(parts) != 2:
         return ""
-    return f"{_unquote(parts[0])}@{_unquote(parts[1])}"
+    return f"{unquote(parts[0])}@{unquote(parts[1])}"
 
 
-def _unquote(text: str) -> str:
+def unquote(text: str) -> str:
     """Each quoted identifier in ``text`` without its quotes, and a doubled
     quote inside one as a single character. ```mysql`.`user``` is
     ``mysql.user``."""

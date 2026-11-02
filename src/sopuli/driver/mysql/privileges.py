@@ -169,6 +169,8 @@ def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -
         if grant.on in TABLES and privilege.name == "SELECT" and not privilege.columns:
             held.add(_table(grant.on))
             continue
+        if broad and grant.on in TABLES and privilege.name == ALL_PRIVILEGES:
+            held.add(_table(grant.on))
         if grant.on == GLOBAL and privilege.name == ALL_PRIVILEGES:
             held.add(CREATE_USER)
         reads_all = privilege.name in ("SELECT", ALL_PRIVILEGES) and not privilege.columns

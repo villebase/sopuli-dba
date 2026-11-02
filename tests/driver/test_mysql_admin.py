@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql.admin import (
-    COLUMNS,
+    COLUMN_GRANTS,
     DB_PRIV_COLUMNS,
     DYNAMIC,
     GLOBAL_ROW,
@@ -17,8 +17,9 @@ from sopuli.driver.mysql.admin import (
     PRIV_COLUMNS,
     PROXIES,
     ROLE_EDGES,
+    ROUTINE_GRANTS,
     SCHEMA,
-    TABLES,
+    TABLE_GRANTS,
     Principal,
     global_privileges,
     mandatory_roles,
@@ -58,8 +59,9 @@ class _Cursor:
         names = {
             DYNAMIC: "dynamic",
             SCHEMA: "schema",
-            TABLES: "tables",
-            COLUMNS: "columns",
+            TABLE_GRANTS: "tables",
+            COLUMN_GRANTS: "columns",
+            ROUTINE_GRANTS: "routines",
             PROXIES: "proxies",
             ROLE_EDGES: "edges",
         }
@@ -83,6 +85,7 @@ def test_every_kind_of_grant_is_named_with_its_object() -> None:
         },
         tables={("acme_app", "10.%"): [("db", "Select,Update"), ("user", "")]},
         columns={("acme_app", "10.%"): [(b"user", b"authentication_string", {"Select"})]},
+        routines={("acme_app", "10.%"): [("PROCEDURE", "acme_cleanup", "Execute,Alter Routine")]},
         proxies={("acme_app", "10.%"): [("root", "localhost"), ("", "")]},
     )
 
@@ -94,6 +97,8 @@ def test_every_kind_of_grant_is_named_with_its_object() -> None:
         "SELECT ON mysql.db",
         "UPDATE ON mysql.db",
         "SELECT (authentication_string) ON mysql.user",
+        "EXECUTE ON PROCEDURE mysql.acme_cleanup",
+        "ALTER ROUTINE ON PROCEDURE mysql.acme_cleanup",
         "PROXY ON root@localhost",
         "PROXY ON ''@''",
     }
@@ -129,12 +134,30 @@ def test_a_mandatory_role_counts_though_role_edges_has_no_row() -> None:
             (Principal("ops", "localhost"), Principal("audit", "10.%")),
         ),
         ("`ops`@`%`,`audit`", (Principal("ops", "%"), Principal("audit", "%"))),
+        # `@` and `,` inside a quoted name belong to the name.
+        ("'ops@x'@'%'", (Principal("ops@x", "%"),)),
+        ("`a,b`@`localhost`,c", (Principal("a,b", "localhost"), Principal("c", "%"))),
     ],
 )
 def test_mandatory_roles_are_parsed_as_the_server_accepts_them(
     setting: str, roles: tuple[Principal, ...]
 ) -> None:
     assert mandatory_roles(setting) == roles
+
+
+def test_a_role_reached_in_two_host_spellings_is_read_once() -> None:
+    """Hosts compare without case: `ops@LOCALHOST` in the setting and
+    `ops@localhost` in role_edges are one role."""
+    cursor = _Cursor(
+        mandatory="ops@LOCALHOST",
+        edges={("acme_app", "10.%"): [("ops", "localhost")]},
+        dynamic={("ops", "LOCALHOST"): [("CONNECTION_ADMIN",)]},
+    )
+
+    found = global_privileges(cursor, APP)
+
+    assert len(found) == 1
+    assert sum(query == ROLE_EDGES for query, _ in cursor.reads) == 2
 
 
 def test_every_read_names_the_principal() -> None:

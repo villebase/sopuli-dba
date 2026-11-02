@@ -32,7 +32,13 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
-from sopuli.driver.mysql.errors import TLS_CONNECTION_ERROR, UNKNOWN_CLIENT_ERROR, from_error
+from sopuli.driver.mysql.errors import (
+    COLUMN_ACCESS_DENIED,
+    TABLE_ACCESS_DENIED,
+    TLS_CONNECTION_ERROR,
+    UNKNOWN_CLIENT_ERROR,
+    from_error,
+)
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption
 from sopuli.driver.protocol import (
@@ -63,6 +69,16 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("mysql")
+
+#: The server refused a read of a table (``1142``) or a column (``1143``).
+REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
+
+MISSING_GRANT_HINT = (
+    "the tool account lacks a grant of 02-mysql-privileges.md section 2.1, which it "
+    "needs to read an account and the privileges guardrail 9 checks. "
+    "`sopuli doctor --check-privileges` lists the missing ones, and the statements "
+    "that grant them"
+)
 
 T = TypeVar("T")
 
@@ -150,10 +166,21 @@ class MysqlSession(ClosesConnection):
         """The account's state, ``None`` where it does not exist
         (:mod:`~sopuli.driver.mysql.accounts`). An account on another plugin
         is refused with
-        :class:`~sopuli.driver.mysql.accounts.OtherPluginError`."""
-        return self._read(
-            lambda cursor: accounts_module.describe(cursor, account, target=self.target.name)
-        )
+        :class:`~sopuli.driver.mysql.accounts.OtherPluginError`.
+
+        It reads the grant tables of guardrail 9 too. A tool account installed
+        without §2.1's grants for them is refused there with ``1142`` or
+        ``1143``, and the hint then says which grants and where to find them:
+        the server's own hint names only the table.
+        """
+        try:
+            return self._read(
+                lambda cursor: accounts_module.describe(cursor, account, target=self.target.name)
+            )
+        except DriverError as error:
+            if error.code in REFUSED_READ:
+                error.hint = MISSING_GRANT_HINT
+            raise
 
     def byte_limit(self) -> ByteLimit:
         raise self._not_written("size a password")

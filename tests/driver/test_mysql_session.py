@@ -211,6 +211,20 @@ def test_any_other_failure_of_the_read_keeps_the_tool_accounts_audit() -> None:
     assert audit.remedies[-1].startswith("the declared accounts were not read: 2013")
 
 
+def test_describe_user_refused_a_grant_table_names_section_2_1() -> None:
+    """The server's own hint names only the table."""
+    session = _session()
+    session.connection.refuse = session_module.pymysql.err.OperationalError(
+        1142, "SELECT command denied to user for table 'global_grants'"
+    )
+
+    with pytest.raises(DriverError) as caught:
+        session.describe_user("acme_app@10.%")
+
+    assert caught.value.code == "1142"
+    assert caught.value.hint == session_module.MISSING_GRANT_HINT
+
+
 def test_describe_user_reads_the_account() -> None:
     session = _session()
     session.connection.accounts = [_account_row("10.%")]

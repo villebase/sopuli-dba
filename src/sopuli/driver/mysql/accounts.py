@@ -152,20 +152,15 @@ def same_host(left: str, right: str) -> bool:
 def account_of(row: Sequence[Any]) -> Account:
     user, host, plugin, locked, expired, changed_at, lifetime = row
     return Account(
-        user=_text(user),
-        host=_text(host),
-        plugin=_text(plugin),
-        locked=_text(locked) == "Y",
-        expired=_text(expired) == "Y",
+        user=admin.text(user),
+        host=admin.text(host),
+        plugin=admin.text(plugin),
+        locked=admin.text(locked) == "Y",
+        expired=admin.text(expired) == "Y",
         # The session's time zone is UTC (connection.UTC_SESSION).
         changed_at=changed_at.replace(tzinfo=UTC) if isinstance(changed_at, datetime) else None,
         lifetime_days=None if lifetime is None else int(lifetime),
     )
-
-
-def _text(value: Any) -> str:
-    """PyMySQL returns some ``mysql.user`` columns as bytes."""
-    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
 def read(cursor: Cursor, users: Sequence[str]) -> dict[str, list[Account]]:

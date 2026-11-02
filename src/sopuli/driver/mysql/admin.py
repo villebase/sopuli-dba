@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from sopuli.driver.mysql.grants import top_level, unquote
 from sopuli.driver.protocol import Cursor
 
 #: Each ``*_priv`` column of ``mysql.user`` and ``mysql.db``, and the
@@ -111,12 +112,17 @@ SCHEMA = (
     f"select {', '.join(DB_PRIV_COLUMNS)} from mysql.db "
     "where User = %s and Host = %s and 'mysql' like Db"
 )
-TABLES = (
+TABLE_GRANTS = (
     "select Table_name, Table_priv from mysql.tables_priv "
     "where User = %s and Host = %s and Db = 'mysql'"
 )
-COLUMNS = (
+COLUMN_GRANTS = (
     "select Table_name, Column_name, Column_priv from mysql.columns_priv "
+    "where User = %s and Host = %s and Db = 'mysql'"
+)
+#: A stored routine in the ``mysql`` schema, by its type and name.
+ROUTINE_GRANTS = (
+    "select Routine_type, Routine_name, Proc_priv from mysql.procs_priv "
     "where User = %s and Host = %s and Db = 'mysql'"
 )
 PROXIES = "select Proxied_user, Proxied_host from mysql.proxies_priv where User = %s and Host = %s"
@@ -129,6 +135,7 @@ TABLES_READ = (
     "mysql.db",
     "mysql.tables_priv",
     "mysql.columns_priv",
+    "mysql.procs_priv",
     "mysql.proxies_priv",
     "mysql.role_edges",
 )
@@ -144,29 +151,33 @@ class Principal:
     def __str__(self) -> str:
         return f"{self.user}@{self.host}"
 
+    def key(self) -> tuple[str, str]:
+        """The server's identity of it: the host without case (ID3), folding
+        only ASCII letters, as ``ascii_general_ci`` does."""
+        return (self.user, self.host.translate(_ASCII_LOWER))
+
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
 
 def mandatory_roles(setting: str | None) -> tuple[Principal, ...]:
     """``@@global.mandatory_roles`` as roles. The server accepts ``r``,
     ``r@h``, ``'r'@'h'`` and ```r```@```h```, comma-separated; a role named
-    without a host is at ``%``."""
+    without a host is at ``%``. Commas and ``@`` inside a quoted name are part
+    of the name, so the split is the one :mod:`~sopuli.driver.mysql.grants`
+    uses on ``SHOW GRANTS``."""
     found = []
-    for item in (setting or "").split(","):
-        name, _, host = item.strip().partition("@")
-        name, host = _unquote(name), _unquote(host) or "%"
+    for item in top_level(setting or "", ","):
+        parts = top_level(item, "@")
+        name = unquote(parts[0]) if parts else ""
+        host = unquote(parts[1]) if len(parts) > 1 else "%"
         if name:
             found.append(Principal(name, host))
     return tuple(found)
 
 
-def _unquote(text: str) -> str:
-    text = text.strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "`'\"":
-        return text[1:-1]
-    return text
-
-
-def _text(value: object) -> str:
-    """PyMySQL returns some grant-table columns as bytes."""
+def text(value: object) -> str:
+    """PyMySQL returns some ``mysql`` table columns as bytes."""
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
@@ -175,17 +186,17 @@ def roles_of(cursor: Cursor, account: Principal) -> tuple[Principal, ...]:
     can activate, followed to the end, and every mandatory role. Sorted."""
     cursor.execute(MANDATORY_ROLES)
     row = cursor.fetchone()
-    pending = [account, *mandatory_roles(_text(row[0]) if row and row[0] else None)]
-    seen: set[Principal] = set()
+    pending = [account, *mandatory_roles(text(row[0]) if row and row[0] else None)]
+    seen: dict[tuple[str, str], Principal] = {}
     while pending:
         current = pending.pop()
-        if current in seen:
+        if current.key() in seen:
             continue
-        seen.add(current)
+        seen[current.key()] = current
         cursor.execute(ROLE_EDGES, (current.user, current.host))
-        pending.extend(Principal(_text(user), _text(host)) for user, host in cursor.fetchall())
-    seen.discard(account)
-    return tuple(sorted(seen))
+        pending.extend(Principal(text(user), text(host)) for user, host in cursor.fetchall())
+    seen.pop(account.key(), None)
+    return tuple(sorted(seen.values()))
 
 
 def held_by(cursor: Cursor, principal: Principal) -> tuple[str, ...]:
@@ -200,33 +211,38 @@ def held_by(cursor: Cursor, principal: Principal) -> tuple[str, ...]:
         found += [
             f"{name} ON *.*"
             for name, flag in zip(PRIV_COLUMNS.values(), row, strict=True)
-            if _text(flag) == "Y"
+            if text(flag) == "Y"
         ]
 
     cursor.execute(DYNAMIC, args)
-    found += [f"{_text(priv)} ON *.*" for (priv,) in cursor.fetchall()]
+    found += [f"{text(priv)} ON *.*" for (priv,) in cursor.fetchall()]
 
     cursor.execute(SCHEMA, args)
     for row in cursor.fetchall():
         found += [
             f"{PRIV_COLUMNS[column]} ON mysql.*"
             for column, flag in zip(DB_PRIV_COLUMNS, row, strict=True)
-            if _text(flag) == "Y"
+            if text(flag) == "Y"
         ]
 
-    cursor.execute(TABLES, args)
+    cursor.execute(TABLE_GRANTS, args)
     for table, privileges in cursor.fetchall():
-        found += [f"{priv} ON mysql.{_text(table)}" for priv in _set(privileges)]
+        found += [f"{priv} ON mysql.{text(table)}" for priv in _set(privileges)]
 
-    cursor.execute(COLUMNS, args)
+    cursor.execute(COLUMN_GRANTS, args)
     for table, column, privileges in cursor.fetchall():
-        found += [f"{priv} ({_text(column)}) ON mysql.{_text(table)}" for priv in _set(privileges)]
+        found += [f"{priv} ({text(column)}) ON mysql.{text(table)}" for priv in _set(privileges)]
+
+    cursor.execute(ROUTINE_GRANTS, args)
+    for kind, routine, privileges in cursor.fetchall():
+        found += [
+            f"{priv} ON {text(kind).upper()} mysql.{text(routine)}" for priv in _set(privileges)
+        ]
 
     cursor.execute(PROXIES, args)
     empty = "''"
     found += [
-        f"PROXY ON {_text(user) or empty}@{_text(host) or empty}"
-        for user, host in cursor.fetchall()
+        f"PROXY ON {text(user) or empty}@{text(host) or empty}" for user, host in cursor.fetchall()
     ]
     return tuple(found)
 
@@ -235,9 +251,9 @@ def _set(value: object) -> Iterable[str]:
     """A ``SET`` column as its members, upper-cased as ``GRANT`` spells them.
     PyMySQL returns a ``SET`` as a string or a set, depending on the column."""
     if isinstance(value, (set, frozenset)):
-        members = [_text(member) for member in value]
+        members = [text(member) for member in value]
     else:
-        members = _text(value).split(",") if value else []
+        members = text(value).split(",") if value else []
     return sorted(member.strip().upper() for member in members if member.strip())
 
 

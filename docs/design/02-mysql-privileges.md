@@ -89,6 +89,7 @@ GRANT SELECT ON mysql.global_grants TO 'sopuli_admin'@'192.0.2.10';
 GRANT SELECT ON mysql.db            TO 'sopuli_admin'@'192.0.2.10';
 GRANT SELECT ON mysql.tables_priv   TO 'sopuli_admin'@'192.0.2.10';
 GRANT SELECT ON mysql.columns_priv  TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.procs_priv    TO 'sopuli_admin'@'192.0.2.10';
 GRANT SELECT ON mysql.proxies_priv  TO 'sopuli_admin'@'192.0.2.10';
 GRANT SELECT ON mysql.role_edges    TO 'sopuli_admin'@'192.0.2.10';
 ```
@@ -113,10 +114,15 @@ retained password's hash. The server refuses both with `1143`
 (`05_identity_grants_probe.py`, TG5). Do not grant `SELECT` on the whole table
 instead. §4 says what the tool reads with it.
 
-The `*_priv` columns and the six whole tables are what guardrail 9 reads (§5):
-another account's global privileges, its grants on the `mysql` schema, its
-proxies and its roles. None of them holds a hash
-(`06_rollover_privileges_probe.py`, PV1 to PV7).
+The `*_priv` columns and the seven whole tables are what guardrail 9 reads
+(§5): another account's global privileges, its grants on the `mysql` schema,
+its proxies and its roles. None of them holds a hash. Probe 06
+(`06_rollover_privileges_probe.py`) read the `*_priv` columns (PV1),
+`global_grants` (PV2), `role_edges` (PV5), and `proxies_priv`, `db` and
+`tables_priv` (PV7) with these grants. `columns_priv` and `procs_priv` hold
+names and privilege sets only: their columns on 8.4.13 are `Host`, `Db`,
+`User`, the table and column or routine name, `Grantor`, the privileges and
+`Timestamp`.
 
 Give the account no other privilege, and no role.
 
@@ -161,7 +167,7 @@ of these reads needs a grant.
 |---|---|
 | held or missing | `CREATE USER` on `*.*` |
 | held or missing | `SELECT` on each column of `mysql.user` in §2.1. Column names are compared without case, as MySQL compares them |
-| held or missing | `SELECT` on each of the six whole tables in §2.1 |
+| held or missing | `SELECT` on each of the seven whole tables in §2.1. `ALL PRIVILEGES` on one of them holds it too |
 | over-granted | every other privilege the account holds or can activate, on any object, each as `<privilege> ON <object>`. This includes `GRANT OPTION`, and `ADMIN OPTION` on a role |
 | unaudited | a line of `SHOW GRANTS` that the tool cannot parse |
 | unreadable | `mysql.user`, where the server refuses the read of §4 with `1142` or `1143`: the column grant of §2.1 is missing |
@@ -177,7 +183,7 @@ comes from.
 A broader grant that includes one of §2.1's counts as held, because the tool
 can do what it needs, and as over-granted, because it can do more. `SELECT` on
 `mysql.user` as a whole, on `mysql.*` or on `*.*` holds the column grant;
-`SELECT` on `mysql.*` or `*.*` holds the six tables too; and
+`SELECT` on `mysql.*` or `*.*` holds the seven tables too; and
 `ALL PRIVILEGES ON *.*` holds every grant. Where `SHOW GRANTS` also prints a
 line the tool cannot parse, such as a `partial_revokes` `REVOKE` that may take
 `mysql` out of a broader grant, only the exact column grant counts as held.
@@ -279,7 +285,10 @@ grant is narrowed to its own schema.
 any role granted to it, and to a role granted to that role. So the tool follows
 `mysql.role_edges` to the end, and reads every role in `mandatory_roles`,
 which has no row in `role_edges` (`06_rollover_privileges_probe.py`, PV6). A
-default role is a granted role, so `mysql.default_roles` adds nothing.
+default role is a granted role, so `mysql.default_roles` adds nothing. The
+setting is split as `SHOW GRANTS` lines are, so a quoted role name may hold
+`,` or `@`. A role reached twice, in two spellings of its host, is read once:
+hosts compare without case.
 
 | Where | What it shows |
 |---|---|
@@ -287,6 +296,7 @@ default role is a granted role, so `mysql.default_roles` adds nothing.
 | `mysql.global_grants` | dynamic privileges, which are all `ON *.*` |
 | `mysql.db` | privileges on a schema. A pattern that matches `mysql`, such as `mysq%`, counts |
 | `mysql.tables_priv`, `mysql.columns_priv` | privileges on a table or column of `mysql` |
+| `mysql.procs_priv` | privileges on a stored routine in `mysql` |
 | `mysql.proxies_priv` | `PROXY` grants |
 | `mysql.role_edges`, `@@global.mandatory_roles` | the roles, read for each of the above |
 

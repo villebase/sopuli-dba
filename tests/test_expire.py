@@ -74,6 +74,19 @@ def test_a_declared_account_proceeds_as_expired() -> None:
     assert decision.state == EXPIRED
 
 
+def test_an_account_with_a_global_privilege_is_expired() -> None:
+    """Expiring sets no password, so guardrail 9 does not run (#1222)."""
+    decision = decide(
+        state(name="JDOE", global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})),
+        config=config({"accounts": ["jdoe"]}),
+        account="jdoe",
+        target="appdb-dev-alpha",
+    )
+
+    assert decision.proceed
+    assert decision.state == EXPIRED
+
+
 def test_an_undeclared_account_is_refused_even_under_force() -> None:
     """Invariant 5: `--force` never waives the whitelist, on this verb either."""
     decision = decide(

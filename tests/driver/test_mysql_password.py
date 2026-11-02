@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.driver.mysql.limits import MAX_PASSWORD_BYTES
 from sopuli.driver.mysql.password import (
     B64,
-    MAX_PASSWORD_BYTES,
     PasswordNotAdmissibleError,
     admit,
     alter_user,
@@ -49,6 +49,12 @@ def test_a_drawn_salt_is_crypts_alphabet() -> None:
 def test_rounds_must_be_whole_thousands(rounds: int) -> None:
     with pytest.raises(ValueError, match="multiple of 1000"):
         caching_sha2_hash(Secret("x"), rounds)
+
+
+@pytest.mark.parametrize("salt", [b"", b"short", b"$" * 20, b"\x00" * 20, b"\xe9" * 20, b"a" * 21])
+def test_a_given_salt_is_checked_and_never_replaced(salt: bytes) -> None:
+    with pytest.raises(ValueError, match="20 bytes"):
+        caching_sha2_hash(Secret("x"), 5000, salt=salt)
 
 
 def test_the_statement_carries_the_hash_as_hex_and_never_the_password() -> None:

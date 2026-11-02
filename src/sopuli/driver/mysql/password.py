@@ -35,19 +35,20 @@ takes no bind parameters.
 from __future__ import annotations
 
 import hashlib
-import secrets as random
+
+# `csprng`, not `random`: the salt must come from the system's random source,
+# and a name that reads like the `random` module invites the wrong swap.
+import secrets as csprng
 
 from sopuli.config import charsets
 from sopuli.driver.mysql.accounts import SUPPORTED_PLUGIN as PLUGIN
 from sopuli.driver.mysql.admin import Principal
+from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.protocol import DriverError
 from sopuli.secrets import Secret
 
 #: The rounds variable, which any account reads (CH5).
 DIGEST_ROUNDS = "select @@global.caching_sha2_password_digest_rounds"
-
-#: The longest password that logs in, in bytes of UTF-8 (CH6).
-MAX_PASSWORD_BYTES = 256
 
 #: crypt's base 64, which is also the salt's alphabet.
 B64 = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -72,20 +73,20 @@ def admit(secret: Secret) -> None:
     """Refuse a password the target cannot take, before anything is computed.
 
     An empty password, control characters (as on Oracle and PostgreSQL), text
-    that cannot be encoded as UTF-8, and more than :data:`MAX_PASSWORD_BYTES`.
+    that cannot be encoded as UTF-8, and more than
+    :data:`~sopuli.driver.mysql.limits.MAX_PASSWORD_BYTES`.
     """
     text = secret.reveal()
     if not text:
         raise PasswordNotAdmissibleError("the password is empty")
     if any(charsets.is_control(character) for character in text):
         raise PasswordNotAdmissibleError("the password contains control characters")
-    try:
-        width = len(text.encode("utf-8"))
-    except UnicodeEncodeError as error:
-        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-8") from error
-    if width > MAX_PASSWORD_BYTES:
+    if not LIMIT.encodable(text):
+        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-8")
+    width = LIMIT.width(text)
+    if width > LIMIT.max_bytes:
         raise PasswordNotAdmissibleError(
-            f"the password is {width} bytes, and a MySQL target takes at most {MAX_PASSWORD_BYTES}",
+            f"the password is {width} bytes, and a MySQL target takes at most {LIMIT.max_bytes}",
             hint=(
                 "the server stores a longer one and then refuses it at login; lower the "
                 "policy's `length`, or use a charset of one-byte characters"
@@ -135,7 +136,7 @@ def sha256_crypt(password: bytes, salt: bytes, rounds: int) -> str:
 
 def draw_salt() -> bytes:
     """20 characters of crypt's base 64, from the system's random source."""
-    return "".join(random.choice(B64) for _ in range(SALT_LENGTH)).encode("ascii")
+    return "".join(csprng.choice(B64) for _ in range(SALT_LENGTH)).encode("ascii")
 
 
 def caching_sha2_hash(secret: Secret, rounds: int, *, salt: bytes | None = None) -> bytes:
@@ -146,7 +147,12 @@ def caching_sha2_hash(secret: Secret, rounds: int, *, salt: bytes | None = None)
     """
     if rounds <= 0 or rounds % 1000:
         raise ValueError(f"caching_sha2_password rounds must be a multiple of 1000: {rounds}")
-    salt = salt or draw_salt()
+    if salt is None:
+        salt = draw_salt()
+    elif len(salt) != SALT_LENGTH or any(byte in (0, ord("$")) or byte > 127 for byte in salt):
+        # The server's own salts are any 7-bit byte but NUL and `$`, which
+        # ends the salt in the stored form; this driver draws crypt's base 64.
+        raise ValueError(f"a salt is {SALT_LENGTH} bytes of 7 bits, without NUL or $")
     digest = sha256_crypt(secret.reveal().encode("utf-8"), salt, rounds)
     return b"$A$%03X$" % (rounds // 1000) + salt + digest.encode("ascii")
 

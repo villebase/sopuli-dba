@@ -39,8 +39,10 @@ from sopuli.driver.mysql.errors import (
     TABLE_ACCESS_DENIED,
     TLS_CONNECTION_ERROR,
     UNKNOWN_CLIENT_ERROR,
+    UNKNOWN_SYSTEM_VARIABLE,
     from_error,
 )
+from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
@@ -185,7 +187,9 @@ class MysqlSession(ClosesConnection):
             raise
 
     def byte_limit(self) -> ByteLimit:
-        raise self._not_written("size a password")
+        """256 bytes of UTF-8, whatever the server: a longer password is stored
+        and then refused at login (:mod:`~sopuli.driver.mysql.limits`)."""
+        return LIMIT
 
     def password_constraints(self, account: str) -> None:
         """Not on the protocol: ``creds generate`` asks it of a driver that
@@ -222,8 +226,12 @@ class MysqlSession(ClosesConnection):
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a
         fault in sopuli, and a MySQL error is classified by
-        :mod:`~sopuli.driver.mysql.errors`, its message passed through
-        ``scrub`` where one is given."""
+        :mod:`~sopuli.driver.mysql.errors`.
+
+        With ``scrub``, the message passes through it, and the error is raised
+        without PyMySQL's as its cause: that one keeps the message as the
+        server sent it, and a traceback or a log with ``exc_info`` would print
+        it."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -233,8 +241,9 @@ class MysqlSession(ClosesConnection):
             with self.connection.cursor() as cursor:
                 return reader(cursor)
         except pymysql.err.MySQLError as error:
-            diagnosis = from_error(error, scrub=scrub) if scrub else from_error(error)
-            raise diagnosis.as_error() from error
+            if scrub is None:
+                raise from_error(error).as_error() from error
+            raise from_error(error, scrub=scrub).as_error() from None
 
     def set_password(self, account: str, secret: Secret) -> ChangeResult:
         """``ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…``, with
@@ -263,7 +272,19 @@ class MysqlSession(ClosesConnection):
                 ),
             )
         user, host = accounts_module.split(state.name)
-        rounds = self._read(_digest_rounds)
+        try:
+            rounds = self._read(_digest_rounds)
+        except DriverError as error:
+            if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
+                raise
+            raise DriverError(
+                f'target "{self.target.name}" has no caching_sha2_password_digest_rounds',
+                code=error.code,
+                hint=(
+                    "the tool sets a password with the server's own rounds, and does not "
+                    "guess them; a server without the variable is not supported for this"
+                ),
+            ) from error
         if rounds % 1000:
             raise DriverError(
                 f"caching_sha2_password_digest_rounds is {rounds} on target "
@@ -354,12 +375,16 @@ def _digest_rounds(cursor: Any) -> int:
 #: middle of the literal starts without the ``0x``.
 _HEX = re.compile(r"0x[0-9a-fA-F]+|[0-9a-fA-F]{16,}")
 
+#: The hash as text, ``$A$`` and the rounds, then the salt and the digest.
+_STORED = re.compile(r"\$A\$[0-9A-Fa-f]{3}\$\S*")
+
 
 def _scrub_hash(message: str) -> str:
     """The server's message about the statement that sets a password, with any
-    hex literal written as ``0x***`` and any other long run of hex digits as
-    ``***``. The server may quote part of the statement, and the hash is worth
-    an offline guessing attack."""
+    hex literal written as ``0x***``, any other long run of hex digits as
+    ``***``, and the hash as text as ``$A$***``. The server may quote part of
+    the statement, and the hash is worth an offline guessing attack."""
+    message = _STORED.sub("$A$***", message)
     return _HEX.sub(lambda found: "0x***" if found[0].startswith("0x") else "***", message)
 
 

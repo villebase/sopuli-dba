@@ -16,6 +16,7 @@ from click.testing import CliRunner
 from repo_files import requires_repo
 from sopuli.cli import cli, help_with
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
+from sopuli.driver.mysql import limits as mysql_limits
 from sopuli.driver.oracle import limits
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
 from sopuli.driver.postgres import limits as pg_limits
@@ -47,6 +48,12 @@ def test_the_registry_states_the_postgresql_limit() -> None:
     `limits.py` imports no psycopg, so this runs in every install shape."""
     assert DRIVERS["postgresql"].password_limit == str(pg_limits.MAX_PASSWORD_BYTES)
     assert f"postgresql: {pg_limits.MAX_PASSWORD_BYTES}" in _help("policy", "sample")
+
+
+def test_the_registry_states_the_mysql_limit() -> None:
+    """Pinned for the same reason. `limits.py` imports no PyMySQL."""
+    assert DRIVERS["mysql"].password_limit == str(mysql_limits.MAX_PASSWORD_BYTES)
+    assert f"mysql: {mysql_limits.MAX_PASSWORD_BYTES}" in _help("policy", "sample")
 
 
 def test_the_rule_in_words_follows_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:

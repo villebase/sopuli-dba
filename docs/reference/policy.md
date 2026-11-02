@@ -39,7 +39,7 @@ Arguments:
 Options:
 
 - `--count` `INTEGER` (1 to 100, default `3`): How many samples to draw.
-- `--max-bytes` `INTEGER` (1 to 4096): Preview a target's byte limit (oracle: 30 below 23, 128 from 23; postgresql: 1024).
+- `--max-bytes` `INTEGER` (1 to 4096): Preview a target's byte limit (oracle: 30 below 23, 128 from 23; postgresql: 1024; mysql: 256).
 - `--encoding` `TEXT` (default `utf-8`): The character set the byte limit is counted in.
 - `--reveal`: Print the sampled passwords. Text output only; they are never stored.
 

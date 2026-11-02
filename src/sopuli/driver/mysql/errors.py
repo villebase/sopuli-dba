@@ -70,6 +70,9 @@ COLUMN_ACCESS_DENIED = 1143
 #: ``ER_CANNOT_USER``: ``ALTER USER`` or ``DROP USER`` on an account that does
 #: not exist, among others.
 CANNOT_USER = 1396
+#: ``ER_UNKNOWN_SYSTEM_VARIABLE``: a server without the variable read, such as
+#: MariaDB 10.11.19 without ``super_read_only`` (#1202).
+UNKNOWN_SYSTEM_VARIABLE = 1193
 #: ``ER_PASSWORD_FORMAT``: a hash of the wrong form after ``AS``.
 PASSWORD_FORMAT = 1827
 #: ``ER_PLUGIN_IS_NOT_LOADED``: ``mysql_native_password`` on 8.4 and 9.

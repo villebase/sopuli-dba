@@ -84,10 +84,11 @@ GRANT SELECT (User, Host, plugin, account_locked, password_expired,
 
 `IDENTIFIED BY RANDOM PASSWORD` makes the server draw the password. The server
 returns it once, in the statement's result, in the column `generated
-password`. The statement text holds no password. The general log and
-`performance_schema`'s statement history keep a statement's text as it was
-sent (`01_password_text_probe.sql`), so a password written in the statement
-would be kept there. Store the returned password where the target's
+password`. The statement text holds no password. The server writes a password
+it parsed as `<secret>` in its logs, but a statement that fails to parse stays
+in `performance_schema`'s statement history as it was sent, password included
+(`01_password_text_probe.sql`). With `RANDOM PASSWORD`, a mistyped statement
+holds no password either. Store the returned password where the target's
 `admin.auth` reads it ([`01-configuration.md`](01-configuration.md)
 §*`admin:`*).
 

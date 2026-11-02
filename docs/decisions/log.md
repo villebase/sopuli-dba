@@ -3998,20 +3998,39 @@ the register.
   `global_privilege`, and nothing waives it. It reads
   `UserState.global_privileges`, which only the MySQL driver fills. Each entry
   is `<PRIVILEGE> ON <object>`, with ` through <role>` where a role grants it,
-  and the refusal names them all.
+  and the refusal names the first five and counts the rest. An empty set means
+  the driver read the grants and found none; a driver that cannot read them
+  raises.
+
+  Two limits, decided on review of the PR the same day:
+  1. Check 9 refuses only the verbs that set a password: `creds apply`,
+     `rotate`, `generate` and `account reset-password`. `account suspend` and
+     `account expire-password` may act on such an account.
+  2. The account the session is connected as is exempt. Check 7 still refuses
+     it unless `--force` waives that, so [#1059](#1059)'s rotation of the tool's
+     own password works on MySQL too.
 - **Why:** MySQL protects only accounts that hold `SYSTEM_USER`. A tool account
   with `CREATE USER` can set the password of any other account, however much
   it holds, and then log in as it. Checks 6 and 8 are never waived because the
   server would refuse the change. Check 9 is never waived because the server
   would allow it. One mistaken config entry would be enough, and a flag would
   be one more mistake. `SELECT ON *.*` and `INSERT ON *.*` count, because they
-  read or rewrite `mysql.user`.
+  read or rewrite `mysql.user`. The limits follow from the same reason. A verb
+  that sets no password hands over no login, and locking a departed DBA takes
+  power away. The tool account's power is the tool's already, and on MySQL it
+  always holds `CREATE USER ON *.*`, so without the exemption #1059's waiver
+  could never succeed there.
 - **Rejected:**
   - MySQL's own list of administrative privileges. It lets `SELECT ON *.*`
     and `INSERT ON *.*` through, and the code would have to keep a list of
     static privileges current.
   - A short list of the most dangerous privileges, which is the most likely to
     miss a path to administrative power.
+  - Check 9 on every mutating verb. The most privileged accounts would be the
+    ones the tool could not lock.
+  - Letting `--force` waive check 9 on `suspend` and `expire-password`. No
+    risk needs the flag there.
 - **Accepted cost:** an application account given a global privilege by habit,
   such as `SELECT ON *.*`, is refused until the grant is narrowed to its own
-  schema.
+  schema. On MySQL, `account reset-password` refuses most DBA personal
+  accounts, which hold something `ON *.*`; their passwords are reset by hand.

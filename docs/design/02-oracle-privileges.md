@@ -886,7 +886,11 @@ Before any `ALTER USER`, the tool refuses when the target account:
 9. holds or can activate a global privilege: a privilege beyond its own data.
    Only the MySQL driver reports one: any privilege `ON *.*` except `USAGE`,
    any privilege on the `mysql` schema, or any `PROXY` grant, held directly or
-   through a role. The refusal names each one.
+   through a role. The refusal names the first five and counts the rest. It
+   applies only to a verb that sets a password: `account suspend` and `account
+   expire-password` take power away, and may act on such an account. The
+   account the session is connected as is exempt, because the tool already has
+   its power; check 7 still refuses it unless `--force` waives that.
 
 `--force` overrides checks 2 to 5 and 7, for a DBA who deliberately manages an
 unusual account, or rotates the tool's own password

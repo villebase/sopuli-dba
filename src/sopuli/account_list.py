@@ -237,7 +237,17 @@ def guardrail_refusal(state: UserState, *, admitted: bool) -> str | None:
         return None
     checks = ", ".join(f"check {guardrails.NUMBERS[one.check]} ({one.reason})" for one in refusals)
     fixed = next((one for one in refusals if not one.overridable), None)
-    if fixed is not None:
+    if fixed is not None and fixed.check == guardrails.GLOBAL_PRIVILEGE:
+        # Check 9 refuses only the verbs that set a password (#1222). It is last
+        # in §4's order, so it is `fixed` only when no other unwaivable check
+        # is, and any other refusal here is one `--force` waives.
+        remedy = "no flag overrides check 9, so no verb will set this account's password"
+        if len(refusals) > 1:
+            remedy += (
+                "; `account suspend` and `account expire-password` need `--force` for the "
+                "rest, and the override is recorded"
+            )
+    elif fixed is not None:
         remedy = (
             f"no flag overrides check {guardrails.NUMBERS[fixed.check]}, so no verb will "
             "act on this account"

@@ -838,6 +838,10 @@ class UserState:
     #: PostgreSQL drivers leave it empty, because their administrative power is
     #: in :attr:`admin_roles` and :attr:`superuser`. Guardrail 9 refuses an
     #: account with any, and no flag waives that (#1222).
+    #:
+    #: **Empty means read and found none**, never "could not read": a driver
+    #: that cannot read an account's grants raises, so check 9 never passes on
+    #: a read that did not happen.
     global_privileges: frozenset[str] = frozenset()
     #: The account this session is connected as: the tool's own. Guardrail 7
     #: refuses it unless ``--force`` waives it (#1059). A plain ``bool``, unlike

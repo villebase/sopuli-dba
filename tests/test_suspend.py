@@ -224,6 +224,20 @@ def test_force_waives_a_guardrail_and_records_it() -> None:
     assert decision.review.overridden
 
 
+def test_an_account_with_a_global_privilege_is_suspended() -> None:
+    """Guardrail 9 refuses only the verbs that set a password, so a departed
+    DBA who holds `ALL PRIVILEGES ON *.*` can be locked (#1222)."""
+    decision = decide(
+        state(global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})),
+        config=config({"accounts": ["jdoe"]}),
+        account="jdoe",
+        target="appdb-dev-alpha",
+    )
+
+    assert decision.proceed
+    assert decision.state == LOCKED
+
+
 def test_force_does_not_waive_the_whitelist() -> None:
     """Invariant 5's own sentence: `--force` overrides other guardrails, never this."""
     decision = decide(

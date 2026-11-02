@@ -4063,3 +4063,11 @@ the register.
     the host reaches.
 - **Accepted cost:** an account at a named host, or a `%` account whose user
   also exists at another host, cannot be verified by login.
+- **Then, for such an account after a change:** `creds apply` confirms the
+  change by `mysql.user.password_last_changed` moving past the run's start, not
+  by a login, so its new password can be promoted. It is reported as a result
+  of its own, weaker than a login's `pass`: it shows the server holds the hash
+  the tool computed, not that a client logs in with the password. Decided by
+  the maintainer the same day; built with `creds apply` on MySQL.
+- **Rejected for that:** leaving such accounts unpromoted, which would mean no
+  rotation of them could finish.

@@ -135,7 +135,7 @@ def test_check_logs_in_as_a_user_s_only_account_at_any_host(stage: Stage) -> Non
 
 
 def test_an_expired_password_that_logs_in_passes(stage: Stage) -> None:
-    """PyMySQL 2.2.8 meets `1862` at connect, after the password was accepted."""
+    """PyMySQL 1.2.3 meets `1862` at connect, after the password was accepted."""
     user = stage.account("%")
     stage.admin("alter user %s@'%%' identified by %s password expire", (user, PASSWORD))
 
@@ -168,6 +168,20 @@ def test_an_account_another_host_could_answer_for_is_not_logged_in_as(
     result = stage.session.verify_password(f"{user}@{hosts[-1]}", Secret(PASSWORD))
 
     assert result.result == "unavailable"
+    assert result.latency_ms is None, "no login was made"
+
+
+def test_an_anonymous_account_at_a_named_host_stops_the_login(stage: Stage) -> None:
+    """`''@localhost` would win over `acme_app@%` for a client on localhost, so
+    the tool does not log in where one exists (#1223)."""
+    user = stage.account("%")
+    stage.created.append(("", "localhost"))
+    stage.admin("create user ''@'localhost'")
+
+    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert result.result == "unavailable"
+    assert "anonymous account ''@localhost" in str(result.detail)
     assert result.latency_ms is None, "no login was made"
 
 

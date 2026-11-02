@@ -1,6 +1,6 @@
 """Which MySQL logins the tool attempts, and what each answer means (#1223).
 
-Tier 0. The answers are the ones measured on 8.4.13 with PyMySQL 2.2.8 and
+Tier 0. The answers are the ones measured on 8.4.13 with PyMySQL 1.2.3 and
 written in :mod:`sopuli.driver.mysql.verification`'s docstring.
 """
 
@@ -55,6 +55,24 @@ def test_a_user_at_another_host_too_is_not_logged_in_as() -> None:
 
     assert reason is not None
     assert "acme_app@10.%, acme_app@localhost" in reason
+
+
+def test_an_anonymous_account_at_a_named_host_competes() -> None:
+    """The server matches the host first, so `''@localhost` wins over
+    `acme_app@%` for a client on localhost."""
+    declared = account("%")
+
+    reason = not_tried_reason(declared, [declared], [account("localhost", user="")])
+
+    assert reason is not None
+    assert "anonymous account ''@localhost" in reason
+
+
+def test_an_anonymous_account_at_any_host_does_not_compete() -> None:
+    """At one host a named user wins, so `''@%` never takes `acme_app@%`'s login."""
+    declared = account("%")
+
+    assert not_tried_reason(declared, [declared], [account("%", user="")]) is None
 
 
 @pytest.mark.parametrize(

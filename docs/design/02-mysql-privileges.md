@@ -379,11 +379,14 @@ tool's host reached `acme_app@%`, and `acme_app@10.%`'s own password was
 refused with `1045`. A refusal names the client's host, not the account, so it
 cannot be told apart from a wrong password. **The tool therefore logs in only
 as a `user@%` account that is the user's only account** (decided on
-[#1223](../decisions/log.md#1223)). Any other declared account is
+[#1223](../decisions/log.md#1223)). An anonymous account at a named host,
+such as `''@localhost`, also stops the login: the server matches the host
+first, so it wins over `acme_app@%` for a client from that host. One at `%`
+does not, because at one host a named user wins. Any other declared account is
 `unavailable`, with no login, and the detail says why. After a login,
 `CURRENT_USER()` confirms which account answered.
 
-What a login answers, measured on 8.4.13 with PyMySQL 2.2.8:
+What a login answers, measured on 8.4.13 with PyMySQL 1.2.3:
 
 | Account | Right password | Wrong password |
 |---|---|---|

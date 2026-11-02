@@ -14,7 +14,7 @@ is `user@%`, and no other account has that user name (decided on #1223,
 :data:`~sopuli.driver.protocol.UNAVAILABLE` without a login, saying why. After
 a login, ``CURRENT_USER()`` confirms which account answered.
 
-What a login answers, measured on 8.4.13 with PyMySQL 2.2.8:
+What a login answers, measured on 8.4.13 with PyMySQL 1.2.3:
 
 | Account | Right password | Wrong password |
 |---|---|---|
@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sopuli.driver.mysql.accounts import Account
+from sopuli.driver.mysql.accounts import Account, same_host
 from sopuli.driver.mysql.errors import (
     ACCESS_DENIED,
     ACCOUNT_BLOCKED,
@@ -59,15 +59,28 @@ UNGUARDED = (
 )
 
 
-def not_tried_reason(declared: Account, same_user: Sequence[Account]) -> str | None:
+def not_tried_reason(
+    declared: Account, same_user: Sequence[Account], anonymous: Sequence[Account] = ()
+) -> str | None:
     """Why the tool does not log in as ``declared``, or ``None`` to log in.
 
     ``same_user`` is every account with the declared user name, at any host,
-    ``declared`` included. A login can reach only ``declared`` when its host
-    is ``%`` and it is the user's only account.
+    ``declared`` included. ``anonymous`` is every account with the empty user
+    name. A login can reach only ``declared`` when its host is ``%``, it is the
+    user's only account, and no anonymous account sits at a named host.
+
+    **An anonymous account competes.** The server matches the host first, so
+    ``''@localhost`` wins over ``acme_app@%`` for a client on ``localhost``,
+    and the right password would then be refused with ``1045``. An anonymous
+    account at ``%`` does not: at one host, a named user wins.
     """
-    others = sorted(account.name for account in same_user if account.host != declared.host)
-    if declared.host != ANY_HOST:
+    others = sorted(
+        account.name for account in same_user if not same_host(account.host, declared.host)
+    )
+    named_anonymous = sorted(
+        f"''@{account.host}" for account in anonymous if not same_host(account.host, ANY_HOST)
+    )
+    if not same_host(declared.host, ANY_HOST):
         return (
             f"a login reaches the account the server matches from the tool's host, which "
             f"may not be {declared.name}, so its password is checked by login only where "
@@ -77,6 +90,12 @@ def not_tried_reason(declared: Account, same_user: Sequence[Account]) -> str | N
         return (
             f"the user also exists as {', '.join(others)}, and a login from the tool's "
             f"host may reach one of those instead of {declared.name}; no login was attempted"
+        )
+    if named_anonymous:
+        return (
+            f"the server has the anonymous account {', '.join(named_anonymous)}, and a "
+            f"login from a host it matches reaches it instead of {declared.name}; no login "
+            f"was attempted"
         )
     return None
 

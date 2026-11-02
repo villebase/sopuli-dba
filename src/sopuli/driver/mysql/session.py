@@ -382,7 +382,8 @@ class MysqlSession(ClosesConnection):
         them at plan time, and this refuses them again.
 
         The tool logs in only where nothing but the declared account can answer:
-        a ``user@%`` account that is the user's only one. Any other is
+        a ``user@%`` account that is the user's only one, with no anonymous
+        account at a named host. Any other is
         :data:`~sopuli.driver.protocol.UNAVAILABLE` without a login, as is an
         account that does not exist or is locked. MySQL gives the tool no
         lockout counter to read, so ``lockout_margin`` and ``attempts`` have
@@ -396,19 +397,18 @@ class MysqlSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        state = self.describe_user(account)
-        if state is None:
+        user, host = accounts_module.split(account)
+        # One read: the user's accounts at every host, and the anonymous ones,
+        # which compete for the same login (`verification.not_tried_reason`).
+        found = self._read(lambda cursor: accounts_module.read(cursor, [user, ""]))
+        declared = accounts_module.find(found[user], host)
+        if declared is None:
             return _not_tried(f'there is no account "{account}" on this target')
-        user, host = accounts_module.split(state.name)
-        same_user = self._read(lambda cursor: accounts_module.read(cursor, [user])[user])
-        declared = accounts_module.find(same_user, host)
-        if declared is None:  # Dropped between the two reads.
-            return _not_tried(f'there is no account "{account}" on this target')
-        reason = verification.not_tried_reason(declared, same_user)
+        reason = verification.not_tried_reason(declared, found[user], found[""])
         if reason is not None:
             return _not_tried(reason)
-        if state.locked:
-            return _not_tried(f"the account is locked ({state.status}); no login was attempted")
+        if declared.locked:
+            return _not_tried("the account is locked; no login was attempted")
         return self._login(declared, secret)
 
     def _login(self, declared: accounts_module.Account, secret: Secret) -> VerifyResult:
@@ -439,7 +439,19 @@ class MysqlSession(ClosesConnection):
             with connection.cursor() as cursor:
                 answered = accounts_module.current_user(cursor)
         except pymysql.err.MySQLError as error:
-            raise from_error(error).as_error() from error
+            # The password was accepted, and which account accepted it is
+            # unknown. A result, not an exception: a scheduled check must not
+            # look broken for a socket that dropped after the answer.
+            failure = from_error(error)
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                latency_ms=latency,
+                detail=(
+                    f"the login succeeded, and reading which account it reached failed "
+                    f"({failure.code}), so it says nothing certain about {declared.name}"
+                ),
+            )
         finally:
             # The login has answered. A socket that drops as it closes does
             # not change the answer.

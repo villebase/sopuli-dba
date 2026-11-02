@@ -582,7 +582,11 @@ class MysqlSession(ClosesConnection):
         require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        raise self._not_written("end a rollover window")
+        """No window is opened yet (#1224), so there is none to end (invariant
+        4). `creds finish-rollover` settles every account before it gets here;
+        this refuses by capability for any other caller."""
+        self.require_rollover(account)
+        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
 
 
 def _ms(started: float) -> int:

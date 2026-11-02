@@ -186,14 +186,27 @@ DRIVERS: dict[str, DatabaseDriver] = {
     ),
     # The module that imports PyMySQL, for the reason the Oracle entry names
     # `session`. `pymysql` is the module the `mysql` extra installs (#1202,
-    # decision 8). It connects and reports the server for `doctor`, and lists
-    # no command yet, so every other command refuses with SOPULI-20006 (#1221).
+    # decision 8). UC-1 (#1223): `creds check`, by login where only the
+    # declared account can answer (#1246); `creds apply` and `rotate`, which set
+    # a password from a hash computed on the client and never log in first, so
+    # with only `current` an account is skipped; `creds generate`, `status`, and
+    # `finish-rollover`, whose window MySQL does not open yet (#1224). The UC-2
+    # verbs refuse with SOPULI-20006 (#1225).
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
         provides=frozenset({"pymysql"}),
         password_limit="256",
-        commands=frozenset(),
+        commands=frozenset(
+            {
+                "creds.check",
+                "creds.apply",
+                "creds.rotate",
+                "creds.generate",
+                "creds.status",
+                "creds.finish-rollover",
+            }
+        ),
     ),
 }
 

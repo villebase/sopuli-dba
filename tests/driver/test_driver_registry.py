@@ -227,6 +227,30 @@ def test_creds_check_is_let_through_on_postgresql() -> None:
     require_command(target("pg-dev", "postgresql"), "creds.check")
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "creds.check",
+        "creds.apply",
+        "creds.rotate",
+        "creds.generate",
+        "creds.status",
+        "creds.finish-rollover",
+    ],
+)
+def test_the_uc1_commands_are_let_through_on_mysql(command: str) -> None:
+    """#1223."""
+    require_command(target("mysql-dev", "mysql"), command)
+
+
+def test_the_uc2_verbs_are_refused_on_mysql() -> None:
+    """#1225 has not written them yet."""
+    with pytest.raises(DriverNotImplementedError) as refused:
+        require_command(target("mysql-dev", "mysql"), "account.suspend")
+
+    assert refused.value.code == DRIVER_NOT_IMPLEMENTED
+
+
 def test_account_list_is_let_through_on_postgresql() -> None:
     """#1201: the driver resolves a `role:` predicate, so `account list` runs."""
     require_command(target("pg-dev", "postgresql"), "account.list")

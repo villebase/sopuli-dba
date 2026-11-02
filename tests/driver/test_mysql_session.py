@@ -160,7 +160,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
         lambda s: s.resolve_profile("default"),
         lambda s: s.resolve_role("acme_role"),
         lambda s: s.accounts_matching(role="acme_role"),
-        lambda s: s.finish_rollover("acme_app@%"),
     ],
 )
 def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
@@ -170,6 +169,14 @@ def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert 'target "mysql-dev" is a MySQL server' in str(caught.value)
+
+
+def test_finish_rollover_is_refused_by_capability() -> None:
+    """No window is opened yet (#1224), so none can be ended: exit 5, not 20006."""
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        _session().finish_rollover("acme_app@%")
+
+    assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
 
 
 def test_a_rollover_is_refused_by_capability_until_it_is_written() -> None:

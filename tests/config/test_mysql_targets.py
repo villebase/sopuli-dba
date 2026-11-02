@@ -329,14 +329,15 @@ def test_a_target_that_verifies_the_server_does_not_warn(mysql: dict[str, str] |
 # --------------------------------------------------------- the driver ---
 
 
-def test_every_command_but_doctor_refuses_a_mysql_target_until_the_driver_is_written() -> None:
-    """The config can declare the server before the driver can reach it, so a
-    command there is SOPULI-20006 with no install line."""
+def test_a_command_the_mysql_driver_does_not_have_yet_is_refused() -> None:
+    """`doctor` and UC-1 run (#1223); a UC-2 verb is SOPULI-20006 with no
+    install line until #1225 writes it."""
     target = server()
 
     require_command(target, "doctor")
+    require_command(target, "creds.apply")
     with pytest.raises(DriverNotImplementedError) as caught:
-        require_command(target, "creds.apply")
+        require_command(target, "account.suspend")
 
     assert 'target "mysql-dev" declares type "mysql"' in str(caught.value)
-    assert "can run only `doctor` there yet" in str(caught.value)
+    assert "can run only `doctor`, `creds apply`" in str(caught.value)

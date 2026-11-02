@@ -60,8 +60,7 @@ the tool account then reaches it (`07_own_grants_probe.py`, OG4 to OG6).
 
 `SYSTEM_USER` protects only the accounts that hold it. An administrative
 account without it is not protected, and the tool account can change its
-password. A guardrail that refuses such an account as a managed account is
-decided in [#1202](../decisions/log.md#1202) (open: #1222).
+password. Guardrail 9 refuses such an account as a managed account (§5).
 
 ---
 
@@ -77,8 +76,21 @@ Run them as an administrator.
 CREATE USER 'sopuli_admin'@'192.0.2.10' IDENTIFIED BY RANDOM PASSWORD;
 GRANT CREATE USER ON *.* TO 'sopuli_admin'@'192.0.2.10';
 GRANT SELECT (User, Host, plugin, account_locked, password_expired,
-              password_last_changed, password_lifetime)
+              password_last_changed, password_lifetime,
+              Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,
+              Drop_priv, Reload_priv, Shutdown_priv, Process_priv, File_priv,
+              Grant_priv, References_priv, Index_priv, Alter_priv, Show_db_priv,
+              Super_priv, Create_tmp_table_priv, Lock_tables_priv, Execute_priv,
+              Repl_slave_priv, Repl_client_priv, Create_view_priv, Show_view_priv,
+              Create_routine_priv, Alter_routine_priv, Create_user_priv, Event_priv,
+              Trigger_priv, Create_tablespace_priv, Create_role_priv, Drop_role_priv)
   ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.global_grants TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.db            TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.tables_priv   TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.columns_priv  TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.proxies_priv  TO 'sopuli_admin'@'192.0.2.10';
+GRANT SELECT ON mysql.role_edges    TO 'sopuli_admin'@'192.0.2.10';
 ```
 
 `IDENTIFIED BY RANDOM PASSWORD` makes the server draw the password. The server
@@ -100,6 +112,11 @@ the stored hash, `authentication_string`, or `User_attributes`, which holds a
 retained password's hash. The server refuses both with `1143`
 (`05_identity_grants_probe.py`, TG5). Do not grant `SELECT` on the whole table
 instead. §4 says what the tool reads with it.
+
+The `*_priv` columns and the six whole tables are what guardrail 9 reads (§5):
+another account's global privileges, its grants on the `mysql` schema, its
+proxies and its roles. None of them holds a hash
+(`06_rollover_privileges_probe.py`, PV1 to PV7).
 
 Give the account no other privilege, and no role.
 
@@ -143,7 +160,8 @@ of these reads needs a grant.
 | Reported as | What it is |
 |---|---|
 | held or missing | `CREATE USER` on `*.*` |
-| held or missing | `SELECT` on each of the seven columns of `mysql.user` in §2.1. Column names are compared without case, as MySQL compares them |
+| held or missing | `SELECT` on each column of `mysql.user` in §2.1. Column names are compared without case, as MySQL compares them |
+| held or missing | `SELECT` on each of the six whole tables in §2.1 |
 | over-granted | every other privilege the account holds or can activate, on any object, each as `<privilege> ON <object>`. This includes `GRANT OPTION`, and `ADMIN OPTION` on a role |
 | unaudited | a line of `SHOW GRANTS` that the tool cannot parse |
 | unreadable | `mysql.user`, where the server refuses the read of §4 with `1142` or `1143`: the column grant of §2.1 is missing |
@@ -158,8 +176,9 @@ comes from.
 
 A broader grant that includes one of §2.1's counts as held, because the tool
 can do what it needs, and as over-granted, because it can do more. `SELECT` on
-`mysql.user` as a whole, on `mysql.*` or on `*.*` holds the column grant, and
-`ALL PRIVILEGES ON *.*` holds both grants. Where `SHOW GRANTS` also prints a
+`mysql.user` as a whole, on `mysql.*` or on `*.*` holds the column grant;
+`SELECT` on `mysql.*` or `*.*` holds the six tables too; and
+`ALL PRIVILEGES ON *.*` holds every grant. Where `SHOW GRANTS` also prints a
 line the tool cannot parse, such as a `partial_revokes` `REVOKE` that may take
 `mysql` out of a broader grant, only the exact column grant counts as held.
 A database pattern, such as `` `%`.* ``, never counts: the tool does not
@@ -234,3 +253,42 @@ an expired password, so a role with the same name is not named either.
 Where the read of the declared accounts fails, `mysql.user` is unreadable, and
 a line says why. The audit of the tool account's own grants is kept, so a
 missing grant is still reported.
+
+---
+
+## 5. Guardrail 9: a managed account with a global privilege
+
+The tool refuses to manage an account that holds, or can activate, any of
+these (decided in [#1222](../decisions/log.md#1222)):
+
+- any privilege `ON *.*` but `USAGE`, static or dynamic;
+- any privilege on the `mysql` schema, one of its tables, or one of their
+  columns;
+- any `PROXY` grant.
+
+No flag waives it. The tool account's `CREATE USER` changes the password of
+any account that does not hold `SYSTEM_USER`, an administrative one included
+(§1). The tool would then know the password of an account that can change the
+server. The rule covers every global privilege rather than a list of
+administrative ones. MySQL adds dynamic privileges in new releases, and a list
+would miss them. `SELECT ON *.*` also reads every stored hash. An application
+account that was given a global privilege out of habit is refused until its
+grant is narrowed to its own schema.
+
+**Roles count whether they are active or not.** The account can `SET ROLE` to
+any role granted to it, and to a role granted to that role. So the tool follows
+`mysql.role_edges` to the end, and reads every role in `mandatory_roles`,
+which has no row in `role_edges` (`06_rollover_privileges_probe.py`, PV6). A
+default role is a granted role, so `mysql.default_roles` adds nothing.
+
+| Where | What it shows |
+|---|---|
+| the `*_priv` columns of `mysql.user` | static privileges `ON *.*` |
+| `mysql.global_grants` | dynamic privileges, which are all `ON *.*` |
+| `mysql.db` | privileges on a schema. A pattern that matches `mysql`, such as `mysq%`, counts |
+| `mysql.tables_priv`, `mysql.columns_priv` | privileges on a table or column of `mysql` |
+| `mysql.proxies_priv` | `PROXY` grants |
+| `mysql.role_edges`, `@@global.mandatory_roles` | the roles, read for each of the above |
+
+The refusal names each privilege as `<privilege> ON <object>`, with
+`through <role>` where a role gives it.

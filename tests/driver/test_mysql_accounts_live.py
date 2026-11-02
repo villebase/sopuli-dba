@@ -23,6 +23,7 @@ pymysql = pytest.importorskip("pymysql")
 session_module = pytest.importorskip("sopuli.driver.mysql.session")
 accounts_module = pytest.importorskip("sopuli.driver.mysql.accounts")
 
+#: The columns the survey reads, revoked in one test.
 COLUMNS = (
     "User, Host, plugin, account_locked, password_expired, password_last_changed, password_lifetime"
 )
@@ -55,8 +56,7 @@ def stage(live_mysql: Any) -> Iterator[Stage]:
     tool, password = f"sopuli_tool_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
     with live_mysql.connect() as admin, admin.cursor() as cursor:
         cursor.execute("create user %s@'%%' identified by %s", (tool, password))
-        cursor.execute("grant create user on *.* to %s@'%%'", (tool,))
-        cursor.execute(f"grant select ({COLUMNS}) on mysql.user to %s@'%%'", (tool,))
+    live_mysql.grant_section_2(tool)
     target = ExpandedTarget(
         target=Target(
             name="tier1-mysql",
@@ -115,6 +115,40 @@ def test_check_privileges_reports_the_declared_accounts(stage: Stage) -> None:
         for line in audit.remedies
     )
     assert any("acme_none@% does not exist on this server" in line for line in audit.remedies)
+
+
+def test_global_privileges_are_read_through_every_path(stage: Stage) -> None:
+    """As the tool account, with only §2.1's grants: a static and a dynamic
+    global privilege through a role two levels down, a schema pattern that
+    matches `mysql`, a column of `mysql.user`, and a mandatory role. A proxy
+    grant needs root@localhost, which this fixture does not reach; tier 0
+    covers it."""
+    admin_module = pytest.importorskip("sopuli.driver.mysql.admin")
+    user = stage.account("10.%")
+    outer, inner, mandatory = (f"acme_r{n}_{uuid.uuid4().hex[:6]}" for n in range(3))
+    for role in (outer, inner, mandatory):
+        stage.admin("create role %s", (role,))
+        stage.created.append((role, "%"))
+    stage.admin("grant %s to %s", (inner, outer))
+    stage.admin("grant %s to %s@'10.%%'", (outer, user))
+    stage.admin("grant reload, backup_admin on *.* to %s", (inner,))
+    stage.admin("grant select on `mysq%%`.* to %s", (inner,))
+    stage.admin("grant select (authentication_string) on mysql.user to %s@'10.%%'", (user,))
+    stage.admin("grant process on *.* to %s", (mandatory,))
+    stage.admin("set global mandatory_roles = %s", (mandatory,))
+    try:
+        with stage.session.connection.cursor() as cursor:
+            found = admin_module.global_privileges(cursor, admin_module.Principal(user, "10.%"))
+    finally:
+        stage.admin("set global mandatory_roles = ''")
+
+    assert found == {
+        f"RELOAD ON *.* through {inner}@%",
+        f"BACKUP_ADMIN ON *.* through {inner}@%",
+        f"SELECT ON mysql.* through {inner}@%",
+        "SELECT (authentication_string) ON mysql.user",
+        f"PROCESS ON *.* through {mandatory}@%",
+    }
 
 
 def test_without_the_column_grant_mysql_user_is_unreadable(stage: Stage) -> None:

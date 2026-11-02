@@ -179,13 +179,8 @@ def test_check_privileges_reports_section_2_and_an_over_grant_through_a_role(
     role's PROCESS is over-granted."""
     user, password = tool_account
     role = f"acme_ops_{uuid.uuid4().hex[:8]}"
+    live_mysql.grant_section_2(user)
     with live_mysql.connect() as admin, admin.cursor() as cursor:
-        cursor.execute("grant create user on *.* to %s@'%%'", (user,))
-        cursor.execute(
-            "grant select (User, Host, plugin, account_locked, password_expired, "
-            "password_last_changed, password_lifetime) on mysql.user to %s@'%%'",
-            (user,),
-        )
         cursor.execute("create role %s", (role,))
         cursor.execute("grant process on *.* to %s", (role,))
         cursor.execute("grant %s to %s@'%%'", (role, user))

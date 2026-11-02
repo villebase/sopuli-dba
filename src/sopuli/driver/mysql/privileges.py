@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ
 from sopuli.driver.mysql.grants import ALL_PRIVILEGES, GLOBAL, Grant, Grants
 from sopuli.driver.mysql.grants import read as read_grants
 from sopuli.driver.protocol import Cursor, PrivilegeAudit
@@ -30,8 +31,10 @@ USAGE = "USAGE"
 #: The table §2's column grant is on, as the parser spells it.
 USER_TABLE = "mysql.user"
 
-#: §2's columns of ``mysql.user``, as ``SHOW GRANTS`` spells them. MySQL
-#: compares column names without case, and so does the audit.
+#: §2's columns of ``mysql.user``, as ``SHOW GRANTS`` spells them: the ones an
+#: account's state is read from, and the ``*_priv`` columns guardrail 9 reads
+#: (:mod:`~sopuli.driver.mysql.admin`). MySQL compares column names without
+#: case, and so does the audit.
 COLUMNS = (
     "User",
     "Host",
@@ -40,7 +43,12 @@ COLUMNS = (
     "password_expired",
     "password_last_changed",
     "password_lifetime",
+    *PRIV_COLUMNS,
 )
+
+#: §2's whole tables, each granted ``SELECT``: the rest of what guardrail 9
+#: reads. None of them holds a hash.
+TABLES = TABLES_READ
 
 #: The account the session runs as, for the hint.
 SELF = "select current_user()"
@@ -76,7 +84,12 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
 
     no_create_user = CREATE_USER not in held
     columns = [name for name in COLUMNS if _column(name) not in held]
-    missing = ([CREATE_USER] if no_create_user else []) + [_column(name) for name in columns]
+    tables = [table for table in TABLES if _table(table) not in held]
+    missing = (
+        ([CREATE_USER] if no_create_user else [])
+        + [_column(name) for name in columns]
+        + [_table(table) for table in tables]
+    )
     unaudited = tuple(
         f"a SHOW GRANTS line the tool cannot read: {line}" for line in grants.unparsed
     )
@@ -87,11 +100,11 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
         roles=tuple(sorted(set(roles))),
         unaudited=unaudited,
         remedies=(OVER_GRANTED_REMEDY,) if over else (),
-        hint=_hint(user, create_user=no_create_user, columns=columns),
+        hint=_hint(user, create_user=no_create_user, columns=columns, tables=tables),
     )
 
 
-def _hint(user: str, *, create_user: bool, columns: list[str]) -> str:
+def _hint(user: str, *, create_user: bool, columns: list[str], tables: list[str]) -> str:
     """Where §2 is, and the statements that grant what is missing."""
     hint = f"{DOCUMENT} section 2 has the grants for the tool account `{user}`"
     name, _, host = user.rpartition("@")
@@ -101,6 +114,7 @@ def _hint(user: str, *, create_user: bool, columns: list[str]) -> str:
         statements.append(f"GRANT CREATE USER ON *.* TO {account};")
     if columns:
         statements.append(f"GRANT SELECT ({', '.join(columns)}) ON {USER_TABLE} TO {account};")
+    statements += [f"GRANT SELECT ON {table} TO {account};" for table in tables]
     return f"{hint}: {' '.join(statements)}" if statements else hint
 
 
@@ -152,15 +166,16 @@ def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -
                 else:
                     held.add(_column(needed))
             continue
+        if grant.on in TABLES and privilege.name == "SELECT" and not privilege.columns:
+            held.add(_table(grant.on))
+            continue
         if grant.on == GLOBAL and privilege.name == ALL_PRIVILEGES:
             held.add(CREATE_USER)
-        if (
-            broad
-            and grant.on in COVERS_USER_TABLE
-            and privilege.name in ("SELECT", ALL_PRIVILEGES)
-            and not privilege.columns
-        ):
+        reads_all = privilege.name in ("SELECT", ALL_PRIVILEGES) and not privilege.columns
+        if broad and reads_all and grant.on in COVERS_USER_TABLE:
             held.update(_column(name) for name in COLUMNS)
+        if broad and reads_all and grant.on in (GLOBAL, "mysql.*"):
+            held.update(_table(table) for table in TABLES)
         columns = f" ({', '.join(privilege.columns)})" if privilege.columns else ""
         over.add(f"{privilege.name}{columns} ON {on}")
 
@@ -186,6 +201,10 @@ def _needed_column(column: str) -> str | None:
 
 def _column(name: str) -> str:
     return f"SELECT ({name}) ON {USER_TABLE}"
+
+
+def _table(table: str) -> str:
+    return f"SELECT ON {table}"
 
 
 def audit(cursor: Cursor) -> PrivilegeAudit:

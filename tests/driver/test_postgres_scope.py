@@ -38,6 +38,9 @@ class _Cursor:
         assert self._last is not None
         return self._rows[self._last]
 
+    def fetchall(self) -> Any:
+        raise AssertionError("the scope reads fetch one row")
+
 
 def _observe(
     *,

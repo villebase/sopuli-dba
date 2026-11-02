@@ -130,6 +130,7 @@ from sopuli.driver.protocol import (
     AttributeChange,
     AuditCoverage,
     ChangeResult,
+    ClosesConnection,
     Credential,
     DriverContext,
     DriverError,
@@ -292,7 +293,7 @@ def initialise(
 
 
 @dataclass
-class OracleSession:
+class OracleSession(ClosesConnection):
     """One open connection, and everything done through it.
 
     **A** :class:`sopuli.driver.protocol.Session`. The protocol is structural, so
@@ -1703,13 +1704,6 @@ class OracleSession:
         scope = self.scope()
         assert_scope(scope, self.target.target.oracle, target=self.target.name)
         return scope
-
-    def close(self) -> None:
-        """Let the connection go. Safe twice, because a caller unwinding from
-        an error should not have to know whether it already did."""
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
 
     def __enter__(self) -> OracleSession:
         return self

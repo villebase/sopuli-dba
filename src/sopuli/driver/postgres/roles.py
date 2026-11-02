@@ -63,9 +63,9 @@ declared name are refused rather than guessed between.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
-from sopuli.driver.protocol import DriverError, UserState
+from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
 #: The built-in roles whose members guardrail 4 refuses
@@ -177,14 +177,6 @@ MEMBERS_QUERY = (
     f"where {COUNTING_GRANT}"
     ") select r.rolname from members join pg_roles r on r.oid = members.oid order by r.rolname"
 )
-
-
-class Cursor(Protocol):
-    """The part of a psycopg cursor this module uses."""
-
-    def execute(self, query: Any, params: Any = None, /) -> Any: ...
-
-    def fetchall(self) -> Any: ...
 
 
 class AmbiguousRoleError(DriverError):

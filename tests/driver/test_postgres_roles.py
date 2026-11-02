@@ -87,6 +87,9 @@ class _Cursor:
     def execute(self, query: Any, params: Any = None, /) -> None:
         self.executed.append((query, params))
 
+    def fetchone(self) -> Any:
+        raise AssertionError("the role reads fetch every row")
+
     def fetchall(self) -> Any:
         return self.rows
 

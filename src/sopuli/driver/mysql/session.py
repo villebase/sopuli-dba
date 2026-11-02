@@ -42,6 +42,7 @@ from sopuli.driver.protocol import (
     AttributeChange,
     AuditCoverage,
     ChangeResult,
+    ClosesConnection,
     Credential,
     DriverContext,
     DriverError,
@@ -53,8 +54,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
-from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
-from sopuli.exit_codes import ExitCode
+from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -62,27 +62,6 @@ from sopuli.secrets import Secret
 LOG = logger("mysql")
 
 T = TypeVar("T")
-
-
-class NotWrittenError(DriverError):
-    """The MySQL driver connects, and cannot do this yet.
-
-    ``SOPULI-20006``, ``config`` and exit 9, as for a driver with no module at
-    all: nothing installed fixes it, and the configuration is right.
-    """
-
-    category = "config"
-    exit_code = ExitCode.CONFIG_INVALID
-
-    def __init__(self, target: str, what: str) -> None:
-        super().__init__(
-            f'target "{target}" is a MySQL server, and this build cannot {what} there yet',
-            hint=(
-                "this is not something to install: the MySQL driver connects and "
-                "reports the server, and the rest of it is not written yet"
-            ),
-            code=DRIVER_NOT_IMPLEMENTED,
-        )
 
 
 class UnencryptedSessionError(DriverError):
@@ -119,7 +98,7 @@ PLAIN_LOGIN_FAILURE = "'NoneType' object has no attribute 'is_auth_switch_reques
 
 
 @dataclass
-class MysqlSession:
+class MysqlSession(ClosesConnection):
     """One open connection to a server. A
     :class:`~sopuli.driver.protocol.Session` by its methods."""
 
@@ -154,7 +133,15 @@ class MysqlSession:
         return self._scope
 
     def _not_written(self, what: str) -> NotWrittenError:
-        return NotWrittenError(self.target.name, what)
+        return NotWrittenError(
+            self.target.name,
+            product="a MySQL server",
+            what=what,
+            hint=(
+                "the MySQL driver connects and reports the server, and the rest of it "
+                "is not written yet"
+            ),
+        )
 
     def describe_user(self, account: str) -> UserState | None:
         raise self._not_written("read an account")
@@ -248,12 +235,6 @@ class MysqlSession:
 
     def finish_rollover(self, account: str) -> ChangeResult:
         raise self._not_written("end a rollover window")
-
-    def close(self) -> None:
-        """Let the connection go. Safe twice, also after a close that raised."""
-        connection, self.connection = self.connection, None
-        if connection is not None:
-            connection.close()
 
 
 def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:

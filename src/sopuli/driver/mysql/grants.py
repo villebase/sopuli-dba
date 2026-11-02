@@ -28,7 +28,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Protocol
+
+from sopuli.driver.protocol import Cursor
 
 #: The roles granted straight to the session's account: rows whose grantee is
 #: the account itself, not a role it reaches.
@@ -53,16 +54,6 @@ GLOBAL = "*.*"
 ALL_PRIVILEGES = "ALL PRIVILEGES"
 
 SYSTEM_USER = "SYSTEM_USER"
-
-
-class Cursor(Protocol):
-    """The part of a PyMySQL cursor this module uses."""
-
-    def execute(self, query: Any, args: Any = None, /) -> Any: ...
-
-    def fetchone(self) -> Any: ...
-
-    def fetchall(self) -> Any: ...
 
 
 @dataclass(frozen=True)

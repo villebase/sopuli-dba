@@ -31,10 +31,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sopuli.driver.oracle.accounts import COMMON_QUERY
-from sopuli.driver.oracle.capabilities import UNREADABLE_CODES, Cursor
+from sopuli.driver.oracle.capabilities import UNREADABLE_CODES
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.oracle.privileges import is_yes
-from sopuli.driver.protocol import AuditCoverage
+from sopuli.driver.protocol import AuditCoverage, Cursor
 
 #: The two actions a DBA's routes use (UC-2 §1): an ``ALTER USER``, to reset the
 #: password to a known value or to grant ``CONNECT THROUGH``, and a logon as the

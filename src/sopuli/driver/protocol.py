@@ -67,7 +67,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.exit_codes import ExitCode
@@ -1527,3 +1527,70 @@ def require_capability(
     """
     if not scope.supports(capability):
         raise UnsupportedCapabilityError(capability, target=target, hint=hint)
+
+
+class Cursor(Protocol):
+    """The part of a database cursor a driver uses: ``oracledb``'s, psycopg's
+    and PyMySQL's all have it.
+
+    Structural, so a tier-0 test hands a driver a fake and the tier-1 lane
+    hands it the client's, and neither has to know about the other.
+    """
+
+    def execute(self, statement: Any, parameters: Any = None, /) -> Any: ...
+
+    def fetchone(self) -> Any: ...
+
+    def fetchall(self) -> Any: ...
+
+
+class ReadOnlyTargetError(DriverError):
+    """A write was about to start on a session that cannot take one.
+
+    P1 requires this **up front** rather than halfway through a statement: an
+    Oracle physical standby opens ``READ ONLY``, a PostgreSQL standby is in
+    recovery, and a MySQL replica runs with ``read_only``. Finding out at the
+    statement means finding out after the run already decided this target was
+    fine.
+
+    Exit 1 with category ``database``, which is P5's established shape for a
+    condition that has no number of its own. Adding a number to P5's table is a
+    change to a contract schedulers branch on, and a standby does not warrant
+    one.
+    """
+
+    category = "database"
+
+
+def require_read_write(scope: Scope, *, target: str, hint: str) -> None:
+    """Refuse a write where the driver found the session read-only.
+
+    Each mutating method of a session calls this before it builds a statement.
+    ``hint`` is the driver's, because what makes a session read-only, and so
+    what to do about it, is the product's.
+
+    An **unknown** ``read_write`` is not a refusal. A session that could not
+    read its open mode, as an Oracle account without the documented grant on
+    ``V$DATABASE`` cannot, would otherwise turn a missing grant into "this
+    database is a standby", which is a worse diagnosis than the one the
+    missing grant already produces. The server refuses a write to a standby
+    on its own; this makes the refusal early and legible.
+    """
+    if scope.read_write is False:
+        raise ReadOnlyTargetError(
+            f'target "{target}" is {scope.open_mode or "read-only"} and cannot be written to',
+            hint=hint,
+        )
+
+
+class ClosesConnection:
+    """The ``close`` of a session that holds one client connection in
+    ``connection``."""
+
+    connection: Any
+
+    def close(self) -> None:
+        """Let the connection go. Safe twice, also after a close that raised."""
+        connection, self.connection = self.connection, None
+        if connection is not None:
+            connection.close()

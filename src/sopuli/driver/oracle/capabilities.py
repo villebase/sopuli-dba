@@ -37,9 +37,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol
+from typing import Any
 
 from sopuli.config.model import TargetOracle
+from sopuli.driver import protocol
 from sopuli.driver.oracle.errors import from_error
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
@@ -55,25 +56,13 @@ from sopuli.driver.protocol import (
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     UNKNOWN,
+    Cursor,
     DriverError,
     Encryption,
+    ReadOnlyTargetError,
     Scope,
 )
 from sopuli.exit_codes import ExitCode
-
-
-class Cursor(Protocol):
-    """The one shape this module needs from a database cursor.
-
-    Structural, so a tier-0 test hands it a fake and the tier-1 lane hands it
-    ``oracledb``'s, and neither has to know about the other.
-    """
-
-    def execute(self, statement: str, parameters: Any = None, /) -> Any: ...
-
-    def fetchone(self) -> Any: ...
-
-    def fetchall(self) -> Any: ...
 
 
 class ProbeError(DriverError):
@@ -528,26 +517,6 @@ class ScopeAssertionError(DriverError):
     exit_code = ExitCode.CONFIG_INVALID
 
 
-class ReadOnlyTargetError(DriverError):
-    """A mutation was about to run against a target that is not open read-write.
-
-    P1 requires this **up front** rather than halfway through a statement: a
-    physical standby opens ``READ ONLY``, and finding out at the ``ALTER USER``
-    means finding out after the run already decided this target was fine.
-
-    Exit 1 with its own category, which is P5's established shape for a condition
-    that has no number of its own -- connectivity and authorization are the
-    precedent. Adding a number to P5's table is a change to a contract schedulers
-    branch on, and a standby does not warrant one.
-
-    Deliberately **not** raised by :func:`assert_scope`. `creds check` reads and
-    must keep working against a standby, so refusing one is the mutating
-    commands' call and not a property of having connected.
-    """
-
-    category = "database"
-
-
 def assert_scope(scope: Scope, declared: TargetOracle | None, *, target: str) -> None:
     """Refuse unless what the file claims is what the connection found.
 
@@ -616,32 +585,28 @@ def assert_scope(scope: Scope, declared: TargetOracle | None, *, target: str) ->
             )
 
 
+READ_ONLY_HINT = (
+    "this looks like a physical standby; point the target at the primary, "
+    "or drop it from the selection"
+)
+
+
 def require_read_write(scope: Scope, *, target: str) -> None:
     """Refuse a mutation against a target that is not open read-write (P1).
 
+    As :func:`sopuli.driver.protocol.require_read_write`, with Oracle's hint.
     Called by each mutating method of
     :class:`~sopuli.driver.oracle.session.OracleSession` before it builds a
     statement, and by nothing else. ``apply_attributes`` with nothing to apply
-    builds none and returns before the call. See :class:`ReadOnlyTargetError`
-    for why this is not folded into :func:`assert_scope`. The pre-flight and
+    builds none and returns before the call. The pre-flight and
     `creds finish-rollover` read ``scope.read_write`` themselves, so that they
     can report a read-only target as a finding rather than raise.
 
-    An **unknown** open mode is not a refusal. ``V$DATABASE`` is in the
-    documented grant set but a half-installed account cannot read it, and
-    refusing every such target would turn a missing grant into "this database is
-    a standby", which is a worse diagnosis than the one the missing grant already
-    produces. The server refuses a write to a standby on its own; this exists to
-    make the refusal early and legible, not to be the only thing standing there.
+    Deliberately **not** called by :func:`assert_scope`. `creds check` reads and
+    must keep working against a standby, so refusing one is the mutating
+    commands' call and not a property of having connected.
     """
-    if scope.read_write is False:
-        raise ReadOnlyTargetError(
-            f'target "{target}" is open {scope.open_mode or "read-only"} and cannot be written to',
-            hint=(
-                "this looks like a physical standby; point the target at the primary, "
-                "or drop it from the selection"
-            ),
-        )
+    protocol.require_read_write(scope, target=target, hint=READ_ONLY_HINT)
 
 
 #: Asserted by ``tests/driver/test_capabilities.py`` against P1's own table, so a

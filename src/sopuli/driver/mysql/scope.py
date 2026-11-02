@@ -16,8 +16,9 @@ Connecting proves none of them either.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
+from sopuli.driver import protocol
 from sopuli.driver.mysql import grants
 from sopuli.driver.protocol import (
     ADMIN_REFUSED,
@@ -25,10 +26,12 @@ from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     SERVER,
     UNKNOWN,
+    Cursor,
     DriverError,
     Encryption,
     Scope,
 )
+from sopuli.driver.protocol import ReadOnlyTargetError as ReadOnlyTargetError
 from sopuli.exit_codes import ExitCode
 
 #: ``scope.open_mode``, in the words P1 uses for an Oracle database.
@@ -64,16 +67,6 @@ TCP = "tcp"
 
 UNENCRYPTED_HINT = "set `mysql.ssl_mode` to VERIFY_IDENTITY, and give the server a certificate"
 NO_ROW_HINT = "SHOW SESSION STATUS has no Ssl_version row for this session"
-
-
-class Cursor(Protocol):
-    """The part of a PyMySQL cursor this module uses."""
-
-    def execute(self, query: Any, args: Any = None, /) -> Any: ...
-
-    def fetchone(self) -> Any: ...
-
-    def fetchall(self) -> Any: ...
 
 
 class NotMysqlError(DriverError):
@@ -191,20 +184,14 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     )
 
 
-class ReadOnlyTargetError(DriverError):
-    """A write was about to start on a session that cannot take one: exit 1,
-    category ``database``, raised before anything is sent."""
+READ_ONLY_HINT = (
+    "the server has read_only or super_read_only on, as a replica does, or the "
+    "session's transaction_read_only is on. Point the target at the writable "
+    "primary"
+)
 
 
 def require_read_write(scope: Scope, *, target: str) -> None:
-    """Refuse a write where :func:`observe` found the session read-only."""
-    if scope.read_write is not False:
-        return
-    raise ReadOnlyTargetError(
-        f'target "{target}" is {scope.open_mode} and cannot be written to',
-        hint=(
-            "the server has read_only or super_read_only on, as a replica does, or the "
-            "session's transaction_read_only is on. Point the target at the writable "
-            "primary"
-        ),
-    )
+    """Refuse a write where :func:`observe` found the session read-only, as
+    :func:`sopuli.driver.protocol.require_read_write`."""
+    protocol.require_read_write(scope, target=target, hint=READ_ONLY_HINT)

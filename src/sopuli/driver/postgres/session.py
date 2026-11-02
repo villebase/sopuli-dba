@@ -79,6 +79,7 @@ from sopuli.driver.protocol import (
     AttributeChange,
     AuditCoverage,
     ChangeResult,
+    ClosesConnection,
     Credential,
     DriverContext,
     DriverError,
@@ -90,8 +91,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
-from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
-from sopuli.exit_codes import ExitCode
+from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -116,29 +116,8 @@ def _not_tried(detail: str) -> VerifyResult:
     return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
 
 
-class NotWrittenError(DriverError):
-    """The PostgreSQL driver connects, and cannot do this yet.
-
-    ``SOPULI-20006``, ``config`` and exit 9, as for a driver with no module at
-    all: nothing installed fixes it, and the configuration is right.
-    """
-
-    category = "config"
-    exit_code = ExitCode.CONFIG_INVALID
-
-    def __init__(self, target: str, what: str) -> None:
-        super().__init__(
-            f'target "{target}" is a PostgreSQL cluster, and this build cannot {what} there yet',
-            hint=(
-                f"this is not something to install: the PostgreSQL driver reads roles, "
-                f"checks and sets their passwords, and cannot {what} yet"
-            ),
-            code=DRIVER_NOT_IMPLEMENTED,
-        )
-
-
 @dataclass
-class PostgresSession:
+class PostgresSession(ClosesConnection):
     """One open connection to a cluster. A
     :class:`~sopuli.driver.protocol.Session` by its methods."""
 
@@ -217,7 +196,15 @@ class PostgresSession:
             raise from_error(error).as_error() from error
 
     def _not_written(self, what: str) -> NotWrittenError:
-        return NotWrittenError(self.target.name, what)
+        return NotWrittenError(
+            self.target.name,
+            product="a PostgreSQL cluster",
+            what=what,
+            hint=(
+                "the PostgreSQL driver reads roles, checks and sets their passwords, "
+                f"and cannot {what} yet"
+            ),
+        )
 
     def describe_user(self, account: str) -> UserState | None:
         """The role from ``pg_roles``, or ``None`` if there is none
@@ -594,12 +581,6 @@ class PostgresSession:
         refuses by capability for any other caller."""
         self.require_rollover(account)
         raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
-
-    def close(self) -> None:
-        """Let the connection go. Safe twice, also after a close that raised."""
-        connection, self.connection = self.connection, None
-        if connection is not None:
-            connection.close()
 
 
 @dataclass(frozen=True)

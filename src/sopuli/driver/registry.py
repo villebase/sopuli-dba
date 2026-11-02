@@ -38,7 +38,8 @@ from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Target
-from sopuli.driver.protocol import Driver, DriverContext
+from sopuli.driver.protocol import Driver, DriverContext, DriverError
+from sopuli.exit_codes import ExitCode
 from sopuli.extras import (
     MISSING_CLIENT,
     MISSING_MODULE,
@@ -222,6 +223,28 @@ class DriverNotImplementedError(ConfigError):
     """
 
     code = DRIVER_NOT_IMPLEMENTED
+
+
+class NotWrittenError(DriverError):
+    """A driver connects, and cannot do this yet.
+
+    ``SOPULI-20006``, ``config`` and exit 9, as for a driver with no module at
+    all: nothing installed fixes it, and the configuration is right. A session
+    raises it, so it is a :class:`~sopuli.driver.protocol.DriverError` and
+    reaches the caller as that target's error. ``product`` is how the message
+    names what the target is, such as "a MySQL server", and ``hint`` says what
+    the driver can do instead.
+    """
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, target: str, *, product: str, what: str, hint: str) -> None:
+        super().__init__(
+            f'target "{target}" is {product}, and this build cannot {what} there yet',
+            hint=f"this is not something to install: {hint}",
+            code=DRIVER_NOT_IMPLEMENTED,
+        )
 
 
 def installed(driver: DatabaseDriver) -> bool:

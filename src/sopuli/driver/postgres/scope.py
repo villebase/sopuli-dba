@@ -18,8 +18,9 @@ build of the PostgreSQL driver does not do, and connecting proves none of them.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
+from sopuli.driver import protocol
 from sopuli.driver.protocol import (
     ADMIN_REFUSED,
     CLUSTER,
@@ -27,10 +28,12 @@ from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     ROLE_LOOKUP,
     UNKNOWN,
+    Cursor,
     DriverError,
     Encryption,
     Scope,
 )
+from sopuli.driver.protocol import ReadOnlyTargetError as ReadOnlyTargetError
 from sopuli.exit_codes import ExitCode
 
 #: ``scope.open_mode``, in the words P1 uses for an Oracle database, and a third
@@ -73,14 +76,6 @@ UNENCRYPTED_HINT = (
     "set `postgres.sslmode` to verify-full, and give the server a certificate (`ssl = on`)"
 )
 NO_ROW_HINT = "pg_stat_ssl has no row for this session's backend"
-
-
-class Cursor(Protocol):
-    """The part of a psycopg cursor this module uses."""
-
-    def execute(self, query: Any, params: Any = None, /) -> Any: ...
-
-    def fetchone(self) -> Any: ...
 
 
 def encryption_of(row: Any) -> Encryption:
@@ -159,18 +154,9 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
     )
 
 
-class ReadOnlyTargetError(DriverError):
-    """A write was about to start on a session that cannot take one.
-
-    The PostgreSQL :class:`sopuli.driver.oracle.capabilities.ReadOnlyTargetError`:
-    exit 1, category ``database``, raised before anything is sent.
-    """
-
-
 def require_read_write(scope: Scope, *, target: str) -> None:
-    """Refuse a write where :func:`observe` found the session read-only."""
-    if scope.read_write is not False:
-        return
+    """Refuse a write where :func:`observe` found the session read-only, as
+    :func:`sopuli.driver.protocol.require_read_write`."""
     if scope.open_mode == IN_RECOVERY:
         hint = "this cluster is a standby; point the target at the primary"
     else:
@@ -178,6 +164,4 @@ def require_read_write(scope: Scope, *, target: str) -> None:
             "default_transaction_read_only is on for this role or database; "
             "the tool's role needs it off"
         )
-    raise ReadOnlyTargetError(
-        f'target "{target}" is {scope.open_mode} and cannot be written to', hint=hint
-    )
+    protocol.require_read_write(scope, target=target, hint=hint)

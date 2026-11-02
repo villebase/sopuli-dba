@@ -27,9 +27,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
 
-from sopuli.driver.protocol import PrivilegeAudit
+from sopuli.driver.protocol import Cursor, PrivilegeAudit
 
 CREATEROLE = "CREATEROLE"
 SUPERUSER = "SUPERUSER"
@@ -123,16 +122,6 @@ FORBIDDEN_ROLES = (
 )
 
 DOCUMENT = "02-postgres-privileges.md"
-
-
-class Cursor(Protocol):
-    """The part of a psycopg cursor this module uses."""
-
-    def execute(self, query: Any, params: Any = None, /) -> Any: ...
-
-    def fetchone(self) -> Any: ...
-
-    def fetchall(self) -> Any: ...
 
 
 @dataclass(frozen=True)

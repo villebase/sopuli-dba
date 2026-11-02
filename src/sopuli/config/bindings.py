@@ -49,6 +49,8 @@ from sopuli.config.model import (
 from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.products import (
     mysql_account,
+    mysql_host_token,
+    named,
     refuse_a_bare_mysql_account,
     refuse_a_container_clause,
 )
@@ -460,7 +462,7 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
             refuse_a_bare_mysql_account(
                 expanded,
                 account,
-                declared_by=_name(application),
+                declared_by=named(application),
                 at=at.key("accounts").index(position),
             )
             secret = _render(ref, application, account, expanded, at=where)
@@ -479,11 +481,6 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
                 )
             )
     return bound
-
-
-def _name(application: Application) -> str:
-    """An application entry, as a message names it."""
-    return "the application" if application.name is None else f"application {application.name!r}"
 
 
 def _check_store_declared(secret: SecretRef | None, config: Config, *, at: KeyPath) -> None:
@@ -958,12 +955,5 @@ def _tokens(application: Application, account: str, expanded: ExpandedTarget) ->
     if split is None:
         tokens["user"] = account
     else:
-        tokens["user"], tokens["host"] = split[0], host_token(split[1])
+        tokens["user"], tokens["host"] = split[0], mysql_host_token(split[1])
     return tokens
-
-
-def host_token(host: str) -> str:
-    """A MySQL host pattern as ``{host}`` writes it: ``%`` as ``any`` and ``_``
-    as ``one``, so that no vault path holds a MySQL wildcard. ``10.%`` is
-    ``10.any``."""
-    return host.replace("%", "any").replace("_", "one")

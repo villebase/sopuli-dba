@@ -88,6 +88,19 @@ def test_an_account_with_a_user_and_a_host_is_accepted(account: str) -> None:
     assert list(refs(config(app(account)))) == [account]
 
 
+@pytest.mark.parametrize(
+    "account", ["'acme_app'@'%'", "`acme_app`@%", "acme_app@ %", "acme_app @%", 'acme_app@"%"']
+)
+def test_a_part_quoted_as_sql_quotes_it_or_padded_is_refused(account: str) -> None:
+    error = refused(app(account))
+
+    assert error.message == (
+        f"application 'acme' declares {account!r} on MySQL target 'mysql-dev', "
+        "whose user or host starts or ends with a quote or a space"
+    )
+    assert str(error.at) == "applications[0].accounts[0]"
+
+
 def test_the_error_points_at_the_bare_name_in_the_list() -> None:
     error = refused(app("acme_app@%", "acme_api"))
 

@@ -1724,7 +1724,9 @@ one account per host, each with its own password, and which one a login reaches
 depends on how the client connects, so a bare name would leave the others on
 the old password ([#1202](../decisions/log.md#1202)). The name is split at the
 last `@`, because a user name may contain `@` and a host may not, and both
-parts must be non-empty. A bare name is refused with exit 9, naming the
+parts must be non-empty. Neither part may start or end with a quote or a
+space, as in `'acme_app'@'%'`: the file holds the names, not the SQL that
+quotes them. A bare name is refused with exit 9, naming the
 account, its application and the target. The same holds for a name a
 `personal_accounts:` rule declares when its `targets:` reach a MySQL target.
 `{user}` and `{host}` (§7) put the two parts into a secret ref.

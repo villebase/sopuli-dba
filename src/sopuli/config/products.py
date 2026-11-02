@@ -351,9 +351,8 @@ def refuse_a_container_clause(
         if position is None:
             return
         written = at.key("overrides").index(position).key("oracle")
-    name = "the application" if application.name is None else f"application {application.name!r}"
     raise ConfigError(
-        f"{name} sets `oracle: container_clause`, and binds to {product.name} target "
+        f"{named(application)} sets `oracle: container_clause`, and binds to {product.name} target "
         f"{expanded.name!r}",
         at=written.key("container_clause"),
         hint=(
@@ -363,8 +362,17 @@ def refuse_a_container_clause(
     )
 
 
+def named(application: Application) -> str:
+    """An application entry, as the start of a message names it."""
+    return "the application" if application.name is None else f"application {application.name!r}"
+
+
 #: Where a MySQL account name puts its host: after the last `@`.
 MYSQL_HOST_SEPARATOR = "@"
+
+#: What a part of an account name may not start or end with: SQL's quotes, and
+#: space. The config holds the names, not the statement that quotes them.
+_NOT_AT_AN_END = ("'", '"', "`", " ", "\t")
 
 
 def mysql_account(name: str) -> tuple[str, str] | None:
@@ -380,6 +388,13 @@ def mysql_account(name: str) -> tuple[str, str] | None:
     return user, host
 
 
+def mysql_host_token(host: str) -> str:
+    """A MySQL host pattern as ``{host}`` writes it: ``%`` as ``any`` and ``_``
+    as ``one``, so that no vault path holds a MySQL wildcard. ``10.%`` is
+    ``10.any`` (decided on #1221)."""
+    return host.replace("%", "any").replace("_", "one")
+
+
 def refuse_a_bare_mysql_account(
     expanded: ExpandedTarget, account: str, *, declared_by: str, at: KeyPath
 ) -> None:
@@ -391,19 +406,35 @@ def refuse_a_bare_mysql_account(
     other on the old password. ``declared_by`` is who declares the account,
     such as "application 'acme'", and ``at`` is where the name is written. A
     name on another product's target is not checked.
+
+    A part quoted as SQL quotes it, as in ``'acme_app'@'%'``, or with a space
+    at an end, is refused too. It splits, but the quotes would become part of
+    the name the driver looks for, and no account would match.
     """
-    if expanded.target.type != MYSQL or mysql_account(account) is not None:
+    if expanded.target.type != MYSQL:
         return
-    raise ConfigError(
-        f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
-        "and a MySQL account must name its host as user@host",
-        at=at,
-        hint=(
-            "write the host after the last `@`, as `acme_app@10.%`, or `acme_app@%` for "
-            "the account any host reaches: MySQL keeps one account per host, each with "
-            "its own password"
-        ),
-    )
+    split = mysql_account(account)
+    if split is None:
+        raise ConfigError(
+            f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
+            "and a MySQL account must name its host as user@host",
+            at=at,
+            hint=(
+                "write the host after the last `@`, as `acme_app@10.%`, or `acme_app@%` "
+                "for the account any host reaches: MySQL keeps one account per host, each "
+                "with its own password"
+            ),
+        )
+    if any(part.startswith(_NOT_AT_AN_END) or part.endswith(_NOT_AT_AN_END) for part in split):
+        raise ConfigError(
+            f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
+            "whose user or host starts or ends with a quote or a space",
+            at=at,
+            hint=(
+                "write the name without SQL's quotes, as `acme_app@10.%`: the tool "
+                "quotes each part itself"
+            ),
+        )
 
 
 def check_personal_mysql_accounts(config: Config) -> None:

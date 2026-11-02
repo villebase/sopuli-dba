@@ -191,7 +191,7 @@ pair of brackets, separated by commas.
 | `sopuli-dba` | nothing beyond the CLI and the config layer | you only need `config validate`, `config show`, `target list` — in an editor, a linter, a pre-commit hook |
 | `"sopuli-dba[oracle]"` | `python-oracledb` | you manage Oracle databases |
 | `"sopuli-dba[postgres]"` | `psycopg`, with the libpq it bundles | you manage PostgreSQL clusters |
-| `"sopuli-dba[mysql]"` | PyMySQL, with `cryptography` for its RSA key exchange | you will manage MySQL servers. The driver is not written yet, so only `doctor` runs against one |
+| `"sopuli-dba[mysql]"` | PyMySQL, with `cryptography` for its RSA key exchange | you will manage MySQL servers. So far only `doctor` runs against one |
 | `"sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
 | `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
 | `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |

@@ -253,6 +253,26 @@ services:
       timeout: 3s
       retries: 20
 
+  # ---------------------------------------------------------------- mysql ---
+  # The MySQL driver's tier-1 server (#1221). 8.4 is MySQL's long-term support
+  # release. The image generates a self-signed certificate on first start, so
+  # TLS is on, and a test that asks for `VERIFY_IDENTITY` meets a certificate it
+  # cannot verify. The probes' release matrix is `mysql-matrix` below.
+  mysql:
+    image: mysql:8.4
+    profiles: [tier1, tier2]
+    environment:
+      MYSQL_ROOT_PASSWORD: sopuli-test
+      MYSQL_DATABASE: sopuli
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MYSQL_PORT:-3306}:3306"
+      - "[::1]:${SOPULI_TEST_MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -psopuli-test --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   # ------------------------------------------------------ postgres matrix ---
   # PostgreSQL 13 to 18, for the probes in sql/postgres/ (#1032). Each major
   # version has its own port variable, so a second clone can run the matrix

@@ -50,7 +50,8 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
-role change its password at its next login.
+role change its password at its next login. A MySQL target runs only `doctor`
+so far (§7).
 
 ---
 
@@ -681,6 +682,63 @@ acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not
   targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
     hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
 ```
+
+### A MySQL server
+
+The stack also runs MySQL 8.4 at `127.0.0.1:3306`, user `root`, password
+`sopuli-test`. `doctor` connects to it and reports what it found. Every other
+command refuses a MySQL target.
+
+Connecting needs no privilege. Create the tool account as root, with a
+password of your own, and export the same password as
+`SOPULI_DB_ADMIN_PASSWORD`:
+
+```
+$ docker exec -it -e MYSQL_PWD=sopuli-test sopuli-test-mysql-1 mysql -uroot
+mysql> CREATE USER 'sopuli_admin'@'%' IDENTIFIED BY '…';
+```
+
+Save this as `mysql.yaml`:
+
+```yaml
+version: 1
+targets:
+  - name: mysql-dev
+    type: mysql
+    environment: dev
+    dsn: "127.0.0.1:3306"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mysql: { ssl_mode: REQUIRED }
+```
+
+The image's certificate is self-signed, so the target sets `REQUIRED`. Run
+`doctor`:
+
+```
+$ sopuli --config mysql.yaml doctor
+...
+client
+  tns_admin         (unset)
+  instant_client    23.26.3.0.0
+  reaches           19.1 and later
+  psycopg           3.3.6
+  libpq             18.4
+  require_auth      accepted
+  pymysql           1.2.3
+
+TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+mysql-dev  yes        server  -          READ WRITE  0             tls
+
+1 note:
+  mysql-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
+
+1 warning:
+  targets[0].mysql.ssl_mode: target 'mysql-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+```
+
+Keep TLS on: with `ssl_mode: DISABLED` a login can fail
+(`01-configuration.md` §3a, `mysql:`).
 
 ---
 

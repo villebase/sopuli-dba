@@ -1237,7 +1237,7 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. The `mysql` driver is not written yet, so every command but `doctor` refuses a `mysql` target with `SOPULI-20006`, before connecting. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mysql` target and reports the server; every other command refuses it with `SOPULI-20006`, before connecting, until the driver is written. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
 | `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL and MySQL: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
@@ -1718,8 +1718,14 @@ The `dsn` is `host:port`, by the rule above for PostgreSQL: a connection URI
 (`mysql://…`) and a keyword string are refused, because both can carry a
 password.
 
-The driver is not written yet ([#1221](https://github.com/villebase/sopuli-dba/issues/1221)).
-What it will do is decided in [#1202](../decisions/log.md#1202).
+`doctor` connects to the server and reports it. A mode that requires TLS,
+`REQUIRED` or a verifying one, refuses a session that has none. Under
+`DISABLED`, or `PREFERRED` against a server without TLS, a login the server
+has not cached fails: PyMySQL 1.2.3 cannot finish `caching_sha2_password`'s
+full exchange over a plain connection (measured on 8.4.13). Every other
+command refuses a MySQL target until the driver is written
+([#1221](https://github.com/villebase/sopuli-dba/issues/1221)). What it will do
+is decided in [#1202](../decisions/log.md#1202).
 
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:

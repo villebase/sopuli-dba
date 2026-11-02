@@ -538,7 +538,7 @@ jobs:
       - name: bring up the tier-1 stack
         working-directory: test
         run: |
-          docker compose --profile tier1 --profile supabase up -d --wait vault postgres supabase oracle-free yopass yopass-memcached
+          docker compose --profile tier1 --profile supabase up -d --wait vault postgres mysql supabase oracle-free yopass yopass-memcached
           docker compose --profile tier1 up -d vault-init
           docker compose --profile tier1 wait vault-init
 

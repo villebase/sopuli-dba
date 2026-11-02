@@ -340,7 +340,7 @@ def _exports_build_driver(tree: ast.Module) -> bool:
 #: Types the config accepts whose driver module is not written yet. Each
 #: resolves to `DriverNotImplementedError`, and the test below fails once its
 #: module exists, so the entry leaves this set in the PR that writes it.
-UNWRITTEN: frozenset[str] = frozenset({"mysql"})
+UNWRITTEN: frozenset[str] = frozenset()
 
 WRITTEN = sorted(set(DRIVERS) - UNWRITTEN)
 

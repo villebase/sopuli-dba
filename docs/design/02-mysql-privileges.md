@@ -157,7 +157,11 @@ comes from.
 A broader grant that includes one of §2.1's counts as held, because the tool
 can do what it needs, and as over-granted, because it can do more. `SELECT` on
 `mysql.user` as a whole, on `mysql.*` or on `*.*` holds the column grant, and
-`ALL PRIVILEGES ON *.*` holds both grants. Database and table names are
+`ALL PRIVILEGES ON *.*` holds both grants. Where `SHOW GRANTS` also prints a
+line the tool cannot parse, such as a `partial_revokes` `REVOKE` that may take
+`mysql` out of a broader grant, only the exact column grant counts as held.
+A database pattern, such as `` `%`.* ``, never counts: the tool does not
+match patterns. Database and table names are
 compared exactly, as a Linux server compares them, so a grant on `MYSQL`.`USER`
 is not the system table's. Where something is missing, the hint gives the
 statements that grant it.

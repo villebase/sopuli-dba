@@ -109,6 +109,29 @@ def test_a_broader_select_covers_the_columns_and_is_over_granted(line: str, over
     assert found.over_granted == (over,)
 
 
+def test_a_broader_select_does_not_count_beside_a_line_the_parser_cannot_read() -> None:
+    """With `partial_revokes`, a REVOKE line may take `mysql` out of
+    `SELECT ON *.*`, so only the exact column grant counts as held."""
+    found = _classify(
+        [INSTALL[0], f"GRANT SELECT ON *.* TO {TOOL}", f"REVOKE SELECT ON `mysql`.* FROM {TOOL}"]
+    )
+
+    assert len(found.missing) == len(COLUMNS)
+    assert found.over_granted == ("SELECT ON *.*",)
+
+
+def test_missing_is_sorted() -> None:
+    found = _classify([f"GRANT USAGE ON *.* TO {TOOL}"])
+
+    assert list(found.missing) == sorted(found.missing)
+
+
+def test_the_hint_quotes_the_account_name() -> None:
+    found = classify(user="o'brien@%", grants=parse_all([]), roles=())
+
+    assert "TO 'o''brien'@'%';" in str(found.hint)
+
+
 def test_all_privileges_on_every_object_covers_section_2() -> None:
     found = _classify([f"GRANT ALL PRIVILEGES ON *.* TO {TOOL}"])
 

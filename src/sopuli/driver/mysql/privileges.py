@@ -67,37 +67,47 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
     """
     held: set[str] = set()
     over: set[str] = set()
+    # A line the parser cannot read may be a `partial_revokes` REVOKE that
+    # takes `mysql` out of a broader grant. Then only the exact column grant
+    # counts as held: the tool cannot tell what the broader one still covers.
+    broad = not grants.unparsed
     for grant in grants.grants:
-        _sort(grant, held, over)
+        _sort(grant, held, over, broad=broad)
 
-    missing = [] if CREATE_USER in held else [CREATE_USER]
-    missing += [_column(name) for name in COLUMNS if _column(name) not in held]
+    no_create_user = CREATE_USER not in held
+    columns = [name for name in COLUMNS if _column(name) not in held]
+    missing = ([CREATE_USER] if no_create_user else []) + [_column(name) for name in columns]
     unaudited = tuple(
         f"a SHOW GRANTS line the tool cannot read: {line}" for line in grants.unparsed
     )
     return PrivilegeAudit(
         over_granted=tuple(sorted(over)),
         held=tuple(sorted(held)),
-        missing=tuple(missing),
+        missing=tuple(sorted(missing)),
         roles=tuple(sorted(set(roles))),
         unaudited=unaudited,
         remedies=(OVER_GRANTED_REMEDY,) if over else (),
-        hint=_hint(user, missing),
+        hint=_hint(user, create_user=no_create_user, columns=columns),
     )
 
 
-def _hint(user: str, missing: list[str]) -> str:
+def _hint(user: str, *, create_user: bool, columns: list[str]) -> str:
     """Where §2 is, and the statements that grant what is missing."""
     hint = f"{DOCUMENT} section 2 has the grants for the tool account `{user}`"
     name, _, host = user.rpartition("@")
-    account = f"'{name}'@'{host}'"
+    account = f"{_quote(name)}@{_quote(host)}"
     statements = []
-    if CREATE_USER in missing:
+    if create_user:
         statements.append(f"GRANT CREATE USER ON *.* TO {account};")
-    columns = [name for name in COLUMNS if _column(name) in missing]
     if columns:
         statements.append(f"GRANT SELECT ({', '.join(columns)}) ON {USER_TABLE} TO {account};")
     return f"{hint}: {' '.join(statements)}" if statements else hint
+
+
+def _quote(text: str) -> str:
+    """``text`` as a MySQL string literal, so a pasted statement names that
+    account."""
+    return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 #: Objects on which a privilege without a column list covers every column of
@@ -107,13 +117,14 @@ def _hint(user: str, missing: list[str]) -> str:
 COVERS_USER_TABLE = (GLOBAL, "mysql.*", USER_TABLE)
 
 
-def _sort(grant: Grant, held: set[str], over: set[str]) -> None:
+def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -> None:
     """Put each privilege of one ``SHOW GRANTS`` line in ``held``, ``over``
     or both.
 
     A broader grant that includes §2's, such as ``SELECT ON mysql.*``, counts
     as held, because the tool can read what it needs, and as over-granted,
-    because it reads more.
+    because it reads more. Not where ``broad`` is false: then it is only
+    over-granted.
 
     A role grant gives nothing itself: its roles' privileges are on lines of
     their own, because the read names every role in ``USING``. Its ``ADMIN
@@ -144,7 +155,8 @@ def _sort(grant: Grant, held: set[str], over: set[str]) -> None:
         if grant.on == GLOBAL and privilege.name == ALL_PRIVILEGES:
             held.add(CREATE_USER)
         if (
-            grant.on in COVERS_USER_TABLE
+            broad
+            and grant.on in COVERS_USER_TABLE
             and privilege.name in ("SELECT", ALL_PRIVILEGES)
             and not privilege.columns
         ):

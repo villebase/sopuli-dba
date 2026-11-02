@@ -1718,6 +1718,27 @@ The `dsn` is `host:port`, by the rule above for PostgreSQL: a connection URI
 (`mysql://…`) and a keyword string are refused, because both can carry a
 password.
 
+**An account on a MySQL target names its host**, as `user@host`:
+`acme_app@10.%`, or `acme_app@%` for the account any host reaches. MySQL keeps
+one account per host, each with its own password, and which one a login reaches
+depends on how the client connects, so a bare name would leave the others on
+the old password ([#1202](../decisions/log.md#1202)). The name is split at the
+last `@`, because a user name may contain `@` and a host may not, and both
+parts must be non-empty. Neither part may start or end with a quote or a
+space, as in `'acme_app'@'%'`: the file holds the names, not the SQL that
+quotes them. A bare name is refused with exit 9, naming the
+account, its application and the target. The same holds for a name a
+`personal_accounts:` rule declares when its `targets:` reach a MySQL target.
+`{user}` and `{host}` (§7) put the two parts into a secret ref.
+
+```yaml
+applications:
+  - name: acme-mysql
+    targets: [mysql-prod]
+    accounts: [acme_app@10.%, acme_api@%]
+    secret_template: "mysql/{host}#DB_CREDENTIALS/{user}"
+```
+
 The target's `admin` is an account with `CREATE USER` that cannot use
 `SYSTEM_USER`. [`02-mysql-privileges.md`](02-mysql-privileges.md) has its
 grants, and the tool refuses an account that can use `SYSTEM_USER`, with
@@ -2774,6 +2795,8 @@ the audit record unreadable without re-deriving precedence.
 |---|---|
 | `{account}` | database username as written |
 | `{account_lower}` / `{account_upper}` | case-normalised |
+| `{user}` | on a MySQL target, the account's user, before the last `@`; elsewhere the whole account name |
+| `{host}` | on a MySQL target, the account's host, with `%` written as `any` and `_` as `one` |
 | `{target}` | target name |
 | `{env}` | the target's `environment` |
 | `{container}` | Oracle PDB / container name |
@@ -2787,6 +2810,13 @@ against such a target fails to render rather than rendering short — §10's rul
 applied to refs. `{application}` is the one documented exception, and is empty
 rather than missing in the inline form.
 
+`{user}` and `{host}` keep a MySQL account's `@` and its host's wildcards out
+of a vault path ([#1202](../decisions/log.md#1202)). `acme_app@10.%` renders
+`mysql/{host}#DB_CREDENTIALS/{user}` as `mysql/10.any#DB_CREDENTIALS/acme_app`,
+and `acme_app@%` as `mysql/any#DB_CREDENTIALS/acme_app`. Only a MySQL target
+supplies `{host}`. On another target a label called `host` fills it, and with
+no such label the ref is refused, naming the target.
+
 A template parses as the ref it will expand into: the punctuation that gives a
 ref its shape is literal, and the tokens sit inside the parts. So
 `tenants/{tenant}#DB_CREDENTIALS/{account}` is checked structurally at load. A
@@ -2794,8 +2824,10 @@ token's *value* is known only when the ref renders, and it goes in as written.
 
 A name whose value contains `/` or `#` is refused when a ref uses it
 ([#935](../decisions/log.md#935)). The names are `{account}`, `{account_lower}`,
-`{account_upper}`, `{application}`, and `{container}` when the target has an
-Oracle container. The account `acme/web` in `#DB/{account}` would store its
+`{account_upper}`, `{user}`, `{application}`, `{container}` when the target has
+an Oracle container, and `{host}` on a MySQL target. MySQL accepts a netmask as
+a host, as in `acme_app@10.0.0.0/255.0.0.0`, so that account cannot go through
+`{host}`. The account `acme/web` in `#DB/{account}` would store its
 password under `acme`, then `web`. The account `ACME#WEB`, which Oracle allows
 unquoted, in `apps/acme/{account}` would address the document `apps/acme/ACME`
 and its field `WEB`. The error names the placeholder and its value. A common
@@ -3722,8 +3754,12 @@ notices until a rotation.
   each policy with a target it governs (§7)
 - both top-level `accounts:` and `applications:` present → error
 - a secret ref that cannot produce **distinct refs for distinct accounts** → error.
-  Concretely: more than one account declared, and neither `{account}`,
-  `{account_lower}` nor `{account_upper}` appears in `secret` / `secret_template`.
+  Concretely: more than one account declared, and none of `{account}`,
+  `{account_lower}`, `{account_upper}`, `{user}` and `{host}` appears in
+  `secret` / `secret_template`. `{user}` or `{host}` alone can still render two
+  MySQL accounts alike, as `{user}` does `acme_app@10.%` and `acme_app@%`, and
+  `{host}` does `10.%` and a host named `10.any`; the next rule refuses such a
+  pair.
   The second password written would overwrite the first, and whichever
   application reads the first is locked out at the next rotation. This is about
   *accounts*, not scopes — one account sharing a password across eleven PDBs is

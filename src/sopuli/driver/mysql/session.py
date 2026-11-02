@@ -165,22 +165,25 @@ class MysqlSession(ClosesConnection):
     #: The server's clock just before :meth:`set_password` sent its statement,
     #: per account, for :meth:`confirm_change`.
     _changed_since: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
-    #: Always ``None``: any account reads ``server_uuid`` (probe 02, CH5).
-    identity_caveat: str | None = field(default=None, init=False)
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
+    #: ``identity_caveat`` is always ``None``: any account reads ``server_uuid``
+    #: (probe 02, CH5).
+    identity_caveat = None
     identity_kind = "MySQL server"
     identity_key = "server_uuid"
     identity_hint = (
         "declare each server once: two targets on one server would change its "
-        "accounts under two names. A replica has its own server_uuid, and is "
-        "refused writes while it is read-only"
+        "accounts under two names. A server whose data directory was copied "
+        "from another keeps that server's server_uuid until its auto.cnf is "
+        "removed and it restarts"
     )
 
     def cluster_identity(self) -> str | None:
         """The server's ``server_uuid``, which the CLI uses to refuse two
-        targets that are one server. Any account reads it."""
-        return str(self._read(lambda cursor: _one(cursor, SERVER_UUID)))
+        targets that are one server. Any account reads it. A replica has its
+        own, so a source and its replica are not caught here."""
+        return self._read(_server_uuid)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its encryption.
@@ -367,6 +370,17 @@ class MysqlSession(ClosesConnection):
             failure.password_sent = True
             raise
         self._changed_since[state.name] = since
+        try:
+            self._read(lambda cursor: cursor.execute(password_module.discard_old(user, host)))
+        except DriverError as failure:
+            # The new password is set; an old one someone retained may still
+            # work. The run reports the account failed, with the change made.
+            failure.password_sent = True
+            failure.message = (
+                f"the password was set, but discarding a retained old password failed: "
+                f"{failure.message}"
+            )
+            raise
         LOG.debug("password set for %s on %s", state.name, self.target.name)
         return ChangeResult(changed=True, detail="password set")
 
@@ -598,11 +612,11 @@ class MysqlSession(ClosesConnection):
         require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        """Refused by capability: the tool opens no rollover window on MySQL,
-        and `apply --strategy direct` is the caller that reaches this. `creds
-        finish-rollover` is not listed for MySQL."""
+        """Refused by capability, as on PostgreSQL (invariant 4): the tool
+        opens no rollover window on MySQL. `creds finish-rollover` is not
+        listed for MySQL, so no command reaches this today."""
         self.require_rollover(account)
-        raise self._not_written("end a rollover window")
+        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
 
 
 def _ms(started: float) -> int:
@@ -619,9 +633,9 @@ def _not_tried(detail: str) -> VerifyResult:
 SERVER_UUID = "select @@global.server_uuid"
 
 
-def _one(cursor: Any, query: str) -> Any:
-    cursor.execute(query)
-    return cursor.fetchone()[0]
+def _server_uuid(cursor: Any) -> str:
+    cursor.execute(SERVER_UUID)
+    return str(cursor.fetchone()[0])
 
 
 #: The server's clock, in the session's time zone, which is UTC

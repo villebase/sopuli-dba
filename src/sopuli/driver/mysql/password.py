@@ -158,7 +158,17 @@ def caching_sha2_hash(secret: Secret, rounds: int, *, salt: bytes | None = None)
 
 
 def alter_user(user: str, host: str, stored: bytes) -> str:
-    """The one statement that sets the password: the account as the server
+    """The statement that sets the password: the account as the server
     spells it, and the hash as a hex literal."""
     account = Principal(user, host).sql()
     return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}"
+
+
+def discard_old(user: str, host: str) -> str:
+    """The statement sent after :func:`alter_user`, so that only the vault's
+    password logs in. A password someone retained with ``RETAIN CURRENT
+    PASSWORD`` survives a change without it (``03_dual_password_probe.py``,
+    DP4), and the tool cannot read whether one is retained. An account with
+    only ``CREATE USER`` may send it, and it is accepted with nothing retained
+    (DP1, DP7). Decided on #1223."""
+    return f"ALTER USER {Principal(user, host).sql()} DISCARD OLD PASSWORD"

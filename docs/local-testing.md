@@ -863,8 +863,9 @@ rotation: staged 2 documents, promoted 2 documents
 ```
 
 `--strategy rollover` is refused with exit 5: the tool does not open MySQL's
-dual-password window. `creds finish-rollover` refuses a MySQL target, because
-the tool cannot read whether an account keeps an old password. `creds status`
+dual-password window, and `creds finish-rollover` is not written for MySQL, so
+it refuses a MySQL target. Each password change also discards an old password
+someone kept with `RETAIN CURRENT PASSWORD`, so only the vault's works. `creds status`
 shows when the server last changed each password. `ROLLOVER` reads `not
 supported`.
 

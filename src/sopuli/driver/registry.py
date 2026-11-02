@@ -190,10 +190,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # declared account can answer (#1246); `creds apply` and `rotate`, which set
     # a password from a hash computed on the client and never log in first, so
     # with only `current` an account is skipped; `creds generate` and `status`.
-    # `finish-rollover` is not listed: the tool cannot read whether an account
-    # retains an old password (`User_attributes`), so it could not say that none
-    # does; #1224 writes the rollover. The UC-2 verbs refuse with SOPULI-20006
-    # (#1225).
+    # `finish-rollover` is not written for MySQL (#1224, decision 6 of #1202),
+    # nor are the UC-2 verbs (#1225): both refuse with SOPULI-20006.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",

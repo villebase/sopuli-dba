@@ -244,9 +244,7 @@ def test_the_uc1_commands_are_let_through_on_mysql(command: str) -> None:
 
 @pytest.mark.parametrize("command", ["account.suspend", "creds.finish-rollover"])
 def test_what_mysql_cannot_do_yet_is_refused(command: str) -> None:
-    """The UC-2 verbs are not written, nor is `finish-rollover`: the tool
-    cannot read whether an account retains an old password, so it could not
-    say that none does."""
+    """The UC-2 verbs are not written for MySQL, nor is `finish-rollover`."""
     # TODO(#1225): the UC-2 verbs. TODO(#1224): the rollover.
     with pytest.raises(DriverNotImplementedError) as refused:
         require_command(target("mysql-dev", "mysql"), command)

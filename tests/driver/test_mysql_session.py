@@ -60,6 +60,8 @@ class _Cursor:
             raise self._connection.refuse
         if query.startswith("ALTER USER") and self._connection.fail_alter is not None:
             raise self._connection.fail_alter
+        if query.endswith("DISCARD OLD PASSWORD") and self._connection.fail_discard is not None:
+            raise self._connection.fail_discard
         if "digest_rounds" in query and self._connection.fail_rounds is not None:
             raise self._connection.fail_rounds
 
@@ -102,6 +104,8 @@ class _Connection:
         self.rounds = 5000
         #: The server's clock, as `select now()` returns it: naive, UTC.
         self.now = datetime(2026, 11, 2, 12, 0, 0)
+        #: An error `DISCARD OLD PASSWORD` raises instead.
+        self.fail_discard: Exception | None = None
         #: An error the read of the rounds raises instead.
         self.fail_rounds: Exception | None = None
 
@@ -252,18 +256,34 @@ def test_describe_user_refused_a_grant_table_names_section_2_1() -> None:
     assert caught.value.hint == session_module.MISSING_GRANT_HINT
 
 
-def test_set_password_sends_one_alter_user_with_the_hash() -> None:
+def test_set_password_sends_the_hash_then_discards_a_retained_password() -> None:
+    """#1223: a password someone retained would survive the change (probe 03,
+    DP4), and the tool cannot see it, so it is always discarded."""
     session = _session()
     session.connection.accounts = [_account_row("10.%")]
 
     result = session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
 
-    (statement,) = [q for q in session.connection.queries if q.startswith("ALTER USER")]
+    statement, discard = [q for q in session.connection.queries if q.startswith("ALTER USER")]
     assert statement.startswith(
         "ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x2441243030352"
     )
+    assert discard == "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD"
     assert "Acme-App-pw1" not in statement
     assert result.changed is True
+
+
+def test_a_failed_discard_says_the_password_was_set() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.fail_discard = session_module.pymysql.err.OperationalError(
+        1227, "Access denied; you need the CREATE USER privilege"
+    )
+
+    with pytest.raises(DriverError, match="the password was set, but discarding") as caught:
+        session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
+
+    assert caught.value.password_sent is True
 
 
 @pytest.mark.parametrize(

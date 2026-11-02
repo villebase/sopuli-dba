@@ -111,7 +111,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
 @pytest.mark.parametrize(
     "call",
     [
-        lambda s: s.describe_user("acme_app@%"),
         lambda s: s.byte_limit(),
         lambda s: s.set_password("acme_app@%", Secret("x")),
         lambda s: s.suspend_account("acme_app@%"),

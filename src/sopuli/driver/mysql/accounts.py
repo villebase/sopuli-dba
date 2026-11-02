@@ -1,0 +1,240 @@
+"""Reading a MySQL account, and what the config declares about it. Tier 0.
+
+A MySQL account is a user name and a host pattern, and the config names it as
+``user@host`` (#1202, decision 4). One user name can exist at several hosts,
+each its own account with its own password (``05_identity_grants_probe.py``,
+ID1). The server compares the user name exactly and the host without case
+(ID3), and so does this module (decision 3).
+
+**What it reads.** The columns of ``mysql.user`` that
+``02-mysql-privileges.md`` §2.1 grants: the user, the host, the plugin, the
+lock, the expiry and the password's age. Never ``authentication_string`` or
+``User_attributes``: the tool account is not granted them, and the server
+refuses them with ``1143`` (TG5). The user name is sent as a bind value; it is
+not a secret, and invariant 14 is about passwords.
+
+**Only ``caching_sha2_password`` is supported** (decision 5). An account on
+another plugin is refused when it is described, which every command does
+before it changes anything, so the refusal comes at plan time. The tool does
+not move an account to another plugin.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+from sopuli.driver.protocol import Cursor, DriverError, UserState
+from sopuli.exit_codes import ExitCode
+
+#: The plugin the tool sets passwords for (decision 5).
+SUPPORTED_PLUGIN = "caching_sha2_password"
+
+#: Every row for one user name, at any host. ``User`` compares exactly: its
+#: collation is binary, so two names that differ only in case are two users.
+ROWS_FOR_USER = (
+    "select User, Host, plugin, account_locked, password_expired, "
+    "password_last_changed, password_lifetime from mysql.user where User = %s"
+)
+
+#: ``UserState.status``, in the words Oracle uses for the same states.
+OPEN = "OPEN"
+LOCKED = "LOCKED"
+EXPIRED = "EXPIRED"
+EXPIRED_AND_LOCKED = "EXPIRED & LOCKED"
+
+#: The system accounts a new server creates. Each holds ``SYSTEM_USER``, so
+#: the tool account cannot change them anyway (TG1, TG2).
+SYSTEM_PREFIX = "mysql."
+
+#: ``UserState.password_changed_unknown`` where the column is empty.
+NO_CHANGE_DATE = "mysql.user.password_last_changed is empty for this account"
+
+
+class BareAccountError(DriverError):
+    """A MySQL account named without its host. The config refuses one first;
+    this is the driver's own second line. ``config``, exit 9."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, account: str) -> None:
+        super().__init__(
+            f'MySQL account "{account}" has no host',
+            hint=f"name it with its host, such as {account}@10.%",
+        )
+
+
+class OtherPluginError(DriverError):
+    """A declared account authenticates with a plugin the tool does not set
+    passwords for (decision 5). ``config``, exit 9: the fix is to move the
+    account to ``caching_sha2_password`` outside the tool, or to remove it
+    from the config."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, account: str, plugin: str, *, target: str) -> None:
+        super().__init__(
+            f'account "{account}" on target "{target}" uses {plugin}, and sopuli '
+            f"changes only {SUPPORTED_PLUGIN} accounts",
+            hint=(
+                f"move the account to {SUPPORTED_PLUGIN} with ALTER USER … IDENTIFIED "
+                "WITH, or remove it from the config. The tool does not change an "
+                "account's plugin"
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class Account:
+    """One ``mysql.user`` row, as :data:`ROWS_FOR_USER` reads it."""
+
+    user: str
+    host: str
+    plugin: str
+    locked: bool
+    expired: bool
+    changed_at: datetime | None
+    lifetime_days: int | None
+
+    @property
+    def name(self) -> str:
+        """``user@host``, in the server's spelling."""
+        return f"{self.user}@{self.host}"
+
+
+def split(account: str) -> tuple[str, str]:
+    """``user@host`` as its two parts, split at the last ``@``. A user name
+    may hold ``@``; a host pattern may not."""
+    user, at, host = account.rpartition("@")
+    if not at or not user or not host:
+        raise BareAccountError(account)
+    return user, host
+
+
+def same_host(left: str, right: str) -> bool:
+    """Hosts compare without case, as the server compares them (ID3)."""
+    return left.lower() == right.lower()
+
+
+def account_of(row: Sequence[Any]) -> Account:
+    user, host, plugin, locked, expired, changed_at, lifetime = row
+    return Account(
+        user=_text(user),
+        host=_text(host),
+        plugin=_text(plugin),
+        locked=_text(locked) == "Y",
+        expired=_text(expired) == "Y",
+        changed_at=changed_at if isinstance(changed_at, datetime) else None,
+        lifetime_days=None if lifetime is None else int(lifetime),
+    )
+
+
+def _text(value: Any) -> str:
+    """PyMySQL returns some ``mysql.user`` columns as bytes."""
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def read(cursor: Cursor, user: str) -> list[Account]:
+    """Every account with this user name, at any host."""
+    cursor.execute(ROWS_FOR_USER, (user,))
+    return [account_of(row) for row in cursor.fetchall()]
+
+
+def find(accounts: Iterable[Account], host: str) -> Account | None:
+    """The account at ``host``, compared without case."""
+    for account in accounts:
+        if same_host(account.host, host):
+            return account
+    return None
+
+
+def state_of(account: Account) -> UserState:
+    """One account as a :class:`~sopuli.driver.protocol.UserState`.
+
+    A lock is always a person's: ``account_locked`` is set by ``ACCOUNT
+    LOCK``. The temporary lock after failed logins is not in ``mysql.user``
+    (``04_lock_expiry_probe.py``), so ``failed_logins`` is unknown. The
+    password expires ``password_lifetime`` days after it changed. A lifetime of
+    ``NULL`` follows the server's ``default_password_lifetime``, which the
+    account's row does not say, so the date is unknown there too.
+    """
+    expires_at = None
+    if account.changed_at is not None and account.lifetime_days:
+        expires_at = account.changed_at + timedelta(days=account.lifetime_days)
+    return UserState(
+        name=account.name,
+        status=_status(locked=account.locked, expired=account.expired),
+        locked=account.locked,
+        deliberately_locked=account.locked,
+        expired=account.expired,
+        password_changed_at=account.changed_at,
+        password_changed_unknown=None if account.changed_at else NO_CHANGE_DATE,
+        password_expires_at=expires_at,
+        vendor_maintained=account.user.startswith(SYSTEM_PREFIX),
+        password_file_member=False,
+    )
+
+
+def _status(*, locked: bool, expired: bool) -> str:
+    if locked and expired:
+        return EXPIRED_AND_LOCKED
+    if locked:
+        return LOCKED
+    if expired:
+        return EXPIRED
+    return OPEN
+
+
+def describe(cursor: Cursor, account: str, *, target: str) -> UserState | None:
+    """The declared account's state, ``None`` where it does not exist.
+
+    Raises :class:`OtherPluginError` for an account on another plugin.
+    """
+    user, host = split(account)
+    found = find(read(cursor, user), host)
+    if found is None:
+        return None
+    if found.plugin != SUPPORTED_PLUGIN:
+        raise OtherPluginError(found.name, found.plugin, target=target)
+    return state_of(found)
+
+
+def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:
+    """What `doctor --check-privileges` says about the declared accounts.
+
+    One line for each declared account that does not exist, that uses another
+    plugin, or whose user name also exists at a host the config does not
+    declare (decision 4: the server would let that other account log in with
+    its own password, which the tool does not manage).
+    """
+    lines: list[str] = []
+    hosts: dict[str, list[str]] = {}
+    for account in declared:
+        user, host = split(account)
+        hosts.setdefault(user, []).append(host)
+    for user, wanted in hosts.items():
+        rows = read(cursor, user)
+        for host in wanted:
+            found = find(rows, host)
+            if found is None:
+                lines.append(
+                    f"{user}@{host} does not exist on this server: create it, or remove "
+                    "it from the config. The tool does not create accounts"
+                )
+            elif found.plugin != SUPPORTED_PLUGIN:
+                lines.append(
+                    f"{found.name} uses {found.plugin}: the tool changes only "
+                    f"{SUPPORTED_PLUGIN} accounts. Move it, or remove it from the config"
+                )
+        for row in rows:
+            if not any(same_host(row.host, host) for host in wanted):
+                lines.append(
+                    f"{row.name} exists and the config does not declare it: it logs in "
+                    f"as {user} with a password of its own, which the tool does not "
+                    "change. Declare it, or drop it"
+                )
+    return tuple(lines)

@@ -364,6 +364,7 @@ from sopuli.safety import (
 from sopuli.secrets import Secret
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
+from sopuli.store import registry as store_registry
 from sopuli.store.credentials import (
     StoredSecret,
     read_secret,
@@ -2286,6 +2287,11 @@ def account_reset_password(
     # telling an operator their notify client is missing is among the things a
     # preview is *for*.
     channel = _notify_channel(delivery)
+    # **What the delivery backends would refuse from the config alone**, for
+    # the same invariant and before the logins below (#1257). The backends
+    # themselves are built after the question, and their store logins and
+    # preflights come there.
+    _refuse_undeliverable(run, config, delivery, reached)
 
     # Before any password is drawn (#857), and after the refusals above, which
     # need no connection. Under `--dry-run` too: a preview that said "would be
@@ -2301,11 +2307,10 @@ def account_reset_password(
     _ask_environments(plan, run, demand, action=action, noun="account")
 
     # **The delivery backend**, after the question, so that an operator who
-    # answers no has not logged in to the store. A store that cannot wrap is an
-    # unavailable capability, so it is exit 5 here, naming the store, before a
-    # password is drawn rather than as a per-target error row after. A store's
-    # refusal can still follow a yes: building a backend and logging in to its
-    # store are one step today.
+    # answers no has not logged in to the store. What it would refuse from the
+    # config alone was refused before the logins (`_refuse_undeliverable`). A
+    # refusal from the store's login or its preflight can still follow a yes:
+    # that is the cost of keeping a no free of store logins (#1257).
     #
     # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read
     # for a capability rather than for a guard: a preview delivers nothing, so it
@@ -3556,6 +3561,59 @@ def _notify(
     except Exception as error:  # noqa: BLE001 -- never worth failing a done reset
         return _finding(error).message
     return None
+
+
+def _refuse_undeliverable(
+    run: Invocation, config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
+) -> None:
+    """Refuse what :func:`_delivery_backends` would refuse, without connecting.
+
+    Called before the plan-time logins and before any confirmation (#1257), so
+    these refusals do not follow a yes. Nothing here opens a socket:
+
+    * `onepassword_share`: the SDK imports, and, on a real run, the service
+      account's token resolves. A preview does not need the token, as
+      :func:`_delivery_backends` says.
+    * `one_time_link`: `httpx` and `pysequoia` import.
+    * `vault_path` and `vault_wrapped`: each target's delivery store is named,
+      its backend's client imports (exit 9), and its `vaults:` entry is one the
+      method can use (exit 5).
+
+    The store login, `vault_path`'s capabilities check, Yopass's `/config` and
+    the 1Password login stay in :func:`_delivery_backends`, after the answer: an
+    operator who answers no has not logged in to the delivery store. A refusal
+    from one of those can still follow a yes.
+    """
+    if delivery.is_seen:
+        return
+    if delivery.onepassword_share is not None:
+        # Imported here, for `_delivery_backend`'s reason.
+        from sopuli.delivery import onepassword
+
+        onepassword.check_installed()
+        if not run.dry_run:
+            resolve_material(
+                delivery.onepassword_share.token,
+                env=material_environment(),
+                where=f"delivery.{onepassword.METHOD}.token",
+            )
+        return
+    if delivery.one_time_link is not None:
+        from sopuli.delivery import yopass
+
+        yopass.check_installed()
+        return
+    from sopuli.delivery import vault_path, vault_wrapped
+
+    declared = {vault.name: vault for vault in config.vaults}
+    for name in sorted({_delivery_store(config, delivery, target) for target in reached}):
+        dangling(name, set(declared), noun="vault", section="vaults", at=ROOT.key("vaults"))
+        vault = declared[name]
+        store_registry.resolve(vault)
+        if delivery.vault_path is not None:
+            vault_path.refuse_unfit(vault)
+        else:
+            vault_wrapped.refuse_unfit(vault)
 
 
 def _delivery_backends(

@@ -337,8 +337,11 @@ def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch
 
 def test_a_preview_refuses_a_host_without_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     """Importing the SDK needs no token, so a preview checks it, and does not say
-    "would be reset" for a run that would be refused (invariant 4)."""
-    monkeypatch.setitem(sys.modules, "onepassword", None)
+    "would be reset" for a run that would be refused (invariant 4). The
+    submodules are blocked too: an earlier test may have imported them, and an
+    imported submodule stays in `sys.modules` whatever its package says."""
+    for module in ("onepassword", "onepassword.client", "onepassword.types"):
+        monkeypatch.setitem(sys.modules, module, None)
     config = build_config(yaml.safe_load(ONEPASSWORD_DELIVERY))
     assert config.delivery is not None
 

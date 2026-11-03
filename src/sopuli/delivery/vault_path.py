@@ -48,6 +48,7 @@ from sopuli.secrets import Secret
 from sopuli.store.protocol import VERSIONING, SecretStore, StoreError
 
 if TYPE_CHECKING:  # pragma: no cover -- annotations only
+    from sopuli.config.model import Vault
     from sopuli.store.hashicorp._transport import Transport
 
 #: The method's name in `delivery.method`, and what a receipt records.
@@ -239,6 +240,21 @@ def _receipt(body: Any, *, path: str) -> Receipt:
             ),
         )
     return Receipt(method=METHOD, expires_at=deletion, path=path, version=version)
+
+
+def refuse_unfit(vault: Vault) -> None:
+    """Refuse a `vaults:` entry this method cannot write to, from the config alone.
+
+    The checks :func:`for_store` makes on an opened store, made before anything
+    connects, so the refusal comes before the plan-time logins and any
+    confirmation (#1257). An entry with no `kv_version` is KV v2, the
+    HashiCorp backend's default. :func:`for_store` still checks the store it is
+    given.
+    """
+    if vault.type != "hashicorp":
+        raise NotAPathStoreError(vault.name, why="it is not a HashiCorp store")
+    if vault.kv_version == 1:
+        raise NotAPathStoreError(vault.name, why="its mount is KV v1, which has no versions")
 
 
 def for_store(store: SecretStore, *, vault: str, ttl: str, prefix: str) -> VaultPath:

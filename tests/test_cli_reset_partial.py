@@ -18,6 +18,7 @@ same error.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
+from sopuli.store.registry import BackendNotInstalledError
 
 ACCOUNT = "acme_dev_alice"
 TARGET = "tier1-oracle"
@@ -1140,6 +1142,114 @@ def test_a_no_opens_no_delivery_store(
     # question; the real one prints once.
     assert list(dict.fromkeys(events)) == ["plan", "login", "asked"]
     assert session.reset == []
+
+
+VAULT_PATH = MANUAL.replace(
+    "  method: manual\n  manual:\n    force_expire: true\n",
+    "  method: vault_path\n  vault_path:\n    ttl: 1h\n    prefix: handover\n",
+)
+
+ONEPASSWORD = MANUAL.replace(
+    "  method: manual\n  manual:\n    force_expire: true\n",
+    "  method: onepassword_share\n  onepassword_share:\n    onepassword_vault: acme-handover\n"
+    "    ttl: 24h\n    token: { env: SOPULI_TEST_ACME_OP_TOKEN }\n",
+)
+
+ONE_TIME_LINK = MANUAL.replace(
+    "  method: manual\n  manual:\n    force_expire: true\n",
+    "  method: one_time_link\n  one_time_link:\n    base_url: https://yopass.example.com\n"
+    "    ttl: 1h\n",
+)
+
+
+def _not_installed(*_: Any, **__: Any) -> None:
+    raise BackendNotInstalledError("a client this delivery needs is not installed")
+
+
+def _installed(*_: Any, **__: Any) -> None:
+    return None
+
+
+#: The 1Password install check, stubbed in both of its cases so the test never
+#: imports the real SDK. Once imported it stays in `sys.modules`, and a later
+#: test that blocks it with `sys.modules["onepassword"] = None` would still
+#: find it.
+OP_INSTALLED = "sopuli.delivery.onepassword.check_installed"
+
+
+@pytest.mark.parametrize(
+    ("config", "patch", "exit_code"),
+    [
+        pytest.param(
+            VAULT_PATH.replace("kv_version: 2", "kv_version: 1"),
+            None,
+            ExitCode.UNSUPPORTED_CAPABILITY,
+            id="vault_path-on-kv1",
+        ),
+        pytest.param(
+            WRAPPED,
+            ("sopuli.cli.store_registry.resolve", _not_installed),
+            ExitCode.CONFIG_INVALID,
+            id="vault-client-not-installed",
+        ),
+        pytest.param(
+            ONEPASSWORD,
+            (OP_INSTALLED, _installed),
+            ExitCode.CONFIG_INVALID,
+            id="onepassword-no-token",
+        ),
+        pytest.param(
+            ONEPASSWORD,
+            (OP_INSTALLED, _not_installed),
+            ExitCode.CONFIG_INVALID,
+            id="onepassword-sdk-not-installed",
+        ),
+        pytest.param(
+            ONE_TIME_LINK,
+            ("sopuli.delivery.yopass.check_installed", _not_installed),
+            ExitCode.CONFIG_INVALID,
+            id="yopass-not-installed",
+        ),
+    ],
+)
+def test_a_delivery_refusal_from_the_config_comes_before_any_login(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    sent: Sent,
+    config: str,
+    patch: tuple[str, Callable[..., None]] | None,
+    exit_code: ExitCode,
+) -> None:
+    """What a delivery backend would refuse from the config alone is refused
+    before the plan-time logins and the question (#1257). The backends are not
+    built: their store logins stay after the answer."""
+    monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
+    if patch is not None:
+        monkeypatch.setattr(*patch)
+    opened: list[str] = []
+    built: list[str] = []
+    asked: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> Any:
+        opened.append(target.name)
+        return Asked("OPEN", DENIED)
+
+    def backends(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        built.append("store")
+        return {}
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    monkeypatch.setattr("sopuli.cli._delivery_backends", backends)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", lambda question, **_: asked.append(question))
+
+    result = _run(runner, write_config(_gated(config)))
+
+    assert getattr(result.exception, "exit_code", None) == exit_code, result.output
+    assert opened == []
+    assert built == []
+    assert asked == []
 
 
 def test_an_unattended_run_is_refused_before_any_login(

@@ -357,6 +357,18 @@ class Yopass:
         return response
 
 
+def check_installed() -> None:
+    """Refuse, naming the extra, if `httpx` or `pysequoia` does not import.
+
+    Opens nothing, so it runs before any login and any confirmation (#1257).
+    """
+    try:
+        import httpx  # noqa: F401
+    except ModuleNotFoundError as error:
+        raise YopassNotInstalledError("httpx") from error
+    _sequoia()
+
+
 def _sequoia() -> Any:
     """`pysequoia`, or the refusal that names the extra."""
     try:

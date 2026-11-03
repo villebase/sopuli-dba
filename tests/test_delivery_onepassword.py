@@ -316,9 +316,20 @@ def test_a_missing_dependency_of_the_sdk_is_not_reported_as_the_sdk_missing(
     assert "failed to load: no module 'pydantic'" in str(raised.value)
 
 
+def block_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the SDK unimportable, as on a host without it.
+
+    The submodules are blocked too. A CLI test that ran earlier may have
+    imported them through the real install check, and an imported submodule
+    stays in `sys.modules` whatever its package says.
+    """
+    for module in ("onepassword", "onepassword.client", "onepassword.types"):
+        monkeypatch.setitem(sys.modules, module, None)
+
+
 def test_a_missing_sdk_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """ADR-006 rule 2, through the real import rather than a stub of it."""
-    monkeypatch.setitem(sys.modules, "onepassword", None)
+    block_sdk(monkeypatch)
     with pytest.raises(OnePasswordNotInstalledError) as raised:
         onepassword._sdk()
 
@@ -337,8 +348,8 @@ def test_an_sdk_whose_library_does_not_load_names_the_extra(
             if fullname == "onepassword" or fullname.startswith("onepassword."):
                 raise ImportError("version `GLIBC_2.32' not found")
 
-    monkeypatch.delitem(sys.modules, "onepassword", raising=False)
-    monkeypatch.delitem(sys.modules, "onepassword.client", raising=False)
+    for module in ("onepassword", "onepassword.client", "onepassword.types"):
+        monkeypatch.delitem(sys.modules, module, raising=False)
     monkeypatch.setattr(sys, "meta_path", [Unloadable(), *sys.meta_path])
     with pytest.raises(OnePasswordNotInstalledError) as raised:
         onepassword._sdk()
@@ -482,7 +493,7 @@ def test_an_interrupt_with_a_failed_delete_notes_the_item_left() -> None:
 
 def test_check_installed_refuses_a_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     """What a `--dry-run` runs: no token, and the same refusal as the real run."""
-    monkeypatch.setitem(sys.modules, "onepassword", None)
+    block_sdk(monkeypatch)
     with pytest.raises(OnePasswordNotInstalledError):
         onepassword.check_installed()
 

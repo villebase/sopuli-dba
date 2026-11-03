@@ -58,6 +58,7 @@ from sopuli.secrets import Secret
 from sopuli.store.protocol import SecretStore, StoreError
 
 if TYPE_CHECKING:  # pragma: no cover -- annotations only
+    from sopuli.config.model import Vault
     from sopuli.store.hashicorp._transport import Transport
 
 #: The method's name in `delivery.method`, and what a receipt records.
@@ -207,6 +208,17 @@ def _expiry(info: dict[str, Any]) -> datetime | None:
 def _created(info: dict[str, Any]) -> datetime | None:
     """``wrap_info.creation_time``, or ``None`` when it is not a timestamp."""
     return vault_time(info.get("creation_time"))
+
+
+def refuse_unfit(vault: Vault) -> None:
+    """Refuse a `vaults:` entry this method cannot wrap with, from the config alone.
+
+    The check :func:`for_store` makes on an opened store, made before anything
+    connects, so the refusal comes before the plan-time logins and any
+    confirmation (#1257). :func:`for_store` still checks the store it is given.
+    """
+    if vault.type != "hashicorp":
+        raise NotWrappableError(vault.name)
 
 
 def for_store(store: SecretStore, *, vault: str, ttl: str) -> VaultWrapped:

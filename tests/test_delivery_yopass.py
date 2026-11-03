@@ -25,6 +25,7 @@ from sopuli.delivery.yopass import (
     Yopass,
     YopassNotInstalledError,
     YopassRefusedError,
+    check_installed,
     link_base,
     refusal,
     splits,
@@ -396,6 +397,20 @@ def test_without_pysequoia_preflight_names_the_extra(monkeypatch: pytest.MonkeyP
 
     assert raised.value.exit_code == ExitCode.CONFIG_INVALID
     assert "sopuli-dba[yopass]" in str(raised.value.hint)
+
+
+@pytest.mark.parametrize("module", ["httpx", "pysequoia"])
+def test_check_installed_names_the_missing_module(
+    module: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The install check a reset runs before any login (#1257) opens nothing
+    and names what is missing."""
+    monkeypatch.setitem(sys.modules, module, None)
+    with pytest.raises(YopassNotInstalledError) as raised:
+        check_installed()
+
+    assert module in str(raised.value)
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
 
 
 # ------------------------------------------------- tier 1: the real server ---

@@ -1432,6 +1432,21 @@ path, not a side effect of it (§1).
 They are not one guarantee with several implementations. The config key makes them
 look interchangeable, so this section says how they differ.
 
+**Each method's checks come before a password is drawn, in two groups** (#1257).
+What the config alone decides comes first, before the run logs in to any target
+and before any confirmation:
+
+- the store's client is installed (exit 9);
+- the store is one the method can use: a HashiCorp store, with a KV v2 mount for
+  `vault_path` (exit 5);
+- the Yopass or 1Password client is installed (exit 9);
+- the 1Password token resolves (exit 9). A `--dry-run` does not need it.
+
+What needs the store comes after the answer, so an operator who answers no has
+not logged in to it. That is the store login, `vault_path`'s capabilities check,
+the Yopass server's `/config` and the 1Password sharing policy. A refusal from
+one of those can still follow a yes.
+
 - **`vault_wrapped`**: single use. The unwrap is the last read, so a value fetched
   twice is a value somebody else fetched first. **Interception is detectable even
   where it is not preventable.** That is the strongest property in the list, and

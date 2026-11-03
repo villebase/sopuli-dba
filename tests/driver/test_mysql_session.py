@@ -49,6 +49,7 @@ class _Cursor:
             accounts_module.DEFAULT_LIFETIME: (0,),
             "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
             session_module.SERVER_NOW: (connection.now,),
+            session_module.SERVER_UUID: ("8747dbf7-d699-11f1-a32f-ce3a34795652",),
         }
         self._last = ""
 
@@ -59,6 +60,8 @@ class _Cursor:
             raise self._connection.refuse
         if query.startswith("ALTER USER") and self._connection.fail_alter is not None:
             raise self._connection.fail_alter
+        if query.endswith("DISCARD OLD PASSWORD") and self._connection.fail_discard is not None:
+            raise self._connection.fail_discard
         if "digest_rounds" in query and self._connection.fail_rounds is not None:
             raise self._connection.fail_rounds
 
@@ -101,6 +104,8 @@ class _Connection:
         self.rounds = 5000
         #: The server's clock, as `select now()` returns it: naive, UTC.
         self.now = datetime(2026, 11, 2, 12, 0, 0)
+        #: An error `DISCARD OLD PASSWORD` raises instead.
+        self.fail_discard: Exception | None = None
         #: An error the read of the rounds raises instead.
         self.fail_rounds: Exception | None = None
 
@@ -160,7 +165,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
         lambda s: s.resolve_profile("default"),
         lambda s: s.resolve_role("acme_role"),
         lambda s: s.accounts_matching(role="acme_role"),
-        lambda s: s.finish_rollover("acme_app@%"),
     ],
 )
 def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
@@ -170,6 +174,14 @@ def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert 'target "mysql-dev" is a MySQL server' in str(caught.value)
+
+
+def test_finish_rollover_is_refused_by_capability() -> None:
+    """No window is opened yet (#1224), so none can be ended: exit 5, not 20006."""
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        _session().finish_rollover("acme_app@%")
+
+    assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
 
 
 def test_a_rollover_is_refused_by_capability_until_it_is_written() -> None:
@@ -244,18 +256,34 @@ def test_describe_user_refused_a_grant_table_names_section_2_1() -> None:
     assert caught.value.hint == session_module.MISSING_GRANT_HINT
 
 
-def test_set_password_sends_one_alter_user_with_the_hash() -> None:
+def test_set_password_sends_the_hash_then_discards_a_retained_password() -> None:
+    """#1223: a password someone retained would survive the change (probe 03,
+    DP4), and the tool cannot see it, so it is always discarded."""
     session = _session()
     session.connection.accounts = [_account_row("10.%")]
 
     result = session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
 
-    (statement,) = [q for q in session.connection.queries if q.startswith("ALTER USER")]
+    statement, discard = [q for q in session.connection.queries if q.startswith("ALTER USER")]
     assert statement.startswith(
         "ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x2441243030352"
     )
+    assert discard == "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD"
     assert "Acme-App-pw1" not in statement
     assert result.changed is True
+
+
+def test_a_failed_discard_says_the_password_was_set() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.fail_discard = session_module.pymysql.err.OperationalError(
+        1227, "Access denied; you need the CREATE USER privilege"
+    )
+
+    with pytest.raises(DriverError, match="the password was set, but discarding") as caught:
+        session.set_password("acme_app@10.%", Secret("Acme-App-pw1"))
+
+    assert caught.value.password_sent is True
 
 
 @pytest.mark.parametrize(

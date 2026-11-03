@@ -17,7 +17,8 @@ verifier. This measures, on each server:
   CH4  IDENTIFIED WITH mysql_native_password AS '*<hex>', with the hash
        computed by the probe, set by the tool account, then a login with the
        password and with a wrong one
-  CH5  @@global.caching_sha2_password_digest_rounds, read by the tool account
+  CH5  @@global.caching_sha2_password_digest_rounds, and @@global.server_uuid,
+       read by the tool account
   CH6  a hash the probe computes for passwords of 255, 256, 257 and 512
        bytes, set by root with AS, then a login with each password
 
@@ -42,7 +43,8 @@ STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
 times. CH5 and CH6 were added and the whole probe run again on 2026-11-02
-(#1223), twice, exit 0, with the same result.
+(#1223), twice, exit 0, with the same result, and again the same day with
+CH5's server_uuid read, twice, exit 0.
 
 RESULTS -- the same on all three releases, except where noted
 
@@ -59,7 +61,8 @@ RESULTS -- the same on all three releases, except where noted
        and a wrong one is refused, 1045 (28000). 8.4.13 and 9.7.4
        refuse it, 1524 (HY000), "Plugin 'mysql_native_password' is not
        loaded": 8.4.13 ships the plugin disabled, and 9.7.4 has none
-  CH5  5000 on 8.0.46 and 8.4.13, and 10000 on 9.7.4: the rounds of CH1
+  CH5  5000 on 8.0.46 and 8.4.13, and 10000 on 9.7.4: the rounds of CH1. The
+       server_uuid is read too, a UUID in its usual 8-4-4-4-12 form
   CH6  every hash is accepted. 255 and 256 bytes log in, and 257 and 512 are
        refused, 1045 (28000)
 
@@ -391,6 +394,10 @@ def probe(service: str) -> None:
     )
     print(f"CH5 digest rounds, read by the tool: {rounds_read}")
     check("CH5", (ok, rounds_read), (True, {"9.7.4": "10000"}.get(release, "5000")))
+    uuid_ok, uuid_read = mysql(service, TOOL, TOOL_PASSWORD, "SELECT @@global.server_uuid")
+    shaped = bool(re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", uuid_read))
+    print(f"CH5 server_uuid, read by the tool: {uuid_read}")
+    check("CH5 server_uuid", (uuid_ok, shaped), (True, True))
 
     lengths = []
     for size in (255, 256, 257, 512):

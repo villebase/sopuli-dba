@@ -4118,3 +4118,13 @@ the register.
   progress beside `pending` (a new vault write and a payload change), and
   comparing `password_last_changed` with the vault version (someone else's
   change would be taken as the rotation's).
+- **And a password someone retained:** after each change the MySQL driver
+  sends `ALTER USER … DISCARD OLD PASSWORD`, so only the vault's password logs
+  in. A password a person kept with `RETAIN CURRENT PASSWORD` survives a change
+  without it (`03_dual_password_probe.py`, DP4), and the tool cannot read
+  whether one is kept. An account with only `CREATE USER` may send it, and it
+  is accepted with nothing retained (DP1, DP7). Decided by the maintainer the
+  same day, on the review of #1249. Rejected: leaving it to #1224 and
+  documenting it, which would report `IN_SYNC` and promote while an old
+  password still logs in. Accepted cost: it ends a dual-password window a
+  person opened by hand.

@@ -334,6 +334,26 @@ def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
     login.close()
 
 
+def test_a_password_someone_retained_stops_working_after_a_change(
+    stage: Stage, live_mysql: Any
+) -> None:
+    """#1223. A person changed the password with RETAIN CURRENT PASSWORD, so
+    two work. After the driver sets a new one, only the new one logs in."""
+    user = stage.account("%")
+    stage.admin(
+        "alter user %s@'%%' identified by %s retain current password", (user, "Acme-Second-pw2")
+    )
+    new = f"Acme-Only-{uuid.uuid4().hex[:12]}"
+
+    stage.session.set_password(f"{user}@%", Secret(new))
+
+    live_mysql.connect_as(user, new).close()
+    for old in ("Acme-pw1", "Acme-Second-pw2"):
+        with pytest.raises(pymysql.err.OperationalError) as refused:
+            live_mysql.connect_as(user, old)
+        assert refused.value.args[0] == 1045
+
+
 def test_a_change_no_login_can_reach_is_confirmed_by_the_server(stage: Stage) -> None:
     """#1223. `user@10.%` is not reached by a login from the tool's host. After
     set_password, the server's password_last_changed is no earlier than its

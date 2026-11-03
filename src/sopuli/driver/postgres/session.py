@@ -133,6 +133,16 @@ class PostgresSession(ClosesConnection):
     _scope: Scope | None = field(default=None, init=False, repr=False)
     #: Why :meth:`cluster_identity` found no answer, or ``None``.
     identity_caveat: str | None = field(default=None, init=False)
+    #: The words for two targets that are one cluster
+    #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
+    identity_kind = "PostgreSQL cluster"
+    identity_key = "system_identifier"
+    identity_hint = (
+        "declare each cluster once. A primary and its standbys share their "
+        "roles, so one target covers them all. If one is a pg_basebackup copy "
+        "or a promoted standby, a separate server, give each its own secret and "
+        "run one of them per run with --target"
+    )
 
     def scope(self) -> Scope:
         """What this session is: a cluster, read-write or not, and its encryption.

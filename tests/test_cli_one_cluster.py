@@ -9,6 +9,10 @@ from sopuli.exit_codes import ExitCode
 
 
 class _Session:
+    identity_kind = "PostgreSQL cluster"
+    identity_key = "system_identifier"
+    identity_hint = "declare each cluster once"
+
     def __init__(self, identity: str | None) -> None:
         self.identity = identity
         self.identity_caveat: str | None = None
@@ -77,3 +81,34 @@ def test_the_postgresql_session_still_names_its_cluster() -> None:
     )
 
     assert isinstance(session, ClusterIdentity)
+
+
+def test_the_mysql_session_names_its_server() -> None:
+    """For the same reason, on MySQL (#1223)."""
+    session_module = pytest.importorskip("sopuli.driver.mysql.session")
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import Timeouts
+
+    target = ExpandedTarget(target=Target(name="mysql-dev", type="mysql", dsn="h:3306"))
+    session = session_module.MysqlSession(
+        connection=None, target=target, correlation_id="run", timeouts=Timeouts()
+    )
+
+    assert isinstance(session, ClusterIdentity)
+    assert (session.identity_kind, session.identity_key) == ("MySQL server", "server_uuid")
+
+
+def test_two_targets_on_one_mysql_server_are_refused_by_name() -> None:
+    class _Mysql(_Session):
+        identity_kind = "MySQL server"
+        identity_key = "server_uuid"
+
+    clusters: dict[str, str] = {}
+    claim(_Mysql("8747dbf7"), "mysql-a", clusters)
+
+    with pytest.raises(OneClusterError) as refused:
+        claim(_Mysql("8747dbf7"), "mysql-b", clusters)
+
+    assert refused.value.message == (
+        'targets "mysql-a" and "mysql-b" are one MySQL server (server_uuid 8747dbf7)'
+    )

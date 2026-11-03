@@ -324,7 +324,14 @@ computes the account's `caching_sha2_password` hash on the client and sends:
 
 ```sql
 ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x2441243030...
+ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD
 ```
+
+The second statement ends any password a person kept with `RETAIN CURRENT
+PASSWORD`, which a change without it leaves working
+(`03_dual_password_probe.py`, DP4). The tool cannot read whether one is kept,
+so it always sends it, and the server accepts it with nothing kept (DP1, DP7)
+([#1223](../decisions/log.md#1223)).
 
 The hash is SHA-crypt with SHA-256, a 20-byte salt the driver draws, and the
 server's own rounds, from `caching_sha2_password_digest_rounds`, which any

@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
 from jsonschema import Draft202012Validator
@@ -1102,6 +1103,42 @@ def test_a_plan_time_refusal_comes_before_the_question(
 
     assert isinstance(result.exception, UnsupportedCapabilityError), result.output
     assert asked == []
+    assert session.reset == []
+
+
+def test_a_no_opens_no_delivery_store(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The delivery backends come after the question (#1214), so an operator
+    who answers no has not logged in to the store. The plan is printed before
+    the plan-time logins (invariant 8)."""
+    events: list[str] = []
+    session = Asked("OPEN", DENIED)
+
+    def open_session(target: Any, run: Any, config: Any) -> Any:
+        events.append("login")
+        return session
+
+    def no(question: str, **_: Any) -> None:
+        events.append("asked")
+        raise click.Abort
+
+    def backends(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        events.append("store")
+        return {}
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    monkeypatch.setattr("sopuli.cli._delivery_backends", backends)
+    monkeypatch.setattr("sopuli.cli._show_plan", lambda *a, **k: events.append("plan"))
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", no)
+    config = _gated(WRAPPED, safety="confirm_environments: [dev], require_encryption: true")
+
+    _run(runner, write_config(config))
+
+    # The stub does not mark the plan shown, so it is "shown" again at the
+    # question; the real one prints once.
+    assert list(dict.fromkeys(events)) == ["plan", "login", "asked"]
     assert session.reset == []
 
 

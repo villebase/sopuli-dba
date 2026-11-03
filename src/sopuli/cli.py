@@ -1864,14 +1864,14 @@ def account_expire_password(
     # person. A target whose scope cannot be read is left to the run, where the
     # driver refuses the same way. An unattended run that the confirmation
     # would refuse is refused first, with no login (#1214).
-    _refuse_unconfirmable(plan, run, action=action, confirmed=confirm)
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
     scopes: dict[str, Scope | None] = {}
     for expanded in reached:
         scope = _plan_scope(expanded, run, config, scopes)
         if scope is not None:
             expire.require_expiry(scope, target=expanded.name)
 
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+    _ask_environments(plan, run, demand, action=action, noun="account")
 
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
@@ -2254,7 +2254,7 @@ def account_reset_password(
     emitter.event(document, "plan.resolved", data=document.plan)
     # The half of the confirmation that needs no connection: an unattended run
     # that nobody can answer is refused here, before any login (#1214).
-    _refuse_unconfirmable(plan, run, action=action, confirmed=confirm)
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
 
     # The record path is derived before anything connects, so a name it cannot
     # be built from is a plan-time refusal (invariant 4) rather than a failure
@@ -2287,12 +2287,14 @@ def account_reset_password(
     # (#1214): a yes followed by a refusal means nothing, and teaches people to
     # answer without reading. The cost is that the checks' logins to each target,
     # and the password prompt of a target with `auth: prompt`, come before it.
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+    _ask_environments(plan, run, demand, action=action, noun="account")
 
     # **The delivery backend**, after the question, so that an operator who
     # answers no has not logged in to the store. A store that cannot wrap is an
     # unavailable capability, so it is exit 5 here, naming the store, before a
-    # password is drawn rather than as a per-target error row after.
+    # password is drawn rather than as a per-target error row after. A store's
+    # refusal can still follow a yes: building a backend and logging in to its
+    # store are one step today.
     #
     # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read
     # for a capability rather than for a guard: a preview delivers nothing, so it
@@ -3553,7 +3555,7 @@ def _delivery_backends(
     *,
     account: str,
 ) -> dict[str, DeliveryBackend]:
-    """One backend per target, built before anything connects (invariant 4).
+    """One backend per target, built before a password is drawn (invariant 4).
 
     Empty on the seen path, which delivers through the terminal and has no
     backend, and empty under ``--dry-run``: a preview delivers nothing, so it
@@ -4662,7 +4664,16 @@ def _confirm_environments(
     that appeared only in text mode would be a confirmation somebody could skip by
     asking for JSON.
     """
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirmed)
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirmed, noun=noun)
+    _ask_environments(plan, run, demand, action=action, noun=noun)
+
+
+def _ask_environments(
+    plan: Any, run: Invocation, demand: Confirmation | None, *, action: str, noun: str
+) -> None:
+    """The question half of :func:`_confirm_environments`, for ``demand`` as
+    :func:`_refuse_unconfirmable` returned it. Nothing is asked where it is
+    ``None``."""
     if demand is None:
         return
     question = f"{action} in `{demand.named}`?"
@@ -4673,15 +4684,18 @@ def _confirm_environments(
 
 
 def _refuse_unconfirmable(
-    plan: Any, run: Invocation, *, action: str, confirmed: bool
+    plan: Any, run: Invocation, *, action: str, confirmed: bool, noun: str
 ) -> Confirmation | None:
     """The half of :func:`_confirm_environments` that needs no connection.
 
     Refuses a run that the gate would ask and nobody can answer: a profile with
     `confirm: false`, or no terminal. Returns what the gate would ask about, or
     ``None`` where it would not ask. A verb that runs plan-time logins before
-    its question calls this before them (#1214), so an unattended run that is
-    going to be refused does not log in first.
+    its question calls this before them, and :func:`_ask_environments` after
+    them (#1214), so an unattended run that is going to be refused does not log
+    in first. Where it will ask, the plan is printed now, before those logins:
+    a target with `auth: prompt` asks for a password at its login, and the
+    operator sees the plan first (invariant 8).
     """
     if run.dry_run:
         return None
@@ -4691,6 +4705,7 @@ def _refuse_unconfirmable(
     _refuse_if_profile_unattended(run, action=action)
     if not _can_prompt():
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
+    _show_plan(plan, run, noun=noun)
     return demand
 
 

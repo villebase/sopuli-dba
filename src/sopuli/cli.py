@@ -7298,7 +7298,10 @@ def creds_apply(
     # Where a question will be asked, the plan is printed now, before the logins.
     action = "applying a password"
     demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="apply")
-    if bindings and _asks_rollback(source_stage, confirmed=confirm, previewing=run.dry_run):
+    rolls_back = bool(bindings) and _asks_rollback(
+        source_stage, confirmed=confirm, previewing=run.dry_run
+    )
+    if rolls_back:
         _show_plan(plan, run, noun="apply")
 
     if not bindings:
@@ -7336,6 +7339,12 @@ def creds_apply(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
+    if demand is not None or rolls_back:
+        # Read once before a question, so a store that cannot be read refuses
+        # before anybody is asked: with token auth, opening a store connects to
+        # nothing. What this read finds is not used. The run reads again under
+        # the lock, after the answer, and that read is the one it acts on.
+        _read_documents(keys, stores, run=run)
 
     # `--confirm` already means "proceed without asking" here -- it is what
     # `--source previous` requires -- so the flag answers both gates. Two flags
@@ -7772,7 +7781,7 @@ def _refuse_unanswerable_rollback(
     `--dry-run` needs no confirmation. Nothing is changed, and a preview an
     operator has to authorise is a preview they will stop taking.
     """
-    if stage != PREVIOUS or confirmed or previewing:
+    if not _asks_rollback(stage, confirmed=confirmed, previewing=previewing):
         return
     _refuse_if_profile_unattended(run, action="rolling back")
     if not _can_prompt():
@@ -7981,8 +7990,9 @@ def _read_documents(
 
     Nothing on this path prompts or prints -- the store layer writes to no
     stream -- which is what keeps the spinner clear of `sopuli.output.spinner`'s
-    rule about never being live across a prompt. A confirmation, where there is
-    one, is already past by the time a verb reads a document.
+    rule about never being live across a prompt. A verb that reads before its
+    question (#1257) has finished the read, and stopped the spinner, before it
+    asks.
     """
     emitter = run.emitter()
     documents: dict[LockKey, Any] = {}
@@ -11460,7 +11470,12 @@ def creds_finish_rollover(
     # reason -- to know whether a `pending` is staged, and to have something to
     # verify with -- and a read has never needed one.
     sources = _sources(bindings, _read_documents(keys, stores, run=run))
-    _ask_environments(plan, run, demand, action=action, noun="window")
+    if demand is not None:
+        _ask_environments(plan, run, demand, action=action, noun="window")
+        # Read again after the answer, as `creds generate` does: it can take
+        # minutes, and a `pending` staged meanwhile must keep the window open.
+        # The first read is what lets a store's refusal come before the question.
+        sources = _sources(bindings, _read_documents(keys, stores, run=run))
 
     finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
 

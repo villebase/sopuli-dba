@@ -1991,10 +1991,13 @@ These are decisions:
   - `account reset-password` and `account expire-password`: the checks' logins
     to each target. A reset opens its delivery store only after the answer.
   - `creds apply`: opening the stores, reading the documents, and the
-    `require_encryption` and attribute checks. The `--preflight` survey runs
+    `require_encryption` and attribute checks. The run reads the documents
+    again under the lock and acts on that read. The `--preflight` survey runs
     under the lock, so it comes after the answer: a person reading the plan
     holds no lock.
-  - `creds finish-rollover`: opening the stores and reading the documents.
+  - `creds finish-rollover`: opening the stores and reading the documents. It
+    reads them again after the answer, as `creds generate` does, so a
+    `pending` staged while the question waited keeps the window open.
 - **`--dry-run` is never gated**, which is the opposite of `readonly` and right
   for the opposite reason. `readonly` decides whether a verb is available at all;
   this decides assent, and a preview is how somebody works out what they are

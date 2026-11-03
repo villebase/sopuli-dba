@@ -212,12 +212,13 @@ def test_a_target_that_cannot_expire_refuses_the_run_at_plan_time(
 def test_the_refusal_comes_before_the_confirmation(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Nobody is asked to confirm a run that cannot happen (#1201)."""
+    """Nobody is asked to confirm a run that cannot happen (#1201). The question
+    half of the gate is patched: the verb calls it after its checks (#1214)."""
     session = FakeSession()
     session.capabilities = frozenset()
     monkeypatch.setattr("sopuli.cli._open_session", lambda target, run, config: session)
     asked: list[bool] = []
-    monkeypatch.setattr("sopuli.cli._confirm_environments", lambda *a, **k: asked.append(True))
+    monkeypatch.setattr("sopuli.cli._ask_environments", lambda *a, **k: asked.append(True))
 
     result = run(runner, write_config(OFFLINE), "--account", ACCOUNT, "--output", "json")
 

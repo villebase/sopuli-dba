@@ -66,7 +66,16 @@ from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.lock.keys import LockKey
 from sopuli.passwords import ByteLimit, PasswordPolicyError, Violation, check
 from sopuli.passwords import generate as draw_password
-from sopuli.payload import GENERATED, ORIGIN, PENDING, SUPPLIED, merge
+from sopuli.payload import (
+    GENERATED,
+    ORIGIN,
+    PENDING,
+    REMOVE,
+    RETAINING,
+    ROLLOVER,
+    SUPPLIED,
+    merge,
+)
 from sopuli.secrets import Secret
 from sopuli.store.credentials import staged_patch
 
@@ -128,6 +137,10 @@ class Candidate:
     #: §4 requires the override to be recorded in the audit event, and recording
     #: it as "the flag was passed" would not say what it let through.
     accepted_violations: tuple[Violation, ...] = ()
+    #: ``True`` when `creds rotate --strategy rollover` staged it: the staging
+    #: write then marks the ``pending`` with :data:`~sopuli.payload.ROLLOVER`
+    #: (#1224). Every other staging write clears the mark.
+    rollover: bool = False
 
 
 @dataclass(frozen=True)
@@ -175,6 +188,11 @@ class DocumentWrite:
             if stage == PENDING:
                 patches.append(
                     staged_patch(ref, SUPPLIED if candidate.supplied else GENERATED, stage=ORIGIN)
+                )
+                # Cleared by any other staging write, so a mark never outlives
+                # the `pending` it described.
+                patches.append(
+                    staged_patch(ref, RETAINING if candidate.rollover else REMOVE, stage=ROLLOVER)
                 )
         return merge(*patches)
 

@@ -1384,6 +1384,28 @@ def test_a_rollover_with_no_profile_window_retains_the_old_password(
     assert all(row["rollover"]["active"] is True for row in applied)
 
 
+@pytest.mark.parametrize(("strategy", "mark"), [("rollover", "retaining"), ("staged", None)])
+def test_a_held_rollover_leaves_its_pending_marked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    strategy: str,
+    mark: str | None,
+) -> None:
+    """#1224: a rotation that cannot promote leaves its `pending` staged. Under
+    `rollover` it is marked, so the `apply` that finishes the run keeps the
+    window it opened; under any other strategy it is not."""
+    harness = estate(
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+        set_error=RuntimeError("the connection dropped"),
+    )
+    run(runner, write_config(CONFIG), "--strategy", strategy)
+
+    body = stored(harness["store"], "apps/acme/appdb-beta")
+    assert "acme_web_user" in body["pending"]
+    assert body.get("rollover", {}).get("acme_web_user") == mark
+
+
 def test_a_rotation_by_default_discards_the_old_password(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

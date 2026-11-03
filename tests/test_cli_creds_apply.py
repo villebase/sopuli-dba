@@ -840,17 +840,45 @@ def test_without_a_login_first_a_pending_is_set_and_verified_after(
     assert row["secret"]["stage"] == "current"
 
 
-def test_a_staged_pending_is_set_without_touching_a_retained_password(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+@pytest.mark.parametrize(
+    ("mark", "strategy", "expected"),
+    [
+        # A rollover rotation's `pending`: set again, keeping its window.
+        ({"rollover": {"acme_web_user": "retaining"}}, (), "keep"),
+        # Unless the operator asks for the old password to stop now.
+        ({"rollover": {"acme_web_user": "retaining"}}, ("--strategy", "direct"), "discard"),
+        # Any other `pending`: a retained password ends, as #1249 decided.
+        ({}, (), "discard"),
+    ],
+)
+def test_only_a_rollover_s_pending_keeps_a_retained_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    mark: dict[str, Any],
+    strategy: tuple[str, ...],
+    expected: str,
 ) -> None:
-    """#1224, Q2: `apply` cannot tell a first set from a re-set, so it keeps
-    whatever is retained. A second `RETAIN` on MySQL would drop the old
-    password a rotation retained."""
-    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
-    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+    """#1224: `apply` cannot tell a first set from a re-set, so it keeps what
+    is retained only for a `pending` a rollover rotation marked. A second
+    `RETAIN` on MySQL would drop the old password that rotation retained."""
+    document = {
+        "DB_CREDENTIALS": {"acme_web_user": LIVE},
+        "pending": {"acme_web_user": STAGED},
+        **mark,
+    }
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": document},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", *strategy)
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert harness["sessions"][0].old_passwords == ["keep"]
+    assert harness["sessions"][-1].old_passwords == [expected]
+    promoted = stored(harness["store"], "apps/acme/appdb-alpha")
+    assert promoted.get("rollover") in (None, {}), "cleared with `pending`"
+    kept = "the previous password still logs in" in result.output
+    assert kept == (expected == "keep")
 
 
 def test_apply_refuses_a_rollover_it_would_have_to_open_itself(
@@ -4209,6 +4237,22 @@ def test_a_refused_password_is_replaced_and_the_run_succeeds(
     # the refused value nor the one the run started with.
     assert document["DB_CREDENTIALS"]["acme_web_user"] not in (LIVE, STAGED)
     assert document["pending"] == {}
+
+
+def test_a_redraw_of_a_rollover_s_pending_keeps_its_window(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Review of #1255: the redraw restages a marked `pending` with its mark,
+    so the re-apply to targets the first draw reached keeps the window."""
+    documents = staged()
+    documents[REDRAW_DOCUMENT]["rollover"] = {"acme_web_user": "retaining"}
+    harness = estate(documents=documents, set_error=refusal(), refusals=1)
+
+    run(runner, write_config(REDRAW_CONFIG))
+
+    modes = [mode for session in harness["sessions"] for mode in session.old_passwords]
+    assert modes
+    assert set(modes) == {"keep"}
 
 
 def test_every_target_of_a_redrawn_account_gets_the_new_password(

@@ -47,6 +47,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    ROLLOVER,
     STAMPS,
     StageLayout,
     merge,
@@ -80,7 +81,7 @@ PREVIOUS_VERSION = "previous_version"
 #: What the tool adds to each version's content besides the password
 #: (decision 3). Not part of the secret's own keys, so neither shown nor
 #: carried from one version to the next.
-OWN_KEYS = frozenset({ORIGIN, GENERATED_AT, GENERATED_BY})
+OWN_KEYS = frozenset({ORIGIN, ROLLOVER, GENERATED_AT, GENERATED_BY})
 
 
 class StagingStore(SecretStore, NativeStaging, Protocol):
@@ -151,6 +152,7 @@ class _View:
             PENDING: self.value(self.pending),
             PREVIOUS: self.value(self.previous),
             ORIGIN: None if self.pending is None else _get(self.pending.data, ORIGIN),
+            ROLLOVER: None if self.pending is None else _get(self.pending.data, ROLLOVER),
         }
         for stamp in STAMPS:
             found[stamp] = self.attributes.get(stamp)
@@ -370,7 +372,10 @@ class NativeStagedStore:
             token = self.inner.write(path, data, cas=cas)
             self._payload[path] = token
             return token
-        new = {key: layout.read(data, key) for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, *STAMPS)}
+        new = {
+            key: layout.read(data, key)
+            for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, ROLLOVER, *STAMPS)
+        }
         seen = self._seen.pop(path, None)
         view = (
             seen if seen is not None and seen.current.version == cas else self._view(path, layout)
@@ -421,7 +426,9 @@ class NativeStagedStore:
             # the record of which pending is live is what clears it.
             return self._promote(path, view.current, new, pending=False, cas=cas)
         if new[PENDING] is not None and (
-            new[PENDING] != old[PENDING] or new[ORIGIN] != old[ORIGIN]
+            new[PENDING] != old[PENDING]
+            or new[ORIGIN] != old[ORIGIN]
+            or new[ROLLOVER] != old[ROLLOVER]
         ):
             return self._stage(path, view, new, cas=cas)
         if any(new[stamp] != old[stamp] for stamp in STAMPS):
@@ -492,7 +499,9 @@ class NativeStagedStore:
         """
         expected = self._next_generation(path, view)
         attributes = {**_stamps(new), PENDING_VERSION: expected}
-        content = self._content(view.layout, new[PENDING], new[ORIGIN], view.base())
+        content = self._content(
+            view.layout, new[PENDING], new[ORIGIN], view.base(), rollover=new[ROLLOVER]
+        )
         token = self.inner.stage(path, content, attributes=attributes, cas=cas)
         staged = self.inner.read_stage(path, PENDING)
         assert staged is not None
@@ -521,10 +530,17 @@ class NativeStagedStore:
         return number
 
     def _content(
-        self, layout: StageLayout, value: Any, origin: Any, base: Mapping[str, Any]
+        self,
+        layout: StageLayout,
+        value: Any,
+        origin: Any,
+        base: Mapping[str, Any],
+        *,
+        rollover: Any = None,
     ) -> dict[str, Any]:
         """A version's content: the secret's other keys, the password at the
-        ref's field, and what was true when it was made (decision 3)."""
+        ref's field, and what was true when it was made (decision 3), with the
+        rollover mark of #1224 beside ``origin``."""
         content = merge(
             base,
             layout.patch(CURRENT, value),
@@ -532,6 +548,8 @@ class NativeStagedStore:
         )
         if origin is not None:
             content[ORIGIN] = origin
+        if rollover is not None:
+            content[ROLLOVER] = rollover
         return content
 
     @staticmethod
@@ -608,7 +626,7 @@ def _without_residue(data: Any) -> Any:
         key: value
         for key, value in data.items()
         if key not in (GENERATED_AT, GENERATED_BY)
-        and not (key == ORIGIN and not isinstance(value, Mapping))
+        and not (key in (ORIGIN, ROLLOVER) and not isinstance(value, Mapping))
     }
 
 

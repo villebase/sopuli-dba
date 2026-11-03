@@ -22,6 +22,8 @@ from sopuli.payload import (
     PENDING,
     PREVIOUS,
     REMOVE,
+    RETAINING,
+    ROLLOVER,
     StageLayout,
     merge,
     stage_layout,
@@ -127,6 +129,38 @@ def test_a_live_pending_is_shown_with_its_origin(
 
     assert stored is not None
     assert stored.data == {"password": "a", "pending": "b", "origin": "generated"}
+
+
+def test_a_rollover_mark_is_staged_with_its_pending_and_cleared_with_it(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """#1224: the mark lives in the PENDING version's content, beside `origin`,
+    and promotion leaves it behind in no stage."""
+    seeded(view)
+    apply_patch(
+        view,
+        PATH,
+        merge(stage_patch("b"), LAYOUT.patch(ROLLOVER, RETAINING)),
+        cas=token(view),
+    )
+
+    staged = view.read(PATH)
+    assert staged is not None
+    assert staged.data["rollover"] == RETAINING
+    pending = inner.read_stage(PATH, "pending")
+    assert pending is not None
+    assert pending.data["rollover"] == RETAINING
+
+    apply_patch(
+        view,
+        PATH,
+        merge(promotion("b", "a"), LAYOUT.patch(ROLLOVER, REMOVE)),
+        cas=token(view),
+    )
+
+    promoted = view.read(PATH)
+    assert promoted is not None
+    assert "rollover" not in promoted.data
 
 
 def test_a_pending_that_is_not_the_recorded_one_is_not_a_pending(

@@ -102,6 +102,8 @@ from sopuli.payload import (
     PENDING,
     PREVIOUS,
     REMOVE,
+    RETAINING,
+    ROLLOVER,
     SUPPLIED,
     TARGETS,
     StageLayout,
@@ -221,6 +223,10 @@ class Source:
     #: names as the version it applied, and ``None`` for a caller that
     #: built a source without a stored document behind it.
     version: int | None = None
+    #: Whether the ``pending`` read carries :data:`~sopuli.payload.ROLLOVER`:
+    #: a rollover rotation staged it and retained the old password on MySQL,
+    #: so setting it again must not end that window (#1224).
+    rollover: bool = False
 
 
 #: The stages a run can be asked to apply from, in the order UC-1 §5 lists them.
@@ -283,6 +289,7 @@ def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> So
         value=value,
         replaces=current if promotes(chosen) else None,
         pending_staged=staged is not None,
+        rollover=chosen == PENDING and layout.read(document, ROLLOVER) == RETAINING,
     )
 
 
@@ -749,6 +756,8 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         # rather than removing the key, exactly as `pending` above does.
         # `tests/test_payload.py` pins that and says why it stays.
         patches.append(layout.patch(ORIGIN, REMOVE))
+        # The rollover mark describes `pending` too (#1224).
+        patches.append(layout.patch(ROLLOVER, REMOVE))
         patches.append(layout.patch("rotated_at", stamp))
         patches.append(layout.patch("rotated_by", by))
         if entry.policy is not None:

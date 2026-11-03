@@ -34,7 +34,7 @@ from sopuli.diagnostics import (
     ROTATION_OVERDUE,
 )
 from sopuli.driver.protocol import UserState
-from sopuli.finish_rollover import window_unreadable
+from sopuli.finish_rollover import active_unknown
 from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.notices import render_notices, unknown_change_dates
 from sopuli.output.palette import Role, paint, state_cell
@@ -120,7 +120,7 @@ def _rollover(user: UserState | None, supported: bool | None = None) -> dict[str
     if user is None:
         return None
     found: dict[str, Any] = {"profile_rollover_time": user.rollover_time}
-    if not window_unreadable(user, supported=supported):
+    if not active_unknown(user, supported=supported):
         # Left out where the window cannot be read, as on MySQL (#1254):
         # `false` would say no old password works when one may.
         found["active"] = bool(user.rollover_active)
@@ -373,7 +373,7 @@ def _rollover_cell(user: UserState | None, supported: bool | None = None) -> Cel
         return Cell("not supported", Role.MUTED)
     if user.rollover_active:
         return Cell("window open", Role.NOTABLE)
-    if window_unreadable(user, supported=supported):
+    if supported and active_unknown(user, supported=supported):
         # MySQL (#1224): no profile sets a window, and whether a password is
         # retained is in a column the tool account does not read.
         return Cell("unknown", Role.MUTED)

@@ -69,8 +69,8 @@ __all__ = [
     "decide",
     "remaining",
     "settled_before_closing",
+    "active_unknown",
     "window_unknown",
-    "window_unreadable",
 ]
 
 #: A rotation this run must not finish: the vault has staged a password the
@@ -93,16 +93,22 @@ def window_unknown(user: UserState, scope: Scope) -> bool:
     nothing retained, so it is sent every time. PostgreSQL also reports
     ``None``, and has no rollover, so no window is open there.
     """
-    return window_unreadable(user, supported=scope.supports(PASSWORD_ROLLOVER))
+    return user.rollover_active is None and scope.supports(PASSWORD_ROLLOVER)
 
 
-def window_unreadable(user: UserState, *, supported: bool | None) -> bool:
-    """:func:`window_unknown` for a caller that holds only whether the target
-    has rollover (``supported``), such as `creds status`'s rows. ``None`` is a
-    scope that could not be read, which claims nothing (#1254). A window length
-    the driver read (``rollover_days``) is a profile's, as on Oracle, so the
-    window is not unknown there."""
-    return user.rollover_active is None and user.rollover_days is None and supported is True
+def active_unknown(user: UserState, *, supported: bool | None) -> bool:
+    """Whether ``results[].rollover.active`` must be left out (#1254): the
+    driver did not report the window, and nothing says the target lacks
+    rollover.
+
+    The output's rule, used by every view that writes ``active``.
+    ``supported`` is whether the target has ``password_rollover``; ``None`` is a
+    scope that could not be read, which rules nothing out. A window length the
+    driver read (``rollover_days``) is a profile's, as on Oracle, so the window
+    is not unknown there. The gates of `creds finish-rollover` use
+    :func:`window_unknown`, which needs a scope it has read.
+    """
+    return user.rollover_active is None and user.rollover_days is None and supported is not False
 
 
 def settled_before_closing(

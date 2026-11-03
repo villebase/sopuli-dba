@@ -886,6 +886,10 @@ class ChangeResult:
     #: call retained it (:data:`OLD_RETAIN`, MySQL). ``False`` where a profile
     #: opens a window: the account's state says so there.
     retained: bool = False
+    #: Whether this call ended any password the account kept beside the new
+    #: one (:data:`OLD_DISCARD`, MySQL), so none is open now (#1254). ``False``
+    #: where the driver sent nothing for it.
+    discarded: bool = False
 
 
 @dataclass(frozen=True)

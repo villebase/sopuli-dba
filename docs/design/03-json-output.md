@@ -486,7 +486,9 @@ tool account never reads, so `creds status`, `creds apply`, `creds rotate` and
 `creds finish-rollover` leave `active` out unless the run itself retained or
 discarded the old password. Absent means unknown, not `false`: a consumer that
 asks whether an old password may still work treats a missing `active` as
-"maybe". `supported: true` beside it says the target has rollover.
+"maybe". `supported: true` beside it says the target has rollover. In `creds
+status`, a row whose driver did not report the window and whose scope could not
+be read has no `supported` and no `active`: nothing rules a window out.
 
 **The two `summary` blocks count `ok` differently.** In `check`, `ok` counts
 the rows it confirmed. `status` never logs in, so none of its states means

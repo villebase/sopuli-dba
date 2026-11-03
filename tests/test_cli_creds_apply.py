@@ -558,7 +558,9 @@ class FakeSession:
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
         self._called("set_password")
-        return ChangeResult(changed=True)
+        # As the MySQL driver does where it can keep a second password (#1254).
+        unread = PASSWORD_ROLLOVER in self.capabilities
+        return ChangeResult(changed=True, discarded=unread and old_password == "discard")
 
     def _called(self, event: str) -> None:
         """The seam a takeover needs: something happens to the vault *while* this

@@ -9138,7 +9138,8 @@ def _apply_one(
         old_password = strategies.old_password(
             regime, user, source.stage, rotating=rotating, marked=source.rollover
         )
-        retained = session.set_password(user.name, source.value, old_password=old_password).retained
+        set_result = session.set_password(user.name, source.value, old_password=old_password)
+        retained, discarded = set_result.retained, set_result.discarded
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
         # must not be reported `changed: false`, which would hide a mutated database
@@ -9170,9 +9171,9 @@ def _apply_one(
             # A rollover rotation's `pending`, set again (#1224): where that
             # rotation reached this target, its old password still logs in.
             outcome = replace(outcome, detail=f"{outcome.detail}; {WINDOW_KEPT}")
-        elif after_user.rollover_active is None:
-            # Discarded: a driver that cannot read the window has just ended
-            # any, so the row can say none is open (#1254).
+        elif discarded and after_user.rollover_active is None:
+            # The driver ended any retained password and cannot read the
+            # window, so the row says none is open (#1254).
             after_user = replace(after_user, rollover_active=False)
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
@@ -9387,7 +9388,7 @@ def _rollover_json(user: UserState, scope: Scope) -> dict[str, Any]:
     ``false`` would say no old password works when one may.
     """
     found: dict[str, Any] = {"profile_rollover_time": user.rollover_time}
-    if not windows.window_unknown(user, scope):
+    if not windows.active_unknown(user, supported=scope.supports(PASSWORD_ROLLOVER)):
         found["active"] = bool(user.rollover_active)
     if user.rollover_ends_at is not None:
         # Omitted rather than null: the schema types `ends_at` as a timestamp and
@@ -12533,16 +12534,18 @@ def _close_windows(
     by a run that no longer owns the estate cannot be reopened. A takeover found
     here raises, the same as one found at step 5.
     """
-    # Only where the run left a window: a row whose `rollover.active` is false
-    # had none. On MySQL that is every change but `--strategy rollover`'s,
-    # which discarded the old password already (#1224), so closing again would
-    # spend a login and report a window nobody opened.
+    # Only where the run left a window open: `rollover.active` is true. A row
+    # with it false had none, and a row without it is one whose window this
+    # run could not read and did not open (#1254). On MySQL only `--strategy
+    # rollover`'s changes are true; the others discarded the old password
+    # already (#1224), so closing again would spend a login and report a
+    # window nobody opened.
     confirmed = [
         record.binding
         for record in applied
         if apply_states.is_confirmed(record.outcome.state)
         and record.binding.secret is not None
-        and (record.rollover is None or record.rollover.get("active", True))
+        and (record.rollover is None or record.rollover.get("active") is True)
     ]
     if not confirmed:
         return 0

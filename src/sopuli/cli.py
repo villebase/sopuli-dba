@@ -350,6 +350,7 @@ from sopuli.preflight import Finding
 from sopuli.safety import (
     ENCRYPTED,
     ENCRYPTED_CONNECTION,
+    Confirmation,
     RefusedError,
     confirmation_demanded,
     encryption_required_at,
@@ -1872,14 +1873,16 @@ def account_expire_password(
     # the run would refuse. It is `_require_seen_expiry`'s pattern: one short
     # login per target, closed before the prompt, so no session waits on a
     # person. A target whose scope cannot be read is left to the run, where the
-    # driver refuses the same way.
+    # driver refuses the same way. An unattended run that the confirmation
+    # would refuse is refused first, with no login (#1214).
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
     scopes: dict[str, Scope | None] = {}
     for expanded in reached:
         scope = _plan_scope(expanded, run, config, scopes)
         if scope is not None:
             expire.require_expiry(scope, target=expanded.name)
 
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+    _ask_environments(plan, run, demand, action=action, noun="account")
 
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
@@ -2260,16 +2263,49 @@ def account_reset_password(
     # nothing.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
+    # The half of the confirmation that needs no connection: an unattended run
+    # that nobody can answer is refused here, before any login (#1214).
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
 
     # The record path is derived before anything connects, so a name it cannot
     # be built from is a plan-time refusal (invariant 4) rather than a failure
     # after the password has already changed.
     paths = _record_paths(config, account, reached)
-    # **The delivery backend too, and for the same invariant.** A store
-    # that cannot wrap is an unavailable capability, knowable from the file
-    # before any database is reached -- so it is exit 5 here, naming the store,
-    # rather than a per-target error row after a password has been drawn.
+
+    # **The notify channel too, and for the same invariant.** Not inside `_notify`,
+    # which wraps everything in a bare `except` so that a dead webhook cannot fail
+    # a reset that already succeeded. There it would swallow `SOPULI-20003` too,
+    # and a configured channel whose client is not installed would become a
+    # warning *after* the password changed, when it was knowable before the run
+    # connected to anything. Invariant 4 and E5's contract say
+    # configured-but-uninstalled fails use with exit 9.
+    #
+    # **Not skipped under `--dry-run`**, unlike `_delivery_backends` below. That
+    # one is skipped because opening a store needs credentials a preview should
+    # not demand; resolving a channel imports a module and opens nothing, and
+    # telling an operator their notify client is missing is among the things a
+    # preview is *for*.
+    channel = _notify_channel(delivery)
+
+    # Before any password is drawn (#857), and after the refusals above, which
+    # need no connection. Under `--dry-run` too: a preview that said "would be
+    # reset" over a connection the run would refuse would be wrong.
+    scopes: dict[str, Scope | None] = {}
+    _require_encryption(reached, run, config, scopes=scopes)
+    _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
+
+    # The question comes after the checks above, as in `account expire-password`
+    # (#1214): a yes followed by a refusal means nothing, and teaches people to
+    # answer without reading. The cost is that the checks' logins to each target,
+    # and the password prompt of a target with `auth: prompt`, come before it.
+    _ask_environments(plan, run, demand, action=action, noun="account")
+
+    # **The delivery backend**, after the question, so that an operator who
+    # answers no has not logged in to the store. A store that cannot wrap is an
+    # unavailable capability, so it is exit 5 here, naming the store, before a
+    # password is drawn rather than as a per-target error row after. A store's
+    # refusal can still follow a yes: building a backend and logging in to its
+    # store are one step today.
     #
     # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read
     # for a capability rather than for a guard: a preview delivers nothing, so it
@@ -2279,30 +2315,8 @@ def account_reset_password(
     #
     # On `vault_path` this is also where the store's policy is first checked, on
     # the account name as typed: a token that could read the person's path is
-    # refused before anything connects (UC-2 §6.6).
+    # refused before any password is drawn (UC-2 §6.6).
     backends = _delivery_backends(run, config, delivery, reached, account=account)
-
-    # **The notify channel too, and for the same reason.** Not inside `_notify`,
-    # which wraps everything in a bare `except` so that a dead webhook cannot fail
-    # a reset that already succeeded. There it would swallow `SOPULI-20003` too,
-    # and a configured channel whose client is not installed would become a
-    # warning *after* the password changed, when it was knowable before the run
-    # connected to anything. Invariant 4 and E5's contract say
-    # configured-but-uninstalled fails use with exit 9.
-    #
-    # **Not skipped under `--dry-run`**, which is where this stops mirroring
-    # `_delivery_backends` above. That one is skipped because opening a store needs
-    # credentials a preview should not demand; resolving a channel imports a module
-    # and opens nothing, and telling an operator their notify client is missing is
-    # among the things a preview is *for*.
-    channel = _notify_channel(delivery)
-
-    # Before any password is drawn (#857), and after the refusals above, which
-    # need no connection. Under `--dry-run` too: a preview that said "would be
-    # reset" over a connection the run would refuse would be wrong.
-    scopes: dict[str, Scope | None] = {}
-    _require_encryption(reached, run, config, scopes=scopes)
-    _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
 
     header = render_plan(plan, noun="account")
     if not reached:
@@ -3552,7 +3566,7 @@ def _delivery_backends(
     *,
     account: str,
 ) -> dict[str, DeliveryBackend]:
-    """One backend per target, built before anything connects (invariant 4).
+    """One backend per target, built before a password is drawn (invariant 4).
 
     Empty on the seen path, which delivers through the terminal and has no
     backend, and empty under ``--dry-run``: a preview delivers nothing, so it
@@ -4661,19 +4675,49 @@ def _confirm_environments(
     that appeared only in text mode would be a confirmation somebody could skip by
     asking for JSON.
     """
-    if run.dry_run:
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirmed, noun=noun)
+    _ask_environments(plan, run, demand, action=action, noun=noun)
+
+
+def _ask_environments(
+    plan: Any, run: Invocation, demand: Confirmation | None, *, action: str, noun: str
+) -> None:
+    """The question half of :func:`_confirm_environments`, for ``demand`` as
+    :func:`_refuse_unconfirmable` returned it. Nothing is asked where it is
+    ``None``."""
+    if demand is None:
         return
-    demand = confirmation_demanded(run.resolved, plan.blast_radius)
-    if demand is None or confirmed:
-        return
-    _refuse_if_profile_unattended(run, action=action)
-    if not _can_prompt():
-        refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
     question = f"{action} in `{demand.named}`?"
     # As `rotate`'s gate does: only where somebody is actually asked.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     _show_plan(plan, run, noun=noun)
     _confirm(question, abort=True, err=True)
+
+
+def _refuse_unconfirmable(
+    plan: Any, run: Invocation, *, action: str, confirmed: bool, noun: str
+) -> Confirmation | None:
+    """The half of :func:`_confirm_environments` that needs no connection.
+
+    Refuses a run that the gate would ask and nobody can answer: a profile with
+    `confirm: false`, or no terminal. Returns what the gate would ask about, or
+    ``None`` where it would not ask. A verb that runs plan-time logins before
+    its question calls this before them, and :func:`_ask_environments` after
+    them (#1214), so an unattended run that is going to be refused does not log
+    in first. Where it will ask, the plan is printed now, before those logins:
+    a target with `auth: prompt` asks for a password at its login, and the
+    operator sees the plan first (invariant 8).
+    """
+    if run.dry_run:
+        return None
+    demand = confirmation_demanded(run.resolved, plan.blast_radius)
+    if demand is None or confirmed:
+        return None
+    _refuse_if_profile_unattended(run, action=action)
+    if not _can_prompt():
+        refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
+    _show_plan(plan, run, noun=noun)
+    return demand
 
 
 def _record_plan(plan: Any, run: Invocation, *, noun: str, confirmation_required: bool) -> None:

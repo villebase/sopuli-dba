@@ -225,6 +225,29 @@ def test_the_refusal_comes_before_the_confirmation(
     assert asked == []
 
 
+def test_an_unattended_run_is_refused_before_any_login(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The half of the confirmation that needs no connection comes before the
+    plan-time login (#1214): with nobody to ask, exit 8 and no session."""
+    opened: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> FakeSession:
+        opened.append(target.name)
+        return FakeSession()
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: False)
+    gated = OFFLINE.replace(
+        "version: 1\n", "version: 1\ndefaults:\n  safety:\n    confirm_environments: [dev]\n"
+    )
+
+    result = run(runner, write_config(gated), "--account", ACCOUNT)
+
+    assert result.exception.exit_code == ExitCode.ABORTED, result.output
+    assert opened == []
+
+
 #: What `reset-password` needs as well: a policy, and an unseen delivery so that
 #: it previews under `--output json`. A preview opens no delivery store.
 RESETTABLE = """

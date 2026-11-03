@@ -203,19 +203,34 @@ def text(value: object) -> str:
 def roles_of(cursor: Cursor, account: Principal) -> tuple[Principal, ...]:
     """Every role the account can activate: granted to it, or to a role it
     can activate, followed to the end, and every mandatory role. Sorted."""
+    seen = follow(cursor, [account, *read_mandatory_roles(cursor)], ROLE_EDGES)
+    seen.pop(account.key(), None)
+    return tuple(sorted(seen.values()))
+
+
+def read_mandatory_roles(cursor: Cursor) -> tuple[Principal, ...]:
+    """The server's ``@@global.mandatory_roles``, as roles."""
     cursor.execute(MANDATORY_ROLES)
     row = cursor.fetchone()
-    pending = [account, *mandatory_roles(text(row[0]) if row and row[0] else None)]
+    return mandatory_roles(text(row[0]) if row and row[0] else None)
+
+
+def follow(
+    cursor: Cursor, start: Iterable[Principal], edges: str
+) -> dict[tuple[str, str], Principal]:
+    """Every principal ``edges`` reaches from ``start``, followed to the end,
+    ``start`` included, by :meth:`Principal.key`. ``edges`` takes a user and a
+    host and returns the user and host of each principal one step on."""
+    pending = list(start)
     seen: dict[tuple[str, str], Principal] = {}
     while pending:
         current = pending.pop()
         if current.key() in seen:
             continue
         seen[current.key()] = current
-        cursor.execute(ROLE_EDGES, (current.user, current.host))
+        cursor.execute(edges, (current.user, current.host))
         pending.extend(Principal(text(user), text(host)) for user, host in cursor.fetchall())
-    seen.pop(account.key(), None)
-    return tuple(sorted(seen.values()))
+    return seen
 
 
 def held_by(cursor: Cursor, principal: Principal, *, literal_db: bool = False) -> tuple[str, ...]:

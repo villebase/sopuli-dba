@@ -11,7 +11,8 @@ lists the method that is not built yet. §9 lists the open questions. On
 PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 `account suspend` are built. The seen reset and `account expire-password` are
 refused there with exit 5, because a role cannot be made to change its password
-at its next login.
+at its next login. On MySQL only `account list` is built; the other verbs
+refuse a MySQL target with `SOPULI-20006`.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -493,6 +494,24 @@ config does, at plan time and with exit 9, before anything connects, where
 any selected target is MySQL. A run that also reaches other products is
 refused as a whole, because one person's name differs between them; the hint
 says how to leave the MySQL targets out ([#1225](https://github.com/villebase/sopuli-dba/issues/1225)).
+`account list` refuses such an `--account` too: as a filter it would match
+nothing, and look like an answer. It compares names the same way when it folds
+two rules' names into one row, so `jdoe@%` and `JDOE@%` are two rows.
+
+**On MySQL, a role is an account, so `role:` names its host.** `CREATE ROLE
+dev_role` makes `dev_role@%`, so the rule is `role: dev_role@%`. A bare name is
+refused when the file loads, with exit 9, as a bare account name is. The role
+is compared as an account is. A `profile:` rule is refused by the absent
+`profile_management` capability, exit 5, because MySQL has no profiles. A
+`role:` rule admits every account the role is granted to, directly or through
+another role, whether or not the role is active: the account can `SET ROLE` to
+it. A role in the chain is admitted too, because it is an account. A rule that
+names a role in `@@global.mandatory_roles`, or a role such a role holds, is
+refused with exit 9 and names the setting: every account holds it, so the rule
+would admit every account. `account list` adds `SOPULI-W063` for each MySQL
+target it lists: MySQL keeps a block after failed logins (error 3955) outside
+`mysql.user`, so an account shown as `OPEN` may be blocked. Reasons:
+[#1225](../decisions/log.md#1225).
 
 ---
 

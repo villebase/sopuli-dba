@@ -59,8 +59,7 @@ sopuli account list [OPTIONS]
 
 Resolve `personal_accounts:` and show what it matched.
 
-The command reads no password and writes nothing, and it works on Oracle
-targets only. `personal_accounts:` can
+The command reads no password and writes nothing. `personal_accounts:` can
 declare accounts by a rule over a database profile or role, so the
 config alone does not list them. This command applies the rules on each
 selected target, and shows each account with the rule that matched it and

@@ -146,10 +146,10 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `password_reuse_policy` | Server may reject a generated password | yes (`PASSWORD_REUSE_*`, verify function) |
 | `expire_password` | Force expiry / end rollover | yes |
 | `account_lock_state` | Read and set lock state | yes |
-| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles` |
+| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles`. MySQL: always, from `mysql.user` and `mysql.role_edges`, in `02-mysql-privileges.md` §2.1's grant set |
 
 A PostgreSQL session reports `role_lookup` and none of the others. A MySQL
-session reports `password_rollover` where the server has
+session reports `role_lookup`, and `password_rollover` where the server has
 `caching_sha2_password_digest_rounds`, and none of the others. On MySQL the tool
 opens the window itself, with `RETAIN CURRENT PASSWORD` (UC-1 §6.3).
 
@@ -246,9 +246,10 @@ commands, `creds generate`, `apply`, `check`, `rotate`, `status` and
 `expire-password`. That is every command that connects to a target. The config
 also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`.
 `doctor` connects to a MySQL server and reports the scope, `server`. The MySQL
-entry lists UC-1's `creds generate`, `apply`, `check`, `rotate` and `status`
-(#1223). Every other command, `finish-rollover` and the `account` commands
-among them, refuses a MySQL target with `SOPULI-20006`. What
+entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
+`finish-rollover` (#1223, #1224), and UC-2's `account list` (#1225). Every
+other command, the `account` commands that change an account among them,
+refuses a MySQL target with `SOPULI-20006`. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted

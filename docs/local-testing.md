@@ -50,8 +50,9 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
-role change its password at its next login. A MySQL target runs `doctor` and
-the `creds` commands (§7), and refuses the `account` commands.
+role change its password at its next login. A MySQL target runs `doctor`, the
+`creds` commands (§7) and `account list` (§9), and refuses the other `account`
+commands.
 
 ---
 
@@ -688,7 +689,8 @@ acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not
 The stack also runs MySQL 8.4 at `127.0.0.1:3306`, user `root`, password
 `sopuli-test`. `doctor` connects to it and reports what it found, and the UC-1
 commands run against it: `creds generate`, `apply`, `check`, `rotate`,
-`finish-rollover` and `status`. The `account` commands refuse a MySQL target.
+`finish-rollover` and `status`. Of the `account` commands, only `account list`
+runs (§9).
 
 Connecting needs no privilege. Create the tool account as root, with a
 password of your own, and export the same password as
@@ -1296,6 +1298,48 @@ acme_dev_carol  pg-dev  role 'acme_dev_team'  NOLOGIN  -              -
 
 A cluster has no profiles, so a `profile:` predicate on a PostgreSQL target is
 refused with exit 5.
+
+On the MySQL server of §7, with the tool account's grants, make a role and
+grant it to two people:
+
+```
+mysql> CREATE ROLE 'acme_dev_team';
+mysql> CREATE USER 'acme_dev_alice'@'%' IDENTIFIED BY '…';
+mysql> CREATE USER 'acme_dev_bob'@'localhost' IDENTIFIED BY '…';
+mysql> GRANT 'acme_dev_team' TO 'acme_dev_alice'@'%', 'acme_dev_bob'@'localhost';
+```
+
+A MySQL role is an account, so the rule names its host. Add to `mysql.yaml`:
+
+```yaml
+policies:
+  personal-standard:
+    password: { length: 20 }
+personal_accounts:
+  - role: acme_dev_team@%
+    policy: personal-standard
+```
+
+```
+$ sopuli --config mysql.yaml account list
+ACCOUNT                 TARGET     DECLARED BY             STATUS  DB_PW_CHANGED  RESET_AT
+acme_dev_alice@%        mysql-dev  role 'acme_dev_team@%'  OPEN    2026-11-03     -
+acme_dev_bob@localhost  mysql-dev  role 'acme_dev_team@%'  OPEN    2026-11-03     -
+
+2 declared accounts, 2 on the selected targets
+
+2 notes:
+  no `reset_records:` block is declared, so there is no reset journal to read and RESET_AT is empty for every account; the database's own password-change date is unaffected and is reported beside it
+  mysql-dev: MySQL keeps a block after failed logins (error 3955) outside mysql.user, so the tool cannot read it, and an account shown as OPEN may be blocked until PASSWORD_LOCK_TIME ends or somebody runs ALTER USER … ACCOUNT UNLOCK
+
+1 warning:
+  targets[0].mysql.ssl_mode: target 'mysql-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+```
+
+The role counts whether or not it is active. MySQL has no profiles, so a
+`profile:` rule on a MySQL target is refused with exit 5, and a `role:` rule
+without a host is refused when the file loads, with exit 9.
 
 ### `account reset-password`
 

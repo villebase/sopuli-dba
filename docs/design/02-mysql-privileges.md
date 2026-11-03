@@ -124,6 +124,12 @@ names and privilege sets only: their columns on 8.4.13 are `Host`, `Db`,
 `User`, the table and column or routine name, `Grantor`, the privileges and
 `Timestamp`.
 
+The same two reads resolve a `role:` rule in `personal_accounts:` (UC-2 §2,
+#1225). A role is a row in `mysql.user`, and `mysql.role_edges` says whom it
+is granted to. `account list` follows `role_edges` down from the role to every
+account below it, and a verb follows it up from an account to its roles. So
+the session reports `role_lookup` and needs no other grant for it.
+
 Give the account no other privilege, and no role.
 
 ### 2.2 What the tool reads about itself

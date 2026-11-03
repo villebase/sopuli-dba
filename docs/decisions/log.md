@@ -4211,3 +4211,34 @@ the register.
   - A nullable `active`. It changes the field's type, which is a major bump.
   - Documenting `false` as "not known" on MySQL. The field would mean different
     things on different products.
+
+## #1225
+
+- **Decided:** 2026-11-03, #1225
+- **Question:** Questions 4 and 5 of #1225; 1 to 3 are recorded with the verbs
+  they govern. A MySQL role is an account, `user@host`, and `CREATE ROLE
+  dev_role` makes `dev_role@%`. Does a `role:` rule on MySQL name its host? And
+  what does a rule that names a mandatory role admit, when the server grants
+  every role in `@@global.mandatory_roles` to every account?
+- **Decision:**
+  4. A `role:` rule that reaches a MySQL target names its host, as `role:
+     dev_role@%`. A bare name is refused when the file loads, exit 9. The role is
+     compared as an account is: the user exactly, the host without ASCII case.
+  5. A rule that names a mandatory role is refused at plan time, exit 9, naming
+     the setting. So is a rule that names a role a mandatory role holds, for the
+     same reason. An account's roles, which a verb admits by, do not follow
+     mandatory roles.
+- **Why:**
+  4. A bare name is a guess, as it is for an account ([#1202](#1202), decision
+     4): `dev_role@%` and `dev_role@localhost` are two roles.
+  5. Every account holds a mandatory role, and every role it holds, so the rule
+     would admit every account on the server. A rule that admits every account
+     is not a whitelist (invariant 5).
+- **Rejected:**
+  4. Reading a bare name as `@%`, as MySQL's own `GRANT` does. It is right for
+     a role created without a host and wrong for every other.
+  5. Admitting every account and letting `account list` show it. The listing
+     would be accurate, and the rule would still let a verb act on any account.
+- **Accepted cost:** a role in the chain below a `role:` rule is admitted and
+  listed, because it is an account that holds the role. A verb that resets it
+  would refuse it only by the guardrails.

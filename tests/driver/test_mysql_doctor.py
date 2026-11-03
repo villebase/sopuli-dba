@@ -102,7 +102,7 @@ def test_doctor_reaches_the_server_and_reports_what_it_is(
     assert scope["open_mode"] == "READ WRITE"
     assert scope["read_write"] is True
     assert scope["db_version"], "the version the server reported"
-    assert scope["capabilities"] == ["password_rollover"]
+    assert scope["capabilities"] == ["password_rollover", "role_lookup"]
     assert scope["encryption"]["method"] == "tls"
     assert scope["encryption"]["protocol"] == "tcp"
 

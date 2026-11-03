@@ -442,7 +442,12 @@ def mysql_host_token(host: str) -> str:
 
 
 def refuse_a_bare_mysql_account(
-    expanded: ExpandedTarget, account: str, *, declared_by: str, at: KeyPath
+    expanded: ExpandedTarget,
+    account: str,
+    *,
+    declared_by: str,
+    at: KeyPath,
+    example: str = "acme_app",
 ) -> None:
     """A MySQL account names its host, as ``acme_app@10.%`` (#1202, decision 4).
 
@@ -451,7 +456,8 @@ def refuse_a_bare_mysql_account(
     connects. Reading a bare name as one of them would rotate it and leave the
     other on the old password. ``declared_by`` is who declares the account,
     such as "application 'acme'", and ``at`` is where the name is written. A
-    name on another product's target is not checked.
+    name on another product's target is not checked. ``example`` is the user
+    name the hint shows.
 
     A part quoted as SQL quotes it, as in ``'acme_app'@'%'``, or with a space
     at an end, is refused too. It splits, but the quotes would become part of
@@ -466,7 +472,7 @@ def refuse_a_bare_mysql_account(
             "and a MySQL account must name its host as user@host",
             at=at,
             hint=(
-                "write the host after the last `@`, as `acme_app@10.%`, or `acme_app@%` "
+                f"write the host after the last `@`, as `{example}@10.%`, or `{example}@%` "
                 "for the account any host reaches: MySQL keeps one account per host, each "
                 "with its own password"
             ),
@@ -477,23 +483,38 @@ def refuse_a_bare_mysql_account(
             "whose user or host starts or ends with a quote or a space",
             at=at,
             hint=(
-                "write the name without SQL's quotes, as `acme_app@10.%`: the tool "
+                f"write the name without SQL's quotes, as `{example}@10.%`: the tool "
                 "quotes each part itself"
             ),
         )
+
+
+def _typed_user(name: str) -> str:
+    """The user part of a name as typed, without SQL's quotes, for a hint."""
+    split = mysql_account(name)
+    return (split[0] if split else name).strip("'\"` \t") or "dev_role"
 
 
 def check_personal_mysql_accounts(config: Config) -> None:
     """A `personal_accounts:` rule names its hosts on a MySQL target too.
 
     Personal accounts never become bindings, so :mod:`sopuli.config.bindings`
-    does not see them. A rule declared by ``profile:`` or ``role:`` names no
-    account, and has nothing to check. Run after references are resolved, so
-    the rule's ``targets:`` names exist.
+    does not see them. A ``role:`` names its host too: a MySQL role is an
+    account, and ``CREATE ROLE dev_role`` makes ``dev_role@%`` (decision 4 of
+    #1225). A ``profile:`` names no account, and has nothing to check. Run
+    after references are resolved, so the rule's ``targets:`` names exist.
     """
     for index, rule in enumerate(config.personal_accounts):
         at = ROOT.key("personal_accounts").index(index)
         for expanded in select(config, rule.targets):
+            if rule.role is not None:
+                refuse_a_bare_mysql_account(
+                    expanded,
+                    rule.role,
+                    declared_by="a personal account rule's `role:`",
+                    at=at.key("role"),
+                    example=_typed_user(rule.role),
+                )
             for position, account in enumerate(rule.accounts):
                 refuse_a_bare_mysql_account(
                     expanded,

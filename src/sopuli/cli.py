@@ -113,7 +113,12 @@ from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
-from sopuli.config.products import mysql_account, quoted_or_padded, tls_setting
+from sopuli.config.products import (
+    account_matcher,
+    mysql_account,
+    quoted_or_padded,
+    tls_setting,
+)
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
@@ -143,6 +148,7 @@ from sopuli.diagnostics import (
     admin_diagnostics,
     constraint_diagnostics,
     encryption_diagnostics,
+    failed_login_block_unread,
     guardrail_diagnostics,
     guardrail_pass_ahead,
     guardrail_refuses_ahead,
@@ -3860,8 +3866,7 @@ def account_list_command(
 ) -> str:
     """Resolve `personal_accounts:` and show what it matched.
 
-    The command reads no password and writes nothing, and it works on Oracle
-    targets only. `personal_accounts:` can
+    The command reads no password and writes nothing. `personal_accounts:` can
     declare accounts by a rule over a database profile or role, so the
     config alone does not list them. This command applies the rules on each
     selected target, and shows each account with the rule that matched it and
@@ -3900,6 +3905,10 @@ def account_list_command(
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
         return "no targets selected"
+    if account is not None:
+        # A bare name names no MySQL account, so as a filter it would match
+        # nothing and say so as if it were an answer.
+        _refuse_a_bare_mysql_name(account, reached)
 
     unjournaled = no_reset_journal() if config.reset_records is None else []
     document.diagnostics.extend(unjournaled)
@@ -3907,10 +3916,16 @@ def account_list_command(
     rows: list[account_list.Row] = []
     errors = 0
     unread = _JournalFailures()
+    unseen: list[Diagnostic] = []
     for target in reached:
         found, failed = _list_one(target, run, config, wanted=account, unread=unread)
         rows.extend(found)
         errors += failed
+        if found and not failed and target.target.type == MYSQL:
+            # Every row's state is read from `mysql.user`, which does not
+            # hold the block after failed logins (#1225).
+            unseen.append(failed_login_block_unread(target.name))
+    document.diagnostics.extend(unseen)
 
     # Only a target that answered reads the journal, so this needs no `answered`.
     unreadable: list[Diagnostic] = []
@@ -3925,6 +3940,7 @@ def account_list_command(
     answered = errors < len(reached)
     notes = [one.message for one in unjournaled] if answered else []
     notes.extend(one.message for one in unreadable)
+    notes.extend(one.message for one in unseen)
     return render_account_list(rows, run_notes=notes)
 
 
@@ -4033,30 +4049,31 @@ def _declared_names(
 ) -> list[str]:
     """Every account the declaration admits here, once each.
 
-    **Deduplicated across rules, by ``upper()``.** An account may be admitted
-    by more than one rule -- UC-2 2 calls that ordinary -- and an enumerated rule
-    yields the *file's* spelling while a predicate yields the *dictionary's*. So
-    ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE`` carrying the profile are
-    one person, and must be one row. A listing that shows one account twice is
-    worse than one that omits it: it misreports the size of the whitelist an
-    operator is reviewing.
+    **Deduplicated across rules, by the product's comparison.** An account may
+    be admitted by more than one rule -- UC-2 2 calls that ordinary -- and an
+    enumerated rule yields the *file's* spelling while a predicate yields the
+    *dictionary's*. So ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE``
+    carrying the profile are one person, and must be one row. A listing that
+    shows one account twice is worse than one that omits it: it misreports the
+    size of the whitelist an operator is reviewing. On MySQL ``jdoe@%`` and
+    ``JDOE@%`` are two accounts, and two rows (#1225).
 
     First occurrence wins, so file order leads and predicates fill in behind it,
     which keeps a reviewer's listing aligned with the file they are reading it
     against.
 
-    ``--account`` filters here, after resolution. UC-2 2's rule for the flag: it
-    narrows the resolved set and never extends it.
+    ``--account`` filters here, after resolution, by the same comparison. UC-2
+    2's rule for the flag: it narrows the resolved set and never extends it.
     """
-    seen: dict[str, str] = {}
+    same = account_matcher(target.target.type)
+    names: list[str] = []
     for rule in account_list.rules_on(config, target.name):
         for name in _resolve_rule(session, rule, target):
-            seen.setdefault(name.upper(), name)
+            if not any(same(name, kept) for kept in names):
+                names.append(name)
 
-    names = list(seen.values())
     if wanted is not None:
-        spelled = wanted.upper()
-        names = [name for name in names if name.upper() == spelled]
+        names = [name for name in names if same(name, wanted)]
     return names
 
 
@@ -4224,7 +4241,7 @@ def _describe_row(
     )
     if refused is not None:
         notices.append(account_list.Notice(ADMITTED_REFUSED_ACCOUNT, refused))
-    owner = account_list.cross_declared(config, name)
+    owner = account_list.cross_declared(config, name, same=account_matcher(target.target.type))
     if owner is not None:
         notices.append(
             account_list.Notice(

@@ -37,10 +37,12 @@ needs a container to test.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from sopuli.config.model import Config, PersonalAccountRule
+from sopuli.config.products import same_name
 from sopuli.driver import guardrails
 from sopuli.driver.protocol import UserState
 from sopuli.personal import declared_on, rules_for
@@ -181,7 +183,9 @@ def rule_for(
     return declared_on(config, account, target, profile=profile, roles=roles)
 
 
-def cross_declared(config: Config, account: str) -> str | None:
+def cross_declared(
+    config: Config, account: str, *, same: Callable[[str, str], bool] = same_name
+) -> str | None:
     """The application that also declares ``account``, if one does.
 
     **The collision a file cannot see.**
@@ -200,10 +204,10 @@ def cross_declared(config: Config, account: str) -> str | None:
     operator with an ambiguous whitelist and no way to look at it. Describing the
     ambiguity is what lets them resolve it.
     """
-    # By `upper()`, invariant 5's rule, as the mutating verbs compare (#1056).
-    spelled = account.upper()
+    # By `same`, as the mutating verbs compare (#1056): `upper()`, invariant
+    # 5's rule, or on MySQL the user exactly and the host without case (#1225).
     for application in config.applications:
-        if any(declared.upper() == spelled for declared in application.accounts):
+        if any(same(account, declared) for declared in application.accounts):
             return application.label
     return None
 

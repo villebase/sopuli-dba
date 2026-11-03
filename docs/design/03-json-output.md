@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.74.schema.json`](../schemas/sopuli-run-1.74.schema.json),
+Schemas: [`../schemas/sopuli-run-1.75.schema.json`](../schemas/sopuli-run-1.75.schema.json),
 [`../schemas/sopuli-event-1.21.schema.json`](../schemas/sopuli-event-1.21.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -479,6 +479,14 @@ rollover at all (`password_rollover`). It is `false` on PostgreSQL, where the
 ROLLOVER column prints `not supported`, and absent where the scope could not be
 read. Without it, `active: false` with `profile_rollover_time: null` would mean
 "this profile grants no window" and "this product has none" alike (#1072).
+
+**`results[].rollover.active` is absent where the tool cannot read it**, from
+run schema 1.75 (#1254). On MySQL a retained old password is in a column the
+tool account never reads, so `creds status`, `creds apply`, `creds rotate` and
+`creds finish-rollover` leave `active` out unless the run itself retained or
+discarded the old password. Absent means unknown, not `false`: a consumer that
+asks whether an old password may still work treats a missing `active` as
+"maybe". `supported: true` beside it says the target has rollover.
 
 **The two `summary` blocks count `ok` differently.** In `check`, `ok` counts
 the rows it confirmed. `status` never logs in, so none of its states means
@@ -3176,6 +3184,11 @@ These rules follow from the two lists:
   `lock.found[].declared` widened from "a binding names this path" to "this
   configuration accounts for this path". Turning the boolean into a three-valued
   string would have been a rename, which is major.
+- **Leaving an optional property out where its value is not known is minor.**
+  `true` and `false` keep their meanings, and every optional property may
+  already be absent. `results[].rollover.active` is the example, from run
+  schema 1.75 (#1254). Making it nullable would have changed its type, which is
+  major.
 - **How many entries a diagnostic code emits is contract.** A consumer may count
   a code's entries, so the count changes only with a bump of every schema that
   carries the code: the run schema for `diagnostics[]`, and the event schema

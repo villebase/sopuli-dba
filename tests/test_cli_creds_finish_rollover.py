@@ -293,6 +293,30 @@ def test_a_window_that_cannot_be_read_is_discarded_without_a_login(
         assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
 
 
+@pytest.mark.parametrize(("dry_run", "active"), [(True, None), (False, False)])
+def test_the_json_says_active_only_where_it_is_known(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    dry_run: bool,
+    active: bool | None,
+) -> None:
+    """#1254, MySQL: a preview leaves `rollover.active` out, because the window
+    cannot be read. A close discarded any retained password, so it is `false`."""
+    estate(
+        users={"ACME_WEB_USER": UserState(name="ACME_WEB_USER", status="OPEN")},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    flags = ["--dry-run"] if dry_run else ["--confirm"]
+    found = document(
+        run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json", *flags)
+    )
+
+    assert not list(validator.iter_errors(found))
+    assert found["results"][0]["rollover"].get("active") is active
+
+
 def test_an_open_window_is_closed(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

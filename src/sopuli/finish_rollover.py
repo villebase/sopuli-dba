@@ -70,6 +70,7 @@ __all__ = [
     "remaining",
     "settled_before_closing",
     "window_unknown",
+    "window_unreadable",
 ]
 
 #: A rotation this run must not finish: the vault has staged a password the
@@ -92,7 +93,16 @@ def window_unknown(user: UserState, scope: Scope) -> bool:
     nothing retained, so it is sent every time. PostgreSQL also reports
     ``None``, and has no rollover, so no window is open there.
     """
-    return user.rollover_active is None and scope.supports(PASSWORD_ROLLOVER)
+    return window_unreadable(user, supported=scope.supports(PASSWORD_ROLLOVER))
+
+
+def window_unreadable(user: UserState, *, supported: bool | None) -> bool:
+    """:func:`window_unknown` for a caller that holds only whether the target
+    has rollover (``supported``), such as `creds status`'s rows. ``None`` is a
+    scope that could not be read, which claims nothing (#1254). A window length
+    the driver read (``rollover_days``) is a profile's, as on Oracle, so the
+    window is not unknown there."""
+    return user.rollover_active is None and user.rollover_days is None and supported is True
 
 
 def settled_before_closing(

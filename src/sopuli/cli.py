@@ -8900,7 +8900,7 @@ def _apply_one(
             final,
             changed=True,
             verified_before=before,
-            rollover=_rollover_json(now),
+            rollover=_rollover_json(now, session.scope()),
             overridden=overridden,
             caveats=caveats,
             attributes=enforced,
@@ -9026,7 +9026,7 @@ def _apply_one(
                     done,
                     changed=False,
                     verified_before=before,
-                    rollover=_rollover_json(user),
+                    rollover=_rollover_json(user, session.scope()),
                     overridden=overridden,
                     caveats=caveats,
                     duration_ms=_elapsed(started),
@@ -9109,7 +9109,7 @@ def _apply_one(
                 done,
                 changed=False,
                 verified_before=before,
-                rollover=_rollover_json(user),
+                rollover=_rollover_json(user, session.scope()),
                 attributes=enforced,
                 # Reported on the no-op path too. The waiver was granted and the
                 # tool went on to touch an account §4 would have refused -- that
@@ -9170,6 +9170,10 @@ def _apply_one(
             # A rollover rotation's `pending`, set again (#1224): where that
             # rotation reached this target, its old password still logs in.
             outcome = replace(outcome, detail=f"{outcome.detail}; {WINDOW_KEPT}")
+        elif after_user.rollover_active is None:
+            # Discarded: a driver that cannot read the window has just ended
+            # any, so the row can say none is open (#1254).
+            after_user = replace(after_user, rollover_active=False)
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
             outcome.state
@@ -9371,18 +9375,20 @@ def _with_regime(
     return check_states.Outcome(outcome.state, f"{outcome.detail}; {extra}", outcome.verification)
 
 
-def _rollover_json(user: UserState) -> dict[str, Any]:
+def _rollover_json(user: UserState, scope: Scope) -> dict[str, Any]:
     """``results[].rollover``: the window, and the profile that decides it.
 
     Emitted for every account this run acted on rather than only for the ones
     with an open window, because the *absence* of one is the answer to "did the
     old password stop working just now" -- and ``profile_rollover_time`` beside
     it says whether that was the regime asked for or the only one available.
+
+    ``active`` is left out where the window cannot be read, on MySQL (#1254):
+    ``false`` would say no old password works when one may.
     """
-    found: dict[str, Any] = {
-        "active": bool(user.rollover_active),
-        "profile_rollover_time": user.rollover_time,
-    }
+    found: dict[str, Any] = {"profile_rollover_time": user.rollover_time}
+    if not windows.window_unknown(user, scope):
+        found["active"] = bool(user.rollover_active)
     if user.rollover_ends_at is not None:
         # Omitted rather than null: the schema types `ends_at` as a timestamp and
         # not as a nullable one, and there is no deadline to report when no
@@ -11410,6 +11416,7 @@ def creds_finish_rollover(
             changed=record.changed,
             duration_ms=record.duration_ms,
             error=record.error,
+            unknown_window=record.unknown_window,
         )
         for record in finished
     ]

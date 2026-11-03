@@ -21,17 +21,33 @@ import pytest
 from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import ResetRecords
 from sopuli.lock import Holder, LockableStore, LockDeniedError, LockManager, lock_path
+from sopuli.lock.keys import LockKey
 from sopuli.reset_record import (
     Delivery,
     ResetRecord,
     assert_no_secret,
-    record_lock_key,
-    record_path,
 )
+from sopuli.reset_record import record_lock_key as _record_lock_key
+from sopuli.reset_record import record_path as _record_path
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
 
 RECORDS = ResetRecords(vault="kv", prefix="sopuli/personal-resets")
+
+
+def record_path(
+    records: ResetRecords, *, target: str, account: str, product: str = "oracle"
+) -> str:
+    """The module's own, on an Oracle target unless ``product`` says otherwise."""
+    return _record_path(records, target=target, account=account, product=product)
+
+
+def record_lock_key(
+    records: ResetRecords, *, target: str, account: str, product: str = "oracle"
+) -> LockKey:
+    return _record_lock_key(records, target=target, account=account, product=product)
+
+
 NOW = datetime(2026, 9, 17, 9, 14, 22, tzinfo=UTC)
 HOLDER = Holder(host="dba-ws-4.example.com", pid=8821, os_user="dba01")
 

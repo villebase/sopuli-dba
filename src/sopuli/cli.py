@@ -2692,6 +2692,10 @@ def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget
     it would not admit by such a rule; it asks the same question here, before it
     describes the account, so that the verb and the listing refuse alike. Each
     `role:` rule that reaches the target is resolved: a few reads per rule.
+
+    At plan time the refusal ends the run, exit 9. In the run it is that
+    target's `ERROR` row, exit 4, as every refusal there is: an earlier target
+    may already have been reset, and its row must still be reported.
     """
     if target.target.type != MYSQL:
         return
@@ -3116,7 +3120,9 @@ def _reset_one(
     try:
         try:
             session = _open_session(target, run, config)
-            # Asked again for a target plan time could not read.
+            # Asked again on every MySQL target, as the encryption is: plan time
+            # passes over a target it could not reach, and the server's
+            # mandatory roles may have changed since. A few reads per rule.
             _refuse_mandatory_roles(session, config, target)
             state = session.describe_user(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -3339,9 +3345,8 @@ def _reset_one(
             detail=(
                 decision.detail
                 if unclosed is None
-                else "password set, but the rollover window was not closed, so assume the "
-                f"old password still works until it ends: {unclosed.message}"
-                + (f" -- {unclosed.hint}" if unclosed.hint else "")
+                else "password set, but the old password was not ended, so assume it still "
+                f"works: {unclosed.message}" + (f" -- {unclosed.hint}" if unclosed.hint else "")
             ),
             status=status,
             actions=_reset_actions(changes, unclosed),

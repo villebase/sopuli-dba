@@ -372,7 +372,7 @@ def test_a_set_then_a_failed_close_still_shows_the_password_on_the_seen_path(
 
     assert result.exit_code == ExitCode.PARTIAL, result.output
     assert "ERROR" in result.output
-    assert "so assume the old password still works until it ends" in result.output
+    assert "the old password was not ended, so assume it still works" in result.output
     assert "Close it by hand: ALTER USER ..." in result.output
     assert "shown once" in result.output
     assert len(sent.records) == 1

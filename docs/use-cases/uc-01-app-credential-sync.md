@@ -638,7 +638,10 @@ These rules decide what `apply` does with each account:
   verification result `stored`, the account is `IN_SYNC`, and its pending
   password can be promoted. `stored` is weaker than `pass`: the server records
   a password change at or after the tool's statement, and no client has
-  logged in with the password.
+  logged in with the password. An expired account is changed as on Oracle: a
+  new password ends the expiry, with `RETAIN CURRENT PASSWORD` or without, and
+  a rollover's retained password logs in too (`04_lock_expiry_probe.py`, LE7
+  and LE8, [#1225](../decisions/log.md#1225)).
 - **A locked account is not changed at all,** unless the policy asks for an
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,

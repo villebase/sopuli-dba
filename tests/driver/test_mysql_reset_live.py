@@ -120,6 +120,21 @@ def test_a_seen_reset_ends_the_block_and_leaves_only_the_new_password_expired(
     assert blocked.login(NEW) == MUST_CHANGE
 
 
+@pytest.mark.parametrize("old_password", ["discard", "retain"])
+def test_a_set_ends_an_expiry_so_creds_apply_may_change_an_expired_account(
+    blocked: Reset, old_password: str
+) -> None:
+    """Why the scope reports `expire_password` (LE7, LE8): UC-1 changes an
+    expired account because the new password ends the expiry, on a rollover
+    too."""
+    blocked.admin(f"alter user `{blocked.user}`@`%` account unlock password expire")
+
+    blocked.session.set_password(blocked.account, Secret(NEW), old_password=old_password)
+
+    assert blocked.expired() == "N"
+    assert blocked.login(NEW) == "ok"
+
+
 def test_an_unseen_reset_ends_the_block_and_the_new_password_logs_in(blocked: Reset) -> None:
     blocked.session.reset_password(blocked.account, Secret(NEW), expire=False)
 

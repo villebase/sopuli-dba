@@ -32,6 +32,9 @@ mysql.user's account_locked, password_expired and User_attributes:
        retained and previous passwords. Then DISCARD OLD PASSWORD, the
        retained password and the new one. Then a password by hash without
        PASSWORD EXPIRE, and whether the expiry is still set (#1225)
+  LE8  PASSWORD EXPIRE, then a password by hash with RETAIN CURRENT PASSWORD,
+       as `creds rotate --strategy rollover` sends it. Then the new and the
+       retained passwords (#1225)
 
 A login is "ok", or the error number and SQLSTATE of the refusal. Logins use
 the server's own mysql client, as in 02_client_hash_probe.py.
@@ -45,7 +48,7 @@ STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
 times. LE5 was added and the whole probe run again on 2026-11-02 (#1223),
-twice, exit 0, with the same result. LE6 and LE7 were added and the whole
+twice, exit 0, with the same result. LE6 to LE8 were added and the whole
 probe run again on 2026-11-03 (#1225), twice, exit 0, with the same result.
 
 RESULTS -- the same on all three releases
@@ -83,12 +86,15 @@ RESULTS -- the same on all three releases
        password_expired still reads Y, the retained password answers 1045
        (28000), and the new one logs in, expired. A password by hash without
        PASSWORD EXPIRE is accepted, password_expired reads N, and it logs in
+  LE8  both accepted, and password_expired reads N. The new password and the
+       retained one both log in
 
   So a lock and an expiry read back from mysql.user, and a timed block does
   not: nothing in mysql.user shows it. ACCOUNT UNLOCK ends both kinds. A
   password change does not end a timed block, so with FAILED_LOGIN_ATTEMPTS 1
   one wrong login, such as one before a rotation's change, blocks the account
-  for PASSWORD_LOCK_TIME days. A password change ends an expiry, and one with
+  for PASSWORD_LOCK_TIME days. A password change ends an expiry, with RETAIN
+  CURRENT PASSWORD or without, and one with
   PASSWORD EXPIRE expires the retained password too, which keeps working
   until DISCARD OLD PASSWORD.
 
@@ -288,6 +294,20 @@ def probe(service: str) -> None:
         (OK, OK, OK, CLIENT_REFUSES, REFUSED, OK, "locked=N expired=Y attributes=NULL", REFUSED,
          CLIENT_REFUSES, OK, "locked=N expired=N attributes=NULL", OK),
     )  # fmt: skip
+
+    # LE8: a rotation's rollover set on an expired account.
+    expire = alter(service, "PASSWORD EXPIRE")
+    set_a = alter(service, by_hash(A, rounds) + " RETAIN CURRENT PASSWORD")
+    # The attributes now hold the retained hash, whose salt differs per run.
+    after = state(service).split(" attributes=")[0]
+    new, kept = login(service, A), login(service, D)
+    print(f"LE8 PASSWORD EXPIRE: {expire}; set by hash with RETAIN CURRENT PASSWORD: {set_a}")
+    print(f"LE8 then: {after}; new: {new}; retained: {kept}")
+    ch.check(
+        "LE8",
+        (expire, set_a, after, new, kept),
+        (OK, OK, "locked=N expired=N", OK, OK),
+    )
 
 
 def reset(service: str, password: str, rounds: int) -> tuple[str, str, str]:

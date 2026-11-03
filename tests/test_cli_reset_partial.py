@@ -31,7 +31,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.clock import utc_now
-from sopuli.delivery import Receipt
+from sopuli.delivery import Receipt, onepassword, vault_path, yopass
 from sopuli.diagnostics import encryption_diagnostics, no_reset_record
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -51,9 +51,11 @@ from sopuli.driver.protocol import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
+from sopuli.material import MaterialError
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
+from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
 from sopuli.store.registry import BackendNotInstalledError
@@ -1166,6 +1168,14 @@ def _not_installed(*_: Any, **__: Any) -> None:
     raise BackendNotInstalledError("a client this delivery needs is not installed")
 
 
+def _sdk_not_installed(*_: Any, **__: Any) -> None:
+    raise onepassword.OnePasswordNotInstalledError()
+
+
+def _yopass_not_installed(*_: Any, **__: Any) -> None:
+    raise yopass.YopassNotInstalledError("pysequoia")
+
+
 def _installed(*_: Any, **__: Any) -> None:
     return None
 
@@ -1178,50 +1188,50 @@ OP_INSTALLED = "sopuli.delivery.onepassword.check_installed"
 
 
 @pytest.mark.parametrize(
-    ("config", "patch", "exit_code"),
+    ("config", "patch", "error"),
     [
         pytest.param(
             VAULT_PATH.replace("kv_version: 2", "kv_version: 1"),
             None,
-            ExitCode.UNSUPPORTED_CAPABILITY,
+            vault_path.NotAPathStoreError,
             id="vault_path-on-kv1",
         ),
         pytest.param(
             WRAPPED,
-            ("sopuli.cli.store_registry.resolve", _not_installed),
-            ExitCode.CONFIG_INVALID,
+            ("sopuli.cli.store_registry.require_installed", _not_installed),
+            BackendNotInstalledError,
             id="vault-client-not-installed",
         ),
         pytest.param(
             # Unfit and uninstalled: the method can never use this entry, so
             # installing its client would not help, and exit 5 says so.
             VAULT_PATH.replace("kv_version: 2", "kv_version: 1"),
-            ("sopuli.cli.store_registry.resolve", _not_installed),
-            ExitCode.UNSUPPORTED_CAPABILITY,
+            ("sopuli.cli.store_registry.require_installed", _not_installed),
+            vault_path.NotAPathStoreError,
             id="fitness-before-the-install-check",
         ),
         pytest.param(
             WRAPPED.replace("  vault: vault-dev\n", "", 1),
             None,
-            ExitCode.ABORTED,
+            RefusedError,
             id="no-store-named",
         ),
         pytest.param(
             ONEPASSWORD,
             (OP_INSTALLED, _installed),
-            ExitCode.CONFIG_INVALID,
+            MaterialError,
             id="onepassword-no-token",
         ),
         pytest.param(
             ONEPASSWORD,
-            (OP_INSTALLED, _not_installed),
-            ExitCode.CONFIG_INVALID,
+            (OP_INSTALLED, _sdk_not_installed),
+            onepassword.OnePasswordNotInstalledError,
             id="onepassword-sdk-not-installed",
         ),
         pytest.param(
             ONE_TIME_LINK,
-            ("sopuli.delivery.yopass.check_installed", _not_installed),
-            ExitCode.CONFIG_INVALID,
+            ("sopuli.delivery.yopass.check_installed", _yopass_not_installed),
+            yopass.YopassNotInstalledError,
             id="yopass-not-installed",
         ),
     ],
@@ -1233,7 +1243,7 @@ def test_a_delivery_refusal_from_the_config_comes_before_any_login(
     sent: Sent,
     config: str,
     patch: tuple[str, Callable[..., None]] | None,
-    exit_code: ExitCode,
+    error: type[Exception],
 ) -> None:
     """What a delivery backend would refuse from the config alone is refused
     before the plan, the plan-time logins and the question (#1257). The
@@ -1260,7 +1270,9 @@ def test_a_delivery_refusal_from_the_config_comes_before_any_login(
 
     result = _run(runner, write_config(_gated(config)))
 
-    assert getattr(result.exception, "exit_code", None) == exit_code, result.output
+    # The exact type, so a refusal from the wrong check, or one naming the
+    # wrong extra, fails here.
+    assert type(result.exception) is error, result.output
     assert "Plan:" not in result.output
     assert opened == []
     assert built == []

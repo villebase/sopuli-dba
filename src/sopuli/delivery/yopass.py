@@ -216,8 +216,10 @@ ClientFactory = Callable[[str], "httpx.Client"]
 
 def _client(base_url: str) -> httpx.Client:
     """An `httpx` client for the server, with a short timeout."""
-    client: httpx.Client = _httpx().Client(base_url=base_url, timeout=TIMEOUT_S)
-    return client
+    _require_httpx()
+    import httpx
+
+    return httpx.Client(base_url=base_url, timeout=TIMEOUT_S)
 
 
 @dataclass
@@ -321,7 +323,9 @@ class Yopass:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         """One request, or a :class:`StoreError` that names the server and the path."""
-        httpx = _httpx()
+        _require_httpx()
+        import httpx
+
         started = time.monotonic()
         try:
             with self.client_factory(self.base_url) as client:
@@ -355,17 +359,20 @@ def check_installed() -> None:
 
     Opens nothing, so it runs before any login and any confirmation (#1257).
     """
-    _httpx()
+    _require_httpx()
     _sequoia()
 
 
-def _httpx() -> Any:
-    """`httpx`, or the refusal that names the extra."""
+def _require_httpx() -> None:
+    """Refuse, naming the extra, if `httpx` does not import.
+
+    A check only: each caller then imports `httpx` itself, so the type checker
+    still knows what it holds.
+    """
     try:
-        import httpx
+        import httpx  # noqa: F401
     except ModuleNotFoundError as error:
         raise YopassNotInstalledError("httpx") from error
-    return httpx
 
 
 def _sequoia() -> Any:

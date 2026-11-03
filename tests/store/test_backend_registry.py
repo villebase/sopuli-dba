@@ -31,6 +31,7 @@ from sopuli.store.registry import (
     BackendNotImplementedError,
     BackendNotInstalledError,
     installed,
+    require_installed,
     resolve,
 )
 
@@ -124,6 +125,35 @@ def test_installed_does_not_import_the_client(monkeypatch: pytest.MonkeyPatch) -
 
     assert installed(Backend(module="x", extra="e", provides=frozenset({"wave"})))
     assert "wave" not in sys.modules
+
+
+def test_require_installed_imports_nothing_where_the_client_is_there(
+    module_factory: MakeModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check a reset makes before the plan (#1257) asks without importing,
+    so a preview loads no backend module and no HTTP client."""
+    name = module_factory("MARKER = 'imported'\n")
+    monkeypatch.setitem(
+        BACKENDS, "hashicorp", Backend(module=name, extra="hashicorp", provides=frozenset({"json"}))
+    )
+
+    require_installed(vault())
+
+    assert name not in sys.modules
+
+
+def test_require_installed_names_the_extra_where_the_client_is_missing(
+    module_factory: MakeModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = module_factory(f"import {ABSENT}\n")
+    monkeypatch.setitem(
+        BACKENDS, "oci", Backend(module=name, extra="oci", provides=frozenset({ABSENT}))
+    )
+
+    with pytest.raises(BackendNotInstalledError) as caught:
+        require_installed(vault(name="oci-prod", backend="oci"))
+
+    assert "sopuli-dba[oci]" in str(caught.value.hint)
 
 
 # -------------------------------------------------------------------- resolve ---

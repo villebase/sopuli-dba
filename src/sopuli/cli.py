@@ -3453,16 +3453,21 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
     """
     link = _delivery_store_link(config, delivery, target)
     if link is None:
-        raise RefusedError(
-            f"`delivery.method: {delivery.method}` has no store to deliver into",
-            at=ROOT.key("delivery").key(delivery.method).key("vault"),
-            hint=(
-                "name one under the method, on the target, or as `defaults.vault` -- the "
-                "same chain a secret ref walks. A store is not guessed at, because the "
-                "wrong one would hand somebody else's vault a working password"
-            ),
-        )
+        raise _no_delivery_store(delivery)
     return link[0]
+
+
+def _no_delivery_store(delivery: Delivery) -> RefusedError:
+    """The refusal for an unseen delivery whose store chain runs out."""
+    return RefusedError(
+        f"`delivery.method: {delivery.method}` has no store to deliver into",
+        at=ROOT.key("delivery").key(delivery.method).key("vault"),
+        hint=(
+            "name one under the method, on the target, or as `defaults.vault` -- the "
+            "same chain a secret ref walks. A store is not guessed at, because the "
+            "wrong one would hand somebody else's vault a working password"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -3578,7 +3583,9 @@ def _refuse_undeliverable(
     * `one_time_link`: `httpx` and `pysequoia` import.
     * `vault_path` and `vault_wrapped`: each target's delivery store is named
       and declared, its `vaults:` entry is one the method can use (exit 5), and
-      its client imports (exit 9). Fitness first: an entry the method can never
+      its client is installed (exit 9), which is asked without importing it
+      (:func:`~sopuli.store.registry.require_installed`), so a preview loads
+      no HTTP client. Fitness first: an entry the method can never
       use is not worth installing a client for.
 
     The store login, `vault_path`'s capabilities check, Yopass's `/config` and
@@ -3610,19 +3617,20 @@ def _refuse_undeliverable(
     declared = {vault.name: vault for vault in config.vaults}
     checked: set[str] = set()
     for target in reached:
-        name = _delivery_store(config, delivery, target)
+        link = _delivery_store_link(config, delivery, target)
+        if link is None:
+            raise _no_delivery_store(delivery)
+        name, at = link
         if name in checked:
             continue
         checked.add(name)
-        link = _delivery_store_link(config, delivery, target)
-        at = link[1] if link is not None else ROOT.key("vaults")
         dangling(name, set(declared), noun="vault", section="vaults", at=at)
         vault = declared[name]
         if delivery.vault_path is not None:
             vault_path.refuse_unfit(vault)
         else:
             vault_wrapped.refuse_unfit(vault)
-        store_registry.resolve(vault)
+        store_registry.require_installed(vault)
     return None
 
 
@@ -3633,7 +3641,7 @@ def _delivery_backends(
     reached: Sequence[ExpandedTarget],
     *,
     account: str,
-    onepassword_token: Secret | None = None,
+    onepassword_token: Secret | None,
 ) -> dict[str, DeliveryBackend]:
     """One backend per target, built before a password is drawn (invariant 4).
 
@@ -3681,8 +3689,14 @@ def _delivery_backends(
         # Imported here, for `_delivery_backend`'s reason.
         from sopuli.delivery import onepassword
 
-        # Resolved once, by `_refuse_undeliverable`, before the plan.
-        assert onepassword_token is not None
+        # Resolved once, by `_refuse_undeliverable`, before the plan. Refused
+        # here too rather than asserted, so no backend is ever built without it.
+        if onepassword_token is None:
+            raise RefusedError(
+                f"`delivery.method: {onepassword.METHOD}` has no resolved token",
+                at=ROOT.key("delivery").key(onepassword.METHOD).key("token"),
+                hint="this is a bug in sopuli-dba: the token is resolved before the plan",
+            )
         shared = delivery.onepassword_share
         share = onepassword.OnePassword(
             onepassword_vault=shared.onepassword_vault,

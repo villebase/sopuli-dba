@@ -180,6 +180,19 @@ def installed(backend: Backend) -> bool:
     return extras_installed(backend.provides)
 
 
+def require_installed(vault: Vault) -> None:
+    """Refuse ``vault`` if its backend's client is not installed, importing
+    nothing where it is.
+
+    :func:`installed` asks without importing (ADR-006 rule 3). Only where it
+    says no does :func:`resolve` import, and that import fails before any
+    vendor code runs, so the refusal names the extra as :func:`resolve` would.
+    For a check made before anything connects (#1257).
+    """
+    if not installed(BACKENDS[vault.type]):
+        resolve(vault)
+
+
 def resolve(vault: Vault) -> ModuleType:
     """Import the module serving ``vault``'s ``type:``, or say why it cannot.
 

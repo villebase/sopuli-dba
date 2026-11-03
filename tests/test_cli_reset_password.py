@@ -331,6 +331,7 @@ def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch
         config.delivery,
         config.expanded_targets,
         account=ACCOUNT,
+        onepassword_token=None,
     )
 
     assert backends == {}

@@ -179,6 +179,7 @@ from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
     OLD_DISCARD,
+    OLD_KEEP,
     OLD_RETAIN,
     PASS,
     PASSWORD_EXPIRE,
@@ -335,7 +336,15 @@ from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
 from sopuli.passwords import ByteLimit, generate, require_feasible
-from sopuli.payload import CURRENT, ORIGIN, PENDING, PREVIOUS, stage_layout
+from sopuli.payload import (
+    CURRENT,
+    ORIGIN,
+    PENDING,
+    PREVIOUS,
+    RETAINING,
+    ROLLOVER,
+    stage_layout,
+)
 from sopuli.personal import declared_on
 from sopuli.preflight import Finding
 from sopuli.safety import (
@@ -8730,6 +8739,13 @@ WINDOW_LEFT_OPEN = "the run lost its lock before it closed the rollover window"
 #: still kept if one is added.
 STOPPED_BEFORE_VERIFY = "the password was set, and the run lost its lock before it verified it"
 
+#: A row's clause where `apply` set a rollover rotation's `pending` again and
+#: left a retained password as it was, on MySQL (#1224).
+WINDOW_KEPT = (
+    "a rollover rotation staged this password, so where it reached this target "
+    "the previous password still logs in until `sopuli creds finish-rollover`"
+)
+
 #: An error row's clause where the run set the password with the old one
 #: retained, on MySQL (#1224).
 RETAINED_AFTER_ERROR = (
@@ -9150,6 +9166,10 @@ def _apply_one(
             # the driver says this call retained one, so the row says so.
             after_user = replace(after_user, rollover_active=True)
             outcome = apply_states.window_opened(outcome)
+        elif old_password == OLD_KEEP:
+            # A rollover rotation's `pending`, set again (#1224): where that
+            # rotation reached this target, its old password still logs in.
+            outcome = replace(outcome, detail=f"{outcome.detail}; {WINDOW_KEPT}")
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
             outcome.state
@@ -10207,8 +10227,9 @@ def _refuse_tool_window(strategy: str, user: UserState, *, target: str, rotating
         "no profile opens a window here, and `creds apply` does not open one",
         hint=(
             "`sopuli creds rotate --strategy rollover` opens the window when it sets "
-            "the new password; `creds apply` sets a staged password again and leaves "
-            "a retained one as it is"
+            "the new password. To finish such a rotation, run `creds apply` without "
+            "--strategy: it sets the rotation's staged password again and leaves the "
+            "window open"
         ),
     )
 
@@ -10540,6 +10561,13 @@ def _every_target_of(
     ]
 
 
+def _marked(binding: Binding, stored: Any) -> bool:
+    """Whether ``binding``'s ``pending`` in ``stored`` carries the rollover mark."""
+    if stored is None or binding.secret is None:
+        return False
+    return bool(stage_layout(binding.secret).read(stored.data, ROLLOVER) == RETAINING)
+
+
 def _restage(
     wanted: Sequence[_Applied],
     documents: dict[LockKey, Any],
@@ -10565,8 +10593,13 @@ def _restage(
     drawn: list[tuple[str, LockKey]] = []
     notes: list[Diagnostic] = []
     for key, records in _redraws_by_document(wanted).items():
+        # A redraw replaces a rollover rotation's `pending` with another that
+        # carries its mark (#1224): the re-apply that follows reaches targets
+        # the first draw already set, and must not end the window there.
+        stored = documents.get(key)
         candidates = tuple(
-            staging.draw_once(
+            replace(candidate, rollover=_marked(candidate.binding, stored))
+            for candidate in staging.draw_once(
                 [record.binding for record in records],
                 lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
             )

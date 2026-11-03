@@ -877,6 +877,8 @@ def test_only_a_rollover_s_pending_keeps_a_retained_password(
     assert harness["sessions"][-1].old_passwords == [expected]
     promoted = stored(harness["store"], "apps/acme/appdb-alpha")
     assert promoted.get("rollover") in (None, {}), "cleared with `pending`"
+    kept = "the previous password still logs in" in result.output
+    assert kept == (expected == "keep")
 
 
 def test_apply_refuses_a_rollover_it_would_have_to_open_itself(
@@ -4235,6 +4237,22 @@ def test_a_refused_password_is_replaced_and_the_run_succeeds(
     # the refused value nor the one the run started with.
     assert document["DB_CREDENTIALS"]["acme_web_user"] not in (LIVE, STAGED)
     assert document["pending"] == {}
+
+
+def test_a_redraw_of_a_rollover_s_pending_keeps_its_window(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Review of #1255: the redraw restages a marked `pending` with its mark,
+    so the re-apply to targets the first draw reached keeps the window."""
+    documents = staged()
+    documents[REDRAW_DOCUMENT]["rollover"] = {"acme_web_user": "retaining"}
+    harness = estate(documents=documents, set_error=refusal(), refusals=1)
+
+    run(runner, write_config(REDRAW_CONFIG))
+
+    modes = [mode for session in harness["sessions"] for mode in session.old_passwords]
+    assert modes
+    assert set(modes) == {"keep"}
 
 
 def test_every_target_of_a_redrawn_account_gets_the_new_password(

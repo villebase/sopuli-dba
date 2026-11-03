@@ -7997,8 +7997,8 @@ def _apply_estate(
     """Every account, target by target, one connection each.
 
     ``rotating`` is set by `creds rotate` for the round that sets the
-    ``pending`` it staged (:func:`_apply_one`). A redraw's round leaves it
-    unset: some of its targets already hold the first draw.
+    ``pending`` it staged (:func:`_apply_one`). `creds apply` leaves it unset,
+    its redraw rounds included.
 
     ``decided`` is a guardrail decision the caller already made from the
     survey, over every credential and not only the shared ones. `creds rotate`
@@ -8733,8 +8733,8 @@ STOPPED_BEFORE_VERIFY = "the password was set, and the run lost its lock before 
 #: An error row's clause where the run set the password with the old one
 #: retained, on MySQL (#1224).
 RETAINED_AFTER_ERROR = (
-    "the password was set with the previous one retained, so both log in until "
-    "`sopuli creds finish-rollover`"
+    "where the password was set, the previous one was retained, so both log in "
+    "until `sopuli creds finish-rollover`"
 )
 
 #: The row's detail when the run lost its lock after the attribute pass changed
@@ -9120,7 +9120,7 @@ def _apply_one(
         # first has not.
         sent = session.scope().encryption
         old_password = strategies.old_password(regime, user, source.stage, rotating=rotating)
-        session.set_password(user.name, source.value, old_password=old_password)
+        retained = session.set_password(user.name, source.value, old_password=old_password).retained
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
         # must not be reported `changed: false`, which would hide a mutated database
@@ -9143,9 +9143,9 @@ def _apply_one(
             if isinstance(stored, VerifyResult):
                 after = stored
         outcome = apply_states.after_change(after_user, after)
-        if old_password == OLD_RETAIN:
+        if retained:
             # MySQL (#1224): the server cannot say a password is retained, and
-            # this run retained one, so the row says so.
+            # the driver says this call retained one, so the row says so.
             after_user = replace(after_user, rollover_active=True)
             outcome = apply_states.window_opened(outcome)
 
@@ -9215,9 +9215,10 @@ def _apply_one(
             # The driver's hint for a refused value is "draw another", which a
             # rollback cannot do: it has one value to send and it sent it.
             reported = replace(reported, hint=ROLLBACK_REFUSED_HINT)
-        if issued and old_password == OLD_RETAIN:
+        if old_password == OLD_RETAIN and (issued or _carried(error)):
             # MySQL (#1224): the server cannot say a password is retained, so
-            # the row is the only place that says the old one still logs in.
+            # the row is the only place that says the old one still logs in. A
+            # statement that failed after it was sent may have been applied.
             reported = replace(reported, message=f"{reported.message}; {RETAINED_AFTER_ERROR}")
         return _Applied(
             binding,
@@ -11818,7 +11819,7 @@ def creds_rotate(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
-    if finish_windows:
+    if finish_windows and strategy == strategies.ROLLOVER:
         _refuse_unwritten_finish(bindings, config)
 
     if run.dry_run:
@@ -12119,11 +12120,14 @@ class _Rotation:
 
 
 def _refuse_unwritten_finish(bindings: Sequence[Binding], config: Config) -> None:
-    """Refuse `rotate --finish-rollover` before anything is staged, where a
-    target's driver has no `creds finish-rollover` (SOPULI-20006).
+    """Refuse `rotate --strategy rollover --finish-rollover` before anything is
+    staged, where a target's driver has no `creds finish-rollover`
+    (SOPULI-20006).
 
-    MySQL until #1224's second part: its window cannot be read, so the closing
-    step would report nothing to close while the retained password still logs in.
+    MySQL until #1224's second part: the run would open a window there that the
+    closing step cannot read, so it would report nothing to close while the
+    retained password still logs in. Under another strategy no MySQL window
+    opens, so a mixed estate's other windows are still closed.
     """
     by_target = {expanded.name: expanded for expanded in config.expanded_targets}
     for name in dict.fromkeys(binding.target for binding in bindings):

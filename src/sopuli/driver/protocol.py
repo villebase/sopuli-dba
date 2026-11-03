@@ -882,6 +882,10 @@ class ChangeResult:
 
     changed: bool
     detail: str | None = None
+    #: Whether the old password still works beside the new one because this
+    #: call retained it (:data:`OLD_RETAIN`, MySQL). ``False`` where a profile
+    #: opens a window: the account's state says so there.
+    retained: bool = False
 
 
 @dataclass(frozen=True)

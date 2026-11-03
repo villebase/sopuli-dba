@@ -284,6 +284,9 @@ class FakeSession:
         self.database.set_password(account.upper(), secret.reveal())
         self.changed.append((account.upper(), secret.reveal()))
         self.old_passwords.append(old_password)
+        if old_password == "retain":
+            self._called("set_password")
+            return ChangeResult(changed=True, retained=True)
         self._called("set_password")
         return ChangeResult(changed=True)
 
@@ -1457,7 +1460,7 @@ def test_an_error_after_a_retain_still_says_both_passwords_work(
 
     (row,) = [row for row in document(result)["results"] if row["state"] != "PENDING_APPLY"]
     assert (row["state"], row["changed"]) == ("ERROR", True)
-    assert "the previous one retained, so both log in" in row["error"]["message"]
+    assert "the previous one was retained, so both log in" in row["error"]["message"]
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
@@ -1485,6 +1488,24 @@ def test_finish_rollover_on_a_target_without_it_is_refused_before_staging(
     assert "`creds finish-rollover` is not written" in str(result.exception)
     assert changed(harness) == []
     assert "pending" not in stored(harness["store"], "apps/acme/mysql-alpha")
+
+
+def test_finish_rollover_without_a_rollover_runs_on_such_a_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Second review of #1252: under the default strategy no MySQL window
+    opens, so `--finish-rollover` is not refused, and a mixed estate's other
+    windows still close."""
+    harness = estate(
+        documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        users={"ACME_WEB_USER@%": user("acme_web_user@%")},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    result = run(runner, write_config(MYSQL_CONFIG), "--finish-rollover")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(changed(harness)) == 1
+    assert finished(harness) == []
 
 
 def test_finish_rollover_closes_windows_at_the_end_of_the_run(

@@ -426,7 +426,9 @@ class MysqlSession(ClosesConnection):
                 self.target.name,
                 "retained" if old_password == OLD_RETAIN else "left as it was",
             )
-            return ChangeResult(changed=True, detail="password set")
+            return ChangeResult(
+                changed=True, detail="password set", retained=old_password == OLD_RETAIN
+            )
         try:
             self._read(lambda cursor: cursor.execute(password_module.discard_old(user, host)))
         except DriverError as failure:

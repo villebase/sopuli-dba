@@ -218,7 +218,13 @@ def decide(verification: VerifyResult, *, unknown_window: bool = False) -> Outco
     )
 
 
-def closed(user: UserState, verification: VerifyResult, *, now: datetime | None = None) -> Outcome:
+def closed(
+    user: UserState,
+    verification: VerifyResult,
+    *,
+    now: datetime | None = None,
+    unknown_window: bool = False,
+) -> Outcome:
     """The outcome for a window this run ended.
 
     ``IN_SYNC``, and the detail says **how early** rather than merely that it
@@ -226,11 +232,11 @@ def closed(user: UserState, verification: VerifyResult, *, now: datetime | None 
     window closed with four minutes left is a tidy-up, and one closed with
     fifty-five is a decision somebody made about an application's grace period.
 
-    Where the window could not be read (MySQL), the detail says what was sent
-    instead: any retained password was discarded, and whether ``current`` was
-    verified.
+    With ``unknown_window`` (:func:`window_unknown`, MySQL), the detail says
+    what was sent instead: any retained password was discarded, and whether
+    ``current`` was verified.
     """
-    if user.rollover_active is None:
+    if unknown_window:
         if verification.result == PASS:
             return Outcome(IN_SYNC, "any retained password discarded", verification)
         return Outcome(

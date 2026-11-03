@@ -11646,7 +11646,7 @@ def _finish_one(
                 user=user,
                 duration_ms=_elapsed(started),
             )
-        outcome = windows.closed(user, verified)
+        outcome = windows.closed(user, verified, unknown_window=unknown)
     except LockError:
         # Ahead of the catch-all on purpose -- see the docstring. The run ends;
         # it does not report a takeover as one account's bad luck.
@@ -12526,10 +12526,16 @@ def _close_windows(
     by a run that no longer owns the estate cannot be reopened. A takeover found
     here raises, the same as one found at step 5.
     """
+    # Only where the run left a window: a row whose `rollover.active` is false
+    # had none. On MySQL that is every change but `--strategy rollover`'s,
+    # which discarded the old password already (#1224), so closing again would
+    # spend a login and report a window nobody opened.
     confirmed = [
         record.binding
         for record in applied
-        if apply_states.is_confirmed(record.outcome.state) and record.binding.secret is not None
+        if apply_states.is_confirmed(record.outcome.state)
+        and record.binding.secret is not None
+        and (record.rollover is None or record.rollover.get("active", True))
     ]
     if not confirmed:
         return 0

@@ -340,8 +340,8 @@ def test_an_unavailable_login_does_not_stop_an_unread_close() -> None:
 
 
 def test_an_unread_close_says_what_it_did_and_what_it_did_not_verify() -> None:
-    by_login = windows.closed(unread(), attempt(PASS))
-    unverified = windows.closed(unread(), attempt(UNAVAILABLE))
+    by_login = windows.closed(unread(), attempt(PASS), unknown_window=True)
+    unverified = windows.closed(unread(), attempt(UNAVAILABLE), unknown_window=True)
 
     assert by_login.detail == "any retained password discarded"
     assert "was not verified by login" in unverified.detail

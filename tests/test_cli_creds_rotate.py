@@ -1488,15 +1488,19 @@ def test_an_error_after_a_retain_still_says_both_passwords_work(
     assert "the previous one was retained, so both log in" in row["error"]["message"]
 
 
-@pytest.mark.parametrize("strategy", [("--strategy", "rollover"), ()])
-def test_finish_rollover_discards_on_a_target_whose_window_cannot_be_read(
+@pytest.mark.parametrize(
+    ("strategy", "closed"), [(("--strategy", "rollover"), ["ACME_WEB_USER@%"]), ((), [])]
+)
+def test_finish_rollover_closes_only_a_window_the_rotation_opened(
     runner: CliRunner,
     write_config: Callable[[str], Path],
     estate: Harness,
     strategy: tuple[str, ...],
+    closed: list[str],
 ) -> None:
-    """#1224: on MySQL the window cannot be read, so the closing step always
-    sends the driver's close, which discards any retained password."""
+    """#1224: on MySQL a rollover rotation retained the old password, so the
+    closing step discards it. Under the default strategy the change already
+    discarded it, so no login is spent and no close is reported."""
     harness = estate(
         documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
         users={"ACME_WEB_USER@%": user("acme_web_user@%")},
@@ -1506,7 +1510,7 @@ def test_finish_rollover_discards_on_a_target_whose_window_cannot_be_read(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(changed(harness)) == 1
-    assert finished(harness) == ["ACME_WEB_USER@%"]
+    assert finished(harness) == closed
 
 
 def test_finish_rollover_closes_windows_at_the_end_of_the_run(

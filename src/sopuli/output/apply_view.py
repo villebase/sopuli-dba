@@ -701,7 +701,10 @@ def _verdict(
         line = ", ".join(parts)
         if not (changed and not promoted):
             line = paint(line, Role.HEADING)
-        return _with_remedy(line, repair, stopped, flag=False)
+        # `--repair` still retries a skipped pair, so the flag line stays where
+        # one is (#852): once its guardrail no longer refuses it, the retry
+        # finishes the promotion it held back. `SOPULI-W050` says why.
+        return _with_remedy(line, repair, stopped, flag=bool(skipped))
     parts.append(f"{unconfirmed} not confirmed")
     return _with_remedy(", ".join(parts), repair, stopped, flag=True)
 

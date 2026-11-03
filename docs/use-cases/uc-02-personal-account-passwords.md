@@ -1433,12 +1433,16 @@ They are not one guarantee with several implementations. The config key makes th
 look interchangeable, so this section says how they differ.
 
 **Each method's checks come before a password is drawn, in two groups** (#1257).
-What the config alone decides comes first, before the run logs in to any target
-and before any confirmation:
+What the config alone decides comes first, before the plan is printed, before
+the run logs in to any target and before any confirmation. A `--dry-run` makes
+these checks too, so it does not say "would be reset" for a run they refuse:
 
-- the store's client is installed (exit 9);
+- each target has a delivery store, named by §3's chain (exit 8);
 - the store is one the method can use: a HashiCorp store, with a KV v2 mount for
   `vault_path` (exit 5);
+- the store's client is installed (exit 9). This comes after the check above,
+  because installing a client does not help where the method cannot use the
+  store;
 - the Yopass or 1Password client is installed (exit 9);
 - the 1Password token resolves (exit 9). A `--dry-run` does not need it.
 

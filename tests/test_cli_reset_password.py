@@ -32,7 +32,7 @@ from click.testing import CliRunner
 
 from conftest import WriteConfig
 from oracle_harness import Environment
-from sopuli.cli import _delivery_backends, cli
+from sopuli.cli import _delivery_backends, _refuse_undeliverable, cli
 from sopuli.config.loading import build_config
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
 from sopuli.delivery import onepassword
@@ -300,6 +300,9 @@ def test_onepassword_share_is_not_refused_for_an_oci_default_store(
     reason to refuse it (#1138). The token is unset, so the run stops at plan
     time on that instead, before anything connects."""
     monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
+    # The SDK check comes before the token's (#1257), and the SDK is not
+    # installed on every Python the suite runs on.
+    monkeypatch.setattr(onepassword, "check_installed", lambda: None)
 
     result = run(runner, write_config(ONEPASSWORD_DELIVERY), "--account", ACCOUNT)
 
@@ -318,8 +321,6 @@ def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch
         raise AssertionError("a preview built a 1Password backend")
 
     monkeypatch.setattr(onepassword, "OnePassword", refuse)
-    # The SDK check is the next test's; some CI jobs install no extras.
-    monkeypatch.setattr(onepassword, "check_installed", lambda: None)
     monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
     config = build_config(yaml.safe_load(ONEPASSWORD_DELIVERY))
     assert config.delivery is not None
@@ -337,21 +338,22 @@ def test_a_preview_builds_no_onepassword_backend(monkeypatch: pytest.MonkeyPatch
 
 def test_a_preview_refuses_a_host_without_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     """Importing the SDK needs no token, so a preview checks it, and does not say
-    "would be reset" for a run that would be refused (invariant 4). The
-    submodules are blocked too: an earlier test may have imported them, and an
-    imported submodule stays in `sys.modules` whatever its package says."""
+    "would be reset" for a run that would be refused (invariant 4). It is
+    checked before the plan, with the other refusals the config alone decides
+    (#1257). The submodules are blocked too: an earlier test may have imported
+    them, and an imported submodule stays in `sys.modules` whatever its package
+    says."""
     for module in ("onepassword", "onepassword.client", "onepassword.types"):
         monkeypatch.setitem(sys.modules, module, None)
     config = build_config(yaml.safe_load(ONEPASSWORD_DELIVERY))
     assert config.delivery is not None
 
     with pytest.raises(onepassword.OnePasswordNotInstalledError):
-        _delivery_backends(
+        _refuse_undeliverable(
             SimpleNamespace(dry_run=True),  # type: ignore[arg-type]
             config,
             config.delivery,
             config.expanded_targets,
-            account=ACCOUNT,
         )
 
 

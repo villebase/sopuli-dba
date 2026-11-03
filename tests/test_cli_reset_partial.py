@@ -221,7 +221,7 @@ def _open(monkeypatch: pytest.MonkeyPatch, session: FakeSession, *, unseen: bool
     if unseen:
         monkeypatch.setattr(
             "sopuli.cli._delivery_backends",
-            lambda run, config, delivery, reached, account: {TARGET: FakeBackend()},
+            lambda run, config, delivery, reached, account, **_: {TARGET: FakeBackend()},
         )
     else:
         monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
@@ -1193,6 +1193,20 @@ OP_INSTALLED = "sopuli.delivery.onepassword.check_installed"
             id="vault-client-not-installed",
         ),
         pytest.param(
+            # Unfit and uninstalled: the method can never use this entry, so
+            # installing its client would not help, and exit 5 says so.
+            VAULT_PATH.replace("kv_version: 2", "kv_version: 1"),
+            ("sopuli.cli.store_registry.resolve", _not_installed),
+            ExitCode.UNSUPPORTED_CAPABILITY,
+            id="fitness-before-the-install-check",
+        ),
+        pytest.param(
+            WRAPPED.replace("  vault: vault-dev\n", "", 1),
+            None,
+            ExitCode.ABORTED,
+            id="no-store-named",
+        ),
+        pytest.param(
             ONEPASSWORD,
             (OP_INSTALLED, _installed),
             ExitCode.CONFIG_INVALID,
@@ -1222,8 +1236,8 @@ def test_a_delivery_refusal_from_the_config_comes_before_any_login(
     exit_code: ExitCode,
 ) -> None:
     """What a delivery backend would refuse from the config alone is refused
-    before the plan-time logins and the question (#1257). The backends are not
-    built: their store logins stay after the answer."""
+    before the plan, the plan-time logins and the question (#1257). The
+    backends are not built: their store logins stay after the answer."""
     monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
     if patch is not None:
         monkeypatch.setattr(*patch)
@@ -1247,9 +1261,32 @@ def test_a_delivery_refusal_from_the_config_comes_before_any_login(
     result = _run(runner, write_config(_gated(config)))
 
     assert getattr(result.exception, "exit_code", None) == exit_code, result.output
+    assert "Plan:" not in result.output
     assert opened == []
     assert built == []
     assert asked == []
+
+
+def test_a_preview_refuses_what_the_run_would_refuse_from_the_config(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """A `--dry-run` makes the same checks, before the plan, so it does not
+    say "would be reset" for a run that will be refused (#1257). Before, a
+    preview opened no store and passed `vault_path` on a KV v1 mount."""
+    opened: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> Any:
+        opened.append(target.name)
+        return Asked("OPEN", DENIED)
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    kv1 = VAULT_PATH.replace("kv_version: 2", "kv_version: 1")
+
+    result = _run(runner, write_config(kv1), "--dry-run")
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "would be reset" not in result.output
+    assert opened == []
 
 
 def test_an_unattended_run_is_refused_before_any_login(

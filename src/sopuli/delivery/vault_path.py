@@ -248,13 +248,17 @@ def refuse_unfit(vault: Vault) -> None:
     The checks :func:`for_store` makes on an opened store, made before anything
     connects, so the refusal comes before the plan-time logins and any
     confirmation (#1257). An entry with no `kv_version` is KV v2, the
-    HashiCorp backend's default. :func:`for_store` still checks the store it is
-    given.
+    HashiCorp backend's default, and anything else is refused, since only KV v2
+    has versions. :func:`for_store`'s third refusal, a mount that is not known,
+    has no counterpart here: an entry with no `mount:` opens on the backend's
+    default mount. :func:`for_store` still checks the store it is given.
     """
     if vault.type != "hashicorp":
         raise NotAPathStoreError(vault.name, why="it is not a HashiCorp store")
-    if vault.kv_version == 1:
-        raise NotAPathStoreError(vault.name, why="its mount is KV v1, which has no versions")
+    if vault.kv_version not in (None, 2):
+        raise NotAPathStoreError(
+            vault.name, why=f"its mount is KV v{vault.kv_version}, which has no versions"
+        )
 
 
 def for_store(store: SecretStore, *, vault: str, ttl: str, prefix: str) -> VaultPath:

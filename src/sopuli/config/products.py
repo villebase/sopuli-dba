@@ -434,6 +434,20 @@ def account_matcher(product: str) -> Callable[[str, str], bool]:
     return same_mysql_account if product == MYSQL else same_name
 
 
+def account_key(product: str) -> Callable[[str], object]:
+    """A key that is equal for two names :func:`account_matcher` takes as one
+    account, so a caller can fold names in a dict rather than compare every
+    pair. On MySQL a name that is not ``user@host`` keys as itself."""
+    if product != MYSQL:
+        return str.upper
+
+    def mysql_key(name: str) -> object:
+        split = mysql_account(name)
+        return name if split is None else (split[0], split[1].translate(_ASCII_LOWER))
+
+    return mysql_key
+
+
 def mysql_host_token(host: str) -> str:
     """A MySQL host pattern as ``{host}`` writes it: ``%`` as ``any`` and ``_``
     as ``one``, so that no vault path holds a MySQL wildcard. ``10.%`` is
@@ -489,10 +503,11 @@ def refuse_a_bare_mysql_account(
         )
 
 
-def _typed_user(name: str) -> str:
-    """The user part of a name as typed, without SQL's quotes, for a hint."""
+def typed_user(name: str, *, default: str) -> str:
+    """The user part of a MySQL name as typed, without SQL's quotes, spaces or
+    a stray ``@``, for a hint. ``default`` where nothing is left."""
     split = mysql_account(name)
-    return (split[0] if split else name).strip("'\"` \t") or "dev_role"
+    return (split[0] if split else name).strip("'\"` \t@") or default
 
 
 def check_personal_mysql_accounts(config: Config) -> None:
@@ -513,7 +528,7 @@ def check_personal_mysql_accounts(config: Config) -> None:
                     rule.role,
                     declared_by="a personal account rule's `role:`",
                     at=at.key("role"),
-                    example=_typed_user(rule.role),
+                    example=typed_user(rule.role, default="dev_role"),
                 )
             for position, account in enumerate(rule.accounts):
                 refuse_a_bare_mysql_account(

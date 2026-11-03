@@ -508,9 +508,12 @@ another role, whether or not the role is active: the account can `SET ROLE` to
 it. A role in the chain is admitted too, because it is an account. A rule that
 names a role in `@@global.mandatory_roles`, or a role such a role holds, is
 refused with exit 9 and names the setting: every account holds it, so the rule
-would admit every account. `account list` adds `SOPULI-W063` for each MySQL
-target it lists: MySQL keeps a block after failed logins (error 3955) outside
-`mysql.user`, so an account shown as `OPEN` may be blocked. Reasons:
+would admit every account. An account the role is granted to that the tool
+cannot describe, such as one on another plugin, is an `ERROR` row with the
+reason, and the others are listed. `account list` adds `SOPULI-W063` for each
+MySQL target where it lists an account that exists and is not locked: MySQL
+keeps a block after failed logins (error 3955) outside `mysql.user`, so an
+account shown as `OPEN` may be blocked. Reasons:
 [#1225](../decisions/log.md#1225).
 
 ---

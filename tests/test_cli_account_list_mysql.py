@@ -20,6 +20,7 @@ from click.testing import CliRunner, Result
 from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.diagnostics import ADMITTED_CROSS_DECLARED, FAILED_LOGIN_BLOCK_UNREAD
+from sopuli.driver.mysql.accounts import OtherPluginError
 from sopuli.driver.protocol import UserState
 from sopuli.exit_codes import ExitCode
 
@@ -41,8 +42,9 @@ personal_accounts:
 
 
 class FakeSession:
-    """A server whose `role:` resolves to ``members``, and whose accounts
-    are all open."""
+    """A server whose `role:` resolves to ``members``. An account whose user
+    starts ``legacy`` is on another plugin, one that starts ``locked`` is
+    locked, and the rest are open."""
 
     def __init__(self, members: Mapping[str, tuple[str, ...]]) -> None:
         self.members = members
@@ -55,8 +57,13 @@ class FakeSession:
         return self.members[role]
 
     def describe_user(self, account: str) -> UserState:
+        if account.startswith("legacy"):
+            raise OtherPluginError(account, "mysql_native_password", target="mysql-dev")
         held = frozenset(role for role, names in self.members.items() if account in names)
-        return UserState(name=account, status="OPEN", roles=held)
+        locked = account.startswith("locked")
+        return UserState(
+            name=account, status="LOCKED" if locked else "OPEN", locked=locked, roles=held
+        )
 
     def close(self) -> None:
         return None
@@ -153,6 +160,43 @@ def test_no_account_says_nothing_about_blocks(
 
     codes = [one.get("code") for one in json.loads(result.output)["diagnostics"]]
     assert FAILED_LOGIN_BLOCK_UNREAD not in codes
+
+
+@pytest.mark.parametrize(
+    "names", [("locked_jdoe@%",), ("legacy@%",)], ids=["locked", "undescribed"]
+)
+def test_no_open_account_says_nothing_about_blocks(
+    write_config: WriteConfig, members: dict[str, tuple[str, ...]], names: tuple[str, ...]
+) -> None:
+    """A locked account cannot log in anyway, and an account that could not
+    be described has no state to doubt."""
+    members["dev_role@%"] = names
+    result = listed(write_config, "  - role: dev_role@%", "--target", "mysql-dev")
+
+    codes = [one.get("code") for one in json.loads(result.output)["diagnostics"]]
+    assert FAILED_LOGIN_BLOCK_UNREAD not in codes
+
+
+def test_an_account_that_cannot_be_described_is_one_failed_row(
+    write_config: WriteConfig, members: dict[str, tuple[str, ...]]
+) -> None:
+    """A role member on another plugin is one ERROR row with its error, the
+    others are listed, and the run exits 4, partial, not with the member's
+    refusal."""
+    members["dev_role@%"] = ("jdoe@%", "legacy@%")
+    config = write_config(CONFIG.format(rules="  - role: dev_role@%"))
+    runner = CliRunner()
+    args = ["--config", str(config), "account", "list", "--target", "mysql-dev"]
+    document = runner.invoke(cli, ["--output", "json", *args])
+    text = runner.invoke(cli, args)
+
+    assert document.exit_code == ExitCode.PARTIAL, document.output
+    rows = {row["account"]: row for row in json.loads(document.output)["results"]}
+    assert rows["jdoe@%"]["state"] == "DECLARED"
+    assert rows["legacy@%"]["state"] == "ERROR"
+    assert "mysql_native_password" in rows["legacy@%"]["error"]["message"]
+    assert "1 account could not be described" in click.unstyle(text.output)
+    assert "could not be answered" not in click.unstyle(text.output)
 
 
 def test_a_cross_declared_account_is_compared_as_the_server_does(

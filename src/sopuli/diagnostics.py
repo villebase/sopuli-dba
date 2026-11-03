@@ -782,8 +782,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "after failed logins (`FAILED_LOGIN_ATTEMPTS`), and a blocked login gets error "
             "3955, but the block is not in `mysql.user`, so the tool cannot read it. An "
             "account the listing shows as `OPEN` may be blocked until `PASSWORD_LOCK_TIME` "
-            "ends, or until `ALTER USER … ACCOUNT UNLOCK`. One entry per MySQL target, with "
-            "`target` set."
+            "ends, or until `ALTER USER … ACCOUNT UNLOCK`. One entry per MySQL target that "
+            "lists an account that exists and is not locked, with `target` set."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

@@ -183,6 +183,13 @@ def test_a_role_on_mysql_names_its_host() -> None:
     assert "`dev_role@%`" in str(error.hint)
 
 
+def test_a_role_with_an_empty_host_names_no_stray_at_sign_in_the_hint() -> None:
+    error = refused(personal_accounts=[{"role": "acme_dev_team@"}])
+
+    assert "`acme_dev_team@%`" in str(error.hint)
+    assert "@@" not in str(error.hint)
+
+
 def test_a_quoted_role_is_refused_with_the_typed_name_in_the_hint() -> None:
     error = refused(personal_accounts=[{"role": "'acme_dev_team'@'%'"}])
 

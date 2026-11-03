@@ -114,10 +114,12 @@ from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
 from sopuli.config.products import (
+    account_key,
     account_matcher,
     mysql_account,
     quoted_or_padded,
     tls_setting,
+    typed_user,
 )
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
@@ -2655,7 +2657,7 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     split = mysql_account(account)
     if not mysql or (split is not None and not quoted_or_padded(split)):
         return
-    user = (split[0] if split else account).strip("'\"` \t@") or "jdoe"
+    user = typed_user(account, default="jdoe")
     hint = (
         f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
         "MySQL keeps one account per host, each with its own password"
@@ -3917,13 +3919,18 @@ def account_list_command(
     errors = 0
     unread = _JournalFailures()
     unseen: list[Diagnostic] = []
+    unanswered = 0
     for target in reached:
         found, failed = _list_one(target, run, config, wanted=account, unread=unread)
         rows.extend(found)
         errors += failed
-        if found and not failed and target.target.type == MYSQL:
-            # Every row's state is read from `mysql.user`, which does not
-            # hold the block after failed logins (#1225).
+        unanswered += sum(1 for row in found if row.failed and row.account == account_list.ABSENT)
+        if target.target.type == MYSQL and any(
+            row.state is not None and not row.state.locked for row in found
+        ):
+            # Each such row's state is read from `mysql.user`, which does
+            # not hold the block after failed logins (#1225). A locked
+            # account cannot log in anyway.
             unseen.append(failed_login_block_unread(target.name))
     document.diagnostics.extend(unseen)
 
@@ -3937,7 +3944,7 @@ def account_list_command(
     document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
     # Where no target answered there is no RESET_AT to explain, and a note about
     # the journal would point the reader away from the unreachable targets.
-    answered = errors < len(reached)
+    answered = unanswered < len(reached)
     notes = [one.message for one in unjournaled] if answered else []
     notes.extend(one.message for one in unreadable)
     notes.extend(one.message for one in unseen)
@@ -4029,11 +4036,20 @@ def _list_one(
 
         names = _declared_names(session, config, target, wanted=wanted)
         journal = _open_journal(run, config, unread) if names else None
-        rows = [
-            _describe_row(session, name, target, config, journal=journal, unread=unread)
-            for name in names
-        ]
-        return rows, 0
+        rows: list[account_list.Row] = []
+        failed = 0
+        for name in names:
+            try:
+                rows.append(
+                    _describe_row(session, name, target, config, journal=journal, unread=unread)
+                )
+            except DriverError as error:
+                # One account the driver cannot describe, such as a MySQL
+                # role member on another plugin, is one failed row, not a
+                # failed listing (#1225).
+                rows.append(_undescribed_row(target, name, _finding(error)))
+                failed += 1
+        return rows, failed
     finally:
         if session is not None:
             with suppress(Exception):
@@ -4065,14 +4081,15 @@ def _declared_names(
     ``--account`` filters here, after resolution, by the same comparison. UC-2
     2's rule for the flag: it narrows the resolved set and never extends it.
     """
-    same = account_matcher(target.target.type)
-    names: list[str] = []
+    key = account_key(target.target.type)
+    seen: dict[object, str] = {}
     for rule in account_list.rules_on(config, target.name):
         for name in _resolve_rule(session, rule, target):
-            if not any(same(name, kept) for kept in names):
-                names.append(name)
+            seen.setdefault(key(name), name)
 
+    names = list(seen.values())
     if wanted is not None:
+        same = account_matcher(target.target.type)
         names = [name for name in names if same(name, wanted)]
     return names
 
@@ -4259,6 +4276,18 @@ def _describe_row(
         state=state,
         reset_at=_reset_at(journal, config, target.name, name, unread=unread),
         notices=tuple(notices),
+    )
+
+
+def _undescribed_row(target: ExpandedTarget, name: str, error: Error) -> account_list.Row:
+    """An account a rule named and the driver could not describe: ``ERROR``,
+    with the error, as :func:`_unreachable_row` reports a target."""
+    return account_list.Row(
+        account=name,
+        target=target.name,
+        rule=None,
+        state=None,
+        unreachable=error,
     )
 
 

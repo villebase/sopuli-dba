@@ -161,27 +161,33 @@ def tool_opens_window(strategy: str, user: UserState) -> bool:
     return strategy == ROLLOVER and not opens_window(user)
 
 
-def old_password(strategy: str, user: UserState, stage: str, *, rotating: bool) -> str:
+def old_password(
+    strategy: str, user: UserState, stage: str, *, rotating: bool, marked: bool = False
+) -> str:
     """What :meth:`~sopuli.driver.protocol.Session.set_password` does with the
     old password, as decided on #1224.
 
     * The run that staged the ``pending`` (`creds rotate`) retains the old
       password where it opens the window itself, and discards it otherwise.
-    * Any later run that sets a staged ``pending`` again keeps what is retained.
-      It cannot tell a first set from a re-set: MySQL keeps a retained password
-      through a change without ``RETAIN``, and a second ``RETAIN`` would replace
-      it with the ``pending`` (``03_dual_password_probe.py``, DP4 and DP3).
-      ``--strategy direct`` is the exception: it asks for the old password to
-      stop working now, so it discards it. ``direct`` is never the default.
-    * ``current`` and a rollback's ``previous`` discard it.
+    * A later run that sets a ``pending`` a rollover rotation staged (``marked``,
+      :data:`~sopuli.payload.ROLLOVER`) keeps what is retained. It cannot tell a
+      first set from a re-set: MySQL keeps a retained password through a change
+      without ``RETAIN``, and a second ``RETAIN`` would replace it with the
+      ``pending`` (``03_dual_password_probe.py``, DP4 and DP3). ``--strategy
+      direct`` asks for the old password to stop working now, so it discards it
+      even then. ``direct`` is never the default.
+    * Everything else discards it: an unmarked ``pending``, ``current``, and a
+      rollback's ``previous`` (#1249).
 
     Only a driver that keeps a second password on request acts on the answer.
     """
     if stage != PENDING:
         return OLD_DISCARD
-    if not rotating:
-        return OLD_DISCARD if strategy == DIRECT else OLD_KEEP
-    return OLD_RETAIN if tool_opens_window(strategy, user) else OLD_DISCARD
+    if rotating:
+        return OLD_RETAIN if tool_opens_window(strategy, user) else OLD_DISCARD
+    if marked and strategy != DIRECT:
+        return OLD_KEEP
+    return OLD_DISCARD
 
 
 def moves_profile(user: UserState, attributes: AccountAttributes) -> str | None:

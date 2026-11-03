@@ -4141,11 +4141,15 @@ the register.
 - **Decision:**
   1. A window opens only with `creds rotate --strategy rollover`. The default
      stays `staged`.
-  2. While a `pending` is staged, `apply` sets it with neither `RETAIN` nor
-     `DISCARD`. `apply --strategy rollover` is refused at pre-flight where no
-     profile opens a window. `apply --strategy direct` sends `DISCARD`, because
-     it asks for the old password to stop working now (from the review of
-     #1252).
+  2. `rotate --strategy rollover` marks each `pending` it stages with
+     `rollover: retaining` in the vault, removed with the `pending`. `apply`
+     sets a marked `pending` with neither `RETAIN` nor `DISCARD`, and sends
+     `DISCARD` after any other, as [#1223](#1223) decided. `apply --strategy
+     direct` sends `DISCARD` even for a marked one, because it asks for the old
+     password to stop working now. `apply --strategy rollover` is refused at
+     pre-flight where no profile opens a window. The mark replaced "whatever
+     the strategy", which the second review of #1252 showed kept an old
+     retained password in the `generate` then `apply` flow.
   3. `finish-rollover` sends `DISCARD` where no login is available, and
      reports `current` as not verified.
 - **Why:**
@@ -4157,7 +4161,10 @@ the register.
      DP3). `apply` cannot tell a first set from a re-set: it does not log in
      first ([#1223](#1223)), and it does not read `User_attributes` (decision 6
      of [#1202](#1202)). Keeping is right on a re-set; on a first set the old
-     password stops at once, which `RETAIN` on a re-set would cause too.
+     password stops at once, which `RETAIN` on a re-set would cause too. The
+     mark limits keeping to a rollover's own `pending`. Any other `pending` has
+     no window to protect, and a retained password there is one a person or an
+     older rotation left, which [#1223](#1223) ends.
   3. A staged `pending` still refuses the close, and the rotation confirmed
      `current` before it promoted. Leaving the window open would mean the tool
      could never finish a rollover on any account but a sole `user@%`.
@@ -4166,10 +4173,13 @@ the register.
     old password working until someone ends it.
   - A per-application setting in place of Oracle's profile. The flag already
     makes the choice.
-  - Recording the strategy beside the `pending`, and sending `RETAIN` where
+  - Sending `RETAIN` from `apply` for a marked `pending` where
     `password_last_changed` is older than it. That reads someone else's change
     as the rotation's, which [#1223](#1223) rejected, and a wrong guess drops
     the old password.
+  - Keeping a retained password for every `pending`, without a mark, which was
+    decided first. In the `generate` then `apply` flow it kept an old
+    password working with no end.
   - Refusing `apply` while a rollover's `pending` is held. It blocks the
     recovery `apply` exists for.
   - Leaving the window open and reporting `UNVERIFIABLE` where no login is

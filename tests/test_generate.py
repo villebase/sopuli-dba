@@ -22,7 +22,7 @@ from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config, PasswordPolicy
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.passwords import ByteLimit, PasswordPolicyError
-from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, SUPPLIED
+from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, RETAINING, ROLLOVER, SUPPLIED
 from sopuli.secrets import Secret
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}}
@@ -327,18 +327,28 @@ def test_one_patch_carries_every_account_and_nothing_else() -> None:
     """The merge has to preserve what `staged_patch` guarantees per account:
     every sibling absent rather than rewritten with what was last read.
 
-    There are two root keys, not one: the staged value and the `origin`
-    describing it. Both are keyed by account under the same mirror rule, and the
-    assertion that matters is unchanged -- nothing here names an account this run
-    did not come for.
+    There are three root keys, not one: the staged value, the `origin`
+    describing it, and the rollover mark, cleared here (#1224). All are keyed by
+    account under the same mirror rule, and the assertion that matters is
+    unchanged -- nothing here names an account this run did not come for.
     """
     writes = generate.group(candidates(estate(accounts=["acme_web_user", "acme_batch_user"])))
 
     patch = writes[0].patch(stage=PENDING)
 
-    assert set(patch) == {PENDING, ORIGIN}
+    assert set(patch) == {PENDING, ORIGIN, ROLLOVER}
     assert set(patch[PENDING]) == {"acme_web_user", "acme_batch_user"}
     assert set(patch[ORIGIN]) == {"acme_web_user", "acme_batch_user"}
+    assert patch[ROLLOVER] == {"acme_web_user": None, "acme_batch_user": None}
+
+
+def test_a_rollover_rotation_marks_what_it_stages() -> None:
+    """#1224: the mark tells a later `apply` to keep the window on MySQL."""
+    drawn = [replace(one, rollover=True) for one in candidates(estate())]
+
+    patch = generate.group(drawn)[0].patch(stage=PENDING)
+
+    assert patch[ROLLOVER] == {"acme_web_user": RETAINING}
 
 
 # ------------------------------------------------------------- the origin ---
@@ -498,6 +508,7 @@ def test_one_account_per_document_at_the_root_is_still_fine() -> None:
     assert writes[0].patch(stage=PENDING) == {
         PENDING: writes[0].candidates[0].value,
         ORIGIN: GENERATED,
+        ROLLOVER: None,
     }
 
 

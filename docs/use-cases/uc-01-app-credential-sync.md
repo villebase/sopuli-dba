@@ -133,7 +133,7 @@ by its number.
 A version's content cannot change after it is written, so the fields above are
 split by when they become true (decision 3 in
 [`../decisions/log.md`](../decisions/log.md#1158)). The content holds the
-password, `origin`, `generated_at` and `generated_by`. `rotated_at`,
+password, `origin`, `rollover`, `generated_at` and `generated_by`. `rotated_at`,
 `rotated_by`, `policy` and `targets` go in the secret's metadata, written in the
 same call that moves CURRENT. The metadata also records `pending_version`, the
 number of the version that is the live pending. A PENDING version with another
@@ -270,6 +270,21 @@ reserved root names, so a `secret:` ref may not name a field called `origin`.
 
 It is called `origin` and not `source` because `apply --source` already names a
 stage. One word with two meanings, one flag apart, would eventually be misread.
+
+### `rollover`: a pending a rollover rotation staged
+
+`creds rotate --strategy rollover` writes `rollover: retaining` beside each
+`pending` it stages ([#1224](../decisions/log.md#1224)). On MySQL that rotation
+kept the old password working with `RETAIN CURRENT PASSWORD` (§6.3). If a target
+failed and the promotion is held, the `creds apply` that finishes the run sets
+the `pending` again, and the mark tells it not to end that window. Without the
+mark, `apply` ends any retained password, so a password retained by hand or by
+an older rotation stops working ([#1223](../decisions/log.md#1223)).
+
+`rollover` follows `origin`'s rules. It describes `pending`, every other staging
+write removes it, and promotion removes it with `pending`. It follows the mirror
+rule, it is a reserved root name, and under native staging it is in the PENDING
+version's content. Oracle and PostgreSQL never act on it.
 
 ---
 
@@ -1484,14 +1499,15 @@ CURRENT PASSWORD` keeps the old password working beside the new one, and
   its own. `creds rotate --strategy rollover` opens one, and the row reports
   `ROLLOVER_ACTIVE`. The default, `staged`, and `direct` both send `DISCARD OLD
   PASSWORD` after the change, so only the new password works.
-- Only the `rotate` run that staged the `pending` sends `RETAIN`. A later
-  `creds apply` sets the `pending` again with neither `RETAIN` nor `DISCARD`,
-  which keeps a retained password. `creds apply --strategy direct` sends
-  `DISCARD`, because it asks for the old password to stop working now. A second `RETAIN` would replace the old
-  password with the `pending` (`03_dual_password_probe.py`, DP3), and `apply`
-  cannot tell a first set from a re-set. So a target the rotation did not
-  reach gets no window, and `creds apply --strategy rollover` is refused at
-  pre-flight on MySQL.
+- Only the `rotate` run that staged the `pending` sends `RETAIN`, and it marks
+  the `pending` with `rollover` (§3). A later `creds apply` sets a marked
+  `pending` again with neither `RETAIN` nor `DISCARD`, which keeps the window.
+  A second `RETAIN` would replace the old password with the `pending`
+  (`03_dual_password_probe.py`, DP3), and `apply` cannot tell a first set from
+  a re-set. So a target the rotation did not reach gets no window, and `creds
+  apply --strategy rollover` is refused at pre-flight on MySQL. `apply` sends
+  `DISCARD` after an unmarked `pending`, and under `--strategy direct`, which
+  asks for the old password to stop working now.
 - `check` cannot see a retained password: the server keeps it in
   `mysql.user.User_attributes`, which the tool account never reads (#1202,
   decision 6). A login that passes is `IN_SYNC`, not `ROLLOVER_ACTIVE`.

@@ -840,17 +840,43 @@ def test_without_a_login_first_a_pending_is_set_and_verified_after(
     assert row["secret"]["stage"] == "current"
 
 
-def test_a_staged_pending_is_set_without_touching_a_retained_password(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+@pytest.mark.parametrize(
+    ("mark", "strategy", "expected"),
+    [
+        # A rollover rotation's `pending`: set again, keeping its window.
+        ({"rollover": {"acme_web_user": "retaining"}}, (), "keep"),
+        # Unless the operator asks for the old password to stop now.
+        ({"rollover": {"acme_web_user": "retaining"}}, ("--strategy", "direct"), "discard"),
+        # Any other `pending`: a retained password ends, as #1249 decided.
+        ({}, (), "discard"),
+    ],
+)
+def test_only_a_rollover_s_pending_keeps_a_retained_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    mark: dict[str, Any],
+    strategy: tuple[str, ...],
+    expected: str,
 ) -> None:
-    """#1224, Q2: `apply` cannot tell a first set from a re-set, so it keeps
-    whatever is retained. A second `RETAIN` on MySQL would drop the old
-    password a rotation retained."""
-    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
-    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+    """#1224: `apply` cannot tell a first set from a re-set, so it keeps what
+    is retained only for a `pending` a rollover rotation marked. A second
+    `RETAIN` on MySQL would drop the old password that rotation retained."""
+    document = {
+        "DB_CREDENTIALS": {"acme_web_user": LIVE},
+        "pending": {"acme_web_user": STAGED},
+        **mark,
+    }
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": document},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", *strategy)
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert harness["sessions"][0].old_passwords == ["keep"]
+    assert harness["sessions"][-1].old_passwords == [expected]
+    promoted = stored(harness["store"], "apps/acme/appdb-alpha")
+    assert promoted.get("rollover") in (None, {}), "cleared with `pending`"
 
 
 def test_apply_refuses_a_rollover_it_would_have_to_open_itself(

@@ -249,25 +249,29 @@ def test_an_account_that_is_not_moving_refuses_nothing() -> None:
 
 
 @pytest.mark.parametrize(
-    ("regime", "account", "stage", "rotating", "expected"),
+    ("regime", "account", "stage", "rotating", "marked", "expected"),
     [
         # The rotation's own run opens a window no profile opens.
-        (strategy.ROLLOVER, user(), "pending", True, "retain"),
+        (strategy.ROLLOVER, user(), "pending", True, False, "retain"),
         # A profile opens it on Oracle, so the driver is not asked to.
-        (strategy.ROLLOVER, enabled(), "pending", True, "discard"),
-        (strategy.STAGED, user(), "pending", True, "discard"),
-        (strategy.DIRECT, user(), "pending", True, "discard"),
-        # A later apply cannot tell a first set from a re-set (DP3, DP4).
-        (strategy.ROLLOVER, user(), "pending", False, "keep"),
-        (strategy.STAGED, user(), "pending", False, "keep"),
+        (strategy.ROLLOVER, enabled(), "pending", True, False, "discard"),
+        (strategy.STAGED, user(), "pending", True, False, "discard"),
+        (strategy.DIRECT, user(), "pending", True, False, "discard"),
+        # A later apply of a rollover's `pending` cannot tell a first set from
+        # a re-set (DP3, DP4), so it keeps the window.
+        (strategy.ROLLOVER, user(), "pending", False, True, "keep"),
+        (strategy.STAGED, user(), "pending", False, True, "keep"),
         # Except where the operator asks for the old password to stop now.
-        (strategy.DIRECT, user(), "pending", False, "discard"),
+        (strategy.DIRECT, user(), "pending", False, True, "discard"),
+        # Any other `pending` ends a retained password (#1249).
+        (strategy.STAGED, user(), "pending", False, False, "discard"),
         # Not a rotation in flight.
-        (strategy.STAGED, user(), "current", False, "discard"),
-        (strategy.STAGED, user(), "previous", False, "discard"),
+        (strategy.STAGED, user(), "current", False, False, "discard"),
+        (strategy.STAGED, user(), "previous", False, False, "discard"),
     ],
 )
 def test_what_a_change_does_with_the_old_password(
-    regime: str, account: UserState, stage: str, rotating: bool, expected: str
+    regime: str, account: UserState, stage: str, rotating: bool, marked: bool, expected: str
 ) -> None:
-    assert strategy.old_password(regime, account, stage, rotating=rotating) == expected
+    found = strategy.old_password(regime, account, stage, rotating=rotating, marked=marked)
+    assert found == expected

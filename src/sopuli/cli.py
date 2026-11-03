@@ -9119,7 +9119,9 @@ def _apply_one(
         # carried the password across the network, and one the driver refused
         # first has not.
         sent = session.scope().encryption
-        old_password = strategies.old_password(regime, user, source.stage, rotating=rotating)
+        old_password = strategies.old_password(
+            regime, user, source.stage, rotating=rotating, marked=source.rollover
+        )
         retained = session.set_password(user.name, source.value, old_password=old_password).retained
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
@@ -12194,8 +12196,13 @@ def _rotate_estate(
     drawn, skipped = _to_stage(rotating, documents, surveyed, run=run, force=force)
 
     # Step 4 -- `creds generate`'s write, behind the fence it uses.
+    # A rollover rotation marks what it stages (#1224), so a later `creds apply`
+    # sets it again without ending the window this run opens on MySQL. Only a
+    # driver that keeps a second password on request reads the mark's effect.
+    marked = strategy == strategies.ROLLOVER
     writes = staging.group(
-        staging.draw_once(
+        replace(candidate, rollover=marked)
+        for candidate in staging.draw_once(
             drawn,
             lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
         )

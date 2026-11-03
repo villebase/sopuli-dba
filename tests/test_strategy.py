@@ -243,3 +243,31 @@ def test_the_default_regime_is_left_alone_by_a_move() -> None:
 
 def test_an_account_that_is_not_moving_refuses_nothing() -> None:
     assert strategy.moving_profile(strategy.STAGED, user(), None) is None
+
+
+# ------------------------------------------------- the old password (#1224) ---
+
+
+@pytest.mark.parametrize(
+    ("regime", "account", "stage", "rotating", "expected"),
+    [
+        # The rotation's own run opens a window no profile opens.
+        (strategy.ROLLOVER, user(), "pending", True, "retain"),
+        # A profile opens it on Oracle, so the driver is not asked to.
+        (strategy.ROLLOVER, enabled(), "pending", True, "discard"),
+        (strategy.STAGED, user(), "pending", True, "discard"),
+        (strategy.DIRECT, user(), "pending", True, "discard"),
+        # A later apply cannot tell a first set from a re-set (DP3, DP4).
+        (strategy.ROLLOVER, user(), "pending", False, "keep"),
+        (strategy.STAGED, user(), "pending", False, "keep"),
+        # Except where the operator asks for the old password to stop now.
+        (strategy.DIRECT, user(), "pending", False, "discard"),
+        # Not a rotation in flight.
+        (strategy.STAGED, user(), "current", False, "discard"),
+        (strategy.STAGED, user(), "previous", False, "discard"),
+    ],
+)
+def test_what_a_change_does_with_the_old_password(
+    regime: str, account: UserState, stage: str, rotating: bool, expected: str
+) -> None:
+    assert strategy.old_password(regime, account, stage, rotating=rotating) == expected

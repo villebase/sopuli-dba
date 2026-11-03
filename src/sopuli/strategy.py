@@ -36,6 +36,14 @@ a window regardless. Refusing that is the whole reason this module exists rather
 than a one-line default. Silently running ``rollover`` while reporting ``staged``
 would tell an application team the old password had stopped working when it had
 not.
+
+**MySQL is the exception: the tool opens the window.** No profile grants one.
+``rollover`` sends ``RETAIN CURRENT PASSWORD``, and the old password then works
+until `creds finish-rollover` sends ``DISCARD OLD PASSWORD``. A rotation under
+``staged`` or ``direct`` discards it at once, and so does an `apply` under
+``direct``. ``rollover`` is never the default there,
+because the window has no end of its own (#1224). Only `creds rotate` opens one:
+:func:`old_password` says why.
 """
 
 from __future__ import annotations
@@ -44,11 +52,15 @@ from dataclasses import dataclass
 
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
+    OLD_DISCARD,
+    OLD_KEEP,
+    OLD_RETAIN,
     PASSWORD_ROLLOVER,
     AccountAttributes,
     Scope,
     UserState,
 )
+from sopuli.payload import PENDING
 
 __all__ = [
     "DIRECT",
@@ -61,7 +73,9 @@ __all__ = [
     "extra_detail",
     "moves_profile",
     "moving_profile",
+    "old_password",
     "opens_window",
+    "tool_opens_window",
     "unhonourable",
 ]
 
@@ -134,6 +148,40 @@ def closes_window(strategy: str, user: UserState) -> bool:
     work in it.
     """
     return strategy == DIRECT and opens_window(user)
+
+
+def tool_opens_window(strategy: str, user: UserState) -> bool:
+    """Whether ``rollover`` here needs the tool to open the window itself.
+
+    On MySQL no profile opens one, and the tool sends ``RETAIN CURRENT
+    PASSWORD`` (#1224). :meth:`~sopuli.driver.protocol.Session.require_rollover`
+    has already refused a target that cannot keep a second password, so
+    ``rollover`` with no window from the profile means this.
+    """
+    return strategy == ROLLOVER and not opens_window(user)
+
+
+def old_password(strategy: str, user: UserState, stage: str, *, rotating: bool) -> str:
+    """What :meth:`~sopuli.driver.protocol.Session.set_password` does with the
+    old password, as decided on #1224.
+
+    * The run that staged the ``pending`` (`creds rotate`) retains the old
+      password where it opens the window itself, and discards it otherwise.
+    * Any later run that sets a staged ``pending`` again keeps what is retained.
+      It cannot tell a first set from a re-set: MySQL keeps a retained password
+      through a change without ``RETAIN``, and a second ``RETAIN`` would replace
+      it with the ``pending`` (``03_dual_password_probe.py``, DP4 and DP3).
+      ``--strategy direct`` is the exception: it asks for the old password to
+      stop working now, so it discards it. ``direct`` is never the default.
+    * ``current`` and a rollback's ``previous`` discard it.
+
+    Only a driver that keeps a second password on request acts on the answer.
+    """
+    if stage != PENDING:
+        return OLD_DISCARD
+    if not rotating:
+        return OLD_DISCARD if strategy == DIRECT else OLD_KEEP
+    return OLD_RETAIN if tool_opens_window(strategy, user) else OLD_DISCARD
 
 
 def moves_profile(user: UserState, attributes: AccountAttributes) -> str | None:

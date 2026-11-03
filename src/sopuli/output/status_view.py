@@ -371,6 +371,10 @@ def _rollover_cell(user: UserState | None, supported: bool | None = None) -> Cel
         return Cell("not supported", Role.MUTED)
     if user.rollover_active:
         return Cell("window open", Role.NOTABLE)
+    if supported and user.rollover_active is None and user.rollover_days is None:
+        # MySQL (#1224): no profile sets a window, and whether a password is
+        # retained is in a column the tool account does not read.
+        return Cell("unknown", Role.MUTED)
     configured = user.rollover_days
     if not configured:
         # Unknown where the scope could not be read: "not configured" would

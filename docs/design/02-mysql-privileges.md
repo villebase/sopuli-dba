@@ -330,8 +330,16 @@ ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD
 The second statement ends any password a person kept with `RETAIN CURRENT
 PASSWORD`, which a change without it leaves working
 (`03_dual_password_probe.py`, DP4). The tool cannot read whether one is kept,
-so it always sends it, and the server accepts it with nothing kept (DP1, DP7)
-([#1223](../decisions/log.md#1223)).
+so it sends it after every change but two, and the server accepts it with
+nothing kept (DP1, DP7) ([#1223](../decisions/log.md#1223)).
+
+The two exceptions are UC-1 §6.3's rollover ([#1224](../decisions/log.md#1224)).
+`creds rotate --strategy rollover` ends the first statement with `RETAIN
+CURRENT PASSWORD` and sends no `DISCARD`, so the old password keeps working
+(DP6). `creds apply`, setting a staged `pending` again, sends neither: a second
+`RETAIN` would replace the retained password with the current one (DP3).
+`creds apply --strategy direct` sends `DISCARD` all the same. No
+grant beyond `CREATE USER` is needed for either (DP2).
 
 The hash is SHA-crypt with SHA-256, a 20-byte salt the driver draws, and the
 server's own rounds, from `caching_sha2_password_digest_rounds`, which any

@@ -212,6 +212,8 @@ class FakeSession:
         self.encryption = encryption
         self.attempts: list[tuple[str, str]] = []
         self.changed: list[tuple[str, str]] = []
+        #: What each `set_password` was told to do with the old password.
+        self.old_passwords: list[str] = []
         self.finished: list[str] = []
         self.closed = False
 
@@ -274,11 +276,17 @@ class FakeSession:
             return VerifyResult("login", PASS, latency_ms=9)
         return VerifyResult("login", FAIL, detail="ORA-01017: invalid credential")
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         if self.set_error is not None:
             raise self.set_error
         self.database.set_password(account.upper(), secret.reveal())
         self.changed.append((account.upper(), secret.reveal()))
+        self.old_passwords.append(old_password)
+        if old_password == "retain":
+            self._called("set_password")
+            return ChangeResult(changed=True, retained=True)
         self._called("set_password")
         return ChangeResult(changed=True)
 
@@ -1348,6 +1356,156 @@ def test_a_takeover_before_any_database_is_reached_is_still_exit_four(
 
 
 # ------------------------------------------------------- --finish-rollover ---
+
+
+def old_passwords(harness: dict[str, Any]) -> list[str]:
+    """What every `set_password` was told to do with the old password."""
+    return [mode for session in harness["sessions"] for mode in session.old_passwords]
+
+
+def test_a_rollover_with_no_profile_window_retains_the_old_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """#1224: where no profile opens a window, as on MySQL, `rotate --strategy
+    rollover` asks the driver to retain the old password, and the row says the
+    window is open."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert old_passwords(harness) == ["retain", "retain"]
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
+    assert [row["state"] for row in applied] == ["ROLLOVER_ACTIVE", "ROLLOVER_ACTIVE"]
+    assert all(row["rollover"]["active"] is True for row in applied)
+
+
+def test_a_rotation_by_default_discards_the_old_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1224, Q1: no profile window means `staged` by default, never a window
+    the tool opens on its own."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert old_passwords(harness) == ["discard", "discard"]
+
+
+def test_a_rollover_the_profile_opens_does_not_ask_to_retain(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """On Oracle the profile opens the window, so the driver is not asked to."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert old_passwords(harness) == ["discard", "discard"]
+
+
+MYSQL_CONFIG = """\
+version: 1
+defaults:
+  policy: app-standard
+policies:
+  app-standard:
+    password: { length: 24, charset: alnum, first_char: alpha }
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault-prod.example.com:8200
+targets:
+  - name: mysql-alpha
+    type: mysql
+    dsn: mysql-alpha.example.com:3306
+    environment: prod
+    vault: vault-prod
+applications:
+  - name: acme
+    accounts: [acme_web_user@%]
+    secret_template: "apps/acme/{target}#DB_CREDENTIALS/{user}"
+"""
+
+
+def test_an_error_after_a_retain_still_says_both_passwords_work(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Review of #1252: the server cannot say a password is retained, so an
+    error after the statement must not lose that fact."""
+    events: list[str] = []
+
+    def fail_after_the_change(harness: dict[str, Any], event: str) -> None:
+        events.append(event)
+        if event == "describe_user" and "set_password" in events:
+            raise RuntimeError("the connection dropped")
+
+    estate(capabilities=frozenset({PASSWORD_ROLLOVER}), on_call=fail_after_the_change)
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--strategy",
+        "rollover",
+        "--output",
+        "json",
+    )
+
+    (row,) = [row for row in document(result)["results"] if row["state"] != "PENDING_APPLY"]
+    assert (row["state"], row["changed"]) == ("ERROR", True)
+    assert "the previous one was retained, so both log in" in row["error"]["message"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_finish_rollover_on_a_target_without_it_is_refused_before_staging(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, dry_run: bool
+) -> None:
+    """Review of #1252: on MySQL the closing step cannot see the window it
+    would close, so `--finish-rollover` is refused with SOPULI-20006 before
+    anything is staged or set, in a preview too."""
+    harness = estate(
+        documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    flags = ["--dry-run"] if dry_run else []
+    result = run(
+        runner,
+        write_config(MYSQL_CONFIG),
+        "--strategy",
+        "rollover",
+        "--finish-rollover",
+        *flags,
+    )
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "`creds finish-rollover` is not written" in str(result.exception)
+    assert changed(harness) == []
+    assert "pending" not in stored(harness["store"], "apps/acme/mysql-alpha")
+
+
+def test_finish_rollover_without_a_rollover_runs_on_such_a_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Second review of #1252: under the default strategy no MySQL window
+    opens, so `--finish-rollover` is not refused, and a mixed estate's other
+    windows still close."""
+    harness = estate(
+        documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        users={"ACME_WEB_USER@%": user("acme_web_user@%")},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    result = run(runner, write_config(MYSQL_CONFIG), "--finish-rollover")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(changed(harness)) == 1
+    assert finished(harness) == []
 
 
 def test_finish_rollover_closes_windows_at_the_end_of_the_run(

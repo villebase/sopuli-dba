@@ -390,6 +390,8 @@ class FakeSession:
         #: Every ``set_password`` this session was asked for, refused ones
         #: included. ``changed`` is the subset that landed.
         self.attempted: list[tuple[str, str]] = []
+        #: What each ``set_password`` was told to do with the old password.
+        self.old_passwords: list[str] = []
         #: Accounts this session actually issued ``ACCOUNT UNLOCK`` for, which is
         #: not the same list as the ones it was asked about -- invariant 9 for the
         #: attributes is that an account already open is not touched.
@@ -539,12 +541,15 @@ class FakeSession:
         queued = self.answers.get(account.upper(), [])
         return queued.pop(0) if queued else VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9)
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         # Recorded before the refusal, unlike `changed` below, which only sees the
         # calls that succeeded. A bounded redraw has to be asserted on the
         # statements the server was *asked* for: an unbounded loop issues
         # them for ever and appends nothing to a list of successes.
         self.attempted.append((account.upper(), secret.reveal()))
+        self.old_passwords.append(old_password)
         if self.set_error is not None and next(self.refusals, False):
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
@@ -833,6 +838,33 @@ def test_without_a_login_first_a_pending_is_set_and_verified_after(
     row = document(result)["results"][0]
     assert (row["state"], row["changed"]) == ("IN_SYNC", True)
     assert row["secret"]["stage"] == "current"
+
+
+def test_a_staged_pending_is_set_without_touching_a_retained_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1224, Q2: `apply` cannot tell a first set from a re-set, so it keeps
+    whatever is retained. A second `RETAIN` on MySQL would drop the old
+    password a rotation retained."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["sessions"][0].old_passwords == ["keep"]
+
+
+def test_apply_refuses_a_rollover_it_would_have_to_open_itself(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1224: where no profile opens a window, as on MySQL, only `creds rotate`
+    opens one. `apply --strategy rollover` is refused before anything changes,
+    rather than reporting a window it did not open."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "rollover")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "`creds apply` does not open one" in str(result.exception)
+    assert all(session.attempted == [] for session in harness["sessions"])
 
 
 def test_without_a_login_first_a_current_is_left_alone(

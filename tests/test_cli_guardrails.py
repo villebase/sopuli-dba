@@ -141,7 +141,9 @@ class FakeSession:
         held = dict(self.changed).get(account.upper(), LIVE)
         return VerifyResult("login", PASS if secret.reveal() == held else "fail", latency_ms=9)
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         self.changed.append((account.upper(), secret.reveal()))
         return ChangeResult(changed=True)
 
@@ -1655,7 +1657,9 @@ def test_force_records_the_waiver_on_an_account_that_failed(
     """And on the error path, for the same reason: the override happened."""
 
     class Refusing(FakeSession):
-        def set_password(self, name: str, secret: Secret) -> ChangeResult:
+        def set_password(
+            self, name: str, secret: Secret, *, old_password: str = "discard"
+        ) -> ChangeResult:
             raise RuntimeError("ORA-01031: insufficient privileges")
 
     harness = estate(

@@ -315,7 +315,8 @@ is promoted until every target has confirmed the new password, so the
 `current` that applications read is always a password the whole estate
 already accepts. A run that stops part way leaves `pending` staged and the
 databases it reached changed. `creds apply` finishes that run, and under
-the rollover strategy there is no outage in the meantime.
+the rollover strategy there is no outage in the meantime. On MySQL, a
+target this run did not reach gets no window when `creds apply` sets it.
 
 Running `creds generate`, `creds apply` and `creds check` one after another
 is not the same. Each of those commands takes and releases its own lock.

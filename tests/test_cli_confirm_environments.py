@@ -125,7 +125,9 @@ class FakeSession:
     def verify_password(self, account: str, secret: Secret, **_: Any) -> VerifyResult:
         return VerifyResult("login", PASS, latency_ms=9)
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         self.changed.append((account.upper(), secret.reveal()))
         return ChangeResult(changed=True)
 

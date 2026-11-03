@@ -521,6 +521,18 @@ def test_a_configured_quiet_window_shows_its_length(
     assert "1h configured" in result.output
 
 
+def test_a_window_nothing_can_read_is_unknown(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """MySQL (#1224): rollover exists, no profile configures it, and whether a
+    password is retained cannot be read, so the column says neither."""
+    estate(users={"ACME_WEB_USER": account("ACME_WEB_USER")})
+    result = run(runner, write_config(CONFIG))
+
+    assert "unknown" in result.output
+    assert "not configured" not in result.output
+
+
 def test_a_target_with_no_rollover_says_so_rather_than_not_configured(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

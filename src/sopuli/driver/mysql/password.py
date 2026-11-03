@@ -157,11 +157,21 @@ def caching_sha2_hash(secret: Secret, rounds: int, *, salt: bytes | None = None)
     return b"$A$%03X$" % (rounds // 1000) + salt + digest.encode("ascii")
 
 
-def alter_user(user: str, host: str, stored: bytes) -> str:
+#: What :func:`alter_user` appends to keep the old password working beside the
+#: new one, until ``DISCARD OLD PASSWORD`` (``03_dual_password_probe.py``, DP6).
+RETAIN = " RETAIN CURRENT PASSWORD"
+
+
+def alter_user(user: str, host: str, stored: bytes, *, retain: bool = False) -> str:
     """The statement that sets the password: the account as the server
-    spells it, and the hash as a hex literal."""
+    spells it, and the hash as a hex literal.
+
+    With ``retain``, the old password keeps working beside the new one. Sent
+    once per rotation: a second ``RETAIN`` replaces the retained password with
+    the current one, which drops the old password (DP3)."""
     account = Principal(user, host).sql()
-    return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}"
+    keep = RETAIN if retain else ""
+    return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}{keep}"
 
 
 def discard_old(user: str, host: str) -> str:

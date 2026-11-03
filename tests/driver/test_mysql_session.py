@@ -176,17 +176,55 @@ def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
     assert 'target "mysql-dev" is a MySQL server' in str(caught.value)
 
 
-def test_finish_rollover_is_refused_by_capability() -> None:
-    """No window is opened yet (#1224), so none can be ended: exit 5, not 20006."""
-    with pytest.raises(UnsupportedCapabilityError) as caught:
-        _session().finish_rollover("acme_app@%")
+def test_a_server_with_the_rounds_variable_can_keep_a_second_password() -> None:
+    """#1224: `password_rollover` where the tool can set a password at all."""
+    assert _session().scope().supports(PASSWORD_ROLLOVER)
 
+
+def test_a_server_without_the_rounds_variable_has_no_rollover() -> None:
+    """A server that answers 1193 is refused by capability, exit 5 (invariant 4)."""
+    session = _session()
+    session.connection.fail_rounds = session_module.pymysql.err.OperationalError(
+        1193, "Unknown system variable 'caching_sha2_password_digest_rounds'"
+    )
+
+    assert not session.scope().supports(PASSWORD_ROLLOVER)
+    with pytest.raises(UnsupportedCapabilityError, match=PASSWORD_ROLLOVER) as caught:
+        session.require_rollover("acme_app@%")
     assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
 
 
-def test_a_rollover_is_refused_by_capability_until_it_is_written() -> None:
-    with pytest.raises(UnsupportedCapabilityError, match=PASSWORD_ROLLOVER):
+def test_a_rollover_needs_the_account_to_exist() -> None:
+    with pytest.raises(DriverError, match="does not exist"):
         _session().require_rollover("acme_app@%")
+
+
+def test_a_rollover_retains_and_sends_no_discard() -> None:
+    """#1224, DP6: RETAIN on the statement, and no DISCARD after it."""
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+
+    session.set_password("acme_app@10.%", Secret("Acme-App-pw1"), old_password="retain")
+
+    (statement,) = [q for q in session.connection.queries if q.startswith("ALTER USER")]
+    assert statement.endswith(" RETAIN CURRENT PASSWORD")
+
+
+def test_a_re_set_keeps_what_is_retained() -> None:
+    """#1224, DP4: neither RETAIN nor DISCARD."""
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+
+    session.set_password("acme_app@10.%", Secret("Acme-App-pw1"), old_password="keep")
+
+    (statement,) = [q for q in session.connection.queries if q.startswith("ALTER USER")]
+    assert "RETAIN" not in statement
+
+
+def test_finish_rollover_is_not_written_yet() -> None:
+    """#1224's second part: refused with SOPULI-20006 until it is written."""
+    with pytest.raises(session_module.NotWrittenError):
+        _session().finish_rollover("acme_app@%")
 
 
 def test_audit_coverage_never_raises() -> None:

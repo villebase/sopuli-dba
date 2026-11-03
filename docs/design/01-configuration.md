@@ -1984,6 +1984,10 @@ These are decisions:
   ask, and click's EOF abort would tell an operator that the run stopped without
   telling them what to type. Exit 8, `category: policy`, naming the setting, where
   it was written, and both `--confirm` and `--dry-run`.
+- **`account reset-password` and `account expire-password` ask after their
+  plan-time checks** (#1214). Those checks log in to each target, and a yes
+  followed by a refusal means nothing. The unattended refusal still comes
+  before any login. A reset opens its delivery store only after the answer.
 - **`--dry-run` is never gated**, which is the opposite of `readonly` and right
   for the opposite reason. `readonly` decides whether a verb is available at all;
   this decides assent, and a preview is how somebody works out what they are

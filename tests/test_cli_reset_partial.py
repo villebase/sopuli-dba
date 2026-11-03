@@ -33,6 +33,7 @@ from sopuli.delivery import Receipt
 from sopuli.diagnostics import encryption_diagnostics, no_reset_record
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
+    ENCRYPTION_NONE,
     ENCRYPTION_TLS,
     EXPIRE_PASSWORD,
     PASSWORD_SET,
@@ -1067,21 +1068,61 @@ def test_the_seen_path_is_refused_where_the_target_cannot_expire_a_password(
     assert session.reset == []
 
 
-def test_the_plan_time_refusal_comes_before_the_confirmation(
-    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+def _gated(config: str, *, safety: str = "confirm_environments: [dev]") -> str:
+    """``config`` with its one target's environment in `confirm_environments`."""
+    return config.replace(
+        "defaults:\n  policy: personal-standard\n",
+        f"defaults:\n  policy: personal-standard\n  safety: {{ {safety} }}\n",
+    )
+
+
+@pytest.mark.parametrize("refusal", ["seen path", "encryption"])
+def test_a_plan_time_refusal_comes_before_the_question(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    sent: Sent,
+    refusal: str,
 ) -> None:
     """Nobody is asked to confirm a reset that cannot happen, as in `account
-    expire-password` (#1214)."""
+    expire-password` (#1214). A real run, with someone at a terminal to ask."""
     session = Asked("OPEN", DENIED)
-    session.capabilities = frozenset()
-    _open(monkeypatch, session, unseen=False)
-    asked: list[bool] = []
-    monkeypatch.setattr("sopuli.cli._confirm_environments", lambda *a, **k: asked.append(True))
+    if refusal == "seen path":
+        session.capabilities = frozenset()
+        config = _gated(MANUAL)
+    else:
+        session.encryption = Encryption(method=ENCRYPTION_NONE, protocol="tcp")
+        config = _gated(WRAPPED, safety="confirm_environments: [dev], require_encryption: true")
+    _open(monkeypatch, session, unseen=refusal == "encryption")
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    asked: list[str] = []
+    monkeypatch.setattr("sopuli.cli._confirm", lambda question, **_: asked.append(question))
 
-    result = _run(runner, write_config(MANUAL), "--dry-run")
+    result = _run(runner, write_config(config))
 
     assert isinstance(result.exception, UnsupportedCapabilityError), result.output
     assert asked == []
+    assert session.reset == []
+
+
+def test_an_unattended_run_is_refused_before_any_login(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """The half of the confirmation that needs no connection stays before the
+    plan-time logins (#1214): with nobody to ask, exit 8 and no session."""
+    opened: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> Any:
+        opened.append(target.name)
+        return Asked("OPEN", DENIED)
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: False)
+
+    result = _run(runner, write_config(_gated(WRAPPED)))
+
+    assert result.exception.exit_code == ExitCode.ABORTED, result.output
+    assert opened == []
 
 
 def test_the_seen_path_is_asked_again_where_plan_time_could_not_read_the_scope(

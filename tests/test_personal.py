@@ -18,7 +18,13 @@ import pytest
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import PersonalAccountRule
-from sopuli.personal import admits, declared_on, rules_admitting, rules_for
+from sopuli.personal import (
+    admits,
+    bound_by_application,
+    declared_on,
+    rules_admitting,
+    rules_for,
+)
 
 TARGET = {
     "name": "appdb-dev-alpha",
@@ -96,6 +102,53 @@ def test_a_mysql_host_is_compared_without_case() -> None:
     loaded = mysql_config("jdoe@db.example.com")
 
     assert declared_on(loaded, "jdoe@DB.EXAMPLE.COM", "mysql-dev") is not None
+
+
+def test_a_mysql_role_is_compared_as_an_account() -> None:
+    """`DEV_ROLE@%` is another role than `dev_role@%`; the host has no case
+    (#1225, item 4)."""
+    loaded = build_config(
+        {
+            "version": 1,
+            "targets": [MYSQL_TARGET],
+            "personal_accounts": [{"role": "dev_role@%"}],
+        }
+    )
+
+    assert declared_on(loaded, "jdoe@%", "mysql-dev", roles=("dev_role@%",)) is not None
+    assert declared_on(loaded, "jdoe@%", "mysql-dev", roles=("DEV_ROLE@%",)) is None
+    on_host = build_config(
+        {
+            "version": 1,
+            "targets": [MYSQL_TARGET],
+            "personal_accounts": [{"role": "dev_role@LOCALHOST"}],
+        }
+    )
+    assert declared_on(on_host, "jdoe@%", "mysql-dev", roles=("dev_role@localhost",)) is not None
+
+
+def test_a_mysql_application_account_binds_only_its_own_spelling() -> None:
+    """An application's `JDOE@%` is another account than `jdoe@%`, so it does
+    not refuse it; its own `JDOE@%` it does (#1225, item 6)."""
+    loaded = build_config(
+        {
+            "version": 1,
+            "vaults": {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
+            "targets": [{**MYSQL_TARGET, "vault": "vault-dev"}],
+            "applications": [
+                {
+                    "name": "acme",
+                    "accounts": ["JDOE@%"],
+                    "secret_template": "apps/acme#DB/{user}",
+                }
+            ],
+            "personal_accounts": [{"role": "dev_role@%"}],
+        }
+    )
+
+    assert bound_by_application(loaded, "jdoe@%", "mysql-dev") is None
+    assert bound_by_application(loaded, "JDOE@%", "mysql-dev") is not None
+    assert bound_by_application(loaded, "JDOE@LOCALHOST", "mysql-dev") is None
 
 
 def test_a_bare_name_matches_no_mysql_account() -> None:

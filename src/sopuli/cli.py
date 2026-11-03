@@ -113,7 +113,14 @@ from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
 from sopuli.config.password_keys import place_of
-from sopuli.config.products import mysql_account, quoted_or_padded, tls_setting
+from sopuli.config.products import (
+    account_key,
+    account_matcher,
+    mysql_account,
+    quoted_or_padded,
+    tls_setting,
+    typed_user,
+)
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
@@ -143,6 +150,7 @@ from sopuli.diagnostics import (
     admin_diagnostics,
     constraint_diagnostics,
     encryption_diagnostics,
+    failed_login_block_unread,
     guardrail_diagnostics,
     guardrail_pass_ahead,
     guardrail_refuses_ahead,
@@ -2649,7 +2657,7 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     split = mysql_account(account)
     if not mysql or (split is not None and not quoted_or_padded(split)):
         return
-    user = (split[0] if split else account).strip("'\"` \t@") or "jdoe"
+    user = typed_user(account, default="jdoe")
     hint = (
         f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
         "MySQL keeps one account per host, each with its own password"
@@ -3860,8 +3868,7 @@ def account_list_command(
 ) -> str:
     """Resolve `personal_accounts:` and show what it matched.
 
-    The command reads no password and writes nothing, and it works on Oracle
-    targets only. `personal_accounts:` can
+    The command reads no password and writes nothing. `personal_accounts:` can
     declare accounts by a rule over a database profile or role, so the
     config alone does not list them. This command applies the rules on each
     selected target, and shows each account with the rule that matched it and
@@ -3900,6 +3907,10 @@ def account_list_command(
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
         return "no targets selected"
+    if account is not None:
+        # A bare name names no MySQL account, so as a filter it would match
+        # nothing and say so as if it were an answer.
+        _refuse_a_bare_mysql_name(account, reached)
 
     unjournaled = no_reset_journal() if config.reset_records is None else []
     document.diagnostics.extend(unjournaled)
@@ -3907,10 +3918,21 @@ def account_list_command(
     rows: list[account_list.Row] = []
     errors = 0
     unread = _JournalFailures()
+    unseen: list[Diagnostic] = []
+    unanswered = 0
     for target in reached:
         found, failed = _list_one(target, run, config, wanted=account, unread=unread)
         rows.extend(found)
         errors += failed
+        unanswered += sum(1 for row in found if row.target_failed)
+        if target.target.type == MYSQL and any(
+            row.state is not None and not row.state.locked for row in found
+        ):
+            # Each such row's state is read from `mysql.user`, which does
+            # not hold the block after failed logins (#1225). A locked
+            # account cannot log in anyway.
+            unseen.append(failed_login_block_unread(target.name))
+    document.diagnostics.extend(unseen)
 
     # Only a target that answered reads the journal, so this needs no `answered`.
     unreadable: list[Diagnostic] = []
@@ -3922,9 +3944,10 @@ def account_list_command(
     document.finish(ExitCode.PARTIAL if errors else ExitCode.SUCCESS, summarise_account_list(rows))
     # Where no target answered there is no RESET_AT to explain, and a note about
     # the journal would point the reader away from the unreachable targets.
-    answered = errors < len(reached)
+    answered = unanswered < len(reached)
     notes = [one.message for one in unjournaled] if answered else []
     notes.extend(one.message for one in unreadable)
+    notes.extend(one.message for one in unseen)
     return render_account_list(rows, run_notes=notes)
 
 
@@ -4011,13 +4034,26 @@ def _list_one(
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return [_unreachable_row(target, _finding(error))], 1
 
-        names = _declared_names(session, config, target, wanted=wanted)
-        journal = _open_journal(run, config, unread) if names else None
-        rows = [
-            _describe_row(session, name, target, config, journal=journal, unread=unread)
-            for name in names
-        ]
-        return rows, 0
+        named = _declared_names(session, config, target, wanted=wanted)
+        journal = _open_journal(run, config, unread) if named else None
+        rows: list[account_list.Row] = []
+        failed = 0
+        for name, rule in named:
+            try:
+                rows.append(
+                    _describe_row(session, name, target, config, journal=journal, unread=unread)
+                )
+            except DriverError as error:
+                # One account the driver refuses to describe, such as a MySQL
+                # role member on another plugin, is one failed row, not a
+                # failed listing (#1225). That refusal is about the account,
+                # `config`; anything else, such as a dropped session or a
+                # refused read, is about the target and ends it, as before.
+                if error.category != "config":
+                    raise
+                rows.append(_undescribed_row(target, name, rule, _finding(error)))
+                failed += 1
+        return rows, failed
     finally:
         if session is not None:
             with suppress(Exception):
@@ -4030,34 +4066,37 @@ def _declared_names(
     target: ExpandedTarget,
     *,
     wanted: str | None,
-) -> list[str]:
-    """Every account the declaration admits here, once each.
+) -> list[tuple[str, PersonalAccountRule]]:
+    """Every account the declaration admits here, once each, with the first
+    rule that named it.
 
-    **Deduplicated across rules, by ``upper()``.** An account may be admitted
-    by more than one rule -- UC-2 2 calls that ordinary -- and an enumerated rule
-    yields the *file's* spelling while a predicate yields the *dictionary's*. So
-    ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE`` carrying the profile are
-    one person, and must be one row. A listing that shows one account twice is
-    worse than one that omits it: it misreports the size of the whitelist an
-    operator is reviewing.
+    **Deduplicated across rules, by the product's comparison.** An account may
+    be admitted by more than one rule -- UC-2 2 calls that ordinary -- and an
+    enumerated rule yields the *file's* spelling while a predicate yields the
+    *dictionary's*. So ``acme_dev_alice`` enumerated and ``ACME_DEV_ALICE``
+    carrying the profile are one person, and must be one row. A listing that
+    shows one account twice is worse than one that omits it: it misreports the
+    size of the whitelist an operator is reviewing. On MySQL ``jdoe@%`` and
+    ``JDOE@%`` are two accounts, and two rows (#1225).
 
     First occurrence wins, so file order leads and predicates fill in behind it,
     which keeps a reviewer's listing aligned with the file they are reading it
     against.
 
-    ``--account`` filters here, after resolution. UC-2 2's rule for the flag: it
-    narrows the resolved set and never extends it.
+    ``--account`` filters here, after resolution, by the same comparison. UC-2
+    2's rule for the flag: it narrows the resolved set and never extends it.
     """
-    seen: dict[str, str] = {}
+    key = account_key(target.target.type)
+    seen: dict[object, tuple[str, PersonalAccountRule]] = {}
     for rule in account_list.rules_on(config, target.name):
         for name in _resolve_rule(session, rule, target):
-            seen.setdefault(name.upper(), name)
+            seen.setdefault(key(name), (name, rule))
 
-    names = list(seen.values())
+    named = list(seen.values())
     if wanted is not None:
-        spelled = wanted.upper()
-        names = [name for name in names if name.upper() == spelled]
-    return names
+        same = account_matcher(target.target.type)
+        named = [(name, rule) for name, rule in named if same(name, wanted)]
+    return named
 
 
 def _resolve_rule(
@@ -4224,7 +4263,7 @@ def _describe_row(
     )
     if refused is not None:
         notices.append(account_list.Notice(ADMITTED_REFUSED_ACCOUNT, refused))
-    owner = account_list.cross_declared(config, name)
+    owner = account_list.cross_declared(config, name, same=account_matcher(target.target.type))
     if owner is not None:
         notices.append(
             account_list.Notice(
@@ -4242,6 +4281,23 @@ def _describe_row(
         state=state,
         reset_at=_reset_at(journal, config, target.name, name, unread=unread),
         notices=tuple(notices),
+        product=target.target.type,
+    )
+
+
+def _undescribed_row(
+    target: ExpandedTarget, name: str, rule: PersonalAccountRule, error: Error
+) -> account_list.Row:
+    """An account ``rule`` named and the driver could not describe: ``ERROR``,
+    with the error, as :func:`_unreachable_row` reports a target. The rule is
+    kept, so ``declared_by`` says what named it."""
+    return account_list.Row(
+        account=name,
+        target=target.name,
+        rule=rule,
+        state=None,
+        unreachable=error,
+        product=target.target.type,
     )
 
 

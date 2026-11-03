@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sopuli.account_list import ABSENT, ACCOUNT_MISSING, DECLARED, ERROR, Row
+from sopuli.config.products import account_key
 from sopuli.diagnostics import PASSWORD_CHANGE_DATE_UNKNOWN
 from sopuli.output.document import Diagnostic, Error, Summary
 from sopuli.output.notices import render_notices, unknown_change_dates
@@ -128,6 +129,8 @@ def _state(row: Row) -> str:
 
 
 def _detail(row: Row) -> str:
+    if row.failed and not row.target_failed:
+        return "a rule named this account, and it could not be described"
     if row.failed:
         return "this target could not be answered, so nothing here was resolved"
     if row.rule is None:
@@ -140,7 +143,8 @@ def summarise(rows: Sequence[Row]) -> Summary:
 
     ``changed`` is zero by construction. ``ok`` counts the accounts that exist,
     ``unchanged`` every row this verb looked at and left alone, and ``failed``
-    the targets it could not answer. Counting them as zero on a run that exits
+    the targets it could not answer and the accounts it could not describe.
+    Counting them as zero on a run that exits
     ``PARTIAL`` would make the exit code and the summary disagree.
     """
     return Summary(
@@ -268,12 +272,15 @@ def _or_dash(value: str | None) -> str:
 
 def _count(rows: Sequence[Row]) -> str:
     missing = sum(1 for row in rows if not row.exists and not row.failed)
-    failed = sum(1 for row in rows if row.failed)
-    accounts = len({row.account.upper() for row in rows if not row.failed})
+    failed = sum(1 for row in rows if row.target_failed)
+    undescribed = sum(1 for row in rows if row.failed and not row.target_failed)
+    accounts = len({account_key(row.product)(row.account) for row in rows if not row.failed})
     noun = "account" if accounts == 1 else "accounts"
-    line = f"{accounts} declared {noun}, {len(rows) - failed} on the selected targets"
+    line = f"{accounts} declared {noun}, {len(rows) - failed - undescribed} on the selected targets"
     if missing:
         line += f" ({missing} not present)"
+    if undescribed:
+        line += f"; {undescribed} account{'' if undescribed == 1 else 's'} could not be described"
     if failed:
         line += f"; {failed} target{'' if failed == 1 else 's'} could not be answered"
-    return paint(line, Role.NOTABLE) if missing or failed else line
+    return paint(line, Role.NOTABLE) if missing or failed or undescribed else line

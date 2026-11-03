@@ -330,14 +330,15 @@ def test_a_target_that_verifies_the_server_does_not_warn(mysql: dict[str, str] |
 
 
 def test_a_command_the_mysql_driver_does_not_have_yet_is_refused() -> None:
-    """`doctor` and UC-1 run (#1223); a UC-2 verb is SOPULI-20006 with no
-    install line until #1225 writes it."""
+    """`doctor`, UC-1 (#1223) and `account list` run (#1225); a mutating UC-2
+    verb is SOPULI-20006 with no install line until #1225 writes it."""
     target = server()
 
     require_command(target, "doctor")
     require_command(target, "creds.apply")
+    require_command(target, "account.list")
     with pytest.raises(DriverNotImplementedError) as caught:
         require_command(target, "account.suspend")
 
     assert 'target "mysql-dev" declares type "mysql"' in str(caught.value)
-    assert "can run only `doctor`, `creds apply`" in str(caught.value)
+    assert "can run only `doctor`, `account list`, `creds apply`" in str(caught.value)

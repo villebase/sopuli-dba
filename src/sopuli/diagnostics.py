@@ -560,6 +560,11 @@ HANDOVER_LEFT_BEHIND = "SOPULI-W061"
 #: :data:`ADMITTED_VENDOR_ACCOUNT`.
 ADMITTED_REFUSED_ACCOUNT = "SOPULI-W062"
 
+#: `account list` described accounts on a MySQL target, where a block after
+#: failed logins cannot be read, so an account shown as open may be blocked
+#: (#1225).
+FAILED_LOGIN_BLOCK_UNREAD = "SOPULI-W063"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -771,6 +776,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "2, which is `SOPULI-W041`. One entry per row. The message names every check "
             "that refuses and says whether `--force` overrides them. Guardrail 9, a global "
             "privilege, refuses only the verbs that set a password, and the message says so."
+        ),
+        FAILED_LOGIN_BLOCK_UNREAD: (
+            "`account list` described accounts on a MySQL target. MySQL blocks an account "
+            "after failed logins (`FAILED_LOGIN_ATTEMPTS`), and a blocked login gets error "
+            "3955, but the block is not in `mysql.user`, so the tool cannot read it. An "
+            "account the listing shows as `OPEN` may be blocked until `PASSWORD_LOCK_TIME` "
+            "ends, or until `ALTER USER … ACCOUNT UNLOCK`. One entry per MySQL target that "
+            "lists an account that exists and is not locked, with `target` set."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1549,6 +1562,26 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
         )
         for one in skipped
     ]
+
+
+def failed_login_block_unread(target: str) -> Diagnostic:
+    """Say that `account list` cannot see a MySQL block after failed logins (#1225).
+
+    One per target rather than one per account: the cause is the server, and
+    it is the same on every row. ``04_lock_expiry_probe.py`` measured that the
+    block is not in ``mysql.user``, so no account's row can say whether it has
+    one.
+    """
+    return Diagnostic(
+        level="warning",
+        code=FAILED_LOGIN_BLOCK_UNREAD,
+        target=target,
+        message=(
+            f"{target}: MySQL keeps a block after failed logins (error 3955) outside "
+            "mysql.user, so the tool cannot read it, and an account shown as OPEN may be "
+            "blocked until PASSWORD_LOCK_TIME ends or somebody runs ALTER USER … ACCOUNT UNLOCK"
+        ),
+    )
 
 
 def no_reset_journal() -> list[Diagnostic]:

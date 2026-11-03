@@ -18,6 +18,7 @@ import pytest
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetMysql
 from sopuli.driver.protocol import (
     PASSWORD_ROLLOVER,
+    ROLE_LOOKUP,
     AccountAttributes,
     Credential,
     Driver,
@@ -162,9 +163,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
         lambda s: s.reset_password("acme_app@%", Secret("x"), expire=True),
         lambda s: s.expire_password("acme_app@%"),
         lambda s: s.apply_attributes("acme_app@%", AccountAttributes()),
-        lambda s: s.resolve_profile("default"),
-        lambda s: s.resolve_role("acme_role"),
-        lambda s: s.accounts_matching(role="acme_role"),
     ],
 )
 def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
@@ -174,6 +172,41 @@ def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert 'target "mysql-dev" is a MySQL server' in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda s: s.resolve_profile("dev_users"),
+        lambda s: s.accounts_matching(profile="dev_users"),
+    ],
+)
+def test_a_profile_rule_is_refused_by_capability(call: Any) -> None:
+    """MySQL has no profiles: exit 5, as on PostgreSQL (#1225)."""
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        call(_session())
+
+    assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "profile_management" in str(caught.value)
+    assert "MySQL has no profiles" in str(caught.value.hint)
+
+
+def test_the_server_can_look_up_a_role_whatever_its_rounds() -> None:
+    """`role_lookup` comes from §2.1's grants, not from the server, so a
+    server without the rounds variable reports it too."""
+    assert _session().scope().supports(ROLE_LOOKUP)
+    session = _session()
+    session.connection.fail_rounds = session_module.pymysql.err.OperationalError(
+        1193, "Unknown system variable 'caching_sha2_password_digest_rounds'"
+    )
+    assert session.scope().capabilities == frozenset({ROLE_LOOKUP})
+
+
+def test_accounts_matching_takes_exactly_one_rule() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        _session().accounts_matching()
+    with pytest.raises(ValueError, match="exactly one"):
+        _session().accounts_matching(profile="p", role="r@%")
 
 
 def test_a_server_with_the_rounds_variable_can_keep_a_second_password() -> None:

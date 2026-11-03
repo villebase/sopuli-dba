@@ -37,10 +37,12 @@ needs a container to test.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from sopuli.config.model import Config, PersonalAccountRule
+from sopuli.config.products import same_name
 from sopuli.driver import guardrails
 from sopuli.driver.protocol import UserState
 from sopuli.personal import declared_on, rules_for
@@ -119,7 +121,10 @@ class Row:
     reset_at: str | None = None
     #: Findings about this row that belong beside it rather than at the run level.
     notices: tuple[Notice, ...] = field(default_factory=tuple)
-    #: Why this target could not be answered at all, where it could not.
+    #: Why this row could not be answered, where it could not: the whole target,
+    #: with ``account`` :data:`ABSENT`, or one account a rule named that the
+    #: driver could not describe, such as a MySQL account on another plugin
+    #: (#1225).
     #:
     #: Distinct from ``state is None``, and that distinction is the whole reason
     #: the field exists: an account the declaration names and the database does
@@ -128,6 +133,9 @@ class Row:
     #: Inferring the first from the second would report a down target as a
     #: missing account.
     unreachable: Any | None = None
+    #: The target's ``type``, so names are counted as that product compares
+    #: them: on MySQL ``jdoe@%`` and ``JDOE@%`` are two accounts (#1225).
+    product: str = ""
 
     @property
     def exists(self) -> bool:
@@ -136,8 +144,13 @@ class Row:
 
     @property
     def failed(self) -> bool:
-        """Whether this row is a target that could not be answered."""
+        """Whether this row could not be answered: a target, or one account."""
         return self.unreachable is not None
+
+    @property
+    def target_failed(self) -> bool:
+        """Whether this row is a whole target that could not be answered."""
+        return self.failed and self.account == ABSENT
 
 
 def enumerated_names(rule: PersonalAccountRule) -> tuple[str, ...]:
@@ -181,7 +194,9 @@ def rule_for(
     return declared_on(config, account, target, profile=profile, roles=roles)
 
 
-def cross_declared(config: Config, account: str) -> str | None:
+def cross_declared(
+    config: Config, account: str, *, same: Callable[[str, str], bool] = same_name
+) -> str | None:
     """The application that also declares ``account``, if one does.
 
     **The collision a file cannot see.**
@@ -200,10 +215,10 @@ def cross_declared(config: Config, account: str) -> str | None:
     operator with an ambiguous whitelist and no way to look at it. Describing the
     ambiguity is what lets them resolve it.
     """
-    # By `upper()`, invariant 5's rule, as the mutating verbs compare (#1056).
-    spelled = account.upper()
+    # By `same`, as the mutating verbs compare (#1056): `upper()`, invariant
+    # 5's rule, or on MySQL the user exactly and the host without case (#1225).
     for application in config.applications:
-        if any(declared.upper() == spelled for declared in application.accounts):
+        if any(same(account, declared) for declared in application.accounts):
             return application.label
     return None
 

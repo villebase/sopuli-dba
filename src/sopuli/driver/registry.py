@@ -191,7 +191,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # a password from a hash computed on the client and never log in first, so
     # with only `current` an account is skipped; `creds generate` and `status`.
     # `finish-rollover` sends `DISCARD OLD PASSWORD` (#1224, decision 6 of
-    # #1202). The UC-2 verbs are not written (#1225) and refuse with SOPULI-20006.
+    # #1202). UC-2: `account list`, where a `role:` rule names its host and a
+    # `profile:` rule is refused by capability, because MySQL has no profiles
+    # (#1225). The mutating UC-2 verbs are not written and refuse with
+    # SOPULI-20006.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -199,6 +202,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit="256",
         commands=frozenset(
             {
+                "account.list",
                 "creds.check",
                 "creds.apply",
                 "creds.rotate",

@@ -161,7 +161,7 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
         ],
         personal_accounts=[{"profile": "DEV_USERS"}],
     )
-    target = next(one for one in both.targets if one.name == TARGET)
+    target = next(one for one in both.expanded_targets if one.name == TARGET)
 
     class Session:
         def describe_user(self, name: str) -> UserState:
@@ -291,7 +291,7 @@ def test_oracle_system_carries_both_codes() -> None:
     from sopuli.cli import _describe_row, _JournalFailures
 
     built = config(personal_accounts=[{"role": "ACME_DEV_TEAM"}])
-    target = next(one for one in built.targets if one.name == TARGET)
+    target = next(one for one in built.expanded_targets if one.name == TARGET)
 
     class Session:
         def describe_user(self, name: str) -> UserState:
@@ -315,7 +315,7 @@ def test_the_row_carries_the_refusal_under_its_own_code() -> None:
     from sopuli.cli import _describe_row, _JournalFailures
 
     built = config(personal_accounts=[{"role": "ACME_DEV_TEAM"}])
-    target = next(one for one in built.targets if one.name == TARGET)
+    target = next(one for one in built.expanded_targets if one.name == TARGET)
 
     class Session:
         def describe_user(self, name: str) -> UserState:
@@ -544,7 +544,7 @@ def described(name: str, *, vendor: bool = False, on: str = TARGET) -> Row:
         ],
         personal_accounts=[{"role": "ACME_DEV_TEAM"}],
     )
-    target = next(one for one in built.targets if one.name == on)
+    target = next(one for one in built.expanded_targets if one.name == on)
 
     class Session:
         def describe_user(self, account: str) -> UserState:

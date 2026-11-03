@@ -13,9 +13,10 @@ and the declared accounts for ``doctor --check-privileges``, and describes an
 account. For UC-1 it sets a password from a hash computed on the client,
 keeps the old one working for `rotate --strategy rollover` until `creds
 finish-rollover` discards it, verifies one by login where only the declared
-account can answer, and names the server by its ``server_uuid``. The registry
-lists `doctor` and the `creds` commands. The methods that change an account
-otherwise or look up a role refuse with ``SOPULI-20006`` without a round trip.
+account can answer, and names the server by its ``server_uuid``. For UC-2 it
+resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`). The registry
+lists `doctor`, the `creds` commands and `account list`. The methods that
+change an account otherwise refuse with ``SOPULI-20006`` without a round trip.
 """
 
 from __future__ import annotations
@@ -35,7 +36,8 @@ from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
-from sopuli.driver.mysql import verification
+from sopuli.driver.mysql import roles, verification
+from sopuli.driver.mysql.admin import Principal
 from sopuli.driver.mysql.client import client_lines
 from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
 from sopuli.driver.mysql.errors import (
@@ -57,6 +59,8 @@ from sopuli.driver.protocol import (
     OLD_RETAIN,
     PASS,
     PASSWORD_ROLLOVER,
+    PROFILE_MANAGEMENT,
+    ROLE_LOOKUP,
     STORED,
     UNAVAILABLE,
     UNKNOWN,
@@ -97,6 +101,12 @@ MISSING_GRANT_HINT = (
     "needs to read an account and the privileges guardrail 9 checks. "
     "`sopuli doctor --check-privileges` lists the missing ones, and the statements "
     "that grant them"
+)
+
+#: The hint for a `profile:` rule on a MySQL server.
+NO_PROFILES = (
+    "MySQL has no profiles; declare these accounts by name with `accounts:`, "
+    "or by a role they hold with `role:`"
 )
 
 T = TypeVar("T")
@@ -215,8 +225,11 @@ class MysqlSession(ClosesConnection):
         return self._scope
 
     def _capabilities(self) -> frozenset[str]:
-        """``password_rollover`` where the server has
-        ``caching_sha2_password_digest_rounds``, and nothing otherwise.
+        """``role_lookup`` always, and ``password_rollover`` where the server
+        has ``caching_sha2_password_digest_rounds``.
+
+        ``role_lookup``: a role is a row in ``mysql.user`` and its grants are in
+        ``mysql.role_edges``, and §2.1 grants the tool account both reads.
 
         The tool needs that variable to set any password, and ``RETAIN CURRENT
         PASSWORD`` is older than it (MySQL 8.0.14 and 8.0.24), so a server that
@@ -229,8 +242,8 @@ class MysqlSession(ClosesConnection):
         except DriverError as error:
             if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
                 raise
-            return frozenset()
-        return frozenset({PASSWORD_ROLLOVER})
+            return frozenset({ROLE_LOOKUP})
+        return frozenset({PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
     def _not_written(self, what: str) -> NotWrittenError:
         return NotWrittenError(
@@ -254,19 +267,20 @@ class MysqlSession(ClosesConnection):
         ``1143``, and the hint then says which grants and where to find them:
         the server's own hint names only the table.
         """
-        try:
-            return self._read(lambda cursor: self._describe(cursor, account))
-        except DriverError as error:
-            if error.code in REFUSED_READ:
-                error.hint = MISSING_GRANT_HINT
-            raise
+        return self._read_grants(lambda cursor: self._describe(cursor, account))
 
     def _describe(self, cursor: Any, account: str) -> UserState | None:
         if self._session_user is None:
             self._session_user = accounts_module.current_user(cursor)
-        return accounts_module.describe(
+        state = accounts_module.describe(
             cursor, account, target=self.target.name, session_user=self._session_user
         )
+        if state is None:
+            return None
+        # A `role:` rule admits by these (`sopuli.personal.admits`), and
+        # `accounts_matching` lists by the same grants the other way.
+        user, host = accounts_module.split(state.name)
+        return replace(state, roles=frozenset(roles.granted(cursor, Principal(user, host))))
 
     def byte_limit(self) -> ByteLimit:
         """256 bytes of UTF-8, whatever the server: a longer password is stored
@@ -465,15 +479,49 @@ class MysqlSession(ClosesConnection):
         raise self._not_written("enforce an account's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
-        raise self._not_written("look up a profile")
+        """Refused by capability: MySQL has no profiles, so a `profile:` rule
+        names nothing on a server."""
+        require_capability(
+            self.scope(), PROFILE_MANAGEMENT, target=self.target.name, hint=NO_PROFILES
+        )
+        return None  # pragma: no cover -- the capability is never reported
 
     def resolve_role(self, role: str) -> str | None:
-        raise self._not_written("look up a role")
+        """The role as ``mysql.user`` spells it, or ``None``
+        (:func:`~sopuli.driver.mysql.roles.resolve`). A mandatory role, or one a
+        mandatory role holds, is refused with exit 9. The tool account reads
+        ``mysql.user`` and ``mysql.role_edges`` by §2.1's grants, so
+        :data:`ROLE_LOOKUP` is always reported."""
+        require_capability(self.scope(), ROLE_LOOKUP, target=self.target.name)
+        return self._read_grants(
+            lambda cursor: roles.resolve(cursor, role, target=self.target.name)
+        )
 
     def accounts_matching(
         self, *, profile: str | None = None, role: str | None = None
     ) -> tuple[str, ...]:
-        raise self._not_written("list the accounts a predicate admits")
+        """Every account that holds ``role``, through any chain of grants
+        (:func:`~sopuli.driver.mysql.roles.members_of`). A ``profile`` is
+        refused as :meth:`resolve_profile` refuses it."""
+        if (profile is None) == (role is None):
+            raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
+        if profile is not None:
+            self.resolve_profile(profile)
+            return ()  # pragma: no cover -- resolve_profile always raises
+        assert role is not None
+        spelled = self.resolve_role(role)
+        if spelled is None:
+            return ()
+        return self._read_grants(lambda cursor: roles.members_of(cursor, spelled))
+
+    def _read_grants(self, reader: Callable[[Any], T]) -> T:
+        """:meth:`_read`, with the hint about §2.1's grants on a refused read."""
+        try:
+            return self._read(reader)
+        except DriverError as error:
+            if error.code in REFUSED_READ:
+                error.hint = MISSING_GRANT_HINT
+            raise
 
     def verify_password(
         self,

@@ -71,9 +71,11 @@ def admits(
     are case-sensitive: ``JDOE@%`` is another account than a declared
     ``jdoe@%``, and ``upper()`` would admit it (#1225).
 
-    A ``role:`` or ``profile:`` is compared by ``upper()`` on every product,
-    which is how the drivers resolve one for `account list`, so a verb admits
-    exactly the accounts the listing shows (#1208).
+    A ``role:`` is compared by ``same`` too: on MySQL a role is an account,
+    ``user@host``, and ``DEV_ROLE@%`` is another role than ``dev_role@%``
+    (#1225). A ``profile:`` is compared by ``upper()``; only Oracle has
+    profiles. Each is how the drivers resolve one for `account list`, so a
+    verb admits exactly the accounts the listing shows (#1208).
     """
     if rule.accounts:
         return any(same(account, declared) for declared in rule.accounts)
@@ -85,7 +87,7 @@ def admits(
         return profile is not None and profile.upper() == rule.profile.upper()
 
     if rule.role is not None:
-        return rule.role.upper() in {held.upper() for held in roles}
+        return any(same(held, rule.role) for held in roles)
 
     # Unreachable through the config layer, which refuses an entry declaring
     # none of the three. Answered rather than asserted: a rule that says
@@ -184,13 +186,15 @@ def bound_by_application(config: Config, account: str, target: str) -> str | Non
     would give the account a password no vault holds, and the application
     would fail at its next login (invariant 6). No flag waives it.
 
-    Names are compared by ``upper()``, invariant 5's rule for one database user
-    on one target. The application is named as `account list`'s
-    `SOPULI-W042` names it.
+    Names are compared as the target's product compares them: by ``upper()``,
+    invariant 5's rule, and on MySQL the user exactly and the host without
+    ASCII case, so an application's ``JDOE@%`` does not refuse ``jdoe@%``
+    (#1225). The application is named as `account list`'s `SOPULI-W042`
+    names it.
     """
-    spelled = account.upper()
+    same = account_matcher(_product(config, target))
     for binding in config.bindings:
-        if binding.target == target and binding.account.upper() == spelled:
+        if binding.target == target and same(binding.account, account):
             owner = binding.application or "the inline application"
             return (
                 f"also declared by {owner} as an application account -- a "

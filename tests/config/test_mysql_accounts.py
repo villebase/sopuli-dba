@@ -170,6 +170,45 @@ def test_a_personal_rule_by_profile_names_no_account_to_check() -> None:
     assert loaded.personal_accounts[0].profile == "DEVELOPER"
 
 
+def test_a_role_on_mysql_names_its_host() -> None:
+    """A MySQL role is an account: `CREATE ROLE dev_role` makes `dev_role@%`,
+    and a bare name is a guess (decision 4 of #1225)."""
+    error = refused(personal_accounts=[{"role": "dev_role"}])
+
+    assert error.message == (
+        "a personal account rule's `role:` declares 'dev_role' on MySQL target "
+        "'mysql-dev', and a MySQL account must name its host as user@host"
+    )
+    assert str(error.at) == "personal_accounts[0].role"
+    assert "`dev_role@%`" in str(error.hint)
+
+
+def test_a_role_with_an_empty_host_names_no_stray_at_sign_in_the_hint() -> None:
+    error = refused(personal_accounts=[{"role": "acme_dev_team@"}])
+
+    assert "`acme_dev_team@%`" in str(error.hint)
+    assert "@@" not in str(error.hint)
+
+
+def test_a_quoted_role_is_refused_with_the_typed_name_in_the_hint() -> None:
+    error = refused(personal_accounts=[{"role": "'acme_dev_team'@'%'"}])
+
+    assert "starts or ends with a quote" in error.message
+    assert "`acme_dev_team@10.%`" in str(error.hint)
+
+
+def test_a_role_with_its_host_is_accepted() -> None:
+    loaded = config(personal_accounts=[{"role": "dev_role@%"}])
+
+    assert loaded.personal_accounts[0].role == "dev_role@%"
+
+
+def test_a_role_that_reaches_no_mysql_target_is_unchanged() -> None:
+    loaded = config(personal_accounts=[{"role": "DEV_ROLE", "targets": [ORACLE["name"]]}])
+
+    assert loaded.personal_accounts[0].role == "DEV_ROLE"
+
+
 # ------------------------------------------------------- {user} and {host} ---
 
 

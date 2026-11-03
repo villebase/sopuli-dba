@@ -121,7 +121,10 @@ class Row:
     reset_at: str | None = None
     #: Findings about this row that belong beside it rather than at the run level.
     notices: tuple[Notice, ...] = field(default_factory=tuple)
-    #: Why this target could not be answered at all, where it could not.
+    #: Why this row could not be answered, where it could not: the whole target,
+    #: with ``account`` :data:`ABSENT`, or one account a rule named that the
+    #: driver could not describe, such as a MySQL account on another plugin
+    #: (#1225).
     #:
     #: Distinct from ``state is None``, and that distinction is the whole reason
     #: the field exists: an account the declaration names and the database does
@@ -130,6 +133,9 @@ class Row:
     #: Inferring the first from the second would report a down target as a
     #: missing account.
     unreachable: Any | None = None
+    #: The target's ``type``, so names are counted as that product compares
+    #: them: on MySQL ``jdoe@%`` and ``JDOE@%`` are two accounts (#1225).
+    product: str = ""
 
     @property
     def exists(self) -> bool:
@@ -138,8 +144,13 @@ class Row:
 
     @property
     def failed(self) -> bool:
-        """Whether this row is a target that could not be answered."""
+        """Whether this row could not be answered: a target, or one account."""
         return self.unreachable is not None
+
+    @property
+    def target_failed(self) -> bool:
+        """Whether this row is a whole target that could not be answered."""
+        return self.failed and self.account == ABSENT
 
 
 def enumerated_names(rule: PersonalAccountRule) -> tuple[str, ...]:

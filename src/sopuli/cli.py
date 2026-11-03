@@ -3924,7 +3924,7 @@ def account_list_command(
         found, failed = _list_one(target, run, config, wanted=account, unread=unread)
         rows.extend(found)
         errors += failed
-        unanswered += sum(1 for row in found if row.failed and row.account == account_list.ABSENT)
+        unanswered += sum(1 for row in found if row.target_failed)
         if target.target.type == MYSQL and any(
             row.state is not None and not row.state.locked for row in found
         ):
@@ -4034,20 +4034,24 @@ def _list_one(
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return [_unreachable_row(target, _finding(error))], 1
 
-        names = _declared_names(session, config, target, wanted=wanted)
-        journal = _open_journal(run, config, unread) if names else None
+        named = _declared_names(session, config, target, wanted=wanted)
+        journal = _open_journal(run, config, unread) if named else None
         rows: list[account_list.Row] = []
         failed = 0
-        for name in names:
+        for name, rule in named:
             try:
                 rows.append(
                     _describe_row(session, name, target, config, journal=journal, unread=unread)
                 )
             except DriverError as error:
-                # One account the driver cannot describe, such as a MySQL
+                # One account the driver refuses to describe, such as a MySQL
                 # role member on another plugin, is one failed row, not a
-                # failed listing (#1225).
-                rows.append(_undescribed_row(target, name, _finding(error)))
+                # failed listing (#1225). That refusal is about the account,
+                # `config`; anything else, such as a dropped session or a
+                # refused read, is about the target and ends it, as before.
+                if error.category != "config":
+                    raise
+                rows.append(_undescribed_row(target, name, rule, _finding(error)))
                 failed += 1
         return rows, failed
     finally:
@@ -4062,8 +4066,9 @@ def _declared_names(
     target: ExpandedTarget,
     *,
     wanted: str | None,
-) -> list[str]:
-    """Every account the declaration admits here, once each.
+) -> list[tuple[str, PersonalAccountRule]]:
+    """Every account the declaration admits here, once each, with the first
+    rule that named it.
 
     **Deduplicated across rules, by the product's comparison.** An account may
     be admitted by more than one rule -- UC-2 2 calls that ordinary -- and an
@@ -4082,16 +4087,16 @@ def _declared_names(
     2's rule for the flag: it narrows the resolved set and never extends it.
     """
     key = account_key(target.target.type)
-    seen: dict[object, str] = {}
+    seen: dict[object, tuple[str, PersonalAccountRule]] = {}
     for rule in account_list.rules_on(config, target.name):
         for name in _resolve_rule(session, rule, target):
-            seen.setdefault(key(name), name)
+            seen.setdefault(key(name), (name, rule))
 
-    names = list(seen.values())
+    named = list(seen.values())
     if wanted is not None:
         same = account_matcher(target.target.type)
-        names = [name for name in names if same(name, wanted)]
-    return names
+        named = [(name, rule) for name, rule in named if same(name, wanted)]
+    return named
 
 
 def _resolve_rule(
@@ -4276,18 +4281,23 @@ def _describe_row(
         state=state,
         reset_at=_reset_at(journal, config, target.name, name, unread=unread),
         notices=tuple(notices),
+        product=target.target.type,
     )
 
 
-def _undescribed_row(target: ExpandedTarget, name: str, error: Error) -> account_list.Row:
-    """An account a rule named and the driver could not describe: ``ERROR``,
-    with the error, as :func:`_unreachable_row` reports a target."""
+def _undescribed_row(
+    target: ExpandedTarget, name: str, rule: PersonalAccountRule, error: Error
+) -> account_list.Row:
+    """An account ``rule`` named and the driver could not describe: ``ERROR``,
+    with the error, as :func:`_unreachable_row` reports a target. The rule is
+    kept, so ``declared_by`` says what named it."""
     return account_list.Row(
         account=name,
         target=target.name,
-        rule=None,
+        rule=rule,
         state=None,
         unreachable=error,
+        product=target.target.type,
     )
 
 

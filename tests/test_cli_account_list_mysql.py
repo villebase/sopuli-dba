@@ -21,7 +21,7 @@ from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.diagnostics import ADMITTED_CROSS_DECLARED, FAILED_LOGIN_BLOCK_UNREAD
 from sopuli.driver.mysql.accounts import OtherPluginError
-from sopuli.driver.protocol import UserState
+from sopuli.driver.protocol import DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
 CONFIG = """version: 1
@@ -59,6 +59,8 @@ class FakeSession:
     def describe_user(self, account: str) -> UserState:
         if account.startswith("legacy"):
             raise OtherPluginError(account, "mysql_native_password", target="mysql-dev")
+        if account.startswith("broken"):
+            raise DriverError('the session to target "mysql-dev" is closed')
         held = frozenset(role for role, names in self.members.items() if account in names)
         locked = account.startswith("locked")
         return UserState(
@@ -195,8 +197,32 @@ def test_an_account_that_cannot_be_described_is_one_failed_row(
     assert rows["jdoe@%"]["state"] == "DECLARED"
     assert rows["legacy@%"]["state"] == "ERROR"
     assert "mysql_native_password" in rows["legacy@%"]["error"]["message"]
+    assert "dev_role@%" in rows["legacy@%"]["declared_by"]
     assert "1 account could not be described" in click.unstyle(text.output)
     assert "could not be answered" not in click.unstyle(text.output)
+
+
+def test_a_failure_of_the_target_is_not_caught_per_account(
+    write_config: WriteConfig, members: dict[str, tuple[str, ...]]
+) -> None:
+    """Only the driver's refusal of one account, `config`, is a row. A
+    session that fails is the target's failure and ends it, as before."""
+    members["dev_role@%"] = ("jdoe@%", "broken@%")
+    result = listed(write_config, "  - role: dev_role@%", "--target", "mysql-dev")
+
+    assert type(result.exception) is DriverError, result.output
+
+
+def test_two_spellings_of_a_user_are_counted_as_two_accounts(
+    write_config: WriteConfig, members: dict[str, tuple[str, ...]]
+) -> None:
+    members["dev_role@%"] = ("JDOE@%", "jdoe@%")
+    config = write_config(CONFIG.format(rules="  - role: dev_role@%"))
+    text = CliRunner().invoke(
+        cli, ["--config", str(config), "account", "list", "--target", "mysql-dev"]
+    )
+
+    assert "2 declared accounts, 2 on the selected targets" in click.unstyle(text.output)
 
 
 def test_a_cross_declared_account_is_compared_as_the_server_does(

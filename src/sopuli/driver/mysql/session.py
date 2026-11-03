@@ -267,12 +267,7 @@ class MysqlSession(ClosesConnection):
         ``1143``, and the hint then says which grants and where to find them:
         the server's own hint names only the table.
         """
-        try:
-            return self._read(lambda cursor: self._describe(cursor, account))
-        except DriverError as error:
-            if error.code in REFUSED_READ:
-                error.hint = MISSING_GRANT_HINT
-            raise
+        return self._read_grants(lambda cursor: self._describe(cursor, account))
 
     def _describe(self, cursor: Any, account: str) -> UserState | None:
         if self._session_user is None:

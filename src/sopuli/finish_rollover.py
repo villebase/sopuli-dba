@@ -50,7 +50,16 @@ from sopuli.check import (
     Outcome,
 )
 from sopuli.clock import until
-from sopuli.driver.protocol import EXPIRE_PASSWORD, FAIL, PASS, Scope, UserState, VerifyResult
+from sopuli.driver.protocol import (
+    EXPIRE_PASSWORD,
+    FAIL,
+    PASS,
+    PASSWORD_ROLLOVER,
+    UNAVAILABLE,
+    Scope,
+    UserState,
+    VerifyResult,
+)
 from sopuli.payload import PENDING
 
 __all__ = [
@@ -60,6 +69,7 @@ __all__ = [
     "decide",
     "remaining",
     "settled_before_closing",
+    "window_unknown",
 ]
 
 #: A rotation this run must not finish: the vault has staged a password the
@@ -70,6 +80,19 @@ PENDING_APPLY = "PENDING_APPLY"
 #: A window this build cannot close. Also the schema's, and the honest word: the
 #: account was passed over, and the window will elapse on its own.
 SKIPPED = "SKIPPED"
+
+
+def window_unknown(user: UserState, scope: Scope) -> bool:
+    """Whether a window may be open and the tool cannot read it: MySQL (#1224).
+
+    The server keeps a retained password in ``mysql.user.User_attributes``,
+    which the tool account never reads (decision 6 of #1202), so the driver
+    reports ``rollover_active`` as ``None`` on a target that has rollover. The
+    close is then ``DISCARD OLD PASSWORD``, which the server accepts with
+    nothing retained, so it is sent every time. PostgreSQL also reports
+    ``None``, and has no rollover, so no window is open there.
+    """
+    return user.rollover_active is None and scope.supports(PASSWORD_ROLLOVER)
 
 
 def settled_before_closing(
@@ -90,7 +113,9 @@ def settled_before_closing(
       nothing to do. Measured on 23.26.2.0.0
       (`sql/oracle/07_lock_and_rollover_probe.sql`, step 3), issuing the statement
       anyway is accepted silently and changes nothing, so a run that just issued it
-      would report a change every night.
+      would report a change every night. Where the window cannot be read
+      (:func:`window_unknown`, MySQL) the run goes on and always reports a
+      change, the one exception to invariant 9 here (#1224).
     * **A database that is not open read-write.** ``ERROR``, exit 1. A physical
       standby cannot take the ``ALTER USER``, so it is refused here, before the
       login a close would otherwise spend and before a preview can promise a
@@ -108,14 +133,16 @@ def settled_before_closing(
       the database against, so nothing here can say the close is safe.
     * **No way to close it.** ``SKIPPED``, naming the capability. Not an error:
       a window this build cannot end early simply elapses on its own, which is
-      what would have happened anyway.
+      what would have happened anyway. Asked only of a window the database
+      reports open: MySQL ends one with ``DISCARD OLD PASSWORD``, which needs
+      no :data:`EXPIRE_PASSWORD`.
     """
     if user is None:
         return Outcome(
             ACCOUNT_MISSING,
             "the config declares this account; the database has no such user",
         )
-    if not user.rollover_active:
+    if not user.rollover_active and not window_unknown(user, scope):
         return Outcome(IN_SYNC, "no rollover window is open")
     if scope.read_write is False:
         return Outcome(
@@ -140,7 +167,7 @@ def settled_before_closing(
             "the vault holds no password for this account, so nothing can say "
             "closing the window is safe",
         )
-    if not scope.supports(EXPIRE_PASSWORD):
+    if user.rollover_active and not scope.supports(EXPIRE_PASSWORD):
         return Outcome(
             SKIPPED,
             f"this database cannot end a window early ({EXPIRE_PASSWORD}); "
@@ -149,8 +176,15 @@ def settled_before_closing(
     return None
 
 
-def decide(verification: VerifyResult) -> Outcome | None:
+def decide(verification: VerifyResult, *, unknown_window: bool = False) -> Outcome | None:
     """Why the login says not to close, or ``None`` to go ahead.
+
+    With ``unknown_window`` (:func:`window_unknown`, MySQL), a login that is
+    **unavailable** goes ahead too, as decided on #1224 (Q3). On MySQL the tool
+    logs in only as a sole ``user@%`` account, so for any other account the
+    gate would never let the close happen. A staged ``pending`` still refuses
+    it, and the rotation confirmed ``current`` before it promoted.
+    :func:`closed` says ``current`` was not verified. A **fail** still refuses.
 
     ``None`` on a **pass**, which is the weaker half of the answer and known to
     be: the window means both passwords authenticate, so this cannot prove the
@@ -168,6 +202,8 @@ def decide(verification: VerifyResult) -> Outcome | None:
     """
     if verification.result == PASS:
         return None
+    if verification.result == UNAVAILABLE and unknown_window:
+        return None
     if verification.result == FAIL:
         return Outcome(
             DRIFT,
@@ -182,14 +218,33 @@ def decide(verification: VerifyResult) -> Outcome | None:
     )
 
 
-def closed(user: UserState, verification: VerifyResult, *, now: datetime | None = None) -> Outcome:
+def closed(
+    user: UserState,
+    verification: VerifyResult,
+    *,
+    now: datetime | None = None,
+    unknown_window: bool = False,
+) -> Outcome:
     """The outcome for a window this run ended.
 
     ``IN_SYNC``, and the detail says **how early** rather than merely that it
     happened. That number is the one an operator is judged on afterwards: a
     window closed with four minutes left is a tidy-up, and one closed with
     fifty-five is a decision somebody made about an application's grace period.
+
+    With ``unknown_window`` (:func:`window_unknown`, MySQL), the detail says
+    what was sent instead: any retained password was discarded, and whether
+    ``current`` was verified.
     """
+    if unknown_window:
+        if verification.result == PASS:
+            return Outcome(IN_SYNC, "any retained password discarded", verification)
+        return Outcome(
+            IN_SYNC,
+            "any retained password discarded; the vault's `current` was not verified by "
+            "login, because no login can reach this account",
+            verification,
+        )
     left = remaining(user, now=now)
     if left is None:
         return Outcome(IN_SYNC, "rollover window closed", verification)

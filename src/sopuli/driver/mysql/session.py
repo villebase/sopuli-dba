@@ -11,12 +11,11 @@ scope: ``server``, whether it takes writes, and its encryption. It refuses a
 tool account that can use ``SYSTEM_USER``, audits the tool account's grants
 and the declared accounts for ``doctor --check-privileges``, and describes an
 account. For UC-1 it sets a password from a hash computed on the client,
-keeps the old one working for `rotate --strategy rollover`, verifies one by
-login where only the declared account can answer, and names the server by its
-``server_uuid``. The registry lists `doctor` and the `creds` commands but
-`finish-rollover`. The methods that change an account otherwise,
-look up a role or end a rollover refuse with ``SOPULI-20006`` without a round
-trip.
+keeps the old one working for `rotate --strategy rollover` until `creds
+finish-rollover` discards it, verifies one by login where only the declared
+account can answer, and names the server by its ``server_uuid``. The registry
+lists `doctor` and the `creds` commands. The methods that change an account
+otherwise or look up a role refuse with ``SOPULI-20006`` without a round trip.
 """
 
 from __future__ import annotations
@@ -688,10 +687,23 @@ class MysqlSession(ClosesConnection):
             raise DriverError(f'account "{account}" does not exist on target "{self.target.name}"')
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        """Not written yet (#1224, second part): `creds finish-rollover` is not
-        listed for MySQL, and `--strategy direct` never closes a window here,
-        because no profile opens one."""
-        raise self._not_written("end a rollover window")
+        """``ALTER USER … DISCARD OLD PASSWORD``, always, and ``changed: True``.
+
+        The tool cannot read whether a password is retained: it is in
+        ``mysql.user.User_attributes``, which the tool account never reads
+        (decision 6 of #1202). The server accepts the statement with nothing
+        retained (``03_dual_password_probe.py``, DP1), so it is sent every
+        time, and every run reports a change. That is the one exception to
+        invariant 9 this verb has (#1224).
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(f'account "{account}" does not exist on target "{self.target.name}"')
+        user, host = accounts_module.split(state.name)
+        self._read(lambda cursor: cursor.execute(password_module.discard_old(user, host)))
+        LOG.debug("old password discarded for %s on %s", state.name, self.target.name)
+        return ChangeResult(changed=True, detail="any retained password discarded")
 
 
 def _ms(started: float) -> int:

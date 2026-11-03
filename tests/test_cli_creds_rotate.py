@@ -139,6 +139,9 @@ class Database:
         found = self.declared.get(account)
         if found is None:
             return None
+        if found.rollover_active is None and "@" in account:
+            # A MySQL account: the driver cannot read the window (#1224).
+            return found
         return replace(found, rollover_active=account in self.windows)
 
     def accepts(self, account: str, offered: str) -> bool:
@@ -1485,49 +1488,29 @@ def test_an_error_after_a_retain_still_says_both_passwords_work(
     assert "the previous one was retained, so both log in" in row["error"]["message"]
 
 
-@pytest.mark.parametrize("dry_run", [False, True])
-def test_finish_rollover_on_a_target_without_it_is_refused_before_staging(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, dry_run: bool
+@pytest.mark.parametrize(
+    ("strategy", "closed"), [(("--strategy", "rollover"), ["ACME_WEB_USER@%"]), ((), [])]
+)
+def test_finish_rollover_closes_only_a_window_the_rotation_opened(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    strategy: tuple[str, ...],
+    closed: list[str],
 ) -> None:
-    """Review of #1252: on MySQL the closing step cannot see the window it
-    would close, so `--finish-rollover` is refused with SOPULI-20006 before
-    anything is staged or set, in a preview too."""
-    harness = estate(
-        documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
-        capabilities=frozenset({PASSWORD_ROLLOVER}),
-    )
-    flags = ["--dry-run"] if dry_run else []
-    result = run(
-        runner,
-        write_config(MYSQL_CONFIG),
-        "--strategy",
-        "rollover",
-        "--finish-rollover",
-        *flags,
-    )
-
-    assert result.exit_code != ExitCode.SUCCESS
-    assert "`creds finish-rollover` is not written" in str(result.exception)
-    assert changed(harness) == []
-    assert "pending" not in stored(harness["store"], "apps/acme/mysql-alpha")
-
-
-def test_finish_rollover_without_a_rollover_runs_on_such_a_target(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
-) -> None:
-    """Second review of #1252: under the default strategy no MySQL window
-    opens, so `--finish-rollover` is not refused, and a mixed estate's other
-    windows still close."""
+    """#1224: on MySQL a rollover rotation retained the old password, so the
+    closing step discards it. Under the default strategy the change already
+    discarded it, so no login is spent and no close is reported."""
     harness = estate(
         documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
         users={"ACME_WEB_USER@%": user("acme_web_user@%")},
         capabilities=frozenset({PASSWORD_ROLLOVER}),
     )
-    result = run(runner, write_config(MYSQL_CONFIG), "--finish-rollover")
+    result = run(runner, write_config(MYSQL_CONFIG), *strategy, "--finish-rollover")
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert len(changed(harness)) == 1
-    assert finished(harness) == []
+    assert finished(harness) == closed
 
 
 def test_finish_rollover_closes_windows_at_the_end_of_the_run(

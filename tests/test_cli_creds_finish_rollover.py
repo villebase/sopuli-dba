@@ -33,7 +33,9 @@ from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
     PASS,
+    PASSWORD_ROLLOVER,
     SKIPPED,
+    UNAVAILABLE,
     VERIFY_LOGIN,
     ChangeResult,
     Credential,
@@ -264,6 +266,31 @@ def document(result: Result) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------ the happy path ---
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_window_that_cannot_be_read_is_discarded_without_a_login(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, dry_run: bool
+) -> None:
+    """#1224, MySQL: the window is `unknown`, an unavailable login does not
+    stop the close (Q3), and the row says `current` was not verified. A
+    preview says what it would send and sends nothing."""
+    harness = estate(
+        users={"ACME_WEB_USER": UserState(name="ACME_WEB_USER", status="OPEN")},
+        answers={"ACME_WEB_USER": VerifyResult(VERIFY_LOGIN, UNAVAILABLE, detail="no login")},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    flags = ["--dry-run"] if dry_run else ["--confirm"]
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", *flags)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "unknown" in result.output
+    if dry_run:
+        assert "would discard any retained password" in result.output
+        assert harness["sessions"][0].closed == []
+    else:
+        assert "was not verified by login" in result.output
+        assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
 
 
 def test_an_open_window_is_closed(

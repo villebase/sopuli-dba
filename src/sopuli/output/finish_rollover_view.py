@@ -166,7 +166,7 @@ def _left_alone(state: str) -> bool:
     return is_inconclusive(state) or state in (PENDING_APPLY, SKIPPED)
 
 
-def render_window_table(rows: Sequence[tuple[Binding, UserState]]) -> list[str]:
+def render_window_table(rows: Sequence[tuple[Binding, UserState, bool]]) -> list[str]:
     """What is open and how long it has left, printed before anything is closed.
 
     Under ``--dry-run`` this is the whole output beside the plan, and it is the
@@ -181,12 +181,18 @@ def render_window_table(rows: Sequence[tuple[Binding, UserState]]) -> list[str]:
                 Column("TARGET", _TARGET),
                 Column("WINDOW"),
             ],
-            [[binding.account, binding.target, _window(user)] for binding, user in rows],
+            [
+                [binding.account, binding.target, _window(user, unknown)]
+                for binding, user, unknown in rows
+            ],
         )
     )
 
 
-def _window(user: UserState) -> Cell | str:
+def _window(user: UserState, unknown: bool) -> Cell | str:
+    """``unknown`` where the window cannot be read: MySQL (#1224)."""
+    if unknown:
+        return Cell("unknown", Role.MUTED)
     if not user.rollover_active:
         return Cell("none open", Role.MUTED)
     left = remaining(user)

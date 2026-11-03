@@ -379,6 +379,25 @@ def test_a_rollover_keeps_the_old_password_working_until_a_discard(
     assert refused.value.args[0] == 1045
 
 
+def test_finish_rollover_ends_a_retained_password_and_is_accepted_without_one(
+    stage: Stage, live_mysql: Any
+) -> None:
+    """#1224: `finish_rollover` sends DISCARD, so the retained password stops,
+    and a second call with nothing retained is accepted (DP1)."""
+    user = stage.account("%")
+    new = f"Acme-New-{uuid.uuid4().hex[:12]}"
+    stage.session.set_password(f"{user}@%", Secret(new), old_password="retain")
+
+    first = stage.session.finish_rollover(f"{user}@%")
+    second = stage.session.finish_rollover(f"{user}@%")
+
+    assert (first.changed, second.changed) == (True, True)
+    live_mysql.connect_as(user, new).close()
+    with pytest.raises(pymysql.err.OperationalError) as refused:
+        live_mysql.connect_as(user, "Acme-pw1")
+    assert refused.value.args[0] == 1045
+
+
 def test_an_unknown_old_password_mode_sends_nothing(stage: Stage, live_mysql: Any) -> None:
     """A mode outside the protocol's three is a fault in the caller."""
     user = stage.account("%")

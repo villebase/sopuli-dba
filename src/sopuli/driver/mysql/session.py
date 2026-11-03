@@ -162,6 +162,9 @@ class MysqlSession(ClosesConnection):
     encryption: Encryption | None = None
     #: Invariant 3's cache, probed on first use as on Oracle.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: ``caching_sha2_password_digest_rounds``, read with the scope, or ``None``
+    #: where the server has no such variable.
+    _rounds: int | None = field(default=None, init=False, repr=False)
     #: ``CURRENT_USER()``, ``user@host``, read on the first
     #: :meth:`describe_user`. It does not change for the life of a connection,
     #: as the Oracle session's ``_session_user`` does not.
@@ -223,7 +226,7 @@ class MysqlSession(ClosesConnection):
         ``1193``. Any account reads the variable (CH5).
         """
         try:
-            self._read(_digest_rounds)
+            self._rounds = self._read(_digest_rounds)
         except DriverError as error:
             if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
                 raise
@@ -376,7 +379,9 @@ class MysqlSession(ClosesConnection):
             )
         user, host = accounts_module.split(state.name)
         try:
-            rounds = self._read(_digest_rounds)
+            # Read with the scope, and set only at server start, so the value
+            # cannot change within the session.
+            rounds = self._rounds if self._rounds is not None else self._read(_digest_rounds)
         except DriverError as error:
             if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
                 raise

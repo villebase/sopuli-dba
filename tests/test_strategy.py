@@ -260,6 +260,8 @@ def test_an_account_that_is_not_moving_refuses_nothing() -> None:
         # A later apply cannot tell a first set from a re-set (DP3, DP4).
         (strategy.ROLLOVER, user(), "pending", False, "keep"),
         (strategy.STAGED, user(), "pending", False, "keep"),
+        # Except where the operator asks for the old password to stop now.
+        (strategy.DIRECT, user(), "pending", False, "discard"),
         # Not a rotation in flight.
         (strategy.STAGED, user(), "current", False, "discard"),
         (strategy.STAGED, user(), "previous", False, "discard"),

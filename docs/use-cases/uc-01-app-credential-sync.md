@@ -1486,7 +1486,8 @@ CURRENT PASSWORD` keeps the old password working beside the new one, and
   PASSWORD` after the change, so only the new password works.
 - Only the `rotate` run that staged the `pending` sends `RETAIN`. A later
   `creds apply` sets the `pending` again with neither `RETAIN` nor `DISCARD`,
-  which keeps a retained password. A second `RETAIN` would replace the old
+  which keeps a retained password. `creds apply --strategy direct` sends
+  `DISCARD`, because it asks for the old password to stop working now. A second `RETAIN` would replace the old
   password with the `pending` (`03_dual_password_probe.py`, DP3), and `apply`
   cannot tell a first set from a re-set. So a target the rotation did not
   reach gets no window, and `creds apply --strategy rollover` is refused at

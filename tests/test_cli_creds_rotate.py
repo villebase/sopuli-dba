@@ -1407,6 +1407,86 @@ def test_a_rollover_the_profile_opens_does_not_ask_to_retain(
     assert old_passwords(harness) == ["discard", "discard"]
 
 
+MYSQL_CONFIG = """\
+version: 1
+defaults:
+  policy: app-standard
+policies:
+  app-standard:
+    password: { length: 24, charset: alnum, first_char: alpha }
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault-prod.example.com:8200
+targets:
+  - name: mysql-alpha
+    type: mysql
+    dsn: mysql-alpha.example.com:3306
+    environment: prod
+    vault: vault-prod
+applications:
+  - name: acme
+    accounts: [acme_web_user@%]
+    secret_template: "apps/acme/{target}#DB_CREDENTIALS/{user}"
+"""
+
+
+def test_an_error_after_a_retain_still_says_both_passwords_work(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Review of #1252: the server cannot say a password is retained, so an
+    error after the statement must not lose that fact."""
+    events: list[str] = []
+
+    def fail_after_the_change(harness: dict[str, Any], event: str) -> None:
+        events.append(event)
+        if event == "describe_user" and "set_password" in events:
+            raise RuntimeError("the connection dropped")
+
+    estate(capabilities=frozenset({PASSWORD_ROLLOVER}), on_call=fail_after_the_change)
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--strategy",
+        "rollover",
+        "--output",
+        "json",
+    )
+
+    (row,) = [row for row in document(result)["results"] if row["state"] != "PENDING_APPLY"]
+    assert (row["state"], row["changed"]) == ("ERROR", True)
+    assert "the previous one retained, so both log in" in row["error"]["message"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_finish_rollover_on_a_target_without_it_is_refused_before_staging(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, dry_run: bool
+) -> None:
+    """Review of #1252: on MySQL the closing step cannot see the window it
+    would close, so `--finish-rollover` is refused with SOPULI-20006 before
+    anything is staged or set, in a preview too."""
+    harness = estate(
+        documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    flags = ["--dry-run"] if dry_run else []
+    result = run(
+        runner,
+        write_config(MYSQL_CONFIG),
+        "--strategy",
+        "rollover",
+        "--finish-rollover",
+        *flags,
+    )
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "`creds finish-rollover` is not written" in str(result.exception)
+    assert changed(harness) == []
+    assert "pending" not in stored(harness["store"], "apps/acme/mysql-alpha")
+
+
 def test_finish_rollover_closes_windows_at_the_end_of_the_run(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

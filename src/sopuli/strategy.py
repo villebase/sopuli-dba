@@ -38,9 +38,10 @@ would tell an application team the old password had stopped working when it had
 not.
 
 **MySQL is the exception: the tool opens the window.** No profile grants one.
-``rollover`` sends ``RETAIN CURRENT PASSWORD``, the old password then works until
-`creds finish-rollover` sends ``DISCARD OLD PASSWORD``, and ``staged`` and
-``direct`` both discard it at once. ``rollover`` is never the default there,
+``rollover`` sends ``RETAIN CURRENT PASSWORD``, and the old password then works
+until `creds finish-rollover` sends ``DISCARD OLD PASSWORD``. A rotation under
+``staged`` or ``direct`` discards it at once, and so does an `apply` under
+``direct``. ``rollover`` is never the default there,
 because the window has no end of its own (#1224). Only `creds rotate` opens one:
 :func:`old_password` says why.
 """
@@ -170,6 +171,8 @@ def old_password(strategy: str, user: UserState, stage: str, *, rotating: bool) 
       It cannot tell a first set from a re-set: MySQL keeps a retained password
       through a change without ``RETAIN``, and a second ``RETAIN`` would replace
       it with the ``pending`` (``03_dual_password_probe.py``, DP4 and DP3).
+      ``--strategy direct`` is the exception: it asks for the old password to
+      stop working now, so it discards it. ``direct`` is never the default.
     * ``current`` and a rollback's ``previous`` discard it.
 
     Only a driver that keeps a second password on request acts on the answer.
@@ -177,7 +180,7 @@ def old_password(strategy: str, user: UserState, stage: str, *, rotating: bool) 
     if stage != PENDING:
         return OLD_DISCARD
     if not rotating:
-        return OLD_KEEP
+        return OLD_DISCARD if strategy == DIRECT else OLD_KEEP
     return OLD_RETAIN if tool_opens_window(strategy, user) else OLD_DISCARD
 
 

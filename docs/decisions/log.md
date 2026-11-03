@@ -4142,8 +4142,10 @@ the register.
   1. A window opens only with `creds rotate --strategy rollover`. The default
      stays `staged`.
   2. While a `pending` is staged, `apply` sets it with neither `RETAIN` nor
-     `DISCARD`, whatever the strategy. `apply --strategy rollover` is refused
-     at pre-flight where no profile opens a window.
+     `DISCARD`. `apply --strategy rollover` is refused at pre-flight where no
+     profile opens a window. `apply --strategy direct` sends `DISCARD`, because
+     it asks for the old password to stop working now (from the review of
+     #1252).
   3. `finish-rollover` sends `DISCARD` where no login is available, and
      reports `current` as not verified.
 - **Why:**

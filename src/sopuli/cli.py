@@ -178,6 +178,7 @@ from sopuli.driver.protocol import (
     DEFAULT_MARGIN,
     EXPIRE_PASSWORD,
     FAIL,
+    OLD_DISCARD,
     OLD_RETAIN,
     PASS,
     PASSWORD_EXPIRE,
@@ -8729,6 +8730,13 @@ WINDOW_LEFT_OPEN = "the run lost its lock before it closed the rollover window"
 #: still kept if one is added.
 STOPPED_BEFORE_VERIFY = "the password was set, and the run lost its lock before it verified it"
 
+#: An error row's clause where the run set the password with the old one
+#: retained, on MySQL (#1224).
+RETAINED_AFTER_ERROR = (
+    "the password was set with the previous one retained, so both log in until "
+    "`sopuli creds finish-rollover`"
+)
+
 #: The row's detail when the run lost its lock after the attribute pass changed
 #: the account and before the password was set.
 STOPPED_BEFORE_PASSWORD = (
@@ -8856,6 +8864,7 @@ def _apply_one(
     caveats: tuple[guardrails.Caveat, ...] = ()
     enforced: tuple[AttributeChange, ...] = ()
     issued = False
+    old_password = OLD_DISCARD
     reuse: UserState | None = None
     sent: Encryption | None = None
     outcome: check_states.Outcome | None = None
@@ -9206,6 +9215,10 @@ def _apply_one(
             # The driver's hint for a refused value is "draw another", which a
             # rollback cannot do: it has one value to send and it sent it.
             reported = replace(reported, hint=ROLLBACK_REFUSED_HINT)
+        if issued and old_password == OLD_RETAIN:
+            # MySQL (#1224): the server cannot say a password is retained, so
+            # the row is the only place that says the old one still logs in.
+            reported = replace(reported, message=f"{reported.message}; {RETAINED_AFTER_ERROR}")
         return _Applied(
             binding,
             source,
@@ -11668,7 +11681,8 @@ def creds_rotate(
     `current` that applications read is always a password the whole estate
     already accepts. A run that stops part way leaves `pending` staged and the
     databases it reached changed. `creds apply` finishes that run, and under
-    the rollover strategy there is no outage in the meantime.
+    the rollover strategy there is no outage in the meantime. On MySQL, a
+    target this run did not reach gets no window when `creds apply` sets it.
 
     Running `creds generate`, `creds apply` and `creds check` one after another
     is not the same. Each of those commands takes and releases its own lock.
@@ -11804,6 +11818,8 @@ def creds_rotate(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
+    if finish_windows:
+        _refuse_unwritten_finish(bindings, config)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The
@@ -12100,6 +12116,18 @@ class _Rotation:
     stolen: LockStolenError | None = None
     #: The pre-flight's caveats as notes (decision #606), for the end of the run.
     caveats: list[str] = field(default_factory=list)
+
+
+def _refuse_unwritten_finish(bindings: Sequence[Binding], config: Config) -> None:
+    """Refuse `rotate --finish-rollover` before anything is staged, where a
+    target's driver has no `creds finish-rollover` (SOPULI-20006).
+
+    MySQL until #1224's second part: its window cannot be read, so the closing
+    step would report nothing to close while the retained password still logs in.
+    """
+    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
+    for name in dict.fromkeys(binding.target for binding in bindings):
+        require_command(by_target[name].target, "creds.finish-rollover")
 
 
 def _rotate_estate(

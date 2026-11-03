@@ -193,8 +193,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # `finish-rollover` sends `DISCARD OLD PASSWORD` (#1224, decision 6 of
     # #1202). UC-2: `account list`, where a `role:` rule names its host and a
     # `profile:` rule is refused by capability, because MySQL has no profiles
-    # (#1225). The mutating UC-2 verbs are not written and refuse with
-    # SOPULI-20006.
+    # (#1225); `account reset-password`, which refuses `--keep-rollover` by
+    # capability. `account suspend` and `expire-password` are not written and
+    # refuse with SOPULI-20006.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -203,6 +204,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         commands=frozenset(
             {
                 "account.list",
+                "account.reset-password",
                 "creds.check",
                 "creds.apply",
                 "creds.rotate",

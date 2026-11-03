@@ -99,7 +99,8 @@ Give a person's account a new password, and hand it over.
 This is for someone who cannot get into their own account, usually because
 the password expired and they no longer know it. The command draws a new
 password, sets it, and delivers it by the method `delivery:` names. It
-works on Oracle targets only.
+works on Oracle and MySQL targets, and on PostgreSQL by an unseen method
+only.
 
 The configuration chooses one of two paths. The unseen path, the default,
 puts the password where only the owner can fetch it, and shows it to
@@ -124,7 +125,9 @@ stops working at once. `--keep-rollover` leaves the window open, for a
 reset where the person still knows the old password. Do not use it after a
 suspected disclosure, because someone else knows the old password too. The
 tool refuses `--keep-rollover` with `manual`, because there the closed
-window is what makes the expiry end your knowledge of the password.
+window is what makes the expiry end your knowledge of the password. It
+refuses it on a MySQL target too: a reset there always discards the old
+password, because a kept one cannot be read back.
 
 `--account` names one account. The target selectors choose where it is
 reset, not which account; each target holds a separate account with a

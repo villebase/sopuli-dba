@@ -70,6 +70,11 @@ def config(**overrides: Any) -> Any:
     return build_config({**DOCUMENT, **overrides})
 
 
+def expanded(built: Any, name: str = TARGET) -> Any:
+    """The expanded target ``name`` of a built config."""
+    return next(target for target in built.expanded_targets if target.name == name)
+
+
 def user(name: str, *, status: str = "OPEN", profile: str | None = None, **extra: Any) -> UserState:
     return UserState(name=name, status=status, profile=profile, **extra)
 
@@ -661,7 +666,7 @@ def test_the_reset_at_column_is_read_from_the_journal() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    found = _reset_at(journal, built, TARGET, "jdoe", unread=_JournalFailures())
+    found = _reset_at(journal, built, expanded(built), "jdoe", unread=_JournalFailures())
     assert found == "2026-09-17T09:14:22Z"
 
 
@@ -677,7 +682,7 @@ def test_a_journal_with_no_record_for_this_account_is_not_a_finding() -> None:
     )
 
     unread = _JournalFailures()
-    assert _reset_at(MemoryStore(), built, TARGET, "jdoe", unread=unread) is None
+    assert _reset_at(MemoryStore(), built, expanded(built), "jdoe", unread=unread) is None
     assert unread.first is None
 
 
@@ -698,7 +703,7 @@ def test_a_journal_that_cannot_be_read_does_not_fail_the_listing() -> None:
         vaults={"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}},
     )
 
-    assert _reset_at(Broken(), built, TARGET, "jdoe", unread=_JournalFailures()) is None
+    assert _reset_at(Broken(), built, expanded(built), "jdoe", unread=_JournalFailures()) is None
 
 
 JOURNALLED = {
@@ -724,9 +729,9 @@ def test_a_refused_read_is_recorded_and_the_next_record_is_still_read() -> None:
     built = config(**JOURNALLED)
     unread = _JournalFailures()
 
-    _reset_at(Refusing(), built, TARGET, "jdoe", unread=unread)
-    _reset_at(Refusing(), built, TARGET, "rroe", unread=unread)
-    _reset_at(MemoryStore(), built, TARGET, "asmith", unread=unread)
+    _reset_at(Refusing(), built, expanded(built), "jdoe", unread=unread)
+    _reset_at(Refusing(), built, expanded(built), "rroe", unread=unread)
+    _reset_at(MemoryStore(), built, expanded(built), "asmith", unread=unread)
 
     assert unread.rows == 2
     assert not unread.dead
@@ -754,7 +759,7 @@ def test_a_store_that_fails_otherwise_is_not_read_again() -> None:
     journal = Unreachable()
 
     for account in ("jdoe", "rroe", "asmith"):
-        assert _reset_at(journal, built, TARGET, account, unread=unread) is None
+        assert _reset_at(journal, built, expanded(built), account, unread=unread) is None
 
     assert len(reads) == 1
     assert unread.dead
@@ -780,8 +785,8 @@ def test_a_journal_that_cannot_be_opened_is_tried_once(monkeypatch: pytest.Monke
 
     assert _open_journal(run, built, unread) is None
     assert _open_journal(run, built, unread) is None
-    _reset_at(None, built, TARGET, "jdoe", unread=unread)
-    _reset_at(None, built, TARGET, "rroe", unread=unread)
+    _reset_at(None, built, expanded(built), "jdoe", unread=unread)
+    _reset_at(None, built, expanded(built), "rroe", unread=unread)
 
     assert len(calls) == 1
     assert unread.dead
@@ -798,7 +803,8 @@ def test_a_record_with_no_reset_at_is_recorded() -> None:
     journal.write("sopuli/personal-resets/appdb-dev-alpha/jdoe", {"account": "jdoe"}, cas=None)
     unread = _JournalFailures()
 
-    assert _reset_at(journal, config(**JOURNALLED), TARGET, "jdoe", unread=unread) is None
+    built = config(**JOURNALLED)
+    assert _reset_at(journal, built, expanded(built), "jdoe", unread=unread) is None
 
     assert unread.rows == 1
     assert unread.first == (
@@ -834,7 +840,8 @@ def test_a_name_with_no_record_path_is_recorded_and_does_not_raise() -> None:
 
     unread = _JournalFailures()
 
-    assert _reset_at(MemoryStore(), config(**JOURNALLED), TARGET, "A/B", unread=unread) is None
+    built = config(**JOURNALLED)
+    assert _reset_at(MemoryStore(), built, expanded(built), "A/B", unread=unread) is None
 
     assert unread.rows == 1
     assert not unread.dead
@@ -843,4 +850,5 @@ def test_a_name_with_no_record_path_is_recorded_and_does_not_raise() -> None:
 def test_no_journal_configured_reads_as_no_date_rather_than_an_error() -> None:
     from sopuli.cli import _JournalFailures, _reset_at
 
-    assert _reset_at(None, config(), TARGET, "jdoe", unread=_JournalFailures()) is None
+    built = config()
+    assert _reset_at(None, built, expanded(built), "jdoe", unread=_JournalFailures()) is None

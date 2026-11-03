@@ -14,9 +14,10 @@ account. For UC-1 it sets a password from a hash computed on the client,
 keeps the old one working for `rotate --strategy rollover` until `creds
 finish-rollover` discards it, verifies one by login where only the declared
 account can answer, and names the server by its ``server_uuid``. For UC-2 it
-resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`). The registry
-lists `doctor`, the `creds` commands and `account list`. The methods that
-change an account otherwise refuse with ``SOPULI-20006`` without a round trip.
+resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`) and resets a
+password. The registry lists `doctor`, the `creds` commands, `account list`
+and `account reset-password`. The methods that change an account otherwise
+refuse with ``SOPULI-20006`` without a round trip.
 """
 
 from __future__ import annotations
@@ -52,15 +53,21 @@ from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
     ENCRYPTION_TLS,
+    EXPIRE_PASSWORD,
+    KEEP_ROLLOVER,
+    KEPT_WINDOW_UNREADABLE,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     OLD_PASSWORD_MODES,
     OLD_RETAIN,
     PASS,
     PASSWORD_ROLLOVER,
+    PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
+    ROLLOVER_FINISH,
     STORED,
     UNAVAILABLE,
     UNKNOWN,
@@ -78,6 +85,7 @@ from sopuli.driver.protocol import (
     DriverContext,
     DriverError,
     Encryption,
+    PartialAccountChangeError,
     PrivilegeAudit,
     Scope,
     Timeouts,
@@ -225,11 +233,17 @@ class MysqlSession(ClosesConnection):
         return self._scope
 
     def _capabilities(self) -> frozenset[str]:
-        """``role_lookup`` always, and ``password_rollover`` where the server
-        has ``caching_sha2_password_digest_rounds``.
+        """``role_lookup`` and ``expire_password`` always, and
+        ``password_rollover`` where the server has
+        ``caching_sha2_password_digest_rounds``.
 
         ``role_lookup``: a role is a row in ``mysql.user`` and its grants are in
         ``mysql.role_edges``, and §2.1 grants the tool account both reads.
+
+        ``expire_password``: an account with only ``CREATE USER`` sends
+        ``PASSWORD EXPIRE`` (LE3) and ``DISCARD OLD PASSWORD`` (DP7), and a
+        new password ends an expiry (LE7), so `creds apply` sets one on an
+        expired account and the change confirms.
 
         The tool needs that variable to set any password, and ``RETAIN CURRENT
         PASSWORD`` is older than it (MySQL 8.0.14 and 8.0.24), so a server that
@@ -242,8 +256,8 @@ class MysqlSession(ClosesConnection):
         except DriverError as error:
             if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
                 raise
-            return frozenset({ROLE_LOOKUP})
-        return frozenset({PASSWORD_ROLLOVER, ROLE_LOOKUP})
+            return frozenset({EXPIRE_PASSWORD, ROLE_LOOKUP})
+        return frozenset({EXPIRE_PASSWORD, PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
     def _not_written(self, what: str) -> NotWrittenError:
         return NotWrittenError(
@@ -391,36 +405,7 @@ class MysqlSession(ClosesConnection):
                 ),
             )
         user, host = accounts_module.split(state.name)
-        try:
-            # Read with the scope, and set only at server start, so the value
-            # cannot change within the session.
-            rounds = self._rounds if self._rounds is not None else self._read(_digest_rounds)
-        except DriverError as error:
-            if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
-                raise
-            raise DriverError(
-                f'target "{self.target.name}" has no caching_sha2_password_digest_rounds',
-                code=error.code,
-                hint=(
-                    "the tool sets a password with the server's own rounds, and does not "
-                    "guess them; a server without the variable is not supported for this"
-                ),
-            ) from error
-        if rounds % 1000:
-            raise DriverError(
-                f"caching_sha2_password_digest_rounds is {rounds} on target "
-                f'"{self.target.name}", which is not a multiple of 1000',
-                hint=(
-                    "the stored hash writes the rounds in thousands, so the tool does not "
-                    "know what the server would store; set the variable to a multiple of 1000"
-                ),
-            )
-        statement = password_module.alter_user(
-            user,
-            host,
-            password_module.caching_sha2_hash(secret, rounds),
-            retain=old_password == OLD_RETAIN,
-        )
+        statement = self._password_statement(user, host, secret, retain=old_password == OLD_RETAIN)
         # The server's clock before the statement: confirm_change compares
         # password_last_changed with it. The session's time zone is UTC.
         since = self._read(_server_now)
@@ -456,13 +441,150 @@ class MysqlSession(ClosesConnection):
         LOG.debug("password set for %s on %s", state.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
 
+    def _password_statement(
+        self, user: str, host: str, secret: Secret, *, retain: bool = False, expire: bool = False
+    ) -> str:
+        """The ``ALTER USER`` that sets ``secret`` by its hash, with the
+        server's own rounds. Built before the first statement of a change, so
+        a refusal here changes nothing."""
+        try:
+            # Read with the scope, and set only at server start, so the value
+            # cannot change within the session.
+            rounds = self._rounds if self._rounds is not None else self._read(_digest_rounds)
+        except DriverError as error:
+            if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
+                raise
+            raise DriverError(
+                f'target "{self.target.name}" has no caching_sha2_password_digest_rounds',
+                code=error.code,
+                hint=(
+                    "the tool sets a password with the server's own rounds, and does not "
+                    "guess them; a server without the variable is not supported for this"
+                ),
+            ) from error
+        if rounds % 1000:
+            raise DriverError(
+                f"caching_sha2_password_digest_rounds is {rounds} on target "
+                f'"{self.target.name}", which is not a multiple of 1000',
+                hint=(
+                    "the stored hash writes the rounds in thousands, so the tool does not "
+                    "know what the server would store; set the variable to a multiple of 1000"
+                ),
+            )
+        return password_module.alter_user(
+            user,
+            host,
+            password_module.caching_sha2_hash(secret, rounds),
+            retain=retain,
+            expire=expire,
+        )
+
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend an account")
 
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
     ) -> tuple[AccountChange, ...]:
-        raise self._not_written("reset a password")
+        """UC-2 §4.1 on a MySQL server: three statements, one per row the
+        protocol names (#1225).
+
+        1. ``ACCOUNT UNLOCK``, on every reset. A block after failed logins is
+           not in ``mysql.user``, and a new password does not end it (LE5), so
+           the reset cannot tell whether one is in place and ends it anyway
+           (decision 1). The row says it was sent, and that its effect cannot
+           be read.
+        2. The password by its hash, with ``PASSWORD EXPIRE`` where
+           ``expire``. The owner then logs in only to set a password of their
+           own (LE6).
+        3. ``DISCARD OLD PASSWORD``. A password someone retained survives the
+           change, and the expiry with it (LE7), so this is sent on every
+           reset. The tool cannot read whether one was retained.
+
+        **Refused before anything is sent:** ``keep_rollover``, by capability
+        (decision 2), a read-only session, a password the server cannot take,
+        an account that does not exist, and one locked with ``ACCOUNT LOCK``.
+        That lock is always somebody's decision (H4): a block after failed
+        logins never sets ``account_locked``.
+
+        A failure after the unlock committed raises
+        :class:`~sopuli.driver.protocol.PartialAccountChangeError` with the
+        rows that ran, as on Oracle.
+        """
+        if keep_rollover:
+            # The command refuses it at plan time; this is the driver's own line.
+            raise UnsupportedCapabilityError(
+                KEEP_ROLLOVER, target=self.target.name, hint=KEPT_WINDOW_UNREADABLE
+            )
+        password_module.admit(secret)
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing was reset, and the "
+                    "account name is worth checking against the server"
+                ),
+            )
+        if state.deliberately_locked:
+            raise DriverError(
+                f'account "{state.name}" is locked, and a reset does not unlock it',
+                hint=(
+                    "ACCOUNT LOCK is somebody's decision -- `account suspend`, usually -- and "
+                    "handing the account a working password would undo it silently. Run "
+                    "ALTER USER … ACCOUNT UNLOCK first if that is what you mean (H4)"
+                ),
+            )
+        user, host = accounts_module.split(state.name)
+        # Built before the first statement, so a refusal of the rounds cannot
+        # come after the unlock.
+        statement = self._password_statement(user, host, secret, expire=expire)
+        discard = password_module.discard_old(user, host)
+
+        self._read(lambda cursor: cursor.execute(password_module.unlock(user, host)))
+        done: tuple[AccountChange, ...] = (
+            AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=True,
+                status=state.status,
+                detail=(
+                    "sent ACCOUNT UNLOCK, which ends a block after failed logins; "
+                    "whether one was in place cannot be read"
+                ),
+            ),
+        )
+        try:
+            self._read(lambda cursor: cursor.execute(statement), scrub=_scrub_hash)
+        except DriverError as failure:
+            failure.password_sent = True
+            raise PartialAccountChangeError(failure, completed=done) from failure
+        done = (
+            *done,
+            AccountChange(
+                PASSWORD_SET,
+                changed=True,
+                status=state.status,
+                detail="password set, expired" if expire else "password set",
+            ),
+        )
+        try:
+            self._read(lambda cursor: cursor.execute(discard))
+        except DriverError as failure:
+            raise PartialAccountChangeError(
+                failure,
+                completed=done,
+                hint=f"assume a retained old password still works. Discard it by hand: {discard}",
+            ) from failure
+        LOG.debug("password reset for %s on %s", state.name, self.target.name)
+        return (
+            *done,
+            AccountChange(
+                ROLLOVER_FINISH,
+                changed=True,
+                status=state.status,
+                detail="sent DISCARD OLD PASSWORD, so no retained password logs in",
+            ),
+        )
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
         raise self._not_written("expire a password")

@@ -406,11 +406,16 @@ def same_name(left: str, right: str) -> bool:
     return left.upper() == right.upper()
 
 
+def fold_mysql_host(host: str) -> str:
+    """A MySQL host pattern with its ASCII letters in lower case: equal for two
+    patterns the server takes as one host (``05_identity_grants_probe.py``,
+    ID3). The one copy of the rule: the driver's reads use it too."""
+    return host.translate(_ASCII_LOWER)
+
+
 def same_mysql_host(left: str, right: str) -> bool:
-    """Two MySQL host patterns are one host: compared without ASCII case, as
-    the server compares them (``05_identity_grants_probe.py``, ID3). The one
-    copy of the rule: the driver's reads use it too."""
-    return left.translate(_ASCII_LOWER) == right.translate(_ASCII_LOWER)
+    """Two MySQL host patterns are one host (:func:`fold_mysql_host`)."""
+    return fold_mysql_host(left) == fold_mysql_host(right)
 
 
 def same_mysql_account(left: str, right: str) -> bool:
@@ -443,7 +448,7 @@ def account_key(product: str) -> Callable[[str], object]:
 
     def mysql_key(name: str) -> object:
         split = mysql_account(name)
-        return name if split is None else (split[0], split[1].translate(_ASCII_LOWER))
+        return name if split is None else (split[0], fold_mysql_host(split[1]))
 
     return mysql_key
 

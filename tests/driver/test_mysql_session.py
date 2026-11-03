@@ -17,13 +17,19 @@ import pytest
 
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetMysql
 from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
+    EXPIRE_PASSWORD,
+    KEEP_ROLLOVER,
     PASSWORD_ROLLOVER,
+    PASSWORD_SET,
     ROLE_LOOKUP,
+    ROLLOVER_FINISH,
     AccountAttributes,
     Credential,
     Driver,
     DriverContext,
     DriverError,
+    PartialAccountChangeError,
     Session,
     Timeouts,
     UnsupportedCapabilityError,
@@ -59,8 +65,10 @@ class _Cursor:
         self._last = query
         if query.startswith("select User,") and self._connection.refuse is not None:
             raise self._connection.refuse
-        if query.startswith("ALTER USER") and self._connection.fail_alter is not None:
+        if " IDENTIFIED WITH " in query and self._connection.fail_alter is not None:
             raise self._connection.fail_alter
+        if query.endswith("ACCOUNT UNLOCK") and self._connection.fail_unlock is not None:
+            raise self._connection.fail_unlock
         if query.endswith("DISCARD OLD PASSWORD") and self._connection.fail_discard is not None:
             raise self._connection.fail_discard
         if "digest_rounds" in query and self._connection.fail_rounds is not None:
@@ -101,6 +109,8 @@ class _Connection:
         self.refuse: Exception | None = None
         #: An error the statement that sets a password raises instead.
         self.fail_alter: Exception | None = None
+        #: An error `ACCOUNT UNLOCK` raises instead.
+        self.fail_unlock: Exception | None = None
         #: The server's `caching_sha2_password_digest_rounds`.
         self.rounds = 5000
         #: The server's clock, as `select now()` returns it: naive, UTC.
@@ -160,7 +170,6 @@ def test_the_scope_is_read_once_and_cached() -> None:
     "call",
     [
         lambda s: s.suspend_account("acme_app@%"),
-        lambda s: s.reset_password("acme_app@%", Secret("x"), expire=True),
         lambda s: s.expire_password("acme_app@%"),
         lambda s: s.apply_attributes("acme_app@%", AccountAttributes()),
     ],
@@ -191,15 +200,17 @@ def test_a_profile_rule_is_refused_by_capability(call: Any) -> None:
     assert "MySQL has no profiles" in str(caught.value.hint)
 
 
-def test_the_server_can_look_up_a_role_whatever_its_rounds() -> None:
-    """`role_lookup` comes from §2.1's grants, not from the server, so a
-    server without the rounds variable reports it too."""
+def test_the_server_can_look_up_a_role_and_expire_whatever_its_rounds() -> None:
+    """`role_lookup` comes from §2.1's grants and `expire_password` from
+    statements any account with CREATE USER sends, not from the server, so a
+    server without the rounds variable reports them too (#1225)."""
     assert _session().scope().supports(ROLE_LOOKUP)
+    assert _session().scope().supports(EXPIRE_PASSWORD)
     session = _session()
     session.connection.fail_rounds = session_module.pymysql.err.OperationalError(
         1193, "Unknown system variable 'caching_sha2_password_digest_rounds'"
     )
-    assert session.scope().capabilities == frozenset({ROLE_LOOKUP})
+    assert session.scope().capabilities == frozenset({EXPIRE_PASSWORD, ROLE_LOOKUP})
 
 
 def test_accounts_matching_takes_exactly_one_rule() -> None:
@@ -358,6 +369,106 @@ def test_set_password_sends_the_hash_then_discards_a_retained_password() -> None
     assert discard == "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD"
     assert "Acme-App-pw1" not in statement
     assert result.changed is True
+
+
+def _altered(session: Any) -> list[str]:
+    return [q for q in session.connection.queries if q.startswith("ALTER USER")]
+
+
+@pytest.mark.parametrize("expire", [True, False], ids=["seen", "unseen"])
+def test_a_reset_unlocks_sets_and_discards(expire: bool) -> None:
+    """#1225: decision 1's unlock, the hash with PASSWORD EXPIRE on the seen
+    path, then DISCARD OLD PASSWORD, as LE6 and LE7 measured them."""
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+
+    rows = session.reset_password("acme_app@10.%", Secret("Acme-App-pw1"), expire=expire)
+
+    unlock, statement, discard = _altered(session)
+    assert unlock == "ALTER USER `acme_app`@`10.%` ACCOUNT UNLOCK"
+    assert statement.startswith(
+        "ALTER USER `acme_app`@`10.%` IDENTIFIED WITH caching_sha2_password AS 0x"
+    )
+    assert statement.endswith(" PASSWORD EXPIRE") is expire
+    assert "Acme-App-pw1" not in statement
+    assert discard == "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD"
+    assert [(row.action, row.changed) for row in rows] == [
+        (ACCOUNT_UNLOCK, True),
+        (PASSWORD_SET, True),
+        (ROLLOVER_FINISH, True),
+    ]
+    assert "cannot be read" in str(rows[0].detail)
+
+
+@pytest.mark.parametrize(
+    ("accounts", "keep", "words"),
+    [
+        ([_account_row("10.%")], True, KEEP_ROLLOVER),
+        ([], False, "does not exist"),
+        ([("acme_app", "10.%", "caching_sha2_password", "Y", "N", None, None)], False, "locked"),
+        ([_account_row("10.%")], False, "is empty"),
+    ],
+    ids=["keep-rollover", "missing", "locked", "empty"],
+)
+def test_a_reset_refuses_before_anything_is_sent(
+    accounts: list[Any], keep: bool, words: str
+) -> None:
+    session = _session()
+    session.connection.accounts = accounts
+    password = "" if words == "is empty" else "Acme-App-pw1"
+
+    with pytest.raises(DriverError, match=words) as caught:
+        session.reset_password("acme_app@10.%", Secret(password), expire=True, keep_rollover=keep)
+
+    assert _altered(session) == []
+    assert caught.value.password_sent is False
+    if keep:
+        assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+
+
+def test_a_failed_unlock_changed_nothing() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.fail_unlock = session_module.pymysql.err.OperationalError(
+        1227, "Access denied; you need the CREATE USER privilege"
+    )
+
+    with pytest.raises(DriverError) as caught:
+        session.reset_password("acme_app@10.%", Secret("Acme-App-pw1"), expire=True)
+
+    assert not isinstance(caught.value, PartialAccountChangeError)
+    assert caught.value.password_sent is False
+    assert len(_altered(session)) == 1
+
+
+def test_a_failed_set_after_the_unlock_carries_the_unlock() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.fail_alter = session_module.pymysql.err.OperationalError(
+        1827, "The password hash doesn't have the expected format near 0x24412430"
+    )
+
+    with pytest.raises(PartialAccountChangeError) as caught:
+        session.reset_password("acme_app@10.%", Secret("Acme-App-pw1"), expire=True)
+
+    assert [row.action for row in caught.value.completed] == [ACCOUNT_UNLOCK]
+    assert caught.value.password_sent is True
+    assert "0x24412430" not in str(caught.value)
+
+
+def test_a_failed_discard_after_the_set_says_what_to_assume() -> None:
+    session = _session()
+    session.connection.accounts = [_account_row("10.%")]
+    session.connection.fail_discard = session_module.pymysql.err.OperationalError(
+        1227, "Access denied; you need the CREATE USER privilege"
+    )
+
+    with pytest.raises(PartialAccountChangeError) as caught:
+        session.reset_password("acme_app@10.%", Secret("Acme-App-pw1"), expire=False)
+
+    assert [row.action for row in caught.value.completed] == [ACCOUNT_UNLOCK, PASSWORD_SET]
+    assert caught.value.password_sent is True
+    assert "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD" in str(caught.value.hint)
 
 
 def test_a_failed_discard_says_the_password_was_set() -> None:

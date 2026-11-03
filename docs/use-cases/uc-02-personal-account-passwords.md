@@ -11,8 +11,9 @@ lists the method that is not built yet. §9 lists the open questions. On
 PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 `account suspend` are built. The seen reset and `account expire-password` are
 refused there with exit 5, because a role cannot be made to change its password
-at its next login. On MySQL only `account list` is built; the other verbs
-refuse a MySQL target with `SOPULI-20006`.
+at its next login. On MySQL, `account list` and `account reset-password` are
+built; `account suspend` and `account expire-password` refuse a MySQL target
+with `SOPULI-20006`.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -623,6 +624,12 @@ rules apply:
   concurrent resets would not collide. That is the failure §3.3 keys the lock to
   prevent. A target name is a `targets:` key, matched exactly. Folding it would
   merge two targets an operator declared as distinct.
+- **On MySQL the account is written as the server compares it.** The user as it
+  is, and the host in lower case, with `%` written `any` and `_` written `one`,
+  as `{host}` writes them in a secret template. So `jdoe@%` is at
+  `<prefix>/<target>/jdoe@any`, and `JDOE@%`, another account, has a record and
+  a lock of its own. `jdoe@LOCALHOST` and `jdoe@localhost` are one account and
+  share them ([#1225](../decisions/log.md#1225)).
 - **Invariant 2 is checked against the serialised document**, not trusted to the
   writer. The type has no field a password could go in, but that proves only that
   no writer *in this build* puts one there. `assert_no_secret` walks what is about
@@ -910,6 +917,38 @@ The tool account needs `ADMIN OPTION` on the role, as for an application role
 (`02-postgres-privileges.md` §2.2). Reasons:
 [#1201](../decisions/log.md#1201).
 
+**On MySQL a reset is always three statements.** The password goes as a
+`caching_sha2_password` hash computed on the client, as in UC-1 (invariant 15):
+
+```sql
+-- 1. on every reset; an account with account_locked = 'Y' is refused (§5)
+ALTER USER `<user>`@`<host>` ACCOUNT UNLOCK
+
+-- 2. the reset itself
+--    unseen (default)
+ALTER USER `<user>`@`<host>` IDENTIFIED WITH caching_sha2_password AS 0x…
+--    seen (manual)
+ALTER USER `<user>`@`<host>` IDENTIFIED WITH caching_sha2_password AS 0x… PASSWORD EXPIRE
+
+-- 3. on every reset
+ALTER USER `<user>`@`<host>` DISCARD OLD PASSWORD
+```
+
+Statement 1 is sent even where nothing shows a lock. MySQL keeps a block after
+failed logins (error 3955) outside `mysql.user`, and a new password does not
+end it, so the reset cannot tell whether the person is blocked, and ends a
+block anyway. Its row says it was sent and that its effect cannot be read. An
+account locked with `ACCOUNT LOCK` is a deliberate lock, and the reset refuses
+it as `SKIPPED`. Statement 3 is sent because a password someone kept with
+`RETAIN CURRENT PASSWORD` survives statement 2, and stays expired and working
+beside the new one; the tool cannot read whether one was kept. After a seen
+reset the new password logs in only to set another: the mysql client asks for
+`--connect-expired-password`, and the server answers `1820` to anything but
+the change. Probe 04 measured these statements on 8.0.46, 8.4.13 and 9.7.4
+(`sql/mysql/04_lock_expiry_probe.py`, LE6 and LE7). The tool account needs
+`CREATE USER`, as for UC-1 (`02-mysql-privileges.md` §2.1). Reasons:
+[#1225](../decisions/log.md#1225).
+
 **The store write and the DDL are two steps, and neither order is free.** Setting
 the password first and failing the write leaves an account nobody knows the
 password to. Writing first and failing the DDL leaves a store holding a password
@@ -1010,6 +1049,10 @@ These rules follow. The first two are measured on 26ai 23.26.2.0.0
   *does* still know their old password and a grace period helps them. **A reset
   after a suspected disclosure must not use it**, because there the old password
   is known to somebody who should not have it. The seen path refuses it (below).
+  So does a MySQL target, on either path, at plan time and with exit 5: a
+  password kept with `RETAIN CURRENT PASSWORD` cannot be read back, so nothing
+  could say whether the window is open or when it ends
+  ([#1225](../decisions/log.md#1225)).
 
 **On the seen path, expiry alone does not end the old password.** The seen
 statement was measured on 26ai 23.26.2.0.0 (Q7) and on 21c 21.3.0.0.0, with the

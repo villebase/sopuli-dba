@@ -178,6 +178,7 @@ from sopuli.diagnostics import (
 )
 from sopuli.driver import guardrails
 from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
+from sopuli.driver.mysql.roles import MandatoryRoleError
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
@@ -353,7 +354,7 @@ from sopuli.payload import (
     ROLLOVER,
     stage_layout,
 )
-from sopuli.personal import declared_on
+from sopuli.personal import declared_on, rules_for
 from sopuli.preflight import Finding
 from sopuli.safety import (
     ENCRYPTED,
@@ -2174,7 +2175,8 @@ def account_reset_password(
     This is for someone who cannot get into their own account, usually because
     the password expired and they no longer know it. The command draws a new
     password, sets it, and delivers it by the method `delivery:` names. It
-    works on Oracle targets only.
+    works on Oracle and MySQL targets, and on PostgreSQL by an unseen method
+    only.
 
     The configuration chooses one of two paths. The unseen path, the default,
     puts the password where only the owner can fetch it, and shows it to
@@ -2199,7 +2201,9 @@ def account_reset_password(
     reset where the person still knows the old password. Do not use it after a
     suspected disclosure, because someone else knows the old password too. The
     tool refuses `--keep-rollover` with `{manual}`, because there the closed
-    window is what makes the expiry end your knowledge of the password.
+    window is what makes the expiry end your knowledge of the password. It
+    refuses it on a MySQL target too: a reset there always discards the old
+    password, because a kept one cannot be read back.
 
     `--account` names one account. The target selectors choose where it is
     reset, not which account; each target holds a separate account with a
@@ -2253,6 +2257,7 @@ def account_reset_password(
 
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
+    reset.refuse_kept_window_on_mysql(reached, keep_rollover=keep_rollover)
     # Before the plan, the prompt and any event, `--dry-run` included: a preview
     # must not say "would be reset" for a run that will be refused. With them,
     # what the delivery backends would refuse from the config alone (#1257); the
@@ -2305,6 +2310,7 @@ def account_reset_password(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(reached, run, config, scopes=scopes)
     _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
+    _refuse_mandatory_roles_at_plan(reached, run, config)
 
     # The question comes after the checks above, as in `account expire-password`
     # (#1214): a yes followed by a refusal means nothing, and teaches people to
@@ -2628,7 +2634,9 @@ def _reset_lock_key(config: Config, account: str, target: ExpandedTarget) -> Loc
     records = config.reset_records
     if records is None:
         return None
-    return reset_record.record_lock_key(records, target=target.name, account=account)
+    return reset_record.record_lock_key(
+        records, target=target.name, account=account, product=target.target.type
+    )
 
 
 def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -> None:
@@ -2671,6 +2679,56 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
         f"account {account!r} is not user@host without quotes, and target {mysql[0]!r} is MySQL",
         hint=hint,
     )
+
+
+def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget) -> None:
+    """Refuse a `role:` rule that names a mandatory role on a MySQL target, or a
+    role one holds, with ``MandatoryRoleError``, exit 9 (#1225, decision 5).
+
+    Every account holds such a role, so the rule would admit every account on
+    the server, and a rule that admits every account is not a whitelist
+    (invariant 5). `account list` refuses it when it resolves the rule. A verb
+    admits by the roles the account holds, which leave mandatory roles out, so
+    it would not admit by such a rule; it asks the same question here, before it
+    describes the account, so that the verb and the listing refuse alike. Each
+    `role:` rule that reaches the target is resolved: a few reads per rule.
+
+    At plan time the refusal ends the run, exit 9. In the run it is that
+    target's `ERROR` row, exit 4, as every refusal there is: an earlier target
+    may already have been reset, and its row must still be reported.
+    """
+    if target.target.type != MYSQL:
+        return
+    for rule in rules_for(config, target.name):
+        if rule.role is not None:
+            session.resolve_role(rule.role)
+
+
+def _refuse_mandatory_roles_at_plan(
+    targets: Iterable[ExpandedTarget], run: Invocation, config: Config
+) -> None:
+    """:func:`_refuse_mandatory_roles` at plan time, before any password is
+    drawn or any question asked: one connection per MySQL target that a
+    `role:` rule reaches, and none otherwise. A target this cannot reach, or
+    whose rules it cannot read, is left to the run, which asks again."""
+    for expanded in targets:
+        if expanded.target.type != MYSQL or not any(
+            rule.role is not None for rule in rules_for(config, expanded.name)
+        ):
+            continue
+        try:
+            session = _open_session(expanded, run, config)
+        except Exception:  # noqa: BLE001 -- the run reports it on its row
+            continue
+        try:
+            _refuse_mandatory_roles(session, config, expanded)
+        except MandatoryRoleError:
+            raise
+        except Exception:  # noqa: BLE001 -- the run asks again, and reports it
+            pass
+        finally:
+            with suppress(Exception):
+                session.close()
 
 
 def _reset_lock_keys(
@@ -2719,7 +2777,7 @@ def _record_paths(
     for target in reached:
         try:
             derived[target.name] = reset_record.record_path(
-                records, target=target.name, account=account
+                records, target=target.name, account=account, product=target.target.type
             )
         except ValueError as error:
             raise ConfigError(
@@ -3062,6 +3120,10 @@ def _reset_one(
     try:
         try:
             session = _open_session(target, run, config)
+            # Asked again on every MySQL target, as the encryption is: plan time
+            # passes over a target it could not reach, and the server's
+            # mandatory roles may have changed since. A few reads per rule.
+            _refuse_mandatory_roles(session, config, target)
             state = session.describe_user(account)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _finding(error)
@@ -3283,9 +3345,8 @@ def _reset_one(
             detail=(
                 decision.detail
                 if unclosed is None
-                else "password set, but the rollover window was not closed, so assume the "
-                f"old password still works until it ends: {unclosed.message}"
-                + (f" -- {unclosed.hint}" if unclosed.hint else "")
+                else "password set, but the old password was not ended, so assume it still "
+                f"works: {unclosed.message}" + (f" -- {unclosed.hint}" if unclosed.hint else "")
             ),
             status=status,
             actions=_reset_actions(changes, unclosed),
@@ -4155,7 +4216,7 @@ def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
 def _reset_at(
     journal: SecretStore | None,
     config: Config,
-    target: str,
+    target: ExpandedTarget,
     account: str,
     *,
     unread: _JournalFailures,
@@ -4184,7 +4245,9 @@ def _reset_at(
         return None
     try:
         # Inside the guard: a name that is not one path segment has no record path.
-        path = reset_record.record_path(records, target=target, account=account)
+        path = reset_record.record_path(
+            records, target=target.name, account=account, product=target.target.type
+        )
     except ValueError as error:
         unread.failed(records.vault, str(error))
         return None
@@ -4279,7 +4342,7 @@ def _describe_row(
         target=target.name,
         rule=admitted,
         state=state,
-        reset_at=_reset_at(journal, config, target.name, name, unread=unread),
+        reset_at=_reset_at(journal, config, target, name, unread=unread),
         notices=tuple(notices),
         product=target.target.type,
     )

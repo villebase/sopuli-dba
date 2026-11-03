@@ -871,7 +871,8 @@ ALTER ROLE "<role>" PASSWORD 'SCRAM-SHA-256$…' VALID UNTIL 'infinity'
 
 PostgreSQL cannot make a role change its password at its next login, so the
 seen path has nothing to end the DBA's exposure. It is refused at plan time by
-the absent `expire_password` capability, exit 5, before a password is drawn.
+the absent `expire_password` capability, exit 5, before a password is drawn,
+and before the run asks for any confirmation (#1214).
 PostgreSQL has no lock that a failed-login limit sets, so there is no statement
 1, and every `NOLOGIN` role is a deliberate lock that the reset refuses as
 `SKIPPED`. A role past its `VALID UNTIL` cannot log in with any password. The

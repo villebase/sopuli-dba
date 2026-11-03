@@ -2249,7 +2249,6 @@ def account_reset_password(
     # nothing.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     # The record path is derived before anything connects, so a name it cannot
     # be built from is a plan-time refusal (invariant 4) rather than a failure
@@ -2292,6 +2291,12 @@ def account_reset_password(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(reached, run, config, scopes=scopes)
     _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
+
+    # The confirmation comes after every plan-time refusal above, as in `account
+    # expire-password` (#1214): a yes followed by a refusal means nothing, and
+    # teaches people to answer without reading. Nothing above depends on the
+    # answer. The cost is that the short plan-time logins happen before it.
+    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="account")
 
     header = render_plan(plan, noun="account")
     if not reached:

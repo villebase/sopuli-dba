@@ -1067,6 +1067,23 @@ def test_the_seen_path_is_refused_where_the_target_cannot_expire_a_password(
     assert session.reset == []
 
 
+def test_the_plan_time_refusal_comes_before_the_confirmation(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """Nobody is asked to confirm a reset that cannot happen, as in `account
+    expire-password` (#1214)."""
+    session = Asked("OPEN", DENIED)
+    session.capabilities = frozenset()
+    _open(monkeypatch, session, unseen=False)
+    asked: list[bool] = []
+    monkeypatch.setattr("sopuli.cli._confirm_environments", lambda *a, **k: asked.append(True))
+
+    result = _run(runner, write_config(MANUAL), "--dry-run")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError), result.output
+    assert asked == []
+
+
 def test_the_seen_path_is_asked_again_where_plan_time_could_not_read_the_scope(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:

@@ -2710,7 +2710,10 @@ events carry the progress per target:
   `verification.done`: invariant 9, visible in the stream.
 - **`verification.done`**, with the result's own `verification` object.
 - **`vault.read`**, once per document, with its version. `null` is a path with
-  nothing at it. **`vault.write`** and **`password.generated`** appear only on a
+  nothing at it. A run that asks a question reads each document once more
+  before it asks, so a store that cannot be read refuses first. The read under
+  the lock is the one the run acts on, and its `vault.read` comes after
+  `lock.acquired` (#1257). **`vault.write`** and **`password.generated`** appear only on a
   redraw, naming the path and the stage, never the value.
 - **`vault.promote`**, once per document **whose promotion was attempted**, with
   the version it produced, or `null` and an `error` when the vault refused the

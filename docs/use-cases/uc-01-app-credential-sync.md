@@ -2427,7 +2427,8 @@ itself (§5).
 Without `--confirm`, a rollback asks "put the vault's `previous` password back on
 every selected target?" after the plan is built, and prints the plan to stderr
 first. The question names no targets, so the plan is what says which ones it
-reaches.
+reaches. It is asked after the vault is read and the `require_encryption` check
+has run, so a refusal from either does not follow a yes (#1257).
 
 ---
 

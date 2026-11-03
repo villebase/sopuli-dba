@@ -3800,7 +3800,8 @@ def test_a_refusal_after_the_plan_does_not_print_the_plan(
     def refuse(*_: object, **__: object) -> None:
         raise RefusedError("needs confirmation, and there is nobody here to ask")
 
-    monkeypatch.setattr("sopuli.cli._confirm_environments", refuse)
+    # The gate's refusal half, which runs before anything connects (#1257).
+    monkeypatch.setattr("sopuli.cli._refuse_unconfirmable", refuse)
     harness = estate(answers={"ACME_WEB_USER": drifted()})
 
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")

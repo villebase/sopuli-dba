@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner, Result
 
@@ -43,6 +44,8 @@ from sopuli.exit_codes import ExitCode
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.protocol import StoreError
+from sopuli.store.registry import BackendNotInstalledError
 
 LIVE = "Correct-Horse-Battery-9"
 STAGED = "Vertical-Anchor-Marble-4"
@@ -93,8 +96,10 @@ def runner() -> CliRunner:
 
 
 class FakeSession:
-    def __init__(self, *, rollover: bool = False) -> None:
+    def __init__(self, *, rollover: bool = False, window: bool = False) -> None:
         self.rollover = rollover
+        #: A window already open before the run, as a rotation leaves one.
+        self.window = window
         self.changed: list[tuple[str, str]] = []
         self.finished: list[str] = []
 
@@ -112,7 +117,7 @@ class FakeSession:
             name=account.upper(),
             status="OPEN",
             rollover_enabled=self.rollover,
-            rollover_active=self.rollover and bool(self.changed),
+            rollover_active=self.rollover and (self.window or bool(self.changed)),
         )
 
     def require_rollover(self, account: str) -> None:
@@ -140,7 +145,7 @@ Harness = Callable[..., dict[str, Any]]
 
 @pytest.fixture
 def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
-    def install(*, rollover: bool = False) -> dict[str, Any]:
+    def install(*, rollover: bool = False, window: bool = False) -> dict[str, Any]:
         store = MemoryStore()
         for target in ("appdb-alpha", "appdb-beta"):
             store.write(
@@ -160,7 +165,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
-                session = FakeSession(rollover=rollover)
+                session = FakeSession(rollover=rollover, window=window)
                 sessions.append(session)
                 return session
 
@@ -692,3 +697,208 @@ def test_the_config_warnings_are_printed_before_the_prompt(
     assert result.exit_code == ExitCode.ABORTED, result.output
     assert result.output.count("1 warning:") == 1
     assert result.output.index("1 warning:") < result.output.index("[y/N]")
+
+
+# ------------------------------------------- the question after the checks ---
+
+#: The verbs that open their stores before they ask (#1257).
+READ_FIRST = [
+    pytest.param(["creds", "apply"], id="apply"),
+    pytest.param(["creds", "apply", "--source", "previous"], id="apply-rollback"),
+    pytest.param(["creds", "finish-rollover"], id="finish-rollover"),
+]
+
+
+@pytest.mark.parametrize("argv", READ_FIRST)
+def test_a_store_refusal_comes_before_the_question(
+    argv: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A yes followed by a refusal means nothing (#1257). At a terminal, a run
+    whose store cannot be opened is refused before anybody is asked: the
+    `confirm_environments` question, and on `--source previous` the rollback's.
+    The store's client not being installed (exit 9) is the case the #1251
+    review named."""
+    estate()
+    asked: list[str] = []
+
+    def refusing(vault: Vault, **_: Any) -> SecretStore:
+        raise BackendNotInstalledError(f"the client for `{vault.name}` is not installed")
+
+    def answer(question: str, **_: Any) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr("sopuli.cli.connect", refusing)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert isinstance(result.exception, BackendNotInstalledError), result.output
+    assert asked == []
+
+
+@pytest.mark.parametrize("argv", READ_FIRST)
+def test_the_plan_comes_before_the_store_and_the_question_after(
+    argv: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plan is printed before the first connection, so a store or target
+    that asks for a password asks after the operator has seen it (invariant 8),
+    and the question comes after the stores are read. A no takes no lock and
+    changes nothing."""
+    harness = estate()
+    before = versions(harness)
+    events: list[str] = []
+    store: SecretStore = harness["store"]
+
+    def opening(vault: Vault, **_: Any) -> SecretStore:
+        events.append("store")
+        return store
+
+    def showing(plan: Any, run: Any, *, noun: str) -> None:
+        events.append("plan")
+
+    def declining(question: str, **_: Any) -> bool:
+        events.append("asked")
+        raise click.Abort
+
+    monkeypatch.setattr("sopuli.cli.connect", opening)
+    monkeypatch.setattr("sopuli.cli._show_plan", showing)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", declining)
+    result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    # The stubbed `_show_plan` does not mark the plan shown, so a run that asks
+    # twice records "plan" twice; only the order matters here.
+    assert list(dict.fromkeys(events)) == ["plan", "store", "asked"]
+    assert events.count("asked") == 1
+    assert versions(harness) == before
+    assert issued(harness) == []
+    assert harness["sessions"] == []
+
+
+@pytest.mark.parametrize("argv", READ_FIRST)
+def test_a_store_that_cannot_be_read_refuses_before_the_question(
+    argv: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opening a store with token auth connects to nothing, so a wrong token or
+    a denied path shows only at the first read. That read comes before the
+    question (#1257)."""
+    harness = estate()
+    asked: list[str] = []
+
+    def denied(path: str, **_: Any) -> Any:
+        raise StoreError(f"permission denied reading `{path}`")
+
+    def answer(question: str, **_: Any) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr(harness["store"], "read", denied)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code != ExitCode.SUCCESS, result.output
+    assert asked == []
+    assert issued(harness) == []
+
+
+def test_a_pending_staged_while_the_question_waits_keeps_the_window_open(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`creds finish-rollover` reads before its question and again after the
+    answer, which can take minutes. A `pending` a rotation staged meanwhile
+    keeps the window open: closing it would cut off whatever has not been given
+    the new password."""
+    harness = estate(rollover=True, window=True)
+    store: MemoryStore = harness["store"]
+    path = "apps/acme/appdb-alpha"
+    stored = store.read(path)
+    assert stored is not None
+    store.write(path, {"DB_CREDENTIALS": {"acme_web_user": LIVE}}, cas=stored.version)
+
+    def staging(question: str, **_: Any) -> bool:
+        now = store.read(path)
+        assert now is not None
+        store.write(
+            path,
+            {"DB_CREDENTIALS": {"acme_web_user": LIVE}, "pending": {"acme_web_user": STAGED}},
+            cas=now.version,
+        )
+        return True
+
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", staging)
+    run(runner, ["creds", "finish-rollover"], write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert harness["sessions"], "the run reached the database"
+    assert [one for session in harness["sessions"] for one in session.finished] == []
+
+
+def test_with_nothing_staged_the_window_is_closed(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control for the test above: the same estate, answered yes with
+    nothing staged, closes the window."""
+    harness = estate(rollover=True, window=True)
+    store: MemoryStore = harness["store"]
+    path = "apps/acme/appdb-alpha"
+    stored = store.read(path)
+    assert stored is not None
+    store.write(path, {"DB_CREDENTIALS": {"acme_web_user": LIVE}}, cas=stored.version)
+
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", lambda question, **_: True)
+    run(runner, ["creds", "finish-rollover"], write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert [one for session in harness["sessions"] for one in session.finished] == ["ACME_WEB_USER"]
+
+
+@pytest.mark.parametrize("terminal", [True, False], ids=["terminal", "unattended"])
+@pytest.mark.parametrize("argv", [["creds", "apply"], ["creds", "finish-rollover"]])
+def test_a_run_with_nothing_to_do_is_neither_asked_nor_refused(
+    argv: list[str],
+    terminal: bool,
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A selection that binds no secret does nothing, so a yes to it would mean
+    nothing, and a scheduler is not refused for lacking one (#1257)."""
+    estate()
+    asked: list[str] = []
+
+    def answer(question: str, **_: Any) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: terminal)
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    unbound = write_config(CONFIG.replace("secret_template", "# secret_template"))
+    result = run(runner, argv, unbound, "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "nothing to" in result.output
+    assert asked == []
+    reported = run(runner, argv, unbound, "--select", "tenant=alpha", "--output", "json")
+    assert required(reported) is False

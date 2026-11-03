@@ -148,7 +148,10 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `account_lock_state` | Read and set lock state | yes |
 | `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles` |
 
-A PostgreSQL session reports `role_lookup` and none of the others.
+A PostgreSQL session reports `role_lookup` and none of the others. A MySQL
+session reports `password_rollover` where the server has
+`caching_sha2_password_digest_rounds`, and none of the others. On MySQL the tool
+opens the window itself, with `RETAIN CURRENT PASSWORD` (UC-1 §6.3).
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.

@@ -354,6 +354,39 @@ def test_a_password_someone_retained_stops_working_after_a_change(
         assert refused.value.args[0] == 1045
 
 
+def test_a_rollover_keeps_the_old_password_working_until_a_discard(
+    stage: Stage, live_mysql: Any
+) -> None:
+    """#1224. `retain` keeps the old password beside the new one. A later
+    `keep` sets the new password again and the old one still works (DP4).
+    `discard` then ends it."""
+    user = stage.account("%")
+    new = f"Acme-New-{uuid.uuid4().hex[:12]}"
+    assert stage.session.scope().supports("password_rollover")
+
+    stage.session.set_password(f"{user}@%", Secret(new), old_password="retain")
+    for works in ("Acme-pw1", new):
+        live_mysql.connect_as(user, works).close()
+
+    stage.session.set_password(f"{user}@%", Secret(new), old_password="keep")
+    for works in ("Acme-pw1", new):
+        live_mysql.connect_as(user, works).close()
+
+    stage.session.set_password(f"{user}@%", Secret(new), old_password="discard")
+    live_mysql.connect_as(user, new).close()
+    with pytest.raises(pymysql.err.OperationalError) as refused:
+        live_mysql.connect_as(user, "Acme-pw1")
+    assert refused.value.args[0] == 1045
+
+
+def test_an_unknown_old_password_mode_sends_nothing(stage: Stage, live_mysql: Any) -> None:
+    """A mode outside the protocol's three is a fault in the caller."""
+    user = stage.account("%")
+    with pytest.raises(ValueError, match="old-password mode"):
+        stage.session.set_password(f"{user}@%", Secret("Acme-Never-1"), old_password="both")
+    live_mysql.connect_as(user, "Acme-pw1").close()
+
+
 def test_a_change_no_login_can_reach_is_confirmed_by_the_server(stage: Stage) -> None:
     """#1223. `user@10.%` is not reached by a login from the tool's host. After
     set_password, the server's password_last_changed is no earlier than its

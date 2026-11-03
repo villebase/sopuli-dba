@@ -9,9 +9,10 @@ the server's version (invariant 3); it is read to report it, and to tell MySQL
 from MariaDB, which answers the same protocol and gets a driver of its own
 (#1202, decision 2).
 
-**No capability is reported.** Each one in P1's table names something a driver
-does on this target, and this build of the MySQL driver does none of them yet.
-Connecting proves none of them either.
+**No capability is read here.** The session adds ``password_rollover``
+(:meth:`~sopuli.driver.mysql.session.MysqlSession.scope`), and the other
+capabilities in P1's table name things this build of the MySQL driver does not
+do yet.
 """
 
 from __future__ import annotations

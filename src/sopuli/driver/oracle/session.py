@@ -112,6 +112,7 @@ from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
     OFFLINE_VERIFY,
+    OLD_DISCARD,
     PASS,
     PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
@@ -461,8 +462,13 @@ class OracleSession(ClosesConnection):
                 f"{from_error(error).first_line}",
             )
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+    ) -> ChangeResult:
         """Issue the ``ALTER USER``, and let a rejection be a rejection.
+
+        ``old_password`` is ignored: the account's profile decides whether a
+        rollover window opens (:mod:`sopuli.strategy`).
 
         **The driver does not regenerate.** UC-1 §4's bounded loop does not live
         here: a driver that drew another password on

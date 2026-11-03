@@ -178,6 +178,7 @@ from sopuli.driver.protocol import (
     DEFAULT_MARGIN,
     EXPIRE_PASSWORD,
     FAIL,
+    OLD_RETAIN,
     PASS,
     PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
@@ -7990,8 +7991,13 @@ def _apply_estate(
     ask_first: bool = True,
     surveyed: Mapping[tuple[str, str], UserState] | None = None,
     decided: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
+    rotating: bool = False,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
+
+    ``rotating`` is set by `creds rotate` for the round that sets the
+    ``pending`` it staged (:func:`_apply_one`). A redraw's round leaves it
+    unset: some of its targets already hold the first draw.
 
     ``decided`` is a guardrail decision the caller already made from the
     survey, over every credential and not only the shared ones. `creds rotate`
@@ -8101,6 +8107,7 @@ def _apply_estate(
                 everywhere=set(decided or ()),
                 unreachable=unreachable.get(name),
                 out=applied,
+                rotating=rotating,
             )
         except LockStolenError as stolen:
             return applied, stolen
@@ -8471,6 +8478,7 @@ def _apply_target(
     everywhere: Collection[Credential] = (),
     unreachable: BaseException | None = None,
     out: list[_Applied],
+    rotating: bool = False,
 ) -> None:
     """One target's worth of accounts, over one connection.
 
@@ -8558,6 +8566,7 @@ def _apply_target(
                     ),
                     encryption_required=required,
                     held=refusing or None,
+                    rotating=rotating,
                 )
             except _StoppedAfterChangeError as stopped:
                 # The account the run was working on when it lost the lock had
@@ -8772,8 +8781,13 @@ def _apply_one(
     requested: str | None = None,
     encryption_required: str | None = None,
     held: Mapping[str, guardrails.Review] | None = None,
+    rotating: bool = False,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
+
+    ``rotating`` is set by the `creds rotate` run that staged the ``pending``.
+    Only that run opens a window the tool must open itself, on MySQL
+    (:func:`sopuli.strategy.old_password`).
 
     ``held`` is set where the guardrail pass refused this credential on other
     targets (#872), mapping each to its review. The account is still read and
@@ -9000,6 +9014,7 @@ def _apply_one(
         # own refusal, so its hint and its profile check are the pre-flight's.
         if strategy == strategies.ROLLOVER:
             session.require_rollover(user.name)
+            _refuse_tool_window(strategy, user, target=binding.target, rotating=rotating)
 
         if attributes.requested():
             # Fenced like every other mutation (P5). `apply_attributes` issues
@@ -9095,7 +9110,8 @@ def _apply_one(
         # carried the password across the network, and one the driver refused
         # first has not.
         sent = session.scope().encryption
-        session.set_password(user.name, source.value)
+        old_password = strategies.old_password(regime, user, source.stage, rotating=rotating)
+        session.set_password(user.name, source.value, old_password=old_password)
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
         # must not be reported `changed: false`, which would hide a mutated database
@@ -9118,6 +9134,11 @@ def _apply_one(
             if isinstance(stored, VerifyResult):
                 after = stored
         outcome = apply_states.after_change(after_user, after)
+        if old_password == OLD_RETAIN:
+            # MySQL (#1224): the server cannot say a password is retained, and
+            # this run retained one, so the row says so.
+            after_user = replace(after_user, rollover_active=True)
+            outcome = apply_states.window_opened(outcome)
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
             outcome.state
@@ -9783,8 +9804,12 @@ def _preflight(
     reuse: list[tuple[str, UserState]] | None = None,
     states: dict[tuple[str, str], UserState] | None = None,
     scopes: dict[str, Scope] | None = None,
+    rotating: bool = False,
 ) -> list[Finding]:
     """UC-1 §8 step 3: ask the estate before anything is written.
+
+    ``rotating`` is set by `creds rotate`, the one command that may open a
+    window the tool must open itself (:func:`_refuse_tool_window`).
 
     One connection per target, and it does both jobs on the one connection: the
     strategy refusal, and -- under ``--preflight`` -- the rest of §8's list. The two
@@ -9860,7 +9885,14 @@ def _preflight(
             continue
         try:
             if strategy is not None:
-                _check_strategy(session, bindings, strategy=strategy, target=name, config=config)
+                _check_strategy(
+                    session,
+                    bindings,
+                    strategy=strategy,
+                    target=name,
+                    config=config,
+                    rotating=rotating,
+                )
             if full:
                 findings.extend(
                     _preflight_target(
@@ -10143,8 +10175,36 @@ def _refuse_preflight(
     return "\n".join([f"{header}\n\n{render_preflight(findings)}", *render_notices(notes)])
 
 
+def _refuse_tool_window(strategy: str, user: UserState, *, target: str, rotating: bool) -> None:
+    """Refuse `creds apply --strategy rollover` where the tool would have to
+    open the window itself, on MySQL (#1224).
+
+    `apply` sets a staged ``pending`` without changing what is retained,
+    because it cannot tell a first set from a re-set
+    (:func:`sopuli.strategy.old_password`). Reporting ``rollover`` there would
+    say the old password still works when it may not.
+    """
+    if rotating or not strategies.tool_opens_window(strategy, user):
+        return
+    raise DriverError(
+        f"--strategy rollover cannot be honoured for {user.name!r} in {target!r}: "
+        "no profile opens a window here, and `creds apply` does not open one",
+        hint=(
+            "`sopuli creds rotate --strategy rollover` opens the window when it sets "
+            "the new password; `creds apply` sets a staged password again and leaves "
+            "a retained one as it is"
+        ),
+    )
+
+
 def _check_strategy(
-    session: Any, bindings: Sequence[Binding], *, strategy: str, target: str, config: Config
+    session: Any,
+    bindings: Sequence[Binding],
+    *,
+    strategy: str,
+    target: str,
+    config: Config,
+    rotating: bool = False,
 ) -> None:
     """Every account in one target, against one requested regime.
 
@@ -10209,6 +10269,7 @@ def _check_strategy(
 
         if strategy == strategies.ROLLOVER:
             session.require_rollover(binding.account)
+            _refuse_tool_window(strategy, user, target=target, rotating=rotating)
             continue
         refusal = strategies.unhonourable(strategy, session.scope(), user)
         if refusal is None:
@@ -12083,7 +12144,9 @@ def _rotate_estate(
     # only those the vault already holds something for: there is no `pending`
     # yet, and a first rotation has no `current` either.
     surveyed: dict[tuple[str, str], UserState] = {}
-    findings = _preflight(rotating, run, config, strategy=strategy, full=True, states=surveyed)
+    findings = _preflight(
+        rotating, run, config, strategy=strategy, full=True, states=surveyed, rotating=True
+    )
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
         return _refuse_preflight(
@@ -12159,6 +12222,7 @@ def _rotate_estate(
         force=force,
         surveyed=surveyed,
         decided=skipped,
+        rotating=True,
     )
     if into.stolen is not None:
         return None
@@ -12537,7 +12601,9 @@ def _preview_rotation(
     _refuse_narrow_rotation(rotating, documents, run)
 
     read: dict[tuple[str, str], UserState] = {}
-    findings = _preflight(rotating, run, config, strategy=strategy, full=True, states=read)
+    findings = _preflight(
+        rotating, run, config, strategy=strategy, full=True, states=read, rotating=True
+    )
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
         return _refuse_preflight(findings, document, header=header)

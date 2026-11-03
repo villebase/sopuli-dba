@@ -68,6 +68,13 @@ def test_the_statement_carries_the_hash_as_hex_and_never_the_password() -> None:
     assert "Acme-App-pw1" not in statement
 
 
+def test_a_rollover_retains_the_current_password_after_the_hash() -> None:
+    """#1224: DP6, a client hash with RETAIN keeps both passwords."""
+    statement = alter_user("acme_app", "10.%", b"$A$005$x", retain=True)
+
+    assert statement.endswith(f" AS 0x{b'$A$005$x'.hex()} RETAIN CURRENT PASSWORD")
+
+
 def test_the_account_is_backquoted_whatever_it_holds() -> None:
     """Only a backquote is doubled: a quote and a backslash are themselves,
     whatever the session's `sql_mode`."""

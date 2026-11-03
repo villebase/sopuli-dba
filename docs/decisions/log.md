@@ -4128,3 +4128,50 @@ the register.
   documenting it, which would report `IN_SYNC` and promote while an old
   password still logs in. Accepted cost: it ends a dual-password window a
   person opened by hand.
+
+## #1224
+
+- **Decided:** 2026-11-03, #1224
+- **Question:** On MySQL a rollover window is a retained password, which the
+  tool opens with `RETAIN CURRENT PASSWORD` and ends with `DISCARD OLD
+  PASSWORD`; no profile opens one and no clock ends one. When does a rotation
+  open one? What does a later `apply` send while the rotation's `pending` is
+  held? And what does `finish-rollover` do where no login can check
+  `current`?
+- **Decision:**
+  1. A window opens only with `creds rotate --strategy rollover`. The default
+     stays `staged`.
+  2. While a `pending` is staged, `apply` sets it with neither `RETAIN` nor
+     `DISCARD`, whatever the strategy. `apply --strategy rollover` is refused
+     at pre-flight where no profile opens a window.
+  3. `finish-rollover` sends `DISCARD` where no login is available, and
+     reports `current` as not verified.
+- **Why:**
+  1. A window with no end needs an operator who knows to end it. UC-1 §6.3
+     makes rollover the default where a profile grants a window, and on MySQL
+     nobody granted one.
+  2. A change without `RETAIN` keeps a retained password, and a second `RETAIN`
+     replaces it with the current one (`03_dual_password_probe.py`, DP4 and
+     DP3). `apply` cannot tell a first set from a re-set: it does not log in
+     first ([#1223](#1223)), and it does not read `User_attributes` (decision 6
+     of [#1202](#1202)). Keeping is right on a re-set; on a first set the old
+     password stops at once, which `RETAIN` on a re-set would cause too.
+  3. A staged `pending` still refuses the close, and the rotation confirmed
+     `current` before it promoted. Leaving the window open would mean the tool
+     could never finish a rollover on any account but a sole `user@%`.
+- **Rejected:**
+  - Rollover by default, as §6.3 reads. Every MySQL rotation would leave the
+    old password working until someone ends it.
+  - A per-application setting in place of Oracle's profile. The flag already
+    makes the choice.
+  - Recording the strategy beside the `pending`, and sending `RETAIN` where
+    `password_last_changed` is older than it. That reads someone else's change
+    as the rotation's, which [#1223](#1223) rejected, and a wrong guess drops
+    the old password.
+  - Refusing `apply` while a rollover's `pending` is held. It blocks the
+    recovery `apply` exists for.
+  - Leaving the window open and reporting `UNVERIFIABLE` where no login is
+    available.
+- **Accepted cost:** a target the rotation did not reach gets its first set
+  from `apply`, without a window. `check` cannot see a retained password, so a
+  login that passes is `IN_SYNC`, not `ROLLOVER_ACTIVE`.

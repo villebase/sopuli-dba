@@ -1475,6 +1475,27 @@ What the tool does:
   documented risk: "brief authentication failures are possible for connections
   established with the old password after the change".
 
+**On MySQL the tool opens the window** ([#1224](../decisions/log.md#1224)). No
+profile grants one. A window is a retained password: `ALTER USER … RETAIN
+CURRENT PASSWORD` keeps the old password working beside the new one, and
+`ALTER USER … DISCARD OLD PASSWORD` ends it. Nothing ends it on a clock.
+
+- `rollover` is never the default on MySQL, because the window has no end of
+  its own. `creds rotate --strategy rollover` opens one, and the row reports
+  `ROLLOVER_ACTIVE`. The default, `staged`, and `direct` both send `DISCARD OLD
+  PASSWORD` after the change, so only the new password works.
+- Only the `rotate` run that staged the `pending` sends `RETAIN`. A later
+  `creds apply` sets the `pending` again with neither `RETAIN` nor `DISCARD`,
+  which keeps a retained password. A second `RETAIN` would replace the old
+  password with the `pending` (`03_dual_password_probe.py`, DP3), and `apply`
+  cannot tell a first set from a re-set. So a target the rotation did not
+  reach gets no window, and `creds apply --strategy rollover` is refused at
+  pre-flight on MySQL.
+- `check` cannot see a retained password: the server keeps it in
+  `mysql.user.User_attributes`, which the tool account never reads (#1202,
+  decision 6). A login that passes is `IN_SYNC`, not `ROLLOVER_ACTIVE`.
+- `creds finish-rollover` on MySQL is not built yet.
+
 ### `creds finish-rollover`, and what it refuses (decided in #263)
 
 The command below closes rollover windows:

@@ -285,6 +285,20 @@ STORED = "stored"
 #: try* (the lockout margin, UC-1 §7 mitigation 2) versus *we could not*.
 VERIFY_RESULTS = (PASS, FAIL, SKIPPED, UNAVAILABLE, STORED)
 
+#: What :meth:`Session.set_password` does with the password the account had.
+#: Only a driver whose product keeps a second password on request acts on it:
+#: MySQL, with ``RETAIN CURRENT PASSWORD`` and ``DISCARD OLD PASSWORD``
+#: (#1224). On Oracle the profile opens a window, and PostgreSQL has none, so
+#: those drivers ignore it.
+#:
+#: ``retain``: the old password keeps working beside the new one, until
+#: ``creds finish-rollover``. ``keep``: whatever is retained stays retained.
+#: ``discard``: only the new password works.
+OLD_RETAIN = "retain"
+OLD_KEEP = "keep"
+OLD_DISCARD = "discard"
+OLD_PASSWORD_MODES = (OLD_RETAIN, OLD_KEEP, OLD_DISCARD)
+
 
 # -------------------------------------------------------------- attributes ---
 
@@ -1097,8 +1111,13 @@ class Session(Protocol):
         """
         ...
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+    ) -> ChangeResult:
         """Set ``account``'s password to ``secret``.
+
+        ``old_password`` is one of :data:`OLD_PASSWORD_MODES`, and only a driver
+        that keeps a second password on request acts on it.
 
         The one call in this interface that reveals a secret, which is one of
         invariant 2's three permitted reveals.

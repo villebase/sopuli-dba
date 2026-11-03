@@ -730,7 +730,7 @@ client
   pymysql           1.2.3
 
 TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-mysql-dev  yes        server  -          READ WRITE  0             tls
+mysql-dev  yes        server  -          READ WRITE  1             tls
 
 1 note:
   mysql-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -862,12 +862,27 @@ rotation: staged 2 documents, promoted 2 documents
 ...
 ```
 
-`--strategy rollover` is refused with exit 5: the tool does not open MySQL's
-dual-password window, and `creds finish-rollover` is not written for MySQL, so
-it refuses a MySQL target. Each password change also discards an old password
-someone kept with `RETAIN CURRENT PASSWORD`, so only the vault's works. `creds status`
-shows when the server last changed each password. `ROLLOVER` reads `not
-supported`.
+Each password change discards an old password someone kept with `RETAIN
+CURRENT PASSWORD`, so only the vault's works. With `--strategy rollover` the
+old password keeps working beside the new one:
+
+```
+$ sopuli --config mysql.yaml creds rotate --strategy rollover --confirm
+...
+ACCOUNT               TARGET     STATE            DETAIL
+acme_app@%            mysql-dev  ROLLOVER_ACTIVE  changed and verified by login; the previous password also logs in until `sopuli creds finish-rollover`
+acme_batch@192.0.2.%  mysql-dev  ROLLOVER_ACTIVE  changed, and the server records the change; no login can reach this account to verify it; the previous password also logs in until `sopuli creds finish-rollover`
+
+2 changed, 2 promoted to `current`
+...
+```
+
+`creds finish-rollover` is not written for MySQL yet, so it refuses a MySQL
+target, and the next rotation ends the window. Only `rotate` opens one: `creds
+apply --strategy rollover` is refused before anything changes. `creds status`
+shows when the server last changed each password. `ROLLOVER` reads `unknown`,
+because the server keeps a retained password where the tool account does not
+read.
 
 Two targets that reach one server are refused with `SOPULI-20008`: the tool
 knows a server by its `server_uuid`.

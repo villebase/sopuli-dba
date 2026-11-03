@@ -177,6 +177,7 @@ __all__ = [
     "settled_before_acting",
     "source_for",
     "summarise_document",
+    "window_opened",
 ]
 
 #: The states in which the database is known to hold what the vault does.
@@ -566,6 +567,26 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
     # the same reason, and here it is worse: guessing which state an unknown
     # result means is how an unconfirmed change becomes a promotion.
     raise ValueError(f"not a verification result: {verification.result!r}")
+
+
+def window_opened(outcome: Outcome) -> Outcome:
+    """The outcome of a change that kept the old password working, on MySQL
+    (#1224): ``ROLLOVER_ACTIVE`` where the change was confirmed, and the
+    outcome as it was otherwise.
+
+    Confirmed by ``stored`` as well as by a login. :func:`after_change` leaves a
+    ``stored`` change under an open window unconfirmed because `--strategy
+    direct` would then close the window on a timestamp alone. Here the window
+    stays open until `creds finish-rollover`, so the old password still works.
+    """
+    if outcome.state != IN_SYNC:
+        return outcome
+    return Outcome(
+        ROLLOVER_ACTIVE,
+        f"{outcome.detail}; the previous password also logs in until "
+        f"`sopuli creds finish-rollover`",
+        outcome.verification,
+    )
 
 
 # -------------------------------------------------------------- the redraw ---

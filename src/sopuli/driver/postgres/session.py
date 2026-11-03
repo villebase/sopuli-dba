@@ -63,6 +63,7 @@ from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     EXPIRY_UNAVAILABLE,
     OFFLINE_VERIFY,
+    OLD_DISCARD,
     PASS,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
@@ -244,8 +245,12 @@ class PostgresSession(ClosesConnection):
         with self._cursor() as cursor:
             return audit(cursor, accounts)
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+    ) -> ChangeResult:
         """``ALTER ROLE … PASSWORD`` with a verifier computed here (invariant 15).
+
+        ``old_password`` is ignored: a role has one password.
 
         As on Oracle, the driver does not regenerate and ``changed`` is ``True``
         whenever the statement succeeded: whether the role already had this

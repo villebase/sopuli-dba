@@ -120,7 +120,9 @@ class FakeSession:
         held = STAGED if account.upper() in self.changed else LIVE
         return VerifyResult("login", PASS if secret.reveal() == held else "fail", latency_ms=9)
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         self.changed.append(account.upper())
         return ChangeResult(changed=True)
 

@@ -11,9 +11,10 @@ scope: ``server``, whether it takes writes, and its encryption. It refuses a
 tool account that can use ``SYSTEM_USER``, audits the tool account's grants
 and the declared accounts for ``doctor --check-privileges``, and describes an
 account. For UC-1 it sets a password from a hash computed on the client,
-verifies one by login where only the declared account can answer, and names
-the server by its ``server_uuid``. The registry lists `doctor` and the `creds`
-commands but `finish-rollover`. The methods that change an account otherwise,
+keeps the old one working for `rotate --strategy rollover`, verifies one by
+login where only the declared account can answer, and names the server by its
+``server_uuid``. The registry lists `doctor` and the `creds` commands but
+`finish-rollover`. The methods that change an account otherwise,
 look up a role or end a rollover refuse with ``SOPULI-20006`` without a round
 trip.
 """
@@ -52,6 +53,9 @@ from sopuli.driver.mysql.scope import observe, read_encryption, require_read_wri
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     OFFLINE_VERIFY,
+    OLD_DISCARD,
+    OLD_PASSWORD_MODES,
+    OLD_RETAIN,
     PASS,
     PASSWORD_ROLLOVER,
     STORED,
@@ -194,9 +198,10 @@ class MysqlSession(ClosesConnection):
         `doctor` keeps the two apart.
         """
         if self._scope is None:
-            self._scope = self._read(
+            observed = self._read(
                 lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
             )
+            self._scope = replace(observed, capabilities=self._capabilities())
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -206,6 +211,24 @@ class MysqlSession(ClosesConnection):
                     self._scope.encryption.method,
                 )
         return self._scope
+
+    def _capabilities(self) -> frozenset[str]:
+        """``password_rollover`` where the server has
+        ``caching_sha2_password_digest_rounds``, and nothing otherwise.
+
+        The tool needs that variable to set any password, and ``RETAIN CURRENT
+        PASSWORD`` is older than it (MySQL 8.0.14 and 8.0.24), so a server that
+        has it keeps a second password on request (``03_dual_password_probe.py``,
+        measured on 8.0.46, 8.4.13 and 9.7.4). A server without it answers
+        ``1193``. Any account reads the variable (CH5).
+        """
+        try:
+            self._read(_digest_rounds)
+        except DriverError as error:
+            if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
+                raise
+            return frozenset()
+        return frozenset({PASSWORD_ROLLOVER})
 
     def _not_written(self, what: str) -> NotWrittenError:
         return NotWrittenError(
@@ -307,9 +330,23 @@ class MysqlSession(ClosesConnection):
                 raise from_error(error).as_error() from error
             raise from_error(error, scrub=scrub).as_error() from None
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+    ) -> ChangeResult:
         """``ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…``, with
         the hash computed here (invariant 15, :mod:`~sopuli.driver.mysql.password`).
+
+        ``old_password`` says what happens to the password the account had
+        (#1224, ``03_dual_password_probe.py``):
+
+        * ``discard``: ``DISCARD OLD PASSWORD`` follows, so only the vault's
+          password logs in. It also ends a password someone retained by hand,
+          which survives a change without it (DP4).
+        * ``retain``: the statement ends with ``RETAIN CURRENT PASSWORD``, and
+          the old password keeps working until ``creds finish-rollover``.
+        * ``keep``: neither. A password already retained stays retained (DP4).
+          A second ``RETAIN`` would replace it with the current one (DP3), so a
+          staged password set again is set this way.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: whether the account already had this password is not a
@@ -322,8 +359,12 @@ class MysqlSession(ClosesConnection):
         hash, which still allows an offline guessing attack. A timeout (``2013``)
         leaves the outcome unknown, and the error's hint says so.
         """
+        if old_password not in OLD_PASSWORD_MODES:
+            raise ValueError(f"not an old-password mode: {old_password!r}")
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
+        if old_password == OLD_RETAIN:
+            require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
         state = self.describe_user(account)
         if state is None:
             raise DriverError(
@@ -357,7 +398,10 @@ class MysqlSession(ClosesConnection):
                 ),
             )
         statement = password_module.alter_user(
-            user, host, password_module.caching_sha2_hash(secret, rounds)
+            user,
+            host,
+            password_module.caching_sha2_hash(secret, rounds),
+            retain=old_password == OLD_RETAIN,
         )
         # The server's clock before the statement: confirm_change compares
         # password_last_changed with it. The session's time zone is UTC.
@@ -370,6 +414,14 @@ class MysqlSession(ClosesConnection):
             failure.password_sent = True
             raise
         self._changed_since[state.name] = since
+        if old_password != OLD_DISCARD:
+            LOG.debug(
+                "password set for %s on %s, old password %s",
+                state.name,
+                self.target.name,
+                "retained" if old_password == OLD_RETAIN else "left as it was",
+            )
+            return ChangeResult(changed=True, detail="password set")
         try:
             self._read(lambda cursor: cursor.execute(password_module.discard_old(user, host)))
         except DriverError as failure:
@@ -607,16 +659,32 @@ class MysqlSession(ClosesConnection):
         )
 
     def require_rollover(self, account: str) -> None:
-        """Refused by capability until the rollover is written (#1224): no
-        capability is reported yet, so this always refuses (invariant 4)."""
-        require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
+        """Refuse ``--strategy rollover`` where the server has no dual
+        passwords (invariant 4), then where the account does not exist.
+
+        No profile decides it: the tool opens the window itself, with ``RETAIN
+        CURRENT PASSWORD`` (#1224). An account on another plugin is refused by
+        :meth:`describe_user`, and ``RETAIN`` with a plugin change would be
+        refused by the server too (``3894``, DP9).
+        """
+        require_capability(
+            self.scope(),
+            PASSWORD_ROLLOVER,
+            target=self.target.name,
+            hint=(
+                "the server has no caching_sha2_password_digest_rounds, which the tool "
+                "needs to set any password here; every server that has it keeps a "
+                "second password on request"
+            ),
+        )
+        if self.describe_user(account) is None:
+            raise DriverError(f'account "{account}" does not exist on target "{self.target.name}"')
 
     def finish_rollover(self, account: str) -> ChangeResult:
-        """Refused by capability, as on PostgreSQL (invariant 4): the tool
-        opens no rollover window on MySQL. `creds finish-rollover` is not
-        listed for MySQL, so no command reaches this today."""
-        self.require_rollover(account)
-        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
+        """Not written yet (#1224, second part): `creds finish-rollover` is not
+        listed for MySQL, and `--strategy direct` never closes a window here,
+        because no profile opens one."""
+        raise self._not_written("end a rollover window")
 
 
 def _ms(started: float) -> int:

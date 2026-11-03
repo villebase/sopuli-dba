@@ -276,7 +276,9 @@ class _Session:
     def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
         return PrivilegeAudit()
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         return ChangeResult(changed=True)
 
     #: The one profile this stub knows about, so `resolve_profile` has both

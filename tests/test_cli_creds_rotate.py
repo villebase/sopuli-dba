@@ -212,6 +212,8 @@ class FakeSession:
         self.encryption = encryption
         self.attempts: list[tuple[str, str]] = []
         self.changed: list[tuple[str, str]] = []
+        #: What each `set_password` was told to do with the old password.
+        self.old_passwords: list[str] = []
         self.finished: list[str] = []
         self.closed = False
 
@@ -274,11 +276,14 @@ class FakeSession:
             return VerifyResult("login", PASS, latency_ms=9)
         return VerifyResult("login", FAIL, detail="ORA-01017: invalid credential")
 
-    def set_password(self, account: str, secret: Secret) -> ChangeResult:
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = "discard"
+    ) -> ChangeResult:
         if self.set_error is not None:
             raise self.set_error
         self.database.set_password(account.upper(), secret.reveal())
         self.changed.append((account.upper(), secret.reveal()))
+        self.old_passwords.append(old_password)
         self._called("set_password")
         return ChangeResult(changed=True)
 
@@ -1348,6 +1353,58 @@ def test_a_takeover_before_any_database_is_reached_is_still_exit_four(
 
 
 # ------------------------------------------------------- --finish-rollover ---
+
+
+def old_passwords(harness: dict[str, Any]) -> list[str]:
+    """What every `set_password` was told to do with the old password."""
+    return [mode for session in harness["sessions"] for mode in session.old_passwords]
+
+
+def test_a_rollover_with_no_profile_window_retains_the_old_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+) -> None:
+    """#1224: where no profile opens a window, as on MySQL, `rotate --strategy
+    rollover` asks the driver to retain the old password, and the row says the
+    window is open."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert old_passwords(harness) == ["retain", "retain"]
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
+    assert [row["state"] for row in applied] == ["ROLLOVER_ACTIVE", "ROLLOVER_ACTIVE"]
+    assert all(row["rollover"]["active"] is True for row in applied)
+
+
+def test_a_rotation_by_default_discards_the_old_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1224, Q1: no profile window means `staged` by default, never a window
+    the tool opens on its own."""
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert old_passwords(harness) == ["discard", "discard"]
+
+
+def test_a_rollover_the_profile_opens_does_not_ask_to_retain(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """On Oracle the profile opens the window, so the driver is not asked to."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+    )
+    result = run(runner, write_config(CONFIG), "--strategy", "rollover")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert old_passwords(harness) == ["discard", "discard"]
 
 
 def test_finish_rollover_closes_windows_at_the_end_of_the_run(

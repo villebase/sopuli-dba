@@ -188,6 +188,18 @@ def alter_user(
     return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}{clause}"
 
 
+def lock(user: str, host: str) -> str:
+    """``ACCOUNT LOCK``, which `account suspend` sends. The password then
+    answers ``3118`` (LE2)."""
+    return f"ALTER USER {Principal(user, host).sql()} ACCOUNT LOCK"
+
+
+def expire(user: str, host: str) -> str:
+    """``PASSWORD EXPIRE`` alone, which `account expire-password` sends after
+    :func:`discard_old` (LE9)."""
+    return f"ALTER USER {Principal(user, host).sql()} PASSWORD EXPIRE"
+
+
 def unlock(user: str, host: str) -> str:
     """``ACCOUNT UNLOCK``, which a reset sends first. It ends a block after
     failed logins, which nothing in ``mysql.user`` shows and a new password does

@@ -14,10 +14,11 @@ account. For UC-1 it sets a password from a hash computed on the client,
 keeps the old one working for `rotate --strategy rollover` until `creds
 finish-rollover` discards it, verifies one by login where only the declared
 account can answer, and names the server by its ``server_uuid``. For UC-2 it
-resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`) and resets a
-password. The registry lists `doctor`, the `creds` commands, `account list`
-and `account reset-password`. The methods that change an account otherwise
-refuse with ``SOPULI-20006`` without a round trip.
+resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`), resets a
+password, suspends an account and expires a password. The registry lists
+`doctor`, the `creds` commands and every `account` command.
+:meth:`MysqlSession.apply_attributes`, which a policy's `account:` block needs,
+refuses with ``SOPULI-20006`` without a round trip.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
     ENCRYPTION_TLS,
     EXPIRE_PASSWORD,
@@ -63,6 +65,7 @@ from sopuli.driver.protocol import (
     OLD_PASSWORD_MODES,
     OLD_RETAIN,
     PASS,
+    PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
@@ -480,7 +483,50 @@ class MysqlSession(ClosesConnection):
         )
 
     def suspend_account(self, account: str) -> AccountChange:
-        raise self._not_written("suspend an account")
+        """``ALTER USER … ACCOUNT LOCK``, or report that the account is already
+        locked (#1225).
+
+        The password then answers ``3118`` (LE2). ``account_locked`` is set only
+        by ``ACCOUNT LOCK``, so a ``Y`` is already a suspension; a block after
+        failed logins is not in ``mysql.user`` and does not count, as Oracle's
+        ``LOCKED(TIMED)`` does not. A reset refuses a locked account (H4), so a
+        suspended account stays suspended until somebody runs ``ALTER USER …
+        ACCOUNT UNLOCK``.
+
+        **The state is read first** (invariant 9): a second ``ACCOUNT LOCK`` is
+        accepted silently (LE2). ``CREATE USER`` is enough.
+
+        Not gated by ``account_lock_state``, which a MySQL session does not
+        report: that capability is also what lets UC-1's ``unlock_if_locked``
+        clear a lock, which this driver does not do yet. PostgreSQL's
+        ``NOLOGIN`` is not gated for the same reason.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        state = self.describe_user(account)
+        if state is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing is suspended, and the "
+                    "account name is worth checking against the server"
+                ),
+            )
+        if state.deliberately_locked:
+            return AccountChange(
+                ACCOUNT_LOCK,
+                changed=False,
+                status=state.status,
+                detail="the account is already locked (ACCOUNT LOCK)",
+            )
+        user, host = accounts_module.split(state.name)
+        self._read(lambda cursor: cursor.execute(password_module.lock(user, host)))
+        LOG.debug("ACCOUNT LOCK for %s on %s", state.name, self.target.name)
+        return AccountChange(
+            ACCOUNT_LOCK,
+            changed=True,
+            status=state.status,
+            detail=f"account was {state.status.lower()}; sent ACCOUNT LOCK",
+        )
 
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
@@ -587,7 +633,78 @@ class MysqlSession(ClosesConnection):
         )
 
     def expire_password(self, account: str) -> tuple[AccountChange, ...]:
-        raise self._not_written("expire a password")
+        """``DISCARD OLD PASSWORD``, then ``PASSWORD EXPIRE``, where
+        ``password_expired`` is ``N``; nothing where it is ``Y`` (#1225,
+        decision 3).
+
+        **The discard comes first, and is sent every time.** A password someone
+        kept with ``RETAIN CURRENT PASSWORD`` survives ``PASSWORD EXPIRE`` and
+        still logs in, expired, until the discard (LE9). The tool cannot read
+        whether one is kept. Discard first so that a failed expiry leaves the
+        old password dead, as Oracle's close comes first (#525).
+
+        **Keyed on ``password_expired``, not on the reported state** (invariant
+        9). Only ``PASSWORD EXPIRE`` sets the column, so ``Y`` is the state this
+        verb converges on, and a second run reports ``changed: false``. A
+        password past its lifetime reads as expired and still has ``N``: the
+        verb expires it, which a new lifetime would not undo. An account someone
+        else expired keeps a retained password; the tool cannot see one.
+
+        A lock is left alone, as on Oracle. ``CREATE USER`` is enough (LE3, DP7).
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        user, host = accounts_module.split(account)
+        found = self._read(
+            lambda cursor: accounts_module.find(accounts_module.read(cursor, [user])[user], host)
+        )
+        if found is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing is expired, and the "
+                    "account name is worth checking against the server"
+                ),
+            )
+        if found.plugin != accounts_module.SUPPORTED_PLUGIN:
+            raise accounts_module.OtherPluginError(
+                found.name, found.plugin, target=self.target.name
+            )
+        status = accounts_module.EXPIRED_AND_LOCKED if found.locked else accounts_module.EXPIRED
+        if found.expired:
+            return (
+                AccountChange(
+                    ROLLOVER_FINISH,
+                    changed=False,
+                    status=status,
+                    detail="nothing sent: the password is already expired",
+                ),
+                AccountChange(
+                    PASSWORD_EXPIRE,
+                    changed=False,
+                    status=status,
+                    detail="the password is already expired",
+                ),
+            )
+        before = accounts_module.LOCKED if found.locked else accounts_module.OPEN
+        self._read(
+            lambda cursor: cursor.execute(password_module.discard_old(found.user, found.host))
+        )
+        discarded = AccountChange(
+            ROLLOVER_FINISH,
+            changed=True,
+            status=before,
+            detail="sent DISCARD OLD PASSWORD, so no retained password logs in",
+        )
+        try:
+            statement = password_module.expire(found.user, found.host)
+            self._read(lambda cursor: cursor.execute(statement))
+        except DriverError as failure:
+            raise PartialAccountChangeError(failure, completed=(discarded,)) from failure
+        LOG.debug("PASSWORD EXPIRE for %s on %s", found.name, self.target.name)
+        return (
+            discarded,
+            AccountChange(PASSWORD_EXPIRE, changed=True, status=before, detail="password expired"),
+        )
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""

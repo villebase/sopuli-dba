@@ -35,6 +35,9 @@ mysql.user's account_locked, password_expired and User_attributes:
   LE8  PASSWORD EXPIRE, then a password by hash with RETAIN CURRENT PASSWORD,
        as `creds rotate --strategy rollover` sends it. Then the new and the
        retained passwords (#1225)
+  LE9  PASSWORD EXPIRE alone, with that password retained. Then the current
+       and the retained passwords. Then DISCARD OLD PASSWORD, and both again
+       (#1225)
 
 A login is "ok", or the error number and SQLSTATE of the refusal. Logins use
 the server's own mysql client, as in 02_client_hash_probe.py.
@@ -48,7 +51,7 @@ STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
 times. LE5 was added and the whole probe run again on 2026-11-02 (#1223),
-twice, exit 0, with the same result. LE6 to LE8 were added and the whole
+twice, exit 0, with the same result. LE6 to LE9 were added and the whole
 probe run again on 2026-11-03 (#1225), twice, exit 0, with the same result.
 
 RESULTS -- the same on all three releases
@@ -88,6 +91,10 @@ RESULTS -- the same on all three releases
        PASSWORD EXPIRE is accepted, password_expired reads N, and it logs in
   LE8  both accepted, and password_expired reads N. The new password and the
        retained one both log in
+  LE9  accepted, and password_expired reads Y. The current password and the
+       retained one both log in, expired. DISCARD OLD PASSWORD is accepted,
+       password_expired still reads Y, the current password logs in, expired,
+       and the retained one answers 1045 (28000)
 
   So a lock and an expiry read back from mysql.user, and a timed block does
   not: nothing in mysql.user shows it. ACCOUNT UNLOCK ends both kinds. A
@@ -96,7 +103,7 @@ RESULTS -- the same on all three releases
   for PASSWORD_LOCK_TIME days. A password change ends an expiry, with RETAIN
   CURRENT PASSWORD or without, and one with
   PASSWORD EXPIRE expires the retained password too, which keeps working
-  until DISCARD OLD PASSWORD.
+  until DISCARD OLD PASSWORD. So does PASSWORD EXPIRE alone.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -308,6 +315,23 @@ def probe(service: str) -> None:
         (expire, set_a, after, new, kept),
         (OK, OK, "locked=N expired=N", OK, OK),
     )
+
+    # LE9: a bare PASSWORD EXPIRE with a retained password (D), then DISCARD.
+    expire = alter(service, "PASSWORD EXPIRE")
+    after = state(service).split(" attributes=")[0]
+    current, kept = login(service, A), login(service, D)
+    discard = alter(service, "DISCARD OLD PASSWORD")
+    discarded = state(service)
+    current_after, kept_after = login(service, A), login(service, D)
+    print(f"LE9 PASSWORD EXPIRE: {expire}; {after}; current: {current}; retained: {kept}")
+    print(f"LE9 DISCARD OLD PASSWORD: {discard}; {discarded}; current: {current_after}; "
+          f"retained: {kept_after}")  # fmt: skip
+    ch.check(
+        "LE9",
+        (expire, after, current, kept, discard, discarded, current_after, kept_after),
+        (OK, "locked=N expired=Y", CLIENT_REFUSES, CLIENT_REFUSES, OK,
+         "locked=N expired=Y attributes=NULL", CLIENT_REFUSES, REFUSED),
+    )  # fmt: skip
 
 
 def reset(service: str, password: str, rounds: int) -> tuple[str, str, str]:

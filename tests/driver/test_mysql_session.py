@@ -20,6 +20,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
     KEEP_ROLLOVER,
+    PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
     ROLE_LOOKUP,
@@ -69,6 +70,9 @@ class _Cursor:
             raise self._connection.fail_alter
         if query.endswith("ACCOUNT UNLOCK") and self._connection.fail_unlock is not None:
             raise self._connection.fail_unlock
+        bare_expire = query.endswith("PASSWORD EXPIRE") and "IDENTIFIED" not in query
+        if bare_expire and self._connection.fail_expire is not None:
+            raise self._connection.fail_expire
         if query.endswith("DISCARD OLD PASSWORD") and self._connection.fail_discard is not None:
             raise self._connection.fail_discard
         if "digest_rounds" in query and self._connection.fail_rounds is not None:
@@ -111,6 +115,8 @@ class _Connection:
         self.fail_alter: Exception | None = None
         #: An error `ACCOUNT UNLOCK` raises instead.
         self.fail_unlock: Exception | None = None
+        #: An error a bare `PASSWORD EXPIRE` raises instead.
+        self.fail_expire: Exception | None = None
         #: The server's `caching_sha2_password_digest_rounds`.
         self.rounds = 5000
         #: The server's clock, as `select now()` returns it: naive, UTC.
@@ -166,17 +172,9 @@ def test_the_scope_is_read_once_and_cached() -> None:
     assert session.scope() is first
 
 
-@pytest.mark.parametrize(
-    "call",
-    [
-        lambda s: s.suspend_account("acme_app@%"),
-        lambda s: s.expire_password("acme_app@%"),
-        lambda s: s.apply_attributes("acme_app@%", AccountAttributes()),
-    ],
-)
-def test_what_is_not_written_refuses_with_20006(call: Any) -> None:
+def test_what_is_not_written_refuses_with_20006() -> None:
     with pytest.raises(DriverError) as caught:
-        call(_session())
+        _session().apply_attributes("acme_app@%", AccountAttributes())
 
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
@@ -469,6 +467,96 @@ def test_a_failed_discard_after_the_set_says_what_to_assume() -> None:
     assert [row.action for row in caught.value.completed] == [ACCOUNT_UNLOCK, PASSWORD_SET]
     assert caught.value.password_sent is True
     assert "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD" in str(caught.value.hint)
+
+
+def _row(*, locked: str = "N", expired: str = "N") -> tuple[Any, ...]:
+    return ("acme_app", "10.%", "caching_sha2_password", locked, expired, None, None)
+
+
+@pytest.mark.parametrize(
+    ("locked", "sent", "changed"),
+    [("N", ["ALTER USER `acme_app`@`10.%` ACCOUNT LOCK"], True), ("Y", [], False)],
+    ids=["open", "already-locked"],
+)
+def test_suspend_locks_once(locked: str, sent: list[str], changed: bool) -> None:
+    """#1225: ACCOUNT LOCK, and nothing where `account_locked` is Y, because
+    the server accepts a second lock silently (LE2) and invariant 9 asks for
+    `changed: false`."""
+    session = _session()
+    session.connection.accounts = [_row(locked=locked)]
+
+    change = session.suspend_account("acme_app@10.%")
+
+    assert _altered(session) == sent
+    assert change.changed is changed
+
+
+@pytest.mark.parametrize("call", ["suspend_account", "expire_password"])
+def test_a_missing_account_is_refused_before_anything_is_sent(call: str) -> None:
+    session = _session()
+
+    with pytest.raises(DriverError, match="does not exist"):
+        getattr(session, call)("acme_app@10.%")
+
+    assert _altered(session) == []
+
+
+def test_expire_discards_then_expires() -> None:
+    """Decision 3: a retained password survives PASSWORD EXPIRE (LE9), so the
+    discard goes first."""
+    session = _session()
+    session.connection.accounts = [_row()]
+
+    rows = session.expire_password("acme_app@10.%")
+
+    assert _altered(session) == [
+        "ALTER USER `acme_app`@`10.%` DISCARD OLD PASSWORD",
+        "ALTER USER `acme_app`@`10.%` PASSWORD EXPIRE",
+    ]
+    assert [(row.action, row.changed) for row in rows] == [
+        (ROLLOVER_FINISH, True),
+        (PASSWORD_EXPIRE, True),
+    ]
+
+
+def test_an_expired_password_is_left_alone() -> None:
+    """Invariant 9: `password_expired` is Y, so nothing is sent and a second
+    run reports no change."""
+    session = _session()
+    session.connection.accounts = [_row(expired="Y")]
+
+    rows = session.expire_password("acme_app@10.%")
+
+    assert _altered(session) == []
+    assert not any(row.changed for row in rows)
+    assert rows[-1].detail == "the password is already expired"
+
+
+def test_a_failed_expiry_after_the_discard_carries_the_discard() -> None:
+    session = _session()
+    session.connection.accounts = [_row()]
+    session.connection.fail_expire = session_module.pymysql.err.OperationalError(
+        1227, "Access denied; you need the CREATE USER privilege"
+    )
+
+    with pytest.raises(PartialAccountChangeError) as caught:
+        session.expire_password("acme_app@10.%")
+
+    assert [row.action for row in caught.value.completed] == [ROLLOVER_FINISH]
+
+
+def test_a_failed_discard_before_the_expiry_changed_nothing() -> None:
+    session = _session()
+    session.connection.accounts = [_row()]
+    session.connection.fail_discard = session_module.pymysql.err.OperationalError(
+        1227, "Access denied; you need the CREATE USER privilege"
+    )
+
+    with pytest.raises(DriverError) as caught:
+        session.expire_password("acme_app@10.%")
+
+    assert not isinstance(caught.value, PartialAccountChangeError)
+    assert len(_altered(session)) == 1
 
 
 def test_a_failed_discard_says_the_password_was_set() -> None:

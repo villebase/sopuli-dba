@@ -248,9 +248,9 @@ commands, `creds generate`, `apply`, `check`, `rotate`, `status` and
 also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`.
 `doctor` connects to a MySQL server and reports the scope, `server`. The MySQL
 entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
-`finish-rollover` (#1223, #1224), and UC-2's `account list` and
-`reset-password` (#1225). Every other command, `account suspend` and
-`expire-password` among them, refuses a MySQL target with `SOPULI-20006`. What
+`finish-rollover` (#1223, #1224), and UC-2's `account list`,
+`reset-password`, `suspend` and `expire-password` (#1225): every command that
+connects to a target, as for PostgreSQL. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted

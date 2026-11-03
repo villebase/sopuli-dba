@@ -243,14 +243,13 @@ def test_the_uc1_commands_are_let_through_on_mysql(command: str) -> None:
     require_command(target("mysql-dev", "mysql"), command)
 
 
-@pytest.mark.parametrize("command", ["account.suspend"])
-def test_what_mysql_cannot_do_yet_is_refused(command: str) -> None:
-    """The UC-2 verbs are not written for MySQL."""
-    # TODO(#1225): the UC-2 verbs.
-    with pytest.raises(DriverNotImplementedError) as refused:
-        require_command(target("mysql-dev", "mysql"), command)
-
-    assert refused.value.code == DRIVER_NOT_IMPLEMENTED
+@pytest.mark.parametrize(
+    "command",
+    ["account.list", "account.reset-password", "account.suspend", "account.expire-password"],
+)
+def test_the_uc2_commands_are_let_through_on_mysql(command: str) -> None:
+    """#1225."""
+    require_command(target("mysql-dev", "mysql"), command)
 
 
 def test_account_list_is_let_through_on_postgresql() -> None:

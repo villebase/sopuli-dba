@@ -586,9 +586,9 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   answers `3955`, also to the right password, and nothing in `mysql.user`
   shows it. Other places, such as `performance_schema`, were not measured.
   `ACCOUNT UNLOCK` ends a lock and a block. A new password does not end a
-  block, and does end an expiry. A password kept with `RETAIN CURRENT PASSWORD` survives a
-  change with `PASSWORD EXPIRE`, expired too, until `DISCARD OLD PASSWORD`
-  (#1225). An account with only `CREATE USER` does all of these.
+  block, and does end an expiry. A password kept with `RETAIN CURRENT
+  PASSWORD` survives `PASSWORD EXPIRE`, with a change or alone, expired too,
+  until `DISCARD OLD PASSWORD` (#1225). An account with only `CREATE USER` does all of these.
   `sql/mysql/04_lock_expiry_probe.py` measures it.
 - `verified` `mysql-identity` (#1202) — **What is one MySQL account?**
   A user name and a host pattern. One name at several hosts is several

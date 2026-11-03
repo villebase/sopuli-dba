@@ -356,6 +356,12 @@ until the `DISCARD` (`04_lock_expiry_probe.py`, LE6 and LE7, on 8.0.46, 8.4.13
 and 9.7.4). `CREATE USER` is enough for all three
 ([#1225](../decisions/log.md#1225)).
 
+`account suspend` sends `ACCOUNT LOCK`, where `account_locked` is `N`.
+`account expire-password` sends `DISCARD OLD PASSWORD`, then `PASSWORD
+EXPIRE`, where `password_expired` is `N`: a kept password survives `PASSWORD
+EXPIRE` alone (LE9). Neither statement carries a password, and `CREATE USER`
+is enough for both.
+
 The hash is SHA-crypt with SHA-256, a 20-byte salt the driver draws, and the
 server's own rounds, from `caching_sha2_password_digest_rounds`, which any
 account reads. It agrees with the hash the server computes for the same

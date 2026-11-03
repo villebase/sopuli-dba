@@ -5,7 +5,7 @@ What the command adds on MySQL: `--keep-rollover` refused by capability, a
 `role:` rule that names a mandatory role refused at plan time, and names
 compared as the server compares them. The driver's statements are tested in
 `tests/driver/test_mysql_session.py`, and against a server in
-`tests/driver/test_mysql_reset_live.py`.
+`tests/driver/test_mysql_account_verbs_live.py`.
 """
 
 from __future__ import annotations

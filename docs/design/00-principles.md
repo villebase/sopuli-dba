@@ -149,9 +149,10 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles`. MySQL: always, from `mysql.user` and `mysql.role_edges`, in `02-mysql-privileges.md` §2.1's grant set |
 
 A PostgreSQL session reports `role_lookup` and none of the others. A MySQL
-session reports `role_lookup`, and `password_rollover` where the server has
-`caching_sha2_password_digest_rounds`, and none of the others. On MySQL the tool
-opens the window itself, with `RETAIN CURRENT PASSWORD` (UC-1 §6.3).
+session reports `role_lookup` and `expire_password`, and `password_rollover`
+where the server has `caching_sha2_password_digest_rounds`, and none of the
+others. On MySQL the tool opens the window itself, with `RETAIN CURRENT
+PASSWORD` (UC-1 §6.3), and ends it with `DISCARD OLD PASSWORD`.
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.
@@ -247,9 +248,9 @@ commands, `creds generate`, `apply`, `check`, `rotate`, `status` and
 also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`.
 `doctor` connects to a MySQL server and reports the scope, `server`. The MySQL
 entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
-`finish-rollover` (#1223, #1224), and UC-2's `account list` (#1225). Every
-other command, the `account` commands that change an account among them,
-refuses a MySQL target with `SOPULI-20006`. What
+`finish-rollover` (#1223, #1224), and UC-2's `account list` and
+`reset-password` (#1225). Every other command, `account suspend` and
+`expire-password` among them, refuses a MySQL target with `SOPULI-20006`. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted

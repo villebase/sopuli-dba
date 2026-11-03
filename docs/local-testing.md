@@ -51,8 +51,8 @@ lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target runs `doctor`, the
-`creds` commands (§7) and `account list` (§9), and refuses the other `account`
-commands.
+`creds` commands (§7), `account list` and `account reset-password` (§9), and
+refuses `account suspend` and `account expire-password`.
 
 ---
 
@@ -730,7 +730,7 @@ client
   pymysql           1.2.3
 
 TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-mysql-dev  yes        server  -          READ WRITE  1             tls
+mysql-dev  yes        server  -          READ WRITE  3             tls
 
 1 note:
   mysql-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -1491,6 +1491,52 @@ $ sopuli --config postgres.yaml account reset-password --account acme_dev_alice 
 sopuli: target "pg-dev" does not support expire_password
   hint: the seen path expires the password so that the copy the DBA saw stops working at the owner's first login (UC-2 §1), and this target cannot expire one; use an unseen delivery method
 ```
+
+### `account reset-password` on MySQL
+
+On the server of §7, with the role from `account list` above, add the
+`vaults:`, `defaults.vault`, `delivery:` and `reset_records:` blocks of §5 to
+`mysql.yaml`. The account is named with its host. Give `acme_dev_alice` a
+failed-login limit and one wrong password, which blocks it:
+
+```
+mysql> ALTER USER 'acme_dev_alice'@'%' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1;
+$ docker exec sopuli-test-mysql-1 mysql -h127.0.0.1 -uacme_dev_alice -pWrong -e "select 1"
+ERROR 3955 (HY000): Access denied for user 'acme_dev_alice'@'127.0.0.1'. Account is blocked for 1 day(s) (1 day(s) remaining) due to 1 consecutive failed logins.
+```
+
+`mysql.user` does not show the block, so the account reads `OPEN`. The reset
+ends the block anyway:
+
+```
+$ sopuli --config mysql.yaml account reset-password --account 'acme_dev_alice@%'
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT           TARGET     INTENT        SECRET
+acme_dev_alice@%  mysql-dev  password_set  -
+
+ACCOUNT           TARGET     STATE  WAS   DETAIL
+acme_dev_alice@%  mysql-dev  RESET  OPEN  declared by role 'acme_dev_team@%'
+
+reset acme_dev_alice@% on 1 of 1 targets
+
+hand this to acme_dev_alice@% for mysql-dev; it unwraps once:
+
+    <TOKEN>
+
+It stops working at 2026-11-03T17:08:28.294814Z, and the first unwrap is the
+last. Do not unwrap it to check -- that spends the person's one read, and
+them finding it spent is the only warning either of you gets.
+
+1 warning:
+  targets[0].mysql.ssl_mode: target 'mysql-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+```
+
+The password in the token logs in. The record is at
+`sopuli/personal-resets/mysql-dev/acme_dev_alice@any`: a path holds no `%`.
+`--keep-rollover` is refused with exit 5, because a reset on MySQL always
+discards the old password.
 
 ### Delivering to the person's own Vault path
 

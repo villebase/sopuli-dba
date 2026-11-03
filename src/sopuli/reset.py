@@ -32,17 +32,22 @@ narrows rather than widens.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.config.errors import ArgumentError
-from sopuli.config.model import Config, Delivery
+from sopuli.config.model import Config, Delivery, ExpandedTarget
+from sopuli.config.targets import MYSQL
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
+    KEEP_ROLLOVER,
+    KEPT_WINDOW_UNREADABLE,
     SEEN_NEEDS_EXPIRY,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
     require_capability,
 )
@@ -175,6 +180,27 @@ def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
             "--keep-rollover, or use an unseen delivery method (UC-2 §4.3)"
         ),
     )
+
+
+def refuse_kept_window_on_mysql(targets: Iterable[ExpandedTarget], *, keep_rollover: bool) -> None:
+    """Refuse ``--keep-rollover`` where a target is MySQL, at plan time, exit 5
+    (#1225, decision 2).
+
+    A reset there discards the old password: a password kept with ``RETAIN
+    CURRENT PASSWORD`` cannot be read back, so nothing could say whether the
+    window is open or when it ends. Refused by capability, naming the first
+    MySQL target, on either path and under ``--dry-run`` too, for
+    :func:`refuse_kept_window`'s reason. Knowable from the file, so it needs no
+    connection, and the whole run is refused, as
+    :func:`~sopuli.cli._refuse_a_bare_mysql_name` refuses it.
+    """
+    if not keep_rollover:
+        return
+    for expanded in targets:
+        if expanded.target.type == MYSQL:
+            raise UnsupportedCapabilityError(
+                KEEP_ROLLOVER, target=expanded.name, hint=KEPT_WINDOW_UNREADABLE
+            )
 
 
 def refuse_seen_path(
@@ -350,7 +376,8 @@ def decide(
             detail=(
                 f"the account is {state.status.lower()}; a reset does not undo a "
                 f"deliberate lock -- remove it by hand first if that is what you mean "
-                f"(ALTER USER … ACCOUNT UNLOCK on Oracle, ALTER ROLE … LOGIN on PostgreSQL)"
+                f"(ALTER USER … ACCOUNT UNLOCK on Oracle and MySQL, ALTER ROLE … LOGIN on "
+                f"PostgreSQL)"
             ),
         )
 

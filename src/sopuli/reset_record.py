@@ -48,7 +48,9 @@ from typing import Any
 
 from sopuli.clock import to_rfc3339
 from sopuli.config.model import ResetRecords
+from sopuli.config.products import fold_mysql_host, mysql_account, mysql_host_token
 from sopuli.config.secret_refs import TRAVERSAL, normalise_path
+from sopuli.config.targets import MYSQL
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder
 from sopuli.secrets import Secret
@@ -147,8 +149,10 @@ class ResetRecord:
         return data
 
 
-def record_path(records: ResetRecords, *, target: str, account: str) -> str:
+def record_path(records: ResetRecords, *, target: str, account: str, product: str = "") -> str:
     """Where one (target, account)'s record lives under the configured prefix.
+    ``product`` is the target's ``type``, which decides how the account is
+    written (:func:`account_segment`).
 
     Target before account, which is the order the estate is usually read in --
     `lock status` groups by store and path, and a listing of the prefix then
@@ -185,7 +189,28 @@ def record_path(records: ResetRecords, *, target: str, account: str) -> str:
     """
     for noun, value in (("target", target), ("account", account)):
         _reject_unusable_component(noun, value)
-    return normalise_path(f"{records.prefix}/{target}/{account.upper().lower()}")
+    return normalise_path(f"{records.prefix}/{target}/{account_segment(account, product)}")
+
+
+def account_segment(account: str, product: str = "") -> str:
+    """The account's part of a record path: one value for every spelling of
+    one account.
+
+    ``upper().lower()`` on Oracle and PostgreSQL, :func:`record_path`'s rule.
+    On MySQL the server's own identity (#1225): the user exactly, because
+    ``jdoe@%`` and ``JDOE@%`` are two accounts there and folding them would
+    give two people one record and one lock, and the host without ASCII case,
+    written by :func:`~sopuli.config.products.mysql_host_token` so that no
+    path holds a MySQL wildcard. ``jdoe@%`` is ``jdoe@any``. A literal host
+    ``any`` writes the same segment, and then the two accounts share one record
+    and one lock; nothing names a host that way by accident.
+    """
+    if product == MYSQL:
+        split = mysql_account(account)
+        if split is not None:
+            user, host = split
+            return f"{user}@{mysql_host_token(fold_mysql_host(host))}"
+    return account.upper().lower()
 
 
 def _reject_unusable_component(noun: str, value: str) -> None:
@@ -204,7 +229,9 @@ def _reject_unusable_component(noun: str, value: str) -> None:
         )
 
 
-def record_lock_key(records: ResetRecords, *, target: str, account: str) -> LockKey:
+def record_lock_key(
+    records: ResetRecords, *, target: str, account: str, product: str = ""
+) -> LockKey:
     """The advisory lock a reset of this (target, account) is taken under.
 
     An ordinary :class:`~sopuli.lock.keys.LockKey`, which is the whole claim of UC-2
@@ -225,7 +252,10 @@ def record_lock_key(records: ResetRecords, *, target: str, account: str) -> Lock
     delivery form would leave the other form's concurrent resets uncontended,
     which is the collision this lock is for.
     """
-    return LockKey(store=records.vault, path=record_path(records, target=target, account=account))
+    return LockKey(
+        store=records.vault,
+        path=record_path(records, target=target, account=account, product=product),
+    )
 
 
 #: Every key a record document may carry, and the only ones. The closed set is

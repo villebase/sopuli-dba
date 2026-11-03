@@ -341,4 +341,6 @@ def test_a_command_the_mysql_driver_does_not_have_yet_is_refused() -> None:
         require_command(target, "account.suspend")
 
     assert 'target "mysql-dev" declares type "mysql"' in str(caught.value)
-    assert "can run only `doctor`, `account list`, `creds apply`" in str(caught.value)
+    assert "can run only `doctor`, `account list`, `account reset-password`, `creds apply`" in str(
+        caught.value
+    )

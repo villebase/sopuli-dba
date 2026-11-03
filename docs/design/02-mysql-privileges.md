@@ -348,6 +348,14 @@ current one (DP3). `creds apply --strategy direct` sends `DISCARD` all the
 same. No
 grant beyond `CREATE USER` is needed for either (DP2).
 
+`account reset-password` (UC-2 §4.1) sends `ACCOUNT UNLOCK` first, then the
+first statement, with `PASSWORD EXPIRE` on the seen path, then `DISCARD OLD
+PASSWORD`. `ACCOUNT UNLOCK` ends a block after failed logins, which nothing in
+`mysql.user` shows. A kept password survives `PASSWORD EXPIRE`, expired too,
+until the `DISCARD` (`04_lock_expiry_probe.py`, LE6 and LE7, on 8.0.46, 8.4.13
+and 9.7.4). `CREATE USER` is enough for all three
+([#1225](../decisions/log.md#1225)).
+
 The hash is SHA-crypt with SHA-256, a 20-byte salt the driver draws, and the
 server's own rounds, from `caching_sha2_password_digest_rounds`, which any
 account reads. It agrees with the hash the server computes for the same

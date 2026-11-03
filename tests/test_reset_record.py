@@ -174,6 +174,29 @@ def test_the_account_segment_follows_upper_and_stays_lower_case() -> None:
     )
 
 
+def mysql_path(account: str) -> str:
+    return record_path(RECORDS, target="mysql-dev", account=account, product="mysql")
+
+
+def test_a_mysql_account_is_keyed_on_the_servers_identity() -> None:
+    """#1225, item 5: `jdoe@%` and `JDOE@%` are two accounts on MySQL, so two
+    records and two locks. The host compares without case, so `jdoe@LOCALHOST`
+    and `jdoe@localhost` are one. No path holds a MySQL wildcard."""
+    assert mysql_path("jdoe@%") == "sopuli/personal-resets/mysql-dev/jdoe@any"
+    assert mysql_path("JDOE@%") == "sopuli/personal-resets/mysql-dev/JDOE@any"
+    assert mysql_path("jdoe@LOCALHOST") == mysql_path("jdoe@localhost")
+    assert mysql_path("jdoe@10.0._.%").endswith("/jdoe@10.0.one.any")
+    assert record_lock_key(
+        RECORDS, target="mysql-dev", account="jdoe@%", product="mysql"
+    ).path == mysql_path("jdoe@%")
+
+
+def test_a_bare_name_on_mysql_is_folded_as_elsewhere() -> None:
+    """The command refuses a bare name on a MySQL target before it derives a
+    path; a name that is not `user@host` is not a MySQL account to key."""
+    assert mysql_path("JDoe") == "sopuli/personal-resets/mysql-dev/jdoe"
+
+
 # ------------------------------------------------------------------ the lock ---
 
 

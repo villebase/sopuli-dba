@@ -131,6 +131,18 @@ EXPIRY_UNAVAILABLE = (
     "the account with `account suspend`"
 )
 
+#: What `account reset-password --keep-rollover` names as the missing
+#: capability on a MySQL server, given at plan time and by the driver alike
+#: (#1225, decision 2).
+KEEP_ROLLOVER = "--keep-rollover"
+
+#: Its hint.
+KEPT_WINDOW_UNREADABLE = (
+    "a reset on a MySQL server discards the old password: a password kept with "
+    "RETAIN CURRENT PASSWORD cannot be read back, so nothing could say when the "
+    "window ends. Drop --keep-rollover"
+)
+
 #: Lock state can be read and set.
 ACCOUNT_LOCK_STATE = "account_lock_state"
 

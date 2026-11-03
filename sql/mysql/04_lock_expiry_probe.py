@@ -22,6 +22,16 @@ mysql.user's account_locked, password_expired and User_attributes:
        the change would make, then the current password. Then the tool sets
        the new password by hash, as the driver does, and logs in with it. Then
        ACCOUNT UNLOCK, and the new password again (#1223)
+  LE6  A wrong password and the right one, which blocks the account. Then a
+       seen reset as the driver sends it: ACCOUNT UNLOCK, the new password by
+       hash with PASSWORD EXPIRE, and DISCARD OLD PASSWORD. Then the new
+       password, as the mysql client does by default and with
+       --connect-expired-password (#1225)
+  LE7  No failed-login limit, and a password retained with RETAIN CURRENT
+       PASSWORD. Then the new password by hash with PASSWORD EXPIRE, and the
+       retained and previous passwords. Then DISCARD OLD PASSWORD, the
+       retained password and the new one. Then a password by hash without
+       PASSWORD EXPIRE, and whether the expiry is still set (#1225)
 
 A login is "ok", or the error number and SQLSTATE of the refusal. Logins use
 the server's own mysql client, as in 02_client_hash_probe.py.
@@ -35,7 +45,8 @@ STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-01 (#1202), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both
 times. LE5 was added and the whole probe run again on 2026-11-02 (#1223),
-twice, exit 0, with the same result.
+twice, exit 0, with the same result. LE6 and LE7 were added and the whole
+probe run again on 2026-11-03 (#1225), twice, exit 0, with the same result.
 
 RESULTS -- the same on all three releases
 
@@ -62,12 +73,24 @@ RESULTS -- the same on all three releases
        tool's ALTER USER ... AS with the new password's hash is accepted, and
        the new password still answers 3955. ACCOUNT UNLOCK is accepted, and
        the new password then logs in
+  LE6  both answer 3955 (HY000). The three statements are accepted, and
+       password_expired reads Y. The new password logs in: the mysql client
+       refuses to run a statement by default, and with the option SELECT 1
+       answers 1820 (HY000)
+  LE7  both log in. The new password with PASSWORD EXPIRE is accepted, the
+       retained password still logs in, expired as the new one is, and the
+       previous one answers 1045 (28000). DISCARD OLD PASSWORD is accepted,
+       password_expired still reads Y, the retained password answers 1045
+       (28000), and the new one logs in, expired. A password by hash without
+       PASSWORD EXPIRE is accepted, password_expired reads N, and it logs in
 
   So a lock and an expiry read back from mysql.user, and a timed block does
   not: nothing in mysql.user shows it. ACCOUNT UNLOCK ends both kinds. A
   password change does not end a timed block, so with FAILED_LOGIN_ATTEMPTS 1
   one wrong login, such as one before a rotation's change, blocks the account
-  for PASSWORD_LOCK_TIME days.
+  for PASSWORD_LOCK_TIME days. A password change ends an expiry, and one with
+  PASSWORD EXPIRE expires the retained password too, which keeps working
+  until DISCARD OLD PASSWORD.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -98,7 +121,7 @@ ch = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(ch)
 
 ACCOUNT = ch.ACCOUNT
-A, B, C = "Acme-Probe-pwA", "Acme-Probe-pwB", "Acme-Probe-pwC"
+A, B, C, D = "Acme-Probe-pwA", "Acme-Probe-pwB", "Acme-Probe-pwC", "Acme-Probe-pwD"
 OK, REFUSED = "ok", "1045 (28000)"
 LOCKED = "3118 (HY000)"
 BLOCKED = "3955 (HY000)"
@@ -222,6 +245,83 @@ def probe(service: str) -> None:
         "LE5",
         (answer, wrong, old, set_c, new, unlock, after_unlock),
         (OK, BLOCKED, BLOCKED, OK, BLOCKED, OK, OK),
+    )
+
+    # LE6: a reset of a blocked account, in the driver's order (#1225).
+    wrong, right = ch.login(service, ch.WRONG), ch.login(service, C)
+    unlock, set_d, discard = reset(service, D, rounds)
+    after = state(service)
+    default = login(service, D)
+    session = answers(client(service, D, "SELECT 1;\n", "--connect-expired-password"))
+    print(f"LE6 wrong: {wrong}; password: {right}")
+    print(f"LE6 ACCOUNT UNLOCK: {unlock}; set by hash with PASSWORD EXPIRE: {set_d}; "
+          f"DISCARD OLD PASSWORD: {discard}")  # fmt: skip
+    print(f"LE6 then: {after}; new password by default: {default}; with the option: {session}")
+    ch.check(
+        "LE6",
+        (wrong, right, unlock, set_d, discard, after, default, session),
+        (BLOCKED, BLOCKED, OK, OK, OK, attributes_one(expired="Y"), CLIENT_REFUSES,
+         ["1820 (HY000)"]),
+    )  # fmt: skip
+
+    # LE7: a reset of an account with a retained password, with no failed-login
+    # limit, so a refused login blocks nothing.
+    ch.root(service, f"ALTER USER '{ACCOUNT}'@'%' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
+    ch.root(service, f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY '{A}'")
+    ch.root(service, f"ALTER USER '{ACCOUNT}'@'%' IDENTIFIED BY '{B}' RETAIN CURRENT PASSWORD")
+    retained, current = ch.login(service, A), ch.login(service, B)
+    set_c = alter(service, by_hash(C, rounds) + " PASSWORD EXPIRE")
+    kept, previous = login(service, A), login(service, B)
+    discard = alter(service, "DISCARD OLD PASSWORD")
+    after = state(service)
+    kept_after, new = login(service, A), login(service, C)
+    set_d = alter(service, by_hash(D, rounds))
+    cleared, new_d = state(service), ch.login(service, D)
+    print(f"LE7 retained: {retained}; current: {current}")
+    print(f"LE7 set by hash with PASSWORD EXPIRE: {set_c}; retained: {kept}; previous: {previous}")
+    print(f"LE7 DISCARD OLD PASSWORD: {discard}; {after}; retained: {kept_after}; new: {new}")
+    print(f"LE7 set by hash without it: {set_d}; {cleared}; new: {new_d}")
+    ch.check(
+        "LE7",
+        (retained, current, set_c, kept, previous, discard, after, kept_after, new, set_d,
+         cleared, new_d),
+        (OK, OK, OK, CLIENT_REFUSES, REFUSED, OK, "locked=N expired=Y attributes=NULL", REFUSED,
+         CLIENT_REFUSES, OK, "locked=N expired=N attributes=NULL", OK),
+    )  # fmt: skip
+
+
+def reset(service: str, password: str, rounds: int) -> tuple[str, str, str]:
+    """The three statements of the MySQL driver's seen reset, as the tool account."""
+    return (
+        alter(service, "ACCOUNT UNLOCK"),
+        alter(service, by_hash(password, rounds) + " PASSWORD EXPIRE"),
+        alter(service, "DISCARD OLD PASSWORD"),
+    )
+
+
+def login(service: str, password: str) -> str:
+    """:func:`ch.login`, which also reports the client's own refusal of an
+    expired password, :data:`CLIENT_REFUSES`: the server took the password."""
+    lines = client(service, password, "SELECT CURRENT_USER();\n")
+    if CLIENT_REFUSES in lines:
+        return CLIENT_REFUSES
+    for line in lines:
+        if line.startswith("ERROR "):
+            return ch.code(line.removeprefix("ERROR ").split(" at line ")[0])
+    return OK
+
+
+def by_hash(password: str, rounds: int) -> str:
+    """The clause that sets ``password`` by its hash, as the driver sends it."""
+    stored = ch.caching_sha2_hash(password, ch.draw_salt(), rounds)
+    return f"IDENTIFIED WITH caching_sha2_password AS 0x{stored.hex()}"
+
+
+def attributes_one(*, expired: str) -> str:
+    """The state LE5 left the attributes in: one failed login, a day's block."""
+    return (
+        f'locked=N expired={expired} attributes={{"Password_locking": '
+        '{"failed_login_attempts": 1, "password_lock_time_days": 1}}'
     )
 
 

@@ -162,16 +162,37 @@ def caching_sha2_hash(secret: Secret, rounds: int, *, salt: bytes | None = None)
 RETAIN = " RETAIN CURRENT PASSWORD"
 
 
-def alter_user(user: str, host: str, stored: bytes, *, retain: bool = False) -> str:
+#: What :func:`alter_user` appends so that the owner must set a password of
+#: their own at the next login (``04_lock_expiry_probe.py``, LE6).
+EXPIRE = " PASSWORD EXPIRE"
+
+
+def alter_user(
+    user: str, host: str, stored: bytes, *, retain: bool = False, expire: bool = False
+) -> str:
     """The statement that sets the password: the account as the server
     spells it, and the hash as a hex literal.
 
     With ``retain``, the old password keeps working beside the new one. Sent
     once per rotation: a second ``RETAIN`` replaces the retained password with
-    the current one, which drops the old password (DP3)."""
+    the current one, which drops the old password (DP3).
+
+    With ``expire``, the new password logs in only to set another, and the
+    server answers ``1820`` to anything else until it is set. A password
+    retained before stays retained, and is expired too (LE7). A reset never
+    retains, so the two are not sent together."""
+    if retain and expire:
+        raise ValueError("a password is not both retained and expired")
     account = Principal(user, host).sql()
-    keep = RETAIN if retain else ""
-    return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}{keep}"
+    clause = RETAIN if retain else EXPIRE if expire else ""
+    return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}{clause}"
+
+
+def unlock(user: str, host: str) -> str:
+    """``ACCOUNT UNLOCK``, which a reset sends first. It ends a block after
+    failed logins, which nothing in ``mysql.user`` shows and a new password does
+    not end (LE4 to LE6). Decided on #1225."""
+    return f"ALTER USER {Principal(user, host).sql()} ACCOUNT UNLOCK"
 
 
 def discard_old(user: str, host: str) -> str:

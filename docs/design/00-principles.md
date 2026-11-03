@@ -149,7 +149,7 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles`. MySQL: always, from `mysql.user` and `mysql.role_edges`, in `02-mysql-privileges.md` §2.1's grant set |
 
 A PostgreSQL session reports `role_lookup` and none of the others. A MySQL
-session reports `role_lookup` and `expire_password`, and `password_rollover`
+session reports `role_lookup`, and `password_rollover` and `expire_password`
 where the server has `caching_sha2_password_digest_rounds`, and none of the
 others. On MySQL the tool opens the window itself, with `RETAIN CURRENT
 PASSWORD` (UC-1 §6.3), and ends it with `DISCARD OLD PASSWORD`.

@@ -58,6 +58,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ENCRYPTION_TLS,
     EXPIRE_PASSWORD,
+    EXPIRY_UNAVAILABLE,
     KEEP_ROLLOVER,
     KEPT_WINDOW_UNREADABLE,
     OFFLINE_VERIFY,
@@ -236,30 +237,34 @@ class MysqlSession(ClosesConnection):
         return self._scope
 
     def _capabilities(self) -> frozenset[str]:
-        """``role_lookup`` and ``expire_password`` always, and
-        ``password_rollover`` where the server has
+        """``role_lookup`` always, and ``password_rollover`` and
+        ``expire_password`` where the server has
         ``caching_sha2_password_digest_rounds``.
 
         ``role_lookup``: a role is a row in ``mysql.user`` and its grants are in
         ``mysql.role_edges``, and §2.1 grants the tool account both reads.
 
+        The tool needs that variable to set any password, and ``RETAIN CURRENT
+        PASSWORD`` and ``DISCARD OLD PASSWORD`` are older than it (MySQL 8.0.14
+        and 8.0.24), so a server that has it keeps a second password on request
+        and discards it (``03_dual_password_probe.py``, measured on 8.0.46,
+        8.4.13 and 9.7.4). A server without it answers ``1193``. Any account
+        reads the variable (CH5).
+
         ``expire_password``: an account with only ``CREATE USER`` sends
         ``PASSWORD EXPIRE`` (LE3) and ``DISCARD OLD PASSWORD`` (DP7), and a
-        new password ends an expiry (LE7), so `creds apply` sets one on an
-        expired account and the change confirms.
-
-        The tool needs that variable to set any password, and ``RETAIN CURRENT
-        PASSWORD`` is older than it (MySQL 8.0.14 and 8.0.24), so a server that
-        has it keeps a second password on request (``03_dual_password_probe.py``,
-        measured on 8.0.46, 8.4.13 and 9.7.4). A server without it answers
-        ``1193``. Any account reads the variable (CH5).
+        new password ends an expiry (LE7, LE8), so `creds apply` sets one on an
+        expired account and the change confirms. It comes with the variable,
+        because the expiry sends ``DISCARD OLD PASSWORD`` first: a server too
+        old to know the statement is refused at plan time, exit 5, rather than
+        with a syntax error in the run (invariant 4).
         """
         try:
             self._rounds = self._read(_digest_rounds)
         except DriverError as error:
             if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
                 raise
-            return frozenset({EXPIRE_PASSWORD, ROLE_LOOKUP})
+            return frozenset({ROLE_LOOKUP})
         return frozenset({EXPIRE_PASSWORD, PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
     def _not_written(self, what: str) -> NotWrittenError:
@@ -502,31 +507,45 @@ class MysqlSession(ClosesConnection):
         ``NOLOGIN`` is not gated for the same reason.
         """
         require_read_write(self.scope(), target=self.target.name)
-        state = self.describe_user(account)
-        if state is None:
-            raise DriverError(
-                f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=(
-                    "the tool does not create accounts (Q8); nothing is suspended, and the "
-                    "account name is worth checking against the server"
-                ),
-            )
-        if state.deliberately_locked:
+        found, status = self._row(account, what="suspended")
+        if found.locked:
             return AccountChange(
                 ACCOUNT_LOCK,
                 changed=False,
-                status=state.status,
+                status=status,
                 detail="the account is already locked (ACCOUNT LOCK)",
             )
-        user, host = accounts_module.split(state.name)
-        self._read(lambda cursor: cursor.execute(password_module.lock(user, host)))
-        LOG.debug("ACCOUNT LOCK for %s on %s", state.name, self.target.name)
+        self._read(lambda cursor: cursor.execute(password_module.lock(found.user, found.host)))
+        LOG.debug("ACCOUNT LOCK for %s on %s", found.name, self.target.name)
         return AccountChange(
             ACCOUNT_LOCK,
             changed=True,
-            status=state.status,
-            detail=f"account was {state.status.lower()}; sent ACCOUNT LOCK",
+            status=status,
+            detail=f"account was {status.lower()}; sent ACCOUNT LOCK",
         )
+
+    def _row(self, account: str, *, what: str) -> tuple[accounts_module.Account, str]:
+        """The account's ``mysql.user`` row and its status, for a verb that
+        needs no more: no roles and no grant tables, which the command already
+        read. Refuses an account that does not exist, before anything is sent;
+        ``what`` is the verb's participle for the hint."""
+
+        def read(cursor: Any) -> tuple[accounts_module.Account | None, str]:
+            found = accounts_module.read_one(cursor, account, target=self.target.name)
+            if found is None:
+                return None, ""
+            return found, accounts_module.state_now(cursor, found).status
+
+        found, status = self._read(read)
+        if found is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    f"the tool does not create accounts (Q8); nothing is {what}, and the "
+                    "account name is worth checking against the server"
+                ),
+            )
+        return found, status
 
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
@@ -651,25 +670,16 @@ class MysqlSession(ClosesConnection):
         else expired keeps a retained password; the tool cannot see one.
 
         A lock is left alone, as on Oracle. ``CREATE USER`` is enough (LE3, DP7).
+        Refused by capability where the server does not report
+        ``expire_password`` (:meth:`_capabilities`): the command refuses it at
+        plan time, and this is the driver's own line for a target whose scope
+        plan time could not read.
         """
         require_read_write(self.scope(), target=self.target.name)
-        user, host = accounts_module.split(account)
-        found = self._read(
-            lambda cursor: accounts_module.find(accounts_module.read(cursor, [user])[user], host)
+        require_capability(
+            self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=EXPIRY_UNAVAILABLE
         )
-        if found is None:
-            raise DriverError(
-                f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=(
-                    "the tool does not create accounts (Q8); nothing is expired, and the "
-                    "account name is worth checking against the server"
-                ),
-            )
-        if found.plugin != accounts_module.SUPPORTED_PLUGIN:
-            raise accounts_module.OtherPluginError(
-                found.name, found.plugin, target=self.target.name
-            )
-        status = accounts_module.EXPIRED_AND_LOCKED if found.locked else accounts_module.EXPIRED
+        found, status = self._row(account, what="expired")
         if found.expired:
             return (
                 AccountChange(
@@ -685,7 +695,7 @@ class MysqlSession(ClosesConnection):
                     detail="the password is already expired",
                 ),
             )
-        before = accounts_module.LOCKED if found.locked else accounts_module.OPEN
+        before = status
         self._read(
             lambda cursor: cursor.execute(password_module.discard_old(found.user, found.host))
         )

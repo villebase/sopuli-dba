@@ -198,17 +198,21 @@ def test_a_profile_rule_is_refused_by_capability(call: Any) -> None:
     assert "MySQL has no profiles" in str(caught.value.hint)
 
 
-def test_the_server_can_look_up_a_role_and_expire_whatever_its_rounds() -> None:
-    """`role_lookup` comes from §2.1's grants and `expire_password` from
-    statements any account with CREATE USER sends, not from the server, so a
-    server without the rounds variable reports them too (#1225)."""
+def test_the_server_can_look_up_a_role_whatever_its_rounds() -> None:
+    """`role_lookup` comes from §2.1's grants, not from the server, so a
+    server without the rounds variable reports it too. `expire_password` comes
+    with the variable: the expiry sends DISCARD OLD PASSWORD, which a server
+    that old may not know, so it is refused at plan time (#1225)."""
     assert _session().scope().supports(ROLE_LOOKUP)
     assert _session().scope().supports(EXPIRE_PASSWORD)
     session = _session()
     session.connection.fail_rounds = session_module.pymysql.err.OperationalError(
         1193, "Unknown system variable 'caching_sha2_password_digest_rounds'"
     )
-    assert session.scope().capabilities == frozenset({EXPIRE_PASSWORD, ROLE_LOOKUP})
+    assert session.scope().capabilities == frozenset({ROLE_LOOKUP})
+    with pytest.raises(UnsupportedCapabilityError, match=EXPIRE_PASSWORD):
+        session.expire_password("acme_app@10.%")
+    assert _altered(session) == []
 
 
 def test_accounts_matching_takes_exactly_one_rule() -> None:
@@ -517,6 +521,20 @@ def test_expire_discards_then_expires() -> None:
         (ROLLOVER_FINISH, True),
         (PASSWORD_EXPIRE, True),
     ]
+
+
+def test_a_password_past_its_lifetime_is_expired_and_reported_so() -> None:
+    """`password_expired` is N, so the verb expires it; the row's status is
+    the one read, EXPIRED, as `describe_user` reports it."""
+    session = _session()
+    session.connection.accounts = [
+        ("acme_app", "10.%", "caching_sha2_password", "N", "N", datetime(2020, 1, 1), 1)
+    ]
+
+    rows = session.expire_password("acme_app@10.%")
+
+    assert [row.changed for row in rows] == [True, True]
+    assert {row.status for row in rows} == {"EXPIRED"}
 
 
 def test_an_expired_password_is_left_alone() -> None:

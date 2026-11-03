@@ -336,4 +336,17 @@ def test_the_mysql_driver_is_written_for_every_command() -> None:
 
     for command in ("doctor", "creds.apply", "account.list", "account.suspend"):
         require_command(target, command)
-    assert DRIVERS["mysql"].commands == DRIVERS["postgresql"].commands
+    assert DRIVERS["mysql"].commands == frozenset(
+        {
+            "account.list",
+            "account.reset-password",
+            "account.suspend",
+            "account.expire-password",
+            "creds.check",
+            "creds.apply",
+            "creds.rotate",
+            "creds.generate",
+            "creds.status",
+            "creds.finish-rollover",
+        }
+    )

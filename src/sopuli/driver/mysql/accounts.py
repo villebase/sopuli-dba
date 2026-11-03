@@ -231,6 +231,23 @@ def _status(*, locked: bool, expired: bool) -> str:
     return OPEN
 
 
+def read_one(cursor: Cursor, account: str, *, target: str) -> Account | None:
+    """The declared account's row, ``None`` where it does not exist. Raises
+    :class:`OtherPluginError` for an account on another plugin. What
+    :func:`describe` and the verbs that need only the row read."""
+    user, host = split(account)
+    found = find(read(cursor, [user])[user], host)
+    if found is not None and found.plugin != SUPPORTED_PLUGIN:
+        raise OtherPluginError(found.name, found.plugin, target=target)
+    return found
+
+
+def state_now(cursor: Cursor, found: Account, *, now: datetime | None = None) -> UserState:
+    """:func:`state_of` with the server's ``default_password_lifetime``, so a
+    password past its lifetime reads as expired."""
+    return state_of(found, now=now or datetime.now(UTC), default_days=default_lifetime(cursor))
+
+
 def describe(
     cursor: Cursor,
     account: str,
@@ -245,13 +262,10 @@ def describe(
     ``session_user`` is :func:`current_user` where the session already read it;
     without it, this reads it.
     """
-    user, host = split(account)
-    found = find(read(cursor, [user])[user], host)
+    found = read_one(cursor, account, target=target)
     if found is None:
         return None
-    if found.plugin != SUPPORTED_PLUGIN:
-        raise OtherPluginError(found.name, found.plugin, target=target)
-    state = state_of(found, now=now or datetime.now(UTC), default_days=default_lifetime(cursor))
+    state = state_now(cursor, found, now=now)
     # Guardrail 9 reads it (`02-mysql-privileges.md` §5). Read here, so every
     # command that describes the account before it changes it has it.
     held = admin.global_privileges(cursor, admin.Principal(found.user, found.host))

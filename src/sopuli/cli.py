@@ -1840,11 +1840,10 @@ def account_expire_password(
     The command issues `ALTER USER ... PASSWORD EXPIRE` for an account that
     `personal_accounts:` declares. It works on Oracle and MySQL targets.
     PostgreSQL cannot make a role change its password at its next login, so a
-    PostgreSQL
-    target refuses the run with exit 5 before any account is touched. It draws,
-    sends and shows no password, so there is nothing to deliver and nothing
-    that could leak. That is why it is a separate verb, not a flag on
-    `reset-password`.
+    PostgreSQL target refuses the run with exit 5 before any account is
+    touched. It draws, sends and shows no password, so there is nothing to
+    deliver and nothing that could leak. That is why it is a separate verb, not
+    a flag on `reset-password`.
 
     The command closes an open rollover window first, with `EXPIRE PASSWORD
     ROLLOVER PERIOD`, and then expires the password. Expiring alone does not
@@ -1853,8 +1852,6 @@ def account_expire_password(
     only the old password needs a reset. On MySQL it sends `DISCARD OLD
     PASSWORD` first, because a password kept with `RETAIN CURRENT PASSWORD`
     still works after the expiry, and the tool cannot see whether one is kept.
-    An account whose `password_expired` is already `Y` is left alone, retained
-    password and all.
 
     `--account` names one account, and a profile or role rule in
     `personal_accounts:` never widens it, as for `account suspend`. The command
@@ -1864,8 +1861,11 @@ def account_expire_password(
 
     An account that is already expired, with no window open, reports no
     change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
-    expired, because the password still works until this command runs. The
-    command leaves a lock of either kind alone.
+    expired, because the password still works until this command runs. On
+    MySQL, already expired means `password_expired` is `Y`, and such an account
+    is left alone, retained password and all. A password past its lifetime has
+    `N`, so the command expires it. The command leaves a lock of either kind
+    alone.
 
     It writes no reset record and takes no advisory lock, because it delivers
     nothing.

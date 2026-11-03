@@ -1,10 +1,12 @@
-"""`reset_password` against the tier-1 `mysql` service (#1225).
+"""The UC-2 verbs that change an account, against the tier-1 `mysql` service
+(#1225).
 
 Tier 1. What only a server can answer, as the tool account with the grants of
 `02-mysql-privileges.md` §2.1: that a reset ends a block after failed logins
 it cannot read, that the seen path leaves the new password expired, and that
-no old password logs in afterwards, a retained one included. Probe 04's LE6
-and LE7 measured the same statements with the mysql client.
+no old password logs in afterwards, a retained one included; that a suspend
+locks once; and that an expiry ends a retained password and converges. Probe
+04's LE6 to LE9 measured the same statements with the mysql client.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ session_module = pytest.importorskip("sopuli.driver.mysql.session")
 #: Test passwords, not credentials.
 OLD, KEPT, NEW = "Acme-Old-pw1", "Acme-Kept-pw2", "Acme-New-pw3"
 #: The server's answers to a login.
-REFUSED, BLOCKED, MUST_CHANGE = 1045, 3955, 1862
+REFUSED, BLOCKED, MUST_CHANGE, LOCKED = 1045, 3955, 1862, 3118
 
 
 @dataclass
@@ -133,6 +135,32 @@ def test_a_set_ends_an_expiry_so_creds_apply_may_change_an_expired_account(
 
     assert blocked.expired() == "N"
     assert blocked.login(NEW) == "ok"
+
+
+def test_suspend_locks_the_account_once(blocked: Reset) -> None:
+    # A block answers before a lock does (3955, not 3118), so it goes first.
+    blocked.admin(f"alter user `{blocked.user}`@`%` failed_login_attempts 0 account unlock")
+
+    first = blocked.session.suspend_account(blocked.account)
+    second = blocked.session.suspend_account(blocked.account)
+
+    assert (first.changed, second.changed) == (True, False)
+    assert blocked.login(KEPT) == LOCKED
+
+
+def test_expire_ends_a_retained_password_and_converges(blocked: Reset) -> None:
+    """Decision 3 and LE9: the retained password stops working, the current
+    one logs in only to change itself, and a second run sends nothing."""
+    blocked.admin(f"alter user `{blocked.user}`@`%` failed_login_attempts 0 account unlock")
+
+    first = blocked.session.expire_password(blocked.account)
+    second = blocked.session.expire_password(blocked.account)
+
+    assert [row.changed for row in first] == [True, True]
+    assert not any(row.changed for row in second)
+    assert blocked.expired() == "Y"
+    assert blocked.login(OLD) == REFUSED
+    assert blocked.login(KEPT) == MUST_CHANGE
 
 
 def test_an_unseen_reset_ends_the_block_and_the_new_password_logs_in(blocked: Reset) -> None:

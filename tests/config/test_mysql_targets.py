@@ -19,7 +19,7 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import TargetMysql
 from sopuli.config.targets import MYSQL_SSL_MODES
-from sopuli.driver.registry import DriverNotImplementedError, require_command
+from sopuli.driver.registry import DRIVERS, require_command
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}}
 
@@ -329,18 +329,24 @@ def test_a_target_that_verifies_the_server_does_not_warn(mysql: dict[str, str] |
 # --------------------------------------------------------- the driver ---
 
 
-def test_a_command_the_mysql_driver_does_not_have_yet_is_refused() -> None:
-    """`doctor`, UC-1 (#1223) and `account list` run (#1225); a mutating UC-2
-    verb is SOPULI-20006 with no install line until #1225 writes it."""
+def test_the_mysql_driver_is_written_for_every_command() -> None:
+    """UC-1 (#1223) and UC-2 (#1225): every command that connects to a target,
+    as on PostgreSQL. Pinned so that the list changes by a reviewed line."""
     target = server()
 
-    require_command(target, "doctor")
-    require_command(target, "creds.apply")
-    require_command(target, "account.list")
-    with pytest.raises(DriverNotImplementedError) as caught:
-        require_command(target, "account.suspend")
-
-    assert 'target "mysql-dev" declares type "mysql"' in str(caught.value)
-    assert "can run only `doctor`, `account list`, `account reset-password`, `creds apply`" in str(
-        caught.value
+    for command in ("doctor", "creds.apply", "account.list", "account.suspend"):
+        require_command(target, command)
+    assert DRIVERS["mysql"].commands == frozenset(
+        {
+            "account.list",
+            "account.reset-password",
+            "account.suspend",
+            "account.expire-password",
+            "creds.check",
+            "creds.apply",
+            "creds.rotate",
+            "creds.generate",
+            "creds.status",
+            "creds.finish-rollover",
+        }
     )

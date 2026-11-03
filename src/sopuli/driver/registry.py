@@ -194,8 +194,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # #1202). UC-2: `account list`, where a `role:` rule names its host and a
     # `profile:` rule is refused by capability, because MySQL has no profiles
     # (#1225); `account reset-password`, which refuses `--keep-rollover` by
-    # capability. `account suspend` and `expire-password` are not written and
-    # refuse with SOPULI-20006.
+    # capability; `account suspend`, by `ACCOUNT LOCK`; and `account
+    # expire-password`, which discards a retained password first. That is every
+    # command that connects to a target.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -205,6 +206,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
             {
                 "account.list",
                 "account.reset-password",
+                "account.suspend",
+                "account.expire-password",
                 "creds.check",
                 "creds.apply",
                 "creds.rotate",

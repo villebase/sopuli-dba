@@ -11,9 +11,7 @@ lists the method that is not built yet. §9 lists the open questions. On
 PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 `account suspend` are built. The seen reset and `account expire-password` are
 refused there with exit 5, because a role cannot be made to change its password
-at its next login. On MySQL, `account list` and `account reset-password` are
-built; `account suspend` and `account expire-password` refuse a MySQL target
-with `SOPULI-20006`.
+at its next login. On MySQL every verb is built.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -295,6 +293,19 @@ and the target, before it reads or changes any account. `--dry-run` refuses in
 the same way. The hint names the two verbs that do work there: an unseen
 `account reset-password`, and `account suspend`.
 
+**On MySQL the verb sends `DISCARD OLD PASSWORD`, then `PASSWORD EXPIRE`,
+where `password_expired` is `N`, and nothing where it is `Y`** (decision 3 of
+#1225). A password kept with `RETAIN CURRENT PASSWORD` is MySQL's form of an
+open window, and the tool cannot read whether one is kept. It survives
+`PASSWORD EXPIRE` and still logs in, expired, until the discard
+(`04_lock_expiry_probe.py`, LE9, on 8.0.46, 8.4.13 and 9.7.4). So every expiry
+the verb sends has the discard before it, for the reason Oracle closes first. Only
+`PASSWORD EXPIRE` sets `password_expired`, so `Y` is the converged state, and a
+second run sends nothing and reports `changed: false` (invariant 9). The cost:
+an account somebody else expired keeps a password somebody kept, and the verb
+cannot see it. A lock is left alone. Reasons:
+[#1225](../decisions/log.md#1225).
+
 ### `account suspend`
 
 Disabling an account, the offboarding case, is `sopuli account suspend`. The verb
@@ -363,6 +374,14 @@ as on Oracle. From PostgreSQL 16 the tool account needs `ADMIN OPTION` on the
 role, the grant it already needs to set the role's password
 (`02-postgres-privileges.md` §2.2). Without it the server refuses with
 `42501` (CR7).
+
+**On MySQL the statement is `ALTER USER … ACCOUNT LOCK`** (#1225). The
+password then answers `3118`. `account_locked` is set only by `ACCOUNT LOCK`,
+so every `Y` counts as already suspended, and the reset refuses it (H4). A
+block after failed logins is not in `mysql.user`, so it is not a suspension,
+as `LOCKED(TIMED)` is not: the verb locks the account. A second `ACCOUNT LOCK`
+is accepted silently (`04_lock_expiry_probe.py`, LE2), so the driver reads the
+state first. `CREATE USER` is enough.
 
 ### `account list`
 

@@ -51,8 +51,7 @@ lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target runs `doctor`, the
-`creds` commands (§7), `account list` and `account reset-password` (§9), and
-refuses `account suspend` and `account expire-password`.
+`creds` commands (§7) and the `account` commands (§9).
 
 ---
 
@@ -1809,6 +1808,55 @@ $ sopuli --config postgres.yaml account expire-password --account acme_dev_alice
 sopuli: target "pg-dev" does not support expire_password
   hint: this target cannot make an account change its password at its next login; hand the owner a new password with an unseen `account reset-password`, or end the account with `account suspend`
 ```
+
+### `account suspend` and `account expire-password` on MySQL
+
+On the server of §7, with `mysql.yaml` from `account reset-password` on MySQL
+above. `expire-password` discards a password someone kept with `RETAIN CURRENT
+PASSWORD`, then expires the password:
+
+```
+$ sopuli --config mysql.yaml account expire-password --account 'acme_dev_alice@%'
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT           TARGET     INTENT           SECRET
+acme_dev_alice@%  mysql-dev  password_expire  -
+
+ACCOUNT           TARGET     STATE    STATUS  DETAIL
+acme_dev_alice@%  mysql-dev  EXPIRED  OPEN    sent DISCARD OLD PASSWORD, so no retained password logs in; password expired
+
+expired acme_dev_alice@%'s password on 1 of 1 targets
+...
+```
+
+A second run changes nothing:
+
+```
+ACCOUNT           TARGET     STATE    STATUS   DETAIL
+acme_dev_alice@%  mysql-dev  EXPIRED  EXPIRED  the password is already expired
+
+acme_dev_alice@%'s password was already expired on 1 of 1
+```
+
+`suspend` sends `ACCOUNT LOCK`:
+
+```
+$ sopuli --config mysql.yaml account suspend --account 'acme_dev_bob@localhost'
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT                 TARGET     INTENT        SECRET
+acme_dev_bob@localhost  mysql-dev  account_lock  -
+
+ACCOUNT                 TARGET     STATE   STATUS  DETAIL
+acme_dev_bob@localhost  mysql-dev  LOCKED  OPEN    account was open; sent ACCOUNT LOCK
+
+suspended acme_dev_bob@localhost on 1 of 1 targets
+...
+```
+
+A second run reports `the account is already locked (ACCOUNT LOCK)`, and
+`account reset-password` now skips `acme_dev_bob@localhost`. Run `ALTER USER
+'acme_dev_bob'@'localhost' ACCOUNT UNLOCK` to undo the suspension.
 
 ---
 

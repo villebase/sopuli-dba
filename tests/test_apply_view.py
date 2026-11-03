@@ -356,6 +356,36 @@ def test_unconfirmed_rows_are_counted_in_the_verdict() -> None:
     assert "1 not confirmed" in apply_view.render_apply(rows)
 
 
+def test_skipped_rows_are_counted_apart_from_unconfirmed_ones() -> None:
+    """The exit code leaves a skipped row out, so the verdict does not call it
+    unconfirmed (#1250): on MySQL every `current` row is skipped."""
+    rows = [
+        (binding(), outcome(), True),
+        (binding("acme_batch_user"), outcome(apply.SKIPPED, "only `current` is stored"), False),
+    ]
+
+    rendered = apply_view.render_apply(rows)
+
+    assert "1 changed, 1 skipped" in rendered
+    assert "not confirmed" not in rendered
+
+
+def test_a_skip_that_holds_a_promotion_back_keeps_both_remedies() -> None:
+    """#852: an account skipped on one target holds back its document, and the
+    run exits 4. `--repair` still retries the skipped pair, so its line stays
+    (#1250)."""
+    rows = [
+        (binding(), outcome(), True),
+        (binding(), outcome(apply.SKIPPED, "the account holds DBA"), False),
+    ]
+
+    rendered = apply_view.render_apply(rows, promoted=0, repair="sopuli creds apply")
+
+    assert "1 changed, 1 skipped" in rendered
+    assert "repair with: sopuli creds apply" in rendered
+    assert "--repair FILE" in rendered
+
+
 def test_the_source_table_names_the_stage_per_row() -> None:
     """A `pending` row is a rotation about to be completed and a `current` row is
     a repair: the same command, two very different things to authorise."""

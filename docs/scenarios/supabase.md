@@ -331,7 +331,7 @@ acme_web_user     supabase-dev  IN_SYNC  changed and verified by login
 acme_worker_user  supabase-dev  IN_SYNC  changed and verified by login
 authenticator     supabase-dev  SKIPPED  the server reserves this account in supautils.reserved_roles, and only a superuser may change it
 
-2 changed, 1 promoted to `current`, 1 not confirmed
+2 changed, 1 promoted to `current`, 1 skipped
 ```
 
 `creds rotate` with the same config skips the role in the same way and rotates
@@ -347,7 +347,7 @@ acme_web_user     supabase-dev  IN_SYNC  changed and verified by login
 acme_worker_user  supabase-dev  IN_SYNC  changed and verified by login
 authenticator     supabase-dev  SKIPPED  the server reserves this account in supautils.reserved_roles, and only a superuser may change it
 
-2 changed, 1 promoted to `current`, 1 not confirmed
+2 changed, 1 promoted to `current`, 1 skipped
 ```
 
 Take the role out of `accounts:` all the same: no run will ever change it.

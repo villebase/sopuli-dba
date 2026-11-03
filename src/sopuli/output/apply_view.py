@@ -30,7 +30,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.apply import CONFIRMED, Source, counts, is_confirmed, is_failure, is_inconclusive
+from sopuli.apply import (
+    CONFIRMED,
+    SKIPPED,
+    Source,
+    counts,
+    is_confirmed,
+    is_failure,
+    is_inconclusive,
+)
 from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
 from sopuli.diagnostics import CHANGED_NOT_PROMOTED, PROMOTION_SKIPPED, PROMOTION_WITHHELD
@@ -683,12 +691,20 @@ def _verdict(
     parts = [f"{changed} {verb}"] if changed else [f"nothing {verb}"]
     if promoted:
         parts.append(f"{promoted} promoted to `current`")
-    unconfirmed = sum(1 for state in states if state not in CONFIRMED)
+    # A skipped row is counted on its own, as the exit code leaves it out
+    # (`exit_code_for`): the run never meant to act on it (#1250).
+    skipped = sum(1 for state in states if state == SKIPPED)
+    if skipped:
+        parts.append(f"{skipped} skipped")
+    unconfirmed = sum(1 for state in states if state not in CONFIRMED and state != SKIPPED)
     if not unconfirmed:
         line = ", ".join(parts)
         if not (changed and not promoted):
             line = paint(line, Role.HEADING)
-        return _with_remedy(line, repair, stopped, flag=False)
+        # `--repair` still retries a skipped pair, so the flag line stays where
+        # one is (#852): once its guardrail no longer refuses it, the retry
+        # finishes the promotion it held back. `SOPULI-W050` says why.
+        return _with_remedy(line, repair, stopped, flag=bool(skipped))
     parts.append(f"{unconfirmed} not confirmed")
     return _with_remedy(", ".join(parts), repair, stopped, flag=True)
 

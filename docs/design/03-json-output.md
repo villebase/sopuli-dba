@@ -2873,7 +2873,9 @@ which is logic this tool already owns. The notes the reading produced
 
 - **The environment gate (`safety.confirm_environments`) also sends
   `confirmation.required`**, which `generate` shares with `apply`: only when
-  somebody is actually asked, with the question in `data.prompt`.
+  somebody is actually asked, with the question in `data.prompt`. It comes
+  after `constraints.resolved`, because the question waits for the constraint
+  reading (#1261).
 
 ### `account reset-password`
 

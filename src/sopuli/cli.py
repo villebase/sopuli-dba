@@ -4779,7 +4779,7 @@ def _ask_environments(
 
 
 def _refuse_unconfirmable(
-    plan: Any, run: Invocation, *, action: str, confirmed: bool, noun: str
+    plan: Any, run: Invocation, *, action: str, confirmed: bool, noun: str, show: bool = True
 ) -> Confirmation | None:
     """The half of :func:`_confirm_environments` that needs no connection.
 
@@ -4790,7 +4790,9 @@ def _refuse_unconfirmable(
     them (#1214), so an unattended run that is going to be refused does not log
     in first. Where it will ask, the plan is printed now, before those logins:
     a target with `auth: prompt` asks for a password at its login, and the
-    operator sees the plan first (invariant 8).
+    operator sees the plan first (invariant 8). A verb whose plan is complete
+    only after its stores are read passes ``show=False`` and prints the plan
+    itself, after the read and before its first target login (#1261).
     """
     if run.dry_run:
         return None
@@ -4800,7 +4802,8 @@ def _refuse_unconfirmable(
     _refuse_if_profile_unattended(run, action=action)
     if not _can_prompt():
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
-    _show_plan(plan, run, noun=noun)
+    if show:
+        _show_plan(plan, run, noun=noun)
     return demand
 
 
@@ -6118,7 +6121,18 @@ def creds_generate(
         config, intent=["generate", "vault_promote" if promote else "vault_write_pending"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    asks = _asks_environments(plan, run)
+    bindings = [binding for binding in config.bindings if binding.secret is not None]
+    # With nothing to stage there is nothing to ask about or to refuse.
+    asks = bool(bindings) and _asks_environments(plan, run)
+    # A run nobody can answer is refused before any login (#1261). The plan is
+    # printed later, once the read has filled in its stages.
+    demand = (
+        _refuse_unconfirmable(
+            plan, run, action=action, confirmed=confirm, noun="generation", show=False
+        )
+        if bindings
+        else None
+    )
 
     # **The run reads before it plans**, which is why the stores open here
     # rather than after the `--dry-run` return. The refusals are plan-time ones
@@ -6129,7 +6143,6 @@ def creds_generate(
     # and the document carry the same plan. The plan is recorded first
     # with every stage `unknown`, so a store that cannot be opened still leaves
     # the plan to print, and the document does not claim a read that never ran.
-    bindings = [binding for binding in config.bindings if binding.secret is not None]
     keyed = [
         (binding, key) for binding in bindings if (key := staging.document_key(binding)) is not None
     ]
@@ -6155,17 +6168,15 @@ def creds_generate(
     # No-ops outside `--output jsonl`.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
-    _confirm_environments(plan, run, action=action, confirmed=confirm, noun="generation")
-    if asks and not confirm and not run.dry_run:
-        # An answer can take minutes, and the gates below must refuse over a
-        # `pending` staged meanwhile, not leave it to the check under the lock.
-        # The plan keeps what it said before the question.
-        found, unread = _plan_documents(keys, stores)
 
     if not bindings:
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="generation") + "\n\nnothing to stage"
 
+    # Before the constraint reading, whose login to a target with
+    # `auth: prompt` asks for a password (invariant 8).
+    if demand is not None:
+        _show_plan(plan, run, noun="generation")
     supplied = _password_from_stdin() if from_stdin else None
     limits, unanswered, reserved = _constraints_for(bindings, run, config, offline=offline)
     document.constraints = build_constraints(limits, unanswered)
@@ -6194,15 +6205,20 @@ def creds_generate(
     candidates, skipped = _split_reserved(candidates, reserved)
     writes = staging.group(candidates)
     names = {write.key.store for write in writes}
-    held = _holders(writes, found, _holds_current) if promote else {}
-    staged_over = _holders(writes, found, _holds_pending)
-    # Never under `--dry-run`: a preview is how somebody finds out they need a
-    # flag, and refusing to show it would leave them guessing which accounts it
-    # was about.
-    if staged_over and not discard and not run.dry_run:
-        _refuse_discard(staged_over, current={} if overwrite else held)
-    if held and not overwrite and not run.dry_run:
-        _refuse_overwrite(held)
+    # Every refusal the reads decide comes before the question, so a yes is
+    # not followed by "rerun with a flag" (#1261).
+    held, staged_over = _generate_holders(
+        writes, found, promote=promote, discard=discard, overwrite=overwrite, run=run
+    )
+    _ask_environments(plan, run, demand, action=action, noun="generation")
+    if demand is not None:
+        # An answer can take minutes, and the gates must refuse over a
+        # `pending` staged meanwhile, not leave it to the check under the lock.
+        # The plan keeps what it said before the question.
+        found, unread = _plan_documents(keys, stores)
+        held, staged_over = _generate_holders(
+            writes, found, promote=promote, discard=discard, overwrite=overwrite, run=run
+        )
 
     # Between the plan and the write table, which is where they answer the
     # question the plan raises: it says which targets are in scope, and these say
@@ -6697,6 +6713,35 @@ def _holders(
         if holders:
             found[write.key] = holders
     return found
+
+
+def _generate_holders(
+    writes: Sequence[DocumentWrite],
+    documents: Mapping[LockKey, Any],
+    *,
+    promote: bool,
+    discard: bool,
+    overwrite: bool,
+    run: Invocation,
+) -> tuple[dict[LockKey, tuple[str, ...]], dict[LockKey, tuple[str, ...]]]:
+    """`creds generate`'s two plan-time gates over what the stores hold.
+
+    Returns the accounts whose `current` the write would replace (only under
+    `--promote`) and those whose `pending` it would replace, and refuses where
+    the flag that authorises either is missing. Called before the question and
+    again after it, over a fresh read (#1261).
+
+    Never refuses under `--dry-run`: a preview is how somebody finds out they
+    need a flag, and refusing to show it would leave them guessing which
+    accounts it was about.
+    """
+    held = _holders(writes, documents, _holds_current) if promote else {}
+    staged_over = _holders(writes, documents, _holds_pending)
+    if staged_over and not discard and not run.dry_run:
+        _refuse_discard(staged_over, current={} if overwrite else held)
+    if held and not overwrite and not run.dry_run:
+        _refuse_overwrite(held)
+    return held, staged_over
 
 
 def _holds_current(document: Any, candidate: Candidate) -> bool:
@@ -12016,6 +12061,13 @@ def creds_rotate(
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="rotation") + "\n\nnothing to rotate"
 
+    # A run nobody can answer is refused before the store and target logins
+    # below (#1261). The plan is printed before them too: a target with
+    # `auth: prompt` asks for a password at its login (invariant 8).
+    if not confirm and not run.dry_run:
+        _refuse_unconfirmable_rotation(run)
+        _show_plan(plan, run, noun="rotation")
+
     keys = _document_keys(bindings)
     stores = _staged_stores(
         _stores_for(
@@ -12778,6 +12830,21 @@ def _reach(radius: Any) -> str:
     return where
 
 
+def _refuse_unconfirmable_rotation(run: Invocation) -> None:
+    """Refuse a rotation nobody can answer: a profile with `confirm: false`, or
+    no terminal. The half of :func:`_confirm_rotation` that needs no connection,
+    so `creds rotate` calls it before its logins as well (#1261)."""
+    _refuse_if_profile_unattended(run, action="rotating a password")
+    if not _can_prompt():
+        raise RefusedError(
+            "rotating a password needs confirmation, and there is nobody here to ask",
+            hint=(
+                "pass --confirm to answer in advance, or --dry-run to see the plan "
+                "without touching anything"
+            ),
+        )
+
+
 def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     """Section 8 step 1: print the plan and ask, unless somebody already answered.
 
@@ -12801,15 +12868,7 @@ def _confirm_rotation(plan: Any, *, confirmed: bool, run: Invocation) -> None:
     """
     if confirmed:
         return
-    _refuse_if_profile_unattended(run, action="rotating a password")
-    if not _can_prompt():
-        raise RefusedError(
-            "rotating a password needs confirmation, and there is nobody here to ask",
-            hint=(
-                "pass --confirm to answer in advance, or --dry-run to see the plan "
-                "without touching anything"
-            ),
-        )
+    _refuse_unconfirmable_rotation(run)
     question = f"draw a new password for {_reach(plan.blast_radius)} and promote it?"
     # Sent only where somebody is actually asked: a stream that stops here is a run
     # waiting on a person, and a consumer watching it should be able to tell that

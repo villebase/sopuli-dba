@@ -25,6 +25,7 @@ import click
 import pytest
 from click.testing import CliRunner, Result
 
+from sopuli import cli as cli_module
 from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
@@ -874,7 +875,15 @@ def test_with_nothing_staged_the_window_is_closed(
 
 
 @pytest.mark.parametrize("terminal", [True, False], ids=["terminal", "unattended"])
-@pytest.mark.parametrize("argv", [["creds", "apply"], ["creds", "finish-rollover"]])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["creds", "apply"],
+        ["creds", "finish-rollover"],
+        ["creds", "generate"],
+        ["creds", "rotate"],
+    ],
+)
 def test_a_run_with_nothing_to_do_is_neither_asked_nor_refused(
     argv: list[str],
     terminal: bool,
@@ -902,3 +911,145 @@ def test_a_run_with_nothing_to_do_is_neither_asked_nor_refused(
     assert asked == []
     reported = run(runner, argv, unbound, "--select", "tenant=alpha", "--output", "json")
     assert required(reported) is False
+
+
+# ------------------------------------- generate and rotate, in that order ---
+
+#: The verbs #1261 reordered. `creds rotate` asks every run, so these cases
+#: hold for it with or without the setting.
+ASK_LAST = [
+    pytest.param(["creds", "generate", "--overwrite-pending"], id="generate"),
+    pytest.param(["creds", "rotate"], id="rotate"),
+]
+
+
+def _recording(
+    monkeypatch: pytest.MonkeyPatch, harness: dict[str, Any], *, answer: bool
+) -> list[str]:
+    """Record the store logins, the target logins, the plan and the question,
+    in the order they happen. The question is answered ``answer``."""
+    events: list[str] = []
+    store: SecretStore = harness["store"]
+    # The fake `estate` installed, wrapped below. Read from the namespace, as
+    # `sopuli.cli` re-exports nothing.
+    connect_target: Callable[..., Any] = vars(cli_module)["driver_for"]
+
+    def opening(vault: Vault, **_: Any) -> SecretStore:
+        events.append("store")
+        return store
+
+    class Recording:
+        def __init__(self, driver: Any) -> None:
+            self.driver = driver
+
+        def connect(self, target: Any, credential: Any) -> Any:
+            events.append("target")
+            return self.driver.connect(target, credential)
+
+    def showing(plan: Any, run: Any, *, noun: str) -> None:
+        events.append("plan")
+
+    def asking(question: str, **_: Any) -> bool:
+        events.append("asked")
+        if not answer:
+            raise click.Abort
+        return True
+
+    monkeypatch.setattr("sopuli.cli.connect", opening)
+    monkeypatch.setattr(
+        "sopuli.cli.driver_for",
+        lambda target, context: Recording(connect_target(target, context)),
+    )
+    monkeypatch.setattr("sopuli.cli._show_plan", showing)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", asking)
+    return events
+
+
+@pytest.mark.parametrize("argv", ASK_LAST)
+@pytest.mark.parametrize("terminal", [True, False], ids=["profile", "no-terminal"])
+def test_a_run_nobody_can_answer_is_refused_before_any_login(
+    argv: list[str],
+    terminal: bool,
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile with `confirm: false`, or no terminal, is refused before the
+    run logs in to a store or a target (#1261)."""
+    harness = estate()
+    events = _recording(monkeypatch, harness, answer=True)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: terminal)
+    profile = ("--profile", "ci") if terminal else ()
+    result = run(runner, argv, write_config(PROFILED), "--select", "tenant=alpha", *profile)
+
+    assert isinstance(result.exception, RefusedError), result.output
+    assert result.exception.exit_code == ExitCode.ABORTED
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "order"),
+    [
+        # The plan waits for the read, which fills in its stages, and comes
+        # before the constraint reading's target login.
+        pytest.param(
+            ["creds", "generate", "--overwrite-pending"],
+            ["store", "plan", "target", "asked"],
+            id="generate",
+        ),
+        # The plan comes before every login. This estate requires no
+        # encryption and no attribute, so rotate makes no target login before
+        # the question.
+        pytest.param(["creds", "rotate"], ["plan", "store", "asked"], id="rotate"),
+    ],
+)
+def test_the_question_comes_after_the_logins(
+    argv: list[str],
+    order: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The question comes after every login the plan-time checks make, so a
+    refusal from one of them never follows a yes (#1261). A no changes
+    nothing."""
+    harness = estate()
+    before = versions(harness)
+    events = _recording(monkeypatch, harness, answer=False)
+    result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    assert list(dict.fromkeys(events)) == order
+    assert events.count("asked") == 1
+    assert versions(harness) == before
+    assert issued(harness) == []
+
+
+@pytest.mark.parametrize("promote", [False, True], ids=["pending", "current"])
+def test_a_refusal_the_read_decides_comes_before_the_question(
+    promote: bool,
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A staged `pending` without `--overwrite-pending`, or under `--promote` a
+    `current` without `--overwrite-current`, is refused before anybody is asked,
+    not after a yes (#1261)."""
+    harness = estate()
+    before = versions(harness)
+    events = _recording(monkeypatch, harness, answer=True)
+    flags = ("--promote", "--overwrite-pending") if promote else ()
+    result = run(
+        runner, ["creds", "generate", *flags], write_config(CONFIG), "--select", "tenant=alpha"
+    )
+
+    assert isinstance(result.exception, RefusedError), result.output
+    assert result.exception.exit_code == ExitCode.ABORTED
+    expected = "--overwrite-current" if promote else "--overwrite-pending"
+    assert expected in str(result.exception.hint)
+    assert "asked" not in events
+    assert versions(harness) == before

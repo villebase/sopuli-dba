@@ -1984,12 +1984,11 @@ These are decisions:
   ask, and click's EOF abort would tell an operator that the run stopped without
   telling them what to type. Exit 8, `category: policy`, naming the setting, where
   it was written, and both `--confirm` and `--dry-run`.
-- **Four verbs ask after their plan-time checks** (#1214, #1257). A yes
+- **Every verb asks after its plan-time checks** (#1214, #1257, #1261). A yes
   followed by a refusal means nothing. The unattended refusal still comes
   before any login, and where the run will ask, the plan is printed before the
-  first login. `creds apply` and `creds finish-rollover` with nothing to do
-  neither ask nor refuse. `creds generate` and `account suspend` still ask
-  before their logins. What comes before the question differs by verb:
+  first login that can ask for a password. A run with nothing to do neither
+  asks nor refuses. What comes before the question differs by verb:
   - `account reset-password` and `account expire-password`: the checks' logins
     to each target. A reset opens its delivery store only after the answer.
   - `creds apply`: opening the stores, reading the documents, and the
@@ -2000,6 +1999,19 @@ These are decisions:
   - `creds finish-rollover`: opening the stores and reading the documents. It
     reads them again after the answer, as `creds generate` does, so a
     `pending` staged while the question waited keeps the window open.
+  - `creds generate`: opening the stores and reading the documents, the
+    constraint reading's logins to each target, and the refusals the read
+    decides: a staged `pending` without `--overwrite-pending`, and under
+    `--promote` a `current` without `--overwrite-current`. The plan is printed
+    after the read, which fills in its stages, and before the constraint
+    reading. After the answer the run reads the documents again and checks
+    both refusals again.
+  - `creds rotate`: opening the stores, reading the documents, and the
+    `require_encryption` and attribute checks. Its question is its own, asked
+    of every run (UC-1 §8), not this setting's; its unattended refusal comes
+    before any login too.
+  - `account suspend`: nothing. It makes no login before the question, and
+    every check after it reports on its own row rather than refusing the run.
 - **`--dry-run` is never gated**, which is the opposite of `readonly` and right
   for the opposite reason. `readonly` decides whether a verb is available at all;
   this decides assent, and a preview is how somebody works out what they are

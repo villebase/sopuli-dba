@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner, Result
 
@@ -43,6 +44,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.registry import BackendNotInstalledError
 
 LIVE = "Correct-Horse-Battery-9"
 STAGED = "Vertical-Anchor-Marble-4"
@@ -692,3 +694,89 @@ def test_the_config_warnings_are_printed_before_the_prompt(
     assert result.exit_code == ExitCode.ABORTED, result.output
     assert result.output.count("1 warning:") == 1
     assert result.output.index("1 warning:") < result.output.index("[y/N]")
+
+
+# ------------------------------------------- the question after the checks ---
+
+#: The verbs that open their stores before they ask (#1257).
+READ_FIRST = [
+    pytest.param(["creds", "apply"], id="apply"),
+    pytest.param(["creds", "apply", "--source", "previous"], id="apply-rollback"),
+    pytest.param(["creds", "finish-rollover"], id="finish-rollover"),
+]
+
+
+@pytest.mark.parametrize("argv", READ_FIRST)
+def test_a_store_refusal_comes_before_the_question(
+    argv: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A yes followed by a refusal means nothing (#1257). At a terminal, a run
+    whose store cannot be opened is refused before anybody is asked: the
+    `confirm_environments` question, and on `--source previous` the rollback's.
+    The store's client not being installed (exit 9) is the case the #1251
+    review named."""
+    estate()
+    asked: list[str] = []
+
+    def refusing(vault: Vault, **_: Any) -> SecretStore:
+        raise BackendNotInstalledError(f"the client for `{vault.name}` is not installed")
+
+    def answer(question: str, **_: Any) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr("sopuli.cli.connect", refusing)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert isinstance(result.exception, BackendNotInstalledError), result.output
+    assert asked == []
+
+
+@pytest.mark.parametrize("argv", READ_FIRST)
+def test_the_plan_comes_before_the_store_and_the_question_after(
+    argv: list[str],
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plan is printed before the first connection, so a store or target
+    that asks for a password asks after the operator has seen it (invariant 8),
+    and the question comes after the stores are read. A no takes no lock and
+    changes nothing."""
+    harness = estate()
+    before = versions(harness)
+    events: list[str] = []
+    store: SecretStore = harness["store"]
+
+    def opening(vault: Vault, **_: Any) -> SecretStore:
+        events.append("store")
+        return store
+
+    def showing(plan: Any, run: Any, *, noun: str) -> None:
+        events.append("plan")
+
+    def declining(question: str, **_: Any) -> bool:
+        events.append("asked")
+        raise click.Abort
+
+    monkeypatch.setattr("sopuli.cli.connect", opening)
+    monkeypatch.setattr("sopuli.cli._show_plan", showing)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", declining)
+    result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    # The stubbed `_show_plan` does not mark the plan shown, so a run that asks
+    # twice records "plan" twice; only the order matters here.
+    assert list(dict.fromkeys(events)) == ["plan", "store", "asked"]
+    assert events.count("asked") == 1
+    assert versions(harness) == before
+    assert issued(harness) == []
+    assert harness["sessions"] == []

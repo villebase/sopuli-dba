@@ -7292,19 +7292,17 @@ def creds_apply(
     # the mode.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
-    # `--confirm` already means "proceed without asking" here -- it is what
-    # `--source previous` requires -- so the flag answers both gates. Two flags
-    # for one word would be the sort of distinction only the implementation cares
-    # about. The rollback is asked here, after the plan, so the operator sees
-    # which targets it reaches before answering, and only where there is
-    # something to roll back (#863).
-    if bindings:
-        _confirm_rollback(
-            source_stage, confirmed=confirm, previewing=run.dry_run, run=run, plan=plan
-        )
-    _confirm_environments(plan, run, action="applying a password", confirmed=confirm, noun="apply")
+    # The gates' refusals that need no connection, before anything connects. The
+    # questions come after the plan-time checks below (#1257): a yes followed by
+    # a refusal means nothing, and teaches people to answer without reading.
+    # Where a question will be asked, the plan is printed now, before the logins.
+    action = "applying a password"
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="apply")
+    if bindings and _asks_rollback(source_stage, confirmed=confirm, previewing=run.dry_run):
+        _show_plan(plan, run, noun="apply")
 
     if not bindings:
+        _ask_environments(plan, run, demand, action=action, noun="apply")
         document.finish(ExitCode.SUCCESS, Summary())
         return "\n".join(
             [
@@ -7338,6 +7336,17 @@ def creds_apply(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
+
+    # `--confirm` already means "proceed without asking" here -- it is what
+    # `--source previous` requires -- so the flag answers both gates. Two flags
+    # for one word would be the sort of distinction only the implementation cares
+    # about. The rollback is asked after the plan, so the operator sees which
+    # targets it reaches before answering, and only where there is something to
+    # roll back (#863). Both questions come before the lock, so a person reading
+    # the plan holds no lock. The `--preflight` survey therefore comes after
+    # them: it runs under the lock (#857).
+    _confirm_rollback(source_stage, confirmed=confirm, previewing=run.dry_run, run=run, plan=plan)
+    _ask_environments(plan, run, demand, action=action, noun="apply")
 
     if run.dry_run:
         # Invariant 8: print the plan, take no lock, write nothing. The documents
@@ -7789,12 +7798,18 @@ def _confirm_rollback(
     :func:`_refuse_unanswerable_rollback` has already refused where nobody can
     answer.
     """
-    if stage != PREVIOUS or confirmed or previewing:
+    if not _asks_rollback(stage, confirmed=confirmed, previewing=previewing):
         return
     question = "put the vault's `previous` password back on every selected target?"
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
     _show_plan(plan, run, noun="apply")
     _confirm(question, abort=True, err=True)
+
+
+def _asks_rollback(stage: str | None, *, confirmed: bool, previewing: bool) -> bool:
+    """Whether :func:`_confirm_rollback` asks: a real run from `previous`
+    without `--confirm`."""
+    return stage == PREVIOUS and not confirmed and not previewing
 
 
 def _document_keys(bindings: Sequence[Binding]) -> list[LockKey]:
@@ -11423,12 +11438,14 @@ def creds_finish_rollover(
     _record_plan(plan, run, noun="window", confirmation_required=_asks_environments(plan, run))
     # The one verb here whose purpose is to stop something working, so the gate
     # is if anything more apt: closing a window early is what takes the old
-    # password away from whatever has not been given the new one.
-    _confirm_environments(
-        plan, run, action="ending a rollover window", confirmed=confirm, noun="window"
-    )
+    # password away from whatever has not been given the new one. Its refusals
+    # that need no connection come first, and the question after the stores
+    # have been read (#1257), so a store's refusal does not follow a yes.
+    action = "ending a rollover window"
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="window")
 
     if not bindings:
+        _ask_environments(plan, run, demand, action=action, noun="window")
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="window") + "\n\nnothing to end"
 
@@ -11443,6 +11460,7 @@ def creds_finish_rollover(
     # reason -- to know whether a `pending` is staged, and to have something to
     # verify with -- and a read has never needed one.
     sources = _sources(bindings, _read_documents(keys, stores, run=run))
+    _ask_environments(plan, run, demand, action=action, noun="window")
 
     finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
 

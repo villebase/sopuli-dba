@@ -1984,10 +1984,17 @@ These are decisions:
   ask, and click's EOF abort would tell an operator that the run stopped without
   telling them what to type. Exit 8, `category: policy`, naming the setting, where
   it was written, and both `--confirm` and `--dry-run`.
-- **`account reset-password` and `account expire-password` ask after their
-  plan-time checks** (#1214). Those checks log in to each target, and a yes
-  followed by a refusal means nothing. The unattended refusal still comes
-  before any login. A reset opens its delivery store only after the answer.
+- **A verb asks after its plan-time checks** (#1214, #1257). A yes followed by
+  a refusal means nothing. The unattended refusal still comes before any
+  login, and where the run will ask, the plan is printed before the first
+  login. What comes before the question differs by verb:
+  - `account reset-password` and `account expire-password`: the checks' logins
+    to each target. A reset opens its delivery store only after the answer.
+  - `creds apply`: opening the stores, reading the documents, and the
+    `require_encryption` and attribute checks. The `--preflight` survey runs
+    under the lock, so it comes after the answer: a person reading the plan
+    holds no lock.
+  - `creds finish-rollover`: opening the stores and reading the documents.
 - **`--dry-run` is never gated**, which is the opposite of `readonly` and right
   for the opposite reason. `readonly` decides whether a verb is available at all;
   this decides assent, and a preview is how somebody works out what they are

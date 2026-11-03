@@ -812,7 +812,7 @@ ACCOUNT               TARGET     STATE    DETAIL
 acme_app@%            mysql-dev  SKIPPED  not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
 acme_batch@192.0.2.%  mysql-dev  SKIPPED  not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
 
-nothing changed, 2 not confirmed
+nothing changed, 2 skipped
 ...
 ```
 
@@ -1709,7 +1709,7 @@ acme_app_user    free-pdb  IN_SYNC          changed and verified by login
 acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so the previous password authenticates until it closes
 acme_priv_user   free-pdb  SKIPPED          the account holds DBA
 
-2 changed, 1 promoted to `current`, 1 not confirmed
+2 changed, 1 promoted to `current`, 1 skipped
 
 1 note:
   free-pdb: a password was sent over a connection that is not encrypted: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
@@ -1727,7 +1727,7 @@ acme_app_user    free-pdb  IN_SYNC          changed and verified by login
 acme_batch_user  free-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover window is open, so the previous password authenticates until it closes
 acme_priv_user   free-pdb  SKIPPED          the account holds DBA
 
-2 changed, 1 promoted to `current`, 1 not confirmed
+2 changed, 1 promoted to `current`, 1 skipped
 
 rotation: staged 1 document, promoted 1 document
 

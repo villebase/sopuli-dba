@@ -364,6 +364,7 @@ from sopuli.safety import (
 from sopuli.secrets import Secret
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
+from sopuli.store import registry as store_registry
 from sopuli.store.credentials import (
     StoredSecret,
     read_secret,
@@ -2245,8 +2246,11 @@ def account_reset_password(
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
     # Before the plan, the prompt and any event, `--dry-run` included: a preview
-    # must not say "would be reset" for a run that will be refused.
+    # must not say "would be reset" for a run that will be refused. With them,
+    # what the delivery backends would refuse from the config alone (#1257); the
+    # backends themselves, and their store logins, come after any question.
     _refuse_personal_delivery_store(config, delivery, reached)
+    onepassword_token = _refuse_undeliverable(run, config, delivery, reached)
     plan = plan_builder.build_for_accounts(
         config,
         [(account, target.name) for target in reached],
@@ -2301,11 +2305,10 @@ def account_reset_password(
     _ask_environments(plan, run, demand, action=action, noun="account")
 
     # **The delivery backend**, after the question, so that an operator who
-    # answers no has not logged in to the store. A store that cannot wrap is an
-    # unavailable capability, so it is exit 5 here, naming the store, before a
-    # password is drawn rather than as a per-target error row after. A store's
-    # refusal can still follow a yes: building a backend and logging in to its
-    # store are one step today.
+    # answers no has not logged in to the store. What it would refuse from the
+    # config alone was refused before the logins (`_refuse_undeliverable`). A
+    # refusal from the store's login or its preflight can still follow a yes:
+    # that is the cost of keeping a no free of store logins (#1257).
     #
     # **Skipped under `--dry-run`**, which is UC-2 §6.5's preview exemption read
     # for a capability rather than for a guard: a preview delivers nothing, so it
@@ -2316,7 +2319,9 @@ def account_reset_password(
     # On `vault_path` this is also where the store's policy is first checked, on
     # the account name as typed: a token that could read the person's path is
     # refused before any password is drawn (UC-2 §6.6).
-    backends = _delivery_backends(run, config, delivery, reached, account=account)
+    backends = _delivery_backends(
+        run, config, delivery, reached, account=account, onepassword_token=onepassword_token
+    )
 
     header = render_plan(plan, noun="account")
     if not reached:
@@ -3448,16 +3453,21 @@ def _delivery_store(config: Config, delivery: Delivery, target: ExpandedTarget) 
     """
     link = _delivery_store_link(config, delivery, target)
     if link is None:
-        raise RefusedError(
-            f"`delivery.method: {delivery.method}` has no store to deliver into",
-            at=ROOT.key("delivery").key(delivery.method).key("vault"),
-            hint=(
-                "name one under the method, on the target, or as `defaults.vault` -- the "
-                "same chain a secret ref walks. A store is not guessed at, because the "
-                "wrong one would hand somebody else's vault a working password"
-            ),
-        )
+        raise _no_delivery_store(delivery)
     return link[0]
+
+
+def _no_delivery_store(delivery: Delivery) -> RefusedError:
+    """The refusal for an unseen delivery whose store chain runs out."""
+    return RefusedError(
+        f"`delivery.method: {delivery.method}` has no store to deliver into",
+        at=ROOT.key("delivery").key(delivery.method).key("vault"),
+        hint=(
+            "name one under the method, on the target, or as `defaults.vault` -- the "
+            "same chain a secret ref walks. A store is not guessed at, because the "
+            "wrong one would hand somebody else's vault a working password"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -3558,6 +3568,72 @@ def _notify(
     return None
 
 
+def _refuse_undeliverable(
+    run: Invocation, config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
+) -> Secret | None:
+    """Refuse what :func:`_delivery_backends` would refuse, without connecting.
+
+    Called before the plan, any event and any login (#1257), `--dry-run`
+    included, so these refusals neither follow a yes nor let a preview say
+    "would be reset". Nothing here opens a socket:
+
+    * `onepassword_share`: the SDK imports, and, on a real run, the service
+      account's token resolves. The token is returned, so it is read once and
+      :func:`_delivery_backends` uses it. A preview does not need it.
+    * `one_time_link`: `httpx` and `pysequoia` import.
+    * `vault_path` and `vault_wrapped`: each target's delivery store is named
+      and declared, its `vaults:` entry is one the method can use (exit 5), and
+      its client is installed (exit 9), which is asked without importing it
+      (:func:`~sopuli.store.registry.require_installed`), so a preview loads
+      no HTTP client. Fitness first: an entry the method can never
+      use is not worth installing a client for.
+
+    The store login, `vault_path`'s capabilities check, Yopass's `/config` and
+    the 1Password login stay in :func:`_delivery_backends`, after the answer: an
+    operator who answers no has not logged in to the delivery store. A refusal
+    from one of those can still follow a yes.
+    """
+    if delivery.is_seen:
+        return None
+    if delivery.onepassword_share is not None:
+        # Imported here, for `_delivery_backend`'s reason.
+        from sopuli.delivery import onepassword
+
+        onepassword.check_installed()
+        if run.dry_run:
+            return None
+        return resolve_material(
+            delivery.onepassword_share.token,
+            env=material_environment(),
+            where=f"delivery.{onepassword.METHOD}.token",
+        )
+    if delivery.one_time_link is not None:
+        from sopuli.delivery import yopass
+
+        yopass.check_installed()
+        return None
+    from sopuli.delivery import vault_path, vault_wrapped
+
+    declared = {vault.name: vault for vault in config.vaults}
+    checked: set[str] = set()
+    for target in reached:
+        link = _delivery_store_link(config, delivery, target)
+        if link is None:
+            raise _no_delivery_store(delivery)
+        name, at = link
+        if name in checked:
+            continue
+        checked.add(name)
+        dangling(name, set(declared), noun="vault", section="vaults", at=at)
+        vault = declared[name]
+        if delivery.vault_path is not None:
+            vault_path.refuse_unfit(vault)
+        else:
+            vault_wrapped.refuse_unfit(vault)
+        store_registry.require_installed(vault)
+    return None
+
+
 def _delivery_backends(
     run: Invocation,
     config: Config,
@@ -3565,8 +3641,13 @@ def _delivery_backends(
     reached: Sequence[ExpandedTarget],
     *,
     account: str,
+    onepassword_token: Secret | None,
 ) -> dict[str, DeliveryBackend]:
     """One backend per target, built before a password is drawn (invariant 4).
+
+    :func:`_refuse_undeliverable` has already refused what the config alone
+    decides, and resolved ``onepassword_token`` for a real `onepassword_share`
+    run.
 
     Empty on the seen path, which delivers through the terminal and has no
     backend, and empty under ``--dry-run``: a preview delivers nothing, so it
@@ -3596,28 +3677,31 @@ def _delivery_backends(
     `one_time_link`'s reason. Its preflight logs in with the service account
     and checks the vault and the account's sharing policy (#446). A `--dry-run`
     skips it, as it skips opening a store: it needs the token, which a preview
-    does not ask for. It still checks that the SDK imports, which needs no
-    token, so a preview refuses a host the real run would refuse.
+    does not ask for. :func:`_refuse_undeliverable` checked that the SDK
+    imports, which needs no token, so a preview refuses a host the real run
+    would refuse.
     """
     if delivery.is_seen:
         return {}
     if delivery.onepassword_share is not None:
+        if run.dry_run:
+            return {}
         # Imported here, for `_delivery_backend`'s reason.
         from sopuli.delivery import onepassword
 
-        if run.dry_run:
-            onepassword.check_installed()
-            return {}
-
+        # Resolved once, by `_refuse_undeliverable`, before the plan. Refused
+        # here too rather than asserted, so no backend is ever built without it.
+        if onepassword_token is None:
+            raise RefusedError(
+                f"`delivery.method: {onepassword.METHOD}` has no resolved token",
+                at=ROOT.key("delivery").key(onepassword.METHOD).key("token"),
+                hint="this is a bug in sopuli-dba: the token is resolved before the plan",
+            )
         shared = delivery.onepassword_share
         share = onepassword.OnePassword(
             onepassword_vault=shared.onepassword_vault,
             ttl=shared.ttl,
-            token=resolve_material(
-                shared.token,
-                env=material_environment(),
-                where=f"delivery.{onepassword.METHOD}.token",
-            ),
+            token=onepassword_token,
         )
         backends: dict[str, DeliveryBackend] = {target.name: share for target in reached}
     elif delivery.one_time_link is not None:

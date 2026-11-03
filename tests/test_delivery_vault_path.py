@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from sopuli.config.model import Vault
 from sopuli.delivery.vault_path import (
     CAPABILITIES_PATH,
     METHOD,
@@ -25,6 +26,7 @@ from sopuli.delivery.vault_path import (
     PathCapabilityError,
     VaultPath,
     for_store,
+    refuse_unfit,
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
@@ -285,3 +287,26 @@ def test_a_kv_v2_mount_gives_a_backend_on_that_mount() -> None:
         "8h",
         "vault-dev",
     )
+
+
+@pytest.mark.parametrize(
+    ("vault", "why"),
+    [
+        pytest.param(Vault(name="vault-oci", type="oci"), "not a HashiCorp store", id="oci"),
+        pytest.param(Vault(name="vault-dev", type="hashicorp", kv_version=1), "KV v1", id="kv-v1"),
+    ],
+)
+def test_an_unfit_entry_is_refused_from_the_config_alone(vault: Vault, why: str) -> None:
+    """The checks `for_store` makes on an opened store, made on the `vaults:`
+    entry before anything connects (#1257)."""
+    with pytest.raises(NotAPathStoreError) as caught:
+        refuse_unfit(vault)
+
+    assert why in str(caught.value)
+    assert caught.value.exit_code is ExitCode.UNSUPPORTED_CAPABILITY
+
+
+@pytest.mark.parametrize("kv_version", [2, None])
+def test_a_kv_v2_entry_is_fit(kv_version: int | None) -> None:
+    """No `kv_version` is the HashiCorp backend's default, KV v2."""
+    refuse_unfit(Vault(name="vault-dev", type="hashicorp", kv_version=kv_version))

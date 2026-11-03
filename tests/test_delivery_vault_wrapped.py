@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.model import Vault
 from sopuli.delivery import Receipt
 from sopuli.delivery.vault_wrapped import (
     METHOD,
@@ -28,6 +29,7 @@ from sopuli.delivery.vault_wrapped import (
     NotWrappableError,
     VaultWrapped,
     for_store,
+    refuse_unfit,
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
@@ -239,3 +241,19 @@ def test_a_store_that_cannot_wrap_is_refused_by_name() -> None:
     assert "HashiCorp" in str(caught.value)
     assert caught.value.exit_code is ExitCode.UNSUPPORTED_CAPABILITY
     assert caught.value.category == "capability"
+
+
+def test_a_non_hashicorp_entry_is_refused_from_the_config_alone() -> None:
+    """`for_store`'s refusal, made on the `vaults:` entry before anything
+    connects (#1257)."""
+    with pytest.raises(NotWrappableError) as caught:
+        refuse_unfit(Vault(name="vault-oci", type="oci"))
+
+    assert "vault-oci" in str(caught.value)
+    assert caught.value.exit_code is ExitCode.UNSUPPORTED_CAPABILITY
+
+
+def test_a_hashicorp_entry_of_either_kv_version_is_fit() -> None:
+    """Wrapping needs the transport, which KV v1 and v2 both carry."""
+    refuse_unfit(Vault(name="vault-dev", type="hashicorp", kv_version=1))
+    refuse_unfit(Vault(name="vault-dev", type="hashicorp", kv_version=2))

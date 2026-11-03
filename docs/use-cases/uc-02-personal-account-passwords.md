@@ -1471,6 +1471,25 @@ look interchangeable, so this section says how they differ.
 - **`smtp_encrypted`**: as strong as the recipient's key management, and no
   stronger.
 
+**Each method's checks come before a password is drawn, in two groups** (#1257).
+What the config alone decides comes first, before the plan is printed, before
+the run logs in to any target and before any confirmation. A `--dry-run` makes
+these checks too, so it does not say "would be reset" for a run they refuse:
+
+- each target has a delivery store, named by §3's chain (exit 8);
+- the store is one the method can use: a HashiCorp store, with a KV v2 mount for
+  `vault_path` (exit 5);
+- the store's client is installed (exit 9). This comes after the check above,
+  because installing a client does not help where the method cannot use the
+  store. It is asked without importing the client;
+- the Yopass or 1Password client is installed (exit 9);
+- the 1Password token resolves (exit 9). A `--dry-run` does not need it.
+
+What needs the store comes after the answer, so an operator who answers no has
+not logged in to it. That is the store login, `vault_path`'s capabilities check,
+the Yopass server's `/config` and the 1Password sharing policy. A refusal from
+one of those can still follow a yes.
+
 **What the DBA is shown on `vault_wrapped`, and where.** The password goes to
 Vault and to nobody else. What comes back is the token, and the tool prints it,
 because §6.1 bars it from the notify channel and the tool has no other channel.

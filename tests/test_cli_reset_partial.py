@@ -18,6 +18,7 @@ same error.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.clock import utc_now
-from sopuli.delivery import Receipt
+from sopuli.delivery import Receipt, onepassword, vault_path, yopass
 from sopuli.diagnostics import encryption_diagnostics, no_reset_record
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -50,11 +51,14 @@ from sopuli.driver.protocol import (
 )
 from sopuli.exit_codes import ExitCode
 from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
+from sopuli.material import MaterialError
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.passwords import ByteLimit
+from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore
+from sopuli.store.registry import BackendNotInstalledError
 
 ACCOUNT = "acme_dev_alice"
 TARGET = "tier1-oracle"
@@ -219,7 +223,7 @@ def _open(monkeypatch: pytest.MonkeyPatch, session: FakeSession, *, unseen: bool
     if unseen:
         monkeypatch.setattr(
             "sopuli.cli._delivery_backends",
-            lambda run, config, delivery, reached, account: {TARGET: FakeBackend()},
+            lambda run, config, delivery, reached, account, **_: {TARGET: FakeBackend()},
         )
     else:
         monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda stream: True)
@@ -1140,6 +1144,161 @@ def test_a_no_opens_no_delivery_store(
     # question; the real one prints once.
     assert list(dict.fromkeys(events)) == ["plan", "login", "asked"]
     assert session.reset == []
+
+
+VAULT_PATH = MANUAL.replace(
+    "  method: manual\n  manual:\n    force_expire: true\n",
+    "  method: vault_path\n  vault_path:\n    ttl: 1h\n    prefix: handover\n",
+)
+
+ONEPASSWORD = MANUAL.replace(
+    "  method: manual\n  manual:\n    force_expire: true\n",
+    "  method: onepassword_share\n  onepassword_share:\n    onepassword_vault: acme-handover\n"
+    "    ttl: 24h\n    token: { env: SOPULI_TEST_ACME_OP_TOKEN }\n",
+)
+
+ONE_TIME_LINK = MANUAL.replace(
+    "  method: manual\n  manual:\n    force_expire: true\n",
+    "  method: one_time_link\n  one_time_link:\n    base_url: https://yopass.example.com\n"
+    "    ttl: 1h\n",
+)
+
+
+def _not_installed(*_: Any, **__: Any) -> None:
+    raise BackendNotInstalledError("a client this delivery needs is not installed")
+
+
+def _sdk_not_installed(*_: Any, **__: Any) -> None:
+    raise onepassword.OnePasswordNotInstalledError()
+
+
+def _yopass_not_installed(*_: Any, **__: Any) -> None:
+    raise yopass.YopassNotInstalledError("pysequoia")
+
+
+def _installed(*_: Any, **__: Any) -> None:
+    return None
+
+
+#: The 1Password install check, stubbed in both of its cases so the test never
+#: imports the real SDK. Once imported it stays in `sys.modules`, and a later
+#: test that blocks it with `sys.modules["onepassword"] = None` would still
+#: find it.
+OP_INSTALLED = "sopuli.delivery.onepassword.check_installed"
+
+
+@pytest.mark.parametrize(
+    ("config", "patch", "error"),
+    [
+        pytest.param(
+            VAULT_PATH.replace("kv_version: 2", "kv_version: 1"),
+            None,
+            vault_path.NotAPathStoreError,
+            id="vault_path-on-kv1",
+        ),
+        pytest.param(
+            WRAPPED,
+            ("sopuli.cli.store_registry.require_installed", _not_installed),
+            BackendNotInstalledError,
+            id="vault-client-not-installed",
+        ),
+        pytest.param(
+            # Unfit and uninstalled: the method can never use this entry, so
+            # installing its client would not help, and exit 5 says so.
+            VAULT_PATH.replace("kv_version: 2", "kv_version: 1"),
+            ("sopuli.cli.store_registry.require_installed", _not_installed),
+            vault_path.NotAPathStoreError,
+            id="fitness-before-the-install-check",
+        ),
+        pytest.param(
+            WRAPPED.replace("  vault: vault-dev\n", "", 1),
+            None,
+            RefusedError,
+            id="no-store-named",
+        ),
+        pytest.param(
+            ONEPASSWORD,
+            (OP_INSTALLED, _installed),
+            MaterialError,
+            id="onepassword-no-token",
+        ),
+        pytest.param(
+            ONEPASSWORD,
+            (OP_INSTALLED, _sdk_not_installed),
+            onepassword.OnePasswordNotInstalledError,
+            id="onepassword-sdk-not-installed",
+        ),
+        pytest.param(
+            ONE_TIME_LINK,
+            ("sopuli.delivery.yopass.check_installed", _yopass_not_installed),
+            yopass.YopassNotInstalledError,
+            id="yopass-not-installed",
+        ),
+    ],
+)
+def test_a_delivery_refusal_from_the_config_comes_before_any_login(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    sent: Sent,
+    config: str,
+    patch: tuple[str, Callable[..., None]] | None,
+    error: type[Exception],
+) -> None:
+    """What a delivery backend would refuse from the config alone is refused
+    before the plan, the plan-time logins and the question (#1257). The
+    backends are not built: their store logins stay after the answer."""
+    monkeypatch.delenv("SOPULI_TEST_ACME_OP_TOKEN", raising=False)
+    if patch is not None:
+        monkeypatch.setattr(*patch)
+    opened: list[str] = []
+    built: list[str] = []
+    asked: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> Any:
+        opened.append(target.name)
+        return Asked("OPEN", DENIED)
+
+    def backends(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        built.append("store")
+        return {}
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    monkeypatch.setattr("sopuli.cli._delivery_backends", backends)
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", lambda question, **_: asked.append(question))
+
+    result = _run(runner, write_config(_gated(config)))
+
+    # The exact type, so a refusal from the wrong check, or one naming the
+    # wrong extra, fails here.
+    assert type(result.exception) is error, result.output
+    assert "Plan:" not in result.output
+    assert opened == []
+    assert built == []
+    assert asked == []
+
+
+def test_a_preview_refuses_what_the_run_would_refuse_from_the_config(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
+) -> None:
+    """A `--dry-run` makes the same checks, before the plan, so it does not
+    say "would be reset" for a run that will be refused (#1257). Before, a
+    preview opened no store and passed `vault_path` on a KV v1 mount."""
+    opened: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> Any:
+        opened.append(target.name)
+        return Asked("OPEN", DENIED)
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    kv1 = VAULT_PATH.replace("kv_version: 2", "kv_version: 1")
+
+    result = _run(runner, write_config(kv1), "--dry-run")
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "would be reset" not in result.output
+    assert opened == []
 
 
 def test_an_unattended_run_is_refused_before_any_login(

@@ -38,6 +38,7 @@ from sopuli.driver.protocol import (
     Credential,
     PrivilegeAudit,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
@@ -947,7 +948,10 @@ def _recording(
             return self.driver.connect(target, credential)
 
     def showing(plan: Any, run: Any, *, noun: str) -> None:
-        events.append("plan")
+        # Once per run, as the real one prints it.
+        if not run.document.plan_shown:
+            run.document.plan_shown = True
+            events.append("plan")
 
     def asking(question: str, **_: Any) -> bool:
         events.append("asked")
@@ -1022,10 +1026,34 @@ def test_the_question_comes_after_the_logins(
     result = run(runner, argv, write_config(CONFIG), "--select", "tenant=alpha")
 
     assert result.exit_code == ExitCode.ABORTED, result.output
-    assert list(dict.fromkeys(events)) == order
-    assert events.count("asked") == 1
+    # The whole sequence, so a login after the question fails it too.
+    assert events == order
     assert versions(harness) == before
     assert issued(harness) == []
+
+
+def test_a_rotation_the_encryption_check_refuses_is_not_asked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`require_encryption` logs in to each target before the question, and
+    the fake's connection reports no encryption, so the run is refused there
+    and nobody is asked (#1261)."""
+    harness = estate()
+    before = versions(harness)
+    events = _recording(monkeypatch, harness, answer=True)
+    encrypted = CONFIG.replace(
+        "    confirm_environments: [prod]\n",
+        "    confirm_environments: [prod]\n    require_encryption: true\n",
+    )
+    result = run(runner, ["creds", "rotate"], write_config(encrypted), "--select", "tenant=alpha")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError), result.output
+    assert "encrypted_connection" in str(result.exception)
+    assert events == ["plan", "store", "target"]
+    assert versions(harness) == before
 
 
 @pytest.mark.parametrize("promote", [False, True], ids=["pending", "current"])

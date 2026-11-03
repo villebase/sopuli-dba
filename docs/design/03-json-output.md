@@ -923,7 +923,8 @@ given in advance. It is `true` in these cases:
 - The verb is `creds apply --source previous`, the rollback. It asks every time.
 
 In every other case it is `false`. `creds check` and `creds status` change
-nothing, so they always report `false`.
+nothing, so they always report `false`. A `creds` run whose selection binds no
+secret has nothing to do and asks nothing, so it reports `false` too.
 
 **A `--dry-run` reports the value of the real run**, and so does a run given
 `--confirm`. Neither one prompts, but `plan` is the same on all three runs, and

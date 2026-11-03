@@ -323,6 +323,34 @@ def test_a_full_secret_with_nothing_deprecated_is_refused_before_the_write(
     assert store.read_stage(PATH, PENDING) is None
 
 
+def test_a_secret_that_fills_while_the_question_waits_is_refused_before_the_write(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: LimitedStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The answer can take minutes. A secret that fills up meanwhile is refused
+    by the check after the answer, not by the write under the lock (#1261)."""
+    seed(store, PATH, {FIELD: LIVE})
+    guarded = CONFIG.replace(
+        "  policy: app-standard\n",
+        "  policy: app-standard\n  safety:\n    confirm_environments: [dev]\n",
+        1,
+    )
+
+    def answered_late(question: str, **_: Any) -> bool:
+        store.rooms[PATH] = Room(versions=30, deprecated=(), limit=30)
+        return True
+
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
+    monkeypatch.setattr("sopuli.cli._confirm", answered_late)
+    result = run(runner, write_config(guarded), "generate", "--offline")
+
+    assert isinstance(result.exception, StoreError), result.output
+    assert "too few of them are DEPRECATED" in str(result.exception)
+    assert store.read_stage(PATH, PENDING) is None
+
+
 def test_a_write_that_would_delete_a_pinned_version_is_refused(
     runner: CliRunner, write_config: Callable[[str], Path], store: LimitedStore
 ) -> None:

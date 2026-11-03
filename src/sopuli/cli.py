@@ -6123,16 +6123,15 @@ def creds_generate(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     # With nothing to stage there is nothing to ask about or to refuse.
-    asks = bool(bindings) and _asks_environments(plan, run)
-    # A run nobody can answer is refused before any login (#1261). The plan is
-    # printed later, once the read has filled in its stages.
-    demand = (
-        _refuse_unconfirmable(
+    asks = False
+    demand = None
+    if bindings:
+        asks = _asks_environments(plan, run)
+        # A run nobody can answer is refused before any login (#1261). The plan
+        # is printed later, once the read has filled in its stages.
+        demand = _refuse_unconfirmable(
             plan, run, action=action, confirmed=confirm, noun="generation", show=False
         )
-        if bindings
-        else None
-    )
 
     # **The run reads before it plans**, which is why the stores open here
     # rather than after the `--dry-run` return. The refusals are plan-time ones
@@ -6216,6 +6215,7 @@ def creds_generate(
         # `pending` staged meanwhile, not leave it to the check under the lock.
         # The plan keeps what it said before the question.
         found, unread = _plan_documents(keys, stores)
+        _plan_version_limits(keys, stores, run, adds=lambda key: 1, refuse=True)
         held, staged_over = _generate_holders(
             writes, found, promote=promote, discard=discard, overwrite=overwrite, run=run
         )

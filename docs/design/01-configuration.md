@@ -2004,8 +2004,8 @@ These are decisions:
     decides: a staged `pending` without `--overwrite-pending`, and under
     `--promote` a `current` without `--overwrite-current`. The plan is printed
     after the read, which fills in its stages, and before the constraint
-    reading. After the answer the run reads the documents again and checks
-    both refusals again.
+    reading. After the answer the run reads the documents again, and checks
+    both refusals and the stores' version limits again.
   - `creds rotate`: opening the stores, reading the documents, and the
     `require_encryption` and attribute checks. Its question is its own, asked
     of every run (UC-1 §8), not this setting's; its unattended refusal comes

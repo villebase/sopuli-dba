@@ -5112,18 +5112,25 @@ def _adding(
 
 
 def _limited_documents(
-    keys: Iterable[LockKey], stores: Mapping[str, SecretStore]
+    keys: Iterable[LockKey],
+    stores: Mapping[str, SecretStore],
+    *,
+    read: Mapping[LockKey, Any] | None = None,
 ) -> dict[LockKey, Any]:
     """Each document on a store that limits versions, as read before the lock,
     for the plan to tell which of them the run will write (#1159).
 
     A document that cannot be read is left out: the plan then says nothing
-    about it, and the run's own read fails and reports it.
+    about it, and the run's own read fails and reports it. ``read`` is what the
+    verb has already read before the lock, which is used rather than read twice.
     """
     found: dict[LockKey, Any] = {}
     for key in keys:
         store = stores.get(key.store)
         if store is None or _limits(store) is None:
+            continue
+        if read is not None and key in read:
+            found[key] = read[key]
             continue
         with suppress(StoreError):
             found[key] = store.read(key.path)
@@ -7284,28 +7291,18 @@ def creds_apply(
         plan,
         run,
         noun="apply",
-        # The rollback is asked only where something is bound to roll back.
-        confirmation_required=(source_stage == PREVIOUS and bool(bindings))
-        or _asks_environments(plan, run),
+        # Neither question is asked where nothing is bound (#1257).
+        confirmation_required=bool(bindings)
+        and (source_stage == PREVIOUS or _asks_environments(plan, run)),
     )
     # No-ops outside `--output jsonl`, as in `creds check`: nothing here branches on
     # the mode.
     emitter = run.emitter()
     emitter.event(document, "plan.resolved", data=document.plan)
-    # The gates' refusals that need no connection, before anything connects. The
-    # questions come after the plan-time checks below (#1257): a yes followed by
-    # a refusal means nothing, and teaches people to answer without reading.
-    # Where a question will be asked, the plan is printed now, before the logins.
-    action = "applying a password"
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="apply")
-    rolls_back = bool(bindings) and _asks_rollback(
-        source_stage, confirmed=confirm, previewing=run.dry_run
-    )
-    if rolls_back:
-        _show_plan(plan, run, noun="apply")
 
+    # Nothing to apply is not asked about, nor refused for want of somebody to
+    # ask (#1257): a yes to a run that does nothing means nothing.
     if not bindings:
-        _ask_environments(plan, run, demand, action=action, noun="apply")
         document.finish(ExitCode.SUCCESS, Summary())
         return "\n".join(
             [
@@ -7314,6 +7311,16 @@ def creds_apply(
             ]
         )
 
+    # The gates' refusals that need no connection, before anything connects. The
+    # questions come after the plan-time checks below (#1257): a yes followed by
+    # a refusal means nothing, and teaches people to answer without reading.
+    # Where a question will be asked, the plan is printed now, before the logins.
+    action = "applying a password"
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="apply")
+    rolls_back = _asks_rollback(source_stage, confirmed=confirm, previewing=run.dry_run)
+    if rolls_back:
+        _show_plan(plan, run, noun="apply")
+
     keys = _document_keys(bindings)
     stores = _staged_stores(
         _stores_for(
@@ -7321,9 +7328,18 @@ def creds_apply(
         ),
         run,
     )
+    # Read once before a question, so a store that cannot be read refuses before
+    # anybody is asked: with token auth, opening a store connects to nothing.
+    # The run reads again under the lock, after the answer, and acts on that
+    # read; this one serves only the plan below.
+    read_first = (
+        _read_documents(keys, stores, run=run) if demand is not None or rolls_back else None
+    )
     # Only a document with something to promote is written, and a native
     # promotion adds no version, so only payload-field documents are read.
-    limited = _limited_documents([key for key in keys if not _is_native(stores, key)], stores)
+    limited = _limited_documents(
+        [key for key in keys if not _is_native(stores, key)], stores, read=read_first
+    )
     promoting = {
         _lock_key(binding)
         for binding, source in _sources(bindings, limited, stage=source_stage)
@@ -7339,12 +7355,6 @@ def creds_apply(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
-    if demand is not None or rolls_back:
-        # Read once before a question, so a store that cannot be read refuses
-        # before anybody is asked: with token auth, opening a store connects to
-        # nothing. What this read finds is not used. The run reads again under
-        # the lock, after the answer, and that read is the one it acts on.
-        _read_documents(keys, stores, run=run)
 
     # `--confirm` already means "proceed without asking" here -- it is what
     # `--source previous` requires -- so the flag answers both gates. Two flags
@@ -11445,20 +11455,24 @@ def creds_finish_rollover(
     refuse_if_nobody_to_ask(
         _targets_of(config, bindings), run.prompt, action="ending a rollover window"
     )
-    _record_plan(plan, run, noun="window", confirmation_required=_asks_environments(plan, run))
+    _record_plan(
+        plan,
+        run,
+        noun="window",
+        confirmation_required=bool(bindings) and _asks_environments(plan, run),
+    )
     # The one verb here whose purpose is to stop something working, so the gate
     # is if anything more apt: closing a window early is what takes the old
-    # password away from whatever has not been given the new one. Its refusals
-    # that need no connection come first, and the question after the stores
-    # have been read (#1257), so a store's refusal does not follow a yes.
-    action = "ending a rollover window"
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="window")
-
+    # password away from whatever has not been given the new one. Nothing to end
+    # is not asked about (#1257). Otherwise the refusals that need no connection
+    # come first, and the question after the stores have been read, so a
+    # store's refusal does not follow a yes.
     if not bindings:
-        _ask_environments(plan, run, demand, action=action, noun="window")
         document.finish(ExitCode.SUCCESS, Summary())
         return render_plan(plan, noun="window") + "\n\nnothing to end"
 
+    action = "ending a rollover window"
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="window")
     keys = _document_keys(bindings)
     stores = _staged_stores(
         _stores_for(
@@ -11469,13 +11483,14 @@ def creds_finish_rollover(
     # No lock: this verb writes to no store. The documents are read for one
     # reason -- to know whether a `pending` is staged, and to have something to
     # verify with -- and a read has never needed one.
-    sources = _sources(bindings, _read_documents(keys, stores, run=run))
+    documents = _read_documents(keys, stores, run=run)
     if demand is not None:
         _ask_environments(plan, run, demand, action=action, noun="window")
         # Read again after the answer, as `creds generate` does: it can take
         # minutes, and a `pending` staged meanwhile must keep the window open.
         # The first read is what lets a store's refusal come before the question.
-        sources = _sources(bindings, _read_documents(keys, stores, run=run))
+        documents = _read_documents(keys, stores, run=run)
+    sources = _sources(bindings, documents)
 
     finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
 

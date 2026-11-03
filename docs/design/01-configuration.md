@@ -1984,10 +1984,12 @@ These are decisions:
   ask, and click's EOF abort would tell an operator that the run stopped without
   telling them what to type. Exit 8, `category: policy`, naming the setting, where
   it was written, and both `--confirm` and `--dry-run`.
-- **A verb asks after its plan-time checks** (#1214, #1257). A yes followed by
-  a refusal means nothing. The unattended refusal still comes before any
-  login, and where the run will ask, the plan is printed before the first
-  login. What comes before the question differs by verb:
+- **Four verbs ask after their plan-time checks** (#1214, #1257). A yes
+  followed by a refusal means nothing. The unattended refusal still comes
+  before any login, and where the run will ask, the plan is printed before the
+  first login. `creds apply` and `creds finish-rollover` with nothing to do
+  neither ask nor refuse. `creds generate` and `account suspend` still ask
+  before their logins. What comes before the question differs by verb:
   - `account reset-password` and `account expire-password`: the checks' logins
     to each target. A reset opens its delivery store only after the answer.
   - `creds apply`: opening the stores, reading the documents, and the

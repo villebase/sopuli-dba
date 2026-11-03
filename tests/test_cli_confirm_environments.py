@@ -871,3 +871,34 @@ def test_with_nothing_staged_the_window_is_closed(
     run(runner, ["creds", "finish-rollover"], write_config(CONFIG), "--select", "tenant=alpha")
 
     assert [one for session in harness["sessions"] for one in session.finished] == ["ACME_WEB_USER"]
+
+
+@pytest.mark.parametrize("terminal", [True, False], ids=["terminal", "unattended"])
+@pytest.mark.parametrize("argv", [["creds", "apply"], ["creds", "finish-rollover"]])
+def test_a_run_with_nothing_to_do_is_neither_asked_nor_refused(
+    argv: list[str],
+    terminal: bool,
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A selection that binds no secret does nothing, so a yes to it would mean
+    nothing, and a scheduler is not refused for lacking one (#1257)."""
+    estate()
+    asked: list[str] = []
+
+    def answer(question: str, **_: Any) -> bool:
+        asked.append(question)
+        return True
+
+    monkeypatch.setattr("sopuli.cli._can_prompt", lambda: terminal)
+    monkeypatch.setattr("sopuli.cli._confirm", answer)
+    unbound = write_config(CONFIG.replace("secret_template", "# secret_template"))
+    result = run(runner, argv, unbound, "--select", "tenant=alpha")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "nothing to" in result.output
+    assert asked == []
+    reported = run(runner, argv, unbound, "--select", "tenant=alpha", "--output", "json")
+    assert required(reported) is False

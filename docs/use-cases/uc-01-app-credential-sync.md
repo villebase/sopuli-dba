@@ -1613,7 +1613,10 @@ issues no second statement, because the change was already immediate.
 **What the run reports.** `results[].rollover` carries `active`, `ends_at` where
 there is a window, and `profile_rollover_time`. It is present for every account
 the run acted on, not only those with an open window, because the *absence* of a
-window answers "did the old password stop working just now".
+window answers "did the old password stop working just now". `active` is left
+out where the tool cannot read the window and this run neither retained nor
+discarded the old password, as on MySQL ([#1254](../decisions/log.md#1254)).
+Absent means unknown, not `false`.
 
 ### 6.4 Errors worth handling by name
 

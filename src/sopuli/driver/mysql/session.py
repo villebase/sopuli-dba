@@ -440,7 +440,7 @@ class MysqlSession(ClosesConnection):
             )
             raise
         LOG.debug("password set for %s on %s", state.name, self.target.name)
-        return ChangeResult(changed=True, detail="password set")
+        return ChangeResult(changed=True, detail="password set", discarded=True)
 
     def suspend_account(self, account: str) -> AccountChange:
         raise self._not_written("suspend an account")

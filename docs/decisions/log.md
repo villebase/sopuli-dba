@@ -4190,3 +4190,24 @@ the register.
   sends `DISCARD` and reports `changed: true` on every run, as decision 6 of
   [#1202](#1202) said, which is an exception to invariant 9 recorded in
   `CLAUDE.md`.
+
+## #1254
+
+- **Decided:** 2026-11-03, #1254
+- **Question:** On MySQL the tool cannot read whether an old password is
+  retained ([#1224](#1224)), and `results[].rollover.active` is a boolean, so
+  it said `false` where a window may be open. How does the run document say
+  "unknown"?
+- **Decision:** `active` is left out where the target has `password_rollover`
+  and the driver reports the window as unknown, unless the run itself retained
+  the old password (`true`) or discarded it (`false`). Absent means unknown.
+  Run schema 1.75, a minor bump.
+- **Why:** `active` is optional, and §8 of `03-json-output.md` lets an optional
+  property be absent. `true` and `false` keep their meanings. The same object
+  already leaves `supported` out where the scope could not be read.
+- **Rejected:**
+  - A new field, such as `window_readable: false`, beside `active: false`. A
+    consumer that never learns the field keeps reading a false answer.
+  - A nullable `active`. It changes the field's type, which is a major bump.
+  - Documenting `false` as "not known" on MySQL. The field would mean different
+    things on different products.

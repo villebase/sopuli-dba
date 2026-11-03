@@ -312,6 +312,16 @@ def test_a_window_that_cannot_be_read_is_closed_anyway() -> None:
     assert windows.settled_before_closing(unread(), source(), MYSQL) is None
 
 
+def test_active_is_left_out_only_where_nothing_rules_a_window_out() -> None:
+    """#1254: unknown on MySQL, and where the scope could not be read; known
+    where the target has no rollover or a profile gives the window."""
+    assert windows.active_unknown(unread(), supported=True)
+    assert windows.active_unknown(unread(), supported=None)
+    assert not windows.active_unknown(unread(), supported=False)
+    assert not windows.active_unknown(unread(rollover_active=False), supported=True)
+    assert not windows.active_unknown(unread(rollover_days=1.0), supported=True)
+
+
 def test_an_unknown_window_on_a_target_without_rollover_is_none() -> None:
     """PostgreSQL also reports `None`, and has no rollover at all."""
     postgres = Scope(type="cluster")

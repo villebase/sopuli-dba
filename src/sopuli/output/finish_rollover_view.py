@@ -44,8 +44,12 @@ def build_result(
     changed: bool,
     duration_ms: int | None = None,
     error: Error | None = None,
+    unknown_window: bool = False,
 ) -> dict[str, Any]:
     """One ``results[]`` entry.
+
+    ``unknown_window`` is the row's window that could not be read, on MySQL:
+    ``rollover.active`` is then left out unless this run closed it (#1254).
 
     ``changed`` is whether this run **closed** a window, and it is the only
     mutation this verb makes. An account with no window open reports
@@ -76,7 +80,7 @@ def build_result(
     if outcome.verification is not None:
         entry["verification"] = _verification(outcome.verification)
     if user is not None:
-        entry["rollover"] = _rollover(user, closed=changed)
+        entry["rollover"] = _rollover(user, closed=changed, unknown=unknown_window)
     if duration_ms is not None:
         entry["duration_ms"] = duration_ms
     if error is not None:
@@ -84,7 +88,7 @@ def build_result(
     return entry
 
 
-def _rollover(user: UserState, *, closed: bool) -> dict[str, Any]:
+def _rollover(user: UserState, *, closed: bool, unknown: bool = False) -> dict[str, Any]:
     """The window as it stands **after** this run.
 
     ``active`` is what is true now, so a window this run closed reports
@@ -98,10 +102,12 @@ def _rollover(user: UserState, *, closed: bool) -> dict[str, Any]:
     to close tonight" and "this account never has one".
     """
     still_open = bool(user.rollover_active) and not closed
-    found: dict[str, Any] = {
-        "active": still_open,
-        "profile_rollover_time": user.rollover_time,
-    }
+    found: dict[str, Any] = {"profile_rollover_time": user.rollover_time}
+    if closed or not unknown:
+        # Left out where the window could not be read and this run did not
+        # close it, as on MySQL (#1254). A MySQL close discarded any retained
+        # password, so `false` is known there.
+        found["active"] = still_open
     if still_open and user.rollover_ends_at is not None:
         # Through `as_utc`: `to_rfc3339` converts a naive value from the
         # *machine's* local time, which would put this deadline hours away

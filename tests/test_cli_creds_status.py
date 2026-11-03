@@ -533,6 +533,27 @@ def test_a_window_nothing_can_read_is_unknown(
     assert "not configured" not in result.output
 
 
+@pytest.mark.parametrize(("rollover", "active"), [(True, None), (False, False)])
+def test_the_json_leaves_out_a_window_nothing_can_read(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    rollover: bool,
+    active: bool | None,
+) -> None:
+    """#1254: where the target has rollover and the window cannot be read
+    (MySQL), `rollover.active` is absent, meaning unknown. On a target with no
+    rollover (PostgreSQL) no window can be open, so it is `false`."""
+    estate(users={"ACME_WEB_USER": account("ACME_WEB_USER")}, rollover=rollover)
+    found = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    assert not list(validator.iter_errors(found))
+    window = found["results"][0]["rollover"]
+    assert window.get("active") is active
+    assert window["supported"] is rollover
+
+
 def test_a_target_with_no_rollover_says_so_rather_than_not_configured(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

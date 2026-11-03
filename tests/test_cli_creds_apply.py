@@ -446,6 +446,10 @@ class FakeSession:
         # and closes when `finish_rollover` runs. Modelled rather than scripted,
         # because the command reads the state back after each of those and the
         # bug worth catching is it reading a stale one.
+        if PASSWORD_ROLLOVER in self.capabilities and found.rollover_enabled is None:
+            # As on MySQL: rollover, no profile, and a window the driver
+            # cannot read (#1254).
+            return found
         opened = (
             bool(found.rollover_enabled)
             and any(name == found.name for name, _ in self.changed)
@@ -554,7 +558,9 @@ class FakeSession:
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
         self._called("set_password")
-        return ChangeResult(changed=True)
+        # As the MySQL driver does where it can keep a second password (#1254).
+        unread = PASSWORD_ROLLOVER in self.capabilities
+        return ChangeResult(changed=True, discarded=unread and old_password == "discard")
 
     def _called(self, event: str) -> None:
         """The seam a takeover needs: something happens to the vault *while* this
@@ -879,6 +885,37 @@ def test_only_a_rollover_s_pending_keeps_a_retained_password(
     assert promoted.get("rollover") in (None, {}), "cleared with `pending`"
     kept = "the previous password still logs in" in result.output
     assert kept == (expected == "keep")
+
+
+@pytest.mark.parametrize(
+    ("mark", "active"), [({"rollover": {"acme_web_user": "retaining"}}, None), ({}, False)]
+)
+def test_the_json_says_active_only_where_the_run_knows_it(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Any,
+    mark: dict[str, Any],
+    active: bool | None,
+) -> None:
+    """#1254, MySQL: setting a marked `pending` again keeps whatever is
+    retained, which the tool cannot read, so `rollover.active` is absent. A
+    change that discarded it knows none is open."""
+    document_body = {
+        "DB_CREDENTIALS": {"acme_web_user": LIVE},
+        "pending": {"acme_web_user": STAGED},
+        **mark,
+    }
+    estate(
+        documents={"apps/acme/appdb-alpha": document_body},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    found = document(
+        run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+    )
+
+    validator.validate(found)
+    assert found["results"][0]["rollover"].get("active") is active
 
 
 def test_apply_refuses_a_rollover_it_would_have_to_open_itself(

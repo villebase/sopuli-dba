@@ -561,6 +561,7 @@ def test_a_failed_expiry_after_the_discard_carries_the_discard() -> None:
         session.expire_password("acme_app@10.%")
 
     assert [row.action for row in caught.value.completed] == [ROLLOVER_FINISH]
+    assert "ALTER USER `acme_app`@`10.%` PASSWORD EXPIRE" in str(caught.value.hint)
 
 
 def test_a_failed_discard_before_the_expiry_changed_nothing() -> None:

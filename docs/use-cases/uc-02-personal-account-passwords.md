@@ -298,8 +298,8 @@ where `password_expired` is `N`, and nothing where it is `Y`** (decision 3 of
 #1225). A password kept with `RETAIN CURRENT PASSWORD` is MySQL's form of an
 open window, and the tool cannot read whether one is kept. It survives
 `PASSWORD EXPIRE` and still logs in, expired, until the discard
-(`04_lock_expiry_probe.py`, LE9, on 8.0.46, 8.4.13 and 9.7.4). So the discard
-is sent every time, and first, for the reason Oracle closes first. Only
+(`04_lock_expiry_probe.py`, LE9, on 8.0.46, 8.4.13 and 9.7.4). So every expiry
+the verb sends has the discard before it, for the reason Oracle closes first. Only
 `PASSWORD EXPIRE` sets `password_expired`, so `Y` is the converged state, and a
 second run sends nothing and reports `changed: false` (invariant 9). The cost:
 an account somebody else expired keeps a password somebody kept, and the verb

@@ -582,25 +582,17 @@ class MysqlSession(ClosesConnection):
             )
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
-        state = self.describe_user(account)
-        if state is None:
+        found, status = self._row(account, what="reset")
+        if found.locked:
             raise DriverError(
-                f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=(
-                    "the tool does not create accounts (Q8); nothing was reset, and the "
-                    "account name is worth checking against the server"
-                ),
-            )
-        if state.deliberately_locked:
-            raise DriverError(
-                f'account "{state.name}" is locked, and a reset does not unlock it',
+                f'account "{found.name}" is locked, and a reset does not unlock it',
                 hint=(
                     "ACCOUNT LOCK is somebody's decision -- `account suspend`, usually -- and "
                     "handing the account a working password would undo it silently. Run "
                     "ALTER USER … ACCOUNT UNLOCK first if that is what you mean (H4)"
                 ),
             )
-        user, host = accounts_module.split(state.name)
+        user, host = found.user, found.host
         # Built before the first statement, so a refusal of the rounds cannot
         # come after the unlock.
         statement = self._password_statement(user, host, secret, expire=expire)
@@ -611,7 +603,7 @@ class MysqlSession(ClosesConnection):
             AccountChange(
                 ACCOUNT_UNLOCK,
                 changed=True,
-                status=state.status,
+                status=status,
                 detail=(
                     "sent ACCOUNT UNLOCK, which ends a block after failed logins; "
                     "whether one was in place cannot be read"
@@ -628,7 +620,7 @@ class MysqlSession(ClosesConnection):
             AccountChange(
                 PASSWORD_SET,
                 changed=True,
-                status=state.status,
+                status=status,
                 detail="password set, expired" if expire else "password set",
             ),
         )
@@ -640,13 +632,13 @@ class MysqlSession(ClosesConnection):
                 completed=done,
                 hint=f"assume a retained old password still works. Discard it by hand: {discard}",
             ) from failure
-        LOG.debug("password reset for %s on %s", state.name, self.target.name)
+        LOG.debug("password reset for %s on %s", found.name, self.target.name)
         return (
             *done,
             AccountChange(
                 ROLLOVER_FINISH,
                 changed=True,
-                status=state.status,
+                status=status,
                 detail="sent DISCARD OLD PASSWORD, so no retained password logs in",
             ),
         )
@@ -656,7 +648,7 @@ class MysqlSession(ClosesConnection):
         ``password_expired`` is ``N``; nothing where it is ``Y`` (#1225,
         decision 3).
 
-        **The discard comes first, and is sent every time.** A password someone
+        **The discard comes first, on every expiry this sends.** A password someone
         kept with ``RETAIN CURRENT PASSWORD`` survives ``PASSWORD EXPIRE`` and
         still logs in, expired, until the discard (LE9). The tool cannot read
         whether one is kept. Discard first so that a failed expiry leaves the
@@ -709,7 +701,14 @@ class MysqlSession(ClosesConnection):
             statement = password_module.expire(found.user, found.host)
             self._read(lambda cursor: cursor.execute(statement))
         except DriverError as failure:
-            raise PartialAccountChangeError(failure, completed=(discarded,)) from failure
+            raise PartialAccountChangeError(
+                failure,
+                completed=(discarded,),
+                hint=(
+                    "no retained password works now, and the current one is not expired. "
+                    f"Run the command again, or expire it by hand: {statement}"
+                ),
+            ) from failure
         LOG.debug("PASSWORD EXPIRE for %s on %s", found.name, self.target.name)
         return (
             discarded,

@@ -24,6 +24,7 @@ from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
     PASS,
+    PASSWORD_ROLLOVER,
     SKIPPED,
     UNAVAILABLE,
     VERIFY_LOGIN,
@@ -292,3 +293,56 @@ def test_the_countdown_is_shared_with_status() -> None:
     account = user(rollover_ends_at=NOW + timedelta(minutes=41))
 
     assert windows.remaining(account, now=NOW) == until(account.rollover_ends_at, now=NOW)
+
+
+# ------------------------------------------- a window nothing can read (#1224) ---
+
+#: MySQL: rollover, no profile, and no way to read whether a password is retained.
+MYSQL = Scope(type="server", capabilities=frozenset({PASSWORD_ROLLOVER}))
+
+
+def unread(**fields: object) -> UserState:
+    """A MySQL account as the driver describes it: the window is unknown."""
+    return UserState(name="acme_app@%", status="OPEN", **fields)  # type: ignore[arg-type]
+
+
+def test_a_window_that_cannot_be_read_is_closed_anyway() -> None:
+    """The close is DISCARD, which the server accepts with nothing retained."""
+    assert windows.window_unknown(unread(), MYSQL)
+    assert windows.settled_before_closing(unread(), source(), MYSQL) is None
+
+
+def test_an_unknown_window_on_a_target_without_rollover_is_none() -> None:
+    """PostgreSQL also reports `None`, and has no rollover at all."""
+    postgres = Scope(type="cluster")
+
+    assert not windows.window_unknown(unread(), postgres)
+    settled = windows.settled_before_closing(unread(), source(), postgres)
+    assert settled is not None
+    assert settled.state == check.IN_SYNC
+
+
+def test_a_staged_pending_still_refuses_an_unread_close() -> None:
+    settled = windows.settled_before_closing(unread(), source(PENDING), MYSQL)
+
+    assert settled is not None
+    assert settled.state == windows.PENDING_APPLY
+
+
+def test_an_unavailable_login_does_not_stop_an_unread_close() -> None:
+    """#1224, Q3: no login can reach most MySQL accounts, so its absence does
+    not keep the window open. A refused login still does."""
+    assert windows.decide(attempt(UNAVAILABLE), unknown_window=True) is None
+    assert windows.decide(attempt(UNAVAILABLE)) is not None
+    refused = windows.decide(attempt(FAIL), unknown_window=True)
+    assert refused is not None
+    assert refused.state == check.DRIFT
+
+
+def test_an_unread_close_says_what_it_did_and_what_it_did_not_verify() -> None:
+    by_login = windows.closed(unread(), attempt(PASS))
+    unverified = windows.closed(unread(), attempt(UNAVAILABLE))
+
+    assert by_login.detail == "any retained password discarded"
+    assert "was not verified by login" in unverified.detail
+    assert by_login.state == unverified.state == check.IN_SYNC

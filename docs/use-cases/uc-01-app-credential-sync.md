@@ -1511,7 +1511,13 @@ CURRENT PASSWORD` keeps the old password working beside the new one, and
 - `check` cannot see a retained password: the server keeps it in
   `mysql.user.User_attributes`, which the tool account never reads (#1202,
   decision 6). A login that passes is `IN_SYNC`, not `ROLLOVER_ACTIVE`.
-- `creds finish-rollover` on MySQL is not built yet.
+- `creds finish-rollover` sends `ALTER USER … DISCARD OLD PASSWORD` to every
+  selected account and reports `changed: true`, because the tool cannot read
+  whether a password is retained and the server accepts the statement with none
+  (DP1). That is an exception to invariant 9. Its gates still apply: a staged
+  `pending` refuses the close, and so does a login that the vault's `current`
+  fails. Where no login can reach the account, the close goes ahead and the row
+  says `current` was not verified. The rotation confirmed it before it promoted.
 
 ### `creds finish-rollover`, and what it refuses (decided in #263)
 

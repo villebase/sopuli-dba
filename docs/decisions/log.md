@@ -4186,4 +4186,7 @@ the register.
     available.
 - **Accepted cost:** a target the rotation did not reach gets its first set
   from `apply`, without a window. `check` cannot see a retained password, so a
-  login that passes is `IN_SYNC`, not `ROLLOVER_ACTIVE`.
+  login that passes is `IN_SYNC`, not `ROLLOVER_ACTIVE`. `finish-rollover`
+  sends `DISCARD` and reports `changed: true` on every run, as decision 6 of
+  [#1202](#1202) said, which is an exception to invariant 9 recorded in
+  `CLAUDE.md`.

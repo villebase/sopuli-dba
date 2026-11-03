@@ -190,8 +190,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # declared account can answer (#1246); `creds apply` and `rotate`, which set
     # a password from a hash computed on the client and never log in first, so
     # with only `current` an account is skipped; `creds generate` and `status`.
-    # `finish-rollover` is not written for MySQL (#1224, decision 6 of #1202),
-    # nor are the UC-2 verbs (#1225): both refuse with SOPULI-20006.
+    # `finish-rollover` sends `DISCARD OLD PASSWORD` (#1224, decision 6 of
+    # #1202). The UC-2 verbs are not written (#1225) and refuse with SOPULI-20006.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -204,6 +204,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.rotate",
                 "creds.generate",
                 "creds.status",
+                "creds.finish-rollover",
             }
         ),
     ),

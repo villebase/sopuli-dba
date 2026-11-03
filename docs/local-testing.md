@@ -51,8 +51,7 @@ lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target runs `doctor` and
-the `creds` commands but `finish-rollover` (§7), and refuses the `account`
-commands.
+the `creds` commands (§7), and refuses the `account` commands.
 
 ---
 
@@ -688,9 +687,8 @@ acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not
 
 The stack also runs MySQL 8.4 at `127.0.0.1:3306`, user `root`, password
 `sopuli-test`. `doctor` connects to it and reports what it found, and the UC-1
-commands run against it: `creds generate`, `apply`, `check`, `rotate` and
-`status`. `creds finish-rollover` and the `account` commands refuse a MySQL
-target.
+commands run against it: `creds generate`, `apply`, `check`, `rotate`,
+`finish-rollover` and `status`. The `account` commands refuse a MySQL target.
 
 Connecting needs no privilege. Create the tool account as root, with a
 password of your own, and export the same password as
@@ -877,12 +875,28 @@ acme_batch@192.0.2.%  mysql-dev  ROLLOVER_ACTIVE  changed, and the server record
 ...
 ```
 
-`creds finish-rollover` is not written for MySQL yet, so it refuses a MySQL
-target, and the next rotation ends the window. Only `rotate` opens one: `creds
-apply --strategy rollover` is refused before anything changes. `creds status`
-shows when the server last changed each password. `ROLLOVER` reads `unknown`,
-because the server keeps a retained password where the tool account does not
-read.
+Only `rotate` opens one: `creds apply --strategy rollover` is refused before
+anything changes. `creds finish-rollover` ends it:
+
+```
+$ sopuli --config mysql.yaml creds finish-rollover --confirm
+...
+ACCOUNT               TARGET     WINDOW
+acme_app@%            mysql-dev  unknown
+acme_batch@192.0.2.%  mysql-dev  unknown
+
+ACCOUNT               TARGET     STATE    DETAIL
+acme_app@%            mysql-dev  IN_SYNC  any retained password discarded
+acme_batch@192.0.2.%  mysql-dev  IN_SYNC  any retained password discarded; the vault's `current` was not verified by login, because no login can reach this account
+
+2 closed
+...
+```
+
+The server keeps a retained password where the tool account does not read, so
+the window is `unknown`, and every run sends `DISCARD OLD PASSWORD` and reports
+a change. `creds status` shows when the server last changed each password, and
+its `ROLLOVER` column reads `unknown` for the same reason.
 
 Two targets that reach one server are refused with `SOPULI-20008`: the tool
 knows a server by its `server_uuid`.

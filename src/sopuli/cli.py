@@ -11422,7 +11422,11 @@ def creds_finish_rollover(
             render_plan(plan, noun="window"),
             "",
             *render_window_table(
-                [(record.binding, record.user) for record in finished if record.user is not None]
+                [
+                    (record.binding, record.user, record.unknown_window)
+                    for record in finished
+                    if record.user is not None
+                ]
             ),
         ]
     )
@@ -11460,6 +11464,9 @@ class _Finished:
     would_close: bool = False
     duration_ms: int | None = None
     error: Error | None = None
+    #: Whether the window could not be read, on MySQL (#1224): the table says
+    #: so rather than "none open".
+    unknown_window: bool = False
 
 
 def _finish_estate(
@@ -11532,11 +11539,17 @@ def _finish_target(
                 for binding, _ in work
             ]
 
-        return [
+        rows = [
             _finish_one(
                 binding, session, source=source, margin=margin, preview=preview, manager=manager
             )
             for binding, source in work
+        ]
+        return [
+            replace(row, unknown_window=windows.window_unknown(row.user, session.scope()))
+            if row.user is not None
+            else row
+            for row in rows
         ]
     finally:
         if session is not None:
@@ -11589,13 +11602,16 @@ def _finish_one(
             # fall-through cannot decide a mutation on a value nobody checked.
             raise ValueError(f"no window to end for {binding.account!r} and no reason given")
 
+        unknown = windows.window_unknown(user, session.scope())
         if preview:
+            would = (
+                "would discard any retained password"
+                if unknown
+                else f"would end this window, {windows.remaining(user) or 'time unknown'} early"
+            )
             return _Finished(
                 binding,
-                check_states.Outcome(
-                    check_states.IN_SYNC,
-                    f"would end this window, {windows.remaining(user) or 'time unknown'} early",
-                ),
+                check_states.Outcome(check_states.IN_SYNC, would),
                 changed=False,
                 user=user,
                 would_close=True,
@@ -11605,7 +11621,7 @@ def _finish_one(
         verified = session.verify_password(
             user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=1
         )
-        refused = windows.decide(verified)
+        refused = windows.decide(verified, unknown_window=unknown)
         if refused is not None:
             _left_alone(binding.account, binding.target, refused.state, refused.detail)
             return _Finished(
@@ -11854,8 +11870,6 @@ def creds_rotate(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
-    if finish_windows and strategy == strategies.ROLLOVER:
-        _refuse_unwritten_finish(bindings, config)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The
@@ -12152,21 +12166,6 @@ class _Rotation:
     stolen: LockStolenError | None = None
     #: The pre-flight's caveats as notes (decision #606), for the end of the run.
     caveats: list[str] = field(default_factory=list)
-
-
-def _refuse_unwritten_finish(bindings: Sequence[Binding], config: Config) -> None:
-    """Refuse `rotate --strategy rollover --finish-rollover` before anything is
-    staged, where a target's driver has no `creds finish-rollover`
-    (SOPULI-20006).
-
-    MySQL until #1224's second part: the run would open a window there that the
-    closing step cannot read, so it would report nothing to close while the
-    retained password still logs in. Under another strategy no MySQL window
-    opens, so a mixed estate's other windows are still closed.
-    """
-    by_target = {expanded.name: expanded for expanded in config.expanded_targets}
-    for name in dict.fromkeys(binding.target for binding in bindings):
-        require_command(by_target[name].target, "creds.finish-rollover")
 
 
 def _rotate_estate(

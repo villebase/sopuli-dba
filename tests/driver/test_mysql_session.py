@@ -221,10 +221,26 @@ def test_a_re_set_keeps_what_is_retained() -> None:
     assert "RETAIN" not in statement
 
 
-def test_finish_rollover_is_not_written_yet() -> None:
-    """#1224's second part: refused with SOPULI-20006 until it is written."""
-    with pytest.raises(session_module.NotWrittenError):
-        _session().finish_rollover("acme_app@%")
+def test_finish_rollover_always_discards_and_reports_a_change() -> None:
+    """#1224: the tool cannot read whether a password is retained, and the
+    server accepts DISCARD with none (DP1), so it is sent every time."""
+    session = _session()
+    session.connection.accounts = [_account_row("%")]
+
+    first = session.finish_rollover("acme_app@%")
+    second = session.finish_rollover("acme_app@%")
+
+    sent = [q for q in session.connection.queries if q.startswith("ALTER USER")]
+    assert sent == ["ALTER USER `acme_app`@`%` DISCARD OLD PASSWORD"] * 2
+    assert (first.changed, second.changed) == (True, True)
+
+
+def test_finish_rollover_of_a_missing_account_sends_nothing() -> None:
+    session = _session()
+
+    with pytest.raises(DriverError, match="does not exist"):
+        session.finish_rollover("acme_app@%")
+    assert not any(q.startswith("ALTER USER") for q in session.connection.queries)
 
 
 def test_audit_coverage_never_raises() -> None:

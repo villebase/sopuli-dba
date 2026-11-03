@@ -235,17 +235,18 @@ def test_creds_check_is_let_through_on_postgresql() -> None:
         "creds.rotate",
         "creds.generate",
         "creds.status",
+        "creds.finish-rollover",
     ],
 )
 def test_the_uc1_commands_are_let_through_on_mysql(command: str) -> None:
-    """#1223."""
+    """#1223, and #1224 for `finish-rollover`."""
     require_command(target("mysql-dev", "mysql"), command)
 
 
-@pytest.mark.parametrize("command", ["account.suspend", "creds.finish-rollover"])
+@pytest.mark.parametrize("command", ["account.suspend"])
 def test_what_mysql_cannot_do_yet_is_refused(command: str) -> None:
-    """The UC-2 verbs are not written for MySQL, nor is `finish-rollover`."""
-    # TODO(#1225): the UC-2 verbs. TODO(#1224): the rollover.
+    """The UC-2 verbs are not written for MySQL."""
+    # TODO(#1225): the UC-2 verbs.
     with pytest.raises(DriverNotImplementedError) as refused:
         require_command(target("mysql-dev", "mysql"), command)
 

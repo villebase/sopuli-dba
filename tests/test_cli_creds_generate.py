@@ -1622,13 +1622,13 @@ def test_a_pending_staged_while_the_prompt_waits_is_refused_at_plan_time(
         "  policy: app-standard\n  safety:\n    confirm_environments: [dev]\n",
     )
     monkeypatch.setattr("sopuli.cli._can_prompt", lambda: True)
-    asked = cli_module._confirm_environments
+    asked = cli_module._ask_environments
 
     def answered_late(*args: Any, **kwargs: Any) -> None:
         asked(*args, **kwargs)
         store.write(PATH, {PENDING: {"acme_web_user": "staged-during-the-prompt"}}, cas=0)
 
-    monkeypatch.setattr("sopuli.cli._confirm_environments", answered_late)
+    monkeypatch.setattr("sopuli.cli._ask_environments", answered_late)
 
     result = run(runner, write_config(guarded), stdin="y\n")
 

@@ -923,7 +923,8 @@ given in advance. It is `true` in these cases:
 - The verb is `creds apply --source previous`, the rollback. It asks every time.
 
 In every other case it is `false`. `creds check` and `creds status` change
-nothing, so they always report `false`.
+nothing, so they always report `false`. A `creds` run whose selection binds no
+secret has nothing to do and asks nothing, so it reports `false` too.
 
 **A `--dry-run` reports the value of the real run**, and so does a run given
 `--confirm`. Neither one prompts, but `plan` is the same on all three runs, and
@@ -2873,7 +2874,9 @@ which is logic this tool already owns. The notes the reading produced
 
 - **The environment gate (`safety.confirm_environments`) also sends
   `confirmation.required`**, which `generate` shares with `apply`: only when
-  somebody is actually asked, with the question in `data.prompt`.
+  somebody is actually asked, with the question in `data.prompt`. It comes
+  after `constraints.resolved`, because the question waits for the constraint
+  reading (#1261).
 
 ### `account reset-password`
 

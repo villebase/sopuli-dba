@@ -2404,7 +2404,10 @@ target, in this section's order (`03-json-output.md` §5).
 **Confirmation, and what it is not.** §8 step 1 is "plan + confirm". So `rotate`
 prints the plan to stderr and asks. `--confirm` answers in advance. An unattended
 run without it is refused with exit 8, instead of being left to abort at end of
-input. `apply` has no prompt of its own like this one, for a real reason: it converges an estate on a value
+input. That refusal comes before any login, and the plan is printed before the
+first one. The question comes after the vault read and the `require_encryption`
+and attribute checks, so a refusal from them does not follow a yes (#1261).
+`apply` has no prompt of its own like this one, for a real reason: it converges an estate on a value
 somebody already staged and reviewed. `rotate` invents the value and replaces
 what every application is using, across the whole selection, in one run. The
 estate-wide `safety.confirm_environments` setting is a *different* gate, and

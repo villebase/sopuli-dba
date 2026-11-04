@@ -57,6 +57,30 @@ LOG = logger("mariadb")
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
 
+#: The privileges MariaDB split from ``SUPER`` that set no column of the
+#: ``mysql.user`` view, as ``SHOW PRIVILEGES`` names them (SP1, SP2).
+UNSEEN_PRIVILEGES = (
+    "BINLOG ADMIN",
+    "BINLOG REPLAY",
+    "CONNECTION ADMIN",
+    "FEDERATED ADMIN",
+    "READ_ONLY ADMIN",
+    "REPLICATION MASTER ADMIN",
+    "REPLICATION SLAVE ADMIN",
+    "SET USER",
+    "SLAVE MONITOR",
+)
+
+#: The gap in guardrail 9 that ``02-mariadb-privileges.md`` §5 accepts
+#: (#1267, decision 4): said wherever the config binds accounts to the
+#: target, because check 9 cannot fully check any of them.
+CHECK_9_GAP = (
+    f"check 9 cannot see {', '.join(UNSEEN_PRIVILEGES[:-1])} or {UNSEEN_PRIVILEGES[-1]}: "
+    "they set no column of the mysql.user view, so it does not refuse a declared account "
+    "that holds one. Revoke them from accounts the tool manages "
+    "(02-mariadb-privileges.md section 5)"
+)
+
 T = TypeVar("T")
 
 
@@ -98,7 +122,8 @@ class MariadbSession(ClosesConnection):
         for each declared account that does not exist, uses a plugin the tool
         does not change, or shares its user name with an account at an
         undeclared host. Where the survey's read fails, the audit stands and a
-        line says why, as on MySQL."""
+        line says why, as on MySQL. With any declared account, a last line
+        says what check 9 cannot see (:data:`CHECK_9_GAP`)."""
         audit = self._read(privilege_audit)
         if not accounts:
             return audit
@@ -112,9 +137,13 @@ class MariadbSession(ClosesConnection):
             return replace(
                 audit,
                 unreadable=(*audit.unreadable, "mysql.user"),
-                remedies=(*audit.remedies, f"the declared accounts were not read: {error}"),
+                remedies=(
+                    *audit.remedies,
+                    f"the declared accounts were not read: {error}",
+                    CHECK_9_GAP,
+                ),
             )
-        return replace(audit, remedies=(*audit.remedies, *lines))
+        return replace(audit, remedies=(*audit.remedies, *lines, CHECK_9_GAP))
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(

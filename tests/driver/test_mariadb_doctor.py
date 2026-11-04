@@ -45,6 +45,16 @@ def _config(path: Path, live_mariadb: Any, declared: list[str]) -> Path:
     """No `vaults:` store is reached: `doctor --check-privileges` reports the
     store as unreachable and reads the target all the same."""
     accounts_yaml = ", ".join(f'"{name}"' for name in declared)
+    applications = (
+        f"""applications:
+  - name: acme
+    targets: [tier1-mariadb]
+    accounts: [{accounts_yaml}]
+    secret_template: "apps/acme/{{host}}#DB/{{user}}"
+"""
+        if declared
+        else ""
+    )
     path.write_text(
         f"""version: 1
 vaults:
@@ -59,12 +69,7 @@ targets:
     admin:
       username: "{live_mariadb.tool_user}"
       auth: {{ method: env, password_env: {PASSWORD_ENV} }}
-applications:
-  - name: acme
-    targets: [tier1-mariadb]
-    accounts: [{accounts_yaml}]
-    secret_template: "apps/acme/{{host}}#DB/{{user}}"
-""",
+{applications}""",
         encoding="utf-8",
     )
     # The permission check refuses a config others can read (Linux CI).
@@ -119,6 +124,26 @@ def test_doctor_surveys_the_declared_accounts(
     )
 
     assert f"{accounts}@localhost uses unix_socket" in result.output
+    # The gap in guardrail 9 that decision 4 accepts, said with declared
+    # accounts (02-mariadb-privileges.md section 5).
+    shown = " ".join(result.output.split())
+    assert "check 9 cannot see BINLOG ADMIN," in shown
+    assert "SET USER or SLAVE MONITOR: they set no column of the mysql.user view" in shown
+
+
+def test_without_declared_accounts_doctor_says_nothing_of_check_9(
+    live_mariadb: Any, tmp_path: Path
+) -> None:
+    config = _config(tmp_path / "c.yaml", live_mariadb, [])
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(config), "doctor", "--check-privileges"],
+        env={PASSWORD_ENV: live_mariadb.tool_password},
+    )
+
+    # The audit ran: its always-present PUBLIC line is there.
+    assert "privileges granted to PUBLIC" in " ".join(result.output.split())
+    assert "check 9" not in result.output
 
 
 def test_a_role_the_tool_account_holds_is_reported(live_mariadb: Any, tmp_path: Path) -> None:

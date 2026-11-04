@@ -9,6 +9,7 @@ creates, with exactly `02-mariadb-privileges.md` §2.1's grants.
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import suppress
@@ -66,6 +67,9 @@ applications:
 """,
         encoding="utf-8",
     )
+    # The permission check refuses a config others can read (Linux CI).
+    if sys.platform != "win32":
+        path.chmod(0o600)
     return path
 
 

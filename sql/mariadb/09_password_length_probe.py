@@ -178,18 +178,20 @@ def cases(service: str) -> None:
             )
             ch.check(f"PW1 {plugin} {length}", (answer, good, changed), (ch.OK, ch.OK, "1045"))
 
-        for password in AS_STR:
+        # Each password is named by its place in AS_STR, never printed.
+        for number, password in enumerate(AS_STR, 1):
             answer = set_value(service, plugin, password)
             as_bytes = py_login(service, password.encode("utf-8"))
             as_str = py_login(service, password)
-            print(f"PW2 {plugin} {password!a}: set {answer}; bytes: {as_bytes}; str: {as_str}")
+            label = f"PW2 {plugin} password {number}"
+            print(f"{label}: set {answer}; bytes: {as_bytes}; str: {as_str}")
             recorded = (ch.OK, ch.OK, AS_STR[password])
-            ch.check(f"PW2 {plugin} {password!a}", (answer, as_bytes, as_str), recorded)
+            ch.check(label, (answer, as_bytes, as_str), recorded)
 
-    for (plugin, password), stored in SERVER_VALUES.items():
+    for number, ((plugin, password), stored) in enumerate(SERVER_VALUES.items(), 1):
         value = server_value(service, plugin, password)
-        print(f"PW3 {plugin} {password[:20]!a}: {value}")
-        ch.check(f"PW3 {plugin} {password[:20]!a}", value, stored)
+        print(f"PW3 vector {number}, {plugin}: {value}")
+        ch.check(f"PW3 vector {number}", value, stored)
 
 
 def main() -> int:

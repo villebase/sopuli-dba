@@ -156,10 +156,15 @@ def describe(
     """The declared account's state, ``None`` where it does not exist.
 
     Raises :class:`OtherPluginError` for an account on another plugin. Reads
-    the privileges guardrail 9 checks (:func:`~sopuli.driver.mariadb.admin.
-    global_privileges`, ``02-mariadb-privileges.md`` §5), so every command that
-    describes an account before it changes it has them. ``session_user`` is
-    :func:`current_user` where the session already read it.
+    the privileges guardrail 9 checks
+    (:func:`~sopuli.driver.mariadb.admin.global_privileges`,
+    ``02-mariadb-privileges.md`` §5), so every command that describes an
+    account before it changes it has them. ``session_user`` is
+    :func:`~sopuli.driver.mysql_family.accounts.current_user` where the
+    session already read it.
+
+    The plugin is the one the view shows. An account with a second method
+    joined by ``OR`` shows one of them, so the other is not seen (#1301).
     """
     found = read_one(cursor, account, target=target)
     if found is None:

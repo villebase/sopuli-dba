@@ -97,10 +97,11 @@ COLUMN_PRIVILEGES = (
     "select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, PRIVILEGE_TYPE, IS_GRANTABLE "
     "from information_schema.COLUMN_PRIVILEGES where GRANTEE = %s"
 )
-ROLES = (
-    "select ROLE_NAME from information_schema.APPLICABLE_ROLES where GRANTEE = %s "
-    "order by ROLE_NAME"
-)
+#: Every role the tool account can use, nested ones included. Not filtered by
+#: grantee: ``APPLICABLE_ROLES`` already lists only the session account's, and
+#: spells its grantee ``user@host`` without quotes, and a nested role's grantee
+#: as the role that holds it (measured on 11.8.9, #1287).
+ROLES = "select distinct ROLE_NAME from information_schema.APPLICABLE_ROLES order by ROLE_NAME"
 
 OVER_GRANTED_REMEDY = (
     "revoke each over-granted privilege from the tool account: it needs only what "
@@ -240,6 +241,6 @@ def audit(cursor: Cursor) -> PrivilegeAudit:
     cursor.execute(SELF)
     user = str(cursor.fetchone()[0])
     grants = read(cursor, user)
-    cursor.execute(ROLES, (grantee(user),))
+    cursor.execute(ROLES)
     roles = [str(row[0]) for row in cursor.fetchall()]
     return classify(user=user, grants=grants, roles=roles)

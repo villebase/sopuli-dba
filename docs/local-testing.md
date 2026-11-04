@@ -902,6 +902,50 @@ its `ROLLOVER` column reads `unknown` for the same reason.
 Two targets that reach one server are refused with `SOPULI-20008`: the tool
 knows a server by its `server_uuid`.
 
+### A MariaDB server
+
+The stack also runs MariaDB 11.8 at `127.0.0.1:3307`. Its init creates the
+tool account `sopuli_admin`, password `sopuli-test-admin`, with the grants in
+[`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) §2.1.
+So far only `doctor` runs against MariaDB.
+
+Save this as `mariadb.yaml`, and export `SOPULI_DB_ADMIN_PASSWORD=sopuli-test-admin`:
+
+```yaml
+version: 1
+targets:
+  - name: mariadb-dev
+    type: mariadb
+    environment: dev
+    dsn: "127.0.0.1:3307"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mariadb: { ssl_mode: REQUIRED }
+```
+
+The image's certificate is self-signed, so the target sets `REQUIRED`. Run
+`doctor`:
+
+```
+$ sopuli --config mariadb.yaml doctor
+...
+TARGET       REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+mariadb-dev  yes        server  -          READ WRITE  0             tls
+
+1 note:
+  mariadb-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
+
+1 warning:
+  targets[0].mariadb.ssl_mode: target 'mariadb-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+```
+
+`doctor --check-privileges` audits the tool account and prints nothing more
+when it holds §2.1 exactly. Declare accounts under `applications:`, and it
+names one that does not exist, one on a plugin other than
+`mysql_native_password` and `ed25519`, and the same user name at a host the
+config does not declare. Two targets on one MariaDB server are not caught yet
+(#1286).
+
 ---
 
 ## 8. Application credentials (UC-1)

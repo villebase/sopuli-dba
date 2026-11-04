@@ -13,6 +13,7 @@ build of the MariaDB driver does not do yet (#1268), so the scope has none.
 from __future__ import annotations
 
 from sopuli.driver import protocol
+from sopuli.driver.mysql_family.accounts import text
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.protocol import SERVER, Cursor, DriverError, Encryption, Scope
 from sopuli.exit_codes import ExitCode
@@ -57,8 +58,14 @@ class NotMariadbError(DriverError):
 
 
 def writable(read_only: object, tx_read_only: object) -> bool:
-    """Whether neither setting stops a write. Pure."""
-    return str(read_only).upper() in OFF and not int(str(tx_read_only))
+    """Whether neither setting stops a write. Pure. Each may come as a number,
+    a word or bytes; anything that is not plainly off counts as on, so an
+    unknown spelling reports the server read-only rather than writable."""
+    return _off(read_only) and _off(tx_read_only)
+
+
+def _off(value: object) -> bool:
+    return text(value).strip().upper() in OFF
 
 
 def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None) -> Scope:

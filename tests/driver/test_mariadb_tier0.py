@@ -86,12 +86,23 @@ def test_a_mysql_server_is_refused_before_anything_else_is_read() -> None:
 
 @pytest.mark.parametrize(
     ("read_only", "tx_read_only", "expected"),
-    [(0, 0, True), ("OFF", 0, True), (1, 0, False), ("ON", 0, False), (0, 1, False)],
+    [
+        (0, 0, True),
+        ("OFF", 0, True),
+        (b"OFF", b"0", True),
+        (0, "OFF", True),
+        (1, 0, False),
+        ("ON", 0, False),
+        (0, 1, False),
+        ("NO_LOCK", 0, False),
+        (b"weird", 0, False),
+    ],
 )
 def test_read_only_reads_as_a_number_or_as_12_3s_word(
-    read_only: object, tx_read_only: int, expected: bool
+    read_only: object, tx_read_only: object, expected: bool
 ) -> None:
-    """`read_only` is `0` on 10.11.19, 11.4.13 and 11.8.9 and `OFF` on 12.3.3."""
+    """`read_only` is `0` on 10.11.19, 11.4.13 and 11.8.9 and `OFF` on 12.3.3.
+    Bytes and words read the same way, and an unknown spelling counts as on."""
     assert writable(read_only, tx_read_only) is expected
 
 
@@ -164,9 +175,11 @@ def test_a_role_leaves_what_it_gives_unaudited() -> None:
     assert privileges.ROLES_REMEDY in audit.remedies
 
 
-def test_the_audit_asks_by_its_own_grantee() -> None:
+def test_the_audit_asks_by_its_own_grantee_and_reads_every_applicable_role() -> None:
     """With `SELECT` on `mysql.*`, information_schema shows every account's
-    rows, so each read names the tool account's own (RD1)."""
+    privilege rows, so each privilege read names the tool account's own (RD1).
+    `APPLICABLE_ROLES` lists only the session's roles, nested ones included,
+    and spells its grantee without quotes, so it is read whole (#1287)."""
     cursor = FakeCursor(
         {
             privileges.SELF: ("sopuli_admin@%",),
@@ -174,14 +187,17 @@ def test_the_audit_asks_by_its_own_grantee() -> None:
             privileges.SCHEMA_PRIVILEGES: [],
             privileges.TABLE_PRIVILEGES: [],
             privileges.COLUMN_PRIVILEGES: [],
-            privileges.ROLES: [],
+            privileges.ROLES: [("tool_role",), ("nested_role",)],
         }
     )
 
-    privileges.audit(cursor)
+    audit = privileges.audit(cursor)
 
     asked = {args for _, args in cursor.queries if args is not None}
     assert asked == {("'sopuli_admin'@'%'",)}
+    assert (privileges.ROLES, None) in cursor.queries
+    assert audit.roles == ("nested_role", "tool_role")
+    assert audit.unaudited == (privileges.ROLES_UNAUDITED,)
 
 
 # ----------------------------------------------------------------- survey ---

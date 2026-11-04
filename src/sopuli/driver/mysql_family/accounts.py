@@ -35,6 +35,11 @@ class BareAccountError(DriverError):
         )
 
 
+def text(value: object) -> str:
+    """A column as text: PyMySQL returns some ``mysql`` columns as bytes."""
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
 def split(account: str) -> tuple[str, str]:
     """``user@host`` as its two parts, split at the last ``@``. A user name
     may hold ``@``; a host pattern may not. Trailing spaces in the user name

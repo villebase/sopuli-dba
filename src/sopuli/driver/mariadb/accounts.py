@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sopuli.driver.mysql_family.accounts import same_host, split
+from sopuli.driver.mysql_family.accounts import same_host, split, text
 from sopuli.driver.protocol import Cursor
 
 #: The plugins whose stored value the tool computes and whose login PyMySQL
@@ -35,11 +35,6 @@ OTHER_PLUGIN_HINT = (
     "and never changes an account's plugin. Move the account with ALTER USER … "
     "IDENTIFIED VIA, or remove it from the config"
 )
-
-
-def text(value: object) -> str:
-    """PyMySQL returns some ``mysql`` columns as bytes."""
-    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
 @dataclass(frozen=True)

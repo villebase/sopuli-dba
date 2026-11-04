@@ -19,19 +19,7 @@ from __future__ import annotations
 
 from sopuli.driver import protocol
 from sopuli.driver.mysql import grants
-from sopuli.driver.mysql_family.encryption import (
-    NO_ROW_HINT as NO_ROW_HINT,
-)
-from sopuli.driver.mysql_family.encryption import (
-    TLS_VERSION as TLS_VERSION,
-)
-from sopuli.driver.mysql_family.encryption import (
-    encryption_of as encryption_of,
-)
-from sopuli.driver.mysql_family.encryption import (
-    read_encryption,
-    unencrypted_hint,
-)
+from sopuli.driver.mysql_family.encryption import read_encryption, unencrypted_hint
 from sopuli.driver.protocol import (
     ADMIN_REFUSED,
     SERVER,
@@ -142,10 +130,8 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
                 f'target "{target}" declares type "mysql", and the server is {product} ({version})',
                 hint=(
                     f"{product} speaks MySQL's protocol and handles passwords differently; "
-                    "the MySQL driver does not support it. For MariaDB, set `type: mariadb`"
-                    if product == "MariaDB"
-                    else f"{product} speaks MySQL's protocol and handles passwords "
-                    "differently; the MySQL driver does not support it"
+                    "the MySQL driver does not support it"
+                    + (". For MariaDB, set `type: mariadb`" if product == "MariaDB" else "")
                 ),
             )
     refuse_system_user(cursor, target=target)

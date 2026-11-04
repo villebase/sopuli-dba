@@ -40,6 +40,7 @@ from collections.abc import Iterable
 
 from sopuli.driver.mysql.grants import top_level, unquote
 from sopuli.driver.mysql_family.accounts import Principal
+from sopuli.driver.mysql_family.accounts import text as text
 from sopuli.driver.protocol import Cursor
 
 #: Each ``*_priv`` column of ``mysql.user`` and ``mysql.db``, and the
@@ -162,11 +163,6 @@ def mandatory_roles(setting: str | None) -> tuple[Principal, ...]:
         if name:
             found.append(Principal(name, host))
     return tuple(found)
-
-
-def text(value: object) -> str:
-    """PyMySQL returns some ``mysql`` table columns as bytes."""
-    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
 def roles_of(cursor: Cursor, account: Principal) -> tuple[Principal, ...]:

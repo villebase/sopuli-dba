@@ -111,6 +111,30 @@ def test_doctor_surveys_the_declared_accounts(
     assert f"{accounts}@localhost uses unix_socket" in result.output
 
 
+def test_a_role_the_tool_account_holds_is_reported(live_mariadb: Any, tmp_path: Path) -> None:
+    """`information_schema` shows only the account's own grants, so a role it
+    holds, here one that reads every stored value, is named and left unaudited.
+    Before #1287's review the role read matched nothing, and this passed clean."""
+    role = f"sopuli_role_{uuid.uuid4().hex[:8]}"
+    tool = f"'{live_mariadb.tool_user}'@'%'"
+    with live_mariadb.connect() as admin, admin.cursor() as cursor:
+        cursor.execute(f"create role {role}")
+        cursor.execute(f"grant select on mysql.global_priv to {role}")
+        cursor.execute(f"grant {role} to {tool}")
+    try:
+        document = _doctor(
+            _config(tmp_path / "c.yaml", live_mariadb, ["acme_none@%"]),
+            live_mariadb.tool_password,
+        )
+    finally:
+        with live_mariadb.connect() as admin, admin.cursor() as cursor, suppress(pymysql.Error):
+            cursor.execute(f"drop role {role}")
+
+    privileges = document["targets"][0]["privileges"]
+    assert privileges["roles"] == [role]
+    assert privileges["unaudited"] == ["privileges the tool account gets through a role"]
+
+
 def test_a_wrong_password_is_an_authentication_failure(live_mariadb: Any, tmp_path: Path) -> None:
     config = _config(tmp_path / "c.yaml", live_mariadb, ["acme_none@%"])
 

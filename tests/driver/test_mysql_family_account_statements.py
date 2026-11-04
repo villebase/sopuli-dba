@@ -1,5 +1,5 @@
-"""The statements `account suspend` and `account expire-password` send on
-MariaDB (#1272). Tier 0, and tier 1 on the `mariadb` service (11.8.9)."""
+"""The account statements MySQL and MariaDB share (#1272). Tier 0, and tier 1
+on the `mariadb` service (11.8.9)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,12 @@ from typing import Any
 
 import pytest
 
-from sopuli.driver.mariadb.account_statements import expire, lock
+from sopuli.driver.mysql_family.account_statements import expire, lock, unlock
 
 
 def test_each_statement_names_the_account_between_backquotes() -> None:
     assert lock("acme_dev", "10.%") == "ALTER USER `acme_dev`@`10.%` ACCOUNT LOCK"
+    assert unlock("acme_dev", "10.%") == "ALTER USER `acme_dev`@`10.%` ACCOUNT UNLOCK"
     assert expire("acme`dev", "%") == "ALTER USER `acme``dev`@`%` PASSWORD EXPIRE"
 
 

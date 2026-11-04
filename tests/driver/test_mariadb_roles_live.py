@@ -22,6 +22,8 @@ pymysql = pytest.importorskip("pymysql")
 from sopuli.driver.mariadb.roles import PublicRoleError, members_of, resolve  # noqa: E402
 
 PUBLIC_ROLE = "acme_public_role"
+#: A second role granted to PUBLIC, after the first in name order.
+PUBLIC_ROLE_B = "acme_public_role_b"
 
 
 @dataclass
@@ -62,6 +64,8 @@ def stage(live_mariadb: Any) -> Iterator[Stage]:
     staged = Stage(live=live_mariadb)
     with suppress(pymysql.Error):
         staged.root(f"DROP ROLE {PUBLIC_ROLE}")
+    with suppress(pymysql.Error):
+        staged.root(f"DROP ROLE {PUBLIC_ROLE_B}")
     try:
         yield staged
     finally:
@@ -122,3 +126,16 @@ def test_a_role_public_reaches_is_refused(stage: Stage) -> None:
         assert refused.value.category == "config"
         assert "every account holds it" in str(refused.value)
         assert through in str(refused.value)
+
+
+def test_a_role_two_public_roles_reach_is_named_through_the_first(stage: Stage) -> None:
+    """The refusal names the same role every run: the first in name order."""
+    first, second = stage.role(PUBLIC_ROLE), stage.role(PUBLIC_ROLE_B)
+    inner = stage.role()
+    for holder in (second, first):
+        stage.grant(inner, holder)
+        stage.root(f"GRANT {holder} TO PUBLIC")
+
+    with pytest.raises(PublicRoleError) as refused:
+        stage.read(lambda cursor: resolve(cursor, inner, target="tier1"))
+    assert f"is held by {first}, which is granted to PUBLIC" in str(refused.value)

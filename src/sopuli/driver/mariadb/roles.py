@@ -80,22 +80,30 @@ def resolve(cursor: Cursor, role: str, *, target: str) -> str | None:
     if row is None:
         return None
     found = text(row[0])
-    # PUBLIC's roles, followed to the end: a chain of grants downward from it.
-    reached = follow(cursor, [PUBLIC], ROLE_EDGES)
-    if (found, "") in reached:
-        raise PublicRoleError(found, through=_holder(cursor, found), target=target)
+    through = public_reach(cursor).get(found)
+    if through is not None:
+        raise PublicRoleError(found, through=through, target=target)
     return found
 
 
-def _holder(cursor: Cursor, role: str) -> str:
-    """The role granted to ``PUBLIC`` that reaches ``role``: ``role`` itself
-    where it is granted to ``PUBLIC`` directly."""
+def public_reach(cursor: Cursor) -> dict[str, str]:
+    """Every role ``PUBLIC`` holds, followed to the end, mapped to the role
+    granted to ``PUBLIC`` directly that it is reached through. One walk,
+    breadth first, with each step's roles in name order, so a role two direct
+    grants reach is always named through the same one."""
+    reach: dict[str, str] = {}
+    pending: list[tuple[str, str]] = []
     cursor.execute(ROLE_EDGES, (PUBLIC.user, PUBLIC.host))
-    for direct, _ in cursor.fetchall():
-        name = text(direct)
-        if name == role or (role, "") in follow(cursor, [Principal(name, "")], ROLE_EDGES):
-            return name
-    return role  # pragma: no cover -- resolve found the role through PUBLIC
+    for name in sorted(text(role) for role, _ in cursor.fetchall()):
+        pending.append((name, name))
+    while pending:
+        role, direct = pending.pop(0)
+        if role in reach:
+            continue
+        reach[role] = direct
+        cursor.execute(ROLE_EDGES, (role, ""))
+        pending.extend((name, direct) for name in sorted(text(r) for r, _ in cursor.fetchall()))
+    return reach
 
 
 def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
@@ -108,6 +116,8 @@ def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
     reached.pop(start.key(), None)
     cursor.execute(ROLE_NAMES)
     roles = {text(name) for (name,) in cursor.fetchall()}
+    # PUBLIC is a role too (RR3), and is left out even where its row is absent.
+    roles.add(PUBLIC.user)
     accounts = (
         member for member in reached.values() if not (member.host == "" and member.user in roles)
     )

@@ -34,12 +34,13 @@ The probe checks each result against the one RESULTS below records, as
 
 It MEASURES and decides nothing.
 
-STATUS: run on 10.11.19 and 12.3.3, the mariadb:10.11 and mariadb:12.3 images
-of test/compose.yaml profile mariadb-matrix, on 2026-11-01 (#1220), with Python
-3.13.12 on Windows 11 AMD64. Twice, the first time on servers just created,
-exit 0, and the same result both times.
+STATUS: run on 10.11.19, 11.4.13, 11.8.9 and 12.3.3, the mariadb:10.11,
+mariadb:11.4, mariadb:11.8 and mariadb:12.3 images of test/compose.yaml profile
+mariadb-matrix, with Python 3.13.12 on Windows 11 AMD64: 10.11.19 and 12.3.3 on
+2026-11-01 (#1220), and all four on 2026-11-04 (#1267). Twice each day, the
+first time on servers just created, exit 0, and the same result every time.
 
-RESULTS -- the same on both releases
+RESULTS -- the same on every release
 
   consumers  events_statements_current and events_statements_history are off
        before the probe turns them on

@@ -57,13 +57,14 @@ What each environment is, and what to know before using it:
   `sql/mysql/`. The servers run with the image's defaults, so the binary log
   is on and the general log and slow log are off. A probe turns on any log it
   reads, and sets it back.
-- **mariadb-matrix** (`mariadb-1011` and `mariadb-123`, ports 3311 and 3323)
-  is one server each of MariaDB 10.11 and 12.3, for the probes in
-  `sql/mariadb/`. They start with `performance_schema` and the binary log on,
-  which MariaDB leaves off by default, so that the probes can read them. The
-  general log, the slow log and the statement consumers are off, and a probe
-  turns on what it reads and sets it back. The client in the container is
-  `mariadb`; 12.3 has no `mysql`.
+- **mariadb-matrix** (`mariadb-1011`, `mariadb-114`, `mariadb-118` and
+  `mariadb-123`, ports 3311, 3314, 3318 and 3323) is one server each of
+  MariaDB 10.11, 11.4, 11.8 and 12.3, the long-term support releases, for the
+  probes in `sql/mariadb/`. They start with `performance_schema` and the
+  binary log on, which MariaDB leaves off by default, so that the probes can
+  read them. The general log, the slow log and the statement consumers are
+  off, and a probe turns on what it reads and sets it back. The client in the
+  container is `mariadb`; only 10.11 also has `mysql`.
 - **pgbouncer** (`pgbouncer` and `pgbouncer-ignore`, ports 6432 and 6433) is
   PgBouncer 1.26.0 in front of tier 0's `postgres`, for
   `sql/postgres/08_pgbouncer_probe.py`. Start it with tier 0:
@@ -103,7 +104,7 @@ docker compose --profile nne   up -d      # Vault + Oracle requiring NNE, on 152
 docker compose --profile emulators up -d  # lowkey-vault, on 8443
 docker compose --profile postgres-matrix up -d  # PostgreSQL 13 to 18, on 5413 to 5418
 docker compose --profile mysql-matrix up -d     # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
-docker compose --profile mariadb-matrix up -d   # MariaDB 10.11, 12.3, on 3311, 3323
+docker compose --profile mariadb-matrix up -d   # MariaDB 10.11, 11.4, 11.8, 12.3, on 3311, 3314, 3318, 3323
 docker compose --profile tier0 --profile pgbouncer up -d  # + PgBouncer, on 6432 and 6433
 docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
@@ -206,9 +207,10 @@ same holds for `SOPULI_TEST_PGBOUNCER_PORT` and
 `SOPULI_TEST_SUPABASE_PORT`, default 5440, which the suite does read. One that
 starts `mysql-matrix` sets `SOPULI_TEST_MYSQL80_PORT`, `SOPULI_TEST_MYSQL84_PORT`
 and `SOPULI_TEST_MYSQL9_PORT`, defaults 3380, 3384 and 3390, and one that
-starts `mariadb-matrix` sets `SOPULI_TEST_MARIADB1011_PORT` and
-`SOPULI_TEST_MARIADB123_PORT`, defaults 3311 and 3323. The suite reads none of
-them.
+starts `mariadb-matrix` sets `SOPULI_TEST_MARIADB1011_PORT`,
+`SOPULI_TEST_MARIADB114_PORT`, `SOPULI_TEST_MARIADB118_PORT` and
+`SOPULI_TEST_MARIADB123_PORT`, defaults 3311, 3314, 3318 and 3323. The suite
+reads none of them.
 
 A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
 2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
@@ -223,7 +225,7 @@ after its tier-1 tests, 2026-11-01).
 | mysql | 3306, or `SOPULI_TEST_MYSQL_PORT` | **`--profile tier1`**. `root` / `sopuli-test`, database `sopuli`. MySQL 8.4, with TLS on under a certificate the image generates for itself, so a test that asks for `VERIFY_IDENTITY` meets one it cannot verify |
 | postgres-13 to postgres-18 | 5413 to 5418, or `SOPULI_TEST_POSTGRES13_PORT` to `SOPULI_TEST_POSTGRES18_PORT` | **`--profile postgres-matrix` only**. `postgres` / `sopuli-test`, database `sopuli`. One server of each major release from 13 to 18 |
 | mysql-80, mysql-84, mysql-9 | 3380, 3384 and 3390, or `SOPULI_TEST_MYSQL80_PORT`, `SOPULI_TEST_MYSQL84_PORT` and `SOPULI_TEST_MYSQL9_PORT` | **`--profile mysql-matrix` only**. `root` / `sopuli-test`, database `sopuli`. MySQL 8.0, 8.4 and 9 |
-| mariadb-1011, mariadb-123 | 3311 and 3323, or `SOPULI_TEST_MARIADB1011_PORT` and `SOPULI_TEST_MARIADB123_PORT` | **`--profile mariadb-matrix` only**. `root` / `sopuli-test`, database `sopuli`. MariaDB 10.11 and 12.3, with `performance_schema` and the binary log on |
+| mariadb-1011, mariadb-114, mariadb-118, mariadb-123 | 3311, 3314, 3318 and 3323, or `SOPULI_TEST_MARIADB1011_PORT`, `SOPULI_TEST_MARIADB114_PORT`, `SOPULI_TEST_MARIADB118_PORT` and `SOPULI_TEST_MARIADB123_PORT` | **`--profile mariadb-matrix` only**. `root` / `sopuli-test`, database `sopuli`. MariaDB 10.11, 11.4, 11.8 and 12.3, with `performance_schema` and the binary log on |
 | supabase | 5440, or `SOPULI_TEST_SUPABASE_PORT` | **`--profile supabase` only**. `postgres` / `sopuli-test`, and `supabase_admin`, the superuser, with the same password. Supabase's database alone, PostgreSQL 17.6 with supautils |
 | pgbouncer, pgbouncer-ignore | 6432 and 6433, or `SOPULI_TEST_PGBOUNCER_PORT` and `SOPULI_TEST_PGBOUNCER_IGNORE_PORT` | **`--profile pgbouncer` only**, with tier 0. PgBouncer 1.26.0 in front of postgres; databases `session` and `transaction`. `pgbouncer-ignore` drops the startup parameter `options` |
 | yopass | 1337, or `SOPULI_TEST_YOPASS_PORT` | Yopass 16.0.1 with default flags, for the `one_time_link` delivery tests; it stores secrets in `yopass-memcached`, which publishes no port. The image has no shell, so it has no healthcheck: `curl http://127.0.0.1:1337/health` answers `{"status":"healthy"}`. The web page is at <http://127.0.0.1:1337/> |

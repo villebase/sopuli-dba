@@ -306,6 +306,8 @@ checks their headers against the table below in the same way.
 | Release | Product, and where it ran |
 |---|---|
 | `10.11.19` | The `mariadb:10.11` image, `test/compose.yaml` profile `mariadb-matrix`, as pulled on 2026-11-01. 10.11 is a long-term support release |
+| `11.4.13` | The `mariadb:11.4` image, the same profile, as pulled on 2026-11-04. 11.4 is a long-term support release |
+| `11.8.9` | The `mariadb:11.8` image, the same profile, as pulled on 2026-11-04. 11.8 is a long-term support release |
 | `12.3.3` | The `mariadb:12.3` image, the same profile, as pulled on 2026-11-01. 12.3 is the current long-term support release |
 
 Not measured: every other release, Galera, and every managed service.
@@ -316,12 +318,22 @@ Not measured: every other release, Galera, and every managed service.
 | Script | Release | Date | Issue | Result |
 |---|---|---|---|---|
 | `01_password_text_probe.py` | `10.11.19` | 2026-11-01 | #1220 | **The password stays in clear.** The general log, the slow log and `performance_schema`'s statement history keep `CREATE USER` and `ALTER USER … IDENTIFIED BY '…'`, `SET PASSWORD … = PASSWORD('…')` and `USING PASSWORD('…')` as sent, also when the statement fails to run or to parse. The binary log keeps `CREATE USER`, `ALTER USER … IDENTIFIED BY` and `USING PASSWORD('…')` as sent, and rewrites only `SET PASSWORD` to the hash. `IDENTIFIED VIA mysql_native_password USING '<hash>'` lands everywhere with the hash and no password. The digest holds none. The statement consumers are off by default |
+| `01_password_text_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19 |
+| `01_password_text_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 10.11.19 |
 | `01_password_text_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19 |
 | `02_client_hash_probe.py` | `10.11.19` | 2026-11-01 | #1220 | A `mysql_native_password` or `ed25519` value the probe computes agrees with the server's. An account with only `CREATE USER` sets each with `IDENTIFIED VIA … USING`, and `mysql_native_password` also with `IDENTIFIED BY PASSWORD`, and the password logs in. A malformed value is refused, `1396`. Only `mysql_native_password` is loaded by default; `ed25519` installs. `parsec` is refused, `1126`: the library is not in the image |
+| `02_client_hash_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19 |
+| `02_client_hash_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 12.3.3 |
 | `02_client_hash_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19, and `parsec` installs. A `parsec` value the probe computes, with its own salt, agrees, is set by the same account, and the password logs in |
 | `03_dual_password_probe.py` | `10.11.19` | 2026-11-01 | #1220 | No `RETAIN CURRENT PASSWORD`, `1064`. `IDENTIFIED VIA <plugin> USING '<old>' OR <plugin> USING '<new>'`, with values the probe computed, set by an account with only `CREATE USER`, lets both passwords log in, for each plugin, and also with the old on `mysql_native_password` and the new on `ed25519`. Sending the new value alone ends it. The second value is only in `mysql.global_priv`'s `auth_or`, beside the hashes, and in `SHOW CREATE USER`; the `mysql.user` view shows the first |
+| `03_dual_password_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19 |
+| `03_dual_password_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 12.3.3 |
 | `03_dual_password_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19, and also with `parsec` |
 | `04_lock_expiry_probe.py` | `10.11.19` | 2026-11-01 | #1220 | An account with only `CREATE USER` locks, unlocks and expires another. A locked account's password answers `4151`, a wrong one `1045`, and a second lock is accepted. The `mysql.user` view has no `account_locked`, `1054`: the lock is only in `mysql.global_priv`, beside the hash, and in `SHOW CREATE USER`. `PASSWORD EXPIRE` reads back as the view's `password_expired = 'Y'`; an expired session connects, and `SELECT 1` answers `1820`. With `max_password_errors = 2`, the right password then answers `4150`, neither `mysql.global_priv` nor `SHOW CREATE USER` changes, and `ACCOUNT UNLOCK` ends it |
+| `04_lock_expiry_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19 |
+| `04_lock_expiry_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 10.11.19 |
 | `04_lock_expiry_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19 |
 | `05_identity_grants_probe.py` | `10.11.19` | 2026-11-01 | #1220 | One user name at `%` and `localhost` is two accounts, chosen as on MySQL. A user name with no host means `%`. User names are case-sensitive; a host is stored in lower case. **An account with only `CREATE USER` changes root's password, unlocks root, and changes and drops an account with `ALL PRIVILEGES`**: MariaDB has no `SYSTEM_USER`, `1064`. It cannot grant, `1044`, read `mysql.user`, `1142`, or run `SHOW CREATE USER` or `SHOW GRANTS`, `1044`. Given `SELECT` on chosen columns of the `mysql.user` view, it reads them and is refused `Password` and `authentication_string`, `1143`. `BINLOG ADMIN`, `CONNECTION ADMIN` and `READ_ONLY ADMIN` set no `*_priv` column; they are in `global_priv`'s access bits, and `SHOW GRANTS` prints them with the hash. Roles are in `mysql.roles_mapping`, refused, `1142`, until granted |
+| `05_identity_grants_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19 |
+| `05_identity_grants_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 10.11.19 |
 | `05_identity_grants_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19 |

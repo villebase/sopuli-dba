@@ -37,11 +37,13 @@ this folder use are here. A difference, or a step that fails, makes it exit 1.
 
 It MEASURES and decides nothing.
 
-STATUS: run on 10.11.19 and 12.3.3, the mariadb:10.11 and mariadb:12.3 images
-of test/compose.yaml profile mariadb-matrix, on 2026-11-01 (#1220), with Python
-3.13.12 on Windows 11 AMD64. Twice, exit 0, and the same result both times.
+STATUS: run on 10.11.19, 11.4.13, 11.8.9 and 12.3.3, the mariadb:10.11,
+mariadb:11.4, mariadb:11.8 and mariadb:12.3 images of test/compose.yaml profile
+mariadb-matrix, with Python 3.13.12 on Windows 11 AMD64: 10.11.19 and 12.3.3 on
+2026-11-01 (#1220), and all four on 2026-11-04 (#1267). Twice each day, exit 0,
+and the same result every time.
 
-RESULTS -- the same on both releases, except where noted
+RESULTS -- the same on every release, except where noted
 
   CH1  the probe's value agrees with the server's, for each plugin the server
        has
@@ -50,9 +52,9 @@ RESULTS -- the same on both releases, except where noted
        1045 (28000)
   CH3  each value is refused, 1396 (HY000), "Operation ALTER USER failed",
        and the former password still logs in
-  CH4  both start with mysql_native_password alone. ed25519 installs on both.
-       parsec installs on 12.3.3, and is refused on 10.11.19, 1126 (HY000):
-       the library is not in the image
+  CH4  each starts with mysql_native_password alone. ed25519 installs on
+       each. parsec installs on 11.8.9 and 12.3.3, and is refused on 10.11.19
+       and 11.4.13, 1126 (HY000): the library is not in the image
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -89,7 +91,7 @@ assert _SPEC is not None
 assert _SPEC.loader is not None
 base = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(base)
-base.SERVICES = ("mariadb-1011", "mariadb-123")
+base.SERVICES = ("mariadb-1011", "mariadb-114", "mariadb-118", "mariadb-123")
 base.CLIENT = "mariadb"
 
 StepError = base.StepError
@@ -261,7 +263,7 @@ def cases(service: str) -> None:
     )
     recorded = (
         (OK, "ed25519,mysql_native_password,parsec")
-        if release.startswith("12.3.")
+        if release.startswith(("11.8.", "12.3."))
         else ("1126 (HY000)", "ed25519,mysql_native_password")
     )
     check(

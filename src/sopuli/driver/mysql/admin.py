@@ -41,6 +41,9 @@ from sopuli.driver.mysql_family.accounts import Principal, text
 
 # Shared with MariaDB's check 9, and re-exported: the MySQL driver's modules
 # and tests read them from here.
+from sopuli.driver.mysql_family.accounts import (
+    text as text,
+)
 from sopuli.driver.mysql_family.grant_tables import (
     COLUMN_GRANTS as COLUMN_GRANTS,
 )

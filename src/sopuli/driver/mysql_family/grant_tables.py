@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sopuli.driver.mysql_family.accounts import Principal
+from sopuli.driver.mysql_family.accounts import Principal, text
 from sopuli.driver.protocol import Cursor
 
 TABLE_GRANTS = (
@@ -57,11 +57,6 @@ def object_grants(cursor: Cursor, principal: Principal) -> list[str]:
         f"PROXY ON {text(user) or empty}@{text(host) or empty}" for user, host in cursor.fetchall()
     ]
     return found
-
-
-def text(value: object) -> str:
-    """PyMySQL returns some ``mysql`` table columns as bytes."""
-    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
 def follow(

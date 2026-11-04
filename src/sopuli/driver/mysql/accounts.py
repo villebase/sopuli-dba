@@ -4,7 +4,8 @@ A MySQL account is a user name and a host pattern, and the config names it as
 ``user@host`` (#1202, decision 4). One user name can exist at several hosts,
 each its own account with its own password (``05_identity_grants_probe.py``,
 ID1). The server compares the user name by case and the host without case
-(ID3), and so does this module (decision 3).
+(ID3), and so does this module (decision 3). That model is MariaDB's too, so
+it is in :mod:`sopuli.driver.mysql_family.accounts`.
 
 **What it reads.** The columns of ``mysql.user`` that
 ``02-mysql-privileges.md`` §2.1 grants: the user, the host, the plugin, the
@@ -28,8 +29,9 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sopuli.config.products import same_mysql_account, same_mysql_host
+from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import admin
+from sopuli.driver.mysql_family.accounts import Principal, same_host, split
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
@@ -65,20 +67,6 @@ SYSTEM_ACCOUNTS = frozenset(
 
 #: ``UserState.password_changed_unknown`` where the column is empty.
 NO_CHANGE_DATE = "mysql.user.password_last_changed is empty for this account"
-
-
-class BareAccountError(DriverError):
-    """A MySQL account named without its host. The config refuses one first;
-    this is the driver's own second line. ``config``, exit 9."""
-
-    category = "config"
-    exit_code = ExitCode.CONFIG_INVALID
-
-    def __init__(self, account: str) -> None:
-        super().__init__(
-            f'MySQL account "{account}" has no host',
-            hint=f"name it with its host, such as {account}@10.%",
-        )
 
 
 class OtherPluginError(DriverError):
@@ -127,24 +115,6 @@ class Account:
     def name(self) -> str:
         """``user@host``, in the server's spelling."""
         return f"{self.user}@{self.host}"
-
-
-def split(account: str) -> tuple[str, str]:
-    """``user@host`` as its two parts, split at the last ``@``. A user name
-    may hold ``@``; a host pattern may not. Trailing spaces in the user name
-    are dropped, as the server drops them."""
-    user, at, host = account.rpartition("@")
-    user = user.rstrip(" ")
-    if not at or not user or not host:
-        raise BareAccountError(account)
-    return user, host
-
-
-def same_host(left: str, right: str) -> bool:
-    """Hosts compare without case, as the server compares them (ID3). The rule
-    is :func:`sopuli.config.products.same_mysql_host`'s, so the config's
-    matcher and the driver's reads cannot drift apart."""
-    return same_mysql_host(left, right)
 
 
 def account_of(row: Sequence[Any]) -> Account:
@@ -268,7 +238,7 @@ def describe(
     state = state_now(cursor, found, now=now)
     # Guardrail 9 reads it (`02-mysql-privileges.md` §5). Read here, so every
     # command that describes the account before it changes it has it.
-    held = admin.global_privileges(cursor, admin.Principal(found.user, found.host))
+    held = admin.global_privileges(cursor, Principal(found.user, found.host))
     own = is_session_account(found, session_user or current_user(cursor))
     return replace(state, global_privileges=held, session_account=own)
 

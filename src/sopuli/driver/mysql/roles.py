@@ -25,7 +25,7 @@ are the ones granted to it.
 from __future__ import annotations
 
 from sopuli.driver.mysql import accounts, admin
-from sopuli.driver.mysql.admin import Principal
+from sopuli.driver.mysql_family.accounts import Principal, split
 from sopuli.driver.protocol import Cursor, DriverError
 from sopuli.exit_codes import ExitCode
 
@@ -59,11 +59,11 @@ def resolve(cursor: Cursor, role: str, *, target: str) -> str | None:
     ``None`` where there is none.
 
     ``role`` is ``user@host``; the config refuses a bare name first, and
-    :func:`~sopuli.driver.mysql.accounts.split` refuses one again. Refuses a
-    mandatory role, and a role a mandatory role holds, with
+    :func:`~sopuli.driver.mysql_family.accounts.split` refuses one again.
+    Refuses a mandatory role, and a role a mandatory role holds, with
     :class:`MandatoryRoleError`.
     """
-    user, host = accounts.split(role)
+    user, host = split(role)
     found = accounts.find(accounts.read(cursor, [user])[user], host)
     if found is None:
         return None
@@ -95,7 +95,7 @@ def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
     accounts a verb admits, and a verb admits by :func:`granted`, which follows
     the same grants the other way.
     """
-    user, host = accounts.split(role)
+    user, host = split(role)
     start = Principal(user, host)
     reached = admin.follow(cursor, [start], MEMBERS)
     reached.pop(start.key(), None)

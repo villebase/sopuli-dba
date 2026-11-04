@@ -75,7 +75,7 @@ mysql = [
   # connection, a login the server has not cached needs RSA key exchange,
   # which is PyMySQL's own `rsa` extra (`cryptography`). The config accepts
   # `ssl_mode: DISABLED` and `PREFERRED`, so the extra comes with it. 1.2.3
-  # is the release whose TLS handling src/sopuli/driver/mysql/connection.py
+  # is the release whose TLS handling src/sopuli/driver/mysql_family/connection.py
   # was written from: given a context, it refuses a server that offers no TLS.
   "PyMySQL[rsa]>=1.2.3",
 ]

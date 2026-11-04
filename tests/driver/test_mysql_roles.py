@@ -16,9 +16,9 @@ from sopuli.exit_codes import ExitCode
 
 roles = pytest.importorskip("sopuli.driver.mysql.roles")
 admin = pytest.importorskip("sopuli.driver.mysql.admin")
-accounts = pytest.importorskip("sopuli.driver.mysql.accounts")
+family = pytest.importorskip("sopuli.driver.mysql_family.accounts")
 
-Principal = admin.Principal
+Principal = family.Principal
 
 
 def _fold(host: str) -> str:
@@ -31,8 +31,8 @@ class Server:
     def __init__(
         self, users: list[str], edges: Sequence[tuple[str, str]] = (), mandatory: str = ""
     ) -> None:
-        self.users = [accounts.split(name) for name in users]
-        self.edges = [(accounts.split(role), accounts.split(to)) for role, to in edges]
+        self.users = [family.split(name) for name in users]
+        self.edges = [(family.split(role), family.split(to)) for role, to in edges]
         self.mandatory = mandatory
         self._result: Any = None
 
@@ -85,7 +85,7 @@ def test_a_role_that_does_not_exist_is_none() -> None:
 
 
 def test_a_bare_role_is_refused_by_the_driver_too() -> None:
-    with pytest.raises(accounts.BareAccountError):
+    with pytest.raises(family.BareAccountError):
         roles.resolve(Server([]), "dev_role", target="t")
 
 

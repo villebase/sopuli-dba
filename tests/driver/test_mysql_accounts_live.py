@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
+from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.protocol import Credential
 from sopuli.secrets import Secret
 
@@ -245,7 +246,7 @@ def test_global_privileges_are_read_through_every_path(stage: Stage) -> None:
     stage.admin("set global mandatory_roles = %s", (mandatory,))
     try:
         with stage.session.connection.cursor() as cursor:
-            found = admin_module.global_privileges(cursor, admin_module.Principal(user, "10.%"))
+            found = admin_module.global_privileges(cursor, Principal(user, "10.%"))
     finally:
         stage.admin("set global mandatory_roles = ''")
 

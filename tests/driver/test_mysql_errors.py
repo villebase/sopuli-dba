@@ -12,15 +12,13 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql.errors import (
-    ACCESS_DENIED,
     ACCOUNT_BLOCKED,
-    CANNOT_CONNECT,
     CERTIFICATE_HINT,
-    TLS_CONNECTION_ERROR,
     MappedError,
     classify,
     from_error,
 )
+from sopuli.driver.mysql_family.errors import ACCESS_DENIED, CANNOT_CONNECT, TLS_CONNECTION_ERROR
 from sopuli.driver.protocol import AuthenticationError
 from sopuli.exit_codes import ExitCode
 

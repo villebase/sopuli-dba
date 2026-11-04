@@ -39,20 +39,19 @@ from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
 from sopuli.driver.mysql import roles, verification
-from sopuli.driver.mysql.admin import Principal
-from sopuli.driver.mysql.client import client_lines
-from sopuli.driver.mysql.connection import TLS_REQUIRED_MODES, connect_arguments
-from sopuli.driver.mysql.errors import (
+from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
+from sopuli.driver.mysql.limits import LIMIT
+from sopuli.driver.mysql.privileges import audit as privilege_audit
+from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
+from sopuli.driver.mysql_family.accounts import Principal, split
+from sopuli.driver.mysql_family.client import client_lines
+from sopuli.driver.mysql_family.connection import TLS_REQUIRED_MODES, connect_arguments
+from sopuli.driver.mysql_family.errors import (
     COLUMN_ACCESS_DENIED,
     TABLE_ACCESS_DENIED,
     TLS_CONNECTION_ERROR,
     UNKNOWN_CLIENT_ERROR,
-    UNKNOWN_SYSTEM_VARIABLE,
-    from_error,
 )
-from sopuli.driver.mysql.limits import LIMIT
-from sopuli.driver.mysql.privileges import audit as privilege_audit
-from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
@@ -144,7 +143,7 @@ class PlainLoginError(DriverError):
     'is_auth_switch_request'``, not a MySQL error: its
     ``caching_sha2_password_auth`` returns nothing after the RSA round trip.
     The same login over TLS succeeds. ``connectivity``, with ``2000``
-    (``CR_UNKNOWN_ERROR``), the number :mod:`~sopuli.driver.mysql.errors` gives
+    (``CR_UNKNOWN_ERROR``), the number :mod:`~sopuli.driver.mysql_family.errors` gives
     every client failure that carries none, in the same category. When PyMySQL
     is fixed, the tier-1 test that pins this fails, and this goes.
     """
@@ -301,7 +300,7 @@ class MysqlSession(ClosesConnection):
             return None
         # A `role:` rule admits by these (`sopuli.personal.admits`), and
         # `accounts_matching` lists by the same grants the other way.
-        user, host = accounts_module.split(state.name)
+        user, host = split(state.name)
         return replace(state, roles=frozenset(roles.granted(cursor, Principal(user, host))))
 
     def byte_limit(self) -> ByteLimit:
@@ -412,7 +411,7 @@ class MysqlSession(ClosesConnection):
                     "as ACCOUNT_MISSING rather than failing"
                 ),
             )
-        user, host = accounts_module.split(state.name)
+        user, host = split(state.name)
         statement = self._password_statement(user, host, secret, retain=old_password == OLD_RETAIN)
         # The server's clock before the statement: confirm_change compares
         # password_last_changed with it. The session's time zone is UTC.
@@ -804,7 +803,7 @@ class MysqlSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        user, host = accounts_module.split(account)
+        user, host = split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login (`verification.not_tried_reason`).
         try:
@@ -844,7 +843,7 @@ class MysqlSession(ClosesConnection):
         since = self._changed_since.get(account)
         if since is None:
             return None
-        user, host = accounts_module.split(account)
+        user, host = split(account)
         # The read verify_password makes, so the two agree on which accounts a
         # login can reach.
         found = self._read(lambda cursor: accounts_module.read(cursor, [user, ""]))
@@ -996,7 +995,7 @@ class MysqlSession(ClosesConnection):
         state = self.describe_user(account)
         if state is None:
             raise DriverError(f'account "{account}" does not exist on target "{self.target.name}"')
-        user, host = accounts_module.split(state.name)
+        user, host = split(state.name)
         self._read(lambda cursor: cursor.execute(password_module.discard_old(user, host)))
         LOG.debug("old password discarded for %s on %s", state.name, self.target.name)
         return ChangeResult(changed=True, detail="any retained password discarded")
@@ -1022,7 +1021,7 @@ def _server_uuid(cursor: Any) -> str:
 
 
 #: The server's clock, in the session's time zone, which is UTC
-#: (:data:`~sopuli.driver.mysql.connection.UTC_SESSION`).
+#: (:data:`~sopuli.driver.mysql_family.connection.UTC_SESSION`).
 SERVER_NOW = "select now()"
 
 
@@ -1062,8 +1061,9 @@ def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
     """Refuse a session not known to be TLS where ``ssl_mode`` requires it.
 
     PyMySQL already refuses a server that offers no TLS when it is given a
-    context (:mod:`sopuli.driver.mysql.connection`). This reads the answer from
-    the session itself, so the rule does not rest on the client library alone.
+    context (:mod:`sopuli.driver.mysql_family.connection`). This reads the
+    answer from the session itself, so the rule does not rest on the client
+    library alone.
     ``unknown`` is refused too, with its own words: a mode that requires TLS
     needs it confirmed.
     """

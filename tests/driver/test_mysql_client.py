@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sopuli.driver.mysql.client import client_lines
+from sopuli.driver.mysql_family.client import client_lines
 
 
 def test_the_client_line_is_pymysqls_release() -> None:

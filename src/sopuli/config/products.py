@@ -39,12 +39,14 @@ from sopuli.config.model import (
 from sopuli.config.selection import select
 from sopuli.config.targets import (
     EXTERNAL,
+    MARIADB,
     MYSQL,
     MYSQL_UNENCRYPTED_SSL_MODE,
     MYSQL_VERIFYING_SSL_MODES,
     ORACLE,
     POSTGRESQL,
     UNENCRYPTED_SSLMODE,
+    USER_AT_HOST_TYPES,
     VERIFYING_SSLMODES,
 )
 
@@ -144,7 +146,32 @@ _PRODUCTS: dict[str, _Product] = {
             settings=lambda target: target.mysql_settings,
         ),
     ),
+    MARIADB: _Product(
+        name="MariaDB",
+        article="a",
+        block="mariadb",
+        whole="server",
+        owner="a MariaDB account belongs to the whole server",
+        dsn_hint=(
+            "write host:port, such as mariadb-dev.example.com:3306. TLS goes in "
+            "`mariadb.ssl_mode`; the password is never written in this file (P2)"
+        ),
+        tls=_Tls(
+            mode="ssl_mode",
+            ca="ssl_ca",
+            verifying=MYSQL_VERIFYING_SSL_MODES,
+            unencrypted=MYSQL_UNENCRYPTED_SSL_MODE,
+            default="VERIFY_IDENTITY",
+            alternative="VERIFY_CA",
+            settings=lambda target: target.mariadb_settings,
+        ),
+    ),
 }
+
+
+def product_name(target_type: str) -> str:
+    """The product a ``targets.*.type`` names, as a message writes it: ``MariaDB``."""
+    return _PRODUCTS[target_type].name
 
 
 @dataclass(frozen=True)
@@ -205,6 +232,7 @@ def _written_blocks(target: Target) -> dict[str, bool]:
         ORACLE: target.oracle != TargetOracle(),
         POSTGRESQL: target.postgres is not None,
         MYSQL: target.mysql is not None,
+        MARIADB: target.mariadb is not None,
     }
 
 
@@ -434,16 +462,16 @@ def same_mysql_account(left: str, right: str) -> bool:
 
 def account_matcher(product: str) -> Callable[[str, str], bool]:
     """How a verb compares an account name with a declared one on a target of
-    ``product``: :func:`same_mysql_account` on MySQL, :func:`same_name`
+    ``product``: :func:`same_mysql_account` on MySQL and MariaDB, :func:`same_name`
     elsewhere."""
-    return same_mysql_account if product == MYSQL else same_name
+    return same_mysql_account if product in USER_AT_HOST_TYPES else same_name
 
 
 def account_key(product: str) -> Callable[[str], object]:
     """A key that is equal for two names :func:`account_matcher` takes as one
     account, so a caller can fold names in a dict rather than compare every
-    pair. On MySQL a name that is not ``user@host`` keys as itself."""
-    if product != MYSQL:
+    pair. On MySQL and MariaDB a name that is not ``user@host`` keys as itself."""
+    if product not in USER_AT_HOST_TYPES:
         return str.upper
 
     def mysql_key(name: str) -> object:
@@ -468,37 +496,39 @@ def refuse_a_bare_mysql_account(
     at: KeyPath,
     example: str = "acme_app",
 ) -> None:
-    """A MySQL account names its host, as ``acme_app@10.%`` (#1202, decision 4).
+    """A MySQL or MariaDB account names its host, as ``acme_app@10.%`` (#1202,
+    decision 4).
 
     MySQL keeps ``acme_app@%`` and ``acme_app@localhost`` as two accounts with
     two passwords, and which one a login reaches depends on how the client
-    connects. Reading a bare name as one of them would rotate it and leave the
-    other on the old password. ``declared_by`` is who declares the account,
-    such as "application 'acme'", and ``at`` is where the name is written. A
-    name on another product's target is not checked. ``example`` is the user
-    name the hint shows.
+    connects; MariaDB does the same (#1220). Reading a bare name as one of them
+    would rotate it and leave the other on the old password. ``declared_by`` is
+    who declares the account, such as "application 'acme'", and ``at`` is where
+    the name is written. A name on another product's target is not checked.
+    ``example`` is the user name the hint shows.
 
     A part quoted as SQL quotes it, as in ``'acme_app'@'%'``, or with a space
     at an end, is refused too. It splits, but the quotes would become part of
     the name the driver looks for, and no account would match.
     """
-    if expanded.target.type != MYSQL:
+    if expanded.target.type not in USER_AT_HOST_TYPES:
         return
+    product = _PRODUCTS[expanded.target.type].name
     split = mysql_account(account)
     if split is None:
         raise ConfigError(
-            f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
-            "and a MySQL account must name its host as user@host",
+            f"{declared_by} declares {account!r} on {product} target {expanded.name!r}, "
+            f"and a {product} account must name its host as user@host",
             at=at,
             hint=(
                 f"write the host after the last `@`, as `{example}@10.%`, or `{example}@%` "
-                "for the account any host reaches: MySQL keeps one account per host, each "
-                "with its own password"
+                f"for the account any host reaches: {product} keeps one account per host, "
+                "each with its own password"
             ),
         )
     if quoted_or_padded(split):
         raise ConfigError(
-            f"{declared_by} declares {account!r} on MySQL target {expanded.name!r}, "
+            f"{declared_by} declares {account!r} on {product} target {expanded.name!r}, "
             "whose user or host starts or ends with a quote or a space",
             at=at,
             hint=(
@@ -516,7 +546,7 @@ def typed_user(name: str, *, default: str) -> str:
 
 
 def check_personal_mysql_accounts(config: Config) -> None:
-    """A `personal_accounts:` rule names its hosts on a MySQL target too.
+    """A `personal_accounts:` rule names its hosts on a MySQL or MariaDB target too.
 
     Personal accounts never become bindings, so :mod:`sopuli.config.bindings`
     does not see them. A ``role:`` names its host too: a MySQL role is an

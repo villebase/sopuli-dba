@@ -56,6 +56,25 @@ def test_a_bare_name_is_refused_on_a_mysql_target(write_config: WriteConfig, ver
     assert "--target" not in error["hint"]
 
 
+def test_a_bare_name_is_refused_on_a_mariadb_target_by_its_product(
+    write_config: WriteConfig,
+) -> None:
+    """A MariaDB account is `user@host` too (#1268), and the refusal names MariaDB."""
+    mariadb = CONFIG.replace("mysql-dev", "mariadb-dev").replace("type: mysql", "type: mariadb")
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(write_config(mariadb)), "account", "suspend", "--account", "jdoe"]
+        + ["--dry-run", "--output", "json"],
+    )
+
+    assert exit_of(result) == ExitCode.CONFIG_INVALID, result.output
+    error = json.loads(result.output)["error"]
+    assert error["message"] == (
+        "account 'jdoe' is not user@host without quotes, and target 'mariadb-dev' is MariaDB"
+    )
+    assert "MariaDB keeps one account per host" in error["hint"]
+
+
 @pytest.mark.parametrize(
     ("typed", "example"), [("'acme_ops'@'%'", "acme_ops@%"), ("acme_ops", "acme_ops@%")]
 )

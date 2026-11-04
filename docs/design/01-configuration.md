@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.5.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.6.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.5.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.6.schema.json
 version: 1
 
 runtime:
@@ -1237,14 +1237,15 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql` or `mysql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
-| `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL and MySQL: `host:port`. See below |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql` or `mariadb`. Any other value is refused while the file is being written, not at the first connection. A `mariadb` target loads, validates and shows in `config show`; its driver is #1268, and until it is built any command that connects to one is refused with `SOPULI-20006`. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
+| `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL, MySQL and MariaDB: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
 | `admin` | `{ username, auth }` — the credential that reaches the database. There is no password field, and there will not be one (P2). See below |
 | `oracle` | `{ scope, container }` — **not** an application's `oracle:` block. Both are assertions about the database rather than settings on it, and both are optional. Only on an Oracle target. See below |
 | `postgres` | `{ database, sslmode, sslrootcert }` — how the tool connects to a PostgreSQL cluster. Only on a PostgreSQL target. See below |
 | `mysql` | `{ ssl_mode, ssl_ca }` — how the tool connects to a MySQL server. Only on a MySQL target. See below |
+| `mariadb` | `{ ssl_mode, ssl_ca }` — how the tool connects to a MariaDB server, with the same keys as `mysql`. Only on a MariaDB target. See below |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
 | `safety` | a `safety:` block (§9) |
 
@@ -1759,16 +1760,42 @@ targets that reach one server, known by its `server_uuid`, are refused with
 `SOPULI-20008`, as two targets on one PostgreSQL cluster are. A replica has
 its own `server_uuid`, and while it is read-only a write to it is refused.
 
+### `mariadb:` on a target — how to connect to a server
+
+A MariaDB target is the **server**, as a MySQL target is. Its block takes the
+same two keys, with the same defaults and the same rules, because the tool
+reaches both through PyMySQL:
+
+```yaml
+targets:
+  - name: mariadb-prod
+    type: mariadb
+    dsn: mariadb-prod.example.com:3306
+    environment: prod
+    mariadb:
+      ssl_ca: /etc/sopuli/mariadb-prod-ca.pem
+```
+
+**An account on a MariaDB target names its host** too, as `user@host`, split
+and compared as on MySQL: MariaDB also keeps one account per host, with user
+names compared exactly and hosts without case
+([#1267](../decisions/log.md#1267)). `{user}` and `{host}` (§7) work the same
+way.
+
+The driver is #1268. Until it is built, a MariaDB target loads, validates and
+shows in `config show`, and a command that connects to it is refused with
+`SOPULI-20006`. [`02-mariadb-privileges.md`](02-mariadb-privileges.md) will have
+the tool account's grants.
+
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:
 
-- an `oracle:` block on a PostgreSQL or MySQL target, a `postgres:` block on
-  an Oracle or MySQL target, and a `mysql:` block on an Oracle or PostgreSQL
-  target;
-- `admin.auth: external` on a PostgreSQL or MySQL target, because external
-  authentication is an Oracle wallet;
+- a block of one product's keys on another product's target: `oracle:`,
+  `postgres:`, `mysql:` or `mariadb:` anywhere but on its own type;
+- `admin.auth: external` on a PostgreSQL, MySQL or MariaDB target, because
+  external authentication is an Oracle wallet;
 - an application's `oracle: container_clause`, or an override's, where it
-  binds to a PostgreSQL or MySQL target.
+  binds to a PostgreSQL, MySQL or MariaDB target.
 
 They are checked once the estate is expanded, since an `overrides:` patch can
 change a generated target's `type` or add a block. A patch cannot remove a
@@ -2829,8 +2856,8 @@ the audit record unreadable without re-deriving precedence.
 |---|---|
 | `{account}` | database username as written |
 | `{account_lower}` / `{account_upper}` | case-normalised |
-| `{user}` | on a MySQL target, the account's user, before the last `@`; elsewhere the whole account name |
-| `{host}` | on a MySQL target, the account's host, with `%` written as `any` and `_` as `one` |
+| `{user}` | on a MySQL or MariaDB target, the account's user, before the last `@`; elsewhere the whole account name |
+| `{host}` | on a MySQL or MariaDB target, the account's host, with `%` written as `any` and `_` as `one` |
 | `{target}` | target name |
 | `{env}` | the target's `environment` |
 | `{container}` | Oracle PDB / container name |
@@ -3582,7 +3609,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.5.schema.json`](../schemas/sopuli-config-3.5.schema.json),
+[`docs/schemas/sopuli-config-3.6.schema.json`](../schemas/sopuli-config-3.6.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3593,7 +3620,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.5.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.6.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3631,7 +3658,7 @@ match instead:
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
-| `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, and `mysql:` only on a MySQL target | yes |
+| `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, `mysql:` only on a MySQL target, and `mariadb:` only on a MariaDB target | yes |
 | a PostgreSQL or MySQL target has a `host:port` `dsn` and no `admin.auth: external` | yes |
 | `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
 | `mysql.ssl_ca` only with `ssl_mode: VERIFY_CA` or `VERIFY_IDENTITY` | yes |
@@ -3675,7 +3702,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.5.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.6.schema.json
 version: 1
 ```
 
@@ -3686,7 +3713,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.5.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.6.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

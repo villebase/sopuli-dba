@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.76.schema.json`](../schemas/sopuli-run-1.76.schema.json),
+Schemas: [`../schemas/sopuli-run-1.77.schema.json`](../schemas/sopuli-run-1.77.schema.json),
 [`../schemas/sopuli-event-1.21.schema.json`](../schemas/sopuli-event-1.21.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -554,6 +554,10 @@ on every other type. From run schema 1.61.
 `ssl_mode` and `ssl_ca`, filled in and resolved the same way. A target that
 wrote no block connects with `VERIFY_IDENTITY`. It is null on every other type.
 From run schema 1.72.
+
+**`config.targets[].mariadb` is how the run connects to a MariaDB target**: the
+same keys as `mysql`, filled in and resolved the same way. It is null on every
+other type. From run schema 1.77.
 
 A binding's `secret` is the ref **as written**, a string that round-trips
 (`01-configuration.md` §7), so it matches the config file by eye. The structured

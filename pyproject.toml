@@ -79,6 +79,14 @@ mysql = [
   # was written from: given a context, it refuses a server that offers no TLS.
   "PyMySQL[rsa]>=1.2.3",
 ]
+mariadb = [
+  # The same client as `mysql`, which reaches MariaDB over the same protocol.
+  # Its `ed25519` extra brings PyNaCl, which a login on MariaDB's `ed25519`
+  # plugin needs; `rsa` serves only `caching_sha2_password` and
+  # `sha256_password`, which MariaDB does not have (#1267, decision 5;
+  # sql/mariadb/06_pymysql_login_probe.py).
+  "PyMySQL[ed25519]>=1.2.3",
+]
 hashicorp = [
   # ADR-005 (E2): the HTTP API directly, no `hvac`. `httpx` rather than
   # `requests` for explicit default timeouts and a real SSLContext, and here

@@ -69,9 +69,10 @@ def _flags(*set_: str) -> tuple[str, ...]:
 DB_PRIVS = tuple(c for c in DB_COLUMNS if c.endswith("_priv"))
 
 
-def _db_row(*set_: str) -> tuple[str, ...]:
-    """A ``mysql.db`` row as SCHEMA reads it: the ``*_priv`` columns only."""
-    return tuple("Y" if c in set_ else "N" for c in DB_PRIVS)
+def _db_row(*set_: str, db: str = "mysql") -> tuple[str, ...]:
+    """A ``mysql.db`` row as SCHEMA reads it: ``Db``, then the ``*_priv``
+    columns."""
+    return (db, *("Y" if c in set_ else "N" for c in DB_PRIVS))
 
 
 class _Cursor:
@@ -184,6 +185,20 @@ def test_what_public_holds_every_account_holds() -> None:
         "INSERT ON mysql.* through PUBLIC",
         "SELECT ON mysql.proxies_priv through r3",
     }
+
+
+def test_a_schema_pattern_is_named_as_the_grant_names_it() -> None:
+    cursor = _Cursor(schema={KEY: [_db_row("Select_priv", db="mysq%")]})
+
+    assert global_privileges(cursor, APP) == {"SELECT ON `mysq%`.*"}
+
+
+def test_the_host_is_read_in_lower_case() -> None:
+    """MariaDB stores a host in lower case, and its grant tables compare it
+    byte for byte (ID3)."""
+    cursor = _Cursor(global_row={("acme_app", "app.example.com"): _flags("Super_priv")})
+    upper = Principal("acme_app", "App.Example.COM")
+    assert global_privileges(cursor, upper) == {"SUPER ON *.*"}
 
 
 def test_a_role_that_holds_nothing_adds_nothing() -> None:

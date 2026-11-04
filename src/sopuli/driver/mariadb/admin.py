@@ -100,8 +100,8 @@ GLOBAL_ROW = f"select {', '.join(VIEW_PRIV_COLUMNS)} from mysql.user where User 
 #: between releases, and 11.8.9 has ``Show_create_routine_priv``.
 DB_COLUMNS = r"show columns from mysql.db like '%\_priv'"
 #: ``'mysql' like Db``: a schema grant may name a pattern, such as ``mysq%``,
-#: and a pattern that matches ``mysql`` reaches it.
-SCHEMA = "select {columns} from mysql.db where User = %s and Host = %s and 'mysql' like Db"
+#: and a pattern that matches ``mysql`` reaches it. ``Db`` names it.
+SCHEMA = "select Db, {columns} from mysql.db where User = %s and Host = %s and 'mysql' like Db"
 #: A role is at host ``''``, so the next step is the role and an empty host.
 ROLE_EDGES = "select Role, '' from mysql.roles_mapping where User = %s and Host = %s"
 
@@ -137,10 +137,12 @@ def held_by(
         ]
 
     cursor.execute(SCHEMA.format(columns=", ".join(schema_columns)), args)
-    for row in cursor.fetchall():
+    for db, *flags in cursor.fetchall():
+        # A pattern is named as the grant names it, so the DBA can revoke it.
+        schema = "mysql" if text(db) == "mysql" else f"`{text(db)}`"
         found += [
-            f"{privilege(column)} ON mysql.*"
-            for column, flag in zip(schema_columns, row, strict=True)
+            f"{privilege(column)} ON {schema}.*"
+            for column, flag in zip(schema_columns, flags, strict=True)
             if text(flag) == "Y"
         ]
 
@@ -159,10 +161,15 @@ def roles_of(cursor: Cursor, account: Principal) -> tuple[Principal, ...]:
 
 def global_privileges(cursor: Cursor, account: Principal) -> frozenset[str]:
     """Everything of the module docstring's kind the account holds or can get,
-    each naming the role it comes through."""
+    each naming the role it comes through.
+
+    The host is read in lower case: MariaDB stores a host so, and its grant
+    tables compare it byte for byte, so ``Example.COM`` would match no row
+    (``05_identity_grants_probe.py``, ID3)."""
+    account = Principal(account.user, account.key()[1])
     columns = db_columns(cursor)
     found = set(held_by(cursor, account, columns))
     for role in roles_of(cursor, account):
-        name = role.user if role.host == "" else str(role)
-        found |= {f"{held} through {name}" for held in held_by(cursor, role, columns)}
+        # A role is at host '' (RR1), so its name alone names it.
+        found |= {f"{held} through {role.user}" for held in held_by(cursor, role, columns)}
     return frozenset(found)

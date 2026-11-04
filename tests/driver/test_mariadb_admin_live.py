@@ -26,6 +26,11 @@ pymysql = pytest.importorskip("pymysql")
 
 PORT = int(os.environ.get("SOPULI_TEST_MARIADB_PORT", "3307"))
 
+#: What the PUBLIC test grants. Fixed, not random, so that the next run's
+#: fixture removes what a killed run left.
+PUBLIC_GRANT = "SHUTDOWN ON *.*"
+PUBLIC_ROLE = "acme_public_role"
+
 
 def connect(user: str, password: str) -> Any:
     return pymysql.connect(
@@ -55,8 +60,8 @@ class Stage:
         self.accounts.append(name)
         return Principal(name, "%")
 
-    def role(self) -> str:
-        name = f"acme_role_{uuid.uuid4().hex[:8]}"
+    def role(self, name: str = "") -> str:
+        name = name or f"acme_role_{uuid.uuid4().hex[:8]}"
         self.root.execute(f"CREATE ROLE {name}")
         self.roles.append(name)
         return name
@@ -78,6 +83,11 @@ def stage() -> Iterator[Stage]:
     except pymysql.err.MySQLError as error:
         _missing_environment(f"MariaDB not reachable at 127.0.0.1:{PORT}: {error}")
     with root, tool, root.cursor() as root_cursor, tool.cursor() as tool_cursor:
+        # What an interrupted run may have left with PUBLIC, which every
+        # account on the server would hold (RR3).
+        for leftover in (f"REVOKE {PUBLIC_GRANT} FROM PUBLIC", f"DROP ROLE {PUBLIC_ROLE}"):
+            with suppress(pymysql.Error):
+                root_cursor.execute(leftover)
         staged = Stage(root=root_cursor, tool=tool_cursor)
         try:
             yield staged
@@ -141,15 +151,34 @@ def test_a_nested_role_s_privilege_is_read_whether_or_not_it_is_active(stage: St
 
 def test_what_public_and_its_roles_hold_every_account_holds(stage: Stage) -> None:
     app = stage.account()
-    role = stage.role()
+    role = stage.role(PUBLIC_ROLE)
     stage.root.execute(f"GRANT SELECT ON mysql.proxies_priv TO {role}")
-    stage.grant_public("SHUTDOWN ON *.*")
+    stage.grant_public(PUBLIC_GRANT)
     stage.grant_public(role)
 
     assert stage.held(app) == {
         "SHUTDOWN ON *.* through PUBLIC",
         f"SELECT ON mysql.proxies_priv through {role}",
     }
+
+
+def test_a_schema_pattern_that_matches_mysql_is_read_and_named(stage: Stage) -> None:
+    app = stage.account()
+    stage.root.execute(f"GRANT SELECT ON `mysq%`.* TO {app.sql()}")
+
+    assert stage.held(app) == {"SELECT ON `mysq%`.*"}
+
+
+def test_a_host_written_in_capitals_reads_the_stored_account(stage: Stage) -> None:
+    """The server stores the host in lower case (ID3)."""
+    name = f"acme_app_{uuid.uuid4().hex[:8]}"
+    stage.root.execute("CREATE USER %s@'App.Example.COM' IDENTIFIED BY %s", (name, "x"))
+    try:
+        stage.root.execute("GRANT SUPER ON *.* TO %s@'app.example.com'", (name,))
+
+        assert stage.held(Principal(name, "App.Example.COM")) == {"SUPER ON *.*"}
+    finally:
+        stage.root.execute("DROP USER %s@'app.example.com'", (name,))
 
 
 def test_set_user_is_not_seen(stage: Stage) -> None:

@@ -2,8 +2,11 @@
 
 #1269. Check 9 refuses a managed account that holds, or can get through a role,
 a global privilege, a privilege on the `mysql` schema, or a PROXY grant
-(02-mariadb-privileges.md §5). This measures, on each server, the role reads
-it makes, as a tool account with §2.1's grants, over PyMySQL from the host:
+(02-mariadb-privileges.md §5). This measures, on each server, how roles and
+PUBLIC give privileges, and that a tool account reads each of them, over
+PyMySQL from the host. The tool account gets the GRANT statements of
+test/mariadb-init/01_tool_account.sql, read from that file, so it holds what
+the tier-1 tool account holds.
 
   RR1  an account granted the role r1, which is not its default role. r1 is
        granted r2, and holds SELECT on mysql.db; r2 holds PROCESS ON *.* and
@@ -11,16 +14,19 @@ it makes, as a tool account with §2.1's grants, over PyMySQL from the host:
        mysql.roles_mapping rows (Host, User, Role) whose User is the account,
        r1 or r2, and the view's User, Host, is_role and Process_priv for r1
        and r2
-  RR2  as the account: SELECT on mysql.db before SET ROLE r1, and after it,
-       and SELECT on mysql.columns_priv, r2's grant. Then SET ROLE r2,
-       granted to r1 only
-  RR3  PROCESS ON *.*, INSERT ON mysql.*, SELECT ON mysql.db and the role r3,
-       each granted TO PUBLIC; r3 holds SELECT on mysql.proxies_priv. As the
-       tool account: PUBLIC's rows in the view, mysql.db, mysql.tables_priv
-       and roles_mapping. As a second account with no grant of its own:
-       SELECT on mysql.db, SELECT on mysql.proxies_priv, and SET ROLE r3
+  RR2  as the account: SELECT on mysql.db and on mysql.columns_priv, before
+       SET ROLE r1 and after it. Then SET ROLE r2, granted to r1 only
+  RR3  as a second account with no grant of its own, before any grant to
+       PUBLIC: SELECT on mysql.db, SELECT on sopuli_probe_db.t, and the number
+       of root's sessions in information_schema.PROCESSLIST, while root holds
+       one open. Then, TO PUBLIC: PROCESS ON *.*, SELECT ON mysql.*, SELECT
+       (User) ON mysql.user, EXECUTE ON PROCEDURE mysql.AddGeometryColumn, and
+       the role r3, which holds SELECT on sopuli_probe_db.t; and PROXY ON
+       root@localhost. As the tool account: PUBLIC's rows in the view,
+       mysql.db, columns_priv, procs_priv, proxies_priv and roles_mapping. As
+       the second account, the same three reads again, and SET ROLE r3
 
-A statement answers `ok`, or the error's number.
+A statement answers `ok`, or the error's number. A count is the number.
 
 The probe checks each result against the one RESULTS below records. A
 difference, or a step that fails, makes it exit 1.
@@ -34,34 +40,36 @@ on Windows 11 AMD64. Twice, exit 0, and the same result both times.
 
 RESULTS -- the same on every release
 
-  RR1  roles_mapping holds (`%`, account, r1) and (``, r1, r2): a role's Host
-       is empty, and a role granted to a role is a row whose User is the
-       role. The view has r1 and r2 at Host ``, is_role `Y`, and Process_priv
-       `Y` for r2 only
-  RR2  before SET ROLE, 1142; after it, ok, and r2's grant is ok too.
+  RR1  roles_mapping holds (`%`, account, r1) and (empty, r1, r2): a role's
+       Host is empty, and a role granted to a role is a row whose User is the
+       role. The view has r1 and r2 at an empty Host, is_role `Y`, and
+       Process_priv `Y` for r2 only
+  RR2  before SET ROLE, both reads are refused, 1142; after it, both are ok.
        SET ROLE r2 is refused, 1959: an account activates only a role granted
        to it, and gets a nested role's privileges through the role that
        holds it
-  RR3  PUBLIC is a row of the view at Host ``, is_role `Y`, with Process_priv
-       `Y`. mysql.db holds (PUBLIC, ``, mysql) with Insert_priv `Y`,
-       tables_priv holds (PUBLIC, ``, mysql, db), and roles_mapping holds
-       (``, PUBLIC, r3). The second account reads mysql.db and
-       mysql.proxies_priv with no SET ROLE, and SET ROLE r3 is refused, 1959.
-       What PUBLIC holds, and what a role granted to PUBLIC holds, every
-       account holds, always active
+  RR3  before the grants: 1142, 1142, and 0 of root's sessions. PROXY to
+       PUBLIC is refused, 1133; the other grants are ok. PUBLIC is a row of
+       the view at an empty Host, is_role `Y`, with Process_priv `Y`; it has a
+       row in mysql.db, columns_priv, procs_priv and roles_mapping, and none in
+       proxies_priv. After the grants the second account reads mysql.db and
+       sopuli_probe_db.t, and sees root's session, with no SET ROLE; SET ROLE
+       r3 is refused, 1959. What PUBLIC holds, and what a role granted to
+       PUBLIC holds, every account holds, always active
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
     .venv/Scripts/python sql/mariadb/10_role_reads_probe.py
 
-It needs PyMySQL in the environment that runs it, and 06 beside it, whose
-ports it reads.
+It needs PyMySQL in the environment that runs it, 06 beside it, whose ports it
+reads, and test/mariadb-init/01_tool_account.sql.
 
 THROWAWAY SERVERS ONLY. It creates the accounts sopuli_probe_tool,
-sopuli_probe_held and sopuli_probe_plain and the roles sopuli_probe_r1 to
-sopuli_probe_r3, and grants to PUBLIC. It revokes PUBLIC's grants and drops
-the rest at the end, also after a failed step, and drops leftovers of an
-interrupted run first.
+sopuli_probe_held and sopuli_probe_plain, the roles sopuli_probe_r1 to
+sopuli_probe_r3 and the schema sopuli_probe_db, and grants to PUBLIC. It
+revokes PUBLIC's grants and drops the rest at the end, also after a failed
+step, and first does the same for what an interrupted run left. It then checks
+that PUBLIC holds nothing, and fails the step if it does.
 """
 
 from __future__ import annotations
@@ -85,18 +93,40 @@ ch = pl.ch
 
 TOOL, HELD, PLAIN = "sopuli_probe_tool", "sopuli_probe_held", "sopuli_probe_plain"
 R1, R2, R3 = "sopuli_probe_r1", "sopuli_probe_r2", "sopuli_probe_r3"
+SCHEMA = "sopuli_probe_db"
 PASSWORD = "Acme-Roles-pw1"
+INIT = Path(__file__).resolve().parents[2] / "test" / "mariadb-init" / "01_tool_account.sql"
 
-#: §2.1's grants, as test/mariadb-init/01_tool_account.sql makes them.
-VIEW_COLUMNS = "User, Host, plugin, password_expired, is_role, Process_priv"
-TOOL_GRANTS = (
-    f"GRANT CREATE USER ON *.* TO {TOOL}",
-    f"GRANT SELECT ({VIEW_COLUMNS}) ON mysql.user TO {TOOL}",
-    *(
-        f"GRANT SELECT ON mysql.{table} TO {TOOL}"
-        for table in ("roles_mapping", "db", "tables_priv", "columns_priv", "procs_priv")
-    ),
+#: What the probe grants PUBLIC, and revokes at the end.
+PUBLIC_GRANTS = (
+    "PROCESS ON *.*",
+    "SELECT ON mysql.*",
+    "SELECT (User) ON mysql.user",
+    "EXECUTE ON PROCEDURE mysql.AddGeometryColumn",
+    R3,
 )
+
+
+#: What the tool account reads of PUBLIC's rows: the columns, and the table.
+PUBLIC_READS = (
+    ("User, Host, is_role, Process_priv", "user"),
+    ("Db, Select_priv", "db"),
+    ("Table_name, Column_name", "columns_priv"),
+    ("Routine_name", "procs_priv"),
+    ("Proxied_user", "proxies_priv"),
+    ("Host, Role", "roles_mapping"),
+)
+
+
+def tool_grants() -> tuple[str, ...]:
+    """The init script's GRANT statements, to the probe's tool account."""
+    lines = [line for line in INIT.read_text("utf-8").splitlines() if not line.startswith("--")]
+    statements = (" ".join(part.split()) for part in "\n".join(lines).split(";"))
+    return tuple(
+        statement.replace("'sopuli_admin'@'%'", f"'{TOOL}'@'%'")
+        for statement in statements
+        if statement.startswith("GRANT ")
+    )
 
 
 def connect(service: str, user: str, password: str) -> Any:
@@ -132,25 +162,41 @@ def rows(cursor: Any, statement: str, args: tuple[str, ...] = ()) -> tuple[tuple
 
 
 def clean(service: str) -> None:
+    """Revoke PUBLIC's grants and drop the rest. A revoke of a grant PUBLIC
+    does not hold is refused, so each answer is ignored, and PUBLIC is then
+    checked to hold nothing."""
     with connect(service, "root", ch.ROOT_PASSWORD) as root, root.cursor() as cursor:
-        for statement in (
-            "REVOKE PROCESS ON *.* FROM PUBLIC",
-            "REVOKE INSERT ON mysql.* FROM PUBLIC",
-            "REVOKE SELECT ON mysql.db FROM PUBLIC",
-        ):
-            run(cursor, statement)
+        for grant in PUBLIC_GRANTS:
+            run(cursor, f"REVOKE {grant} FROM PUBLIC")
         for name in (R1, R2, R3):
             run(cursor, f"DROP ROLE IF EXISTS {name}")
         for name in (TOOL, HELD, PLAIN):
             run(cursor, f"DROP USER IF EXISTS '{name}'@'%'")
+        run(cursor, f"DROP DATABASE IF EXISTS {SCHEMA}")
+        left = rows(cursor, "SHOW GRANTS FOR PUBLIC")
+    if left:
+        raise ch.StepError(f"{service}: PUBLIC still holds {left}")
 
 
 def probe(service: str) -> None:
     clean(service)
-    try:
-        cases(service)
-    finally:
-        clean(service)
+    ch.cleaned(service, lambda: cases(service), lambda: clean(service))
+
+
+def plain_reads(service: str) -> tuple[str, str, str]:
+    """As the account with no grant: mysql.db, the probe's table, and how many
+    of root's sessions it sees. ``root`` holds one open meanwhile."""
+    with (
+        connect(service, "root", ch.ROOT_PASSWORD),
+        connect(service, PLAIN, PASSWORD) as plain,
+        plain.cursor() as cursor,
+    ):
+        schema = run(cursor, "SELECT COUNT(*) FROM mysql.db")
+        table = run(cursor, f"SELECT COUNT(*) FROM {SCHEMA}.t")
+        seen = rows(
+            cursor, "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER = 'root'"
+        )
+    return schema, table, seen[0][0]
 
 
 def cases(service: str) -> None:
@@ -160,7 +206,9 @@ def cases(service: str) -> None:
             # `%%`: the statement has a parameter, so PyMySQL formats it.
             rows(cursor, f"CREATE USER '{name}'@'%%' IDENTIFIED BY %s", (PASSWORD,))
         for statement in (
-            *TOOL_GRANTS,
+            *tool_grants(),
+            f"CREATE DATABASE {SCHEMA}",
+            f"CREATE TABLE {SCHEMA}.t (n int)",
             f"CREATE ROLE {R1}",
             f"CREATE ROLE {R2}",
             f"CREATE ROLE {R3}",
@@ -169,6 +217,7 @@ def cases(service: str) -> None:
             f"GRANT {R2} TO {R1}",
             f"GRANT SELECT ON mysql.db TO {R1}",
             f"GRANT {R1} TO '{HELD}'@'%'",
+            f"GRANT SELECT ON {SCHEMA}.t TO {R3}",
         ):
             rows(cursor, statement)
 
@@ -196,59 +245,58 @@ def cases(service: str) -> None:
     )
 
     with connect(service, HELD, PASSWORD) as held, held.cursor() as cursor:
-        before = run(cursor, "SELECT COUNT(*) FROM mysql.db")
+        before = (
+            run(cursor, "SELECT COUNT(*) FROM mysql.db"),
+            run(cursor, "SELECT COUNT(*) FROM mysql.columns_priv"),
+        )
         set_r1 = run(cursor, f"SET ROLE {R1}")
-        after = run(cursor, "SELECT COUNT(*) FROM mysql.db")
-        nested = run(cursor, "SELECT COUNT(*) FROM mysql.columns_priv")
+        after = (
+            run(cursor, "SELECT COUNT(*) FROM mysql.db"),
+            run(cursor, "SELECT COUNT(*) FROM mysql.columns_priv"),
+        )
         set_r2 = run(cursor, f"SET ROLE {R2}")
     print(
         f"RR2 before SET ROLE: {before}; SET ROLE r1: {set_r1}; after: {after}; "
-        f"r2's grant: {nested}; SET ROLE r2: {set_r2}"
+        f"SET ROLE r2: {set_r2}"
     )
-    ch.check("RR2", (before, set_r1, after, nested, set_r2), ("1142", ch.OK, ch.OK, ch.OK, "1959"))
+    ch.check(
+        "RR2",
+        (before, set_r1, after, set_r2),
+        (("1142", "1142"), ch.OK, (ch.OK, ch.OK), "1959"),
+    )
 
+    unset = plain_reads(service)
     with connect(service, "root", ch.ROOT_PASSWORD) as root, root.cursor() as cursor:
-        for statement in (
-            "GRANT PROCESS ON *.* TO PUBLIC",
-            "GRANT INSERT ON mysql.* TO PUBLIC",
-            "GRANT SELECT ON mysql.db TO PUBLIC",
-            f"GRANT SELECT ON mysql.proxies_priv TO {R3}",
-            f"GRANT {R3} TO PUBLIC",
-        ):
-            rows(cursor, statement)
+        granted = tuple(run(cursor, f"GRANT {grant} TO PUBLIC") for grant in PUBLIC_GRANTS)
+        proxy = run(cursor, "GRANT PROXY ON 'root'@'localhost' TO PUBLIC")
     with connect(service, TOOL, PASSWORD) as tool, tool.cursor() as cursor:
-        public = rows(
-            cursor,
-            "SELECT User, Host, is_role, Process_priv FROM mysql.user WHERE User = 'PUBLIC'",
+        public = tuple(
+            rows(cursor, f"SELECT {columns} FROM mysql.{table} WHERE User = 'PUBLIC'")
+            for columns, table in PUBLIC_READS
         )
-        schema = rows(
-            cursor, "SELECT User, Host, Db, Insert_priv FROM mysql.db WHERE User = 'PUBLIC'"
-        )
-        table = rows(
-            cursor,
-            "SELECT User, Host, Db, Table_name FROM mysql.tables_priv WHERE User = 'PUBLIC'",
-        )
-        mapping = rows(
-            cursor, "SELECT Host, User, Role FROM mysql.roles_mapping WHERE User = 'PUBLIC'"
-        )
+    granted_reads = plain_reads(service)
     with connect(service, PLAIN, PASSWORD) as plain, plain.cursor() as cursor:
-        own = run(cursor, "SELECT COUNT(*) FROM mysql.db")
-        through_role = run(cursor, "SELECT COUNT(*) FROM mysql.proxies_priv")
         set_r3 = run(cursor, f"SET ROLE {R3}")
     print(
-        f"RR3 view: {public}; db: {schema}; tables_priv: {table}; roles_mapping: {mapping}; "
-        f"PUBLIC's grant: {own}; r3's grant: {through_role}; SET ROLE r3: {set_r3}"
+        f"RR3 before: {unset}; grants: {granted}; PROXY: {proxy}; as the tool: {public}; "
+        f"after: {granted_reads}; SET ROLE r3: {set_r3}"
     )
     ch.check(
         "RR3",
-        (public, schema, table, mapping, own, through_role, set_r3),
+        (unset, granted, proxy, public, granted_reads, set_r3),
         (
-            (("PUBLIC", "", "Y", "Y"),),
-            (("PUBLIC", "", "mysql", "Y"),),
-            (("PUBLIC", "", "mysql", "db"),),
-            (("", "PUBLIC", R3),),
-            ch.OK,
-            ch.OK,
+            ("1142", "1142", "0"),
+            (ch.OK,) * len(PUBLIC_GRANTS),
+            "1133",
+            (
+                (("PUBLIC", "", "Y", "Y"),),
+                (("mysql", "Y"),),
+                (("user", "User"),),
+                (("AddGeometryColumn",),),
+                (),
+                (("", R3),),
+            ),
+            (ch.OK, ch.OK, "1"),
             "1959",
         ),
     )

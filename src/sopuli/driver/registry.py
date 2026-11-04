@@ -217,6 +217,17 @@ DRIVERS: dict[str, DatabaseDriver] = {
             }
         ),
     ),
+    # Declared before its module exists (#1268): until `session` is written the
+    # type resolves to `DriverNotImplementedError`. PyMySQL reaches MariaDB too,
+    # and its `ed25519` extra brings PyNaCl for that plugin (#1267, decisions 1
+    # and 5), so the extra provides `nacl` as well as `pymysql`: with only the
+    # `mysql` extra installed, `mariadb` is not. No command is written for it yet.
+    "mariadb": DatabaseDriver(
+        module="sopuli.driver.mariadb.session",
+        extra="mariadb",
+        provides=frozenset({"pymysql", "nacl"}),
+        commands=frozenset(),
+    ),
 }
 
 

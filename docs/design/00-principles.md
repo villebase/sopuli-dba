@@ -255,7 +255,10 @@ also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`.
 entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
 `finish-rollover` (#1223, #1224), and UC-2's `account list`,
 `reset-password`, `suspend` and `expire-password` (#1225): every command that
-connects to a target, as for PostgreSQL. What
+connects to a target, as for PostgreSQL. The config accepts `type: mariadb`
+too, and PyMySQL with PyNaCl comes with `sopuli-dba[mariadb]`. Its driver is
+not written yet (#1268), so every command refuses a MariaDB target with
+`SOPULI-20006`. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -479,7 +482,8 @@ These commands install the base and each extra:
 pip install sopuli-dba                 # config, selection, schema — no network client
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
 pip install "sopuli-dba[postgres]"     # + psycopg, to reach PostgreSQL
-pip install "sopuli-dba[mysql]"        # + PyMySQL, for MySQL; so far `doctor` only
+pip install "sopuli-dba[mysql]"        # + PyMySQL, to reach MySQL
+pip install "sopuli-dba[mariadb]"      # + PyMySQL and PyNaCl, for MariaDB; driver not written yet
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
@@ -777,7 +781,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.5.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-3.6.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

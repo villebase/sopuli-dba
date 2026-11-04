@@ -31,7 +31,7 @@ from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import Pairs, Safety, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
-from sopuli.config.targets import MYSQL, POSTGRESQL
+from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL
 from sopuli.config.vaults import OCI_KEYS
 from sopuli.output.document import Option
 from sopuli.output.explain_view import section as explain_section
@@ -893,6 +893,7 @@ def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str
         "container": target.oracle.container,
         "postgres": _postgres_json(target),
         "mysql": _mysql_json(target),
+        "mariadb": _mariadb_json(target),
         "labels": as_dict(target.labels),
         "safety": _target_safety_json(expanded),
         "target_set": expanded.target_set,
@@ -918,6 +919,14 @@ def _mysql_json(target: Target) -> dict[str, Any] | None:
     if target.type != MYSQL:
         return None
     return dataclasses.asdict(target.mysql_settings)
+
+
+def _mariadb_json(target: Target) -> dict[str, Any] | None:
+    """How the run connects to a MariaDB target, with the defaults filled in,
+    for the reason :func:`_postgres_json` gives. The same keys as ``mysql``."""
+    if target.type != MARIADB:
+        return None
+    return dataclasses.asdict(target.mariadb_settings)
 
 
 def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:

@@ -57,6 +57,7 @@ TARGET_KEYS = (
     "oracle",
     "postgres",
     "mysql",
+    "mariadb",
     "labels",
     "safety",
 )
@@ -64,13 +65,20 @@ TARGET_KEYS = (
 ORACLE = "oracle"
 POSTGRESQL = "postgresql"
 MYSQL = "mysql"
+MARIADB = "mariadb"
 
 #: The driver selector (P1). Any other value is refused here, which is
 #: invariant 4 applied to config: a target the tool cannot drive should fail
 #: while the file is being written, not at the first connection. A PostgreSQL
-#: target is the cluster, not one database in it, and a MySQL target is the
-#: server.
-TARGET_TYPES = (ORACLE, POSTGRESQL, MYSQL)
+#: target is the cluster, not one database in it, and a MySQL or MariaDB
+#: target is the server.
+TARGET_TYPES = (ORACLE, POSTGRESQL, MYSQL, MARIADB)
+
+#: The products whose account is a user name and a host, written in the
+#: account's name as `user@host`, and compared as MySQL compares them
+#: ([#1202](../../docs/decisions/log.md#1202), decisions 3 and 4). MariaDB
+#: identifies an account the same way (#1220, `mariadb-tool-grants`).
+USER_AT_HOST_TYPES = (MYSQL, MARIADB)
 
 ADMIN_KEYS = ("username", "auth")
 
@@ -180,7 +188,10 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             entry,
             "dsn",
             at=at,
-            hint="Oracle: host:port/service, or a TNS alias; PostgreSQL and MySQL: host:port",
+            hint=(
+                "Oracle: host:port/service, or a TNS alias; PostgreSQL, MySQL and "
+                "MariaDB: host:port"
+            ),
         ),
         environment=optional_string(entry, "environment", at=at),
         vault=optional_string(entry, "vault", at=at),
@@ -195,6 +206,13 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             None
             if "mysql" not in entry
             else TargetMysql(**read_mysql(entry["mysql"], at=at.key("mysql")))
+        ),
+        mariadb=(
+            None
+            if "mariadb" not in entry
+            else TargetMysql(
+                **read_mysql(entry["mariadb"], at=at.key("mariadb"), block_name="mariadb")
+            )
         ),
         labels=() if "labels" not in entry else pairs(entry["labels"], at=at.key("labels")),
         safety=read_safety(entry, at=at),
@@ -321,16 +339,17 @@ def read_postgres(raw: Any, *, at: KeyPath) -> dict[str, str]:
     return {key: value for key, value in written.items() if value is not None}
 
 
-def read_mysql(raw: Any, *, at: KeyPath) -> dict[str, str]:
-    """``mysql:`` on a target -- the keys it writes, and nothing else.
+def read_mysql(raw: Any, *, at: KeyPath, block_name: str = "mysql") -> dict[str, str]:
+    """``mysql:`` or ``mariadb:`` on a target -- the keys it writes, and nothing else.
 
     Returned as the written keys for the reason :func:`read_postgres` gives: an
     ``overrides:`` patch builds a :class:`~sopuli.config.model.MysqlPatch` from
-    the same keys.
+    the same keys. MariaDB's block takes the same keys, since PyMySQL reaches
+    both.
     """
     options = mapping(raw, at=at)
     reject_unknown_keys(options, allowed=MYSQL_KEYS, at=at)
-    _reject_empty(options, at=at, block_name="mysql")
+    _reject_empty(options, at=at, block_name=block_name)
 
     written = {key: optional_string(options, key, at=at) for key in MYSQL_KEYS}
     ssl_mode = written["ssl_mode"]

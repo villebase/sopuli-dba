@@ -545,11 +545,13 @@ class PostgresPatch:
 
 @dataclass(frozen=True)
 class TargetMysql:
-    """``mysql:`` on a target -- how the tool connects to a MySQL server.
+    """``mysql:`` or ``mariadb:`` on a target -- how the tool connects to the server.
 
     Settings, like :class:`TargetPostgres`. Every account belongs to the whole
-    server, so there is no database to name. ``Target.mysql`` is ``None`` where
-    the file wrote no block, and ``Target.mysql_settings`` reads these defaults.
+    server, so there is no database to name. The two products take the same
+    keys, because both are reached through PyMySQL. ``Target.mysql`` and
+    ``Target.mariadb`` are ``None`` where the file wrote no block, and
+    ``Target.mysql_settings`` and ``Target.mariadb_settings`` read these defaults.
     """
 
     #: One of :data:`~sopuli.config.targets.MYSQL_SSL_MODES`, MySQL's own values.
@@ -560,7 +562,8 @@ class TargetMysql:
 
 @dataclass(frozen=True)
 class MysqlPatch:
-    """``mysql:`` in an ``overrides:`` patch. ``None`` is a key it does not change."""
+    """``mysql:`` or ``mariadb:`` in an ``overrides:`` patch. ``None`` is a key it
+    does not change."""
 
     ssl_mode: str | None = None
     ssl_ca: str | None = None
@@ -586,6 +589,7 @@ class Target:
     oracle: TargetOracle = field(default_factory=TargetOracle)
     postgres: TargetPostgres | None = None
     mysql: TargetMysql | None = None
+    mariadb: TargetMysql | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 
@@ -600,6 +604,12 @@ class Target:
         """How to connect to this MySQL target: the block the file wrote, or the
         defaults where it wrote none."""
         return self.mysql if self.mysql is not None else TargetMysql()
+
+    @property
+    def mariadb_settings(self) -> TargetMysql:
+        """How to connect to this MariaDB target: the block the file wrote, or
+        the defaults where it wrote none."""
+        return self.mariadb if self.mariadb is not None else TargetMysql()
 
 
 @dataclass(frozen=True)
@@ -620,6 +630,7 @@ class TargetPatch:
     oracle: TargetOracle | None = None
     postgres: PostgresPatch | None = None
     mysql: MysqlPatch | None = None
+    mariadb: MysqlPatch | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 

@@ -66,7 +66,7 @@ from sopuli.config.secret_refs import (
 )
 from sopuli.config.selection import matches, select
 from sopuli.config.sharing import STAGE_COLLISION_HINT, StageCollision, colliding_stages
-from sopuli.config.targets import MYSQL
+from sopuli.config.targets import USER_AT_HOST_TYPES
 from sopuli.config.templates import PLACEHOLDER, substitute
 from sopuli.config.vaults import (
     OCI_NAME,
@@ -800,11 +800,11 @@ def _is_name(token: str, expanded: ExpandedTarget) -> bool:
     application is a name, and so is a container, when the target has one: a label
     called ``container`` fills ``{container}`` on a target without one (see
     :func:`_tokens`), and a label is not a name. ``{host}`` is a name on a MySQL
-    target only, for the same reason. ``{target}``, ``{env}`` and the labels are
-    values whoever writes the template also chose.
+    or MariaDB target only, for the same reason. ``{target}``, ``{env}`` and the
+    labels are values whoever writes the template also chose.
     """
     if token == "host":
-        return expanded.target.type == MYSQL
+        return expanded.target.type in USER_AT_HOST_TYPES
     if ACCOUNT_TOKEN.fullmatch(f"{{{token}}}") or token == "application":
         return True
     return token == "container" and expanded.target.oracle.container is not None
@@ -951,7 +951,7 @@ def _tokens(application: Application, account: str, expanded: ExpandedTarget) ->
         tokens["env"] = target.environment
     if target.oracle.container is not None:
         tokens["container"] = target.oracle.container
-    split = mysql_account(account) if target.type == MYSQL else None
+    split = mysql_account(account) if target.type in USER_AT_HOST_TYPES else None
     if split is None:
         tokens["user"] = account
     else:

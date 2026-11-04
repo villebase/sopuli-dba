@@ -117,6 +117,7 @@ from sopuli.config.products import (
     account_key,
     account_matcher,
     mysql_account,
+    product_name,
     quoted_or_padded,
     tls_setting,
     typed_user,
@@ -125,7 +126,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MYSQL
+from sopuli.config.targets import MYSQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -2657,7 +2658,8 @@ def _reset_lock_key(config: Config, account: str, target: ExpandedTarget) -> Loc
 
 
 def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -> None:
-    """Refuse an `--account` that is not ``user@host`` where a target is MySQL.
+    """Refuse an `--account` that is not ``user@host`` where a target is MySQL or
+    MariaDB.
 
     The config refuses such a name when the file declares it (#1202, decision
     4), but a ``profile:`` or ``role:`` rule admits a name typed on the command
@@ -2678,22 +2680,32 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     A part quoted as SQL quotes it, or padded, is refused too, by the config's
     own rule (:func:`~sopuli.config.products.quoted_or_padded`).
     """
-    mysql = [target.name for target in reached if target.target.type == MYSQL]
+    hosted = [target for target in reached if target.target.type in USER_AT_HOST_TYPES]
     split = mysql_account(account)
-    if not mysql or (split is not None and not quoted_or_padded(split)):
+    if not hosted or (split is not None and not quoted_or_padded(split)):
         return
+    product = product_name(hosted[0].target.type)
+    # Every product reached whose accounts are user@host, in a stable order.
+    names = [
+        product_name(kind)
+        for kind in USER_AT_HOST_TYPES
+        if any(target.target.type == kind for target in hosted)
+    ]
+    products = " and ".join(names)
     user = typed_user(account, default="jdoe")
     hint = (
         f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
-        "MySQL keeps one account per host, each with its own password"
+        f"{products} {'keeps' if len(names) == 1 else 'keep'} one account per host, "
+        "each with its own password"
     )
-    if len(mysql) < len(reached):
+    if len(hosted) < len(reached):
         hint += (
-            ". For the other targets, leave the MySQL ones out with `--target`, `--group` or "
-            "`--select`, and run once for each spelling"
+            f". For the other targets, leave the {products} ones out with `--target`, "
+            "`--group` or `--select`, and run once for each spelling"
         )
     raise ConfigError(
-        f"account {account!r} is not user@host without quotes, and target {mysql[0]!r} is MySQL",
+        f"account {account!r} is not user@host without quotes, and target "
+        f"{hosted[0].name!r} is {product}",
         hint=hint,
     )
 
@@ -2714,6 +2726,7 @@ def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget
     target's `ERROR` row, exit 4, as every refusal there is: an earlier target
     may already have been reset, and its row must still be reported.
     """
+    # MySQL only: MariaDB has no `mandatory_roles`.
     if target.target.type != MYSQL:
         return
     for rule in rules_for(config, target.name):
@@ -4003,6 +4016,8 @@ def account_list_command(
         rows.extend(found)
         errors += failed
         unanswered += sum(1 for row in found if row.target_failed)
+        # MySQL only. What `account list` says of a lock and a block on MariaDB,
+        # which it cannot read at all, is #1272's (#1267, decision 2).
         if target.target.type == MYSQL and any(
             row.state is not None and not row.state.locked for row in found
         ):

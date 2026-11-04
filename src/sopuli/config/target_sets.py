@@ -277,6 +277,13 @@ def _build_patch(raw: Any, *, at: KeyPath) -> TargetPatch:
             if "mysql" not in patch
             else MysqlPatch(**read_mysql(patch["mysql"], at=at.key("mysql")))
         ),
+        mariadb=(
+            None
+            if "mariadb" not in patch
+            else MysqlPatch(
+                **read_mysql(patch["mariadb"], at=at.key("mariadb"), block_name="mariadb")
+            )
+        ),
         labels=_patch_labels(patch, at=at),
         safety=read_safety(patch, at=at),
     )

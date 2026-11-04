@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.5.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.6.schema.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.5"
+SCHEMA_VERSION = "3.6"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -567,7 +567,8 @@ _TARGET_TYPES: dict[str, Schema] = {
     "dsn": {
         **STRING,
         "description": (
-            "Oracle: host:port/service, or a TNS alias. PostgreSQL and MySQL: host:port, "
+            "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL and MariaDB: "
+            "host:port, "
             "never a connection URI or a keyword string, which can carry a password."
         ),
     },
@@ -577,6 +578,7 @@ _TARGET_TYPES: dict[str, Schema] = {
     "oracle": _ref("target_oracle"),
     "postgres": _ref("target_postgres"),
     "mysql": _ref("target_mysql"),
+    "mariadb": _ref("target_mariadb"),
     "labels": _ref("labels"),
     "safety": _ref("safety"),
 }
@@ -687,13 +689,18 @@ def _target_postgres() -> Schema:
     )
 
 
-def _target_mysql() -> Schema:
+def _target_mysql(
+    product: str = "MySQL",
+    type_: str = "mysql",
+    mode: str = "MySQL's --ssl-mode. Default `VERIFY_IDENTITY`.",
+) -> Schema:
+    """``mysql:``, or ``mariadb:``, which takes the same keys."""
     return _object(
         keys=targets.MYSQL_KEYS,
         types={
             "ssl_mode": {
                 **_enum(targets.MYSQL_SSL_MODES),
-                "description": "MySQL's --ssl-mode. Default `VERIFY_IDENTITY`.",
+                "description": mode,
             },
             "ssl_ca": {
                 **STRING,
@@ -701,7 +708,9 @@ def _target_mysql() -> Schema:
             },
         },
         min_properties=1,
-        description="How the tool connects to a MySQL server. Only on a `type: mysql` target.",
+        description=(
+            f"How the tool connects to a {product} server. Only on a `type: {type_}` target."
+        ),
     )
 
 
@@ -1331,6 +1340,12 @@ def build_schema() -> Schema:
             "target_oracle": _target_oracle(),
             "target_postgres": _target_postgres(),
             "target_mysql": _target_mysql(),
+            "target_mariadb": _target_mysql(
+                "MariaDB",
+                "mariadb",
+                "How the tool's connection uses TLS, with the values of MySQL's --ssl-mode, "
+                "which the MariaDB client does not have. Default `VERIFY_IDENTITY`.",
+            ),
             "target_set": _target_set(),
             "target_patch": _target_patch(),
             "for_each": _for_each(),

@@ -4278,3 +4278,79 @@ the register.
   somebody kept, and `expire-password` cannot see it. A role in the chain below a `role:` rule is admitted
   and listed, because it is an account that holds the role. A verb that resets
   it would refuse it only by the guardrails.
+
+## #1267
+
+- **Decided:** 2026-11-04, #1267
+- **Question:** The MariaDB driver. Which password plugins does it manage? Does
+  it read an account's lock and rollover state, which MariaDB keeps beside the
+  hash? Where does check 9 read administrative privileges from? Which install
+  extra, which releases, and what does it share with the MySQL driver? How is
+  a change verified on an account a login cannot reach?
+- **Decision:**
+  1. The driver manages accounts on `mysql_native_password` and `ed25519`. An
+     account on `parsec` or any other plugin is refused at plan time, naming
+     the plugin. An account's plugin is never changed.
+  2. The tool never reads an account's lock. `account list` says it cannot be
+     read, and `account suspend` always sends `ACCOUNT LOCK` and reports
+     `changed: true`.
+  3. The tool never reads whether a rollover is open. `creds finish-rollover`
+     always sends the new value alone and reports `changed: true`.
+  4. Check 9 reads what the tool account can read without the hash: the
+     `mysql.user` view's privilege columns, `Repl_client_priv` among them, and
+     roles through `mysql.roles_mapping`. It cannot see a privilege split from
+     `SUPER`, held directly or through a role, and the privileges document says
+     so.
+  5. The client comes in a `mariadb` extra of its own, `PyMySQL[rsa,ed25519]`.
+  6. The supported releases are 10.11 and later.
+  7. The code both drivers can share moves to `sopuli/driver/mysql_family/`
+     before the MariaDB driver is built (#1277).
+  8. A MariaDB account that a login cannot reach is refused at plan time.
+- **Why:**
+  1. PyMySQL 1.2.3 logs in on `mysql_native_password`, and on `ed25519` with
+     PyNaCl, and has no client for `parsec`, `2059` (#1274). `creds check`
+     verifies by a login, so a `parsec` account could be changed and never
+     checked. Moving an account to another plugin can break a client the tool
+     cannot see, as on MySQL ([#1202](#1202), decision 5).
+  2. The lock is only in `mysql.global_priv` and `SHOW CREATE USER`, beside the
+     hash (#1220, #1275). Reading it would let the tool account read every
+     hash, which decision 6 of [#1202](#1202) refused on MySQL.
+  3. The same: `auth_or` is only in `mysql.global_priv` (#1220, #1275). The new
+     value alone is accepted when no rollover is open, so sending it always is
+     safe.
+  4. No place outside `mysql.global_priv` and `SHOW GRANTS` shows a privilege
+     split from `SUPER`, and every grant that shows them also reads the hashes
+     (#1276). None of them changes another account. `CREATE USER`, `GRANT
+     OPTION` and `SUPER`, which do, all have columns in the view.
+  5. `ed25519` needs PyNaCl, which PyMySQL brings only with its `ed25519` extra
+     (#1274). A MySQL install does not need it.
+  6. 10.11, 11.4, 11.8 and 12.3 are the long-term support releases, and each
+     was measured (#1273). 10.6 reached end of life in July 2026 and was not.
+  7. The connection layer, the account model, the error numbers both products
+     send and the `mysql_native_password` hash are the same on both (#1220,
+     `mariadb-driver-shape`). Two copies drift, as #1232 found for the error
+     maps.
+  8. The MySQL driver verifies an account a login cannot reach by
+     `password_last_changed` ([#1225](#1225)). MariaDB keeps that time only in
+     `mysql.global_priv` (#1275), so nothing the tool account reads confirms
+     the change. Refusing at plan time is invariant 4's rule for a missing
+     capability.
+- **Rejected:**
+  1. Managing `parsec` accounts unverified, and managing `ed25519` only. The
+     first changes passwords nothing can check. The second leaves out every
+     default install, which starts on `mysql_native_password`.
+  2. and 3. Granting `SELECT` on `mysql.global_priv`. It exposes every hash.
+  4. Granting `SELECT` on `mysql.*` for check 9, for the same reason; and a
+     per-target setting that says a DBA checked the split privileges, which
+     the tool could not check.
+  5. Adding `ed25519` to the `mysql` extra. Every MySQL install would carry
+     PyNaCl for nothing.
+  6. Supporting 10.6.
+  7. Copying the shared code into the MariaDB driver.
+  8. Taking the accepted `ALTER USER` as the verification, which promotes a
+     password nothing read back (invariant 7); and changing the account but
+     never promoting, which fails the same estates later in the run.
+- **Accepted cost:** `account suspend` and `finish-rollover` report a change
+  on every run, as exceptions to invariant 9. An account that holds only a
+  privilege split from `SUPER` is managed. A `parsec` estate, and an estate
+  whose user exists at more than one host, cannot be managed.

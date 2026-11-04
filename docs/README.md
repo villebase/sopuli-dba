@@ -743,6 +743,20 @@ full.
   it holds `SELECT` on `mysql.*`, which also reads the hashes in
   `mysql.global_priv`.
   `sql/mariadb/07_readable_state_probe.py` measures it.
+- `verified` `mariadb-split-privileges` (#1267) — **Can the tool account read
+  the privileges split from `SUPER` without the hash?**
+  No. `SHOW PRIVILEGES` gives ten privileges the context `Server`. Only
+  `BINLOG MONITOR`, which is `REPLICATION CLIENT` renamed, sets a column of
+  the `mysql.user` view, `Repl_client_priv`, and the tool account reads it
+  with a column grant. The other nine include every privilege split from
+  `SUPER`, such as `SET USER`, `BINLOG ADMIN` and `CONNECTION ADMIN`. They show
+  in `information_schema.USER_PRIVILEGES` and `SHOW GRANTS` only to an account
+  with `SELECT` on `mysql.*`. That grant also reads the hashes in
+  `mysql.global_priv`, and `SHOW GRANTS` prints the hash. A role has no row in
+  `USER_PRIVILEGES` at all, also for root, whether or not its privilege has a
+  column. An account that holds privileges through a role shows only its own
+  there, `USAGE`.
+  `sql/mariadb/08_split_privileges_probe.py` measures it.
 
 ### Vault
 

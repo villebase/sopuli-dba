@@ -354,7 +354,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[onepassword]", "[all]"]
+        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[mariadb]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[onepassword]", "[all]"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -391,11 +391,28 @@ jobs:
           import importlib.util
           import sys
 
-          present = [name for name in ("httpx", "oci", "oracledb", "psycopg", "pymysql", "pysequoia")
+          present = [name for name in ("httpx", "oci", "oracledb", "psycopg", "pymysql", "nacl", "pysequoia")
                      if importlib.util.find_spec(name) is not None]
           if present:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")
           print("base carries no backend client")
+          PY
+
+      # The `mariadb` extra exists for PyNaCl as much as for PyMySQL: an
+      # `ed25519` login needs it (#1267, decision 5). The registry says the
+      # driver is installed only when both import, so this cell holds the
+      # extra to that.
+      - name: the mariadb extra brings PyMySQL and PyNaCl
+        if: matrix.shape == '[mariadb]'
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+
+          missing = [name for name in ("pymysql", "nacl") if importlib.util.find_spec(name) is None]
+          if missing:
+              sys.exit(f"the mariadb extra did not install: {', '.join(missing)}")
+          print("the mariadb extra brings pymysql and nacl")
           PY
 
   # Tier 1 (04-testing.md §4): the UC-1 happy path and the store's real-backend

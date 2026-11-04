@@ -17,16 +17,12 @@ do yet.
 
 from __future__ import annotations
 
-from typing import Any
-
 from sopuli.driver import protocol
 from sopuli.driver.mysql import grants
+from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.protocol import (
     ADMIN_REFUSED,
-    ENCRYPTION_NONE,
-    ENCRYPTION_TLS,
     SERVER,
-    UNKNOWN,
     Cursor,
     DriverError,
     Encryption,
@@ -57,17 +53,6 @@ READ_ONLY_SETTINGS = (
 #: ``VERSION()`` names them. MariaDB gets a driver of its own (#1202, decision
 #: 2). TiDB's version names it, as `8.0.11-TiDB-v7.5.0`, and it is not measured.
 OTHER_PRODUCTS = {"mariadb": "MariaDB", "tidb": "TiDB"}
-
-#: The session's TLS version, or an empty string on a plain connection. Any
-#: account reads its own session status. Measured on 8.4.13 with PyMySQL 1.2.3:
-#: `TLSv1.3` under `REQUIRED` and `PREFERRED`.
-TLS_VERSION = "show session status like 'Ssl_version'"
-
-#: The connection reaches the server over TCP: `dsn:` is always host:port.
-TCP = "tcp"
-
-UNENCRYPTED_HINT = "set `mysql.ssl_mode` to VERIFY_IDENTITY, and give the server a certificate"
-NO_ROW_HINT = "SHOW SESSION STATUS has no Ssl_version row for this session"
 
 
 class NotMysqlError(DriverError):
@@ -124,26 +109,6 @@ def refuse_system_user(cursor: Cursor, *, target: str) -> None:
         raise SystemUserError(target)
 
 
-def encryption_of(row: Any) -> Encryption:
-    """The session's encryption, from its ``Ssl_version`` status row.
-
-    ``protocol`` is the transport, ``tcp``: TLS runs inside the TCP connection.
-    No row is ``unknown``, not ``none``: not knowing is not a finding.
-    """
-    if row is None:
-        return Encryption(method=UNKNOWN, protocol=TCP, hint=NO_ROW_HINT)
-    if row[1]:
-        return Encryption(method=ENCRYPTION_TLS, protocol=TCP)
-    return Encryption(method=ENCRYPTION_NONE, protocol=TCP, hint=UNENCRYPTED_HINT)
-
-
-def read_encryption(cursor: Cursor) -> Encryption:
-    """The session's encryption alone: what the session reads at connect, to
-    hold a mode that requires TLS to it, and hands to :func:`observe`."""
-    cursor.execute(TLS_VERSION)
-    return encryption_of(cursor.fetchone())
-
-
 def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None) -> Scope:
     """This session's scope: a server, whether it takes writes, and how the
     session is encrypted.
@@ -163,8 +128,8 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
                 f'target "{target}" declares type "mysql", and the server is {product} ({version})',
                 hint=(
                     f"{product} speaks MySQL's protocol and handles passwords differently; "
-                    "the MySQL driver does not support it. MariaDB gets a driver of its "
-                    "own, which is not written yet (#1202)"
+                    "the MySQL driver does not support it"
+                    + (". For MariaDB, set `type: mariadb`" if product == "MariaDB" else "")
                 ),
             )
     refuse_system_user(cursor, target=target)

@@ -22,17 +22,22 @@ from sopuli.exit_codes import ExitCode
 
 
 class BareAccountError(DriverError):
-    """A MySQL account named without its host. The config refuses one first;
-    this is the driver's own second line. ``config``, exit 9."""
+    """A MySQL or MariaDB account named without its host. The config refuses
+    one first; this is the driver's own second line. ``config``, exit 9."""
 
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
 
     def __init__(self, account: str) -> None:
         super().__init__(
-            f'MySQL account "{account}" has no host',
+            f'account "{account}" has no host',
             hint=f"name it with its host, such as {account}@10.%",
         )
+
+
+def text(value: object) -> str:
+    """A column as text: PyMySQL returns some ``mysql`` columns as bytes."""
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
 def split(account: str) -> tuple[str, str]:

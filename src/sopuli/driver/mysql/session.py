@@ -42,20 +42,19 @@ from sopuli.driver.mysql import roles, verification
 from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
 from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
-from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
+from sopuli.driver.mysql.scope import observe, require_read_write
 from sopuli.driver.mysql_family.accounts import Principal, split
 from sopuli.driver.mysql_family.client import client_lines
-from sopuli.driver.mysql_family.connection import TLS_REQUIRED_MODES, connect_arguments
+from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
+from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import (
     COLUMN_ACCESS_DENIED,
     TABLE_ACCESS_DENIED,
-    TLS_CONNECTION_ERROR,
     UNKNOWN_CLIENT_ERROR,
 )
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
-    ENCRYPTION_TLS,
     EXPIRE_PASSWORD,
     EXPIRY_UNAVAILABLE,
     KEEP_ROLLOVER,
@@ -73,7 +72,6 @@ from sopuli.driver.protocol import (
     ROLLOVER_FINISH,
     STORED,
     UNAVAILABLE,
-    UNKNOWN,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
@@ -121,16 +119,6 @@ NO_PROFILES = (
 )
 
 T = TypeVar("T")
-
-
-class UnencryptedSessionError(DriverError):
-    """A mode that requires TLS got a session it could not confirm as TLS. The
-    session is closed before anything is sent over it. ``connectivity``, with
-    the client's ``CR_SSL_CONNECTION_ERROR`` number, which is what PyMySQL
-    raises for a server that offers no TLS: the same refusal, read from the
-    session."""
-
-    category = "connectivity"
 
 
 class PlainLoginError(DriverError):
@@ -1055,32 +1043,6 @@ def _scrub_hash(message: str) -> str:
     the statement, and the hash is worth an offline guessing attack."""
     message = _STORED.sub("$A$***", message)
     return _HEX.sub(lambda found: "0x***" if found[0].startswith("0x") else "***", message)
-
-
-def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
-    """Refuse a session not known to be TLS where ``ssl_mode`` requires it.
-
-    PyMySQL already refuses a server that offers no TLS when it is given a
-    context (:mod:`sopuli.driver.mysql_family.connection`). This reads the
-    answer from the session itself, so the rule does not rest on the client
-    library alone.
-    ``unknown`` is refused too, with its own words: a mode that requires TLS
-    needs it confirmed.
-    """
-    mode = target.target.mysql_settings.ssl_mode
-    if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
-        return
-    if encryption.method == UNKNOWN:
-        raise UnencryptedSessionError(
-            f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
-            hint=encryption.hint or "the server did not say whether the session is TLS",
-            code=str(TLS_CONNECTION_ERROR),
-        )
-    raise UnencryptedSessionError(
-        f'target "{target.name}" connected without TLS under `ssl_mode: {mode}`',
-        hint="the server negotiated no TLS; give it a certificate, and keep the mode",
-        code=str(TLS_CONNECTION_ERROR),
-    )
 
 
 @dataclass(frozen=True)

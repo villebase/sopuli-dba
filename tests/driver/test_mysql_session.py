@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetMysql
+from sopuli.driver.mysql_family.connection import UnencryptedSessionError, require_tls
+from sopuli.driver.mysql_family.encryption import TLS_VERSION
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
@@ -52,7 +54,7 @@ class _Cursor:
         self._rows = {
             scope_module.VERSION: (connection.version,),
             scope_module.READ_ONLY_SETTINGS: (0, 0, 0),
-            scope_module.TLS_VERSION: ("Ssl_version", connection.tls),
+            TLS_VERSION: ("Ssl_version", connection.tls),
             privileges_module.SELF: ("sopuli_admin@%",),
             accounts_module.DEFAULT_LIFETIME: (0,),
             "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
@@ -785,8 +787,8 @@ def _encryption(method: str, hint: str | None = "the hint") -> Any:
 @pytest.mark.parametrize("mode", ["REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"])
 def test_a_mode_that_requires_tls_refuses_a_session_without_it(mode: str) -> None:
     """Read from the session, so the rule does not rest on PyMySQL alone."""
-    with pytest.raises(session_module.UnencryptedSessionError) as caught:
-        session_module.require_tls(_encryption("none"), _target(mode))
+    with pytest.raises(UnencryptedSessionError) as caught:
+        require_tls(_encryption("none"), _target(mode))
 
     assert caught.value.category == "connectivity"
     assert caught.value.code == "2026"
@@ -794,16 +796,16 @@ def test_a_mode_that_requires_tls_refuses_a_session_without_it(mode: str) -> Non
 
 
 def test_a_session_not_known_to_be_tls_is_refused_in_its_own_words() -> None:
-    with pytest.raises(session_module.UnencryptedSessionError) as caught:
-        session_module.require_tls(_encryption("unknown"), _target("REQUIRED"))
+    with pytest.raises(UnencryptedSessionError) as caught:
+        require_tls(_encryption("unknown"), _target("REQUIRED"))
 
     assert "could not confirm TLS" in str(caught.value)
     assert caught.value.hint == "the hint"
 
 
 def test_an_unknown_encryption_without_a_hint_still_says_something() -> None:
-    with pytest.raises(session_module.UnencryptedSessionError) as caught:
-        session_module.require_tls(_encryption("unknown", hint=None), _target("REQUIRED"))
+    with pytest.raises(UnencryptedSessionError) as caught:
+        require_tls(_encryption("unknown", hint=None), _target("REQUIRED"))
 
     assert caught.value.hint
     assert caught.value.hint != "None"
@@ -811,11 +813,11 @@ def test_an_unknown_encryption_without_a_hint_still_says_something() -> None:
 
 @pytest.mark.parametrize("mode", ["DISABLED", "PREFERRED"])
 def test_a_mode_that_does_not_require_tls_accepts_any_session(mode: str) -> None:
-    session_module.require_tls(_encryption("none"), _target(mode))
+    require_tls(_encryption("none"), _target(mode))
 
 
 def test_a_session_with_tls_passes_the_check() -> None:
-    session_module.require_tls(_encryption("tls"), _target("REQUIRED"))
+    require_tls(_encryption("tls"), _target("REQUIRED"))
 
 
 def _connected(monkeypatch: pytest.MonkeyPatch, connection: _Connection) -> Any:
@@ -828,7 +830,7 @@ def _connected(monkeypatch: pytest.MonkeyPatch, connection: _Connection) -> Any:
 def test_connect_closes_a_session_it_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
     connection = _Connection(tls="")
 
-    with pytest.raises(session_module.UnencryptedSessionError):
+    with pytest.raises(UnencryptedSessionError):
         _connected(monkeypatch, connection)
 
     assert connection.closed == 1
@@ -841,9 +843,9 @@ def test_connect_reads_only_the_encryption_and_the_scope_does_not_read_it_again(
 
     session = _connected(monkeypatch, connection)
 
-    assert connection.queries == [scope_module.TLS_VERSION]
+    assert connection.queries == [TLS_VERSION]
     assert session.scope().encryption.method == "tls"
-    assert connection.queries.count(scope_module.TLS_VERSION) == 1
+    assert connection.queries.count(TLS_VERSION) == 1
 
 
 def test_a_mariadb_server_connects_and_is_refused_by_its_scope(

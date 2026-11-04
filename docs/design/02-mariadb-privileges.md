@@ -16,7 +16,7 @@ against the tier-1 service (`test/compose.yaml`, `mariadb`), and no probe
 repeats it. "Checked on all four" means the same check on 10.11.19, 11.4.13,
 11.8.9 and 12.3.3.
 
-A MariaDB target is the whole server, as a MySQL target is (open: #1268). An
+A MariaDB target is the whole server, as a MySQL target is. An
 account is a user name and a host, as on MySQL. The user name is
 case-sensitive, the host is stored in lower case, and a name with no host means
 `'%'` (`sql/mariadb/05_identity_grants_probe.py`, ID1 to ID3). The MariaDB and
@@ -117,13 +117,27 @@ Give the account no other privilege, and no role.
 
 ### 2.2 What the tool reads about itself
 
-**`SHOW GRANTS` prints the tool account's own hash.** Any account can run
-`SHOW GRANTS` for itself, and on MariaDB its first line carries the account's
-stored value, such as ``GRANT CREATE USER ON *.* TO
-`sopuli_admin`@`192.0.2.10` IDENTIFIED BY PASSWORD '*…'`` (checked on
-11.8.9). Code that reads it
-treats that line as holding a secret (invariant 2), and keeps no copy of the
-value (open: #1268).
+**The tool reads its own grants from `information_schema`, never from `SHOW
+GRANTS`.** Any account can run `SHOW GRANTS` for itself, and on MariaDB its
+first line carries the account's stored value, such as ``GRANT CREATE USER ON
+*.* TO `sopuli_admin`@`192.0.2.10` IDENTIFIED BY PASSWORD '*…'`` (checked on
+11.8.9). `information_schema`'s `USER_PRIVILEGES`, `SCHEMA_PRIVILEGES`,
+`TABLE_PRIVILEGES` and `COLUMN_PRIVILEGES` show an account its own grants with
+no grant of their own, and no stored value. The audit reads each by the tool
+account's own grantee, since an account that holds `SELECT` on `mysql.*` sees
+every account's rows there (RD1). They show only grants made to the account
+itself: what a role gives it is not there, and `doctor` says so where the
+account holds a role (`sopuli/driver/mariadb/privileges.py`). Grants to
+`PUBLIC` are in none of them either (11.8.9), and every run says so.
+
+**The reads that matter most are tried directly.** `SELECT … LIMIT 0` on
+`mysql.global_priv`, and on the view's `authentication_string` and `Password`,
+returns no row, and is refused with `1142` or `1143` for an account with §2.1
+alone. Where the server allows one, by any route (a direct grant, a role,
+`PUBLIC` or a broader grant), `doctor` reports it as over-granted. A role that
+is not a default role is not active, so the audit sets each role in turn, tries
+the reads, and sets back the role the session had, read by `CURRENT_ROLE()`:
+MariaDB has no `SET ROLE DEFAULT`.
 
 `SHOW GRANTS FOR` another account, and `SHOW CREATE USER` for one, are refused
 with `1044` (TG5). Both print that account's hash to an account allowed to run
@@ -131,15 +145,23 @@ them, so the tool never needs that.
 
 ### 2.3 What `doctor` reports
 
-`doctor` connects to the server and reports the scope, `server` (open: #1268).
-It warns, and never fails ([P5](../decisions/log.md#p5)), about:
+`doctor` connects to the server and reports the scope, `server`: the release,
+whether it takes writes (`read_only` and the session's `tx_read_only`), and the
+session's encryption. A server whose version does not name MariaDB is refused,
+exit 9. `doctor --check-privileges` audits the tool account against §2.1 and
+§3. It names a declared account that does not exist, and one on a plugin the
+tool does not change. Two targets on one server are not caught yet (#1286):
+MariaDB has no `server_uuid`. It warns, and never fails
+([P5](../decisions/log.md#p5)), about:
 
 - each declared user name that also exists at a host the config does not
   declare, as on MySQL ([`02-mysql-privileges.md`](02-mysql-privileges.md) §4).
-  The other account keeps its own password;
+  The other account keeps its own password. On MariaDB the line names it even
+  when it is locked, because the lock cannot be read (decision 2);
 - the gap in guardrail 9 that §5 describes. Check 9 cannot read the privileges
   that MariaDB split from `SUPER`, so it cannot fully check the managed
-  accounts ([#1267](../decisions/log.md#1267), decision 4).
+  accounts ([#1267](../decisions/log.md#1267), decision 4; open: #1269, which
+  builds guardrail 9 and this warning).
 
 ---
 
@@ -161,8 +183,8 @@ It warns, and never fails ([P5](../decisions/log.md#p5)), about:
 ## 4. Managed accounts
 
 A managed account is one the config declares on a MariaDB target, as
-`user@host`: `acme_app@10.%`. A bare name is a config error, as on MySQL
-(open: #1268).
+`user@host`: `acme_app@10.%`. A bare name is a config error, as on MySQL. A
+`role:` rule names a role without a host: a MariaDB role has none (TG7).
 
 **What the tool reads.** The `mysql.user` view gives the tool account the
 plugin and the expiry of another account, and nothing else about its password
@@ -187,8 +209,9 @@ hash.
 | a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it, and a reset sends it only with `--unlock` (decision 9; open: #1272) |
 
 **The tool changes only `mysql_native_password` and `ed25519` accounts**
-(decision 1; open: #1268). An account on `parsec`, or on any other plugin, is
-refused at plan time, and the refusal names the plugin and the account.
+(decision 1). `doctor --check-privileges` names an account on `parsec`, or on
+any other plugin, today. A command that changes a password refuses it at plan
+time, naming the plugin and the account (open: #1270).
 PyMySQL 1.2.3 has no client for `parsec` (`06_pymysql_login_probe.py`, PL1), so
 a `parsec` password could be changed and never checked. The tool never moves an
 account to another plugin.

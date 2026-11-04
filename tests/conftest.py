@@ -568,6 +568,48 @@ def live_mysql() -> MysqlStack:
     return stack
 
 
+# --------------------------------------------------------- tier 1: MariaDB ---
+#
+# The `mariadb` service of `test/compose.yaml`, in the tier1 profile (#1268). A
+# freely pullable image, so a missing one is a skip (§1). Its init creates the
+# tool account `sopuli_admin` with `02-mariadb-privileges.md` §2.1's grants.
+
+
+@dataclass(frozen=True)
+class MariadbStack(MysqlStack):
+    """The running `mariadb` service, and root, which reaches it. Reached as a
+    MySQL server is: PyMySQL speaks to both."""
+
+    #: The tool account the service's init creates.
+    tool_user: str = "sopuli_admin"
+    tool_password: str = "sopuli-test-admin"
+
+
+@pytest.fixture(scope="session")
+def live_mariadb() -> MariadbStack:
+    """A reachable MariaDB, or a skip saying which part was missing.
+
+    The port follows `SOPULI_TEST_MARIADB_PORT`, as the compose file's does.
+    PyMySQL is imported here: it is an extra, and a base install must reach the
+    skip.
+    """
+    stack = MariadbStack(
+        host="127.0.0.1",
+        port=int(os.environ.get("SOPULI_TEST_MARIADB_PORT", "3307")),
+        user="root",
+        password="sopuli-test",
+    )
+    try:
+        import pymysql
+    except ImportError:  # pragma: no cover -- reached only in a base install
+        _missing_environment("PyMySQL is not installed; `pip install -e '.[mariadb]'`")
+    try:
+        stack.connect().close()
+    except pymysql.err.MySQLError as error:
+        _missing_environment(f"MariaDB not reachable at {stack.dsn}: {error}")
+    return stack
+
+
 # -------------------------------------------------------- tier 1: Supabase ---
 #
 # The `supabase` service of `test/compose.yaml`, in the `supabase` profile,

@@ -10,12 +10,9 @@ import pytest
 
 from sopuli.driver.mysql import grants
 from sopuli.driver.mysql.scope import (
-    NO_ROW_HINT,
     READ_ONLY,
     READ_ONLY_SETTINGS,
     READ_WRITE,
-    TLS_VERSION,
-    UNENCRYPTED_HINT,
     VERSION,
     NotMysqlError,
     ReadOnlyTargetError,
@@ -23,6 +20,7 @@ from sopuli.driver.mysql.scope import (
     observe,
     require_read_write,
 )
+from sopuli.driver.mysql_family.encryption import NO_ROW_HINT, TLS_VERSION, unencrypted_hint
 from sopuli.driver.protocol import ADMIN_REFUSED, ENCRYPTION_NONE, ENCRYPTION_TLS, SERVER, UNKNOWN
 from sopuli.exit_codes import ExitCode
 
@@ -113,7 +111,7 @@ def test_a_plain_connection_is_unencrypted_and_says_what_to_set() -> None:
     encryption = _observe(tls="").encryption
 
     assert encryption.method == ENCRYPTION_NONE
-    assert encryption.hint == UNENCRYPTED_HINT
+    assert encryption.hint == unencrypted_hint("mysql")
 
 
 def test_no_ssl_version_row_is_unknown_not_unencrypted() -> None:

@@ -26,11 +26,19 @@ import ssl
 from typing import Any
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.model import ExpandedTarget
+from sopuli.config.model import ExpandedTarget, TargetMysql
 from sopuli.config.targets import MARIADB
 from sopuli.driver.address import host_and_port
 from sopuli.driver.login import require_login, session_label
-from sopuli.driver.protocol import Credential, Timeouts
+from sopuli.driver.mysql_family.errors import TLS_CONNECTION_ERROR
+from sopuli.driver.protocol import (
+    ENCRYPTION_TLS,
+    UNKNOWN,
+    Credential,
+    DriverError,
+    Encryption,
+    Timeouts,
+)
 
 #: The `ssl_mode` values that require TLS: :func:`tls_arguments` gives each a
 #: context, and the session refuses one that is not TLS.
@@ -38,6 +46,14 @@ TLS_REQUIRED_MODES = ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
 
 #: Sent once at login: every TIMESTAMP the session reads is then in UTC.
 UTC_SESSION = "SET time_zone = '+00:00'"
+
+
+def settings_of(target: ExpandedTarget) -> TargetMysql:
+    """The target's own block, ``mariadb:`` on a MariaDB target and ``mysql:``
+    otherwise, with its defaults: the one place the choice is made."""
+    if target.target.type == MARIADB:
+        return target.target.mariadb_settings
+    return target.target.mysql_settings
 
 
 def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
@@ -66,7 +82,7 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     """
     # The block is named after the product: `mysql:` or `mariadb:`.
     key = target.target.type
-    block = target.target.mariadb_settings if key == MARIADB else target.target.mysql_settings
+    block = settings_of(target)
     if block.ssl_mode == "DISABLED":
         return {"ssl_disabled": True}
     if block.ssl_mode == "PREFERRED":
@@ -150,3 +166,39 @@ def connect_arguments(
     # UnicodeEncodeError inside PyMySQL (#1285).
     arguments["password"] = password.reveal().encode("utf-8")
     return arguments
+
+
+class UnencryptedSessionError(DriverError):
+    """A mode that requires TLS got a session it could not confirm as TLS. The
+    session is closed before anything is sent over it. ``connectivity``, with
+    the client's ``CR_SSL_CONNECTION_ERROR`` number, which is what PyMySQL
+    raises for a server that offers no TLS: the same refusal, read from the
+    session."""
+
+    category = "connectivity"
+
+
+def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
+    """Refuse a session not known to be TLS where ``ssl_mode`` requires it.
+
+    PyMySQL already refuses a server that offers no TLS when it is given a
+    context (:func:`tls_arguments`). This reads the answer from the session
+    itself, so the rule does not rest on the client library alone. The mode is
+    the target's own block's, ``mysql:`` or ``mariadb:``. ``unknown`` is
+    refused too, with its own words: a mode that requires TLS needs it
+    confirmed.
+    """
+    mode = settings_of(target).ssl_mode
+    if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
+        return
+    if encryption.method == UNKNOWN:
+        raise UnencryptedSessionError(
+            f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
+            hint=encryption.hint or "the server did not say whether the session is TLS",
+            code=str(TLS_CONNECTION_ERROR),
+        )
+    raise UnencryptedSessionError(
+        f'target "{target.name}" connected without TLS under `ssl_mode: {mode}`',
+        hint="the server negotiated no TLS; give it a certificate, and keep the mode",
+        code=str(TLS_CONNECTION_ERROR),
+    )

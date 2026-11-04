@@ -416,7 +416,12 @@ refuses an empty one and one with control characters.
 ## 7. Checking a password by login
 
 `creds check` verifies a password by logging in as the account, over the
-target's own TLS settings, timeouts and `program_name`. It cannot compare a
+target's own TLS settings, timeouts and `program_name`. Every login, the
+tool account's own included, gives PyMySQL the password as UTF-8 bytes, the
+bytes the tool's hash is computed over. Given a `str`, PyMySQL 1.2.3 would
+encode it as latin-1, and a password that is not ASCII would then be refused,
+`1045`, or fail inside PyMySQL (#1285).
+MariaDB targets connect the same way. It cannot compare a
 hash: the hash is in `authentication_string`, which the tool account does not
 read, so the driver reports no `offline_verify`, and `--method hash` or
 `both` is refused at plan time, exit 5.

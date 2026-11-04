@@ -147,6 +147,6 @@ def connect_arguments(
     # UTF-8 bytes, never a str: PyMySQL 1.2.3 encodes a str password as
     # latin-1, while the server and the tool hash a password's UTF-8 bytes. A
     # str with `é` is then refused, 1045, and one with `€` raises
-    # UnicodeEncodeError inside PyMySQL (#1285; sql/mariadb/09, PW2).
+    # UnicodeEncodeError inside PyMySQL (#1285).
     arguments["password"] = password.reveal().encode("utf-8")
     return arguments

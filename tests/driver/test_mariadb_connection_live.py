@@ -1,9 +1,9 @@
 """A MariaDB login through the shared connection arguments, with a password
 that is not ASCII, on the tier-1 `mariadb` service (11.8.9). Tier 1.
 
-The MariaDB driver connects with
-:func:`~sopuli.driver.mysql_family.connection.connect_arguments`, as the MySQL
-driver does. PyMySQL would encode a str password as latin-1; the server hashes
+:func:`~sopuli.driver.mysql_family.connection.connect_arguments` builds the
+arguments for a MySQL or a MariaDB target, and the MariaDB driver (#1268) is
+built on it. PyMySQL would encode a str password as latin-1; the server hashes
 the password's UTF-8 bytes (#1285). The port follows
 `SOPULI_TEST_MARIADB_PORT`, as the compose file's does.
 """

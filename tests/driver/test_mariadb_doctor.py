@@ -95,7 +95,13 @@ def test_doctor_reports_the_server_and_audits_the_tool_account(
     assert "MariaDB" not in scope["db_version"]
     privileges = target["privileges"]
     assert privileges["missing"] == []
-    assert scope.get("over_granted", []) == []
+    # The run document carries over-grants in the scope, as on MySQL, and
+    # leaves the key out where there are none. The tests below show it present.
+    assert "over_granted" not in scope
+    assert privileges["unaudited"] == [
+        "privileges granted to PUBLIC, apart from reading stored values, which is tried "
+        "directly; SHOW GRANTS FOR PUBLIC lists them"
+    ]
 
 
 def test_doctor_surveys_the_declared_accounts(
@@ -130,9 +136,31 @@ def test_a_role_the_tool_account_holds_is_reported(live_mariadb: Any, tmp_path: 
         with live_mariadb.connect() as admin, admin.cursor() as cursor, suppress(pymysql.Error):
             cursor.execute(f"drop role {role}")
 
-    privileges = document["targets"][0]["privileges"]
-    assert privileges["roles"] == [role]
-    assert privileges["unaudited"] == ["privileges the tool account gets through a role"]
+    target = document["targets"][0]
+    assert target["privileges"]["roles"] == [role]
+    assert "privileges the tool account gets through a role" in target["privileges"]["unaudited"]
+    # The role is not a default role, so it is not active; the audit sets it,
+    # tries the read, and finds that through it every stored value is readable.
+    assert target["scope"]["over_granted"] == [f"SELECT ON mysql.global_priv (through role {role})"]
+
+
+def test_a_grant_to_public_that_reads_stored_values_is_caught(
+    live_mariadb: Any, tmp_path: Path
+) -> None:
+    """A grant to PUBLIC shows in no information_schema row the tool account
+    reads; the direct read finds it (#1287)."""
+    with live_mariadb.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("grant select on mysql.global_priv to public")
+    try:
+        document = _doctor(
+            _config(tmp_path / "c.yaml", live_mariadb, ["acme_none@%"]),
+            live_mariadb.tool_password,
+        )
+    finally:
+        with live_mariadb.connect() as admin, admin.cursor() as cursor:
+            cursor.execute("revoke select on mysql.global_priv from public")
+
+    assert document["targets"][0]["scope"]["over_granted"] == ["SELECT ON mysql.global_priv"]
 
 
 def test_a_wrong_password_is_an_authentication_failure(live_mariadb: Any, tmp_path: Path) -> None:

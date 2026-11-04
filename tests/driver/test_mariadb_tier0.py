@@ -33,6 +33,9 @@ class FakeCursor:
     def execute(self, query: Any, args: Any = None, /) -> None:
         self.last = query
         self.queries.append((query, args))
+        answer = self.answers.get(query)
+        if isinstance(answer, Exception):
+            raise answer
 
     def fetchone(self) -> Any:
         assert self.last is not None
@@ -128,7 +131,8 @@ def test_section_2_1_exactly_is_held_and_nothing_is_missing_or_over() -> None:
     assert audit.missing == ()
     assert audit.over_granted == ()
     assert len(audit.held) == 1 + len(privileges.COLUMNS) + len(privileges.TABLES_READ)
-    assert audit.unaudited == ()
+    # Grants to PUBLIC are never in what the audit reads, so this is always said.
+    assert audit.unaudited == (privileges.PUBLIC_UNAUDITED,)
 
 
 def test_a_grant_that_reads_every_stored_value_is_over_granted() -> None:
@@ -171,7 +175,7 @@ def test_a_role_leaves_what_it_gives_unaudited() -> None:
     audit = privileges.classify(user="sopuli_admin@%", grants=FULL, roles=("tool_role",))
 
     assert audit.roles == ("tool_role",)
-    assert audit.unaudited == (privileges.ROLES_UNAUDITED,)
+    assert audit.unaudited == (privileges.ROLES_UNAUDITED, privileges.PUBLIC_UNAUDITED)
     assert privileges.ROLES_REMEDY in audit.remedies
 
 
@@ -188,6 +192,8 @@ def test_the_audit_asks_by_its_own_grantee_and_reads_every_applicable_role() -> 
             privileges.TABLE_PRIVILEGES: [],
             privileges.COLUMN_PRIVILEGES: [],
             privileges.ROLES: [("tool_role",), ("nested_role",)],
+            privileges.CURRENT_ROLE: (None,),
+            **REFUSED_READS,
         }
     )
 
@@ -197,7 +203,82 @@ def test_the_audit_asks_by_its_own_grantee_and_reads_every_applicable_role() -> 
     assert asked == {("'sopuli_admin'@'%'",)}
     assert (privileges.ROLES, None) in cursor.queries
     assert audit.roles == ("nested_role", "tool_role")
-    assert audit.unaudited == (privileges.ROLES_UNAUDITED,)
+    assert audit.unaudited == (privileges.ROLES_UNAUDITED, privileges.PUBLIC_UNAUDITED)
+    assert audit.over_granted == ()
+
+
+class RefusedError(Exception):  # noqa: N818 -- stands in for PyMySQL's own
+    """PyMySQL's error for a read the server refuses: its number first."""
+
+
+#: The hash reads, each refused as the server refuses them for §2.1 alone.
+REFUSED_READS: dict[str, Any] = {
+    statement: RefusedError(1142 if "global_priv" in statement else 1143, "denied")
+    for statement in privileges.HASH_READS.values()
+}
+
+
+def test_a_hash_read_the_server_allows_is_over_granted_by_any_route() -> None:
+    """A role, PUBLIC or a broader grant: the read is tried, so the route does
+    not matter (#1287)."""
+    reads = {**REFUSED_READS, privileges.HASH_READS["SELECT ON mysql.global_priv"]: []}
+
+    assert privileges.allowed_reads(FakeCursor(reads)) == ("SELECT ON mysql.global_priv",)
+
+
+def test_each_role_is_set_in_turn_and_the_session_role_is_restored() -> None:
+    """A role that is not active hides what it gives until the account sets
+    it. The audit sets each, tries the reads, and puts back the role the
+    session had: here none, so `SET ROLE NONE`. A role that cannot be set alone
+    is skipped (#1287)."""
+
+    class RoleCursor(FakeCursor):
+        def __init__(self) -> None:
+            super().__init__({**REFUSED_READS, privileges.CURRENT_ROLE: (None,)})
+            self.active: str | None = None
+
+        def execute(self, query: Any, args: Any = None, /) -> None:
+            if query.startswith("set role "):
+                self.queries.append((query, args))
+                if "nested" in query:
+                    raise RefusedError(1959, "Invalid role specification")
+                self.active = None if query == privileges.NO_ROLE else query
+                return
+            if self.active and "global_priv" in str(query):
+                self.last = query
+                self.queries.append((query, args))
+                self.answers[query] = []
+                return
+            self.answers.update(REFUSED_READS)
+            super().execute(query, args)
+
+    cursor = RoleCursor()
+
+    reads = privileges.allowed_reads(cursor, ["tool_role", "nested"])
+
+    assert reads == ("SELECT ON mysql.global_priv (through role tool_role)",)
+    assert cursor.queries[-1] == (privileges.NO_ROLE, None)
+
+
+def test_a_failure_that_is_not_a_refusal_is_raised() -> None:
+    reads = {
+        **REFUSED_READS,
+        privileges.HASH_READS["SELECT ON mysql.global_priv"]: RefusedError(2013),
+    }
+
+    with pytest.raises(RefusedError):
+        privileges.allowed_reads(FakeCursor(reads))
+
+
+def test_a_broad_select_holds_what_it_covers_and_is_over_granted() -> None:
+    """`SELECT ON mysql.*` reads everything §2.1 grants, so nothing is missing
+    but `CREATE USER`, and the grant is over-granted (#1287)."""
+    grants = privileges.Grants(schema=(("mysql", "SELECT", False),))
+
+    audit = privileges.classify(user="sopuli_admin@%", grants=grants, roles=())
+
+    assert audit.missing == ("CREATE USER",)
+    assert "SELECT ON mysql.*" in audit.over_granted
 
 
 # ----------------------------------------------------------------- survey ---

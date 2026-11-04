@@ -85,7 +85,9 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
             f'target "{target}" declares type "mariadb", and the server is not MariaDB ({version})',
             hint=(
                 "set `type: mysql` if this is a MySQL server: the two speak one protocol "
-                "and handle passwords differently, and each has its own driver"
+                "and handle passwords differently, and each has its own driver. A "
+                "MariaDB server whose version string was changed, or a proxy that "
+                "rewrites it, is not supported: the tool reaches MariaDB directly"
             ),
         )
     cursor.execute(READ_ONLY_SETTINGS)

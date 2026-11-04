@@ -39,8 +39,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from sopuli.driver.mysql.grants import top_level, unquote
-from sopuli.driver.mysql_family.accounts import Principal
-from sopuli.driver.mysql_family.accounts import text as text
+from sopuli.driver.mysql_family.accounts import Principal, text
 from sopuli.driver.protocol import Cursor
 
 #: Each ``*_priv`` column of ``mysql.user`` and ``mysql.db``, and the

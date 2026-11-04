@@ -31,7 +31,7 @@ from typing import Any
 
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import admin
-from sopuli.driver.mysql_family.accounts import Principal, same_host, split
+from sopuli.driver.mysql_family.accounts import Principal, same_host, split, text
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
@@ -120,11 +120,11 @@ class Account:
 def account_of(row: Sequence[Any]) -> Account:
     user, host, plugin, locked, expired, changed_at, lifetime = row
     return Account(
-        user=admin.text(user),
-        host=admin.text(host),
-        plugin=admin.text(plugin),
-        locked=admin.text(locked) == "Y",
-        expired=admin.text(expired) == "Y",
+        user=text(user),
+        host=text(host),
+        plugin=text(plugin),
+        locked=text(locked) == "Y",
+        expired=text(expired) == "Y",
         # The session's time zone is UTC (connection.UTC_SESSION).
         changed_at=changed_at.replace(tzinfo=UTC) if isinstance(changed_at, datetime) else None,
         lifetime_days=None if lifetime is None else int(lifetime),
@@ -255,7 +255,7 @@ def current_user(cursor: Cursor) -> str:
     not change for the life of a connection, so a session reads it once."""
     cursor.execute(CURRENT_USER)
     (value,) = cursor.fetchone()
-    return admin.text(value)
+    return text(value)
 
 
 def is_session_account(account: Account, session_user: str) -> bool:

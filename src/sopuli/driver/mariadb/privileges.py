@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sopuli.driver.mysql_family.accounts import Principal, split
+from sopuli.driver.mysql_family.accounts import Principal, split, text
 from sopuli.driver.protocol import Cursor, PrivilegeAudit
 
 DOCUMENT = "02-mariadb-privileges.md"
@@ -109,6 +109,30 @@ OVER_GRANTED_REMEDY = (
     "every account's stored value"
 )
 ROLES_UNAUDITED = "privileges the tool account gets through a role"
+
+#: Grants to ``PUBLIC`` (10.11 and later) reach every account and show in no
+#: ``information_schema`` row the tool account reads (measured on 11.8.9,
+#: #1287). The reads below catch the ones that matter most; the rest are not
+#: audited, and the caveat says so on every run.
+PUBLIC_UNAUDITED = (
+    "privileges granted to PUBLIC, apart from reading stored values, which is tried "
+    "directly; SHOW GRANTS FOR PUBLIC lists them"
+)
+
+#: Reads that return every account's stored value, tried with ``LIMIT 0`` so
+#: that a read that is allowed still returns nothing. Refused, ``1142`` or
+#: ``1143``, for an account with §2.1 alone. Allowed by any route at all, a
+#: direct grant, a role, ``PUBLIC`` or a broader grant, they are over-granted.
+HASH_READS = {
+    "SELECT ON mysql.global_priv": "select 1 from mysql.global_priv limit 0",
+    "SELECT (authentication_string) ON mysql.user": (
+        "select authentication_string from mysql.user limit 0"
+    ),
+    "SELECT (Password) ON mysql.user": "select Password from mysql.user limit 0",
+}
+
+#: The answers that mean a read was refused.
+REFUSED = frozenset({1142, 1143})
 ROLES_REMEDY = (
     "information_schema shows only the tool account's own grants: check what each role "
     "in `privileges.roles` gives, or grant §2.1 to the account directly and revoke the roles"
@@ -135,10 +159,19 @@ def grantee(user: str) -> str:
     return f"'{name}'@'{host}'"
 
 
-def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAudit:
-    """§2.1 against what was read. Pure, and the whole judgement."""
+def classify(
+    *, user: str, grants: Grants, roles: Iterable[str], reads: Iterable[str] = ()
+) -> PrivilegeAudit:
+    """§2.1 against what was read. Pure, and the whole judgement.
+
+    ``reads`` are the :data:`HASH_READS` the server allowed. A broader
+    ``SELECT``, on ``*.*`` or ``mysql.*``, counts as holding every §2.1 read it
+    covers, as on MySQL, and is over-granted too: the tool can read what it
+    needs, and reads more.
+    """
     held: set[str] = set()
-    over: set[str] = set()
+    over: set[str] = set(reads)
+    broad = False
     for privilege, grantable in grants.global_:
         if grantable:
             over.add("GRANT OPTION ON *.*")
@@ -146,10 +179,15 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
             held.add(CREATE_USER)
         elif privilege != USAGE:
             over.add(f"{privilege} ON *.*")
+            broad = broad or privilege == "SELECT"
     for schema, privilege, grantable in grants.schema:
         if grantable:
             over.add(f"GRANT OPTION ON {schema}.*")
         over.add(f"{privilege} ON {schema}.*")
+        broad = broad or (schema == "mysql" and privilege == "SELECT")
+    if broad:
+        held.update(_column(name) for name in COLUMNS)
+        held.update(_table(table) for table in TABLES_READ)
     for table, privilege, grantable in grants.table:
         if grantable:
             over.add(f"GRANT OPTION ON {table}")
@@ -181,7 +219,7 @@ def classify(*, user: str, grants: Grants, roles: Iterable[str]) -> PrivilegeAud
         held=tuple(sorted(held)),
         missing=tuple(sorted(missing)),
         roles=held_roles,
-        unaudited=(ROLES_UNAUDITED,) if held_roles else (),
+        unaudited=((ROLES_UNAUDITED,) if held_roles else ()) + (PUBLIC_UNAUDITED,),
         remedies=remedies,
         hint=_hint(user, create_user=no_create_user, columns=columns, tables=tables),
     )
@@ -243,4 +281,63 @@ def audit(cursor: Cursor) -> PrivilegeAudit:
     grants = read(cursor, user)
     cursor.execute(ROLES)
     roles = [str(row[0]) for row in cursor.fetchall()]
-    return classify(user=user, grants=grants, roles=roles)
+    return classify(user=user, grants=grants, roles=roles, reads=allowed_reads(cursor, roles))
+
+
+#: Activating one role at a time, and going back to the role the session had.
+#: A role the account can only reach through another cannot be set alone, and
+#: is tried through the role that holds it: ``SET ROLE`` activates the nested
+#: ones too. MariaDB has no ``SET ROLE DEFAULT`` (``1064`` on 11.8.9), so the
+#: session's role is read first and set back, or ``NONE`` where it had none.
+SET_ROLE = "set role {role}"
+CURRENT_ROLE = "select current_role()"
+NO_ROLE = "set role none"
+
+
+def allowed_reads(cursor: Cursor, roles: Iterable[str] = ()) -> tuple[str, ...]:
+    """The :data:`HASH_READS` the server allows, with the session's own roles,
+    then with each of ``roles`` active in turn. Each read returns no row.
+
+    A role that is not a default role is not active, so a read through it is
+    refused until the account sets it, which it can do at any time. So each
+    role is set and the reads tried again, and the defaults are restored
+    afterwards, also after a failure. A role that cannot be set alone is
+    skipped. A refusal is ``1142`` or ``1143``; any other error is raised.
+    """
+    allowed = dict.fromkeys(_reads(cursor))
+    roles = tuple(roles)
+    if not roles:
+        return tuple(allowed)
+    cursor.execute(CURRENT_ROLE)
+    current = cursor.fetchone()[0]
+    try:
+        for role in roles:
+            try:
+                cursor.execute(SET_ROLE.format(role=_backquote(role)))
+            except Exception:  # noqa: BLE001 -- such as 1959, a role held only through another
+                continue
+            allowed.update(
+                dict.fromkeys(f"{read} (through role {role})" for read in _reads(cursor))
+            )
+    finally:
+        restore = NO_ROLE if current is None else SET_ROLE.format(role=_backquote(text(current)))
+        cursor.execute(restore)
+    return tuple(allowed)
+
+
+def _reads(cursor: Cursor) -> list[str]:
+    allowed = []
+    for name, statement in HASH_READS.items():
+        try:
+            cursor.execute(statement)
+            cursor.fetchall()
+        except Exception as error:  # noqa: BLE001 -- PyMySQL's, which this module does not import
+            if error.args and error.args[0] in REFUSED:
+                continue
+            raise
+        allowed.append(name)
+    return allowed
+
+
+def _backquote(name: str) -> str:
+    return "`" + name.replace("`", "``") + "`"

@@ -36,12 +36,9 @@ from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe
 from sopuli.driver.mysql_family.client import client_lines
-from sopuli.driver.mysql_family.connection import TLS_REQUIRED_MODES, connect_arguments
+from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
-from sopuli.driver.mysql_family.errors import TLS_CONNECTION_ERROR
 from sopuli.driver.protocol import (
-    ENCRYPTION_TLS,
-    UNKNOWN,
     ClosesConnection,
     Credential,
     DriverContext,
@@ -57,13 +54,6 @@ from sopuli.output.debug import logger
 LOG = logger("mariadb")
 
 T = TypeVar("T")
-
-
-class UnencryptedSessionError(DriverError):
-    """A mode that requires TLS got a session it could not confirm as TLS. The
-    session is closed before anything is sent over it."""
-
-    category = "connectivity"
 
 
 @dataclass
@@ -188,26 +178,6 @@ class MariadbSession(ClosesConnection):
                 return reader(cursor)
         except pymysql.err.MySQLError as error:
             raise from_error(error).as_error() from error
-
-
-def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
-    """Refuse a session not known to be TLS where ``mariadb.ssl_mode`` requires
-    it, as on MySQL: the answer is read from the session itself, so the rule
-    does not rest on the client library alone. ``unknown`` is refused too."""
-    mode = target.target.mariadb_settings.ssl_mode
-    if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
-        return
-    if encryption.method == UNKNOWN:
-        raise UnencryptedSessionError(
-            f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
-            hint=encryption.hint or "the server did not say whether the session is TLS",
-            code=str(TLS_CONNECTION_ERROR),
-        )
-    raise UnencryptedSessionError(
-        f'target "{target.name}" connected without TLS under `ssl_mode: {mode}`',
-        hint="the server negotiated no TLS; give it a certificate, and keep the mode",
-        code=str(TLS_CONNECTION_ERROR),
-    )
 
 
 @dataclass(frozen=True)

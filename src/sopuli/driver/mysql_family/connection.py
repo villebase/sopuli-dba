@@ -30,7 +30,15 @@ from sopuli.config.model import ExpandedTarget
 from sopuli.config.targets import MARIADB
 from sopuli.driver.address import host_and_port
 from sopuli.driver.login import require_login, session_label
-from sopuli.driver.protocol import Credential, Timeouts
+from sopuli.driver.mysql_family.errors import TLS_CONNECTION_ERROR
+from sopuli.driver.protocol import (
+    ENCRYPTION_TLS,
+    UNKNOWN,
+    Credential,
+    DriverError,
+    Encryption,
+    Timeouts,
+)
 
 #: The `ssl_mode` values that require TLS: :func:`tls_arguments` gives each a
 #: context, and the session refuses one that is not TLS.
@@ -146,3 +154,44 @@ def connect_arguments(
         arguments["write_timeout"] = timeouts.query_s
     arguments["password"] = password.reveal()
     return arguments
+
+
+class UnencryptedSessionError(DriverError):
+    """A mode that requires TLS got a session it could not confirm as TLS. The
+    session is closed before anything is sent over it. ``connectivity``, with
+    the client's ``CR_SSL_CONNECTION_ERROR`` number, which is what PyMySQL
+    raises for a server that offers no TLS: the same refusal, read from the
+    session."""
+
+    category = "connectivity"
+
+
+def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
+    """Refuse a session not known to be TLS where ``ssl_mode`` requires it.
+
+    PyMySQL already refuses a server that offers no TLS when it is given a
+    context (:func:`tls_arguments`). This reads the answer from the session
+    itself, so the rule does not rest on the client library alone. The mode is
+    the target's own block's, ``mysql:`` or ``mariadb:``. ``unknown`` is
+    refused too, with its own words: a mode that requires TLS needs it
+    confirmed.
+    """
+    settings = (
+        target.target.mariadb_settings
+        if target.target.type == MARIADB
+        else target.target.mysql_settings
+    )
+    mode = settings.ssl_mode
+    if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
+        return
+    if encryption.method == UNKNOWN:
+        raise UnencryptedSessionError(
+            f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
+            hint=encryption.hint or "the server did not say whether the session is TLS",
+            code=str(TLS_CONNECTION_ERROR),
+        )
+    raise UnencryptedSessionError(
+        f'target "{target.name}" connected without TLS under `ssl_mode: {mode}`',
+        hint="the server negotiated no TLS; give it a certificate, and keep the mode",
+        code=str(TLS_CONNECTION_ERROR),
+    )

@@ -36,6 +36,7 @@ from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe
+from sopuli.driver.mysql_family.accounts import current_user
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
@@ -96,8 +97,8 @@ T = TypeVar("T")
 @dataclass
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
-    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses; every other
-    one refuses with ``SOPULI-20006``."""
+    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses, and
+    :meth:`describe_user`; every other one refuses with ``SOPULI-20006``."""
 
     connection: Any
     target: ExpandedTarget
@@ -163,8 +164,9 @@ class MariadbSession(ClosesConnection):
             product="a MariaDB server",
             what=what,
             hint=(
-                "the MariaDB driver connects and reports the server for `doctor`, and "
-                "the rest of it is not written yet (#1270, #1272)"
+                "the MariaDB driver connects, reports the server for `doctor` and "
+                "describes an account, and the rest of it is not written yet "
+                "(#1270, #1272)"
             ),
         )
 
@@ -178,22 +180,23 @@ class MariadbSession(ClosesConnection):
         ``1142`` or ``1143``, and the hint then says where the grants are: the
         server's own hint names only the table.
         """
+        return self._read_grants(lambda cursor: self._describe(cursor, account))
+
+    def _describe(self, cursor: Any, account: str) -> UserState | None:
+        if self._session_user is None:
+            self._session_user = current_user(cursor)
+        return accounts_module.describe(
+            cursor, account, target=self.target.name, session_user=self._session_user
+        )
+
+    def _read_grants(self, reader: Callable[[Any], T]) -> T:
+        """:meth:`_read`, with the hint about §2.1's grants on a refused read."""
         try:
-            return self._read(self._describe_with(account))
+            return self._read(reader)
         except DriverError as error:
             if error.code in REFUSED_READ:
                 error.hint = MISSING_GRANT_HINT
             raise
-
-    def _describe_with(self, account: str) -> Callable[[Any], UserState | None]:
-        def describe(cursor: Any) -> UserState | None:
-            if self._session_user is None:
-                self._session_user = accounts_module.current_user(cursor)
-            return accounts_module.describe(
-                cursor, account, target=self.target.name, session_user=self._session_user
-            )
-
-        return describe
 
     def byte_limit(self) -> NoReturn:
         self._not_written("say how long a password may be")

@@ -16,10 +16,10 @@ from sopuli.driver.mysql.privileges import (
     COLUMNS,
     CREATE_USER,
     OVER_GRANTED_REMEDY,
-    SELF,
     audit,
     classify,
 )
+from sopuli.driver.mysql_family.accounts import CURRENT_USER
 
 TOOL = "`sopuli_admin`@`192.0.2.10`"
 #: §2.1's grants, as SHOW GRANTS prints them.
@@ -240,7 +240,7 @@ class _Cursor:
         self.queries.append(query)
 
     def fetchone(self) -> Any:
-        assert self.last == SELF
+        assert self.last == CURRENT_USER
         return ("sopuli_admin@192.0.2.10",)
 
     def fetchall(self) -> Any:

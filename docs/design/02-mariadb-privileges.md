@@ -42,7 +42,10 @@ TG3). So:
 - the tool account is as strong as root over every account. Keep its
   credential as you keep root's;
 - guardrail 9 (§5) is the only thing that keeps a mistaken config entry from
-  giving the tool an administrative account's password;
+  giving the tool an administrative account's password. The one exception is
+  `mariadb.sys@localhost`, the account a new server creates to own the system
+  views: 10.11.19, 11.8.9 and 12.3.3 all create it, and the driver reports it
+  as the database's own, so guardrail 2 refuses it;
 - the tool account holds nothing beyond §2.1. Every other privilege makes it
   stronger than it needs to be (§3).
 

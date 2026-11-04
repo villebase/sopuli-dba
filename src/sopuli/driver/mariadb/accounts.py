@@ -1,9 +1,10 @@
 """The accounts a MariaDB config declares, as the server has them. Tier 0.
 
 Read from the ``mysql.user`` view through §2.1's column grant
-(``02-mariadb-privileges.md``): the user, the host, the plugin and whether the
-row is a role. Never the stored value, the lock or the rollover state, which
-are only in ``mysql.global_priv`` beside it (#1267, decisions 2 and 3).
+(``02-mariadb-privileges.md``): the user, the host, the plugin, whether the
+password is expired and whether the row is a role. Never the stored value, the
+lock or the rollover state, which are only in ``mysql.global_priv`` beside it
+(#1267, decisions 2 and 3).
 
 The driver changes passwords on ``mysql_native_password`` and ``ed25519``
 accounts only (#1267, decision 1). ``parsec`` is out: PyMySQL has no client for
@@ -19,7 +20,13 @@ from typing import Any
 
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mariadb import admin
-from sopuli.driver.mysql_family.accounts import Principal, same_host, split, text
+from sopuli.driver.mysql_family.accounts import (
+    Principal,
+    current_user,
+    same_host,
+    split,
+    text,
+)
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
@@ -33,6 +40,12 @@ ROWS_FOR_USERS = (
     "select User, Host, plugin, password_expired from mysql.user "
     "where is_role = 'N' and User in ({names})"
 )
+
+#: The account a new server creates to own the ``mysql.user`` view and the
+#: other system views. 10.11.19, 11.8.9 and 12.3.3 all create it, on
+#: ``mysql_native_password``, so the plugin check does not refuse it.
+#: ``root`` is the site's own account, not one of these.
+SYSTEM_ACCOUNTS = frozenset({"mariadb.sys@localhost"})
 
 #: ``UserState.status``, in the words Oracle and MySQL use.
 OPEN = "OPEN"
@@ -107,12 +120,14 @@ def state_of(account: Account) -> UserState:
     sets (``04_lock_expiry_probe.py``, LK3). A lifetime that has run out is not
     seen: the time of the last change is beside the stored value. The lock is
     never read (#1267, decision 2), so an account reads as not locked; a login
-    to a locked one answers ``4151``.
+    to a locked one answers ``4151``. :data:`SYSTEM_ACCOUNTS` are vendor
+    maintained, so guardrail 2 refuses them.
     """
     return UserState(
         name=account.name,
         status=EXPIRED if account.expired else OPEN,
         expired=account.expired,
+        vendor_maintained=account.name in SYSTEM_ACCOUNTS,
         password_changed_unknown=NO_CHANGE_DATE,
         password_file_member=False,
     )
@@ -133,16 +148,6 @@ def read(cursor: Cursor, users: Sequence[str]) -> dict[str, list[Account]]:
 def find(accounts: Sequence[Account], host: str) -> Account | None:
     """The account at ``host``, compared as the server compares hosts."""
     return next((account for account in accounts if same_host(account.host, host)), None)
-
-
-#: The account the session authenticated as: ``user@host``, with the host as
-#: the account's own pattern, not the client's address.
-CURRENT_USER = "select current_user()"
-
-
-def current_user(cursor: Cursor) -> str:
-    cursor.execute(CURRENT_USER)
-    return text(cursor.fetchone()[0])
 
 
 def describe(

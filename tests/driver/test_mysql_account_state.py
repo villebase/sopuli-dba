@@ -12,7 +12,6 @@ import pytest
 
 from sopuli.driver.mysql import admin
 from sopuli.driver.mysql.accounts import (
-    CURRENT_USER,
     DEFAULT_LIFETIME,
     EXPIRED,
     EXPIRED_AND_LOCKED,
@@ -23,7 +22,7 @@ from sopuli.driver.mysql.accounts import (
     describe,
     survey,
 )
-from sopuli.driver.mysql_family.accounts import BareAccountError, same_host, split
+from sopuli.driver.mysql_family.accounts import CURRENT_USER, BareAccountError, same_host, split
 from sopuli.exit_codes import ExitCode
 
 CHANGED = datetime(2026, 10, 1, 12, 0, 0)

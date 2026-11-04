@@ -31,7 +31,13 @@ from typing import Any
 
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import admin
-from sopuli.driver.mysql_family.accounts import Principal, same_host, split, text
+from sopuli.driver.mysql_family.accounts import (
+    Principal,
+    current_user,
+    same_host,
+    split,
+    text,
+)
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
@@ -241,21 +247,6 @@ def describe(
     held = admin.global_privileges(cursor, Principal(found.user, found.host))
     own = is_session_account(found, session_user or current_user(cursor))
     return replace(state, global_privileges=held, session_account=own)
-
-
-#: The account the session authenticated as: ``user@host``, with the host as
-#: the account's own pattern (``%``), not the client's address.
-CURRENT_USER = "select current_user()"
-
-
-def current_user(cursor: Cursor) -> str:
-    """The account this session is connected as, ``user@host``. It is the
-    account the server matched at login, so a tool connected as
-    ``sopuli_svc@%`` is that account, whichever address it came from. It does
-    not change for the life of a connection, so a session reads it once."""
-    cursor.execute(CURRENT_USER)
-    (value,) = cursor.fetchone()
-    return text(value)
 
 
 def is_session_account(account: Account, session_user: str) -> bool:

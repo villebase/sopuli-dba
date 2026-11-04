@@ -17,6 +17,7 @@ from sopuli.driver.mariadb.scope import (
     observe,
     writable,
 )
+from sopuli.driver.mysql_family.accounts import CURRENT_USER
 from sopuli.driver.mysql_family.encryption import TLS_VERSION
 from sopuli.driver.protocol import ENCRYPTION_NONE, ENCRYPTION_TLS, SERVER
 from sopuli.exit_codes import ExitCode
@@ -186,7 +187,7 @@ def test_the_audit_asks_by_its_own_grantee_and_reads_every_applicable_role() -> 
     and spells its grantee without quotes, so it is read whole (#1287)."""
     cursor = FakeCursor(
         {
-            privileges.SELF: ("sopuli_admin@%",),
+            CURRENT_USER: ("sopuli_admin@%",),
             privileges.GLOBAL_PRIVILEGES: [("CREATE USER", "NO")],
             privileges.SCHEMA_PRIVILEGES: [],
             privileges.TABLE_PRIVILEGES: [],

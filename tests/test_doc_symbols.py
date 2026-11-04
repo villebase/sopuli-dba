@@ -155,14 +155,45 @@ def _walk(obj: Any, parts: list[str]) -> bool:
     return True
 
 
+def _normalised(name: str) -> str:
+    """A distribution or module name in one spelling: lower case, `-` and `.` as `_`.
+
+    `pyproject.toml` writes `PyMySQL`, and the import error names `pymysql`.
+    """
+    return re.sub(r"[-.]", "_", name.lower())
+
+
+#: Declared distributions whose top-level modules are not named after them,
+#: normalised. A distribution not listed here imports under its own name.
+_IMPORT_NAMES: dict[str, tuple[str, ...]] = {
+    "onepassword_sdk": ("onepassword",),
+    "pyyaml": ("yaml",),
+    # The pywin32 modules src/ and tests/ import.
+    "pywin32": ("ntsecuritycon", "pywintypes", "win32security"),
+}
+
+
 @cache
 def _declared_dependencies() -> frozenset[str]:
-    """The import names of what `pyproject.toml` declares, extras included."""
+    """The top-level import names of what `pyproject.toml` declares, extras included.
+
+    Each is normalised, and taken from `_IMPORT_NAMES` where it differs from the
+    distribution's name.
+    """
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     declared = list(project.get("dependencies", []))
     for extra in project.get("optional-dependencies", {}).values():
         declared += extra
-    return frozenset(re.split(r"[<>=!~\[; ]", name, maxsplit=1)[0] for name in declared)
+    names: set[str] = set()
+    for entry in declared:
+        distribution = _normalised(re.split(r"[<>=!~\[; ]", entry, maxsplit=1)[0])
+        names.update(_IMPORT_NAMES.get(distribution, (distribution,)))
+    return frozenset(names)
+
+
+def _declared_module(name: str) -> bool:
+    """Whether the missing module `name` belongs to a declared dependency."""
+    return _normalised(name.split(".")[0]) in _declared_dependencies()
 
 
 def _imported(dotted: str) -> bool | None:
@@ -177,7 +208,7 @@ def _imported(dotted: str) -> bool | None:
         try:
             module = importlib.import_module(".".join(parts[:split]))
         except ModuleNotFoundError as error:
-            if error.name in _declared_dependencies():
+            if error.name and _declared_module(error.name):
                 return None
             if split == 1:
                 return False
@@ -388,6 +419,30 @@ def test_the_role_lookup_tells_a_real_name_from_a_missing_one() -> None:
     assert _resolves_in_source("NoSuchName", module, []) is False
     assert _imported("sopuli.config.errors.KeyPath") is True
     assert _imported("sopuli.config.errors.NoSuchName") is False
+
+
+def test_a_declared_extra_is_found_by_its_import_name() -> None:
+    """`pyproject.toml` writes `PyMySQL`; a missing module is named `pymysql` (#1280)."""
+    assert _declared_module("pymysql")
+    assert _declared_module("onepassword.client")
+    assert _declared_module("yaml")
+    assert _declared_module("win32security")
+    assert not _declared_module("onepassword_sdk")
+    assert not _declared_module("no_such_dependency")
+
+
+def test_a_reference_into_a_missing_extra_is_not_judged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As in the docs lane: the MySQL driver's module fails to import for want of PyMySQL."""
+    real = importlib.import_module
+
+    def without_pymysql(name: str, package: str | None = None) -> ModuleType:
+        if name.startswith("sopuli.driver.mysql.session"):
+            raise ModuleNotFoundError("No module named 'pymysql'", name="pymysql")
+        return real(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", without_pymysql)
+
+    assert _imported("sopuli.driver.mysql.session.MysqlSession.scope") is None
 
 
 def test_a_test_module_reference_is_walked_to_its_end() -> None:

@@ -127,7 +127,17 @@ no grant of their own, and no stored value. The audit reads each by the tool
 account's own grantee, since an account that holds `SELECT` on `mysql.*` sees
 every account's rows there (RD1). They show only grants made to the account
 itself: what a role gives it is not there, and `doctor` says so where the
-account holds a role (`sopuli/driver/mariadb/privileges.py`).
+account holds a role (`sopuli/driver/mariadb/privileges.py`). Grants to
+`PUBLIC` are in none of them either (11.8.9), and every run says so.
+
+**The reads that matter most are tried directly.** `SELECT … LIMIT 0` on
+`mysql.global_priv`, and on the view's `authentication_string` and `Password`,
+returns no row, and is refused with `1142` or `1143` for an account with §2.1
+alone. Where the server allows one, by any route (a direct grant, a role,
+`PUBLIC` or a broader grant), `doctor` reports it as over-granted. A role that
+is not a default role is not active, so the audit sets each role in turn, tries
+the reads, and sets back the role the session had, read by `CURRENT_ROLE()`:
+MariaDB has no `SET ROLE DEFAULT`.
 
 `SHOW GRANTS FOR` another account, and `SHOW CREATE USER` for one, are refused
 with `1044` (TG5). Both print that account's hash to an account allowed to run

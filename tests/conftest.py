@@ -508,22 +508,31 @@ class MysqlStack:
         test's setup and teardown."""
         return self.connect_as(self.user, self.password)
 
-    def connect_as(self, user: str, password: str) -> Any:
+    def connect_as(self, user: str, password: str, *, tls: bool = True) -> Any:
         """A session as ``user`` over TLS that checks nothing about the
-        server. PyMySQL is imported here, as in the fixture."""
+        server, or without TLS. PyMySQL is imported here, as in the fixture.
+
+        The password goes as UTF-8 bytes, as the driver sends it: PyMySQL
+        encodes a str as latin-1, which refuses or breaks a password that is
+        not ASCII (#1285). The connection is ``utf8mb4``, so a password in a
+        statement reaches the server as UTF-8 too."""
         import ssl
 
         import pymysql
 
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context = None
+        if tls:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
         return pymysql.connect(
             host=self.host,
             port=self.port,
             user=user,
-            password=password,
+            password=password.encode("utf-8"),
             ssl=context,
+            ssl_disabled=not tls,
+            charset="utf8mb4",
             autocommit=True,
             connect_timeout=5,
         )

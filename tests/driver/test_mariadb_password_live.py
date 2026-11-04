@@ -24,20 +24,6 @@ pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
 from sopuli.driver.mariadb.password import ED25519, NATIVE, VALUES, admit  # noqa: E402
 
 
-def login(live: Any, user: str, password: str) -> Any:
-    """A session as the managed account, given its password as UTF-8 bytes:
-    PyMySQL encodes a str as latin-1 (#1285), and the fixture's ``connect_as``
-    takes a str. Without TLS: neither plugin sends the password."""
-    return pymysql.connect(
-        host=live.host,
-        port=live.port,
-        user=user,
-        password=password.encode("utf-8"),
-        ssl_disabled=True,
-        connect_timeout=5,
-    )
-
-
 @pytest.fixture
 def account(live_mariadb: Any) -> Iterator[str]:
     """A new account at `%`, created and dropped as root."""
@@ -59,16 +45,22 @@ def test_the_tool_account_sets_the_value_and_the_password_logs_in(
     admit(secret)
     value = VALUES[plugin](secret)
 
-    tool = live_mariadb.connect_as(live_mariadb.tool_user, live_mariadb.tool_password)
-    with tool, tool.cursor() as cursor:
+    with (
+        live_mariadb.connect_as(live_mariadb.tool_user, live_mariadb.tool_password) as tool,
+        tool.cursor() as cursor,
+    ):
         cursor.execute(
             f"ALTER USER %s@'%%' IDENTIFIED VIA {plugin} USING %s", (account, value.reveal())
         )
 
-    with login(live_mariadb, account, password) as session, session.cursor() as cursor:
+    # Without TLS: neither plugin sends the password.
+    with (
+        live_mariadb.connect_as(account, password, tls=False) as session,
+        session.cursor() as cursor,
+    ):
         cursor.execute("SELECT CURRENT_USER()")
         assert cursor.fetchone()[0] == f"{account}@%"
 
     with pytest.raises(pymysql.err.OperationalError) as refused:
-        login(live_mariadb, account, password + "-wrong")
+        live_mariadb.connect_as(account, password + "-wrong", tls=False).close()
     assert refused.value.args[0] == 1045
